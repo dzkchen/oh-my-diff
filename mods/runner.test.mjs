@@ -89,6 +89,39 @@ test('lifecycle events and interceptors require their capabilities', () => {
   assert.deepEqual(run(source, { ...extra, payload: { ...payload, input: { text: 'yo', attachments: 0 } } }).value, { unmatched: true });
 });
 
+test('reactive atoms track reads, recompute derived values and run keyed subscriptions once per change', () => {
+  const source = `export default api => {
+    const query = api.atom('query', '');
+    const total = api.member('hits', 'total', 0);
+    const summary = api.derive(() => query.get() + ':' + total.get());
+    api.subscribe(query, () => total.update(count => count + 1));
+    api.command('search', text => { query.set(String(text)); return summary.get(); });
+    api.intercept('render', { match: { component: 'spinner' } }, () => ({ tree: [{ type: 'text', id: 'q', label: 'Query', text: summary.get() }] }));
+    api.intercept('render', { match: { component: 'notice' } }, () => { query.set('x'); return { tree: [] }; });
+  }`;
+  const capabilities = ['commands', 'store', 'terminal'];
+  const searched = run(source, { capabilities, event: 'command', name: 'search', payload: 'abc' });
+  assert.equal(searched.value, 'abc:0');
+  assert.deepEqual(searched.state, { query: 'abc', hits: { total: 1 } });
+  const repeated = run(source, { capabilities, event: 'command', name: 'search', payload: 'abc', state: searched.state });
+  assert.deepEqual(repeated.state, searched.state);
+  const render = (component, index, code = source) => {
+    const input = { component, id: 'main', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'live', owner: null, props: {} };
+    return run(code, { capabilities, state: searched.state, event: 'intercept', name: String(index), payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } });
+  };
+  const drawn = render('spinner', 0);
+  assert.equal(drawn.value.result.tree[0].text, 'abc:1');
+  assert.deepEqual(drawn.value.reads.sort(), ['hits', 'query']);
+  assert.match(render('notice', 1).error, /render_side_effect_refused/);
+  const seeded = render('spinner', 0, `export default api => { const seen = api.atom('seen', 0); seen.set(1);
+    api.intercept('render', () => ({ tree: [{ type: 'text', id: 's', label: 'Seen', text: String(seen.get()) }] })); }`);
+  assert.equal(seeded.value.result.tree[0].text, '1');
+  assert.deepEqual(seeded.state, searched.state);
+  assert.match(run(source, { capabilities, state: 5, event: 'command', name: 'search', payload: 'a' }).error, /state_not_keyed/);
+  assert.match(run('export default api => api.command("late", () => api.subscribe(api.atom("a", 0), () => {}))',
+    { capabilities: ['commands', 'store'], event: 'command', name: 'late' }).error, /subscription_outside_activation/);
+});
+
 test('typed middleware and services register without ambient authority', () => {
   const contract = { name: 'fixture.echo', version: '1.0.0', methods: { echo: { input: 'string', output: 'string' } } };
   const source = `export default api => {

@@ -303,6 +303,18 @@
       "why_mod": "Approves routine check commands inside a user-delegated native approval grant, which hooks and skills cannot hold."
     },
     {
+      "path": "mods/examples/admission_guard",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Refuses or restricts other mods at load and guards host requests under a user-granted policy, which hooks and skills cannot do."
+    },
+    {
+      "path": "mods/examples/command_curator",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Rewrites slash-command and settings metadata, arguments and writes through host continuations that hooks and skills cannot reach."
+    },
+    {
       "path": "mods/examples/channel_pair",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -373,6 +385,18 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Replaces the live terminal layout with splits, tabs, documents and diffs."
+    },
+    {
+      "path": "mods/examples/render_hooks",
+      "extension_type": "mod",
+      "role": "author_example",
+      "why_mod": "Redraws native terminal components: a custom spinner, framed tool calls, annotated assistant messages and a wrapped question."
+    },
+    {
+      "path": "mods/examples/reactive_dashboard",
+      "extension_type": "mod",
+      "role": "author_example",
+      "why_mod": "Keeps a form, a streamed status and a derived summary on keyed reactive state."
     },
     {
       "path": "mods/examples/notification_bridge",

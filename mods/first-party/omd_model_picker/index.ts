@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalComponent, TerminalListEvent, TerminalListRow, TerminalTone } from '../../api.d.ts';
+import type { ModAPI, RenderEvent, TerminalComponent, TerminalListRow, TerminalTone } from '../../api.d.ts';
 
 type Profiles = { profiles?: { name: string; model: string; billing: string; available: boolean }[]; current?: string | null };
 
@@ -13,10 +13,11 @@ export default function activate(api: ModAPI) {
     const text = Array.from(clean(value));
     return text.length <= limit ? text.join('') : `${text.slice(0, Math.max(1, limit - 1)).join('')}…`;
   };
-  api.replace('list', (event: TerminalListEvent): TerminalComponent[] | null => {
-    if (!['model', 'reasoning', 'advanced_reasoning'].includes(event.view_id) || event.items.length > 200 || event.width < 20) return null;
-    const narrow = event.width < 72;
-    const width = Math.min(256, event.width);
+  api.intercept('render', { match: { component: 'list' } }, (input, next) => {
+    const { props: event, viewport } = input as RenderEvent<'list'>;
+    if (!['model', 'reasoning', 'advanced_reasoning'].includes(event.view_id) || event.items.length > 200 || viewport.columns < 20) return next(input);
+    const narrow = viewport.columns < 72;
+    const width = Math.min(256, viewport.columns);
     const title = `${brand ? `${brand} · ` : ''}${clean(event.title)}`;
     const rows: TerminalListRow[] = event.items.map(item => {
       const tag = item.disabled ? ' · unavailable' : item.current ? ' · current' : '';
@@ -38,6 +39,6 @@ export default function activate(api: ModAPI) {
       ...profiles.slice(0, 4).map((profile, index): TerminalComponent => ({ type: 'text', id: `omd_picker_profile_${index}`, label: `Profile ${profile.name}`,
         text: shorten(`${profile.name === current ? '●' : '○'} ${profile.name} · ${profile.model}${profile.billing === 'included_subscription' ? '' : ' · paid'}`, Math.max(8, width - 4)),
         tone: profile.name === current ? 'accent' : profile.available ? 'normal' : 'muted' })));
-    return components;
+    return { tree: components };
   });
 }

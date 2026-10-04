@@ -13,7 +13,7 @@
   "mod.api": "An existing OMD registration API (named in `via`) is the public equivalent of this upstream extension seam.",
   "builtins.command": "P6 plus Q10 builtin controls on a built-in slash command: `observe` its use, `invoke` it from a user context, `hide` it, or `replace` it with a mod command; `access` lists what is allowed.",
   "builtins.key": "Q10 keymap overlay on a built-in keymap action: observe, rebind or unbind for the session (restored on disable), or invoke from a user context.",
-  "terminal.list": "P10 `replace('list')`: restyle this native list view; keys, selection and persistence stay native.",
+  "terminal.list": "4ef `render` hook on component `list`: draw this native list view's rows and surroundings; keys, selection and persistence stay native.",
   "terminal.view": "Q10 `view` event: observe this native view opening and closing; open it by invoking its command; hide it by hiding that command. `access` lists what is allowed.",
   "config.read": "Q1 `config/read`: read the effective value and its origin (secrets redacted).",
   "config.write": "Q1 `config/value/write` / `config/batchWrite` for this key, with a native confirmation naming the mod and value; also readable. `subkeys` limits writes to those sub-key patterns (`*` matches one segment)."

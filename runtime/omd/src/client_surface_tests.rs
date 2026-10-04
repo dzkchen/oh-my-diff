@@ -192,3 +192,45 @@ fn config_reads_redact_secret_values() {
     );
     assert_eq!(config["mcp_servers"]["plain"], json!({"command": "plain"}));
 }
+
+#[test]
+fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
+    let read = json!({
+        "config": {"model": "m", "agents": {"max_depth": 2}, "approval_policy": "never",
+            "mcp_servers": {"docs": {"command": "docs", "env": {"TOKEN": "s1"}}}},
+        "origins": {
+            "model": {"name": {"type": "system", "file": "/etc/codex/config.toml"}, "version": "v1"},
+            "agents.max_depth": {"name": {"type": "user", "file": "/u/config.toml"}, "version": "v2"}
+        }
+    });
+    let packages = json!({"packages": [
+        {"id": "notes", "effective": true, "settings": {"limit": 3},
+            "settings_schema": {"properties": {"limit": {"type": "number", "default": 5}}}},
+        {"id": "off", "effective": false, "settings": {"x": 1},
+            "settings_schema": {"properties": {"x": {"type": "number"}}}}
+    ]});
+    let rows = config_rows(&read, &packages);
+    let row = |key: &str| rows.iter().find(|row| row["key"] == key).cloned();
+    assert_eq!(rows[0]["key"], "mods.notes.limit");
+    assert_eq!(rows[0]["value"], 3);
+    assert!(row("mods.off.x").is_none());
+    let depth = row("agents.max_depth").unwrap();
+    assert_eq!(
+        (
+            depth["editable"].clone(),
+            depth["source"].clone(),
+            depth["version"].clone()
+        ),
+        (json!(true), json!("user"), json!("v2"))
+    );
+    let model = row("model").unwrap();
+    assert_eq!(
+        (model["managed"].clone(), model["editable"].clone()),
+        (json!(true), json!(false))
+    );
+    assert!(
+        row("approval_policy").is_none(),
+        "authority keys are not rows"
+    );
+    assert!(!serde_json::to_string(&rows).unwrap().contains("s1"));
+}

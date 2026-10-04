@@ -163,7 +163,7 @@
       "group": "coordination",
       "decision": "Request, stream and session middleware",
       "observe": "`model_request`, `response_stream`, `prompt`, `session`, `agent`, `tool_call` and `host_operation` middleware observe in order",
-      "alter": "`response_stream` may rewrite unprotected text or stop at an output boundary with an optional retry instruction; `model_request` may pick a configured route; `intercept('model_request')` and `intercept('host_operation')` wrap the route choice and every mod host call as continuations under the caller's grants",
+      "alter": "`response_stream` may rewrite unprotected text or stop at an output boundary with an optional retry instruction; `model_request` may pick a configured route; `intercept('model_request')` and `intercept('host_operation')` wrap the route choice and every mod host call as continuations under the caller's grants; `host_operation` inputs carry the typed `namespace` (`service:<name>/<method>` for service calls) and `origin` names the actual caller, the service `provider` and the caller `chain`",
       "replace": null,
       "timing": "per request and per streamed event",
       "ownership": "mod: the transformation; host: protected fields, boundaries, retry limit and provenance",
@@ -703,7 +703,7 @@
       "evidence": [
         "rust:unrestricted_exec_runs_granted_programs_outside_the_sandbox",
         "patch:unrestricted_process_needs_a_current_grant_and_takes_its_tree_down",
-        "rust:os_and_approve_grants_are_declared_scoped_expiring_and_revocable"
+        "rust:authority_grants_are_declared_scoped_expiring_and_revocable"
       ]
     },
     {
@@ -784,13 +784,13 @@
     {
       "id": "terminal.view",
       "group": "terminal",
-      "decision": "Terminal base view and composable render-site patches",
-      "observe": "the triggering event, checkpoint, real version/installed identity and host presentation phase fresh/started/resumed; current-API observers compose patches after the exclusive base owner",
-      "alter": "the owner returns the bounded base view; observers may wrap or replace declared sites and add non-conflicting presentation fields",
-      "replace": "terminal (exclusive)",
+      "decision": "Terminal view composed from every mod's patch",
+      "observe": "the triggering event, checkpoint, real version/installed identity and host presentation phase fresh/started/resumed",
+      "alter": "every mod returns a bounded patch; patches wrap or replace declared sites and add presentation fields, and exclusive fields go to the first mod in composition order",
+      "replace": null,
       "timing": "repeatable startup presentation before the first editable frame, then every mod event; redrawn inline and fullscreen",
       "ownership": "host: driver, layout, modes, validation, native composer, recovery, input primitives and restoration",
-      "limits": "dependency order is deterministic; conflicting or invalid patches fail alone and transactionally; only the current experimental API loads; title suffix and greeting are bounded last-writer scalars; the welcome site uses blank space only and never restores after an accepted start or resume; recovery remains native",
+      "limits": "dependency order is deterministic; later claims on exclusive fields are reported in `terminal.conflicts` and invalid patches fail alone and transactionally; only the current experimental API loads; title suffix and greeting are bounded last-writer scalars; the welcome site uses blank space only and never restores after an accepted start or resume; recovery remains native",
       "native": "native plugins cannot change the terminal at all",
       "covers": {
         "capabilities": [
@@ -799,15 +799,12 @@
         "events": [
           "terminal"
         ],
-        "replacements": [
-          "terminal"
-        ],
+        "replacements": [],
         "operations": []
       },
       "evidence": [
         "patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer",
         "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
-        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest",
         "patch:welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose",
         "patch:welcome_phase_survives_ready_reload_and_rejected_input_until_accepted_start",
         "patch:welcome_resume_and_fork_markers_are_latched_before_ready_publication",
@@ -923,24 +920,28 @@
     {
       "id": "terminal.rendering",
       "group": "terminal",
-      "decision": "Assistant, tool and completed-activity presentation",
-      "observe": "not applicable",
-      "alter": "a template that retains `{text}` exactly once, compact presentation for successful completed agent tool output, and `inline_sites: 'hidden'` to keep the sidebar, header and named sites out of the inline viewport",
-      "replace": "terminal",
-      "timing": "rich streamed and finalized assistant cells and exec cells as they render, including inline scrollback",
-      "ownership": "host: the raw transcript, stored messages and durable evidence",
-      "limits": "presentation only; active work, failures, user shell commands, prompts, transcript, stored messages and evidence remain native and visible",
+      "decision": "Render hooks on native components",
+      "observe": "typed props, stable identity, surface, viewport and lifecycle of each user and assistant message, tool call, result, group and progress row, command output, spinner, turn duration, notice, session mode, composer hint, question and list",
+      "alter": "`api.intercept('render', …)` restyles the native drawing (`{type: 'native', style}`), wraps it in a component tree, replaces or hides it (`{tree: []}`), and may rewrite spinner `header`, notice `text`, session-mode `label` and composer `placeholder` through `next`; `inline_sites: 'hidden'` keeps sites out of the inline viewport",
+      "replace": null,
+      "timing": "live components redraw asynchronously and keep their last tree until the new answer arrives; inline scrollback waits once per cell; trees are cached until the state keys their hooks read change",
+      "ownership": "host: the raw transcript, approval overlays, question answers, keys, focus and stored messages",
+      "limits": "presentation only; render callbacks get no host operations or state writes; a failing hook falls back to what it received; approval identity, options and grants stay native",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
         "events": [],
         "replacements": [],
-        "operations": []
+        "operations": [],
+        "intercepts": [
+          "render"
+        ]
       },
       "evidence": [
+        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change",
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
-        "patch:focus_flow_compacts_only_successful_agent_output",
-        "patch:message_template_covers_streamed_and_finalized_agent_text",
+        "patch:trees_wrap_restyle_replace_or_hide_the_native_drawing",
+        "patch:widget_hooks_place_the_native_widget_and_report_its_offset",
         "patch:hidden_inline_sites_leave_dialogs_and_diagnostics_in_the_inline_viewport"
       ],
       "replace_note": null
@@ -975,29 +976,72 @@
       "group": "terminal",
       "decision": "Built-in lists, insert, placeholder and glyphs",
       "observe": "none",
-      "alter": "components may `{insert}` text; a view may set `placeholder` and width-preserving `theme.glyphs`",
-      "replace": "list",
+      "alter": "components may `{insert}` text; a `render` hook on component `list` draws the rows and their surroundings; a view may set `placeholder` and width-preserving `theme.glyphs`",
+      "replace": null,
       "timing": "on render",
-      "ownership": "mod: rows and spans; host: keyboard handling, the chosen action and width checks",
-      "limits": "search input keeps native rendering; width-changing glyphs are ignored; one owner per replacement point",
+      "ownership": "mod: rows and spans; host: keyboard handling, selection, the chosen action and width checks",
+      "limits": "search input keeps native rendering; width-changing glyphs are ignored",
       "native": "native plugins cannot restyle built-in pickers",
       "covers": {
         "capabilities": [
           "terminal"
         ],
-        "events": [
-          "list"
-        ],
-        "replacements": [
-          "list"
-        ],
+        "events": [],
+        "replacements": [],
         "operations": []
       },
       "evidence": [
-        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters",
+        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change",
         "patch:list_rows_follow_the_selected_value_and_glyphs_and_placeholder_stay_bounded"
       ],
-      "replace_note": "exclusive"
+      "replace_note": null
+    },
+    {
+      "id": "terminal.interaction",
+      "group": "terminal",
+      "decision": "Controlled fields, component events and pane control",
+      "observe": "`component_event` reports focus, blur, per-edit `change`, `scroll`, `pointer`, `open` and `close` with their origin to the component's owner only",
+      "alter": "a changed `input`/`select` `value` resets the field while echoes of the user's own edits are ignored; `terminal.pane` opens, closes, focuses, scrolls or reveals the caller's own pane, dialog or control",
+      "replace": null,
+      "timing": "after each user gesture or pane request, off the input thread",
+      "ownership": "mod: its own components; host: keys, focus ring, host-reserved keys and permission controls",
+      "limits": "only the owner of a component receives its events or may move it; other mods' components and native views are out of reach",
+      "native": "no equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "terminal.pane"
+        ]
+      },
+      "evidence": [
+        "patch:controlled_fields_keep_echoes_reset_on_mod_values_and_panes_answer_only_their_owner"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "terminal.reactive_state",
+      "group": "terminal",
+      "decision": "Reactive atoms, selectors and keyed subscriptions",
+      "observe": "`api.atom`, `api.member` and `api.derive` read keys of an object `api.state`; render hooks report the keys they read",
+      "alter": "`set`/`update` write through the same compare-and-swap state; `api.subscribe` runs once per changed atom after the handler that changed it",
+      "replace": null,
+      "timing": "subscribers run before the callback commits, so a lost compare-and-swap reruns them with it",
+      "ownership": "mod: its own state; host: storage, compare-and-swap and render cache invalidation",
+      "limits": "render callbacks cannot write state; subscriptions register during activation; at most 64 subscriptions and 8 cascade rounds per callback",
+      "native": "no equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "node:reactive atoms track reads, recompute derived values and run keyed subscriptions once per change",
+        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change"
+      ],
+      "replace_note": null
     },
     {
       "id": "coordination.app_bridge",
@@ -1069,7 +1113,7 @@
         "patch:approval_middleware_requires_the_approvals_capability",
         "patch:delegated_approvals_stay_inside_the_current_grant",
         "patch:only_user_rule_denials_are_overridable",
-        "rust:os_and_approve_grants_are_declared_scoped_expiring_and_revocable"
+        "rust:authority_grants_are_declared_scoped_expiring_and_revocable"
       ],
       "replace_note": null
     },
@@ -1278,7 +1322,7 @@
       "group": "terminal",
       "decision": "Layout, notifications, composer and built-in actions",
       "observe": "`component_event` (including ordered, batched key and paste input from focused `keys: true` panes and documents), `view` and `focus`",
-      "alter": "`terminal.notify`, `terminal.show_thread`, the read-only `terminal.commands` inventory and `sessions.ports` listeners, confirmed `terminal.import_file` with thread/package lifetime, bounded `terminal.image_sample`, `composer.read`/`write` and `builtins.invoke`",
+      "alter": "`terminal.notify`, `terminal.show_thread`, `sessions.ports` listeners, confirmed `terminal.import_file` with thread/package lifetime, bounded `terminal.image_sample`, `composer.read`/`write` and `builtins.invoke {action}` key actions",
       "replace": null,
       "timing": "user commands; composer writes and imports from user contexts",
       "ownership": "mod: content; host: rendering, focus, confirmation and rate limits",
@@ -1302,7 +1346,6 @@
           "composer.write",
           "builtins.invoke",
           "terminal.image_sample",
-          "terminal.commands",
           "sessions.ports"
         ]
       },
@@ -1383,7 +1426,7 @@
       "group": "terminal",
       "decision": "Opening links, images and native prompts",
       "observe": "no",
-      "alter": "`terminal.open` for http(s) URLs or inert files; `terminal.prompt` asks the user to confirm or type text; `image` components",
+      "alter": "`terminal.open` for http(s) URLs or inert files; `terminal.prompt` asks the user to confirm, type text or choose among options (single, multiple or with an Other answer); `image` components",
       "replace": null,
       "timing": "after a native confirmation for opening",
       "ownership": "mod: request; host: confirmation, file-type allowlist and rendering",
@@ -1483,6 +1526,105 @@
         "patch:call_arguments_and_image_messages_can_be_rewritten"
       ],
       "replace_note": null
+    },
+    {
+      "id": "tool.structured_access",
+      "group": "tool",
+      "decision": "Structured HTTP, external files, environment metadata and MCP lifecycle",
+      "observe": "`http.request`/`http.open`/`http.read` responses with redacted headers and redirect hops; `workspace.read`/`list`/`stat` with `root`; `environment.read` values of declared non-secret names; status `access` and the session's `mod-access.jsonl` receipts",
+      "alter": "send requests to `http_access.origins` with an opaque `credential` profile attached only for its enrolled origin; change files under writable `fs_access.roots` with expected versions; connect or disconnect `mcp_servers` on the mod's thread through the engine's MCP refresh",
+      "replace": null,
+      "timing": "lifecycle, interceptor, timer and channel callbacks in the session; external roots and `environment.read` also from commands",
+      "ownership": "user: the hash-bound `http`, `fs.external` and `mcp` grants, their expiry and `omd-mod revoke`; host: origin, redirect and root checks under the actual caller, deadlines, cancellation, stream and server teardown at reload, disable, revoke or expiry, receipts",
+      "limits": "bodies 128 KiB per request result, 1 MiB per request body, 4 streams per mod closed after 60 s idle, 5 redirects each re-checked, no raw tokens; roots must be canonical and outside the workspace, mod stores and credential locations; MCP command servers run as the user like any configured server and their tools pass normal tool approvals",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "http",
+          "fs.external",
+          "mcp"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "http.request",
+          "http.open",
+          "http.read",
+          "http.close",
+          "mcp.connect",
+          "mcp.disconnect",
+          "environment.read"
+        ]
+      },
+      "evidence": [
+        "patch:structured_http_reassesses_redirects_streams_cancels_and_records_receipts",
+        "rust:external_roots_keep_canonical_paths_expected_versions_and_grant_scope",
+        "patch:mcp_connect_builds_only_declared_servers_for_the_engine",
+        "rust:authority_grants_are_declared_scoped_expiring_and_revocable"
+      ]
+    },
+    {
+      "id": "terminal.commands_config",
+      "group": "terminal",
+      "decision": "Command and configuration metadata, execution and changes",
+      "observe": "`commands.list`/`commands.describe` rows (owner, hidden, argument hint, immediate, protected); `config.describe` rows (label, redacted value, source, version, editable, managed, secret); the `config_change` event with original and effective values",
+      "alter": "`command_list` and `config_list` interceptors hide, relabel or hint ordinary rows; `command` interceptors rewrite arguments, transform results or deny; `config_set` interceptors transform or deny a value; `commands.invoke` runs a built-in or mod command and returns its result; `config.set` writes an editable row",
+      "replace": null,
+      "timing": "command popup and inventory, typed and invoked commands, `config.set`, `settings.write`",
+      "ownership": "mod: metadata, transforms and refusals; host: protected commands, managed and secret rows, the writable-key allowlist, confirmation of Codex writes, version-checked writes and recovery",
+      "limits": "protected commands (`/omd`, `/quit`, `/approvals`, `/status`, ...) bypass `command` interceptors and stay visible; managed and secret rows are immutable and values never include secrets; non-immediate mod commands are refused during a turn; at most 4 nested `commands.invoke` runs; a failed list chain keeps the native rows",
+      "native": "hooks cannot list, rewrite or refuse commands or settings",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "config_change"
+        ],
+        "replacements": [],
+        "operations": [
+          "commands.list",
+          "commands.describe",
+          "commands.invoke",
+          "config.describe",
+          "config.set"
+        ],
+        "intercepts": [
+          "command_list",
+          "command",
+          "config_list",
+          "config_set"
+        ]
+      },
+      "evidence": [
+        "rust:command_and_config_interceptors_compose_transform_and_keep_floors",
+        "rust:host_feature_examples_load_and_register_together"
+      ]
+    },
+    {
+      "id": "coordination.admission",
+      "group": "coordination",
+      "decision": "Explicitly authorized mod admission and namespace policy",
+      "observe": "each other active package's id, version, digest, source, capabilities, dependencies and services at load",
+      "alter": "refuse a package (`{deny}`) or withhold host namespaces inside `policy.namespaces` (`{withhold}`); an outer handler may only tighten the decision beneath it",
+      "replace": null,
+      "timing": "every reload; decisions are cached by package and policy digest, so changed content is judged again",
+      "ownership": "user: the hash-bound `policy` grant; host: native admission first, the policy mods and their dependencies are never judged, dependents of refused packages are refused, withheld namespaces fail with `capability_withheld`",
+      "limits": "no host operations during admission; a failing or faulted required policy refuses the other packages with `admission_policy_unavailable` until the policy mod is disabled or reloaded in `/omd`; policy cannot grant capabilities, change managed policy, broker grants or authority operations",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "policy"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [],
+        "intercepts": [
+          "admission"
+        ]
+      },
+      "evidence": [
+        "rust:admission_policy_refuses_withholds_rejudges_and_fails_closed",
+        "rust:host_operation_continuations_retry_and_answer_under_the_actual_caller"
+      ]
     }
   ],
   "composition": [
@@ -1510,10 +1652,17 @@
     },
     {
       "id": "terminal_patch_composition",
-      "rule": "Terminal patches apply after the exclusive base in dependency order. Wrappers contain one slot; one patch may replace a site or own completed-tool presentation; duplicate site, key, status-budget or completed-tool claims fail the later mod transactionally without leaking any of its earlier fields.",
+      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, backdrop, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields.",
       "evidence": [
         "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
         "rust:a_failed_terminal_patch_is_transactional"
+      ]
+    },
+    {
+      "id": "render_hook_composition",
+      "rule": "Render hooks compose as one continuation chain per native component instance in interceptor order, so unrelated wrappers nest; each sees the props the hook before it passed on, the native drawing appears at most once, and a failing or invalid hook is skipped with the input it received.",
+      "evidence": [
+        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change"
       ]
     },
     {

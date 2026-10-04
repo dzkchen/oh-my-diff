@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalComponent } from '@oh-my-diff/mod-api';
+import type { ModAPI, RenderEvent, TerminalComponent } from '@oh-my-diff/mod-api';
 
 export default function activate(api: ModAPI) {
   api.contract({
@@ -31,7 +31,8 @@ export default function activate(api: ModAPI) {
     event.boundary && /\bTODO\b/.test(event.text ?? '')
       ? { stop: { reason: 'unfinished marker' }, retry: { inject: 'Remove TODO markers before finishing.' } }
       : null);
-  api.replace('list', event => {
+  api.intercept('render', { match: { component: 'list' } }, input => {
+    const event = (input as RenderEvent<'list'>).props;
     const rows = event.items.map(item => ({
       value: String(item.order), label: item.label,
       spans: [{ text: item.current ? `${item.label} (current)` : item.label, tone: item.current ? 'accent' as const : 'normal' as const }],
@@ -40,6 +41,6 @@ export default function activate(api: ModAPI) {
       type: 'list', id: 'rows', label: event.title, rows,
       selected: event.selected === null ? undefined : String(event.selected), action: { command: 'release_check:picked' },
     };
-    return [list];
+    return { tree: [list] };
   });
 }

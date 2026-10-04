@@ -8,8 +8,8 @@ import { join } from 'node:path';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = {
-  events: { terminal: 'terminal', list: 'terminal', channel: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
-  replacements: ['terminal', 'list'], middleware: [], state: 'store', contracts: 'contracts',
+  events: { terminal: 'terminal', channel: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
+  replacements: [], intercept: { render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts',
 };
 const source = name => readFileSync(new URL(`./first-party/${name}/index.ts`, import.meta.url), 'utf8');
 function run(name, input) {
@@ -25,26 +25,30 @@ function run(name, input) {
 }
 
 test('model and reasoning lists use bounded generic components', () => {
-  const payload = { view_id: 'model', title: 'Model', subtitle: 'Choose one', width: 40, selected: 1, items: [
+  const props = { view_id: 'model', title: 'Model', subtitle: 'Choose one', selected: 1, items: [
     { label: 'A', description: null, current: true, disabled: false, order: 0 },
     { label: 'B', description: 'Reasoning model', current: false, disabled: false, order: 1 },
   ] };
   const capabilities = ['terminal', 'events', 'store'];
-  const output = run('omd_model_picker', { capabilities, event: 'list', payload });
-  assert.deepEqual(output.registrations.replacements, ['list']);
-  assert.equal(output.value[0].text, 'oh my diff · Model');
-  assert.equal(output.value[1].type, 'list');
-  assert.equal(output.value[1].selected, '1');
-  assert.deepEqual(output.value[1].rows.map(row => row.value), ['0', '1']);
-  assert.match(output.value[1].rows[0].spans[0].text, /current/);
-  assert.equal(JSON.stringify(output.value).includes('Reasoning model'), false);
-  assert.match(output.value[2].text, /enter/);
-  const wide = run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, width: 100 } });
-  assert.match(wide.value[2].rows[1].spans[0].text, /Reasoning model/);
-  assert.equal(run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, items: Array(201).fill(payload.items[0]) } }).value, null);
-  assert.equal(run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, view_id: 'unknown' } }).value, null);
+  const render = (overrides = {}, columns = 40, state = null) => {
+    const input = { component: 'list', id: 'model', surface: 'inline', viewport: { columns, rows: 24 }, lifecycle: 'live', owner: null, props: { ...props, ...overrides } };
+    return run('omd_model_picker', { capabilities, event: 'intercept', name: '0', payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } }, state });
+  };
+  const output = render();
+  assert.equal(output.registrations.interceptors[0].pattern, 'render');
+  const tree = output.value.result.tree;
+  assert.equal(tree[0].text, 'oh my diff · Model');
+  assert.equal(tree[1].type, 'list');
+  assert.equal(tree[1].selected, '1');
+  assert.deepEqual(tree[1].rows.map(row => row.value), ['0', '1']);
+  assert.match(tree[1].rows[0].spans[0].text, /current/);
+  assert.equal(JSON.stringify(tree).includes('Reasoning model'), false);
+  assert.match(tree[2].text, /enter/);
+  assert.match(render({}, 100).value.result.tree[2].rows[1].spans[0].text, /Reasoning model/);
+  assert.equal(render({ items: Array(201).fill(props.items[0]) }).host_call.operation, 'continuation.next');
+  assert.equal(render({ view_id: 'unknown' }).host_call.operation, 'continuation.next');
   const profiles = { profiles: [{ name: 'work', model: 'work/gpt', billing: 'included_subscription', available: true }, { name: 'router', model: 'router/claude', billing: 'explicit_paid_api_grant', available: true }], current: 'work' };
-  const listed = run('omd_model_picker', { capabilities, event: 'list', payload, state: profiles }).value;
+  const listed = render({}, 40, profiles).value.result.tree;
   assert.deepEqual(listed.slice(-3, -1).map(row => row.text), ['● work · work/gpt', '○ router · router/claude · paid']);
 });
 

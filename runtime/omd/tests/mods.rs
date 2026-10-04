@@ -1027,6 +1027,7 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
         json!({"keybindings":{"F6":{"submit":"\u{1b}[2J"}}}),
         json!({"panels":[{"title":"bad","lines":["\u{1b}[2J"]}]}),
         json!({"message_template":"hide original output"}),
+        json!({"sites":{"sidebar":{"components":[{"type":"native"}]}}}),
         json!({"sidebar_width":1000}),
         json!({"sidebar_side":"top"}),
         json!({"header":{"title":"h","lines":["1","2","3","4"]}}),
@@ -1045,7 +1046,7 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
     ] {
         assert!(codex_omd::ModView::parse(value.clone()).is_err(), "{value}");
     }
-    let value = json!({"message_template":"│ {text}","tool_template":"→ {text}","foreground":81,"keybindings":{"F6":"Review current work"}});
+    let value = json!({"foreground":81,"keybindings":{"F6":"Review current work"}});
     assert!(codex_omd::ModView::parse(value).is_ok());
     let view = codex_omd::ModView::parse(json!({
         "sidebar_side":"left","sidebar_width":24,
@@ -1103,7 +1104,6 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
     let mut snapshot = codex_omd::ModViewSnapshot {
         epoch: 7,
         view,
-        owner: Some("terminal".into()),
         progress: Some(codex_omd::ModPanel {
             title: "Echo".into(),
             lines: vec!["halfway".into()],
@@ -1181,7 +1181,7 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
         &root,
         "workspace",
         "workspace",
-        "export default api => api.replace('terminal',()=>({title:'Workspace',sites:{sidebar:{components:[{type:'text',id:'base_text',label:'Base text',text:'base'}]}},status:['workspace'],keybindings:{F8:{focus:'base_text'}}}))",
+        "export default api => api.on('terminal',()=>({title:'Workspace',sites:{sidebar:{components:[{type:'text',id:'base_text',label:'Base text',text:'base'}]}},status:['workspace'],keybindings:{F8:{focus:'base_text'}}}))",
         &["terminal"],
         &[],
     );
@@ -1190,7 +1190,7 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
         &root,
         "focus",
         "focus",
-        "export default api => api.on('terminal',()=>({sites:{sidebar:{mode:'wrap',components:[{type:'box',id:'focus_box',label:'Focus box',children:[{type:'text',id:'focus_text',label:'Focus text',text:'focus'},{type:'slot'}]}]}},completed_tools:'compact',status:['focus'],keybindings:{F9:{command:'focus:toggle'}}}))",
+        "export default api => api.on('terminal',()=>({sites:{sidebar:{mode:'wrap',components:[{type:'box',id:'focus_box',label:'Focus box',children:[{type:'text',id:'focus_text',label:'Focus text',text:'focus'},{type:'slot'}]}]}},status:['focus'],keybindings:{F9:{command:'focus:toggle'}}}))",
         &["terminal"],
         &["workspace"],
     );
@@ -1207,22 +1207,17 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
     let mut runtime = host(&temp);
     let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
     assert_eq!(
-        terminal.owner.as_deref(),
-        Some("workspace"),
+        terminal.contributors,
+        vec!["workspace", "focus", "theme"],
         "{}",
         runtime.status()
     );
-    assert_eq!(terminal.contributors, vec!["focus", "theme"]);
     assert!(
         terminal.diagnostics.is_empty(),
         "{:?}",
         terminal.diagnostics
     );
     assert_eq!(terminal.view.status, vec!["workspace", "focus", "theme"]);
-    assert_eq!(
-        terminal.view.completed_tools,
-        codex_omd::ModCompletedTools::Compact
-    );
     assert_eq!(terminal.view.theme.border, codex_omd::ModBorder::Rounded);
     let sidebar = serde_json::to_value(&terminal.view.sites["sidebar"]).unwrap();
     assert_eq!(sidebar["components"][0]["id"], "focus_box");
@@ -1231,7 +1226,7 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
     let observer = package(
         &root,
         "observer",
-        "export default api => api.on('terminal',()=>({status:['observer']}))",
+        "export default api => api.on('terminal',()=>({status:['observer'],keybindings:{F8:'stolen'}}))",
         &["terminal"],
     );
     trust(&store, &observer, &["terminal"]);
@@ -1244,6 +1239,19 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
     );
     assert!(terminal.contributors.contains(&"observer".to_owned()));
     assert!(terminal.view.status.contains(&"observer".to_owned()));
+    assert_eq!(
+        terminal.view.keybindings["F8"],
+        codex_omd::ModKeyAction::Draft("stolen".into())
+    );
+    assert_eq!(
+        terminal.conflicts,
+        vec![codex_omd::ModViewConflict {
+            field: "keybindings.F8".into(),
+            owner: "observer".into(),
+            rejected: "workspace".into(),
+            origin: "draw".into(),
+        }]
+    );
 
     let cancelled =
         runtime.terminal_view(json!({"event":"interrupted","checkpoint":null}), || false);
@@ -1256,18 +1264,138 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
 }
 
 #[test]
+fn render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let frame = package(
+        &root,
+        "frame",
+        "export default api => { const label = api.atom('label', 'frame'); \
+         api.intercept('render', {match:{component:'tool_call'}}, async (e, next) => { const inner = await next(e); \
+           return {tree:[{type:'text',id:'top',label:'Top',text:label.get() + ':' + Math.random()}, ...inner.tree]}; }); \
+         api.intercept('render', {match:{component:'notice'}}, () => ({tree:[]})); \
+         api.intercept('render', {match:{component:'spinner'}}, (e, next) => next({...e, props:{...e.props, header:'Thinking'}})); \
+         api.intercept('render', {match:{component:'turn_duration'}}, (e, next) => next({...e, props:{...e.props, seconds:1}})); \
+         api.intercept('render', {match:{component:'question'}}, (e, next) => { label.set('leaked'); return next(e); }); \
+         api.intercept('render', {match:{component:'composer_hint'}}, (e, next) => next(e)); \
+         api.command('relabel', name => { if (name) label.set(name); else api.atom('other', 0).set(1); return null; }); }",
+        &["terminal", "store", "commands"],
+    );
+    trust(&store, &frame, &["terminal", "store", "commands"]);
+    let tint = package(
+        &root,
+        "tint",
+        "export default api => api.intercept('render', {match:{component:['tool_call','question']}}, async (e, next) => { \
+           const inner = await next(e); return {tree: inner.tree.map(node => node.type === 'native' ? {...node, style:{bold:true}} : node)}; })",
+        &["terminal"],
+    );
+    trust(&store, &tint, &["terminal"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let render = |component: &str, props: Value| {
+        codex_omd::render_shared(
+            &runtime,
+            json!({"component":component,"id":"call-1","surface":"fullscreen","viewport":{"columns":80,"rows":24},
+                "lifecycle":"final","owner":null,"props":props}),
+            || true,
+        )
+        .unwrap()
+    };
+    let tool = || render("tool_call", json!({"tool":"shell","call_id":"call-1"}));
+    let first = tool();
+    let text = first.result["tree"][0]["text"].as_str().unwrap().to_owned();
+    assert!(text.starts_with("frame:"), "{}", first.result);
+    assert_eq!(
+        first.result["tree"][1],
+        json!({"type":"native","style":{"bold":true}})
+    );
+    assert_eq!(first.reads["frame"], ["label".to_owned()].into());
+    assert_eq!(tool().result["tree"][0]["text"], text);
+    let relabel = |name: Value| {
+        let mut runtime = runtime.lock().unwrap();
+        let generation = runtime.generation();
+        runtime
+            .invoke_with(
+                "frame",
+                generation,
+                "command",
+                "relabel",
+                name,
+                || true,
+                |_| Ok(Value::Null),
+            )
+            .unwrap();
+    };
+    relabel(Value::Null);
+    assert_eq!(tool().result["tree"][0]["text"], text);
+    relabel(json!("renamed"));
+    assert!(
+        tool().result["tree"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("renamed:")
+    );
+
+    assert_eq!(
+        render("notice", json!({"kind":"info","text":"hi"})).result,
+        json!({"tree":[]})
+    );
+    let spinner = render("spinner", json!({"header":"Working","elapsed_ms":5}));
+    assert_eq!(spinner.input["props"]["header"], "Thinking");
+    assert_eq!(spinner.result, json!({"tree":[{"type":"native"}]}));
+    let duration = render("turn_duration", json!({"seconds":3}));
+    assert_eq!(duration.input["props"]["seconds"], 3);
+    assert_eq!(duration.result, json!({"tree":[{"type":"native"}]}));
+    let hint = render("composer_hint", json!({"placeholder":"x".repeat(2000)}));
+    assert!(
+        hint.trace.iter().all(|entry| entry["reason"].is_null()),
+        "{:?}",
+        hint.trace
+    );
+    let question = render("question", json!({"questions":1}));
+    assert_eq!(
+        question.result,
+        json!({"tree":[{"type":"native","style":{"bold":true}}]})
+    );
+    assert!(
+        question.trace.iter().any(|entry| entry["mod"] == "frame"
+            && entry["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("render_side_effect_refused"))),
+        "{:?}",
+        question.trace
+    );
+
+    std::fs::write(
+        tint.join("index.ts"),
+        "export default api => api.intercept('render', {match:{component:'tool_call'}}, async (e, next) => \
+           ({tree: (await next(e)).tree.map(node => node.type === 'native' ? {...node, style:{italic:true}} : node)}))",
+    )
+    .unwrap();
+    trust(&store, &tint, &["terminal"]);
+    runtime.lock().unwrap().reload().unwrap();
+    assert_eq!(
+        tool().result["tree"][1],
+        json!({"type":"native","style":{"italic":true}})
+    );
+    contended(|| store.enable(&frame, false));
+    contended(|| store.enable(&tint, false));
+    runtime.lock().unwrap().reload().unwrap();
+    assert_eq!(tool().result, json!({"tree":[{"type":"native"}]}));
+}
+
+#[test]
 fn a_failed_terminal_patch_is_transactional() {
     let mut view = codex_omd::ModView::parse(json!({"title":"Base","sites":{"sidebar":{"components":[{"type":"text","id":"base","label":"Base","text":"base"}]}}})).unwrap();
     let first = codex_omd::ModViewPatch::parse(json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
-    let second = codex_omd::ModViewPatch::parse(json!({"title":"Leaked","sites":{"sidebar":{"components":[{"type":"text","id":"second","label":"Second","text":"second"}]}}})).unwrap();
-    let mut sites = std::collections::BTreeSet::new();
-    let mut completed_tools = false;
+    let second = codex_omd::ModViewPatch::parse(json!({"title":"Leaked","sites":{"sidebar":{"mode":"wrap","components":[{"type":"text","id":"first","label":"Second","text":"second"},{"type":"slot"}]}}})).unwrap();
+    let mut claims = std::collections::BTreeMap::new();
     first
-        .apply(&mut view, &mut sites, &mut completed_tools)
+        .apply(&mut view, &mut claims, "first", "idle")
         .unwrap();
     assert!(
         second
-            .apply(&mut view, &mut sites, &mut completed_tools)
+            .apply(&mut view, &mut claims, "second", "idle")
             .is_err()
     );
     assert_eq!(view.title.as_deref(), Some("First"));
@@ -2254,11 +2382,11 @@ fn contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest() 
             &root,
             id,
             id,
-            &format!("export default api => api.replace('terminal', () => ({{title:'{id}'}}))"),
-            &["terminal"],
+            "export default api => api.replace('compaction', () => 16000)",
+            &["compaction"],
             &[],
         );
-        trust(&store, &path, &["terminal"]);
+        trust(&store, &path, &["compaction"]);
     }
     let healthy = packaged(
         &root,
@@ -2273,13 +2401,13 @@ fn contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest() 
     for id in ["first", "second"] {
         assert!(
             error_of(&runtime, id)
-                .contains("replacement_conflict: terminal claimed by first, second"),
+                .contains("replacement_conflict: compaction claimed by first, second"),
             "{id}: {}",
             error_of(&runtime, id)
         );
     }
     assert_eq!(runtime.status()["order"], json!(["healthy"]));
-    assert_eq!(runtime.replacement_owner("terminal"), None);
+    assert_eq!(runtime.replacement_owner("compaction"), None);
 }
 
 #[test]
@@ -2441,7 +2569,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     let harness = package(
         &root,
         "harness",
-        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('receipts.submit',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
+        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('receipts.submit',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.on('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
         &[
             "tools",
             "commands",
@@ -2534,10 +2662,10 @@ fn offline_status_retains_conflicts_without_running_paid_work() {
         let path = package(
             &root,
             id,
-            &format!("export default api => api.replace('terminal',()=>({{title:'{id}'}}))"),
-            &["terminal"],
+            "export default api => api.replace('compaction',()=>16000)",
+            &["compaction"],
         );
-        trust(&store, &path, &["terminal"]);
+        trust(&store, &path, &["compaction"]);
     }
     let mut runtime = host(&temp);
     let result = runtime
@@ -2998,7 +3126,7 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
         &root,
         "guard",
         "export default api => api.intercept('host_operation', {match: {operation: ['store.get', 'workspace.check_access']}}, async (e, next) => {
-            if (e.arguments.key === 'svc') return {value: next.origin.caller};
+            if (e.arguments.key === 'svc') return {value: {caller: next.origin.caller, provider: next.origin.provider, chain: next.origin.chain, namespace: e.namespace}};
             if (e.operation === 'workspace.check_access') return next({...e, arguments: {...e.arguments, write: true}});
             const first = await next({...e, arguments: {key: e.arguments.key + '-guarded'}});
             return first.value === null ? next(e) : first;
@@ -3049,7 +3177,10 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
         )
     };
     assert_eq!(run(&mut runtime, "read").unwrap(), json!("value"));
-    assert_eq!(run(&mut runtime, "service").unwrap(), json!("provider"));
+    assert_eq!(
+        run(&mut runtime, "service").unwrap(),
+        json!({"caller": "provider", "provider": "provider", "chain": ["consumer", "provider"], "namespace": "store"})
+    );
     let denied = run(&mut runtime, "check").unwrap_err();
     assert!(
         denied.to_string().contains("capability_denied: fs.write"),
@@ -3065,6 +3196,265 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
     let chains = runtime.status()["chains"].clone();
     assert_eq!(chains[0]["chain"]["trace"][2]["attempts"], 2);
     assert_eq!(chains[1]["chain"]["answered_by"], "guard");
+}
+
+#[test]
+fn command_and_config_interceptors_compose_transform_and_keep_floors() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, source, capabilities) in [
+        (
+            "curator",
+            "export default api => {
+                api.intercept('command_list', async (e, next) => next({commands: e.commands
+                    .filter(c => c.command !== 'secret')
+                    .map(c => c.command === 'deploy' ? {...c, description: 'Deploy now', args_hint: '<env>'} : c)}));
+                api.intercept('command', async (e, next) => {
+                    if (e.args === 'prod') return {deny: 'prod is frozen'};
+                    const r = await next({...e, args: e.args.trim()});
+                    return {result: {wrapped: r.result}};
+                });
+                api.intercept('config_list', async (e, next) => next({rows: e.rows.map(r => r.key === 'tui.theme' ? {...r, label: 'Theme', hidden: true} : r)}));
+                api.intercept('config_set', (e, next) => e.value === 'forbidden' ? {deny: 'not allowed'} : next({...e, value: String(e.value).toLowerCase()}));
+            }",
+            &["commands", "config", "config.write"][..],
+        ),
+        (
+            "intruder",
+            "export default api => {
+                api.intercept('command_list', async (e, next) => { const r = await next(e); return {commands: r.commands.map(c => ({...c, hidden: true}))}; });
+                api.intercept('config_list', async (e, next) => { const r = await next(e); return {rows: r.rows.map(row => ({...row, label: 'mine'}))}; });
+            }",
+            &["commands", "config"][..],
+        ),
+    ] {
+        let path = package(&root, id, source, capabilities);
+        trust(&store, &path, capabilities);
+    }
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let row = |command: &str, protected: bool| {
+        json!({"command": command, "description": command, "owner": null, "hidden": false,
+            "args_hint": null, "immediate": true, "protected": protected})
+    };
+    let commands = codex_omd::compose_rows(
+        &runtime,
+        "command_list",
+        "commands",
+        "command",
+        vec![
+            row("deploy", false),
+            row("secret", false),
+            row("quit", true),
+        ],
+    )
+    .unwrap();
+    assert_eq!(commands[0]["description"], "Deploy now");
+    assert_eq!(commands[0]["args_hint"], "<env>");
+    assert_eq!(commands[1]["hidden"], true);
+    assert_eq!(
+        commands[2],
+        row("quit", true),
+        "protected rows stay visible and unchanged"
+    );
+
+    let run = |args: &str| {
+        codex_omd::continue_operation(
+            &runtime,
+            "command",
+            json!({"command": "deploy", "args": args, "owner": null, "immediate": true, "active_turn": false}),
+            json!({"caller": "user"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |effective| Ok(json!({"result": effective["args"]})),
+        )
+    };
+    assert_eq!(
+        run("  staging ").unwrap()["result"],
+        json!({"wrapped": "staging"})
+    );
+    assert_eq!(
+        run("prod").unwrap_err().to_string(),
+        "command_denied: prod is frozen"
+    );
+
+    let config_row = |key: &str, managed: bool| {
+        json!({"key": key, "label": key, "value": "Dark", "source": "user", "version": "v1",
+            "scope": "codex", "editable": !managed, "managed": managed, "secret": false, "hidden": false})
+    };
+    let rows = codex_omd::compose_rows(
+        &runtime,
+        "config_list",
+        "rows",
+        "key",
+        vec![config_row("tui.theme", false), config_row("model", true)],
+    )
+    .unwrap();
+    assert_eq!(rows[0]["label"], "Theme");
+    assert_eq!(rows[0]["hidden"], true);
+    assert_eq!(
+        rows[1],
+        config_row("model", true),
+        "managed rows cannot be relabeled or hidden"
+    );
+
+    let mut written = Vec::new();
+    let mut set = |value: &str| {
+        codex_omd::continue_operation(
+            &runtime,
+            "config_set",
+            json!({"key": "tui.theme", "value": value, "original": "Dark", "source": "user", "scope": "codex"}),
+            json!({"caller": "user"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |effective| {
+                written.push(effective["value"].clone());
+                Ok(json!({"value": effective["value"]}))
+            },
+        )
+    };
+    assert_eq!(set("LIGHT").unwrap()["value"], "light");
+    assert_eq!(
+        set("forbidden").unwrap_err().to_string(),
+        "config_set_denied: not allowed"
+    );
+    assert_eq!(written, [json!("light")]);
+}
+
+#[test]
+fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let write_guard = |source: &str| {
+        let path = root.join("guard");
+        let _ = std::fs::create_dir(&path);
+        let manifest = json!({"schema":1,"id":"guard","version":"1.0.0","api":CURRENT_API,"state_version":1,
+            "capabilities":["policy"],"policy":{"namespaces":["exec","store"]},"requires":["helper"]});
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(path.join("index.ts"), source).unwrap();
+        trust(&store, &path, &["policy"]);
+    };
+    let helper = package(&root, "helper", "export default () => {}", &[]);
+    trust(&store, &helper, &[]);
+    write_guard(
+        "export default api => api.intercept('admission', {required: true}, (e, next) => {
+            if (e.package.id === 'blocked') return {deny: 'not on the list'};
+            if (e.package.id === 'limited') return {withhold: ['exec']};
+            if (e.package.id === 'helper') throw new Error('dependencies are never judged');
+            return next(e);
+        })",
+    );
+    let limited = package(
+        &root,
+        "limited",
+        "export default api => { api.command('run', () => api.host.call('exec.run', {program: 'true'})); api.command('read', () => api.host.call('store.get', {key: 'k'})); }",
+        &["commands", "exec", "store"],
+    );
+    trust(&store, &limited, &["commands", "exec", "store"]);
+    let blocked = service_package(
+        &root,
+        "blocked",
+        "export default api => api.provide({name:'blocked.echo',version:'1.0.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>value})",
+        json!({"exports":[{"name":"blocked.echo","version":"1.0.0",
+            "methods":{"echo":{"input":"string","output":"string"}}}]}),
+        &["services"],
+    );
+    trust(&store, &blocked, &["services"]);
+    let consumer = service_package(
+        &root,
+        "consumer",
+        "export default () => {}",
+        json!({"imports":[{"name":"blocked.echo","version":"1.0.0"}]}),
+        &["services"],
+    );
+    trust(&store, &consumer, &["services"]);
+    let dependent = packaged(
+        &root,
+        "dependent",
+        "dependent",
+        "export default () => {}",
+        &[],
+        &["blocked"],
+    );
+    trust(&store, &dependent, &[]);
+    let mut runtime = host(&temp);
+    let status = runtime.status();
+    let rejected = |status: &Value, id: &str| {
+        status["rejected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == id)
+            .and_then(|item| item["reason"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(
+        rejected(&status, "blocked"),
+        "admission_denied: not on the list"
+    );
+    assert_eq!(
+        rejected(&status, "dependent"),
+        "dependency_not_admitted: blocked"
+    );
+    assert_eq!(
+        rejected(&status, "consumer"),
+        "dependency_not_admitted: blocked.echo"
+    );
+    assert!(runtime.grants("helper").is_some() && runtime.grants("guard").is_some());
+    let invoke = |runtime: &mut ModHost, command: &str| {
+        runtime.invoke_scoped_with(
+            "limited",
+            runtime.generation(),
+            "command",
+            command,
+            Value::Null,
+            || true,
+            |_, _| Ok(json!("ran")),
+        )
+    };
+    assert!(
+        invoke(&mut runtime, "run")
+            .unwrap_err()
+            .to_string()
+            .contains("capability_withheld: exec")
+    );
+    assert_eq!(invoke(&mut runtime, "read").unwrap(), json!("ran"));
+
+    write_guard(
+        "export default api => api.intercept('admission', {required: true}, (e, next) => e.package.id === 'limited' ? {withhold: ['http']} : next(e))",
+    );
+    runtime.reload().unwrap();
+    let status = runtime.status();
+    assert_eq!(
+        rejected(&status, "limited"),
+        "admission_policy_invalid: http is outside policy.namespaces"
+    );
+    assert!(
+        runtime.grants("blocked").is_some(),
+        "a changed policy re-judges every package"
+    );
+
+    write_guard(
+        "export default api => api.intercept('admission', {required: true}, () => { throw new Error('broken'); })",
+    );
+    runtime.reload().unwrap();
+    let status = runtime.status();
+    assert!(rejected(&status, "limited").starts_with("admission_policy_unavailable"));
+    assert!(rejected(&status, "blocked").starts_with("admission_policy_unavailable"));
+    assert!(runtime.grants("guard").is_some());
+    let guard = root.join("guard");
+    contended(|| store.revoke_authority(&guard));
+    runtime.reload().unwrap();
+    assert!(
+        runtime.grants("limited").is_some() && runtime.grants("blocked").is_some(),
+        "an expired policy grant no longer judges packages"
+    );
 }
 
 #[test]
@@ -3192,7 +3582,7 @@ fn input_and_model_request_continuations_pass_downstream_results_or_deny() {
 }
 
 #[test]
-fn os_and_approve_grants_are_declared_scoped_expiring_and_revocable() {
+fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store"), node()).unwrap();
@@ -3244,6 +3634,43 @@ fn os_and_approve_grants_are_declared_scoped_expiring_and_revocable() {
             json!({"approves": {"kinds": ["exec"]}}),
             &["approvals", "middleware", "approve.override"][..],
         ),
+        ("bare_http", json!({}), &["http"][..]),
+        (
+            "http_path",
+            json!({"http_access": {"origins": ["https://a.example/v1"]}}),
+            &["http"][..],
+        ),
+        (
+            "http_scheme",
+            json!({"http_access": {"origins": ["ftp://a.example"]}}),
+            &["http"][..],
+        ),
+        (
+            "fs_without_read",
+            json!({"fs_access": {"roots": [{"path": "/work"}]}}),
+            &["fs.external"][..],
+        ),
+        (
+            "fs_write_without_write",
+            json!({"fs_access": {"roots": [{"path": "/work", "write": true}]}}),
+            &["fs.read", "fs.external"][..],
+        ),
+        (
+            "fs_relative",
+            json!({"fs_access": {"roots": [{"path": "work"}]}}),
+            &["fs.read", "fs.external"][..],
+        ),
+        ("bare_mcp", json!({}), &["mcp"][..]),
+        (
+            "mcp_both",
+            json!({"mcp_servers": {"s": {"command": "srv", "url": "https://a.example/mcp"}}}),
+            &["mcp"][..],
+        ),
+        (
+            "mcp_command_credential",
+            json!({"mcp_servers": {"s": {"command": "srv", "credential": "p1"}}}),
+            &["mcp"][..],
+        ),
     ];
     for (id, extra, capabilities) in invalid {
         assert!(
@@ -3258,11 +3685,18 @@ fn os_and_approve_grants_are_declared_scoped_expiring_and_revocable() {
         "middleware",
         "approve",
         "commands",
+        "http",
+        "fs.read",
+        "fs.external",
+        "mcp",
     ];
     let path = write(
         "delegate",
         json!({"os_access": {"programs": ["git"], "network": true},
-            "approves": {"kinds": ["exec"], "tools": ["cargo"], "roots": ["/work"]}}),
+            "approves": {"kinds": ["exec"], "tools": ["cargo"], "roots": ["/work"]},
+            "http_access": {"origins": ["https://*.example.com", "http://127.0.0.1:8080"], "credentials": ["p1"]},
+            "fs_access": {"roots": [{"path": "/work/notes"}]},
+            "mcp_servers": {"docs": {"url": "https://mcp.example.com/mcp", "credential": "p1"}}}),
         &capabilities,
     );
     let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
@@ -3284,13 +3718,25 @@ fn os_and_approve_grants_are_declared_scoped_expiring_and_revocable() {
     let grants = runtime.grants("delegate").unwrap();
     assert_eq!(grants.os_access.unwrap().programs, ["git"]);
     assert_eq!(grants.approves.unwrap().roots, ["/work"]);
+    let http = grants.http_access.unwrap();
+    assert!(http.allows("https://api.example.com") && http.allows("http://127.0.0.1:8080"));
+    assert!(!http.allows("https://example.com") && !http.allows("https://evil-example.com"));
+    assert!(!http.allows("http://127.0.0.1:8081"));
+    assert_eq!(
+        codex_omd::url_origin("https://evil.com\\.example.com/x"),
+        None
+    );
+    assert_eq!(grants.fs_access.unwrap().roots[0].path, "/work/notes");
+    assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 2);
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 5);
     contended(|| store.revoke_authority(&path));
     runtime.reload().unwrap();
     let revoked = runtime.grants("delegate").unwrap();
     assert!(revoked.os_access.is_none() && revoked.approves.is_none());
+    assert!(revoked.http_access.is_none() && revoked.fs_access.is_none());
+    assert!(revoked.mcp_servers.is_empty());
     assert!(
         !revoked
             .capabilities

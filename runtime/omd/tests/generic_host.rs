@@ -91,6 +91,7 @@ fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Ori
         capabilities,
         exec_environment: environment,
         os_access: None,
+        fs_access: None,
         origin,
         thread: Some("thread-1"),
     }
@@ -1410,6 +1411,7 @@ fn outside_author_uses_owned_asset_and_paged_exec_output() {
         capabilities: &capabilities,
         exec_environment: &[],
         os_access: None,
+        fs_access: None,
         origin: Origin::UserCommand,
         thread: Some("thread-1"),
     };
@@ -1472,7 +1474,6 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         json!({"capabilities":["commands","store","exec","builtins","contracts","terminal"],"exec_environment":["FIXTURE_ENV"]}),
         "export default api => { api.builtins({commands:{hide:['plan']},modes:{disable:['plan']}}); \
          api.contract({schema:2,id:'fixture',version:1,description:'Fixture gate',assurance:'checked',gates:{complete:[{receipt:'checks',bind:['candidate']}]}}); \
-         api.replace('list', event => [{type:'list',id:'rows',label:'Rows',rows:event.items.map((item, index) => ({value:String(index),label:item.label})),action:{command:'modern:pick'}}]); \
          api.command('run', () => { api.state.set({ran:true}); const out = api.host.call('exec.run', {program:'sh', argv:['-c','true']}); return api.host.call('store.put', {key:'k', value:out.exit_code, expected_revision:null}); }); }",
         &[],
     );
@@ -1545,10 +1546,6 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     assert_eq!(controls[0].1.commands.hide, vec!["plan"]);
     let documents = runtime.contract_documents();
     assert_eq!(documents[0].0.key(), "fixture@1");
-    let listed = runtime
-        .list_view(json!({"view_id":"model","title":"Model","subtitle":null,"width":80,"items":[{"label":"a","description":null,"current":true,"disabled":false,"order":0}],"selected":0}), || true)
-        .unwrap();
-    assert_eq!(listed.0, "modern");
     let mut calls = Vec::new();
     let result = runtime
         .invoke_with(
@@ -1836,4 +1833,151 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
         "denying the network still leaves user-readable files exposed"
     );
     assert!(repository.exists());
+}
+
+#[test]
+fn external_roots_keep_canonical_paths_expected_versions_and_grant_scope() {
+    let (temp, repository, data, authority) = setup();
+    let outside = temp.path().canonicalize().unwrap().join("outside");
+    let notes = outside.join("notes");
+    let readonly = outside.join("readonly");
+    std::fs::create_dir_all(notes.join("sub")).unwrap();
+    std::fs::create_dir_all(&readonly).unwrap();
+    std::fs::write(notes.join("a.md"), "a\n").unwrap();
+    std::fs::write(readonly.join("r.md"), "r\n").unwrap();
+    std::os::unix::fs::symlink(&repository, notes.join("escape")).unwrap();
+    std::os::unix::fs::symlink(&notes, outside.join("linked")).unwrap();
+    let path = |path: &Path| path.to_str().unwrap().to_owned();
+    let access = codex_omd::ModFsAccess {
+        roots: [
+            (&notes, true),
+            (&readonly, false),
+            (&outside.join("linked"), true),
+            (&repository, true),
+        ]
+        .into_iter()
+        .map(|(root, write)| codex_omd::ModFsRoot {
+            path: path(root),
+            write,
+        })
+        .collect(),
+    };
+    let capabilities = strings(&["fs.read", "fs.write", "fs.external"]);
+    let mut external = caller(&capabilities, &[], Origin::Tool);
+    external.fs_access = Some(&access);
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+        record_changes: true,
+    };
+    let call = |operation: &str, arguments: Value| host.call(&external, operation, arguments);
+    let read = call(
+        "workspace.read",
+        json!({"root": path(&notes), "paths": ["a.md"]}),
+    )
+    .unwrap();
+    assert_eq!(read["files"]["a.md"]["text"], "a\n");
+    let listed = call(
+        "workspace.list",
+        json!({"root": path(&notes), "recursive": true}),
+    )
+    .unwrap();
+    assert!(
+        listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "a.md")
+    );
+    let stat = call(
+        "workspace.stat",
+        json!({"root": path(&notes), "paths": ["a.md"], "hash": true}),
+    )
+    .unwrap();
+    let hash = stat["files"]["a.md"]["sha256"].clone();
+    let error = call(
+        "workspace.read",
+        json!({"root": path(&notes), "paths": ["escape/README.md"]}),
+    )
+    .unwrap_err();
+    assert!(error.contains("symlink"), "{error}");
+    let error = call(
+        "workspace.read",
+        json!({"root": path(&notes), "paths": ["../readonly/r.md"]}),
+    )
+    .unwrap_err();
+    assert!(!error.is_empty());
+    let stale = call(
+        "workspace.transaction",
+        json!({"root": path(&notes), "expected": {"a.md": "0".repeat(64)}, "writes": {"a.md": "b\n"}}),
+    )
+    .unwrap_err();
+    assert!(stale.starts_with("stale expected version"), "{stale}");
+    call(
+        "workspace.transaction",
+        json!({"root": path(&notes), "expected": {"a.md": hash, "sub/new.md": null},
+            "writes": {"a.md": "b\n", "sub/new.md": "new\n"}}),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(notes.join("a.md")).unwrap(), "b\n");
+    assert!(codex_omd::take_workspace_changes(&repository).is_empty());
+    assert_eq!(
+        call(
+            "workspace.transaction",
+            json!({"root": path(&readonly), "expected": {"r.md": null}, "writes": {"x.md": "x"}}),
+        )
+        .unwrap_err(),
+        "workspace_write_permission_denied"
+    );
+    let linked = path(&outside.join("linked"));
+    assert_eq!(
+        call("workspace.read", json!({"root": linked, "paths": ["a.md"]})).unwrap_err(),
+        format!("fs_root_not_canonical: {linked}")
+    );
+    assert_eq!(
+        call(
+            "workspace.read",
+            json!({"root": path(&repository), "paths": ["README.md"]})
+        )
+        .unwrap_err(),
+        format!("fs_root_protected: {}", path(&repository))
+    );
+    assert_eq!(
+        call(
+            "workspace.read",
+            json!({"root": path(&outside), "paths": ["notes/a.md"]})
+        )
+        .unwrap_err(),
+        format!("fs_root_not_granted: {}", path(&outside))
+    );
+
+    let environment = strings(&[
+        "OMD_FIXTURE_PLAIN",
+        "OMD_FIXTURE_TOKEN",
+        "OMD_FIXTURE_UNSET",
+    ]);
+    let plain = caller(&capabilities, &environment, Origin::Tool);
+    unsafe {
+        std::env::set_var("OMD_FIXTURE_PLAIN", "visible");
+        std::env::set_var("OMD_FIXTURE_TOKEN", "hidden");
+    }
+    let values = host
+        .call(&plain, "environment.read", json!({"names": environment}))
+        .unwrap();
+    assert_eq!(
+        values["values"]["OMD_FIXTURE_PLAIN"],
+        json!({"set": true, "value": "visible"})
+    );
+    assert_eq!(values["values"]["OMD_FIXTURE_TOKEN"], json!({"set": true}));
+    assert_eq!(
+        values["values"]["OMD_FIXTURE_UNSET"],
+        json!({"set": false, "value": null})
+    );
+    assert_eq!(
+        host.call(&plain, "environment.read", json!({"names": ["HOME"]}))
+            .unwrap_err(),
+        "exec_environment_undeclared: HOME"
+    );
 }

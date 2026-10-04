@@ -65,6 +65,15 @@ const serviceHandlers = new Map();
 const virtualReaders = new Map();
 const updates = [];
 let state = structuredCloneFallback(request.state);
+const initial = JSON.stringify(state ?? null);
+const reads = new Set();
+let tracking = null;
+const subscriptions = [];
+function track(key) {
+  reads.add(key);
+  tracking?.add(key);
+}
+const rendering = request.event === 'intercept' && request.payload?.surface === 'render';
 let activating = true;
 let pending = null;
 const calls = [];
@@ -182,11 +191,84 @@ function intercept(event) {
   const handler = caught ? entry.catch : entry.handler;
   return Promise.resolve(handler(deepFreeze(structuredCloneFallback(input)), next)).then(result => {
     if (result === undefined) throw new Error('interceptor_result_required: ' + entry.location);
-    return { result };
+    return rendering ? { result, reads: [...reads] } : { result };
   });
 }
 function requireCapability(name) {
   if (!request.capabilities.includes(name)) throw new Error('capability_denied: ' + name);
+}
+function writeState(value) {
+  requireCapability(surface.state);
+  if (rendering && !activating) throw new Error('render_side_effect_refused: state writes belong in events, commands or subscriptions');
+  state = structuredCloneFallback(value);
+}
+function keyed() {
+  requireCapability(surface.state);
+  if (state === null || state === undefined) return {};
+  if (typeof state !== 'object' || Array.isArray(state)) throw new Error('state_not_keyed: atoms need an object state');
+  return state;
+}
+function cell(key, fallback, path) {
+  if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(key)) throw new Error('invalid_atom_key: ' + key);
+  const read = () => {
+    track(key);
+    const value = path === undefined ? keyed()[key] : keyed()[key]?.[path];
+    return structuredCloneFallback(value === undefined ? fallback : value);
+  };
+  const write = value => {
+    if (value === undefined) throw new Error('atom_value_required: ' + key);
+    const next = { ...keyed() };
+    next[key] = path === undefined ? value : { ...(next[key] ?? {}), [path]: value };
+    writeState(next);
+  };
+  const atom = { key: path === undefined ? key : key + '/' + path, get: read, set: write, update(change) { write(change(read())); }, peek: () => {
+    const value = path === undefined ? keyed()[key] : keyed()[key]?.[path];
+    return JSON.stringify(value === undefined ? fallback : value);
+  } };
+  return Object.freeze(atom);
+}
+function derive(compute) {
+  if (typeof compute !== 'function') throw new Error('handler_required: derive');
+  let cached;
+  let deps = null;
+  let seen = null;
+  const signature = () => JSON.stringify(deps.map(key => key === '*' ? state : keyed()[key]));
+  const run = () => {
+    const outer = tracking;
+    tracking = new Set();
+    try {
+      cached = compute();
+    } finally {
+      deps = [...tracking];
+      if (outer) deps.forEach(key => outer.add(key));
+      tracking = outer;
+    }
+    seen = signature();
+  };
+  return Object.freeze({ key: null, get() {
+    if (deps === null || seen !== signature()) run();
+    else deps.forEach(track);
+    return structuredCloneFallback(cached);
+  }, peek() { return JSON.stringify(compute()); } });
+}
+async function flushSubscriptions() {
+  if (rendering || !subscriptions.length) return;
+  const before = (() => { const saved = state; state = JSON.parse(initial); try { return subscriptions.map(entry => entry.target.peek()); } finally { state = saved; } })();
+  const seen = before.slice();
+  for (let round = 0; round < 8; round += 1) {
+    let changed = false;
+    for (const [index, entry] of subscriptions.entries()) {
+      if (!entry.active) continue;
+      const now = entry.target.peek();
+      if (now === seen[index]) continue;
+      const previous = seen[index] === undefined ? undefined : JSON.parse(seen[index]);
+      seen[index] = now;
+      changed = true;
+      await entry.handler(JSON.parse(now), previous);
+    }
+    if (!changed) return;
+  }
+  throw new Error('subscription_cascade_limit');
 }
 function unique(map, name, handler) {
   if (map.has(name)) throw new Error('conflict: ' + name);
@@ -285,11 +367,10 @@ const api = Object.freeze({
   },
   command(name, handler, options = {}) {
     requireCapability('commands');
-    for (const key of Object.keys(options ?? {})) if (!['description', 'cli'].includes(key)) throw new Error('unsupported_command_option: ' + key);
+    for (const key of Object.keys(options ?? {})) if (!['description', 'cli', 'args_hint', 'immediate'].includes(key)) throw new Error('unsupported_command_option: ' + key);
     unique(commands, name, handler);
     const entry = { name };
-    if (options?.description !== undefined) entry.description = options.description;
-    if (options?.cli !== undefined) entry.cli = options.cli;
+    for (const key of ['description', 'cli', 'args_hint', 'immediate']) if (options?.[key] !== undefined) entry[key] = options[key];
     registrations.commands.push(entry);
   },
   progress(text) {
@@ -299,13 +380,28 @@ const api = Object.freeze({
     updates.push(text);
   },
   state: Object.freeze({
-    get() { requireCapability(surface.state); return structuredCloneFallback(state); },
-    set(value) { requireCapability(surface.state); state = structuredCloneFallback(value); },
+    get() { requireCapability(surface.state); track('*'); return structuredCloneFallback(state); },
+    set: writeState,
   }),
+  atom(key, fallback = null) { return cell(key, fallback); },
+  member(key, id, fallback = null) {
+    if (typeof id !== 'string' || !id || id.length > 128) throw new Error('invalid_atom_member: ' + id);
+    return cell(key, fallback, id);
+  },
+  derive,
+  subscribe(target, handler) {
+    if (!activating) throw new Error('subscription_outside_activation');
+    if (!target || typeof target.peek !== 'function') throw new Error('invalid_subscription_target');
+    if (typeof handler !== 'function') throw new Error('handler_required: subscribe');
+    if (subscriptions.length >= 64) throw new Error('subscription_limit');
+    const entry = { target, handler, active: true };
+    subscriptions.push(entry);
+    return () => { entry.active = false; };
+  },
   unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
 });
-globalThis.__omd = { api, handlers, intercept, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
-  state: () => state, request, calls,
+globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
+  state: () => rendering ? request.state : state, request, calls,
   pending: () => pending, ready: () => { activating = false; }, suspension };
 `;
 try {
@@ -354,6 +450,7 @@ try {
         : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
       if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;
+      await globalThis.__omd.flushSubscriptions();
     }
     if (globalThis.__omd.pending()) throw new Error('swallowed_host_suspension');
     } catch (error) {

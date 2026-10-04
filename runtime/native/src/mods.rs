@@ -1,3 +1,4 @@
+mod access;
 mod agents;
 mod evidence;
 mod expansion;
@@ -31,6 +32,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+pub(crate) use access::AccessState;
 pub(crate) use expansion::take_route_selection;
 pub(crate) use operations::DataScope;
 
@@ -417,12 +419,10 @@ fn publish(
         errors.push(format!("Reload: {error}"));
     }
     if !errors.is_empty() {
-        if terminal.owner.is_none() {
-            terminal.view = codex_omd::ModView {
-                title: Some("Mod recovery".into()),
-                ..Default::default()
-            };
-        }
+        terminal
+            .view
+            .title
+            .get_or_insert_with(|| "Mod recovery".into());
         terminal.view.panels.insert(
             0,
             codex_omd::ModPanel {
@@ -496,6 +496,7 @@ impl Core {
             expansion::release_owner(self, &id);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_owned(&id, generation);
+                access::release_servers(lead, generation, Some(&id)).await;
             }
         }
     }
@@ -536,6 +537,7 @@ impl Core {
             expansion::retain_sources(self, sources);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_stale(*generation);
+                access::release_servers(lead, *generation, None).await;
             }
         }
         let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
@@ -960,6 +962,7 @@ impl TurnLifecycleContributor for Mods {
                 return;
             };
             lead.session.processes.cleanup();
+            lead.session.access.cleanup();
             if let Some(turn) = self.take_turn(&lead.thread) {
                 expansion::turn_ended(
                     &self.core,
@@ -1447,6 +1450,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             .await;
             self.event("stop", Value::Null, Some(&*lead)).await;
             lead.session.processes.cleanup();
+            lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
         })
     }

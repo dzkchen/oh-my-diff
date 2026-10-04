@@ -96,24 +96,16 @@ fn echo_contract(version: &str) -> Value {
 }
 
 #[test]
-fn colliding_tool_slots_and_contested_terminal_owners_disable_only_the_claimants() {
+fn colliding_tool_slots_and_contested_replacements_disable_only_the_claimants() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
     let alpha = written(&root, "alpha", &tool("beta_run"), &["tools"], json!({}));
     let alpha_beta = written(&root, "alpha_beta", &tool("run"), &["tools"], json!({}));
-    let view = |title: &str| {
-        format!(
-            "export default api => api.replace('terminal', () => ({{title:'{title}',keybindings:{{'F6':'draft'}}}}))"
-        )
+    let view = |threshold: u32| {
+        format!("export default api => api.replace('compaction', () => {threshold})")
     };
-    let first_ui = written(&root, "first_ui", &view("first"), &["terminal"], json!({}));
-    let second_ui = written(
-        &root,
-        "second_ui",
-        &view("second"),
-        &["terminal"],
-        json!({}),
-    );
+    let first_ui = written(&root, "first_ui", &view(1000), &["compaction"], json!({}));
+    let second_ui = written(&root, "second_ui", &view(2000), &["compaction"], json!({}));
     let helper = written(
         &root,
         "helper",
@@ -124,8 +116,8 @@ fn colliding_tool_slots_and_contested_terminal_owners_disable_only_the_claimants
     for (path, capabilities) in [
         (&alpha, &["tools"][..]),
         (&alpha_beta, &["tools"][..]),
-        (&first_ui, &["terminal"][..]),
-        (&second_ui, &["terminal"][..]),
+        (&first_ui, &["compaction"][..]),
+        (&second_ui, &["compaction"][..]),
         (&helper, &["tools", "commands"][..]),
     ] {
         trust(&store, path, capabilities);
@@ -141,18 +133,13 @@ fn colliding_tool_slots_and_contested_terminal_owners_disable_only_the_claimants
     }
     for id in ["first_ui", "second_ui"] {
         assert!(
-            error_of(&runtime, id).contains("replacement_conflict: terminal"),
+            error_of(&runtime, id).contains("replacement_conflict: compaction"),
             "{id}: {}",
             error_of(&runtime, id)
         );
     }
     assert_eq!(active(&runtime), ["helper"]);
-    assert_eq!(runtime.replacement_owner("terminal"), None);
-    assert!(
-        runtime
-            .event("terminal", json!({"event":"draw","checkpoint":null}))
-            .is_empty()
-    );
+    assert_eq!(runtime.replacement_owner("compaction"), None);
     let slots: Vec<String> = runtime
         .tools()
         .into_iter()
@@ -174,13 +161,13 @@ fn colliding_tool_slots_and_contested_terminal_owners_disable_only_the_claimants
 }
 
 #[test]
-fn the_single_terminal_owner_binds_keys_that_may_target_another_mods_command() {
+fn terminal_patches_bind_keys_that_may_target_another_mods_command() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
     let ui = written(
         &root,
         "ui",
-        "export default api => api.replace('terminal', ({event}) => event === 'reserved' ? ({keybindings:{'Ctrl+c':'ignore'}}) : ({title:'Workspace',keybindings:{'F6':{command:'helper:ping'},'F7':{command:'ping'},'Alt+x':{insert:'note'}}}))",
+        "export default api => api.on('terminal', ({event}) => event === 'reserved' ? ({keybindings:{'Ctrl+c':'ignore'}}) : ({title:'Workspace',keybindings:{'F6':{command:'helper:ping'},'F7':{command:'ping'},'Alt+x':{insert:'note'}}}))",
         &["terminal"],
         json!({}),
     );
@@ -203,7 +190,6 @@ fn the_single_terminal_owner_binds_keys_that_may_target_another_mods_command() {
     trust(&store, &observer, &["lifecycle"]);
 
     let mut runtime = host(&temp);
-    assert_eq!(runtime.replacement_owner("terminal").as_deref(), Some("ui"));
     let drawn = runtime.event("terminal", json!({"event":"draw","checkpoint":null}));
     assert_eq!(drawn.len(), 1);
     let view = codex_omd::ModView::parse(drawn[0].1.as_ref().unwrap().clone()).unwrap();
@@ -244,7 +230,7 @@ fn the_single_terminal_owner_binds_keys_that_may_target_another_mods_command() {
         reserved
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.contains("invalid_terminal_view")),
+            .any(|diagnostic| diagnostic.contains("invalid_terminal_patch")),
         "{:?}",
         reserved.diagnostics
     );
@@ -412,13 +398,13 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
     let ui = written(
         &root,
         "ui",
-        "export default api => api.replace('terminal', () => ({title:'Workspace'}))",
-        &["terminal"],
+        "export default api => api.replace('compaction', () => 16000)",
+        &["compaction"],
         json!({}),
     );
     trust(&store, &stream, &["middleware"]);
     trust(&store, &worker, &["tools", "agents"]);
-    trust(&store, &ui, &["terminal"]);
+    trust(&store, &ui, &["compaction"]);
 
     let mut runtime = host(&temp);
     let generation = runtime.generation();
@@ -469,7 +455,10 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
             .to_string()
             .contains("stale_mod_generation")
     );
-    assert_eq!(runtime.replacement_owner("terminal").as_deref(), Some("ui"));
+    assert_eq!(
+        runtime.replacement_owner("compaction").as_deref(),
+        Some("ui")
+    );
     assert_eq!(active(&runtime), ["stream", "ui", "worker"]);
 }
 

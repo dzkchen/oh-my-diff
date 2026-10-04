@@ -288,6 +288,27 @@ pub(super) async fn dispatch(
     request: ModHostCall,
     cancelled: &Arc<AtomicBool>,
 ) -> Result<Value, String> {
+    let id = caller.id.to_owned();
+    let audited =
+        codex_omd::access_receipt(&id, &request, Ok(&Value::Null)).map(|_| request.clone());
+    let result = run(core, lead, caller, call, request, cancelled).await;
+    if let Some(request) = audited
+        && let Some(receipt) =
+            codex_omd::access_receipt(&id, &request, result.as_ref().map_err(Clone::clone))
+    {
+        lead.session.record_access(&receipt);
+    }
+    result
+}
+
+async fn run(
+    core: &Core,
+    lead: &Lead,
+    caller: Caller<'_>,
+    call: Option<&ToolCall<'_>>,
+    request: ModHostCall,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<Value, String> {
     let host = &lead.host;
     let operation = request.operation.clone();
     if operation != "contract.status" {
@@ -478,6 +499,9 @@ pub(super) async fn dispatch(
             .await;
         }
         return result;
+    }
+    if operation.starts_with("http.") || operation.starts_with("mcp.") {
+        return super::access::dispatch(core, lead, &caller, request, cancelled).await;
     }
     if operation.starts_with("providers.") || operation.starts_with("sidecars.") {
         return core

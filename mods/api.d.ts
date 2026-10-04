@@ -45,6 +45,7 @@ export type TerminalComponentAction = TerminalCommandAction | { copy: string; la
 export type TerminalSelectOption = { value: string; label: string };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
 export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
+export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
 export type TerminalComponent =
   | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number }
@@ -62,7 +63,9 @@ export type TerminalComponent =
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
-  | { type: 'slot' };
+  | { type: 'slot' }
+  /** The native drawing of the component a `render` hook draws; at most once per tree. */
+  | { type: 'native'; style?: TerminalStyle };
 export type TerminalRange = { start: number; end: number };
 export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
@@ -84,17 +87,49 @@ export interface TerminalTheme {
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';
   glyphs?: Record<string, string>;
 }
-export type TerminalListEvent = { view_id: string; title: string; subtitle: string | null; width: number; items: { label: string; description: string | null; current: boolean; disabled: boolean; order: number }[]; selected: number | null };
 export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; panels?: Panel[]; header?: Panel; footer?: Panel;
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
-  completed_tools?: 'normal' | 'compact'; message_template?: string; tool_template?: string; placeholder?: string;
+  placeholder?: string;
   layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
 }
-export type TerminalPatch = Omit<TerminalView, 'panels' | 'header' | 'footer'>;
+/** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */
+export type TerminalPatch = TerminalView;
+export type TerminalConflict = { field: string; owner: string; rejected: string; origin: string };
+export type RenderToolStatus = 'running' | 'completed' | 'failed' | 'interrupted';
+export type RenderExecCall = { call_id: string; command: string; exit_code: number | null; duration_ms: number | null; output_lines: number; output_tail: string | null; user_shell: boolean };
+export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
+export interface RenderProps {
+  user_message: { text: string; images: number; spoken: boolean };
+  assistant_message: { text: string; first: boolean };
+  tool_call: { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null }
+    | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null };
+  tool_result: { call_id: string; tool: string; success: boolean | null; text: string };
+  tool_group: { kind: 'exec'; calls: RenderExecCall[]; running: boolean };
+  tool_progress: RenderProps['tool_call'] | (RenderExecCall & { kind: 'exec' });
+  command_output: RenderExecCall & { kind: 'exec' };
+  spinner: { header: string; elapsed_seconds: number; details: string | null; message: string | null; interrupt_hint: boolean };
+  turn_duration: { seconds: number | null; completed_at_ms: number | null };
+  notice: { kind: 'info' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
+  session_mode: { mode: 'plan'; label: string; cycle_hint: boolean };
+  composer_hint: { slot: 'placeholder'; placeholder: string; input_enabled: boolean }
+    | { slot: 'footer'; mode: 'history_search' | 'quit_reminder' | 'shortcut_overlay' | 'esc_hint' | 'composer_empty' | 'composer_draft'; text: string; task_running: boolean };
+  question: { questions: RenderQuestion[]; current: number; queued: number } | { questions: RenderQuestion[]; answered: number; interrupted: boolean };
+  list: { view_id: string; title: string; subtitle: string | null; items: { label: string; description: string | null; current: boolean; disabled: boolean; order: number }[]; selected: number | null };
+}
+export type RenderComponent = keyof RenderProps;
+/** One native component instance. `props` may be rewritten through `next` only where the native drawing reads them: spinner `header`, notice `text`, session_mode `label`, composer_hint `placeholder`. */
+export type RenderEvent<C extends RenderComponent = RenderComponent> = C extends RenderComponent ? {
+  component: C; id: string; surface: 'inline' | 'fullscreen'; viewport: { columns: number; rows: number };
+  lifecycle: 'live' | 'final'; owner: null; props: RenderProps[C];
+} : never;
+export type RenderTree = { tree: TerminalComponent[] };
+export type Widen<T extends Json> = T extends string ? string : T extends number ? number : T extends boolean ? boolean : T;
+export type Atom<T extends Json = Json> = { readonly key: string; get(): T; set(value: T): void; update(change: (value: T) => T): void };
+export type Derived<T extends Json = Json> = { readonly key: null; get(): T };
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
 
@@ -136,13 +171,20 @@ export type Declined = { status: 'declined' };
 export interface HostOperations {
   'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] }; sandbox?: 'none' }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
   'exec.output_page': { arguments: { artifact: ResourceRef; cursor?: number; max_bytes?: number }; result: { text: string; cursor: number | null; bytes: number; sha256: string } };
-  'workspace.read': { arguments: { paths: string[] }; result: { files: Record<string, { text: string; sha256: string } | null> } };
-  'workspace.list': { arguments: { path?: string; recursive?: boolean; include_ignored?: boolean; max_entries?: number }; result: { entries: ({ path: string } & FileStat)[]; truncated: boolean } };
-  'workspace.stat': { arguments: { paths: string[]; hash?: boolean }; result: { files: Record<string, FileStat | null> } };
+  'workspace.read': { arguments: { paths: string[]; root?: string }; result: { files: Record<string, { text: string; sha256: string } | null> } };
+  'workspace.list': { arguments: { path?: string; recursive?: boolean; include_ignored?: boolean; max_entries?: number; root?: string }; result: { entries: ({ path: string } & FileStat)[]; truncated: boolean } };
+  'workspace.stat': { arguments: { paths: string[]; hash?: boolean; root?: string }; result: { files: Record<string, FileStat | null> } };
   'workspace.check_access': { arguments: { paths: string[]; write?: boolean }; result: { paths: string[]; write: boolean } };
   'workspace.snapshot': { arguments: { agent?: string; expected?: string }; result: { snapshot: ResourceRef; candidate_sha256: string } };
   'workspace.fingerprint': { arguments: { agent?: string; expected?: string }; result: { candidate_sha256: string } };
-  'workspace.transaction': { arguments: { expected: Record<string, Fingerprint>; writes?: Record<string, string>; deletes?: string[]; renames?: { old: string; new: string }[]; backup?: boolean }; result: { files: Record<string, string | null>; backup: ResourceRef | null } };
+  'workspace.transaction': { arguments: { expected: Record<string, Fingerprint>; writes?: Record<string, string>; deletes?: string[]; renames?: { old: string; new: string }[]; backup?: boolean; root?: string }; result: { files: Record<string, string | null>; backup: ResourceRef | null } };
+  'http.request': { arguments: HttpRequest & { max_bytes?: number }; result: HttpResponse & { truncated: boolean; bytes: number; body?: string; body_base64?: string } };
+  'http.open': { arguments: HttpRequest; result: HttpResponse & { handle: number } };
+  'http.read': { arguments: { handle: number; max_bytes?: number; wait_ms?: number }; result: { done: boolean; bytes: number; data?: string; data_base64?: string } };
+  'http.close': { arguments: { handle: number }; result: { closed: true } };
+  'mcp.connect': { arguments: { server: string }; result: { server: string; connected: true; tool_prefix: string } };
+  'mcp.disconnect': { arguments: { server: string }; result: { server: string; connected: false; tool_prefix: string } };
+  'environment.read': { arguments: { names: string[] }; result: { values: Record<string, { set: boolean; value?: string | null }> } };
   'workspace.backup': { arguments: { expected: Record<string, Fingerprint> }; result: { backup: ResourceRef } };
   'workspace.restore': { arguments: { backup: ResourceRef; expected: Record<string, Fingerprint> }; result: { files: Record<string, string | null> } };
   'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
@@ -199,20 +241,27 @@ export interface HostOperations {
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   'terminal.notify': { arguments: { title: string; body?: string }; result: { delivered: boolean; method: 'osc9' | 'osc99' | 'osc777' | 'bel' | 'none'; reason?: string } };
   'terminal.show_thread': { arguments: { thread_id: string }; result: { shown: boolean } };
-  'terminal.commands': { arguments: null; result: { commands: { command: string; description: string; owner: string | null }[] } };
+  'commands.list': { arguments: null; result: { commands: CommandRow[] } };
+  'commands.describe': { arguments: { command: string }; result: CommandRow };
+  'commands.invoke': { arguments: { command: string; args?: string }; result: { command: string; result: Json } | Declined };
+  'config.describe': { arguments: null; result: { rows: ConfigRow[] } };
+  'config.set': { arguments: { key: string; value: Json; expected?: Json }; result: { key: string; effective: Json } | Declined };
   'sessions.ports': { arguments: null; result: { ports: { port: number; pid: number; address: string }[] } };
   'terminal.import_file': { arguments: { path: string; max_bytes?: number; lifetime?: 'thread' | 'package' }; result: ResourceRef | Declined };
   'terminal.image_sample': { arguments: { resource: ResourceRef; columns: number; rows: number }; result: { width: number; height: number; rgba: number[] } };
   'composer.read': { arguments: null; result: { text: string; cursor: number; attachments: { kind: 'image'; label: string }[] } };
   'composer.write': { arguments: { text?: string; insert?: string; attach?: { image: ResourceRef }[] }; result: { text: string; cursor: number } };
-  'builtins.invoke': { arguments: { command: string; args?: string } | { action: KeymapAction }; result: { invoked: boolean } };
+  'builtins.invoke': { arguments: { action: KeymapAction }; result: { invoked: boolean } };
   'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; conflicts: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
   'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };
   'terminal.open': { arguments: { url: string } | { path: string } | { path: string; line?: number; editor: true }; result: { opened: true } | Declined };
-  'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }; result: { status: 'accepted'; value?: string } | Declined };
+  'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }
+    | { kind: 'choice'; title: string; message: string; options: { value: string; label: string }[]; multiple?: boolean; other?: boolean };
+    result: { status: 'accepted'; value?: string; values?: string[]; other?: boolean } | Declined };
+  'terminal.pane': { arguments: { action: 'open' | 'close' | 'focus' | 'reveal'; id: string } | { action: 'scroll'; id: string; offset: number }; result: { applied: true } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: { route: string; prompt: string; timeout_ms?: number }; result: { text: string } };
 }
@@ -222,8 +271,7 @@ export interface Events {
   routing: { input: { routes: RouteInfo[]; model: string | null; provider: string; reasoning: string | null }; output: { route: string } | null };
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
   tool_exposure: { input: { thread_id: string | null; ledger: Ledger | null; available: string[] }; output: { enable: string[] } };
-  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null }; output: TerminalView | TerminalPatch | null };
-  list: { input: TerminalListEvent; output: TerminalComponent[] | null };
+  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null }; output: TerminalPatch | null };
   start: { input: Json; output: void };
   resume: { input: { thread_id: string; last_turn: { turn_id: string; status: 'completed' | 'interrupted' | 'failed' | 'in_progress' } | null; restarted: boolean }; output: void };
   idle: { input: Json; output: void };
@@ -256,23 +304,38 @@ export interface Events {
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'open' | 'close';
+    origin?: 'user' | 'mod'; value?: string; offset?: number;
+    pointer?: { column: number; row: number; action: 'down' | 'up' | 'scroll_up' | 'scroll_down'; button: 'left' | 'right' | 'middle' | null };
+    range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
+  config_change: { input: { key: string; original: Json; effective: Json; source: string; scope: 'codex' | 'mod'; caller: string }; output: void };
 }
+export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
+export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };
+export type CommandRow = { command: string; description: string; owner: string | null; hidden: boolean; args_hint: string | null; immediate: boolean; protected: boolean };
+export type ConfigRow = { key: string; label: string; value: Json; source: string; version: string | null; scope: 'codex' | 'mod'; editable: boolean; managed: boolean; secret: boolean; hidden: boolean; type?: string; enum?: Json[] | null };
+export type AdmissionPackage = { id: string; version: string; sha256: string; source: string; scope: string; capabilities: string[]; dependencies: { id: string; version: string }[]; requires: string[]; services: Json; registrations: Json; source_use: Json };
 export type ToolSpecEntry = { name: string; description: string; parameters: Json; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
   tool: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
-  host_operation: { input: { operation: keyof HostOperations; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
+  host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
+  command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };
+  command: { input: { command: string; args: string; owner: string | null; immediate: boolean; active_turn: boolean }; result: { result: Json }; answer: { result: Json } | { deny: string } };
+  config_list: { input: { rows: ConfigRow[] }; result: { rows: ConfigRow[] }; answer: never };
+  config_set: { input: { key: string; value: Json; original: Json; source: string; scope: 'codex' | 'mod' }; result: { value: Json }; answer: { deny: string } };
+  admission: { input: { package: AdmissionPackage; reason: 'load' }; result: { admit: true } | { withhold: string[] } | { deny: string }; answer: { withhold: string[] } | { deny: string } };
   input: { input: { thread_id: string | null; text: string; attachments: number }; result: { text: string }; answer: { deny: string } };
   model_request: { input: { request_id: string; scope: Json; routes: RouteInfo[]; original: RouteInfo; route: string }; result: { route: string }; answer: { deny: string } };
+  render: { input: RenderEvent; result: RenderTree; answer: RenderTree };
 }
 export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
 export type Next<S extends keyof InterceptSurfaces> = ((input: InterceptSurfaces[S]['input']) => Promise<InterceptSurfaces[S]['result']>) & {
   readonly event: S;
-  readonly origin: { readonly caller: string; readonly thread_id?: string | null; readonly agent_id?: string | null; readonly call_id?: string; readonly cell_id?: string };
+  readonly origin: { readonly caller: string; readonly thread_id?: string | null; readonly agent_id?: string | null; readonly call_id?: string; readonly cell_id?: string; readonly provider?: string | null; readonly chain?: readonly string[] };
   readonly signal: { readonly aborted: boolean };
   readonly trace: readonly InterceptTraceEntry[];
   readonly budget: { readonly ms: number; readonly remainingMs: number; readonly hostCalls: number };
@@ -301,16 +364,24 @@ export interface ModAPI {
   intercept<S extends keyof InterceptSurfaces>(pattern: S, options: InterceptOptions, handler: InterceptHandler<S>): InterceptRegistration<S>;
   intercept(pattern: string, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
   intercept(pattern: string, options: InterceptOptions, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
-  replace<K extends 'context' | 'routing' | 'compaction' | 'terminal' | 'list' | 'tool_batch' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  replace<K extends 'context' | 'routing' | 'compaction' | 'tool_batch' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;
   dynamicTools(handler: (call: { name: string; arguments: Json }) => Json | Promise<Json>): void;
   virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
-  command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string }): void;
+  command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string; args_hint?: string; immediate?: boolean }): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
+  /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
+  atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;
+  /** One member of a map-valued atom. */
+  member<T extends Json>(key: string, id: string, fallback: T): Atom<Widen<T>>;
+  /** A memoised selector recomputed when an atom it read changes. */
+  derive<T extends Json>(compute: () => T): Derived<T>;
+  /** Runs `handler` once, after the callback that changed the value; registered during activation. */
+  subscribe<T extends Json>(target: Atom<T> | Derived<T>, handler: (value: T, previous: T | undefined) => void | Promise<void>): () => void;
   unsupported(operation: string): never;
 }
 export default function activate(api: ModAPI): void | Promise<void>;

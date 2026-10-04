@@ -697,6 +697,14 @@ impl ModStore {
         state_value(&bytes, version)
     }
 
+    pub(super) fn state_file(&self, location: &StateLocation) -> Option<PathBuf> {
+        match location {
+            StateLocation::Store { id, scope } => Some(self.root.join(Self::state_name(id, scope))),
+            StateLocation::Directory(directory, name) => Some(directory.join(name)),
+            StateLocation::Unavailable(_) => None,
+        }
+    }
+
     pub(super) fn scoped_state(&self, location: &StateLocation, version: u32) -> Result<Value> {
         match location {
             StateLocation::Store { id, scope } => self.state(id, scope, version),

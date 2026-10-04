@@ -1,4 +1,4 @@
-import type { Json, ModAPI, TerminalPatch } from '../../api.d.ts';
+import type { Json, ModAPI, RenderEvent, TerminalPatch } from '../../api.d.ts';
 
 type Mode = 'mini' | 'full';
 type Usage = { seq: number; context?: number; window?: number | null };
@@ -74,7 +74,15 @@ export default function activate(api: ModAPI) {
     const spend = typeof paid === 'number' && paid > 0 ? `$${(paid / 1e6).toFixed(2)}`
       : state.limit ? `${state.limit.minutes ? `${Math.round(state.limit.minutes / 60)}h` : 'limit'} ${state.limit.used}%` : null;
     const line = [state.busy ? 'working' : state.took === null ? null : duration(state.took), percent === null ? null : `ctx ${percent}%`, spend].filter(Boolean).join(' · ');
-    return { inline_sites: 'hidden', completed_tools: 'compact', placeholder: 'Ask anything · /omd_mini:switch opens the full UI', status: line ? [fit(line, 40)] : [] };
+    return { inline_sites: 'hidden', placeholder: 'Ask anything · /omd_mini:switch opens the full UI', status: line ? [fit(line, 40)] : [] };
+  });
+
+  const mode = api.atom<Json>('mode', null);
+  api.intercept('render', { match: { component: 'command_output', lifecycle: 'final' } }, (event, next) => {
+    const { props } = event as RenderEvent<'command_output'>;
+    if (mode.get() !== 'mini' || props.exit_code !== 0 || props.user_shell) return next(event);
+    return { tree: [{ type: 'line', id: 'mini_compact', label: 'Completed command', spans: [
+      { text: `• Ran ${fit(props.command, 120)}`, tone: 'success' }, { text: ` · ${props.output_lines} output lines`, tone: 'muted' }] }] };
   });
 
   api.command('switch', () => {

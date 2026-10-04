@@ -11,7 +11,7 @@ const source = readFileSync(new URL('../mods/first-party/omd_git/index.ts', impo
 const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_git/mod.json', import.meta.url), 'utf8'));
 const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: ['terminal', 'list'], middleware: [], state: 'store', contracts: 'contracts' };
+const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], intercept: { render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts' };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const gitPath = execFileSync('/usr/bin/which', ['git'], { encoding: 'utf8' }).trim();
 const gitSha256 = digest(readFileSync(realpathSync(gitPath)));

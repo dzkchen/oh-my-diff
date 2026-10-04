@@ -46,9 +46,9 @@ native work.
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
-| `builtins` | `api.builtins` |
-| `terminal` | `terminal` and `list` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.commands`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification` |
+| `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane` |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -58,10 +58,15 @@ native work.
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` interceptors |
 | `middleware` | `host_operation` and `model_request` interceptors and the middleware events |
-| `context`, `commands`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
+| `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
+| `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
 | `os` | `sandbox: "none"` on `exec.run`, `process.start` and `terminal.pty` start (`unrestricted_process_v1`) |
 | `approve` | `{approve}` from the `approval` middleware inside the manifest's `approves` scope (`delegated_approval_v1`) |
 | `approve.override` | delegated approval of commands the user's own execpolicy rules forbid |
+| `http` | `http.request`, `http.open`, `http.read`, `http.close` to the manifest's `http_access` origins (`structured_access_v1`) |
+| `fs.external` | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
+| `mcp` | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
+| `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -101,6 +106,112 @@ grant fails `os` calls with `grant_expired: os`, stops the mod's unsandboxed
 managed processes and panes at the next reload or call, and turns its
 approvals into `ask`. Install, rendering, services, dependencies and model
 text cannot issue or widen a grant.
+
+### Structured access (`structured_access_v1`)
+
+`http`, `fs.external` and `mcp` are authority grants like `os`: the manifest
+scope is part of the trusted digest, `--expires`, project scope and
+`omd-mod revoke` end them, status `mods[].authority` shows the scope, and an
+expired grant fails calls with `grant_expired`. They give granted access
+without an unrestricted child process.
+
+- `http_access: {origins, credentials?}` lists up to 32 origins
+  (`scheme://host[:port]`, `http` or `https`, or `scheme://*.suffix` for
+  subdomains) and credential profile IDs. `http.request {url, method?,
+  headers?, body? | body_base64?, credential?, timeout_ms?, max_bytes?,
+  redirects?}` returns `{status, url, headers, body | body_base64, truncated,
+  bytes, redirects}`; the body is text when it is UTF-8. Defaults and limits:
+  30 s timeout (at most 120 s), 64 KiB response (at most 128 KiB), 1 MiB
+  request body, 32 request headers in 8 KiB, no hop-by-hop or proxy headers.
+  Redirects are followed only up to `redirects` (at most 5); every hop is
+  re-checked against the caller's current grant (`http_origin_denied`), 303 and
+  POST 301/302 become GET, and `authorization`, `cookie` and `x-api-key` are
+  dropped across origins. `credential` names a granted profile whose token the
+  host attaches as `Authorization: Bearer` only for the profile's enrolled
+  origin; a first request to another origin fails with
+  `credential_origin_mismatch` and the mod never sees the token.
+  `set-cookie` and authorization response headers read `[redacted]`.
+  `http.open` returns the status and headers with a `handle`; `http.read
+  {handle, max_bytes?, wait_ms?}` returns up to 64 KiB (`data` or
+  `data_base64`, never splitting a UTF-8 character) and `done`, or
+  `http_stream_busy` while another read of the handle runs; `http.close`
+  ends it. A mod holds at most four streams; they close after 60 s idle and at
+  reload, disable, revoke or expiry. Cancelling the callback aborts a request
+  in flight (`host_operation_cancelled`); the deadline fails it with
+  `http_timeout`.
+- `fs_access: {roots: [{path, write?}]}` lists up to 16 absolute roots and
+  needs `fs.read` (and `fs.write` for `write`). `root` on `workspace.read`,
+  `workspace.list`, `workspace.stat` and `workspace.transaction` resolves the
+  paths under that root with the workspace rules: relative paths without `..`,
+  no symlinked components, opened without following links, and expected
+  versions on every transaction path (`stale expected version for ...`). The
+  root must be canonical (`fs_root_not_canonical`) and cannot overlap the
+  workspace, mod stores, Codex home or credential directories
+  (`fs_root_protected`); writes need `write: true`. External changes are not
+  workspace changes.
+- `mcp_servers: {name: {command, args?} | {url, credential?}}` lists up to 8
+  servers. `mcp.connect {server}` adds `mod_<id>_<name>` to the mod's thread
+  through the engine's own MCP refresh, subject to managed MCP requirements;
+  its tools appear as `mcp__mod_<id>_<name>__<tool>` and run through normal
+  tool admission and approvals (`tools.invoke` from the mod). A `credential`
+  is sent only to the server URL's origin. `mcp.disconnect` removes it; servers
+  also end at reload, disable, revoke or expiry. Command servers run as the
+  user outside the sandbox like any configured MCP server.
+
+Each HTTP request, MCP change, external file operation and
+`environment.read` leaves a receipt with the mod, operation, origin and path
+without query, root, server or names (never bodies, headers or values) in
+status `access` (the last 32); calls the session runs are also appended to its
+`mod-access.jsonl`.
+Servers and remote hosts can still log what they receive; credential profiles
+need an `https` enrollment origin.
+
+`environment.read {names}` (`exec`) returns `{values: {NAME: {set, value}}}`
+for up to 16 names the manifest lists in `exec_environment`; secret-like names
+(`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...) report only
+`{set}`. Per-child values go in `exec.run` `env` and `process.start`
+`environment`, also limited to declared names; nothing changes the host
+process environment.
+
+### Admission and API policy (`admission_api_policy_v1`)
+
+`policy` is an authority grant with manifest `policy: {namespaces}` (up to 16
+patterns, `*` wildcards). At every reload, after native trust, digest and
+dependency checks, each other active package passes the `admission`
+interceptors with `{package: {id, version, sha256, source, scope,
+capabilities, dependencies, requires, services, registrations, source_use},
+reason: 'load'}` (`source_use` is what the source calls):
+
+- `next(e)` admits it; `{deny: reason}` refuses it (`admission_denied`, listed
+  in status `rejected`), and packages that depend on or require it, or import
+  a service only it provides, are refused with `dependency_not_admitted`;
+- `{withhold: [namespace]}` admits it without those host namespaces; its calls
+  there fail with `capability_withheld: <namespace>`. Namespaces are an
+  operation's prefix (`exec`, `workspace`, `http`, `agents`, ...) or
+  `service:<name>/<method>` for service calls, and each must match the policy
+  mods' `policy.namespaces` (`admission_policy_invalid` otherwise).
+
+Admission runs without host operations. An outer handler may only tighten the
+decision beneath it, so an ordinary handler cannot undo a required one. Policy
+mods and their dependencies are never judged and cannot judge themselves;
+decisions are cached by the package and policy digests, so changed content is
+judged again. A failing, timed-out or faulted required admission interceptor
+refuses every judged package with `admission_policy_unavailable`; disabling or
+reloading the policy mod in `/omd` (or `omd-mod disable`) restores them, and an
+expired or revoked `policy` grant stops judging.
+Policy grants nothing: it cannot add capabilities, issue or widen grants, change
+broker or managed policy, or reach authority operations, which are not host
+operations. Delegated overrides of the user's own execpolicy rules stay the
+`approve.override` grant; managed rules are never overridable.
+
+Host and service calls are intercepted with `api.intercept('host_operation')`
+(`middleware`): inputs carry `{operation, namespace, arguments}`, so `match:
+{namespace: 'http'}` or `{namespace: /^service:/}` selects by namespace, and
+`next.origin` names the actual `caller`, the service `provider` when a provider
+makes the call on someone's behalf, and the caller `chain`; the host sets them
+and a mod cannot. Interception covers every host operation and service call,
+including nested provider calls. Pure SDK functions and local rendering are not
+host operations and are not intercepted.
 
 A manifest may list up to 16 `exec_environment` names that `exec.run` passes
 through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
@@ -286,6 +397,23 @@ given thread and the checkout of their working directory. Thread and checkout
 state may be up to 192 KiB, but a callback result, including its state, stays
 within 256 KiB. Package update, migration and rollback commands act on
 `"store"` state only.
+
+### Reactive state (`reactive_state_v1`)
+
+`api.atom(key, fallback)` is a typed handle on one top-level key of an object
+`api.state` (`get`, `set`, `update`); `api.member(key, id, fallback)` is one
+member of a map-valued key; `api.derive(() => value)` is a memoised selector
+that recomputes when a key it read changes. Writes go through the same
+compare-and-swap as `api.state.set`, so a concurrent writer reruns the
+callback rather than losing an update. `api.subscribe(target, (value,
+previous) => …)` registers during activation and runs once per changed target
+after the handler that changed it, still inside that callback: its host calls
+and writes commit or rerun with it, a cascade stops after 8 rounds, and at most
+64 subscriptions exist per mod. Subscriptions belong to the activation
+generation, so a reload or disable drops them. Render hooks report the keys
+they read; the host redraws a hooked component only when one of those keys,
+the mod's settings or its source changes, so several wrappers can watch the
+same state without redrawing the whole view on every key.
 
 ### Routes
 
@@ -484,8 +612,8 @@ expires or is revoked, the mod reloads or is disabled, or its source changes.
 
 ### Terminal lists, insert, placeholder and glyphs
 
-`api.replace('list', event)` renders built-in pickers as components; the host
-keeps keyboard handling and the chosen action. Components accept an
+A `render` hook on component `list` draws built-in pickers as components; the
+host keeps keyboard handling, selection and the chosen action. Components accept an
 `{insert}` action. A terminal view may set `placeholder` and
 `theme.glyphs` (2–4 printable ASCII characters mapped to the same number of
 characters; width-changing mappings are ignored).
@@ -571,7 +699,9 @@ runs or prompts. `approval_result` reports the decision and its source.
 `pattern` is a surface name, `*`, a `*` glob or a `!` negation, and selects only
 surfaces the package's capabilities entitle: `tool` (`interception`), `input`
 (`input`), `model_request` and `host_operation` (`middleware`), `tool_specs`
-(`tools`). Options are
+(`tools`), `command_list` and `command` (`commands`), `config_list`
+(`config`), `config_set` (`config.write`), `admission` (`policy`) and `render`
+(`terminal`). Options are
 `match`, `required` and `before`/`after` (mod IDs). In `match`, a scalar matches
 by `===`, a RegExp tests a scalar as a string, an array is any-of and matches any
 element of an array value, and an object matches part of an object. `match`
@@ -590,6 +720,12 @@ of the chain and then the native executor. Only the listed fields may change:
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
 | `model_request` | `route`, one of `routes` | `{route}` | what `next` returned, or `{deny}` |
 | `tool_specs` | `tools` (drop, re-describe or set `deferred`) | `{tools}` | `{tools}` derived from what `next` returned: drop, defer or re-describe entries, never add or rename one |
+| `command_list` | `commands` (hide, `description`, `args_hint` of ordinary rows) | `{commands}` | `{commands}` derived from what `next` returned |
+| `command` | `args` | `{result}` | a changed `{result}`, an answer without calling `next`, or `{deny}` |
+| `config_list` | `rows` (hide, `label` of ordinary rows) | `{rows}` | `{rows}` derived from what `next` returned |
+| `config_set` | `value` | `{value}` | what `next` returned, or `{deny}` |
+| `admission` | nothing | `{admit: true}`, `{withhold}` or `{deny}` | the same or a tighter decision |
+| `render` | `props` keys the native drawing reads (see Render hooks) | `{tree}` | a `{tree}` of presentation components holding `{type: 'native'}` at most once, with or without calling `next` |
 
 Tool inputs also carry `call_id`, `thread_id`, `agent_id`, `schema`,
 `raw_arguments` and `batch`; `arguments` is an object for function tools and
@@ -763,6 +899,59 @@ inode changed. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
+### Render hooks (`render_hooks_v1`)
+
+`api.intercept('render', {match: {component: 'tool_call'}}, async (e, next) => …)`
+draws one native terminal component instance. `e` is `{component, id, surface,
+viewport: {columns, rows}, lifecycle, owner, props}`: `surface` is `inline` or
+`fullscreen`, `lifecycle` is `live` while the component can still change and
+`final` once it cannot, and `owner` is `null` for host components. `next(e)`
+resolves to `{tree}`; the host's own drawing is `{type: 'native', style?}`, so a
+hook observes (returns what `next` returned), restyles (`style` takes `tone`,
+`bold`, `italic`, `underline`, `fg`, `bg`), wraps (places the native node in a
+tree), replaces (a tree without it) or hides (`{tree: []}`). Trees hold `box`,
+`line`, `text`, `markdown`, `code`, `diff`, `list` and `native` components (64
+components, depth 6, unique ids, 64 KiB); the native node appears at most once.
+Hooks compose as one continuation chain in interceptor order, so unrelated
+wrappers nest, and each hook sees the props the hook before it passed on.
+
+| `component` | `id` | Props (`RenderProps`) | Rewritable |
+| --- | --- | --- | --- |
+| `user_message` | content digest | `text`, `images`, `spoken` | — |
+| `assistant_message` | content digest | `text`, `first` (streamed chunks and the final message; the streaming tail is `live`) | — |
+| `tool_call` | call ID | `kind` (`mcp`/`dynamic`), `server`, `tool`, `arguments`, `status`, `duration_ms` | — |
+| `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
+| `tool_group` | first call ID | `calls` of grouped exploration commands, `running` | — |
+| `tool_progress` | call ID | a running command, MCP or dynamic call (`tool_call` or `command_output` props) | — |
+| `command_output` | call ID | `command`, `exit_code`, `duration_ms`, `output_lines`, `output_tail`, `user_shell` | — |
+| `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
+| `turn_duration` | `turn-<completed ms>` | `seconds`, `completed_at_ms` | — |
+| `notice` | content digest | `kind` (`info`/`warning`/`error`), `text`, `hint` | `text` |
+| `session_mode` | `collaboration` | `mode`, `label`, `cycle_hint` | `label` |
+| `composer_hint` | `placeholder` / `footer` | `slot`, `placeholder`, `input_enabled` / `mode`, `text`, `task_running` | `placeholder` |
+| `question` | item ID or content digest | `questions` (`id`, `header`, `question`, `secret`, option labels), then `current`, `queued` (live) or `answered`, `interrupted` (final) | — |
+| `list` | view ID | `view_id`, `title`, `subtitle`, `items`, `selected` | — |
+
+Text props carry at most 4 KiB; a content digest is stable across resume and
+reflow, so equal content draws identically. Approval overlays have no render
+hook: their identity, decision text, options, focus and grants stay native, and
+`surface_styles.approval` only paints the frame. A question hook changes the
+presentation only; answers, focus and keys stay with the native dialog. The
+existing panes, `above_composer` band and named sites stay declarative views.
+
+Render callbacks get no host operations and cannot write state
+(`render_side_effect_refused`; a write during activation stays local to that
+render); read `api.state` or atoms instead. A tree
+lives until its input changes or a state key its hooks read changes: live
+components redraw asynchronously and keep their last tree until the new one
+arrives, fullscreen transcript cells redraw the same way, and inline scrollback,
+which is written once, waits for each cell's hooks as it is inserted. A
+narrower or wider terminal is a new input. A hook that throws, times out or
+returns an invalid tree is skipped with the input it received, so the native
+drawing survives; a disabled or failed mod's hooks are gone at once, and every
+failed render joins the status `chains` log. With no `render` interceptor the
+host never calls a mod while drawing.
+
 ### Startup presentation (`terminal_welcome_v1`)
 
 The terminal event's read-only `presentation` is `{thread_id, phase}`. A new
@@ -879,14 +1068,16 @@ path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. View
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
 is ignored with a warning. `component_event`, `view` and `focus` report
-interaction. Operations:
+interaction; `component_event` also reports, to the component's owner only and
+with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
+select's new `value` on every edit, `scroll` with a pane's `offset`, `pointer`
+with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
+and dialogs (`ui_composition_v1`). Operations:
 
 - `terminal.notify {title, body?}` uses the configured notification method
   with a focus condition and a 2 s rate limit.
-- `terminal.commands` (`terminal_commands_v1`) returns `{commands: [{command,
-  description, owner}]}`: the built-in and mod slash commands the composer
-  would offer now, with `owner` naming the mod or `null` for built-ins. It is
-  read-only; run one with `builtins.invoke`.
+- `commands.list`, `commands.describe` and `commands.invoke` are described in
+  [Commands and configuration](#commands-and-configuration-command_config_middleware_v1).
 - `sessions.ports` (`session_ports_v1`, `sessions` capability) returns
   `{ports: [{port, pid, address}]}`: TCP listeners owned by the current
   thread's background terminals and their child processes, read by the host
@@ -900,7 +1091,14 @@ interaction. Operations:
   the argv the user sets as `editor` in `host.json`, with `{path}` and `{line}`
   substituted.
 - `terminal.prompt {kind: 'confirm' | 'text', title, message, masked?}` asks
-  the user; mods never answer prompts.
+  the user; mods never answer prompts. `{kind: 'choice', title, message,
+  options: [{value, label}], multiple?, other?}` (`ui_composition_v1`) shows a
+  native picker of up to 32 options: one value, several with `multiple`, or a
+  typed answer through an `Other…` row with `other`; it returns
+  `{status: 'accepted', values, other?}` or `declined` when cancelled.
+- `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
+  focuses, scrolls (`offset`) or reveals one of the caller's own panes,
+  dialogs or controls; another mod's component is `terminal_pane_not_owned`.
 - `terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}`
   starts an interactive shell from a user command after confirmation, in the
   session sandbox without network (macOS) with a scratch `HOME`. `start` may
@@ -915,11 +1113,71 @@ interaction. Operations:
   Sessions belong to the calling mod (four per mod, sixteen in all), render
   only in views that mod owns or contributes to, and stop when it unloads. A
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
-- `builtins.invoke {command} | {action}` runs a built-in command or key action
-  from user contexts; `command` may also name a mod command such as
-  `omd_git:changes` (`builtins_mod_commands_v1`), which runs as if typed once
-  the invoking command finishes; `api.builtins({keys, commands: {replace}})` overlays key
-  bindings (never `approval.*`) and routes a built-in command to a mod command.
+- `builtins.invoke {action}` runs a key action from user contexts;
+  `api.builtins({keys, commands: {replace}})` overlays key bindings (never
+  `approval.*`) and routes a built-in command to a mod command.
+
+### Commands and configuration (`command_config_middleware_v1`)
+
+`commands.list` (`terminal`) returns `{commands: [row]}` for every built-in,
+service-tier and mod command the composer can offer, and `commands.describe
+{command}` one row: `{command, description, owner, hidden, args_hint,
+immediate, protected}`. `owner` names the mod or is `null`; `args_hint` comes
+from `api.command(name, handler, {args_hint})` and shows beside the description
+in the popup; `immediate: false` (`api.command(..., {immediate: false})`)
+refuses the mod command while a turn runs (`command_unavailable_during_turn`),
+and built-ins report the engine's own rule; `protected` rows (`/omd`, `/quit`,
+`/exit`, `/approvals`, `/permissions`, `/status`, `/logout`) keep recovery and
+authority reachable.
+
+`commands.invoke {command, args?}` (`builtins`, user contexts) runs a built-in
+or any mod command and resolves with `{command, result}`: a mod command's
+returned value, or `{invoked: true}` for a built-in, which the terminal
+dispatches with the effective arguments. Another mod's command runs only after
+a native confirmation, since its handler runs with that mod's grants. A mod
+command's display, insert and submit outcomes still apply. Runs nest at most four deep
+(`command_recursion_limit`); the permissions, sandbox elevation, logout,
+quit, exit, feedback and test-approval built-ins are refused.
+
+`config.describe` (`config`) returns `{rows: [row]}`: each enabled mod's
+settings as `mods.<id>.<name>` rows, then the host-writable Codex keys present
+in the effective config. A row is `{key, label, value, source, version, scope,
+editable, managed, secret, hidden}` plus `type` and `enum` for mod settings;
+`source` is the config layer (`user`, `project`, `system`, `mdm`, ...),
+`version` the layer version, `managed` marks managed layers, and secret keys
+and secret-bearing tables (headers, environment, tokens) show `<redacted>` and
+are never editable. `config.set {key, value, expected?}` (`config.write`, user
+contexts) writes an `editable` row: Codex keys after a native confirmation
+through `config/value/write` with the described layer version, mod settings
+through the same validation as `settings.write` (another mod's settings after a
+native confirmation). `expected` refuses the write
+(`config_stale`) when the value changed since it was read; a concurrent Codex
+write fails with the server's version conflict. Every successful `config.set`
+and `settings.write` change raises `config_change {key, original, effective,
+source, scope, caller}` for the other mods registered for it.
+
+Four [continuation](#continuation-middleware-continuation_middleware_v1-tool_continuation_v2)
+surfaces wrap these:
+
+- `command_list` (`commands`) and `config_list` (`config`) compose rows
+  without host operations: hide, relabel (`description`, `label`) or hint
+  (`args_hint`) ordinary rows; a dropped ordinary row becomes hidden. Protected,
+  managed and secret rows cannot change or be dropped, nothing can be added or
+  renamed, and a failing list chain keeps the native rows. Hidden commands leave
+  the popup and the typed-command lookup.
+- `command` (`commands`) wraps typed, popup and `commands.invoke` runs of
+  built-in and mod commands: rewrite `args`, transform `{result}`, answer with
+  `{result}` or refuse with `{deny}` (`command_denied: reason`). Protected
+  built-ins never pass through it, so a broken required interceptor cannot lock
+  out `/omd`.
+- `config_set` (`config.write`) wraps `config.set` and `settings.write`
+  per key: change `value` or `{deny}` (`config_set_denied: reason`); the host
+  re-checks editability, managed floors and the writable-key allowlist after
+  the chain.
+
+Interceptors of these surfaces skip their own mod's calls like every other
+surface, which bounds recursion through `commands.invoke` and
+`settings.write`.
 
 ### Composer completion (`completion_v1`)
 
@@ -1023,10 +1281,11 @@ any it refuses.
   a click outside releases focus and hides the dialog until a mod command runs,
   and Esc reaches the focused component's owner as `component_event {kind:
   'input', events: [{key: 'Esc'}]}`. Space on a focused `list` row activates it
-  like Enter. An `input` or `select` keeps the value it was created with per
-  component id; change the id to reset it.
-- Callback contexts: `terminal` and `list` renders get no host operations; draw
-  from `api.state`. Slash commands, buttons and keybindings run in the terminal
+  like Enter. An `input` or `select` is controlled: the user's edits stay
+  while the view repeats a value, an echo of one of the user's own recent
+  values is ignored, and a new `value` from the mod resets the field.
+- Callback contexts: `terminal` renders and `render` hooks get no host
+  operations; draw from `api.state`. Slash commands, buttons and keybindings run in the terminal
   as user actions and reach only `exec.*`, `workspace.read/list/stat/check_access/
   transaction/backup/restore`, `store.*`, the terminal operations (`app.request`,
   `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`, `packages.*`,
@@ -1254,8 +1513,8 @@ the mod or install Python or debugpy. OMD+ stages the plugin inactive.
 
 Terminal views are drawn on Codex's alternate screen, including its default
 fullscreen transcript. Inline `--no-alt-screen` sessions draw the sidebar,
-header and dialogs inside the current viewport, and message/tool templates,
-`completed_tools` and status segments apply to scrollback. When any mod's view
+header and dialogs inside the current viewport, and `render` hooks and status
+segments apply to scrollback. When any mod's view
 sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport
 omits the sidebar, header and named sites; dialogs, status segments, mod
 progress and diagnostics, the composer, approvals and scrollback remain, and
@@ -1272,9 +1531,9 @@ the accessible text, and optional `min_width`/`max_width` (1–500 columns) on
 header height counts only drawn boxes. Header rows are never spaced by the
 comfortable density.
 
-`terminal_lists_v1` lets a mod replace built-in list rows through
-`api.replace('list', event)`. The host keeps selection actions, session state,
-keyboard handling and native fallback when the mod is absent or fails.
+`terminal_lists_v1` lets a `render` hook on component `list` replace built-in
+list rows. The host keeps selection actions, session state, keyboard handling
+and native fallback when the mod is absent or fails.
 
 Copy-on-select and right-click paste are Codex settings (`tui.copy_on_select`,
 `tui.right_click_paste`); mods change them through `config.write`.
@@ -1376,7 +1635,14 @@ call instead.
 
 Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.
-Observers compose in that order; interceptors follow the continuation order above. Exclusive replacements, contract IDs, service
+Observers compose in that order; interceptors follow the continuation order above. Every mod's `terminal` patch composes in that order too
+(`ui_composition_v1`): sites wrap or replace (a wrap encloses the site's
+replacement whichever composes first), presentation fields merge, and
+exclusive fields (layout, backdrop, panels, header, footer, placeholder,
+replaced sites, keys, glyphs and the status budget) go to the first claimant;
+each later claim is reported in `omd-mod status` under `terminal.conflicts` as
+`{field, owner, rejected, origin}`, and a patch that breaks the composed view's
+limits is dropped whole. Exclusive replacements, contract IDs, service
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.

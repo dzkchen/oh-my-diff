@@ -95,9 +95,7 @@
           "Alt+p": {
             "command": "atlas_policy:atlas"
           }
-        },
-        "message_template": "│ {text}",
-        "tool_template": "› {text}"
+        }
       }
     },
     {

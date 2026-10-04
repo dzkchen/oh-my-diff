@@ -51,22 +51,29 @@ impl ModHostCall {
             "turns.activity" => Ok("sessions"),
             "terminal.notify"
             | "terminal.show_thread"
-            | "terminal.commands"
+            | "commands.list"
+            | "commands.describe"
             | "terminal.import_file"
             | "terminal.image_sample"
             | "terminal.open"
-            | "terminal.prompt" => Ok("terminal"),
+            | "terminal.prompt"
+            | "terminal.pane" => Ok("terminal"),
             "terminal.pty" => Ok("pty"),
             "model.complete" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
             "tools.invoke" | "tools.check" => Ok("interception"),
             "composer.read" | "composer.write" => Ok("composer"),
-            "builtins.invoke" => Ok("builtins"),
+            "builtins.invoke" | "commands.invoke" => Ok("builtins"),
+            "config.describe" => Ok("config"),
+            "config.set" => Ok("config.write"),
             "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
                 Ok("packages")
             }
             "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
             "settings.write" => Ok("commands"),
+            "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
+            "mcp.connect" | "mcp.disconnect" => Ok("mcp"),
+            "environment.read" => Ok("exec"),
             _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
                 Ok("agents")
             }
@@ -98,6 +105,13 @@ impl ModHostCall {
         ) && self.arguments["sandbox"] == "none"
         {
             capabilities.push("os");
+        }
+        if matches!(
+            self.operation.as_str(),
+            "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
+        ) && self.arguments.get("root").is_some()
+        {
+            capabilities.push("fs.external");
         }
         if self.operation == "exec.run"
             && self.arguments["unix_sockets"]
@@ -185,6 +199,14 @@ pub(super) fn run(
                 AUTHORITY_CAPABILITIES.contains(capability) && !loaded.selection.authority_current()
             }) {
                 return Err(failure(format!("grant_expired: {expired}")));
+            }
+            let namespace = host_namespace(&call.operation, &call.arguments);
+            if loaded
+                .withheld
+                .iter()
+                .any(|pattern| namespace_matches(pattern, &namespace))
+            {
+                return Err(failure(format!("capability_withheld: {namespace}")));
             }
             if !active() {
                 return Err(failure("callback_cancelled"));

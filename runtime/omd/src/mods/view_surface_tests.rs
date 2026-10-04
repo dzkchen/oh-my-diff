@@ -26,27 +26,26 @@ fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() 
         assert!(ModViewPatch::parse(invalid).is_err());
     }
     let mut target = ModView::default();
-    let mut replaced = BTreeSet::new();
-    let mut completed = false;
+    let mut claims = BTreeMap::new();
     ModViewPatch::parse(welcome)
         .unwrap()
-        .apply(&mut target, &mut replaced, &mut completed)
+        .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
     ModViewPatch::parse(json!({"greeting":"Ready to work?"}))
         .unwrap()
-        .apply(&mut target, &mut replaced, &mut completed)
+        .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
     assert_eq!(target.greeting.as_deref(), Some("Ready to work?"));
     assert_eq!(
         target.session_title_suffix.as_deref(),
         Some(" | Project tools")
     );
-    assert!(
-        ModViewPatch::parse(json!({"sites":{"welcome":{"components":[]}}}))
-            .unwrap()
-            .apply(&mut target, &mut replaced, &mut completed)
-            .is_err()
-    );
+    let conflicts = ModViewPatch::parse(json!({"sites":{"welcome":{"components":[]}}}))
+        .unwrap()
+        .apply(&mut target, &mut claims, "second", "idle")
+        .unwrap();
+    assert_eq!(conflicts[0].field, "sites.welcome");
+    assert_eq!(conflicts[0].owner, "first");
 }
 
 #[test]
@@ -117,19 +116,29 @@ fn documents_and_diffs_validate_and_named_sites_are_allowed() {
 #[test]
 fn patches_claim_layout_and_backdrop_once() {
     let mut target = ModView::default();
-    let mut replaced = BTreeSet::new();
-    let mut completed = false;
+    let mut claims = BTreeMap::new();
     let layout = json!({"layout": {"content": "transcript"}});
     ModViewPatch::parse(layout.clone())
         .unwrap()
-        .apply(&mut target, &mut replaced, &mut completed)
+        .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
     assert!(target.layout.is_some());
-    assert!(
-        ModViewPatch::parse(layout)
-            .unwrap()
-            .apply(&mut target, &mut replaced, &mut completed)
-            .is_err()
+    let conflicts = ModViewPatch::parse(json!({"layout": {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}}))
+        .unwrap()
+        .apply(&mut target, &mut claims, "second", "idle")
+        .unwrap();
+    assert_eq!(
+        target.layout,
+        Some(serde_json::from_value(layout["layout"].clone()).unwrap())
+    );
+    assert_eq!(
+        conflicts,
+        vec![ModViewConflict {
+            field: "layout".into(),
+            owner: "first".into(),
+            rejected: "second".into(),
+            origin: "idle".into(),
+        }]
     );
 }
 
@@ -147,8 +156,7 @@ fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() 
         assert!(view(value.clone()).is_err(), "{value}");
     }
     let mut target = ModView::default();
-    let mut sites = BTreeSet::new();
-    let mut completed = false;
+    let mut claims = BTreeMap::new();
     for patch in [
         json!({"surface_styles":{"composer":{"top":"#123456"}}}),
         json!({"surface_styles":{"backdrop":{"top":"#abcdef"}}}),
@@ -156,7 +164,7 @@ fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() 
     ] {
         ModViewPatch::parse(patch)
             .unwrap()
-            .apply(&mut target, &mut sites, &mut completed)
+            .apply(&mut target, &mut claims, "first", "idle")
             .unwrap();
     }
     assert_eq!(target.surface_styles.len(), 2);
@@ -178,19 +186,44 @@ fn each_patch_keeps_twelve_keys_while_the_composed_view_holds_more() {
     };
     assert!(ModViewPatch::parse(json!({"keybindings": keys("abcdefghijklm")})).is_err());
     let mut target = ModView::default();
-    let mut replaced = BTreeSet::new();
-    let mut completed = false;
-    for letters in ["abcdefghijkl", "nopqrstuvwyz"] {
+    let mut claims = BTreeMap::new();
+    for (id, letters) in [("first", "abcdefghijkl"), ("second", "nopqrstuvwyz")] {
         ModViewPatch::parse(json!({"keybindings": keys(letters)}))
             .unwrap()
-            .apply(&mut target, &mut replaced, &mut completed)
+            .apply(&mut target, &mut claims, id, "idle")
             .unwrap();
     }
     assert_eq!(target.keybindings.len(), 24);
-    assert!(
-        ModViewPatch::parse(json!({"keybindings": keys("a")}))
+    let conflicts = ModViewPatch::parse(json!({"keybindings": keys("a")}))
+        .unwrap()
+        .apply(&mut target, &mut claims, "third", "idle")
+        .unwrap();
+    assert_eq!(conflicts[0].field, "keybindings.Alt+a");
+}
+
+#[test]
+fn a_wrap_encloses_a_replacement_composed_after_it() {
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    for (id, patch) in [
+        (
+            "frame",
+            json!({"sites": {"sidebar": {"mode": "wrap", "components": [{"type": "box", "id": "frame",
+                "label": "Frame", "children": [{"type": "slot"}]}]}}}),
+        ),
+        (
+            "files",
+            json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}}),
+        ),
+    ] {
+        let conflicts = ModViewPatch::parse(patch)
             .unwrap()
-            .apply(&mut target, &mut replaced, &mut completed)
-            .is_err()
-    );
+            .apply(&mut target, &mut claims, id, "idle")
+            .unwrap();
+        assert!(conflicts.is_empty());
+    }
+    target.close_wraps();
+    let sidebar = serde_json::to_value(&target.sites["sidebar"]).unwrap();
+    assert_eq!(sidebar["mode"], "replace");
+    assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
 }

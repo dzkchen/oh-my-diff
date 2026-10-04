@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_model_picker",
-  "version": "0.3.0-preview.1",
+  "version": "0.3.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Compact /model and reasoning effort picker",
@@ -17,7 +17,7 @@
   ],
   "subscriptions": {"channels": ["omd_profiles/routes"]},
   "compatibility": {
-    "required_features": ["terminal_lists_v1", "events_v1"]
+    "required_features": ["terminal_lists_v1", "events_v1", "render_hooks_v1"]
   },
   "settings_schema": {
     "type": "object",

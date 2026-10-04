@@ -87,18 +87,18 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "9af04544d585e10cf2f56cc61b9cf1392ce04723df0d4700763edbe78f96ffa2",
-        "mod.json": "033757331773bf5733b8d084a79bd3d946cac493b88f8547de9d226d0352236a"
+        "index.ts": "0d6679d89c93eebd4e192197d88d069eb6f498fe3d9284b8c868b25048a2c706",
+        "mod.json": "dbdd6df49937943eb27bca017117b1aa6d87c158570b89763b099cde0c122e2a"
       },
-      "package_sha256": "dcec7dec0ad94c8c8969bcba6123bab82bde0eaa0573ba88b71ae8491820db7f",
+      "package_sha256": "e65d5fe10220dec34969714ea5916d3af79f66ed023c409f0ef7d63fc9bff081",
       "source": "mods/first-party/omd_workspace",
-      "version": "0.2.0-preview.4"
+      "version": "0.2.0-preview.5"
     }
   },
   "product": "oh-my-diff-private-preview-v1",
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "2f6c49f9e0238a8b6251f2708ab8134ec6106d021ff0f946a14bd5fb51363779"
+    "sha256": "b773e2dea2d8cf6a2a4a90b5183ef1970806866b58a1895fbd36090c00719bb0"
   }
 }

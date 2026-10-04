@@ -99,7 +99,7 @@ impl Views {
             state.snapshot.revision = state.snapshot.revision.saturating_add(1);
             state.snapshot.rendered_ms = rendered_ms;
             state.snapshot.view = terminal.view;
-            state.snapshot.owner = terminal.owner;
+            state.snapshot.conflicts = terminal.conflicts;
             state.snapshot.contributors = terminal.contributors;
             state.snapshot.component_owners = terminal.component_owners;
             state.snapshot.input = input;

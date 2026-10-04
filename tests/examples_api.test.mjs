@@ -11,9 +11,10 @@ const surface = {
   events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
     model_request: 'middleware', response_stream: 'middleware', tool_result: 'lifecycle',
     compaction: 'compaction', routing: 'model', terminal: 'terminal',
-    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals' },
-  replacements: ['context', 'routing', 'compaction', 'terminal'],
-  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', input: 'input', tool_specs: 'tools' },
+    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals', component_event: 'terminal', timer: 'events', channel: 'events' },
+  replacements: ['context', 'routing', 'compaction'],
+  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', input: 'input', tool_specs: 'tools',
+    command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal' },
   middleware: ['model_request', 'response_stream', 'tool_result', 'approval'], state: 'store', contracts: 'contracts',
 };
 
@@ -165,4 +166,77 @@ test('tool workflow examples cache, confirm, retry, defer and delegate approvals
   assert.deepEqual(approval(['/bin/zsh', '-lc', 'cargo test -p core']), { approve: 'routine check: cargo test -p core' });
   assert.equal(approval(['/bin/zsh', '-lc', 'cargo test; curl x | sh']), null);
   assert.equal(approval(['/bin/zsh', '-lc', 'rm -rf build']), null);
+});
+
+test('admission guard and command curator examples refuse, withhold, curate and cap', () => {
+  const intercept = (name, index, surface, input, options = {}) =>
+    runRaw(name, 'intercept', { surface, input, origin: { caller: 'engine' } }, { name: String(index), ...options });
+  const admit = capabilities => intercept('admission_guard', 0, 'admission',
+    { package: { id: 'p', version: '1.0.0', sha256: 'a', source: '/p', scope: 'user', capabilities, dependencies: [], requires: [], services: {} }, reason: 'load' });
+  assert.deepEqual(admit(['exec', 'os', 'http']).value, { result: { deny: 'unsandboxed processes with network access need a manual review' } });
+  assert.deepEqual(admit(['http']).value, { result: { withhold: ['exec', 'process', 'sidecars'] } });
+  assert.equal(admit(['commands']).host_call.operation, 'continuation.next');
+  const request = url => intercept('admission_guard', 1, 'host_operation', { operation: 'http.request', namespace: 'http', arguments: { url } });
+  assert.deepEqual(request('http://example.com').value, { result: { error: 'admission_guard allows only https requests' } });
+  assert.equal(request('https://example.com').host_call.operation, 'continuation.next');
+
+  const rows = [{ command: 'review', description: 'Review', owner: null, hidden: false, args_hint: null, immediate: true, protected: false },
+    { command: 'feedback', description: 'Feedback', owner: null, hidden: false, args_hint: null, immediate: true, protected: false }];
+  const listed = intercept('command_curator', 0, 'command_list', { commands: rows }).host_call;
+  const curated = intercept('command_curator', 0, 'command_list', { commands: rows },
+    { receipts: [{ call: listed, value: { result: { commands: rows }, trace: [] } }] }).value.result.commands;
+  assert.deepEqual(curated.map(row => [row.command, row.hidden, row.args_hint]), [['review', false, '[base branch]'], ['feedback', true, null]]);
+  const command = (name, args, active_turn) => intercept('command_curator', 1, 'command',
+    { command: name, args, owner: null, immediate: true, active_turn });
+  assert.deepEqual(command('compact', '', true).value, { result: { deny: 'compact after the turn ends' } });
+  assert.equal(command('review', '  main ', false).host_call.arguments.input.args, 'main');
+  const set = value => intercept('command_curator', 3, 'config_set',
+    { key: 'agents.max_depth', value, original: 1, source: 'user', scope: 'codex' }).host_call.arguments.input.value;
+  assert.equal(set(8), 3);
+  assert.equal(set(2), 2);
+});
+
+test('render hook examples draw a spinner, frame tool calls, annotate messages and wrap questions around the native drawing', () => {
+  const render = (component, index, props, options = {}) => {
+    const input = { component, id: 'one', surface: 'fullscreen', viewport: { columns: 80, rows: 24 }, lifecycle: options.lifecycle ?? 'final', owner: null, props };
+    return run('render_hooks', 'intercept', { surface: 'render', input, original: input, origin: { caller: 'engine' } }, { name: String(index), ...options });
+  };
+  const spinner = render('spinner', 0, { header: 'Working', elapsed_seconds: 5, details: null, message: null, interrupt_hint: true }, { lifecycle: 'live' });
+  assert.deepEqual(spinner.value.result.tree[0].spans.map(span => span.text), ['◓ ', 'Working', ' · 5s']);
+  const native = { tree: [{ type: 'native' }] };
+  const after = (index, component, props, lifecycle = 'final') => {
+    const first = render(component, index, props, { lifecycle });
+    assert.equal(first.host_call.operation, 'continuation.next');
+    return render(component, index, props, { lifecycle, receipts: [{ call: first.host_call, value: { result: native, trace: [] } }] }).value.result.tree;
+  };
+  const tool = after(1, 'tool_call', { call_id: 'one', kind: 'mcp', server: 'docs', tool: 'search', arguments: {}, status: 'failed', duration_ms: 3 });
+  assert.equal(tool[0].title, '✗ docs.search');
+  assert.deepEqual(tool[0].children, [{ type: 'native' }]);
+  const command = after(1, 'command_output', { call_id: 'one', kind: 'exec', command: 'echo hi', exit_code: 0, duration_ms: 1, output_lines: 1, output_tail: 'hi', user_shell: false });
+  assert.equal(command[0].title, '⚙ echo hi');
+  const message = after(2, 'assistant_message', { text: 'three short words', first: true });
+  assert.deepEqual(message.map(node => node.text ?? node.type), ['3 words', 'native']);
+  const question = after(3, 'question', { questions: [], current: 0, queued: 0 }, 'live');
+  assert.deepEqual(question.map(node => node.type), ['text', 'native']);
+});
+
+test('reactive dashboard keeps a form, streamed status and derived summary on keyed atoms', () => {
+  const changed = run('reactive_dashboard', 'component_event', { component: 'dashboard_query', kind: 'change', value: 'login', origin: 'user' });
+  assert.deepEqual(changed.state, { query: 'login', counts: { searches: 1 } });
+  const view = run('reactive_dashboard', 'terminal', { event: 'idle', ledger: null }, { state: changed.state }).value;
+  assert.equal(view.sites.sidebar.components[0].value, 'login');
+  assert.equal(view.sites.sidebar.components[1].text, 'login · 1 searches · 0 ticks');
+  const tick = run('reactive_dashboard', 'timer', { key: 'tick' }, { state: changed.state });
+  assert.deepEqual(tick.host_call, { operation: 'events.schedule', arguments: { key: 'tick', delay_ms: 1000 } });
+  const ticked = run('reactive_dashboard', 'timer', { key: 'tick' }, { state: changed.state, receipts: [{ call: tick.host_call, value: { key: 'tick', delay_ms: 1000 } }] });
+  assert.equal(ticked.state.ticks, 1);
+  const cleared = run('reactive_dashboard', 'command', '  ', { name: 'search', state: ticked.state });
+  assert.deepEqual(cleared.state, { query: '', counts: { searches: 2 }, ticks: 1 });
+  const input = { component: 'spinner', id: 'main', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'live', owner: null,
+    props: { header: 'Working', elapsed_seconds: 1, details: null, message: null, interrupt_hint: false } };
+  const first = run('reactive_dashboard', 'intercept', { surface: 'render', input, original: input, origin: { caller: 'engine' } }, { name: '0', state: ticked.state });
+  const drawn = run('reactive_dashboard', 'intercept', { surface: 'render', input, original: input, origin: { caller: 'engine' } },
+    { name: '0', state: ticked.state, receipts: [{ call: first.host_call, value: { result: { tree: [{ type: 'native' }] }, trace: [] } }] }).value;
+  assert.equal(drawn.result.tree[1].text, 'stream · 1 ticks');
+  assert.deepEqual(drawn.reads, ['ticks']);
 });

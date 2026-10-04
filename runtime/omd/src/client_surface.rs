@@ -9,7 +9,11 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "credentials.request",
     "terminal.notify",
     "terminal.show_thread",
-    "terminal.commands",
+    "commands.list",
+    "commands.describe",
+    "commands.invoke",
+    "config.describe",
+    "config.set",
     "sessions.ports",
     "terminal.import_file",
     "terminal.image_sample",
@@ -20,6 +24,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "contract.select",
     "terminal.open",
     "terminal.prompt",
+    "terminal.pane",
     "terminal.pty",
 ];
 
@@ -27,6 +32,8 @@ pub const USER_ONLY_OPERATIONS: &[&str] = &[
     "credentials.request",
     "terminal.import_file",
     "builtins.invoke",
+    "commands.invoke",
+    "config.set",
     "packages.apply",
     "contract.select",
 ];
@@ -273,6 +280,57 @@ pub fn app_request(
         threads.push_back(created.to_owned());
     }
     Ok(value)
+}
+
+const MANAGED_SOURCES: &[&str] = &[
+    "mdm",
+    "system",
+    "enterpriseManaged",
+    "legacyManagedConfigTomlFromFile",
+    "legacyManagedConfigTomlFromMdm",
+];
+
+/// Config rows for `config.describe`: host-writable Codex keys from a `config/read` result plus mod settings.
+/// `packages` is a `packages.list` result; its enabled mods' settings become `mods.<id>.<name>` rows.
+pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
+    let mut rows = Vec::new();
+    for package in packages["packages"].as_array().into_iter().flatten() {
+        let id = package["id"].as_str().unwrap_or_default();
+        if package["effective"] != true {
+            continue;
+        }
+        for (name, property) in package["settings_schema"]["properties"]
+            .as_object()
+            .into_iter()
+            .flatten()
+        {
+            rows.push(serde_json::json!({"key": format!("mods.{id}.{name}"), "label": format!("{id} {name}"),
+                "value": package["settings"][name], "source": "mod_settings", "version": Value::Null,
+                "scope": "mod", "type": property["type"], "enum": property["enum"],
+                "editable": true, "managed": false, "secret": false, "hidden": false}));
+        }
+    }
+    let mut config = read["config"].clone();
+    redact_config(&mut config);
+    for key in crate::app_routes::writable_config_keys() {
+        let pointer = format!("/{}", key.replace('.', "/"));
+        let Some(value) = config.pointer(&pointer).filter(|value| !value.is_object()) else {
+            continue;
+        };
+        let origin = &read["origins"][key];
+        let source = origin["name"]["type"].as_str().unwrap_or("default");
+        let managed = MANAGED_SOURCES.contains(&source);
+        let secret = value == "<redacted>";
+        rows.push(serde_json::json!({"key": key, "label": key,
+            "value": if secret { Value::from("<redacted>") } else { value.clone() },
+            "source": source, "version": origin["version"], "scope": "codex",
+            "editable": !managed && !secret
+                && matches!(source, "user" | "packagedDefaults" | "default")
+                && crate::app_routes::check_config_key(key).is_ok(),
+            "managed": managed, "secret": secret, "hidden": false}));
+    }
+    rows.truncate(200);
+    rows
 }
 
 fn redact_config(config: &mut Value) {

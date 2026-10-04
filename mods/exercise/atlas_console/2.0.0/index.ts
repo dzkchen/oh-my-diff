@@ -34,7 +34,7 @@ export default function activate(api: ModAPI) {
 
   api.on('turn_end', ({ turn_id, outcome }) => note(`■ turn ${turn_id} ${outcome}`));
 
-  api.replace('terminal', ({ event }): TerminalView => {
+  api.on('terminal', ({ event }): TerminalView => {
     const roomy = density() === 'roomy';
     const lines = activity();
     return {
@@ -55,8 +55,6 @@ export default function activate(api: ModAPI) {
         'Alt+x': { command: 'counter:reset' },
         'Alt+p': { command: 'atlas_policy:atlas' },
       },
-      message_template: '│ {text}',
-      tool_template: '› {text}',
     };
   });
 

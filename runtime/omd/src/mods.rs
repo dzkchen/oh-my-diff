@@ -1,9 +1,15 @@
 mod author;
 mod bridge;
 mod chain;
+mod render;
 pub use chain::ModChain;
 pub use chain::ModInterceptor;
+pub use chain::access_receipt;
+pub use chain::compose_rows;
+pub use chain::continue_operation;
 pub use chain::intercept_shared;
+pub use render::MOD_RENDER_COMPONENTS;
+pub use render::render_shared;
 mod packages;
 mod view;
 pub use view::MOD_KEY_LIMIT;
@@ -14,7 +20,6 @@ pub use view::ModBackdropOffset;
 pub use view::ModBorder;
 pub use view::ModColor;
 pub use view::ModCommandAction;
-pub use view::ModCompletedTools;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
 pub use view::ModDensity;
@@ -35,15 +40,18 @@ pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
 pub use view::ModSpan;
 pub use view::ModSplit;
+pub use view::ModStyle;
 pub use view::ModSurfacePaint;
 pub use view::ModTab;
 pub use view::ModTheme;
 pub use view::ModThemePatch;
 pub use view::ModTone;
 pub use view::ModView;
+pub use view::ModViewConflict;
 pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
+pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
 pub use view::mod_key_name;
 pub use view::valid_glyphs;
@@ -66,6 +74,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -73,6 +82,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
+
+use crate::credentials::url_origin;
 
 pub use package_manager::ModInstallRequest;
 pub use package_manager::ModPackageGrant;
@@ -289,11 +300,15 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_editor_v1",
     "pty_programs_v1",
     "route_reload_v1",
-    "terminal_commands_v1",
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
+    "render_hooks_v1",
+    "ui_composition_v1",
+    "reactive_state_v1",
     "session_ports_v1",
-    "builtins_mod_commands_v1",
+    "structured_access_v1",
+    "command_config_middleware_v1",
+    "admission_api_policy_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -355,7 +370,11 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "turns.activity",
     "terminal.notify",
     "terminal.show_thread",
-    "terminal.commands",
+    "commands.list",
+    "commands.describe",
+    "commands.invoke",
+    "config.describe",
+    "config.set",
     "sessions.ports",
     "terminal.import_file",
     "terminal.image_sample",
@@ -369,6 +388,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "settings.write",
     "terminal.open",
     "terminal.prompt",
+    "terminal.pane",
     "terminal.pty",
     "model.complete",
     "tools.define",
@@ -377,6 +397,13 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "tools.undefine",
     "events.schedule",
     "events.cancel",
+    "http.request",
+    "http.open",
+    "http.read",
+    "http.close",
+    "mcp.connect",
+    "mcp.disconnect",
+    "environment.read",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
     &[(MOD_API_VERSION, "experimental", "2027-03-20")];
@@ -419,8 +446,20 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "os",
     "approve",
     "approve.override",
+    "http",
+    "fs.external",
+    "mcp",
+    "policy",
 ];
-pub const AUTHORITY_CAPABILITIES: &[&str] = &["os", "approve", "approve.override"];
+pub const AUTHORITY_CAPABILITIES: &[&str] = &[
+    "os",
+    "approve",
+    "approve.override",
+    "http",
+    "fs.external",
+    "mcp",
+    "policy",
+];
 
 /// What a user accepts by granting the authority capabilities, shown before trust and in status.
 pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
@@ -435,6 +474,18 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     if granted("approve.override") {
         exposure.push("approve.override: this mod may also approve commands your own execpolicy rules forbid.");
     }
+    if granted("http") {
+        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles to requests for their enrolled origin; it never sees the tokens.");
+    }
+    if granted("fs.external") {
+        exposure.push("fs.external: this mod may read, list and stat, and where write is set change, files under the fs_access roots outside the workspace; credential locations and protected paths stay refused.");
+    }
+    if granted("mcp") {
+        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, and their tools go through normal tool approvals.");
+    }
+    if granted("policy") {
+        exposure.push("policy: this mod may refuse other mods at load and withhold the host namespaces listed in policy.namespaces from them; it cannot grant anything, change managed policy or judge itself, and disabling it in /omd restores the other mods.");
+    }
     exposure
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
@@ -443,7 +494,6 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("tool_exposure", "tools"),
     ("routing", "model"),
     ("terminal", "terminal"),
-    ("list", "terminal"),
     ("compaction", "compaction"),
     ("start", "lifecycle"),
     ("idle", "lifecycle"),
@@ -479,13 +529,12 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("focus", "terminal"),
     ("completion", "composer"),
     ("history", "history"),
+    ("config_change", "config"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "routing",
-    "terminal",
     "compaction",
     "context",
-    "list",
     "tool_batch",
     "completion",
     "history",
@@ -496,6 +545,12 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("model_request", "middleware"),
     ("input", "input"),
     ("tool_specs", "tools"),
+    ("command_list", "commands"),
+    ("command", "commands"),
+    ("config_list", "config"),
+    ("config_set", "config.write"),
+    ("admission", "policy"),
+    ("render", "terminal"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "model_request",
@@ -923,7 +978,10 @@ fn source_use(
                 .map(|(_, capability)| (*capability).to_owned()),
         );
     }
-    if source.contains(".state.get(") || source.contains(".state.set(") {
+    if [".state.get(", ".state.set(", ".atom(", ".member("]
+        .iter()
+        .any(|call| source.contains(call))
+    {
         capabilities.insert("store".to_owned());
     }
     for operation in &operations {
@@ -1009,6 +1067,14 @@ pub struct ModPackage {
     pub os_access: Option<ModOsAccess>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approves: Option<ModApprovalScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_access: Option<ModHttpAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fs_access: Option<ModFsAccess>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mcp_servers: BTreeMap<String, ModMcpServer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ModPolicyScope>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1057,6 +1123,97 @@ pub struct ModApprovalScope {
     pub roots: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hosts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModHttpAccess {
+    pub origins: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<String>,
+}
+
+impl ModHttpAccess {
+    /// `origin` is `scheme://host[:port]`; a granted `scheme://*.suffix[:port]` covers subdomains.
+    pub fn allows(&self, origin: &str) -> bool {
+        self.origins.iter().any(|allowed| {
+            allowed == origin
+                || allowed.split_once("://*.").is_some_and(|(scheme, suffix)| {
+                    origin
+                        .strip_prefix(scheme)
+                        .and_then(|rest| rest.strip_prefix("://"))
+                        .is_some_and(|host| {
+                            host.len() > suffix.len() + 1
+                                && host.ends_with(suffix)
+                                && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
+                        })
+                })
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModFsAccess {
+    pub roots: Vec<ModFsRoot>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModFsRoot {
+    pub path: String,
+    #[serde(default)]
+    pub write: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModMcpServer {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModPolicyScope {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub namespaces: Vec<String>,
+}
+
+/// The policy namespace of a host call: `service:<provider>/<method>` for service calls, else the operation's prefix.
+pub fn host_namespace(operation: &str, arguments: &Value) -> String {
+    match operation {
+        "mods.service" => format!(
+            "service:{}/{}",
+            arguments["name"].as_str().unwrap_or_default(),
+            arguments["method"].as_str().unwrap_or_default()
+        ),
+        _ => operation
+            .split_once('.')
+            .map_or(operation, |(namespace, _)| namespace)
+            .to_owned(),
+    }
+}
+
+/// `*` matches any run of characters in a namespace pattern.
+pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == namespace,
+        Some((prefix, rest)) => {
+            namespace.starts_with(prefix)
+                && (0..=namespace.len() - prefix.len()).any(|skip| {
+                    namespace
+                        .get(prefix.len() + skip..)
+                        .is_some_and(|tail| namespace_matches(rest, tail))
+                })
+        }
+    }
 }
 
 pub const DELEGABLE_APPROVAL_KINDS: &[&str] =
@@ -1315,6 +1472,87 @@ impl ModPackage {
         {
             return Err(failure(
                 "invalid_approves: the approve capability needs approvals, middleware and approves.kinds from exec, stdin, execve, patch, mcp_tool, network",
+            ));
+        }
+        let origin = |value: &str| {
+            let concrete = value.replacen("://*.", "://", 1);
+            url_origin(&concrete).as_deref() == Some(concrete.as_str())
+        };
+        if declared("http") != self.http_access.is_some()
+            || self.http_access.as_ref().is_some_and(|access| {
+                access.origins.is_empty()
+                    || !entries(&access.origins, &origin)
+                    || !entries(&access.credentials, &|id| identifier(id))
+            })
+        {
+            return Err(failure(
+                "invalid_http_access: the http capability needs http_access.origins (scheme://host[:port], scheme://*.suffix) and credential profile IDs",
+            ));
+        }
+        if declared("fs.external") != self.fs_access.is_some()
+            || declared("fs.external") && !declared("fs.read")
+            || self.fs_access.as_ref().is_some_and(|access| {
+                access.roots.is_empty()
+                    || access.roots.len() > 16
+                    || access.roots.iter().any(|root| {
+                        root.path.len() > 256
+                            || !absolute(&root.path)
+                            || root.path == "/"
+                            || root.write && !declared("fs.write")
+                    })
+            })
+        {
+            return Err(failure(
+                "invalid_fs_access: the fs.external capability needs fs.read and up to 16 absolute fs_access.roots (write needs fs.write)",
+            ));
+        }
+        if declared("mcp") == self.mcp_servers.is_empty()
+            || self.mcp_servers.len() > 8
+            || self.mcp_servers.iter().any(|(name, server)| {
+                !identifier(name)
+                    || name.len() > 32
+                    || match (&server.command, &server.url) {
+                        (Some(command), None) => {
+                            command.is_empty()
+                                || command.contains('\0')
+                                || server.credential.is_some()
+                                || server.args.len() > 32
+                                || server
+                                    .args
+                                    .iter()
+                                    .any(|arg| arg.len() > 1024 || arg.contains('\0'))
+                        }
+                        (None, Some(url)) => {
+                            url_origin(url).is_none()
+                                || !server.args.is_empty()
+                                || server
+                                    .credential
+                                    .as_deref()
+                                    .is_some_and(|id| !identifier(id))
+                        }
+                        _ => true,
+                    }
+            })
+        {
+            return Err(failure(
+                "invalid_mcp_servers: the mcp capability needs up to 8 mcp_servers, each a command (with args) or an http(s) url (with an optional credential)",
+            ));
+        }
+        if declared("policy") != self.policy.is_some()
+            || self.policy.as_ref().is_some_and(|scope| {
+                scope.namespaces.len() > 16
+                    || !entries(&scope.namespaces, &|pattern| {
+                        pattern.len() <= 64
+                            && pattern.bytes().all(|byte| {
+                                byte.is_ascii_lowercase()
+                                    || byte.is_ascii_digit()
+                                    || matches!(byte, b'_' | b'.' | b':' | b'/' | b'*')
+                            })
+                    })
+            })
+        {
+            return Err(failure(
+                "invalid_policy: the policy capability needs policy.namespaces (up to 16 namespace patterns)",
             ));
         }
         let requires: BTreeSet<_> = self.requires.iter().collect();
@@ -1840,6 +2078,10 @@ pub struct ModCommand {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cli: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub immediate: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1847,11 +2089,11 @@ pub struct ModCommand {
 pub struct ModTerminalView {
     pub view: ModView,
     #[serde(default)]
-    pub owner: Option<String>,
-    #[serde(default)]
     pub contributors: Vec<String>,
     #[serde(default)]
     pub component_owners: BTreeMap<String, String>,
+    #[serde(default)]
+    pub conflicts: Vec<ModViewConflict>,
     #[serde(default)]
     pub diagnostics: Vec<String>,
 }
@@ -1906,6 +2148,7 @@ struct Loaded {
     source_use: ModSourceUse,
     unused_grants: Vec<String>,
     unused_environment: Vec<String>,
+    withheld: Vec<String>,
     error: Option<String>,
     telemetry: ModTelemetry,
 }
@@ -1949,7 +2192,7 @@ impl ModTelemetry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModGrants {
     pub api: String,
     pub source_sha256: String,
@@ -1957,6 +2200,9 @@ pub struct ModGrants {
     pub exec_environment: Vec<String>,
     pub os_access: Option<ModOsAccess>,
     pub approves: Option<ModApprovalScope>,
+    pub http_access: Option<ModHttpAccess>,
+    pub fs_access: Option<ModFsAccess>,
+    pub mcp_servers: BTreeMap<String, ModMcpServer>,
 }
 
 pub struct ModHost {
@@ -1976,7 +2222,10 @@ pub struct ModHost {
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Instant)>,
+    rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
+    access: Vec<Value>,
+    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Brokered)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 }
@@ -2121,8 +2370,11 @@ fn invoke(
                     .then(|| access.with(|runtime| Ok(runtime.intercepts("host_operation"))))
                     .and_then(|intercepts| intercepts.ok().flatten());
                 let result = if let Some(required) = intercepted {
-                    let input = json!({"operation": call.operation, "arguments": call.arguments});
-                    let origin = json!({"caller": id, "thread_id": thread});
+                    let namespace = host_namespace(&call.operation, &call.arguments);
+                    let input = json!({"operation": call.operation, "namespace": namespace, "arguments": call.arguments});
+                    let chain = scope.stack.borrow().clone();
+                    let provider = (chain.len() > 1).then(|| id.to_owned());
+                    let origin = json!({"caller": id, "thread_id": thread, "provider": provider, "chain": chain});
                     chain::intercept(
                         &mut *access,
                         &mut *host,
@@ -2324,7 +2576,10 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            rendered: HashMap::new(),
             chains: Vec::new(),
+            access: Vec::new(),
+            admissions: BTreeMap::new(),
             brokered: None,
             required_surfaces: Arc::default(),
         };
@@ -2508,6 +2763,7 @@ impl ModHost {
                 source_use: ModSourceUse::default(),
                 unused_grants: Vec::new(),
                 unused_environment: Vec::new(),
+                withheld: Vec::new(),
                 error: None,
                 telemetry: ModTelemetry::default(),
             };
@@ -2591,6 +2847,7 @@ impl ModHost {
         self.loaded = next;
         self.order = order;
         self.rejected = rejected;
+        self.admit();
         self.configuration_sha256 = hash;
         self.generation += 1;
         self.dynamic_tools.clear();
@@ -3064,6 +3321,10 @@ impl ModHost {
                     .description
                     .as_deref()
                     .is_some_and(|description| !visible(description, 256))
+                || command
+                    .args_hint
+                    .as_deref()
+                    .is_some_and(|hint| !visible(hint, 64))
             {
                 return Err(failure("command_conflict_or_invalid_description"));
             }
@@ -3850,7 +4111,6 @@ impl ModHost {
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
-        let owner = self.replacement_owner("terminal");
         let thread = state_thread(&payload);
         let results: Vec<_> = self
             .event_ids("terminal")
@@ -3904,24 +4164,20 @@ impl ModHost {
                 (id, result)
             })
             .collect();
+        let origin = payload["event"].as_str().unwrap_or_default().to_owned();
         let mut view = ModView::default();
-        let mut patches = Vec::new();
+        let mut claims = BTreeMap::new();
+        let mut component_owners = BTreeMap::new();
+        let mut contributors = Vec::new();
+        let mut conflicts = Vec::new();
         let mut diagnostics = Vec::new();
         for (id, result) in results {
-            let owned = owner.as_deref() == Some(id.as_str());
-            let parse = |value: Value| {
-                if owned {
-                    ModView::parse(value).map(|view| (Some(view), None))
-                } else {
-                    ModViewPatch::parse(value).map(|patch| (None, Some(patch)))
-                }
-            };
             let parsed = match result {
                 Ok(value) if value.is_null() => {
                     self.valid_views.remove(&id);
                     continue;
                 }
-                Ok(value) => parse(value.clone()).inspect(|_| {
+                Ok(value) => ModViewPatch::parse(value.clone()).inspect(|_| {
                     self.valid_views.insert(id.clone(), value);
                 }),
                 Err(error) => Err(error),
@@ -3931,27 +4187,11 @@ impl ModHost {
                 if !error.to_string().contains("callback_cancelled") {
                     diagnostics.push(format!("{id}: {error}"));
                 }
-                let last = self.valid_views.get(&id).cloned().ok_or(error)?;
-                parse(last)
+                ModViewPatch::parse(self.valid_views.get(&id).cloned().ok_or(error)?)
             });
-            match parsed {
-                Ok((Some(candidate), _)) => view = candidate,
-                Ok((_, Some(patch))) => patches.push((id, patch)),
-                _ => {}
-            }
-        }
-        let mut component_owners: BTreeMap<String, String> = owner
-            .iter()
-            .flat_map(|owner| {
-                view::site_component_ids(&view.sites)
-                    .into_iter()
-                    .map(move |component| (component, owner.clone()))
-            })
-            .collect();
-        let mut replaced_sites = BTreeSet::new();
-        let mut completed_tools_owner = false;
-        let mut contributors = Vec::new();
-        for (id, mut patch) in patches {
+            let Ok(mut patch) = parsed else {
+                continue;
+            };
             if view
                 .sites
                 .get("dialog")
@@ -3960,47 +4200,30 @@ impl ModHost {
                 patch.sites.remove("dialog");
             }
             let components = view::site_component_ids(&patch.sites);
-            match patch.apply(&mut view, &mut replaced_sites, &mut completed_tools_owner) {
-                Ok(()) => {
+            match patch.apply(&mut view, &mut claims, &id, &origin) {
+                Ok(lost) => {
+                    conflicts.extend(lost);
                     component_owners.extend(
                         components
                             .into_iter()
-                            .map(|component| (component, id.clone())),
+                            .filter(|component| !component_owners.contains_key(component))
+                            .map(|component| (component, id.clone()))
+                            .collect::<Vec<_>>(),
                     );
                     contributors.push(id);
                 }
                 Err(error) => diagnostics.push(format!("{id}: {error}")),
             }
         }
+        view.close_wraps();
+        conflicts.truncate(32);
         ModTerminalView {
             view,
-            owner,
             contributors,
             component_owners,
+            conflicts,
             diagnostics,
         }
-    }
-
-    pub fn list_view(
-        &mut self,
-        payload: Value,
-        active: impl Fn() -> bool,
-    ) -> Option<(String, Vec<ModComponent>)> {
-        let owner = self.replacement_owner("list")?;
-        let value = self
-            .invoke_guarded(&owner, self.generation, "list", "", payload, active)
-            .ok()?;
-        if value.is_null() {
-            return None;
-        }
-        let site = ModRenderSite {
-            mode: ModSiteMode::Replace,
-            components: serde_json::from_value(value).ok()?,
-        };
-        let view = ModView::parse(json!({"sites": {"dialog": site}})).ok()?;
-        view.sites
-            .get("dialog")
-            .map(|site| (owner, site.components.clone()))
     }
 
     pub fn turn_boundary(&mut self) {
@@ -4195,6 +4418,14 @@ impl ModHost {
             .collect()
     }
 
+    /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
+    pub fn record_access(&mut self, receipt: Value) {
+        self.access.push(receipt);
+        if self.access.len() > 32 {
+            self.access.remove(0);
+        }
+    }
+
     pub fn grants(&self, id: &str) -> Option<ModGrants> {
         self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| {
             let current = m.selection.authority_current();
@@ -4211,6 +4442,13 @@ impl ModHost {
                 exec_environment: m.package.exec_environment.clone(),
                 os_access: m.package.os_access.clone().filter(|_| current),
                 approves: m.package.approves.clone().filter(|_| current),
+                http_access: m.package.http_access.clone().filter(|_| current),
+                fs_access: m.package.fs_access.clone().filter(|_| current),
+                mcp_servers: if current {
+                    m.package.mcp_servers.clone()
+                } else {
+                    BTreeMap::new()
+                },
             }
         })
     }
@@ -4339,7 +4577,7 @@ impl ModHost {
     }
 
     pub fn field_policies() -> Value {
-        json!({
+        let mut policies = json!({
             "terminal": {"identity":"observe_only","presentation":"observe_only","greeting":"last_writer","session_title_suffix":"last_writer","welcome":"last_writer"},
             "model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
             "response_stream": {"kind":"observe_only","raw_sha256":"observe_only","raw_usage":"observe_only","opaque_reasoning":"observe_only","protected":"observe_only","text":"alterable","original":"observe_only","effective":"observe_only","provenance":"observe_only","fallback":"observe_only"},
@@ -4348,17 +4586,39 @@ impl ModHost {
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
             "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
-            "intercept.host_operation": {"operation":"observe_only","arguments":"replaceable"},
             "intercept.input": {"thread_id":"observe_only","text":"replaceable","attachments":"observe_only"},
             "intercept.model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable"},
             "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
-        })
+        });
+        for (surface, fields) in [
+            (
+                "intercept.host_operation",
+                json!({"operation":"observe_only","namespace":"observe_only","arguments":"replaceable"}),
+            ),
+            ("intercept.command_list", json!({"commands":"replaceable"})),
+            (
+                "intercept.command",
+                json!({"command":"observe_only","args":"replaceable","owner":"observe_only","immediate":"observe_only","active_turn":"observe_only"}),
+            ),
+            ("intercept.config_list", json!({"rows":"replaceable"})),
+            (
+                "intercept.config_set",
+                json!({"key":"observe_only","value":"replaceable","original":"observe_only","source":"observe_only","scope":"observe_only"}),
+            ),
+            (
+                "intercept.admission",
+                json!({"package":"observe_only","reason":"observe_only"}),
+            ),
+        ] {
+            policies[surface] = fields;
+        }
+        policies
     }
 
     pub fn status(&self) -> Value {
-        json!({"api": MOD_API_VERSION, "host": {"codex":CODEX_HOST_RELEASE,"omd":OMD_HOST_RELEASE,
+        let mut status = json!({"api": MOD_API_VERSION, "host": {"codex":CODEX_HOST_RELEASE,"omd":OMD_HOST_RELEASE,
             "package_schema":MOD_PACKAGE_SCHEMA_VERSION,"state_storage_schema":MOD_STATE_STORAGE_SCHEMA_VERSION,
             "installed_contract_types":INSTALLED_CONTRACT_TYPES_VERSION,"features":MOD_HOST_FEATURES,
             "supported_apis":SUPPORTED_MOD_APIS.iter().map(|(version,stability,support_until)|
@@ -4385,9 +4645,13 @@ impl ModHost {
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
                 "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
+                    "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
+                    "policy": m.package.policy, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
                     "exposure": authority_exposure(&m.package.capabilities)});
-                status }).collect::<Vec<_>>()})
+                status }).collect::<Vec<_>>()});
+        status["access"] = json!(self.access);
+        status
     }
 }
 

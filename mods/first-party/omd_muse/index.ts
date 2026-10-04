@@ -107,7 +107,7 @@ export default function activate(api: ModAPI): void {
     const config = route();
     if (!config) return { display: 'Muse route is not configured for this store; run `omd-package muse --setup`.' };
     if (action === 'fork') {
-      const forked = api.host.tryCall('builtins.invoke', { command: 'fork' });
+      const forked = api.host.tryCall('commands.invoke', { command: 'fork' });
       return { display: forked.ok ? 'Forked this chat; its next Muse turn continues on a fork of the Muse session.' : `Fork failed: ${forked.error}` };
     }
     if (action === 'recover') {

@@ -37,6 +37,7 @@ fn caller<'a>(capabilities: &'a [String], thread: Option<&'a str>) -> Caller<'a>
         capabilities,
         exec_environment: &[],
         os_access: None,
+        fs_access: None,
         origin: Origin::Tool,
         thread,
     }

@@ -7,7 +7,7 @@ const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import
 const root = new URL('../mods/', import.meta.url);
 const surface = {
   events: { start: 'lifecycle', context: 'context', compaction: 'compaction', compaction_end: 'lifecycle', terminal: 'terminal' },
-  replacements: ['compaction'], middleware: [], state: 'store', contracts: 'contracts',
+  replacements: ['compaction'], middleware: [], state: 'store', contracts: 'contracts', intercept: { render: 'terminal' },
 };
 
 function packageFile(name, file) {
@@ -63,16 +63,23 @@ test('session anchor requires the current store capability', () => {
   assert.match(JSON.parse(result.stdout).error, /capability_denied: store/);
 });
 
-test('optional focus flow toggles only completed tool presentation and retains state', () => {
+test('optional focus flow compacts only successful agent commands and retains its toggle', () => {
   const name = 'optional/omd_focus_flow';
   const initial = run(name, 'terminal', { event: 'idle', ledger: null });
-  assert.deepEqual(initial.value, { completed_tools: 'compact', keybindings: { F9: { command: 'omd_focus_flow:toggle' } } });
+  assert.deepEqual(initial.value, { keybindings: { F9: { command: 'omd_focus_flow:toggle' } } });
+  const render = (state, props) => {
+    const input = { component: 'command_output', id: 'call-1', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'final', owner: null,
+      props: { kind: 'exec', call_id: 'call-1', command: 'npm test', exit_code: 0, duration_ms: 5, output_lines: 40, output_tail: 'ok', user_shell: false, ...props } };
+    return run(name, 'intercept', { surface: 'render', input, original: input, origin: { caller: 'engine' } }, state, {}, null, '0');
+  };
+  assert.deepEqual(render(null, {}).value.result.tree[0].spans.map(span => span.text), ['• Ran npm test', ' · 40 output lines']);
+  assert.equal(render(null, { exit_code: 1 }).host_call.operation, 'continuation.next');
+  assert.equal(render(null, { user_shell: true }).host_call.operation, 'continuation.next');
   const toggled = run(name, 'command', null, initial.state, {}, null, 'toggle');
   assert.match(toggled.value.display, /expanded/);
   assert.equal(toggled.state, false);
-  const resumed = run(name, 'terminal', { event: 'idle', ledger: null }, toggled.state);
-  assert.equal(resumed.value.completed_tools, 'normal');
-  const restored = run(name, 'command', null, resumed.state, {}, null, 'toggle');
+  assert.equal(render(false, {}).host_call.operation, 'continuation.next');
+  const restored = run(name, 'command', null, toggled.state, {}, null, 'toggle');
   assert.match(restored.value.display, /compact/);
   assert.equal(restored.state, true);
 });

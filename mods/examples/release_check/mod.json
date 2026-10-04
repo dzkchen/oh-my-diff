@@ -22,7 +22,8 @@
   ],
   "compatibility": {
     "required_features": [
-      "workspace_snapshots_v1"
+      "workspace_snapshots_v1",
+      "render_hooks_v1"
     ]
   }
 }

@@ -407,8 +407,8 @@ export default function activate(api: ModAPI) {
         entry.warnings = [];
         return done();
       case 'worktree': {
-        const invoked = api.host.tryCall('builtins.invoke', { command: 'worktree' });
-        return done(invoked.ok && invoked.value.invoked ? null : 'Start a worktree with /worktree; parallel write tasks are safest in their own worktree');
+        const invoked = api.host.tryCall('commands.invoke', { command: 'worktree' });
+        return done(invoked.ok && !('status' in invoked.value) ? null : 'Start a worktree with /worktree; parallel write tasks are safest in their own worktree');
       }
     }
     return { display: USAGE };

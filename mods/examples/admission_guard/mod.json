@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "admission_guard",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "description": "Refuses unsandboxed network packages, keeps exec from network-capable ones and requires https.",
+  "capabilities": [
+    "policy",
+    "middleware"
+  ],
+  "policy": {
+    "namespaces": ["exec", "process", "sidecars"]
+  },
+  "compatibility": {
+    "required_features": [
+      "admission_api_policy_v1"
+    ]
+  }
+}

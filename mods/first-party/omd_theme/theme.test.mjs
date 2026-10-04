@@ -35,8 +35,6 @@ test('default greeting is hidden; palettes retain semantic colors and width-pres
     assert.match(value.theme.failure, /^#[\da-f]{6}$/);
     assert.equal(value.theme.syntax, palette === 'paper' ? 'catppuccin-latte' : 'catppuccin-mocha');
     assert.notEqual(value.surface_styles.composer.top, value.surface_styles.composer.bottom);
-    assert.equal(value.message_template, undefined);
-    assert.equal(value.completed_tools, undefined);
   }
 });
 

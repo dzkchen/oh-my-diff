@@ -7,6 +7,6 @@
   "license": "Apache-2.0",
   "capabilities": ["commands", "terminal", "builtins"],
   "compatibility": {
-    "required_features": ["terminal_commands_v1", "builtins_mod_commands_v1"]
+    "required_features": ["command_config_middleware_v1"]
   }
 }

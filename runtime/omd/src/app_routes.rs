@@ -314,6 +314,10 @@ fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Resul
     })
 }
 
+pub fn writable_config_keys() -> impl Iterator<Item = &'static str> {
+    TABLE.writable_config.iter().map(String::as_str)
+}
+
 pub fn check_config_key(key: &str) -> io::Result<()> {
     let parts: Vec<&str> = key.split('.').collect();
     if parts.iter().any(|part| part.is_empty()) {

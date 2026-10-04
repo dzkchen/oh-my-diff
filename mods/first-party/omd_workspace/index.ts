@@ -113,7 +113,7 @@ export default function activate(api: ModAPI) {
     };
   };
 
-  api.replace('terminal', ({ event, ledger }) => view(event, ledger));
+  api.on('terminal', ({ event, ledger }) => view(event, ledger));
 
   const write = (values: { [key: string]: Json }, done: string) => {
     const written = api.host.tryCall('settings.write', { values });

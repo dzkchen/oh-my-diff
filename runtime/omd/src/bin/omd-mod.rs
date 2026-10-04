@@ -331,8 +331,8 @@ fn run(args: &[String]) -> io::Result<Value> {
                 || true,
             );
             let mut status = host.status();
-            status["terminal"] = serde_json::json!({"owner": terminal.owner,
-                "contributors": terminal.contributors, "diagnostics": terminal.diagnostics});
+            status["terminal"] = serde_json::json!({"contributors": terminal.contributors,
+                "conflicts": terminal.conflicts, "diagnostics": terminal.diagnostics});
             Ok(status)
         }
         [command, root] if command == "selection-status" => {

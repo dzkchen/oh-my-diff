@@ -34,6 +34,8 @@ pub struct ModChain {
     pub input: Value,
     pub answered_by: Option<String>,
     pub trace: Vec<Value>,
+    #[serde(skip)]
+    pub reads: BTreeMap<String, BTreeSet<String>>,
 }
 
 #[derive(Clone)]
@@ -70,6 +72,15 @@ fn glob(pattern: &str, text: &str) -> bool {
         }
         found.is_some()
     })
+}
+
+/// Like `selects`, but an expired grant no longer entitles authority surfaces.
+fn granted(loaded: &Loaded, pattern: &str, surface: &str) -> bool {
+    selects(pattern, surface, &loaded.package.capabilities)
+        && (loaded.selection.authority_current()
+            || !MOD_INTERCEPT_SURFACES.iter().any(|(name, capability)| {
+                *name == surface && AUTHORITY_CAPABILITIES.contains(capability)
+            }))
 }
 
 pub(super) fn selects(pattern: &str, surface: &str, capabilities: &[String]) -> bool {
@@ -177,16 +188,21 @@ pub(super) fn order(
     Ok(sorted)
 }
 
-fn validate_input(surface: &str, original: &Value, input: &Value) -> Result<()> {
+fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
     let mutable: &[&str] = match surface {
         "tool" => &["tool", "arguments"],
         "host_operation" => &["arguments"],
         "input" => &["text"],
         "model_request" => &["route"],
         "tool_specs" => &["tools"],
+        "command_list" => &["commands"],
+        "command" => &["args"],
+        "config_list" => &["rows"],
+        "config_set" => &["value"],
+        "render" => &["props"],
         _ => &[],
     };
-    let (Some(original), Some(object)) = (original.as_object(), input.as_object()) else {
+    let (Some(original), Some(object)) = (before.as_object(), input.as_object()) else {
         return Err(failure(format!("invalid_continuation_input: {surface}")));
     };
     let unchanged = original
@@ -209,6 +225,13 @@ fn validate_input(surface: &str, original: &Value, input: &Value) -> Result<()> 
                 .any(|route| route["name"] == input["route"] && route["name"].is_string())
         }),
         "tool_specs" => tool_specs(&input["tools"], &original["tools"]),
+        "command_list" => rows(&input["commands"], &original["commands"], "command"),
+        "config_list" => rows(&input["rows"], &original["rows"], "key"),
+        "command" => input["args"]
+            .as_str()
+            .is_some_and(|args| args.len() <= 8192),
+        "config_set" => serde_json::to_vec(&input["value"])?.len() <= 65_536,
+        "render" => render::valid_input(before, input),
         _ => true,
     };
     if unchanged && typed {
@@ -248,6 +271,55 @@ fn tool_specs(tools: &Value, given: &Value) -> bool {
         })
 }
 
+/// List rows may be hidden, re-described or hinted, never added, renamed or changed when protected, managed or secret.
+fn rows(rows: &Value, given: &Value, key: &str) -> bool {
+    let given = given
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| Some((row[key].as_str()?, row)))
+        .collect::<BTreeMap<_, _>>();
+    let Some(rows) = rows.as_array() else {
+        return false;
+    };
+    let names = rows
+        .iter()
+        .filter_map(|row| row[key].as_str())
+        .collect::<BTreeSet<_>>();
+    let text = |value: &Value, limit: usize| {
+        value
+            .as_str()
+            .is_some_and(|text| text.chars().count() <= limit)
+    };
+    names.len() == rows.len()
+        && given.iter().all(|(name, row)| {
+            names.contains(name)
+                || !(row["protected"] == true || row["managed"] == true || row["secret"] == true)
+        })
+        && rows.iter().all(|row| {
+            let Some(original) = row[key].as_str().and_then(|name| given.get(name)) else {
+                return false;
+            };
+            let fixed = original["protected"] == true
+                || original["managed"] == true
+                || original["secret"] == true;
+            row.as_object()
+                .zip(original.as_object())
+                .is_some_and(|(row, original)| {
+                    row.len() == original.len()
+                        && row.iter().all(|(field, value)| match field.as_str() {
+                            _ if fixed || original.get(field.as_str()) == Some(value) => {
+                                original.get(field.as_str()) == Some(value)
+                            }
+                            "description" | "label" => text(value, 160),
+                            "args_hint" => value.is_null() || text(value, 64),
+                            "hidden" => value.is_boolean(),
+                            _ => false,
+                        })
+                })
+        })
+}
+
 fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Result<()> {
     if last == Some(result) {
         return Ok(());
@@ -280,6 +352,52 @@ fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Resul
             object.is_some_and(|object| object.len() == 1)
                 && last.is_some_and(|last| tool_specs(&result["tools"], &last["tools"]))
         }
+        "command_list" => {
+            object.is_some_and(|object| object.len() == 1)
+                && last.is_some_and(|last| rows(&result["commands"], &last["commands"], "command"))
+        }
+        "config_list" => {
+            object.is_some_and(|object| object.len() == 1)
+                && last.is_some_and(|last| rows(&result["rows"], &last["rows"], "key"))
+        }
+        "command" => {
+            deny || object.is_some_and(|object| object.len() == 1)
+                && result.get("result").is_some()
+                && serde_json::to_vec(result)?.len() <= RESULT_BYTES
+        }
+        "admission" => {
+            let withheld = |value: &Value| {
+                value["withhold"].as_array().map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<BTreeSet<_>>()
+                })
+            };
+            let shaped = deny
+                || object.is_some_and(|object| object.len() == 1)
+                    && result["withhold"].as_array().is_some_and(|items| {
+                        items.len() <= 16
+                            && items.iter().all(|item| {
+                                item.as_str()
+                                    .is_some_and(|item| !item.is_empty() && item.len() <= 64)
+                            })
+                    });
+            // An outer handler may only tighten what the chain beneath it decided.
+            shaped
+                && match last {
+                    Some(last) if last.get("deny").is_some() => deny,
+                    Some(last) => match withheld(last) {
+                        Some(inner) => {
+                            deny || withheld(result).is_some_and(|outer| outer.is_superset(&inner))
+                        }
+                        None => true,
+                    },
+                    None => true,
+                }
+        }
+        "render" => render::valid_result(result),
         _ => deny,
     };
     if valid {
@@ -313,6 +431,7 @@ struct Chain {
     executed: bool,
     answered_by: Option<String>,
     trace: Vec<Value>,
+    reads: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Chain {
@@ -476,6 +595,16 @@ impl Chain {
             payload.clone(),
             &mut attempts,
         );
+        let reads = self.reads.entry(link.id.clone()).or_default();
+        if let Ok(reply) = &reply {
+            reads.extend(
+                reply["reads"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|key| key.as_str().map(str::to_owned)),
+            );
+        }
         if reply
             .as_ref()
             .is_ok_and(|reply| reply.get("unmatched") == Some(&Value::Bool(true)))
@@ -601,7 +730,11 @@ impl Chain {
                 );
                 Ok(result)
             }
-            Some(Err(downstream)) => {
+            // A render hook that passed `next` invalid props falls back to what it received.
+            Some(Err(downstream))
+                if self.surface != "render"
+                    || !downstream.starts_with("invalid_continuation_input") =>
+            {
                 self.entry(
                     k,
                     Some(&link),
@@ -614,7 +747,7 @@ impl Chain {
                 );
                 Err(failure(downstream))
             }
-            None => {
+            _ => {
                 self.entry(
                     k,
                     Some(&link),
@@ -644,13 +777,20 @@ fn effective_call(
         operation: input["operation"].as_str().unwrap_or_default().to_owned(),
         arguments: input["arguments"].clone(),
     };
-    let granted = access.with(|runtime| {
+    let (granted, withheld) = access.with(|runtime| {
         Ok(runtime
             .loaded
             .get(caller)
-            .map(|loaded| loaded.package.capabilities.clone())
+            .map(|loaded| (loaded.package.capabilities.clone(), loaded.withheld.clone()))
             .unwrap_or_default())
     })?;
+    let namespace = crate::mods::host_namespace(&call.operation, &call.arguments);
+    if withheld
+        .iter()
+        .any(|pattern| crate::mods::namespace_matches(pattern, &namespace))
+    {
+        return Err(failure(format!("capability_withheld: {namespace}")));
+    }
     if let Some(missing) = call
         .capabilities()?
         .into_iter()
@@ -660,6 +800,57 @@ fn effective_call(
     }
     dispatch(access, host, caller, generation, call, active, scope)
         .map(|value| json!({"value": value}))
+}
+
+/// A redacted receipt for structured access: origin and path without query, root, server or names, never bodies or values.
+pub fn access_receipt(
+    caller: &str,
+    call: &ModHostCall,
+    result: std::result::Result<&Value, String>,
+) -> Option<Value> {
+    let arguments = &call.arguments;
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default();
+    let mut receipt = json!({"mod": caller, "operation": call.operation, "at": at});
+    match call.operation.as_str() {
+        "http.request" | "http.open" => {
+            let url = arguments["url"].as_str().unwrap_or_default();
+            let origin = crate::url_origin(url);
+            let path = url
+                .split_once("://")
+                .and_then(|(_, rest)| rest.find(['/', '?', '#']).map(|start| &rest[start..]))
+                .filter(|_| origin.is_some())
+                .unwrap_or_default()
+                .split(['?', '#'])
+                .next()
+                .unwrap_or_default();
+            receipt["origin"] = json!(origin);
+            receipt["path"] = json!(path.chars().take(256).collect::<String>());
+            receipt["method"] = arguments.get("method").cloned().unwrap_or(json!("GET"));
+            receipt["credential"] = arguments.get("credential").cloned().unwrap_or(Value::Null);
+        }
+        "mcp.connect" | "mcp.disconnect" => receipt["server"] = arguments["server"].clone(),
+        "environment.read" => receipt["names"] = arguments["names"].clone(),
+        "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
+            if arguments.get("root").is_some() =>
+        {
+            receipt["root"] = arguments["root"].clone();
+        }
+        _ => return None,
+    }
+    match result {
+        Ok(value) => {
+            for field in ["status", "redirects"] {
+                if let Some(value) = value.get(field) {
+                    receipt[field] = value.clone();
+                }
+            }
+        }
+        Err(error) => receipt["error"] = json!(error.chars().take(200).collect::<String>()),
+    }
+    Some(receipt)
 }
 
 /// Runs a host call for `caller`, routing service calls to their provider.
@@ -673,7 +864,19 @@ pub(super) fn dispatch(
     scope: &InvocationScope,
 ) -> Result<Value> {
     if call.operation != "mods.service" {
-        return host(caller, call);
+        let request = call.clone();
+        let result = host(caller, call);
+        if let Some(receipt) = access_receipt(
+            caller,
+            &request,
+            result.as_ref().map_err(ToString::to_string),
+        ) {
+            let _ = access.with(|runtime| {
+                runtime.record_access(receipt);
+                Ok(())
+            });
+        }
+        return result;
     }
     let mut guarded = |caller: &str, call: ModHostCall| {
         if matches!(call.operation.as_str(), "tools.define" | "tools.undefine") {
@@ -735,6 +938,7 @@ pub(super) fn intercept(
             input,
             answered_by: None,
             trace: Vec::new(),
+            reads: BTreeMap::new(),
         });
     }
     let mut chain = Chain {
@@ -746,6 +950,7 @@ pub(super) fn intercept(
         executed: false,
         answered_by: None,
         trace: Vec::new(),
+        reads: BTreeMap::new(),
     };
     let result = chain.link(access, host, core, active, scope, 0, input);
     let record = ModChain {
@@ -753,21 +958,183 @@ pub(super) fn intercept(
         input: chain.effective,
         answered_by: chain.answered_by.filter(|_| !chain.executed),
         trace: chain.trace,
+        reads: chain.reads,
     };
     let logged = json!({"result": bounded(&record.result), "input": bounded(&record.input),
         "answered_by": record.answered_by, "trace": record.trace});
     let entry = json!({"surface": surface, "origin": chain.origin, "error": result.as_ref().err().map(ToString::to_string), "chain": logged});
-    let _ = access.with(|runtime| {
-        runtime.chains.push(entry);
-        if runtime.chains.len() > CHAIN_LOG {
-            runtime.chains.remove(0);
-        }
-        Ok(())
+    // Renders repeat per frame, so only failed ones join the chain log.
+    let failed = result.is_err() || record.trace.iter().any(|entry| entry["reason"].is_string());
+    let _ = (surface != "render" || failed).then(|| {
+        access.with(|runtime| {
+            runtime.chains.push(entry);
+            if runtime.chains.len() > CHAIN_LOG {
+                runtime.chains.remove(0);
+            }
+            Ok(())
+        })
     });
     result.map(|_| record)
 }
 
 impl ModHost {
+    /// Refuses or restricts packages through `admission` interceptors; policy mods and their dependencies are not judged.
+    pub(super) fn admit(&mut self) {
+        let Some(required) = self.intercepts("admission") else {
+            return;
+        };
+        let mut exempt = BTreeSet::new();
+        let mut pending = self
+            .loaded
+            .iter()
+            .filter(|(_, loaded)| {
+                loaded
+                    .registrations
+                    .interceptors
+                    .iter()
+                    .any(|interceptor| granted(loaded, &interceptor.pattern, "admission"))
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        while let Some(id) = pending.pop() {
+            if exempt.insert(id.clone())
+                && let Some(loaded) = self.loaded.get(&id)
+            {
+                pending.extend(
+                    loaded
+                        .package
+                        .dependencies
+                        .iter()
+                        .map(|dependency| dependency.id.clone()),
+                );
+                pending.extend(loaded.package.requires.iter().cloned());
+            }
+        }
+        let scope = exempt
+            .iter()
+            .filter_map(|id| self.loaded.get(id)?.package.policy.as_ref())
+            .flat_map(|policy| policy.namespaces.clone())
+            .collect::<Vec<_>>();
+        let policy = exempt
+            .iter()
+            .filter_map(|id| Some(format!("{id}={}", self.loaded.get(id)?.selection.sha256)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let candidates = self
+            .order
+            .iter()
+            .filter(|id| !exempt.contains(*id))
+            .filter(|id| {
+                self.loaded
+                    .get(*id)
+                    .is_some_and(|loaded| loaded.error.is_none())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut refused = BTreeMap::new();
+        for id in candidates {
+            let Some(loaded) = self.loaded.get(&id) else {
+                continue;
+            };
+            let key = format!("{}:{policy}", loaded.selection.sha256);
+            let decision = match self.admissions.get(&key) {
+                Some(decision) => decision.clone(),
+                None => {
+                    let package = &loaded.package;
+                    let input = json!({"package": {"id": id, "version": package.version,
+                        "sha256": loaded.selection.sha256, "source": loaded.selection.path,
+                        "scope": loaded.selection.scope, "capabilities": package.capabilities,
+                        "dependencies": package.dependencies, "requires": package.requires,
+                        "services": package.services, "registrations": loaded.registrations,
+                        "source_use": loaded.source_use}, "reason": "load"});
+                    let chain = intercept(
+                        &mut Access::Held(self),
+                        &mut |_, _| {
+                            Err(failure(
+                                "host_operation_unavailable: admission runs without host operations",
+                            ))
+                        },
+                        &mut Core::Call(&mut |_| Ok(json!({"admit": true}))),
+                        "admission",
+                        required,
+                        input,
+                        json!({"caller": "engine"}),
+                        &|| true,
+                        &InvocationScope::default(),
+                    );
+                    match chain {
+                        Ok(chain) => {
+                            let decision = admission(&chain.result, &scope);
+                            if self.admissions.len() >= 256 {
+                                self.admissions.clear();
+                            }
+                            self.admissions.insert(key, decision.clone());
+                            decision
+                        }
+                        Err(error) => Err(format!("admission_policy_unavailable: {error}")),
+                    }
+                }
+            };
+            match decision {
+                Ok(withheld) => {
+                    if let Some(loaded) = self.loaded.get_mut(&id) {
+                        loaded.withheld = withheld;
+                    }
+                }
+                Err(reason) => {
+                    refused.insert(id, reason);
+                }
+            }
+        }
+        loop {
+            let services = refused
+                .keys()
+                .filter_map(|id| self.loaded.get(id))
+                .flat_map(|loaded| &loaded.registrations.services)
+                .map(|contract| &contract.name)
+                .collect::<BTreeSet<_>>();
+            let dependents = self
+                .loaded
+                .iter()
+                .filter(|(id, _)| !refused.contains_key(*id) && !exempt.contains(*id))
+                .filter_map(|(id, loaded)| {
+                    let refusal = loaded
+                        .package
+                        .dependencies
+                        .iter()
+                        .map(|dependency| &dependency.id)
+                        .chain(&loaded.package.requires)
+                        .find(|dependency| refused.contains_key(*dependency))
+                        .or_else(|| {
+                            loaded
+                                .package
+                                .services
+                                .imports
+                                .iter()
+                                .find(|import| !import.optional && services.contains(&import.name))
+                                .map(|import| &import.name)
+                        })?;
+                    Some((id.clone(), format!("dependency_not_admitted: {refusal}")))
+                })
+                .collect::<Vec<_>>();
+            if dependents.is_empty() {
+                break;
+            }
+            refused.extend(dependents);
+        }
+        for (id, reason) in refused {
+            if let Some(loaded) = self.loaded.remove(&id) {
+                self.order.retain(|item| *item != id);
+                self.rejected.push(ModRejection {
+                    path: loaded.selection.path,
+                    id: Some(id),
+                    scope: loaded.selection.scope,
+                    reason,
+                });
+            }
+        }
+    }
+
     /// `Some(true)` when a required interceptor, including a faulted mod's, selects `surface`.
     pub fn intercepts(&self, surface: &str) -> Option<bool> {
         self.loaded
@@ -779,11 +1146,17 @@ impl ModHost {
                     .iter()
                     .filter(|interceptor| {
                         (loaded.error.is_none() || interceptor.required)
-                            && selects(&interceptor.pattern, surface, &loaded.package.capabilities)
+                            && granted(loaded, &interceptor.pattern, surface)
                     })
                     .map(|interceptor| interceptor.required)
             })
             .max()
+    }
+
+    pub(super) fn may_intercept(&self, surface: &str, input: &Value) -> bool {
+        self.links(surface)
+            .iter()
+            .any(|link| link.matcher.is_null() || may_match(&link.matcher, input))
     }
 
     /// Ordinary links wrap required ones; a faulted mod's required links stay and fail closed.
@@ -803,7 +1176,7 @@ impl ModHost {
                 };
                 for (index, interceptor) in loaded.registrations.interceptors.iter().enumerate() {
                     if interceptor.required == required
-                        && selects(&interceptor.pattern, surface, &loaded.package.capabilities)
+                        && granted(loaded, &interceptor.pattern, surface)
                     {
                         links.push(Link {
                             id: id.clone(),
@@ -819,6 +1192,106 @@ impl ModHost {
             }
         }
         links
+    }
+}
+
+/// An admission result: the withheld namespaces, which must fall inside a policy mod's `policy.namespaces`, or the refusal.
+fn admission(result: &Value, scope: &[String]) -> std::result::Result<Vec<String>, String> {
+    if let Some(reason) = result.get("deny") {
+        return Err(format!(
+            "admission_denied: {}",
+            reason.as_str().unwrap_or_default()
+        ));
+    }
+    let withheld = result["withhold"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    match withheld.iter().find(|namespace| {
+        !scope
+            .iter()
+            .any(|pattern| crate::mods::namespace_matches(pattern, namespace))
+    }) {
+        Some(namespace) => Err(format!(
+            "admission_policy_invalid: {namespace} is outside policy.namespaces"
+        )),
+        None => Ok(withheld),
+    }
+}
+
+/// Composes command or config rows without host operations; a row a handler drops becomes hidden.
+pub fn compose_rows(
+    runtime: &Mutex<ModHost>,
+    surface: &str,
+    field: &str,
+    key: &str,
+    rows: Vec<Value>,
+) -> Result<Vec<Value>> {
+    let required = runtime
+        .lock()
+        .map_err(|_| failure("mod_runtime_poisoned"))?
+        .intercepts(surface);
+    let Some(required) = required else {
+        return Ok(rows);
+    };
+    let chain = intercept_shared(
+        runtime,
+        surface,
+        required,
+        json!({field: rows}),
+        json!({"caller": "user"}),
+        || true,
+        |_, _| {
+            Err(failure(format!(
+                "host_operation_unavailable: {surface} runs without host operations"
+            )))
+        },
+        |effective| Ok(json!({field: effective[field]})),
+    )?;
+    let composed = chain.result[field].as_array().cloned().unwrap_or_default();
+    Ok(rows
+        .into_iter()
+        .map(
+            |mut row| match composed.iter().find(|item| item[key] == row[key]) {
+                Some(item) => item.clone(),
+                None => {
+                    row["hidden"] = json!(true);
+                    row
+                }
+            },
+        )
+        .collect())
+}
+
+/// Runs `core` behind the surface's interceptors, or directly when none is registered.
+pub fn continue_operation(
+    runtime: &Mutex<ModHost>,
+    surface: &str,
+    input: Value,
+    origin: Value,
+    active: impl Fn() -> bool,
+    host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    mut core: impl FnMut(Value) -> Result<Value>,
+) -> Result<Value> {
+    let required = runtime
+        .lock()
+        .map_err(|_| failure("mod_runtime_poisoned"))?
+        .intercepts(surface);
+    let result = match required {
+        Some(required) => {
+            intercept_shared(
+                runtime, surface, required, input, origin, active, host, core,
+            )?
+            .result
+        }
+        None => core(input)?,
+    };
+    match result.get("deny").and_then(Value::as_str) {
+        Some(reason) => Err(failure(format!("{surface}_denied: {reason}"))),
+        None => Ok(result),
     }
 }
 

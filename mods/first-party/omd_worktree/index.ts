@@ -136,7 +136,7 @@ export default function activate(api: ModAPI) {
     const listed = api.host.tryCall('app.request', { method: 'thread/list', params: { cwd: tree.path, limit: 1, sortKey: 'updated_at' } });
     const thread = listed.ok ? (listed.value as { data?: { id?: string }[] }).data?.[0]?.id : undefined;
     if (thread) {
-      api.host.tryCall('builtins.invoke', { command: 'resume', args: thread });
+      api.host.tryCall('commands.invoke', { command: 'resume', args: thread });
       return null;
     }
     const failed = launch(tree.path, tasks().value[tree.path]?.task ?? tree.branch ?? tree.path);

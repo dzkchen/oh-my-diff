@@ -854,6 +854,7 @@ fn delegated_approvals_stay_inside_the_current_grant() {
             roots: vec!["/work".into()],
             hosts: vec!["*.crates.io".into()],
         }),
+        ..Default::default()
     };
     let approver = grants(&["approvals", "middleware", "approve"]);
     let check =
@@ -1547,5 +1548,276 @@ fn watched_changes_skip_ignored_paths_unless_included() {
     assert_eq!(
         super::activity::visible_paths(&root, paths, true, |_| true),
         vec!["src/a.rs", "build/out.js"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_connect_builds_only_declared_servers_for_the_engine() {
+    let Some(fixture) = fixture(&[Package {
+        id: "connector",
+        capabilities: &["mcp"],
+        manifest: json!({"mcp_servers": {"docs": {"command": "docs-server", "args": ["--stdio"]}}}),
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("connector"), runtime.generation())
+    };
+    let caller = Caller {
+        id: "connector",
+        source: "",
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let flag = AtomicBool::new(false);
+    let connect = |server: &str| ModHostCall {
+        operation: "mcp.connect".into(),
+        arguments: json!({"server": server}),
+    };
+    let error = super::access::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        &caller,
+        connect("other"),
+        &flag,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "mcp_server_undeclared: other");
+    let error = super::access::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        &caller,
+        connect("docs"),
+        &flag,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "native_thread_manager_stopped");
+}
+
+fn serve(server: tiny_http::Server, denied: u16) {
+    for request in server.incoming_requests() {
+        let header = |name: &str, value: &str| tiny_http::Header::from_bytes(name, value).unwrap();
+        let path = request.url().to_owned();
+        let auth = request
+            .headers()
+            .iter()
+            .any(|h| h.field.equiv("authorization"));
+        match path.as_str() {
+            "/out" => request
+                .respond(
+                    tiny_http::Response::empty(302)
+                        .with_header(header("location", &format!("http://127.0.0.1:{denied}/"))),
+                )
+                .unwrap(),
+            "/in?token=secret" => request
+                .respond(tiny_http::Response::empty(303).with_header(header("location", "/final")))
+                .unwrap(),
+            "/final" => request
+                .respond(
+                    tiny_http::Response::from_string(format!("ok auth={auth}"))
+                        .with_header(header("set-cookie", "session=s")),
+                )
+                .unwrap(),
+            "/utf8" => request
+                .respond(tiny_http::Response::from_string("a€b"))
+                .unwrap(),
+            "/slow" => {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    let _ = request.respond(tiny_http::Response::empty(204));
+                });
+            }
+            _ => request
+                .respond(tiny_http::Response::from_string("stream-body"))
+                .unwrap(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn structured_http_reassesses_redirects_streams_cancels_and_records_receipts() {
+    let granted = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let denied = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let port = granted.server_addr().to_ip().unwrap().port();
+    let denied_port = denied.server_addr().to_ip().unwrap().port();
+    std::thread::spawn(move || serve(granted, denied_port));
+    std::thread::spawn(move || serve(denied, 0));
+    let origin = format!("http://127.0.0.1:{port}");
+    let Some(fixture) = fixture(&[Package {
+        id: "fetcher",
+        capabilities: &["http"],
+        manifest: json!({"http_access": {"origins": [origin], "credentials": ["p1"]}}),
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let profiles =
+        codex_omd::credentials::CredentialProfiles::local(&fixture.core.host.root).unwrap();
+    let up = profiles
+        .create("up", "provider", Some("up"), Some("https://up.example"))
+        .unwrap();
+    let flag = Arc::new(AtomicBool::new(false));
+    let call = |operation: &str, arguments: Value| ModHostCall {
+        operation: operation.into(),
+        arguments,
+    };
+    let run = |request: ModHostCall| {
+        let flag = flag.clone();
+        let (core, lead) = (fixture.core.clone(), fixture.lead.clone());
+        async move {
+            let (grants, generation) = {
+                let runtime = core.runtime.lock().unwrap();
+                (runtime.grants("fetcher"), runtime.generation())
+            };
+            let caller = Caller {
+                id: "fetcher",
+                source: "",
+                grants,
+                generation,
+                origin: Origin::Event,
+                record_changes: false,
+            };
+            super::operations::dispatch(&core, &lead, caller, None, request, &flag).await
+        }
+    };
+    let followed = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/in?token=secret"), "method": "POST", "body": "x", "redirects": 2,
+            "headers": {"authorization": "Bearer mine"}}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(followed["status"], 200);
+    assert_eq!(followed["body"], "ok auth=true");
+    assert_eq!(followed["headers"]["set-cookie"], "[redacted]");
+    assert_eq!(followed["redirects"][0]["status"], 303);
+    let truncated = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/utf8"), "max_bytes": 2}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        (&truncated["body"], &truncated["truncated"]),
+        (&json!("a"), &json!(true))
+    );
+    let error = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/out"), "redirects": 1}),
+    ))
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error,
+        format!("http_origin_denied: http://127.0.0.1:{denied_port}")
+    );
+    let unfollowed = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/out")}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(unfollowed["status"], 302);
+    let error = run(call(
+        "http.request",
+        json!({"url": format!("http://127.0.0.1:{denied_port}/")}),
+    ))
+    .await
+    .unwrap_err();
+    assert!(error.starts_with("http_origin_denied"), "{error}");
+    let error = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/final"), "credential": up.id}),
+    ))
+    .await
+    .unwrap_err();
+    assert_eq!(error, format!("credential_origin_mismatch: {}", up.id));
+    let error = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/final"), "credential": "other"}),
+    ))
+    .await
+    .unwrap_err();
+    assert_eq!(error, "credential_not_granted: other");
+    let error = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/slow"), "timeout_ms": 100}),
+    ))
+    .await
+    .unwrap_err();
+    assert_eq!(error, "http_timeout");
+    let cancel = flag.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        cancel.store(true, Ordering::Release);
+    });
+    let error = run(call(
+        "http.request",
+        json!({"url": format!("{origin}/slow")}),
+    ))
+    .await
+    .unwrap_err();
+    assert_eq!(error, "host_operation_cancelled");
+    flag.store(false, Ordering::Release);
+
+    let opened = run(call(
+        "http.open",
+        json!({"url": format!("{origin}/stream")}),
+    ))
+    .await
+    .unwrap();
+    let handle = opened["handle"].clone();
+    let read = run(call(
+        "http.read",
+        json!({"handle": handle, "max_bytes": 6, "wait_ms": 2000}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(read["data"], "stream");
+    let reopened = run(call(
+        "http.open",
+        json!({"url": format!("{origin}/stream")}),
+    ))
+    .await
+    .unwrap();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    super::access::release_servers(&fixture.lead, generation + 1, None).await;
+    for handle in [handle, reopened["handle"].clone()] {
+        let error = run(call("http.read", json!({"handle": handle})))
+            .await
+            .unwrap_err();
+        assert_eq!(error, "http_stream_unavailable");
+    }
+
+    let log =
+        std::fs::read_to_string(fixture.lead.session.evidence.join("mod-access.jsonl")).unwrap();
+    assert!(
+        !log.contains("token=secret") && !log.contains("Bearer"),
+        "{log}"
+    );
+    let first: Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
+    assert_eq!(first["origin"], origin);
+    assert_eq!(first["path"], "/in");
+    assert_eq!(first["status"], 200);
+    let normalized = codex_omd::access_receipt(
+        "fetcher",
+        &call(
+            "http.request",
+            json!({"url": "https://API.example.com:443/v1?key=s"}),
+        ),
+        Ok(&json!({})),
+    )
+    .unwrap();
+    assert_eq!(
+        (normalized["origin"].clone(), normalized["path"].clone()),
+        (json!("https://api.example.com"), json!("/v1"))
     );
 }

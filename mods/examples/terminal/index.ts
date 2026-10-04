@@ -50,7 +50,5 @@ export default function activate(api: ModAPI) {
       F10: { focus: 'review_input' },
       'Ctrl+Alt+r': { submit: 'Review the current changes and list remaining risks.' },
     },
-    message_template: '│ {text}',
-    tool_template: '› {text}',
   }));
 }

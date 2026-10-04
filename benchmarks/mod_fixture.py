@@ -109,9 +109,9 @@ CONFORMANCE_PACKAGES = {
 }
 
 CONFORMANCE_CONTENDER = {
-    "capabilities": ["terminal"],
+    "capabilities": ["compaction"],
     "requires": [],
-    "source": "export default api => api.replace('terminal', () => ({title:'CONFORMANCE_CONTENDER'}));\n",
+    "source": "export default api => api.replace('compaction', () => 16000);\n",
 }
 
 
@@ -157,7 +157,8 @@ def install_conformance(destination, manifest, node, profile):
     for identifier, package in sorted(CONFORMANCE_PACKAGES.items()):
         selections.append(conformance_selection(store, identifier, package))
     if profile == "conformance-conflict":
-        selections.append(conformance_selection(store, "conformance_terminal", CONFORMANCE_CONTENDER))
+        for identifier in ("conformance_rival_a", "conformance_rival_b"):
+            selections.append(conformance_selection(store, identifier, CONFORMANCE_CONTENDER))
     (store / "mods.json").write_text(json.dumps(
         {"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": selections}))
     manifest["mods"] = str(store)
@@ -466,7 +467,7 @@ def install(destination, manifest, node, profile):
         api.replace('compaction', () => {api.state.set({compaction:true}); return 16000;});
         api.tool({name:'delegate',description:'Custom delegation policy using native reviewed contribution',parameters:{type:'object',properties:{brief:{type:'string'},selected_evidence:{type:'array',items:{type:'string'}}}}},args=>api.host.call('delegation.contribute',{...args,brief:args.brief+' MOD_POLICY_SENTINEL'}));
         api.intercept('tool', {match:{tool:'omd_contribute'}}, (e,next) => next({...e,tool:'mod_fixture_delegate'}));
-        api.replace('terminal', ({event}) => ({title:'Fixture workspace',foreground:81,sidebar_width:30,panels:[{title:'Activity',lines:[event]}],keybindings:{F6:'Review current work'},message_template:'| {text}',tool_template:'> {text}'}));
+        api.on('terminal', ({event}) => ({title:'Fixture workspace',foreground:81,sidebar_width:30,panels:[{title:'Activity',lines:[event]}],keybindings:{F6:'Review current work'}}));
         api.on('agent_end', ({role,status}) => { const state = api.state.get(); if (state && Array.isArray(state.agents)) api.state.set({...state,agents:[...state.agents,role+':'+status]}); });
         """
         program = Path("/bin/sleep").resolve()
@@ -593,7 +594,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
         capabilities += ["commands", "terminal"]
         body = "api.progress('MOD_PROGRESS_SENTINEL'); return {count:1};"
         setup = """
-        api.replace('terminal', ({event}) => ({title:'PTY left',sidebar_side:'left',sidebar_width:24,
+        api.on('terminal', ({event}) => ({title:'PTY left',sidebar_side:'left',sidebar_width:24,
           panels:[{title:'Activity',lines:[event]}],header:{title:'PTY_HEADER',lines:['header line']},
           footer:{title:'PTY_FOOTER',lines:['footer line']},status:['PTY_STATUS'],
           theme:{accent:201,user_message_background:'#123456'},
@@ -767,11 +768,11 @@ def verify_conformance(destination, requests, profile, scenario):
     assert view["progress"] is None, view["progress"]
 
     if profile == "conformance-conflict":
-        for identifier in ("conformance_terminal", "omd_workspace"):
-            assert "replacement_conflict: terminal claimed by conformance_terminal, omd_workspace" in (errors.get(identifier) or ""), errors
-        assert status["order"] == ["omd_coordination", "conformance_context"], status["order"]
+        for identifier in ("conformance_rival_a", "conformance_rival_b"):
+            assert "replacement_conflict: compaction claimed by conformance_rival_a, conformance_rival_b" in (errors.get(identifier) or ""), errors
+        assert status["order"] == ["omd_coordination", "conformance_context", "omd_workspace"], status["order"]
         assert rejected[("omd_coordination", "user")].startswith("shadowed_by_project_scope"), rejected
-        assert view["view"]["title"] == "Mod recovery", view["view"]
+        assert view["view"]["title"] == "Oh My Diff workspace", view["view"]
         assert any(panel["title"] == "Mod errors" for panel in view["view"]["panels"]), view["view"]
         return
     assert status["order"] == ["omd_coordination", "conformance_context", "omd_workspace"], status["order"]

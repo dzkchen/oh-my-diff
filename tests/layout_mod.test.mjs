@@ -11,7 +11,7 @@ const source = readFileSync(new URL('../mods/first-party/omd_layout/index.ts', i
 const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_layout/mod.json', import.meta.url), 'utf8'));
 const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
+const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], intercept: { render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts' };
 
 const threads = [
   { id: 't1', name: 'Fix login', cwd: '/w/app', model: 'gpt-6', status: { type: 'active', activeFlags: [] }, updatedAt: 30, gitInfo: { branch: 'main', originUrl: 'git@host:me/app.git' } },
@@ -46,7 +46,7 @@ function fixture() {
         if (args.method === 'thread/turns/list') return { data: [{ items: [{ type: 'agentMessage', text: 'Login fixed.\nlogin works' }] }, { items: [{ type: 'userMessage', content: [{ type: 'text', text: 'fix LOGIN' }] }] }] };
         if (args.method === 'thread/settings/update') throw new Error('app_route_unconfigured: gpt-6');
         return {};
-      case 'terminal.commands': return { commands: [{ command: 'compact', description: 'summarize', owner: null }, { command: 'omd_git:status', description: 'Show changed files', owner: 'omd_git' }] };
+      case 'commands.list': return { commands: [{ command: 'compact', description: 'summarize', owner: null, hidden: false }, { command: 'omd_git:status', description: 'Show changed files', owner: 'omd_git', hidden: false }, { command: 'secret', description: 'hidden', owner: null, hidden: true }] };
       case 'workspace.list': throw new Error('workspace_path_unavailable');
       case 'sessions.ports': return { ports: [{ port: 5173, pid: 42, address: '*:5173' }] };
       case 'store.export': return { entries: Object.fromEntries(store) };
@@ -134,12 +134,12 @@ test('palettes search nested pages, keep the composer draft, jump to sessions an
     command('pick', 'run page:actions');
     assert.deepEqual(rows(), ['back', 'mod:omd_git:status']);
     command('pick', 'run mod:omd_git:status');
-    assert.deepEqual(calls.filter(call => call.operation === 'builtins.invoke').at(-1).arguments, { command: 'omd_git:status' });
+    assert.deepEqual(calls.filter(call => call.operation === 'commands.invoke').at(-1).arguments, { command: 'omd_git:status' });
     assert.equal(composer(), '$release-notes ');
     command('palette');
     command('pick', 'run page:commands');
     command('pick', 'run cmd:compact');
-    assert.deepEqual(calls.filter(call => call.operation === 'builtins.invoke').at(-1).arguments, { command: 'compact' });
+    assert.deepEqual(calls.filter(call => call.operation === 'commands.invoke').at(-1).arguments, { command: 'compact' });
     command('palette');
     assert.match(command('pick', 'run model:gpt-6').display, /not a configured route/);
 
@@ -149,11 +149,11 @@ test('palettes search nested pages, keep the composer draft, jump to sessions an
     assert.deepEqual(calls.filter(call => call.operation === 'mods.service').at(-1).arguments, { name: 'omd.panes', method: 'show_tab', input: { index: 1 } });
     command('jump');
     command('pick', 'run session:t2');
-    assert.deepEqual(calls.filter(call => call.operation === 'builtins.invoke').at(-1).arguments, { command: 'resume', args: 't2' });
+    assert.deepEqual(calls.filter(call => call.operation === 'commands.invoke').at(-1).arguments, { command: 'resume', args: 't2' });
     assert.equal(state().drafts.t1, '$release-notes ');
     command('jump');
     command('pick', 'run worktree:/w/app.worktrees/omd-docs');
-    assert.deepEqual(calls.filter(call => call.operation === 'builtins.invoke').at(-1).arguments, { command: 'resume', args: 't2' });
+    assert.deepEqual(calls.filter(call => call.operation === 'commands.invoke').at(-1).arguments, { command: 'resume', args: 't2' });
     calls.length = 0;
     event('resume', { thread_id: 't1', last_turn: null, restarted: false });
     assert.equal(calls.some(call => call.operation === 'composer.write'), false);

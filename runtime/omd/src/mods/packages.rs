@@ -134,6 +134,7 @@ impl ModStore {
             source_use: ModSourceUse::default(),
             unused_grants: Vec::new(),
             unused_environment: Vec::new(),
+            withheld: Vec::new(),
             error: None,
             telemetry: ModTelemetry::default(),
         };

@@ -44,12 +44,6 @@ pub struct ModView {
     pub keybindings: BTreeMap<String, ModKeyAction>,
     #[serde(default)]
     pub theme: ModTheme,
-    #[serde(default)]
-    pub completed_tools: ModCompletedTools,
-    #[serde(default)]
-    pub message_template: Option<String>,
-    #[serde(default)]
-    pub tool_template: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,6 +76,12 @@ pub struct ModViewPatch {
     #[serde(default)]
     pub sidebar_side: Option<ModSidebarSide>,
     #[serde(default)]
+    pub panels: Option<Vec<ModPanel>>,
+    #[serde(default)]
+    pub header: Option<ModPanel>,
+    #[serde(default)]
+    pub footer: Option<ModPanel>,
+    #[serde(default)]
     pub sites: BTreeMap<String, ModRenderSite>,
     #[serde(default)]
     pub status: Vec<String>,
@@ -89,12 +89,6 @@ pub struct ModViewPatch {
     pub keybindings: BTreeMap<String, ModKeyAction>,
     #[serde(default)]
     pub theme: ModThemePatch,
-    #[serde(default)]
-    pub completed_tools: Option<ModCompletedTools>,
-    #[serde(default)]
-    pub message_template: Option<String>,
-    #[serde(default)]
-    pub tool_template: Option<String>,
     #[serde(default)]
     pub placeholder: Option<String>,
     #[serde(default)]
@@ -539,6 +533,27 @@ pub enum ModComponent {
         action: Option<ModCommandAction>,
     },
     Slot,
+    Native {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<ModStyle>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModStyle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<ModTone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<ModColor>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -633,14 +648,6 @@ pub enum ModTone {
     Attention,
     Failure,
     Muted,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ModCompletedTools {
-    #[default]
-    Normal,
-    Compact,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -876,9 +883,9 @@ pub struct ModViewSnapshot {
     #[serde(default)]
     pub view: ModView,
     #[serde(default)]
-    pub owner: Option<String>,
-    #[serde(default)]
     pub contributors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<ModViewConflict>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub component_owners: BTreeMap<String, String>,
     #[serde(default)]
@@ -1238,26 +1245,59 @@ impl ModComponent {
                     && visible(alt, 256)
                     && height.is_none_or(|height| (1..=40).contains(&height))
             }
-            Self::Slot => {
+            Self::Slot | Self::Native { .. } => {
                 *slots += 1;
                 *slots <= 1
             }
         }
     }
+
+    fn contains(&self, found: &dyn Fn(&Self) -> bool) -> bool {
+        found(self)
+            || match self {
+                Self::Box { children, .. }
+                | Self::Pane { children, .. }
+                | Self::Dialog { children, .. } => {
+                    children.iter().any(|child| child.contains(found))
+                }
+                _ => false,
+            }
+    }
+}
+
+/// A render tree draws presentation only and holds the native drawing at most once.
+pub fn invalid_render_tree(tree: &[ModComponent]) -> Option<String> {
+    let (mut count, mut ids, mut natives) = (0, BTreeSet::new(), 0);
+    tree.iter().enumerate().find_map(|(index, component)| {
+        let presentational = !component.contains(&|component| {
+            !matches!(
+                component,
+                ModComponent::Box { .. }
+                    | ModComponent::Line { .. }
+                    | ModComponent::Text { .. }
+                    | ModComponent::Markdown { .. }
+                    | ModComponent::Code { .. }
+                    | ModComponent::Diff { .. }
+                    | ModComponent::List { .. }
+                    | ModComponent::Native { .. }
+            )
+        });
+        (!presentational || !component.validate(1, &mut count, &mut ids, &mut natives))
+            .then(|| format!("tree[{index}]"))
+    })
 }
 
 impl ModRenderSite {
-    fn invalid(&self, patch: bool, ids: &mut BTreeSet<String>) -> Option<String> {
+    fn invalid(&self, ids: &mut BTreeSet<String>) -> Option<String> {
         let mut count = 0;
         let mut slots = 0;
-        if let Some(index) = self
-            .components
-            .iter()
-            .position(|component| !component.validate(1, &mut count, ids, &mut slots))
-        {
+        if let Some(index) = self.components.iter().position(|component| {
+            component.contains(&|component| matches!(component, ModComponent::Native { .. }))
+                || !component.validate(1, &mut count, ids, &mut slots)
+        }) {
             return Some(format!("components[{index}]"));
         }
-        let expected = usize::from(patch && self.mode == ModSiteMode::Wrap);
+        let expected = usize::from(self.mode == ModSiteMode::Wrap);
         (slots != expected).then(|| "slot".to_owned())
     }
 }
@@ -1291,13 +1331,6 @@ fn valid_action(action: &ModKeyAction) -> bool {
     }
 }
 
-fn valid_templates(message: &Option<String>, tool: &Option<String>) -> bool {
-    [message, tool]
-        .into_iter()
-        .flatten()
-        .all(|template| visible(template, 1024) && template.matches("{text}").count() == 1)
-}
-
 fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>, limit: usize) -> bool {
     bindings.len() <= limit
         && bindings
@@ -1312,7 +1345,7 @@ fn valid_status(status: &[String]) -> bool {
             .all(|segment| !segment.is_empty() && visible(segment, 40))
 }
 
-fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> Option<String> {
+fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>) -> Option<String> {
     if sites.len() > 8 {
         return Some("sites".into());
     }
@@ -1321,7 +1354,7 @@ fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> Option
         if !valid_site(name) {
             return Some(format!("sites.{name}"));
         }
-        site.invalid(patch, &mut ids)
+        site.invalid(&mut ids)
             .map(|field| format!("sites.{name}.{field}"))
     })
 }
@@ -1365,7 +1398,7 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
         | ModComponent::Image { id, .. } => {
             ids.insert(id.clone());
         }
-        ModComponent::Slot => {}
+        ModComponent::Slot | ModComponent::Native { .. } => {}
     }
 }
 
@@ -1504,8 +1537,18 @@ impl ModViewPatch {
                 !valid_bindings(&patch.keybindings, MOD_KEY_LIMIT),
             ),
             (
-                "templates",
-                !valid_templates(&patch.message_template, &patch.tool_template),
+                "panels",
+                patch.panels.as_ref().is_some_and(|panels| {
+                    panels.len() > 8 || panels.iter().any(|panel| !panel.valid(32))
+                }),
+            ),
+            (
+                "header",
+                patch.header.as_ref().is_some_and(|panel| !panel.valid(3)),
+            ),
+            (
+                "footer",
+                patch.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
             ),
             (
                 "theme.syntax",
@@ -1542,158 +1585,145 @@ impl ModViewPatch {
         ]
         .into_iter()
         .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
-        .or_else(|| invalid_sites(&patch.sites, true));
+        .or_else(|| invalid_sites(&patch.sites));
         if let Some(field) = invalid {
             return Err(failure(format!("invalid_terminal_patch: {field}")));
         }
         Ok(patch)
     }
 
+    /// Exclusive fields go to the first mod in composition order; later claims become conflicts.
     pub fn apply(
-        self,
+        mut self,
         target: &mut ModView,
-        replaced_sites: &mut BTreeSet<String>,
-        completed_tools_owner: &mut bool,
-    ) -> Result<()> {
+        claims: &mut BTreeMap<String, String>,
+        id: &str,
+        origin: &str,
+    ) -> Result<Vec<ModViewConflict>> {
         let mut candidate = target.clone();
-        let mut candidate_sites = replaced_sites.clone();
-        let mut candidate_completed_tools = *completed_tools_owner;
-        self.apply_to(
-            &mut candidate,
-            &mut candidate_sites,
-            &mut candidate_completed_tools,
-        )?;
-        *target = candidate;
-        *replaced_sites = candidate_sites;
-        *completed_tools_owner = candidate_completed_tools;
-        Ok(())
-    }
-
-    fn apply_to(
-        self,
-        target: &mut ModView,
-        replaced_sites: &mut BTreeSet<String>,
-        completed_tools_owner: &mut bool,
-    ) -> Result<()> {
-        if self.welcome.is_some() {
-            target.welcome = self.welcome;
-        }
-        if self.session_title_suffix.is_some() {
-            target.session_title_suffix = self.session_title_suffix;
-        }
-        if self.greeting.is_some() {
-            target.greeting = self.greeting;
-        }
-        if let Some(title) = self.title {
-            target.title = Some(title);
-        }
-        if let Some(layout) = self.layout {
-            if !replaced_sites.insert("@layout".into()) {
-                return Err(failure("terminal_layout_conflict"));
+        let mut candidate_claims = claims.clone();
+        let mut conflicts = Vec::new();
+        let mut claim = |field: String| {
+            let owner = candidate_claims
+                .entry(field.clone())
+                .or_insert_with(|| id.to_owned());
+            if owner == id {
+                return true;
             }
-            target.layout = Some(layout);
+            conflicts.push(ModViewConflict {
+                field,
+                owner: owner.clone(),
+                rejected: id.to_owned(),
+                origin: origin.to_owned(),
+            });
+            false
+        };
+        macro_rules! last_writer {
+            ($($field:ident),*) => {$(
+                if self.$field.is_some() {
+                    candidate.$field = self.$field;
+                }
+            )*};
         }
-        if let Some(backdrop) = self.backdrop {
-            if !replaced_sites.insert("@backdrop".into()) {
-                return Err(failure("terminal_backdrop_conflict"));
-            }
-            target.backdrop = Some(backdrop);
-        }
-        target.surface_styles.extend(self.surface_styles);
-        if self.inline_sites.is_some() {
-            target.inline_sites = self.inline_sites;
-        }
-        if let Some(foreground) = self.foreground {
-            target.foreground = Some(foreground);
-        }
-        if let Some(background) = self.background {
-            target.background = Some(background);
-        }
+        last_writer!(
+            welcome,
+            session_title_suffix,
+            greeting,
+            title,
+            foreground,
+            background,
+            inline_sites
+        );
         if let Some(width) = self.sidebar_width {
-            target.sidebar_width = width;
+            candidate.sidebar_width = width;
         }
         if let Some(side) = self.sidebar_side {
-            target.sidebar_side = side;
+            candidate.sidebar_side = side;
         }
+        if let Some(panels) = self.panels
+            && claim("panels".into())
+        {
+            candidate.panels = panels;
+        }
+        if self.header.is_some() && claim("header".into()) {
+            candidate.header = self.header;
+        }
+        if self.footer.is_some() && claim("footer".into()) {
+            candidate.footer = self.footer;
+        }
+        if self.layout.is_some() && claim("layout".into()) {
+            candidate.layout = self.layout;
+        }
+        if self.backdrop.is_some() && claim("backdrop".into()) {
+            candidate.backdrop = self.backdrop;
+        }
+        if self.placeholder.is_some() && claim("placeholder".into()) {
+            candidate.placeholder = self.placeholder;
+        }
+        candidate.surface_styles.extend(self.surface_styles);
         for (name, site) in self.sites {
-            match site.mode {
-                ModSiteMode::Replace => {
-                    if !replaced_sites.insert(name.clone()) {
-                        return Err(failure(format!("terminal_site_conflict: {name}")));
-                    }
-                    target.sites.insert(name, site);
-                }
-                ModSiteMode::Wrap => {
-                    let current = target
-                        .sites
-                        .get(&name)
-                        .map(|site| site.components.as_slice())
-                        .unwrap_or_default();
-                    target.sites.insert(
-                        name,
-                        ModRenderSite {
-                            mode: ModSiteMode::Replace,
-                            components: replace_slot(site.components, current),
-                        },
-                    );
-                }
+            if site.mode == ModSiteMode::Replace && !claim(format!("sites.{name}")) {
+                continue;
             }
+            // An unfilled wrap keeps its slot, so a replacement composed later lands inside it.
+            let current = candidate.sites.remove(&name).unwrap_or(ModRenderSite {
+                mode: ModSiteMode::Wrap,
+                components: vec![ModComponent::Slot],
+            });
+            let composed = match (site.mode, current.mode) {
+                (ModSiteMode::Replace, ModSiteMode::Replace) => site,
+                (ModSiteMode::Replace, ModSiteMode::Wrap) => ModRenderSite {
+                    mode: ModSiteMode::Replace,
+                    components: replace_slot(current.components, &site.components),
+                },
+                (ModSiteMode::Wrap, mode) => ModRenderSite {
+                    mode,
+                    components: replace_slot(site.components, &current.components),
+                },
+            };
+            candidate.sites.insert(name, composed);
         }
         for (key, action) in self.keybindings {
-            if target.keybindings.insert(key.clone(), action).is_some() {
-                return Err(failure(format!("terminal_key_conflict: {key}")));
+            if claim(format!("keybindings.{key}")) {
+                candidate.keybindings.insert(key, action);
             }
         }
-        target.status.extend(self.status);
-        if target.status.len() > 4 {
-            return Err(failure("terminal_status_limit"));
+        let room = 4usize.saturating_sub(candidate.status.len());
+        if !self.status.is_empty() && candidate.status.is_empty() || self.status.len() > room {
+            claim("status".into());
         }
-        if self
-            .theme
+        candidate.status.extend(self.status.into_iter().take(room));
+        self.theme
             .glyphs
-            .keys()
-            .any(|glyph| target.theme.glyphs.contains_key(glyph))
-        {
-            return Err(failure("terminal_glyph_conflict"));
-        }
-        self.theme.apply(&mut target.theme);
-        if let Some(mode) = self.completed_tools {
-            if *completed_tools_owner {
-                return Err(failure("terminal_completed_tools_conflict"));
-            }
-            *completed_tools_owner = true;
-            target.completed_tools = mode;
-        }
-        if let Some(placeholder) = self.placeholder {
-            if target.placeholder.is_some() {
-                return Err(failure("terminal_placeholder_conflict"));
-            }
-            target.placeholder = Some(placeholder);
-        }
-
-        if let Some(template) = self.message_template {
-            target.message_template = Some(match target.message_template.take() {
-                Some(current) => template.replace("{text}", &current),
-                None => template,
-            });
-        }
-        if let Some(template) = self.tool_template {
-            target.tool_template = Some(match target.tool_template.take() {
-                Some(current) => template.replace("{text}", &current),
-                None => template,
-            });
-        }
-        ModView::parse_with(
-            serde_json::to_value(target.clone())?,
-            MOD_COMPOSED_KEY_LIMIT,
-        )?;
-        Ok(())
+            .retain(|glyph, _| claim(format!("theme.glyphs.{glyph}")));
+        self.theme.apply(&mut candidate.theme);
+        ModView::parse_with(serde_json::to_value(&candidate)?, MOD_COMPOSED_KEY_LIMIT)?;
+        *target = candidate;
+        *claims = candidate_claims;
+        Ok(conflicts)
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ModViewConflict {
+    pub field: String,
+    pub owner: String,
+    pub rejected: String,
+    pub origin: String,
 }
 
 impl ModView {
     pub fn parse(value: Value) -> Result<Self> {
         Self::parse_with(value, MOD_KEY_LIMIT)
+    }
+
+    pub(super) fn close_wraps(&mut self) {
+        for site in self.sites.values_mut() {
+            if site.mode == ModSiteMode::Wrap {
+                site.mode = ModSiteMode::Replace;
+                site.components = replace_slot(std::mem::take(&mut site.components), &[]);
+            }
+        }
     }
 
     /// Each mod's view or patch keeps 12 keys; the view composed from every mod may hold more.
@@ -1722,10 +1752,6 @@ impl ModView {
                 view.title
                     .as_ref()
                     .is_some_and(|title| !visible(title, 1024)),
-            ),
-            (
-                "templates",
-                !valid_templates(&view.message_template, &view.tool_template),
             ),
             (
                 "header",
@@ -1773,7 +1799,7 @@ impl ModView {
         ]
         .into_iter()
         .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
-        .or_else(|| invalid_sites(&view.sites, false));
+        .or_else(|| invalid_sites(&view.sites));
         if let Some(field) = invalid {
             return Err(failure(format!("invalid_terminal_view: {field}")));
         }

@@ -152,7 +152,7 @@ export default function activate(api: ModAPI) {
     if (state.current && draft.trim()) state.drafts[state.current] = fit(draft, 4_000, true);
     const keys = Object.keys(state.drafts);
     for (const key of keys.slice(0, Math.max(0, keys.length - 16))) delete state.drafts[key];
-    const invoked = api.host.tryCall('builtins.invoke', { command: 'resume', args: id });
+    const invoked = api.host.tryCall('commands.invoke', { command: 'resume', args: id });
     return invoked.ok ? null : invoked.error;
   };
   const enter = (state: State, path: string): string | null => {
@@ -168,8 +168,8 @@ export default function activate(api: ModAPI) {
     const rows: Row[] = [...(state.restore ? [{ value: 'restore', label: 'Restore: Previous composer text', detail: fit(state.restore.replace(/\n/g, '⏎'), 40), page: 'root' }] : []),
       ...Object.entries(PAGES).map(([page, label]) => ({ value: `page:${page}`, label, detail: 'open', page: 'root' })),
       ...BUILTINS.map(([value, label, detail]) => ({ value, label, detail, page: 'root' }))];
-    const inventory = api.host.tryCall('terminal.commands', null);
-    const commands = inventory.ok ? inventory.value.commands : [];
+    const inventory = api.host.tryCall('commands.list', null);
+    const commands = inventory.ok ? inventory.value.commands.filter(item => !item.hidden) : [];
     for (const item of commands) rows.push(item.owner ? { value: `mod:${item.command}`, label: `/${item.command}`, detail: item.description, page: 'actions' } : { value: `cmd:${item.command}`, label: `/${item.command}`, detail: item.description, page: 'commands' });
     const skills = app<{ data?: { skills?: { name: string; description?: string; shortDescription?: string | null }[] }[] }>('skills/list', {});
     for (const skill of (skills?.data ?? []).flatMap(entry => entry.skills ?? [])) rows.push({ value: `skill:${skill.name}`, label: `$${skill.name}`, detail: skill.shortDescription || skill.description || '', page: 'skills' });
@@ -299,11 +299,11 @@ export default function activate(api: ModAPI) {
       return null;
     }
     if (kind === 'builtin' || kind === 'cmd') {
-      const invoked = api.host.tryCall('builtins.invoke', { command: target });
-      if (!invoked.ok) fill(state, `/${target} `);
+      const invoked = api.host.tryCall('commands.invoke', { command: target });
+      if (!invoked.ok || 'status' in invoked.value) fill(state, `/${target} `);
       return null;
     }
-    if (kind === 'mod' && api.host.tryCall('builtins.invoke', { command: target }).ok) return null;
+    if (kind === 'mod') { const invoked = api.host.tryCall('commands.invoke', { command: target }); if (invoked.ok && !('status' in invoked.value)) return null; }
     const text = kind === 'mod' ? `/${target} ` : kind === 'skill' ? `$${target} ` : kind === 'template' ? `/omd_project_pi_prompts:pi ${target} ` : null;
     if (text) {
       fill(state, text);
@@ -311,7 +311,7 @@ export default function activate(api: ModAPI) {
     }
     if (kind === 'model') {
       if (state.current && app('thread/settings/update', { threadId: state.current, model: target })) return `Model: ${target}`;
-      api.host.tryCall('builtins.invoke', { command: 'model' });
+      api.host.tryCall('commands.invoke', { command: 'model' });
       return `${target} is not a configured route here; choose it in /model`;
     }
     if (kind === 'session') return resume(state, target);
@@ -368,8 +368,8 @@ export default function activate(api: ModAPI) {
       const [action, id] = argument.split(' ');
       const thread = state.threads.find(item => item.id === id);
       if (action === 'switch' && thread) message = resume(state, thread.id);
-      else if (action === 'fork') api.host.tryCall('builtins.invoke', { command: 'fork' });
-      else if (action === 'new') api.host.tryCall('builtins.invoke', { command: 'new' });
+      else if (action === 'fork') api.host.tryCall('commands.invoke', { command: 'fork' });
+      else if (action === 'new') api.host.tryCall('commands.invoke', { command: 'new' });
       else if (action === 'here' && thread) message = enter({ ...state, threads: [] }, thread.cwd);
     }
     if (op === '' || op === 'toggle') state.open = !state.open;

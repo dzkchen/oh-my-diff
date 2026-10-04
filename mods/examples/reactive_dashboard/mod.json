@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "reactive_dashboard",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "terminal",
+    "commands",
+    "store",
+    "events"
+  ],
+  "compatibility": {
+    "required_features": [
+      "render_hooks_v1",
+      "ui_composition_v1",
+      "reactive_state_v1"
+    ]
+  }
+}

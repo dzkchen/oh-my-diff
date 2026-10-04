@@ -34,7 +34,7 @@ function harness() {
         return { revision };
       }
       case 'terminal.prompt': return host.confirm ? { status: 'accepted' } : { status: 'declined' };
-      case 'builtins.invoke': return { invoked: true };
+      case 'commands.invoke': return { command: 'worktree', result: { invoked: true } };
       case 'workspace.watch': return { watch_id: `w-${thread.slice(0, 4)}-${calls.length}` };
       case 'workspace.list': return { entries: [{ path: 'src', kind: 'dir' }, { path: 'README.md', kind: 'file' }], truncated: false };
       default: return { key: args.key, delay_ms: args.delay_ms };
@@ -188,7 +188,7 @@ test('shared checkout hands off paths, recovers stale registrations and releases
   assert.equal(approve(A, 'patch', ['src/a.ts']), null);
 
   assert.deepEqual(share(A, 'worktree'), null);
-  assert.deepEqual(calls.filter(item => item.operation === 'builtins.invoke').map(item => item.args), [{ command: 'worktree' }]);
+  assert.deepEqual(calls.filter(item => item.operation === 'commands.invoke').map(item => item.args), [{ command: 'worktree' }]);
   advance(25 * 60);
   invoke(B, 'resume', { thread_id: B, last_turn: null, restarted: true });
   assert.equal(entry(A), undefined);

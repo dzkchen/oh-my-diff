@@ -7,7 +7,7 @@ const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import
 const mod = new URL('../mods/first-party/omd_mini/', import.meta.url);
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
-const surface = { events: { start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', app_notification: 'threads', terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
+const surface = { events: { start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', app_notification: 'threads', terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts', intercept: { render: 'terminal' } };
 const thread = '019a0000-0000-7000-8000-000000000001';
 const launch = '0123456789abcdef';
 const ledger = (cost = null) => ({ thread_id: thread, cwd: '/repo', cost });
@@ -54,7 +54,7 @@ test('a mini session shows compact tools, a simple prompt and one bounded status
   const { invoke } = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`);
   invoke('start', {});
   assert.deepEqual(invoke('terminal', { event: 'start', ledger: ledger() }),
-    { inline_sites: 'hidden', completed_tools: 'compact', placeholder: 'Ask anything · /omd_mini:switch opens the full UI', status: [] });
+    { inline_sites: 'hidden', placeholder: 'Ask anything · /omd_mini:switch opens the full UI', status: [] });
   invoke('turn_start', { turn_id: 't1' }, '', 1790000000000);
   assert.deepEqual(invoke('terminal', { event: 'turn_start', ledger: ledger() }).status, ['working']);
   invoke('turn_end', { turn_id: 't1', outcome: 'completed' }, '', 1790000065000);

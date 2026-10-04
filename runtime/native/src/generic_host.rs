@@ -235,6 +235,7 @@ pub(crate) fn call(
             capabilities: &grants.capabilities,
             exec_environment: &grants.exec_environment,
             os_access: grants.os_access.as_ref(),
+            fs_access: grants.fs_access.as_ref(),
             origin,
             thread,
         },
@@ -257,6 +258,7 @@ mod tests {
             exec_environment: vec!["RUSTUP_HOME".into()],
             os_access: None,
             approves: None,
+            ..Default::default()
         };
         let start = |environment: Value| codex_omd::ModHostCall {
             operation: "process.start".into(),

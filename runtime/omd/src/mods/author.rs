@@ -421,7 +421,7 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Diff { id, .. }
             | ModComponent::Terminal { id, .. }
             | ModComponent::Image { id, .. } => (Some(id.as_str()), &[][..]),
-            ModComponent::Slot => (None, &[][..]),
+            ModComponent::Slot | ModComponent::Native { .. } => (None, &[][..]),
         };
         if component_id == Some(id) {
             Some(component)

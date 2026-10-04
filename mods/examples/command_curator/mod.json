@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "command_curator",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "description": "Curates slash commands and settings: hints, hidden rows, trimmed arguments and a capped subagent depth.",
+  "capabilities": [
+    "commands",
+    "terminal",
+    "config",
+    "config.write"
+  ],
+  "compatibility": {
+    "required_features": [
+      "command_config_middleware_v1"
+    ]
+  }
+}

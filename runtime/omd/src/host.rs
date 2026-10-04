@@ -89,6 +89,7 @@ pub struct Caller<'a> {
     pub capabilities: &'a [String],
     pub exec_environment: &'a [String],
     pub os_access: Option<&'a crate::ModOsAccess>,
+    pub fs_access: Option<&'a crate::ModFsAccess>,
     pub origin: Origin,
     pub thread: Option<&'a str>,
 }
@@ -167,7 +168,59 @@ pub fn served(operation: &str) -> bool {
             | "store.list"
             | "store.export"
             | "store.reset"
+            | "environment.read"
     )
+}
+
+struct ExternalRoot {
+    root: PathBuf,
+    write: bool,
+}
+
+impl Authority for ExternalRoot {
+    fn repository(&self) -> &Path {
+        &self.root
+    }
+
+    fn readable(&self, path: &Path) -> bool {
+        path.starts_with(&self.root)
+    }
+
+    fn writable(&self, path: &Path) -> bool {
+        self.write && path.starts_with(&self.root)
+    }
+
+    fn command(&self, _argv: Vec<String>, _access: &ExecAccess<'_>) -> Result<Command, String> {
+        Err("fs_external_exec_unavailable".into())
+    }
+}
+
+fn environment(caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        names: Vec<String>,
+    }
+    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+    if input.names.is_empty() || input.names.len() > 16 {
+        return Err("environment_names_invalid".into());
+    }
+    let mut values = serde_json::Map::new();
+    for name in input.names {
+        if !caller.exec_environment.contains(&name) {
+            return Err(format!("exec_environment_undeclared: {name}"));
+        }
+        let value = std::env::var(&name)
+            .ok()
+            .filter(|value| value.len() <= 4096);
+        let entry = if secret_like(&name) {
+            json!({"set": value.is_some()})
+        } else {
+            json!({"set": value.is_some(), "value": value})
+        };
+        values.insert(name, entry);
+    }
+    Ok(json!({"values": values}))
 }
 
 pub fn repository_key(repository: &Path) -> String {
@@ -563,6 +616,57 @@ impl Host<'_> {
         )
     }
 
+    /// Runs a workspace read, list, stat or transaction against a granted root outside the workspace.
+    fn external(
+        &self,
+        caller: &Caller<'_>,
+        operation: &str,
+        mut arguments: Value,
+    ) -> Result<Value, String> {
+        let root = arguments
+            .as_object_mut()
+            .and_then(|fields| fields.remove("root"))
+            .and_then(|root| root.as_str().map(str::to_owned))
+            .ok_or("fs_root_invalid")?;
+        let granted = caller
+            .fs_access
+            .and_then(|access| access.roots.iter().find(|granted| granted.path == root))
+            .ok_or_else(|| format!("fs_root_not_granted: {root}"))?;
+        let path = PathBuf::from(&root);
+        if fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) || !path.is_dir() {
+            return Err(format!("fs_root_not_canonical: {root}"));
+        }
+        let overlaps = |other: &Path| path.starts_with(other) || other.starts_with(&path);
+        if credential_paths()
+            .into_iter()
+            .chain([
+                self.data_root.to_path_buf(),
+                self.repository().to_path_buf(),
+            ])
+            .any(|other| {
+                overlaps(&other) || other.canonicalize().is_ok_and(|other| overlaps(&other))
+            })
+        {
+            return Err(format!("fs_root_protected: {root}"));
+        }
+        let authority = ExternalRoot {
+            root: path,
+            write: granted.write,
+        };
+        let host = Host {
+            authority: &authority,
+            data_root: self.data_root,
+            active: self.active,
+            record_changes: false,
+        };
+        match operation {
+            "workspace.read" => host.read(arguments),
+            "workspace.list" => host.list(arguments),
+            "workspace.stat" => host.stat(arguments),
+            _ => host.transaction(caller, arguments),
+        }
+    }
+
     fn checked_paths(&self, names: &[String], write: bool) -> Result<Vec<PathBuf>, String> {
         if names.is_empty()
             || names.len() > 128
@@ -598,6 +702,14 @@ impl Host<'_> {
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
+        if arguments.get("root").is_some()
+            && matches!(
+                operation,
+                "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
+            )
+        {
+            return self.external(caller, operation, arguments);
+        }
         let source = match operation {
             "workspace.transaction" | "workspace.restore" => Some("transaction"),
             "exec.run" if arguments["write"] == true => Some("exec"),
@@ -628,6 +740,7 @@ impl Host<'_> {
             "workspace.transaction" => self.transaction(caller, arguments),
             "workspace.backup" => self.backup(caller, arguments),
             "workspace.restore" => self.restore(caller, arguments),
+            "environment.read" => environment(caller, arguments),
             operation if operation.starts_with("store.") => {
                 let key = repository_key(self.repository());
                 DataStore {

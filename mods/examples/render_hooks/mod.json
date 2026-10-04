@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "render_hooks",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "terminal"
+  ],
+  "compatibility": {
+    "required_features": [
+      "render_hooks_v1"
+    ]
+  }
+}

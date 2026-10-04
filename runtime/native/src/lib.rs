@@ -86,6 +86,7 @@ pub(crate) struct Session {
     contract_state: PathBuf,
     processes: Arc<managed_process::ManagedProcesses>,
     data: mods::DataScope,
+    access: mods::AccessState,
 }
 
 #[derive(Clone)]
@@ -416,6 +417,7 @@ impl Host {
             )),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             data: mods::DataScope::default(),
+            access: mods::AccessState::default(),
             evidence,
         }))
     }
@@ -495,6 +497,26 @@ impl Host {
 }
 
 impl Session {
+    fn record_access(&self, receipt: &Value) {
+        use std::io::Write;
+        let path = self.evidence.join("mod-access.jsonl");
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        else {
+            return;
+        };
+        if file
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() < 8 * 1024 * 1024)
+            && let Ok(mut bytes) = serde_json::to_vec(receipt)
+        {
+            bytes.push(b'\n');
+            let _ = file.write_all(&bytes);
+        }
+    }
+
     fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
         use std::io::Write;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;

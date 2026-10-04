@@ -211,6 +211,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                         .session
                         .processes
                         .cleanup_owned(&self.id, generation);
+                    super::access::release_servers(&self.lead, generation, Some(&self.id)).await;
                     Err(FunctionCallError::RespondToModel(error))
                 }
             }
