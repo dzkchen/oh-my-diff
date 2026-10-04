@@ -1255,7 +1255,7 @@
       "source": "mods/first-party/omd_inspector"
     },
     "omd_layout": {
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_layout"
     },
     "omd_logo": {

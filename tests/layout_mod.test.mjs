@@ -32,6 +32,7 @@ function fixture() {
   writeFileSync(join(repository, 'build/login.js'), '');
   let composer = 'half-typed draft';
   const calls = [];
+  let workflow = null;
   const now = 1_800_000_000_000;
   const store = new Map([['s:t3', { value: { status: 'working', note: 'in another terminal', context: null, ports: [8080], at: now - 60_000 }, revision: 4 }],
     ['s:gone', { value: { status: 'done', note: null, context: null, ports: [], at: 0 }, revision: 2 }]]);
@@ -50,6 +51,7 @@ function fixture() {
       case 'workspace.list': throw new Error('workspace_path_unavailable');
       case 'sessions.ports': return { ports: [{ port: 5173, pid: 42, address: '*:5173' }] };
       case 'store.export': return { entries: Object.fromEntries(store) };
+      case 'store.get': return store.has(args.key) ? { ...store.get(args.key), provenance: { thread_id: 't1' } } : null;
       case 'store.put':
         assert.equal(args.expected_revision, store.get(args.key)?.revision ?? null);
         store.set(args.key, { value: args.value, revision: (store.get(args.key)?.revision ?? 0) + 1 });
@@ -66,6 +68,7 @@ function fixture() {
         if (args.name === 'omd.panes' && args.method === 'tabs') return { titles: ['Shell .', 'review'], active: 0 };
         if (args.name === 'omd.panes' && args.method === 'find') return { views: [{ path: 'src/login.ts', matches: 1 }] };
         if (args.name === 'omd.panes') return { display: null };
+        if (args.name === 'omd.workflow' && workflow) return workflow;
         throw new Error('optional_service_unavailable');
       case 'composer.read': return { text: composer, cursor: 0, attachments: [] };
       case 'composer.write':
@@ -93,6 +96,8 @@ function fixture() {
   return {
     repository, calls, store, composer: () => composer, state: () => state,
     command: (name, text = '') => invoke('command', text, name),
+    tool: (name, input) => invoke('tool', input, name),
+    workflow: value => { workflow = value; },
     event: (event, payload) => invoke(event, payload),
     view: (thread = 't1') => invoke('terminal', { event: 'redraw', ledger: { thread_id: thread, cwd: '/w/app', cost: null } }),
   };
@@ -106,7 +111,7 @@ test('session list groups projects with status, unread, worktree, context, ports
     command('sessions', 'refresh');
     const rows = () => view().sites['omd_layout/sessions'].components[1].rows.map(row => row.spans.map(span => span.text).join(''));
     assert.deepEqual(rows(), ['▾ app (2)', ' ● Fix login main  app · gpt-6 · ctx 25% · :5173', ' ◆ Write docs omd/docs #7  omd-docs · gpt-6', '▾ site (1)', ' ● Other project  site · :8080 · in another terminal']);
-    assert.deepEqual(store.get('s:t1').value, { status: 'working', note: null, context: 25, ports: [5173], at: 1_800_000_000_000 });
+    assert.deepEqual(store.get('s:t1').value, { status: 'working', note: null, context: 25, ports: [5173], brief: null, at: 1_800_000_000_000 });
     assert.equal(store.has('s:gone'), false);
     event('app_notification', { method: 'turn/completed', params: { threadId: 't2', turn: { status: 'completed' } }, thread_id: 't2', coalesced: 1, dropped: 0 });
     assert.deepEqual(rows()[2], '•✓ Write docs omd/docs #7  omd-docs · gpt-6 · turn completed');
@@ -175,6 +180,57 @@ test('palettes search nested pages, keep the composer draft, jump to sessions an
     assert.deepEqual(find().find(item => item.type === 'document').find, { query: '(', regex: true, case: true });
     command('pick', 'close');
     assert.equal(view().sites.dialog, undefined);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('agent briefs stay per session, label stale, resumed and forked copies, follow workflow task changes and share only a summary', () => {
+  const { repository, store, command, event, tool, workflow, view } = fixture();
+  try {
+    view();
+    command('sessions', 'refresh');
+    store.set('s:t3', { value: { ...store.get('s:t3').value, brief: 'Porting the site' }, revision: store.get('s:t3').revision + 1 });
+    store.set('s:t2', { value: { status: 'waiting', note: null, context: null, ports: [], brief: 'Drafting docs', at: 1_800_000_000_000 }, revision: 1 });
+    assert.throws(() => tool('brief', { current: 'x'.repeat(201), next: 'y' }), /brief_field_invalid: current/);
+    assert.throws(() => tool('brief', { current: 'Fix', next: 'Test', questions: Array(7).fill('?') }), /brief_field_invalid: questions/);
+    const pane = (thread = 't1') => view(thread).sites.sidebar.components.find(item => item.id === 'omd_layout_brief')?.children.map(line => line.text);
+    assert.deepEqual(pane(), ['Session: Working', 'No agent brief yet']);
+    assert.deepEqual(tool('brief', { current: 'Fixing the login redirect', next: 'Run the auth tests', remaining: ['Update docs'], questions: ['Keep the old cookie name?'] }), { updated: true });
+    assert.deepEqual(pane(), ['Session: Working', 'Agent brief · just now', 'Now: Fixing the login redirect', 'Next: Run the auth tests', '- Update docs', '? Keep the old cookie name?', 'Estimate: unknown']);
+    assert.equal(store.get('s:t1').value.brief, 'Fixing the login redirect · 1 question');
+    assert.equal(store.get('s:t3').value.brief, 'Porting the site');
+    command('sessions', 'refresh');
+    const rows = () => view().sites['omd_layout/sessions'].components[1].rows.map(row => row.spans.map(span => span.text).join(''));
+    assert.equal(rows()[1], ' ● Fix login main  “Fixing the login redirect · 1 question”  app · gpt-6 · :5173');
+    assert.equal(rows()[2], ' ◆ Write docs omd/docs #7  “Drafting docs”  omd-docs · gpt-6');
+    assert.equal(rows()[4], ' ● Other project  “Porting the site”  site · :8080 · in another terminal');
+
+    event('turn_start', { turn_id: 'turn-2' });
+    assert.equal(pane()[1], 'Agent brief · just now · stale');
+    assert.equal(store.get('s:t1').value.brief, 'Fixing the login redirect · 1 question (stale)');
+
+    workflow({ objective: 'Ship login', remaining_work: ['tests', 'docs'], status: 'active' });
+    event('idle', {});
+    assert.deepEqual(pane().slice(1, 5), ['Workflow task: Ship login', 'Workflow: 2 remaining', 'Agent brief · just now · stale', 'Now: Fixing the login redirect']);
+    workflow({ objective: 'Ship signup', remaining_work: ['tests'], status: 'active' });
+    event('idle', {});
+    assert.deepEqual(pane(), ['Session: Working', 'Workflow task: Ship signup', 'Workflow: 1 remaining', 'Brief cleared: the workflow task changed']);
+    tool('brief', { current: 'Writing tests', next: 'Docs', estimate: '20 minutes' });
+    event('idle', {});
+    assert.deepEqual(pane().slice(1), ['Workflow task: Ship signup', 'Workflow: 1 remaining', 'Agent brief · just now', 'Now: Writing tests', 'Next: Docs', 'Estimate (declared): 20 minutes']);
+
+    event('resume', { thread_id: 't1', last_turn: { turn_id: 'turn-2', status: 'in_progress' }, restarted: false });
+    assert.equal(pane()[3], 'Agent brief · just now');
+    event('resume', { thread_id: 't1', last_turn: { turn_id: 'turn-2', status: 'in_progress' }, restarted: true });
+    assert.equal(pane()[3], 'Agent brief · just now · resumed after an unfinished turn');
+    assert.equal(pane('t2')[3], 'Agent brief · just now · forked, not revalidated');
+    assert.equal(command('brief', 'hide').display, 'Brief panel hidden; /omd_layout:brief shows it');
+    assert.equal(pane(), undefined);
+    assert.equal(command('brief', 'clear').display, 'Brief cleared');
+    assert.equal(store.get('s:t1').value.brief, null);
+    assert.match(command('brief').display, /Brief cleared$/);
+    assert.equal(pane().at(-1), 'Brief cleared');
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

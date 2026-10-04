@@ -52,7 +52,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_guideline_governance` | 0.1.0-preview.1 | `mods/first-party/omd_guideline_governance` |
 | `omd_herdr` | 0.1.0-preview.1 | `mods/first-party/omd_herdr` |
 | `omd_inspector` | 0.2.0-preview.1 | `mods/first-party/omd_inspector` |
-| `omd_layout` | 0.1.0-preview.1 | `mods/first-party/omd_layout` |
+| `omd_layout` | 0.1.0-preview.2 | `mods/first-party/omd_layout` |
 | `omd_logo` | 0.2.0-preview.1 | `mods/first-party/omd_logo` |
 | `omd_lsp_sync` | 0.5.0-preview.1 | `mods/first-party/omd_lsp_sync` |
 | `omd_lsp_view` | 0.2.0-preview.1 | `mods/first-party/omd_lsp_view` |

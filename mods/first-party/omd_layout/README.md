@@ -1,7 +1,7 @@
 # omd_layout
 
-Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`) for the
-workspace layout: a cmux-style session list, find, quick open, a jump palette
+Opt-in first-party mod (`0.1.0-preview.2`, API `0.2.0-experimental.5`) for the
+workspace layout: a cmux-style session list, agent-written session briefs, find, quick open, a jump palette
 and a command palette. It composes `omd_panes` (tabs, viewer, cockpit),
 `omd_worktree` (task worktrees) and `omd_frecency` (file ranking) through their
 optional services and adds no Git engine of its own.
@@ -31,11 +31,28 @@ composer draft for the session you leave and restores it when you return to it
 through the list, unless the composer already holds text. The status line counts
 working, waiting and unread sessions.
 
+**Briefs.** The agent keeps a brief of its session with the `brief` tool
+(`mod_omd_layout_brief`): current work, next step, up to 12 remaining tasks, up
+to 6 questions or decisions for you and an optional estimate it declares;
+oversized or empty fields are refused. A Brief panel below the session list
+shows the host's session state (working, waiting for you, idle, last turn
+failed) apart from the agent's text, the workflow objective and remaining-work
+count when `omd_workflow` runs, the brief's age, and `Estimate: unknown` without
+a declared estimate. A brief from an earlier turn is labelled stale, one carried
+into a fork or into a session resumed after OMD restarted is labelled until the
+agent updates it, and a changed workflow objective clears it. The brief belongs to the session thread
+(forks copy it); the agent writes only its own session's brief, and other
+sessions and their agents never read or change it. Each session-list row shows
+a session's first line and question count, which reaches other OMD processes
+through the shared status below. `/omd_layout:brief` shows the brief (and the
+panel), `hide` hides the panel and `clear` deletes the brief. No observer model
+or compaction summary is involved.
+
 **Ports** are the TCP listeners of the session's background terminals and their
 child processes, read by the host (`sessions.ports`).
 
 **Other terminals.** Each OMD process publishes its current session's status,
-note, context use and ports to the mod's user-scope store, refreshed every five
+note, context use, ports and brief summary to the mod's user-scope store, refreshed every five
 minutes while a turn runs. Sessions running in another terminal show that live
 status instead of their stored one; a working or waiting entry older than 15
 minutes (for example after a crash) falls back to the stored status, and
@@ -64,4 +81,4 @@ Capabilities: `commands`, `terminal`, `lifecycle`, `store` (state and the
 shared status), `sessions` (thread list, turns, ports), `threads` (start,
 settings), `model` and `inventory` (model and skill lists), `builtins`,
 `composer`, `exec` (`git ls-files`), `fs.read` (Pi templates), `events` (the
-status refresh timer) and `services`.
+status refresh timer), `services` and `tools` (the brief tool).

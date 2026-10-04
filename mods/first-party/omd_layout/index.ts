@@ -2,16 +2,18 @@ import type { CommandResult, Json, KeyAction, KeyName, ModAPI, TerminalComponent
 
 type Status = 'working' | 'waiting' | 'done' | 'error';
 type Thread = { id: string; name: string; cwd: string; branch: string | null; project: string; model: string | null; status: Status; updated: number; loaded: boolean };
-type Shared = { status: Status; note: string | null; context: number | null; ports: number[]; at: number };
+type Shared = { status: Status; note: string | null; context: number | null; ports: number[]; brief: string | null; at: number };
 type Row = { value: string; label: string; detail: string; page: string };
 type Search = { query: string; regex: boolean; case: boolean };
 type Picker = { kind: 'palette' | 'jump' | 'open' | 'find'; page: string; query: string; rows: Row[]; note: string | null };
-type Activity = { note?: string; context?: number; ports?: number[] };
+type Activity = { note?: string; context?: number; ports?: number[]; brief?: string };
+type Brief = { current: string; next: string; remaining: string[]; questions: string[]; estimate: string | null; at: number; thread: string | null; turn: number; objective: string | null; resumed: string | null };
 type Worktree = { path: string; branch: string | null; task: string | null; issue: string | null };
 type State = {
   threads: Thread[]; error: string | null; search: string; selected: string | null; current: string | null; seen: Record<string, number>;
   activity: Record<string, Activity>; worktrees: Worktree[]; picker: Picker | null; restore: string | null; drafts: Record<string, string>;
   find: Search; transcript: string[]; open: boolean; revisions: Record<string, number>;
+  brief: Brief | null; cleared: string | null; hidden: boolean; turns: number; workflow: { objective: string; remaining: string[] } | null;
 };
 
 const KEYS = { palette: 'Ctrl+Alt+p', jump: 'Ctrl+Alt+g', quick_open: 'Ctrl+Alt+o', find: 'Ctrl+Alt+f', sessions: 'Ctrl+Alt+s' };
@@ -48,7 +50,7 @@ export default function activate(api: ModAPI) {
   const glyph: Record<Status | 'unread' | 'group', string> = ascii ? { working: '*', waiting: '!', done: '+', error: 'x', unread: '>', group: '-' } : { working: '●', waiting: '◆', done: '✓', error: '✗', unread: '•', group: '▾' };
   const tones: Record<Status, TerminalTone> = { working: 'accent', waiting: 'attention', done: 'success', error: 'failure' };
   const empty = (): State => ({ threads: [], error: null, search: '', selected: null, current: null, seen: {}, activity: {}, worktrees: [], picker: null, restore: null, drafts: {},
-    find: { query: '', regex: false, case: false }, transcript: [], open: false, revisions: {} });
+    find: { query: '', regex: false, case: false }, transcript: [], open: false, revisions: {}, brief: null, cleared: null, hidden: false, turns: 0, workflow: null });
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const words = (value: Json) => String(value ?? '').trim();
@@ -86,12 +88,32 @@ export default function activate(api: ModAPI) {
     ? status.activeFlags?.length ? 'waiting' : 'working' : status?.type === 'systemError' ? 'error' : 'done';
   const keep = (next: Status, failed: boolean): Status => failed && next === 'done' ? 'error' : next;
 
-  // Sessions in other OMD processes read each other's live status, ports and notes from the shared user-scope store.
+  const flag = (state: State, brief: Brief) => state.current && brief.thread && brief.thread !== state.current ? 'forked, not revalidated'
+    : brief.resumed ?? (brief.turn < state.turns ? 'stale' : null);
+  const summary = (state: State) => {
+    const brief = state.brief;
+    if (!brief) return null;
+    const mark = flag(state, brief);
+    const asks = brief.questions.length;
+    return fit(`${brief.current}${asks ? ` · ${asks} question${asks > 1 ? 's' : ''}` : ''}${mark ? ` (${mark})` : ''}`, 256);
+  };
+  const workflow = (state: State) => {
+    const status = service<{ objective?: string; remaining_work?: string[] }>(() => api.services.call('omd.workflow', 'status', null));
+    state.workflow = typeof status?.objective === 'string' ? { objective: fit(status.objective, 512), remaining: (status.remaining_work ?? []).slice(0, 32).map(item => fit(item, 256)) } : null;
+    if (!state.brief || !state.workflow) return;
+    if (state.brief.objective === null) state.brief.objective = state.workflow.objective;
+    else if (state.brief.objective !== state.workflow.objective) {
+      state.brief = null;
+      state.cleared = 'Brief cleared: the workflow task changed';
+    }
+  };
+
+  // Sessions in other OMD processes read each other's live status, ports, notes and brief summaries from the shared user-scope store.
   const share = (state: State) => {
     const thread = state.threads.find(item => item.id === state.current);
     if (!thread) return;
     const activity = state.activity[thread.id] ?? {};
-    const value: Shared = { status: thread.status, note: activity.note ?? null, context: activity.context ?? null, ports: activity.ports ?? [], at: Date.now() };
+    const value: Shared = { status: thread.status, note: activity.note ?? null, context: activity.context ?? null, ports: activity.ports ?? [], brief: summary(state), at: Date.now() };
     const put = api.host.tryCall('store.put', { scope: 'user', key: `s:${thread.id}`, value, expected_revision: state.revisions[thread.id] ?? null });
     if (put.ok) state.revisions[thread.id] = put.value.revision;
     if (thread.status === 'working' || thread.status === 'waiting') api.host.tryCall('events.schedule', { key: 'share', delay_ms: FRESH_MS / 3 });
@@ -124,10 +146,14 @@ export default function activate(api: ModAPI) {
       }
       if (id === state.current) state.revisions[id] = entry.revision;
       const thread = state.threads.find(item => item.id === id);
-      if (!thread || thread.loaded || id === state.current) continue;
+      if (!thread || id === state.current) continue;
+      if (thread.loaded) {
+        (state.activity[id] ??= {}).brief = value.brief ?? undefined;
+        continue;
+      }
       const fresh = now - value.at < FRESH_MS;
       if (fresh || value.status === 'done' || value.status === 'error') thread.status = value.status;
-      state.activity[id] = { note: value.note ?? undefined, context: value.context ?? undefined, ports: fresh ? value.ports : [] };
+      state.activity[id] = { note: value.note ?? undefined, context: value.context ?? undefined, ports: fresh ? value.ports : [], brief: value.brief ?? undefined };
     }
     share(state);
     const ids = new Set(state.threads.map(thread => thread.id));
@@ -137,6 +163,12 @@ export default function activate(api: ModAPI) {
     return state;
   };
 
+  const self = () => {
+    const before = api.host.tryCall('store.get', { key: 'self', scope: 'thread' });
+    const put = before.ok ? api.host.tryCall('store.put', { key: 'self', scope: 'thread', value: true, expected_revision: before.value?.revision ?? null }) : null;
+    const read = put?.ok ? api.host.tryCall('store.get', { key: 'self', scope: 'thread' }) : null;
+    return read?.ok ? read.value?.provenance.thread_id ?? null : null;
+  };
   const composerText = () => {
     const read = api.host.tryCall('composer.read', null);
     return read.ok ? read.value.text : '';
@@ -375,10 +407,14 @@ export default function activate(api: ModAPI) {
     if (op === '' || op === 'toggle') state.open = !state.open;
     if (op !== 'select' && op !== 'act') refresh(state);
     save(state);
-    if (op === 'list') return { display: state.threads.map(thread => `${glyph[thread.status]} ${thread.name}  ${thread.project}${thread.branch ? `/${thread.branch}` : ''}  ${thread.id}`).join('\n') || state.error || 'no sessions' };
+    if (op === 'list') return { display: state.threads.map(thread => {
+      const brief = briefOf(state, thread);
+      return `${glyph[thread.status]} ${thread.name}  ${thread.project}${thread.branch ? `/${thread.branch}` : ''}  ${thread.id}${brief ? `  “${brief}”` : ''}`;
+    }).join('\n') || state.error || 'no sessions' };
     return message ? { display: message } : null;
   }, { description: 'Toggle the session list, or search|select|act|list|refresh it (Ctrl+Alt+S)' });
 
+  const briefOf = (state: State, thread: Thread) => thread.id === state.current ? summary(state) : state.activity[thread.id]?.brief ?? null;
   const unread = (state: State, thread: Thread) => thread.id !== state.current && thread.updated > (state.seen[thread.id] ?? 0);
   const sessionRows = (state: State): TerminalListRow[] => {
     const groups = new Map<string, Thread[]>();
@@ -387,12 +423,14 @@ export default function activate(api: ModAPI) {
       ...threads.map(thread => {
         const activity = state.activity[thread.id] ?? {};
         const tree = state.worktrees.find(item => item.path === thread.cwd);
+        const brief = briefOf(state, thread);
         const detail = [base(thread.cwd), thread.model, activity.context !== undefined ? `ctx ${activity.context}%` : null, activity.ports?.length ? activity.ports.map(port => `:${port}`).join(' ') : null, activity.note].filter(Boolean).join(' · ');
         return { value: thread.id, label: `${thread.status}${unread(state, thread) ? ' unread' : ''} ${thread.name}`, spans: [
           { text: `${unread(state, thread) ? glyph.unread : ' '}${glyph[thread.status]} `, tone: tones[thread.status] },
           { text: fit(thread.name, 60), bold: thread.id === state.current || unread(state, thread) },
           ...(thread.branch ? [{ text: fit(` ${thread.branch}`, 40), tone: 'accent' as const }] : []),
           ...(tree?.issue ? [{ text: fit(` #${tree.issue}`, 20), tone: 'accent' as const }] : []),
+          ...(brief ? [{ text: fit(`  “${brief}”`, 100) }] : []),
           { text: fit(`  ${detail}`, 120), tone: 'muted' as const }] };
       })]);
   };
@@ -429,6 +467,73 @@ export default function activate(api: ModAPI) {
       { type: 'button', id: 'omd_layout_close', label: `Close the ${titles[picker.kind].toLowerCase()}`, text: 'Close', action: { command: 'omd_layout:pick', args: 'close' } }] }] };
   };
 
+  const STATES: Record<Status, string> = { working: 'Working', waiting: 'Waiting for you', done: 'Idle', error: 'Last turn failed' };
+  const age = (at: number) => {
+    const minutes = Math.floor((Date.now() - at) / 60_000);
+    return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes}m ago` : minutes < 2_880 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1_440)}d ago`;
+  };
+  const briefLines = (state: State) => {
+    const line = (id: string, label: string, text: string, tone: TerminalTone = 'normal') => ({ type: 'text' as const, id: `omd_layout_brief_${id}`, label, text: fit(text, 512), tone });
+    const thread = state.threads.find(item => item.id === state.current);
+    const brief = state.brief;
+    const mark = brief && flag(state, brief);
+    return [
+      ...(thread ? [line('state', 'Session state', `Session: ${STATES[thread.status]}`, tones[thread.status])] : []),
+      ...(state.workflow ? [line('task', 'Workflow objective', `Workflow task: ${state.workflow.objective}`, 'accent'),
+        line('workflow', 'Workflow remaining work', `Workflow: ${state.workflow.remaining.length} remaining`, 'accent')] : []),
+      ...(!brief ? [line('none', 'Agent brief', state.cleared ?? 'No agent brief yet', 'muted')] : [
+        line('age', 'Agent brief age', `Agent brief · ${age(brief.at)}${mark ? ` · ${mark}` : ''}`, mark ? 'attention' : 'muted'),
+        line('current', 'Current work', `Now: ${brief.current}`),
+        line('next', 'Next step', `Next: ${brief.next}`),
+        ...brief.remaining.map((item, index) => line(`remaining_${index}`, `Remaining task ${index + 1}`, `- ${item}`)),
+        ...brief.questions.map((item, index) => line(`question_${index}`, `Question ${index + 1}`, `? ${item}`, 'attention')),
+        line('estimate', 'Completion estimate', brief.estimate ? `Estimate (declared): ${brief.estimate}` : 'Estimate: unknown', 'muted')]),
+    ];
+  };
+  api.command('brief', value => {
+    const op = words(value);
+    const state = load();
+    if (op === 'hide') state.hidden = true;
+    else if (op === 'clear') {
+      state.brief = null;
+      state.cleared = 'Brief cleared';
+      share(state);
+    } else if (op === '' || op === 'show') state.hidden = false;
+    else return { display: 'usage: /omd_layout:brief [show|hide|clear]' };
+    save(state);
+    return { display: op === 'hide' ? 'Brief panel hidden; /omd_layout:brief shows it' : op === 'clear' ? 'Brief cleared' : briefLines(state).map(item => item.text).join('\n') };
+  }, { description: 'Show, hide or clear this session\'s agent brief' });
+
+  const text = (value: Json | undefined, limit: number, name: string) => {
+    if (typeof value !== 'string' || !value.trim() || [...value].length > limit) throw new Error(`brief_field_invalid: ${name} must be a non-empty string of at most ${limit} characters`);
+    return fit(value.trim(), limit * 4);
+  };
+  const texts = (value: Json | undefined, count: number, limit: number, name: string) => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > count) throw new Error(`brief_field_invalid: ${name} takes at most ${count} items`);
+    return value.map(item => text(item, limit, name));
+  };
+  api.tool({ name: 'brief', description: 'Replace this session\'s brief, shown to the user beside the conversation and as its session-list summary: current work, next step, remaining tasks and questions or decisions that need the user. Update it when the plan or task changes; it records your own account and grants nothing. Give an estimate only when you can declare one.',
+    parameters: { type: 'object', properties: {
+      current: { type: 'string', description: 'What you are working on now, one line of at most 200 characters' },
+      next: { type: 'string', description: 'The next step, at most 200 characters' },
+      remaining: { type: 'array', items: { type: 'string' }, description: 'Remaining tasks, at most 12 of 160 characters' },
+      questions: { type: 'array', items: { type: 'string' }, description: 'Questions or decisions that need the user, at most 6 of 200 characters' },
+      estimate: { type: 'string', description: 'An explicitly declared completion estimate of at most 40 characters; omit when unknown' },
+    }, required: ['current', 'next'], additionalProperties: false } }, input => {
+    const args = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, Json>;
+    const fields = { current: text(args.current, 200, 'current'), next: text(args.next, 200, 'next'), remaining: texts(args.remaining, 12, 160, 'remaining'),
+      questions: texts(args.questions, 6, 200, 'questions'), estimate: args.estimate === undefined ? null : text(args.estimate, 40, 'estimate') };
+    const state = load();
+    state.current = self() ?? state.current;
+    workflow(state);
+    state.brief = { ...fields, at: Date.now(), thread: state.current, turn: state.turns, objective: state.workflow?.objective ?? null, resumed: null };
+    state.cleared = null;
+    share(state);
+    save(state);
+    return { updated: true };
+  });
+
   const keys = (): Partial<Record<KeyName, KeyAction>> => {
     const configured = (api.settings.keys && typeof api.settings.keys === 'object' && !Array.isArray(api.settings.keys) ? api.settings.keys : {}) as Record<string, Json>;
     const bindings: Partial<Record<KeyName, KeyAction>> = {};
@@ -447,7 +552,8 @@ export default function activate(api: ModAPI) {
       save(state);
     }
     const sites: Record<string, TerminalRenderSite> = { 'omd_layout/sessions': { mode: 'replace', components: sessionList(state, 0, 'site') } };
-    if (api.settings.sidebar !== false) sites.sidebar = { mode: 'wrap', components: [{ type: 'pane', id: 'omd_layout_sidebar', label: 'Sessions panel', title: 'Sessions', children: sessionList(state, 10, 'sidebar') }, { type: 'slot' }] };
+    if (api.settings.sidebar !== false) sites.sidebar = { mode: 'wrap', components: [{ type: 'pane', id: 'omd_layout_sidebar', label: 'Sessions panel', title: 'Sessions', children: sessionList(state, 10, 'sidebar') },
+      ...(state.hidden ? [] : [{ type: 'pane' as const, id: 'omd_layout_brief', label: 'Brief panel', title: 'Brief', children: briefLines(state) }]), { type: 'slot' }] };
     if (state.picker) sites.dialog = pickerSite(state, state.picker);
     else if (state.open) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_layout_sessions_dialog', label: 'Sessions', title: 'Sessions', children: [...sessionList(state, 16, 'dialog'),
       { type: 'button', id: 'omd_layout_sessions_close', label: 'Close the session list', text: 'Close', action: { command: 'omd_layout:sessions', args: 'toggle' } }] }] };
@@ -459,9 +565,10 @@ export default function activate(api: ModAPI) {
   });
 
   api.on('start', () => save(refresh(load())));
-  api.on('resume', ({ thread_id }) => {
+  api.on('resume', ({ thread_id, last_turn, restarted }) => {
     const state = load();
     state.current = thread_id;
+    if (state.brief && restarted) state.brief.resumed = last_turn?.status === 'in_progress' ? 'resumed after an unfinished turn' : 'resumed, not revalidated';
     refresh(state);
     const draft = state.drafts[thread_id];
     if (draft) {
@@ -470,12 +577,17 @@ export default function activate(api: ModAPI) {
     }
     save(state);
   });
-  api.on('idle', () => save(refresh(load(), false)));
+  api.on('idle', () => {
+    const state = load();
+    workflow(state);
+    save(refresh(state, false));
+  });
   api.on('turn_start', () => {
     const state = load();
+    state.turns += 1;
+    workflow(state);
     const thread = state.threads.find(item => item.id === state.current);
-    if (!thread) return;
-    thread.status = 'working';
+    if (thread) thread.status = 'working';
     share(state);
     save(state);
   });
