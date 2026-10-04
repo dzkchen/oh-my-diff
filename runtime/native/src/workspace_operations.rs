@@ -263,6 +263,7 @@ impl WorkspaceAuthority {
         arguments: Value,
         runtime: &mut codex_omd::ModHost,
         processes: &crate::managed_process::ManagedProcesses,
+        protected: &[PathBuf],
         generation: u64,
         active: impl Fn() -> bool,
     ) -> Result<Value, String> {
@@ -299,7 +300,7 @@ impl WorkspaceAuthority {
                             generation,
                             repository: &self.repository,
                             policy: &self.policy,
-                            protected: &[],
+                            protected,
                             os_access: None,
                         },
                         operation,

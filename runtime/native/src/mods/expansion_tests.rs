@@ -343,17 +343,19 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
 }
 
 #[derive(Default)]
-struct RecordingInvoker(std::sync::Mutex<Vec<(String, String, Value)>>);
+struct RecordingInvoker(std::sync::Mutex<Vec<(String, String, Value, bool)>>);
 
 impl codex_extension_api::ToolInvoker for RecordingInvoker {
     fn invoke<'a>(
         &'a self,
         request: codex_extension_api::ToolInvocationRequest,
     ) -> ExtensionFuture<'a, Result<codex_extension_api::ToolInvocationOutcome, String>> {
-        self.0
-            .lock()
-            .unwrap()
-            .push((request.call_id, request.tool, request.arguments));
+        self.0.lock().unwrap().push((
+            request.call_id,
+            request.tool,
+            request.arguments,
+            request.serialized,
+        ));
         Box::pin(std::future::ready(Ok(
             codex_extension_api::ToolInvocationOutcome {
                 output: "second attempt".into(),
@@ -392,9 +394,9 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         },
         Package {
             id: "probe",
-            capabilities: &["interception"],
-            manifest: Value::Null,
-            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'probe' } }, () => {\n    const check = api.host.call('tools.check', { tool: 'exec_command', arguments: { cmd: 'ls' } });\n    const run = api.host.call('tools.invoke', { tool: 'read', arguments: { path: 'b.txt' } });\n    return { output: `${check.decision} ${run.call_id} ${run.output}`, success: true };\n  });\n  api.intercept('tool', { match: { tool: 'read' } }, () => ({ output: 'own call intercepted', success: true }));\n}\n",
+            capabilities: &["interception", "events"],
+            manifest: json!({"subscriptions": {"channels": ["probe/*"]}}),
+            source: "export default function (api) {\n  api.on('channel', () => { api.host.call('tools.invoke', { tool: 'read', arguments: { path: 'c.txt' } }); });\n  api.intercept('tool', { match: { tool: 'probe' } }, () => {\n    const check = api.host.call('tools.check', { tool: 'exec_command', arguments: { cmd: 'ls' } });\n    const run = api.host.call('tools.invoke', { tool: 'read', arguments: { path: 'b.txt' } });\n    return { output: `${check.decision} ${run.call_id} ${run.output}`, success: true };\n  });\n  api.intercept('tool', { match: { tool: 'read' } }, () => ({ output: 'own call intercepted', success: true }));\n}\n",
         },
     ]) else {
         return;
@@ -461,9 +463,18 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         vec![(
             "call-1:retry1".to_owned(),
             "flaky".to_owned(),
-            json!({"path": "a.txt", "attempt": 2})
+            json!({"path": "a.txt", "attempt": 2}),
+            false
         )]
     );
+    assert!(fixture.core.expansion.invoked.lock().unwrap().is_empty());
+    fixture
+        .core
+        .expansion
+        .invoked
+        .lock()
+        .unwrap()
+        .insert("call-1:retry1".into(), String::new());
     assert_eq!(
         mods.intercept_tool(start("call-1:retry1", &FLAKY))
             .await
@@ -480,6 +491,15 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         }
     );
     assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
+    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    delivery::publish(&fixture.core, "probe", json!({"channel": "go", "data": 1})).unwrap();
+    delivery::deliver(&fixture.core).await;
+    let calls = invoker.0.lock().unwrap().clone();
+    assert_eq!(
+        calls.iter().map(|call| call.3).collect::<Vec<_>>(),
+        [false, false, true],
+        "only calls outside a running tool wait for the turn's tool gate"
+    );
     let chain = codex_omd::intercept_shared(
         &fixture.core.runtime,
         "tool",
@@ -838,16 +858,68 @@ fn delegated_approvals_stay_inside_the_current_grant() {
     let approver = grants(&["approvals", "middleware", "approve"]);
     let check =
         |grants: Option<&codex_omd::ModGrants>, kind: &str, decision: &str, details: Value| {
-            approvals::within_grant(grants, kind, decision, &details)
+            approvals::within_grant(grants, kind, decision, &details, Path::new("/repository"))
         };
-    let cargo = json!({"command": ["/usr/bin/cargo", "test"], "cwd": "file:///work/crate"});
+    let cargo = json!({"command": ["cargo", "test"], "cwd": "file:///work/crate"});
     assert!(check(Some(&approver), "exec", "ask", cargo.clone()).is_ok());
+    for command in [
+        json!(["/bin/zsh", "-lc", "./cargo test"]),
+        json!(["/tmp/x/cargo", "test"]),
+        json!(["/tmp/x/cargo", "-c", "cargo"]),
+    ] {
+        assert!(
+            check(
+                Some(&approver),
+                "exec",
+                "ask",
+                json!({"command": command, "cwd": "file:///work"})
+            )
+            .is_err()
+        );
+    }
+    let root = tempfile::tempdir().expect("root");
+    std::os::unix::fs::symlink("/etc", root.path().join("link")).expect("symlink");
+    let mut linked = approver.clone();
+    if let Some(scope) = linked.approves.as_mut() {
+        scope.roots = vec![root.path().display().to_string()];
+    }
+    assert!(
+        check(
+            Some(&linked),
+            "patch",
+            "ask",
+            json!({"files": [root.path().join("a.rs")]})
+        )
+        .is_ok()
+    );
+    assert!(
+        check(
+            Some(&linked),
+            "patch",
+            "ask",
+            json!({"files": [root.path().join("link/hosts")]})
+        )
+        .is_err()
+    );
     assert!(
         check(
             Some(&approver),
             "exec",
             "ask",
-            json!({"command": ["/bin/zsh", "-lc", "cargo test"], "cwd": "file:///work"})
+            json!({"command": ["/bin/sh", "-lc", "cargo test"], "cwd": "file:///work"})
+        )
+        .is_ok()
+    );
+    let mut prefixed = approver.clone();
+    if let Some(scope) = prefixed.approves.as_mut() {
+        scope.tools = vec!["s*".into()];
+    }
+    assert!(
+        check(
+            Some(&prefixed),
+            "exec",
+            "ask",
+            json!({"command": ["/bin/sh"], "cwd": "file:///work"})
         )
         .is_ok()
     );
@@ -1072,10 +1144,14 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
         description: String::new(),
         parameters: json!({"type": "object"}),
     };
+    let grep = ToolSpecView {
+        description: "—".repeat(2048),
+        ..view("grep")
+    };
     let adjustment = mods
         .adjust_tool_specs(
             &thread_store,
-            &[view("read"), view("grep"), view("mcp__srv__search")],
+            &[view("read"), grep, view("mcp__srv__search")],
         )
         .unwrap();
     assert_eq!(adjustment.hide, vec!["mcp__srv__search".to_owned()]);

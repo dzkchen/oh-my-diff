@@ -19,12 +19,43 @@ fn matches(pattern: &str, value: &str) -> bool {
             .is_some_and(|suffix| value.ends_with(&format!(".{suffix}")))
 }
 
-fn base(value: &Value) -> String {
-    value
-        .as_str()
-        .and_then(|path| path.rsplit('/').next())
-        .unwrap_or_default()
-        .to_owned()
+/// A bare pattern matches a program path only where PATH resolves that name, never a same-named file elsewhere.
+fn program_matches(pattern: &str, program: &str, repository: &std::path::Path) -> bool {
+    let path = std::path::Path::new(program);
+    let name = match pattern.contains('*') {
+        true => path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| matches(pattern, name)),
+        false => Some(pattern),
+    };
+    matches(pattern, program)
+        || path.is_absolute()
+            && !pattern.contains('/')
+            && name
+                .and_then(|name| codex_omd::host::resolve_program(name, repository))
+                .is_some_and(|resolved| path.canonicalize().is_ok_and(|real| real == resolved))
+}
+
+/// Resolves symlinks through the deepest existing ancestor; a dangling symlink is unreadable.
+fn resolved(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(real) = current.canonicalize() {
+            return Some(
+                missing
+                    .into_iter()
+                    .rev()
+                    .fold(real, |path, part| path.join(part)),
+            );
+        }
+        if current.symlink_metadata().is_ok() {
+            return None;
+        }
+        missing.push(current.file_name()?);
+        current = current.parent()?;
+    }
 }
 
 fn local(value: &Value) -> Option<std::path::PathBuf> {
@@ -40,6 +71,7 @@ pub(super) fn within_grant(
     kind: &str,
     host_decision: &str,
     details: &Value,
+    repository: &std::path::Path,
 ) -> Result<(), String> {
     let grants = grants.ok_or("the mod is not active")?;
     let granted = |name: &str| grants.capabilities.iter().any(|c| c == name);
@@ -57,16 +89,25 @@ pub(super) fn within_grant(
     let tool = match kind {
         "exec" => {
             let command = &details["command"];
-            match (command[1].as_str(), command[2].as_str()) {
-                (Some("-c" | "-lc"), Some(script))
+            let shell = command[0].as_str().is_some_and(|program| {
+                ["sh", "bash", "zsh"]
+                    .iter()
+                    .any(|shell| program_matches(shell, program, repository))
+            });
+            match (shell, command[1].as_str(), command[2].as_str()) {
+                (true, Some("-c" | "-lc"), Some(script))
                     if !script.contains(|c: char| ";&|`$<>(){}\n\\".contains(c)) =>
                 {
-                    base(&json!(script.split_whitespace().next().unwrap_or_default()))
+                    script
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned()
                 }
-                _ => base(&command[0]),
+                _ => command[0].as_str().unwrap_or_default().to_owned(),
             }
         }
-        "execve" => base(&details["program"]),
+        "execve" => details["program"].as_str().unwrap_or_default().to_owned(),
         "mcp_tool" => format!(
             "{}/{}",
             details["server"].as_str().unwrap_or_default(),
@@ -76,7 +117,12 @@ pub(super) fn within_grant(
         "stdin" => "write_stdin".to_owned(),
         _ => "network".to_owned(),
     };
-    if !scope.tools.is_empty() && !scope.tools.iter().any(|pattern| matches(pattern, &tool)) {
+    if !scope.tools.is_empty()
+        && !scope
+            .tools
+            .iter()
+            .any(|pattern| program_matches(pattern, &tool, repository))
+    {
         return Err(format!("{tool} is outside its grant"));
     }
     let paths: Vec<Value> = match kind {
@@ -90,8 +136,13 @@ pub(super) fn within_grant(
             if path
                 .components()
                 .any(|part| matches!(part, std::path::Component::ParentDir))
-                || !scope.roots.iter().any(|root| path.starts_with(root))
             {
+                return Err(format!("{} is outside its roots", path.display()));
+            }
+            let real = resolved(&path).ok_or("a request path is unreadable")?;
+            if !scope.roots.iter().any(|root| {
+                resolved(std::path::Path::new(root)).is_some_and(|root| real.starts_with(root))
+            }) {
                 return Err(format!("{} is outside its roots", path.display()));
             }
         }
@@ -194,6 +245,7 @@ impl ApprovalGateContributor for Mods {
             let runtime = self.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
+            let repository = lead.host.repository.clone();
             let (kind, host_decision, details) = (
                 input.kind.to_owned(),
                 input.host_decision.to_owned(),
@@ -208,7 +260,7 @@ impl ApprovalGateContributor for Mods {
                     .filter_map(|(id, _)| runtime.grants(id).map(|grants| (id.clone(), grants)))
                     .collect::<BTreeMap<_, _>>();
                 Ok::<_, &str>(decide(results, &|id| {
-                    within_grant(grants.get(id), &kind, &host_decision, &details)
+                    within_grant(grants.get(id), &kind, &host_decision, &details, &repository)
                 }))
             })
             .await;

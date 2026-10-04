@@ -1572,13 +1572,18 @@ impl ToolLifecycleContributor for Mods {
                     if let Ok(mut invoked) = core.expansion.invoked.lock() {
                         invoked.insert(call_id.clone(), String::new());
                     }
-                    let outcome = dispatcher
-                        .block_on(invoker.invoke(codex_extension_api::ToolInvocationRequest {
+                    let outcome = dispatcher.block_on(invoker.invoke(
+                        codex_extension_api::ToolInvocationRequest {
                             call_id: call_id.clone(),
                             tool: effective["tool"].as_str().unwrap_or_default().to_owned(),
                             arguments: effective["arguments"].clone(),
-                        }))
-                        .map_err(std::io::Error::other)?;
+                            serialized: false,
+                        },
+                    ));
+                    if let Ok(mut invoked) = core.expansion.invoked.lock() {
+                        invoked.remove(&call_id);
+                    }
+                    let outcome = outcome.map_err(std::io::Error::other)?;
                     let (output, truncated) = expansion::bounded_output(outcome.output);
                     return Ok(
                         json!({"output": output, "success": outcome.success, "truncated": truncated, "call_id": call_id}),

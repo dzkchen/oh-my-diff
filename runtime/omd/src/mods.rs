@@ -551,6 +551,9 @@ fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
     Ok(())
 }
 
+/// Non-mod `origin.caller` labels, which a mod ID must never equal.
+const HOST_CALLERS: [&str; 4] = ["model", "engine", "code_mode", "user"];
+
 fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 32
@@ -1217,6 +1220,7 @@ impl ModPackage {
         }
         if !identifier(&self.id)
             || self.id.len() > 24
+            || HOST_CALLERS.contains(&self.id.as_str())
             || self.version.is_empty()
             || self.version.len() > 64
             || self.state_version == 0

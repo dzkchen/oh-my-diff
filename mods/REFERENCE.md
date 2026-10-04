@@ -82,9 +82,13 @@ wider scope needs a new trust:
 - `approves: {kinds, tools?, roots?, hosts?}` lists the request kinds a mod may
   approve (`exec`, `stdin`, `execve`, `patch`, `mcp_tool`, `network`) and
   optional scopes: `tools` matches the command's program (the first word inside
-  a `sh -c`/`-lc` wrapper), `apply_patch`, `write_stdin` or `server/tool` of an
+  an `sh`, `bash` or `zsh` `-c`/`-lc` wrapper) as written, where a bare name or
+  `prefix*` also matches an absolute path that `PATH` resolves that name to
+  outside the repository but never a same-named file elsewhere,
+  `apply_patch`, `write_stdin` or `server/tool` of an
   MCP call (`*` and `prefix*` patterns); `roots` are absolute directories that
-  must contain the command's working directory or every patched file; `hosts`
+  must contain the command's working directory or every patched file after
+  symlinks resolve (a dangling symlink never qualifies); `hosts`
   match network hosts (`*.example.com`). Empty scopes are broad. It needs
   `approvals` and `middleware`; `approve.override` needs `approve`.
 
@@ -630,7 +634,10 @@ inside an interceptor are not intercepted. A tool call a mod starts with
 `tools.invoke {tool, arguments}` runs a model-visible tool through the current
 turn's executor under a new `mod-<id>-<n>` call ID, with interception,
 permissions, approvals, sandbox, accounting, cancellation and its own
-`tool_result`, and returns `{call_id, output, success, truncated}`; failures
+`tool_result`, and returns `{call_id, output, success, truncated}`. Calls from
+`timer`, `channel`, `process_event` and `approval_result` wait for the turn's
+running tools like a model call, so they never overlap a tool that is not
+parallel-safe; failures
 and denials come back as `success: false`. `tools.check {tool, arguments}`
 returns `{decision: 'allow' | 'ask' | 'deny', reason, authority}` without
 running anything. The tool's own runtime computes the host requirement the
@@ -996,8 +1003,9 @@ any it refuses.
 
 - Registration: at most 16 tools and 16 commands per mod. Commands are invoked as
   `/<id>:<name>`; the bare `/<name>` works only when no built-in command or other
-  mod uses that name. Mod ids use `a-z`, `0-9` and `_` up to 24 bytes, command
-  and tool names up to 32.
+  mod uses that name. Mod ids use `a-z`, `0-9` and `_` up to 24 bytes and never
+  equal the host `origin.caller` labels `model`, `engine`, `code_mode` or `user`;
+  command and tool names use up to 32.
 - Views: each mod's view or patch has at most 12 keybindings; the view composed
   from every mod has at most 64, and a key bound by two mods rejects the later
   mod's patch. A view holds at most 64 components nested at most 6 deep;

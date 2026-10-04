@@ -228,7 +228,7 @@ pub(super) async fn run<T: Send + 'static>(
         Some(job(&runtime, &mut host, &active))
     });
     while let Some(call) = receiver.recv().await {
-        let value = operations::dispatch(
+        let dispatched = operations::dispatch(
             core,
             lead,
             Caller {
@@ -242,8 +242,8 @@ pub(super) async fn run<T: Send + 'static>(
             None,
             call.request,
             &cancelled,
-        )
-        .await;
+        );
+        let value = SERIALIZED.scope(event != "tool_output", dispatched).await;
         let _ = call.reply.send(value.map_err(std::io::Error::other));
     }
     let result = handle.await.ok().flatten();
@@ -290,6 +290,11 @@ pub(super) async fn invoke_one(
         result
     })
     .await
+}
+
+tokio::task_local! {
+    /// Set while serving a callback outside any tool call, whose `tools.invoke` waits for the turn's tool gate.
+    static SERIALIZED: bool;
 }
 
 pub(super) const TOOL_RESULT_BYTES: usize = 48 * 1024;
@@ -353,6 +358,9 @@ async fn tool_call(
             call_id: call_id.clone(),
             tool: input.tool,
             arguments: input.arguments,
+            serialized: SERIALIZED
+                .try_with(|serialized| *serialized)
+                .unwrap_or(false),
         })
         .await;
     if let Ok(mut invoked) = core.expansion.invoked.lock() {

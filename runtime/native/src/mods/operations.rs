@@ -376,12 +376,14 @@ pub(super) async fn dispatch(
         let runtime = core.input_runtime.clone();
         let processes = lead.session.processes.clone();
         let generation = caller.generation;
+        let protected = host.protected_paths();
         return tokio::task::spawn_blocking(move || {
             let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
             authority.request_rename(
                 request.arguments,
                 &mut runtime,
                 &processes,
+                &protected,
                 generation,
                 active,
             )

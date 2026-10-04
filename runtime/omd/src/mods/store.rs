@@ -568,11 +568,14 @@ impl ModStore {
                 .map_err(failure)?
                 .as_secs(),
         );
+        let renewed = BTreeSet::from([grant(&json!(selection))]);
         config.revision = config
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.write("mods.json", &serde_json::to_value(config)?)
+        let value = serde_json::to_value(config)?;
+        self.write_granting("mods.json", &value, &renewed)
+            .or_else(|_| self.write("mods.json", &value))
     }
 
     pub fn enable(&self, path: &Path, enabled: bool) -> Result<()> {

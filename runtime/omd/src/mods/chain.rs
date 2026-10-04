@@ -242,7 +242,7 @@ fn tool_specs(tools: &Value, given: &Value) -> bool {
                 })
             }) && tool["description"]
                 .as_str()
-                .is_some_and(|text| text.len() <= 4096)
+                .is_some_and(|text| text.chars().count() <= 4096)
                 && (tool["parameters"].is_object() || tool["parameters"].is_null())
                 && tool["deferred"].is_boolean()
         })
