@@ -1098,4 +1098,25 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
     )
     .unwrap();
     assert_eq!(capture.settled_task_charge_microusd, 1200);
+    let resumed = Task::open(
+        Limits {
+            requests: 3,
+            exposure_microusd: 20000,
+            seconds: 30,
+            concurrent_workers: 2,
+            max_depth: 2,
+        },
+        root.path().join("evidence"),
+        Some("resume"),
+    )
+    .unwrap();
+    assert_eq!(
+        resumed
+            .attempts()
+            .unwrap()
+            .iter()
+            .map(|record| (record.provider_billed, record.settled_microusd))
+            .collect::<Vec<_>>(),
+        vec![(true, Some(500)), (true, Some(700))]
+    );
 }

@@ -118,6 +118,37 @@ fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
     fs::rename(&temporary, path)
 }
 
+/// Opens each complete `.json` entry before removing it; a failure keeps it queued and ends the pass with what was taken.
+fn drain<T>(
+    directory: &Path,
+    mut take: impl FnMut(&Value) -> io::Result<Option<T>>,
+) -> io::Result<(Vec<T>, bool)> {
+    let mut taken = Vec::new();
+    for entry in fs::read_dir(directory).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let envelope = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let item = match envelope.as_ref().map(&mut take).transpose() {
+            Ok(item) => item.flatten(),
+            Err(error) if taken.is_empty() => return Err(error),
+            Err(_) => return Ok((taken, false)),
+        };
+        taken.extend(item);
+        if let Err(error) = fs::remove_file(&path) {
+            return if taken.is_empty() {
+                Err(error)
+            } else {
+                Ok((taken, false))
+            };
+        }
+    }
+    Ok((taken, true))
+}
+
 fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -299,42 +330,27 @@ impl Peers {
     /// Takes verified, unexpired, first-seen messages; expired ones get a receipt, replays are dropped.
     pub fn receive(&self, seal: &dyn Seal) -> io::Result<Vec<Inbound>> {
         let inbox = self.root.join("inbox").join(&self.session);
-        let Ok(entries) = fs::read_dir(&inbox) else {
-            return Ok(Vec::new());
-        };
-        let mut delivered = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-                continue;
-            }
-            let envelope = fs::read(&path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-            fs::remove_file(&path)?;
-            let Some(envelope) = envelope else {
-                continue;
-            };
-            let Some(message) = opened(seal, "message", &envelope)? else {
-                continue;
+        let (messages, _) = drain(&inbox, |envelope| {
+            let Some(message) = opened(seal, "message", envelope)? else {
+                return Ok(None);
             };
             if message["to"]["session"] != self.session.as_str() {
-                continue;
+                return Ok(None);
             }
             let id = message["id"].as_str().unwrap_or_default().to_owned();
             if !self.seen.lock().is_ok_and(|mut seen| seen.insert(id)) {
-                continue;
+                return Ok(None);
             }
             if message["expires_at_ms"]
                 .as_u64()
                 .is_none_or(|at| at < now_ms())
             {
                 self.receipt(seal, &message, "expired", None)?;
-            } else {
-                delivered.push(Inbound { message });
+                return Ok(None);
             }
-        }
-        Ok(delivered)
+            Ok(Some(Inbound { message }))
+        })?;
+        Ok(messages)
     }
 
     /// Whether `endpoint`'s own project scope admits the message's sender.
@@ -374,29 +390,20 @@ impl Peers {
     /// Verified receipts for messages this session sent, with the sending package, plus
     /// `expired` or `closed` for messages whose time ran out without one.
     pub fn receipts(&self, seal: &dyn Seal) -> io::Result<Vec<(String, Value)>> {
-        let mut settled = Vec::new();
         let directory = self.root.join("receipts").join(&self.session);
-        for entry in fs::read_dir(&directory).into_iter().flatten().flatten() {
-            let path = entry.path();
-            let envelope = fs::read(&path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-            fs::remove_file(&path)?;
-            let Some(receipt) = envelope
-                .as_ref()
-                .map(|envelope| opened(seal, "receipt", envelope))
-                .transpose()?
-                .flatten()
-            else {
-                continue;
+        let (mut settled, complete) = drain(&directory, |envelope| {
+            let Some(receipt) = opened(seal, "receipt", envelope)? else {
+                return Ok(None);
             };
-            let package = self.sent.lock().ok().and_then(|mut sent| {
-                sent.remove(receipt["id"].as_str().unwrap_or_default())
-                    .map(|sent| sent.package)
-            });
-            if let Some(package) = package {
-                settled.push((package, receipt));
-            }
+            Ok(self
+                .sent
+                .lock()
+                .ok()
+                .and_then(|mut sent| sent.remove(receipt["id"].as_str().unwrap_or_default()))
+                .map(|sent| (sent.package, receipt)))
+        })?;
+        if !complete {
+            return Ok(settled);
         }
         let now = now_ms();
         let lapsed = self

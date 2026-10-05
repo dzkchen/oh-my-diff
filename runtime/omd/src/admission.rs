@@ -460,6 +460,8 @@ impl Task {
                 | Some("request_dispatched")
                 | Some("request_failed")
                 | Some("request_settled")
+                | Some("request_provider_reported")
+                | Some("request_provider_settled")
                 | Some("raw_usage_observed") => {
                     let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
                     let prior = state.attempts.insert(attempt.request, attempt.clone());

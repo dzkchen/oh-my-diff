@@ -70,6 +70,60 @@ fn sessions_exchange_sealed_messages_and_receipts() {
     assert_eq!(receipts[0].1["correlation"], "c1");
 }
 
+struct FlakySeal(std::sync::atomic::AtomicUsize);
+
+impl Seal for FlakySeal {
+    fn seal(&self, sha256: &str) -> io::Result<String> {
+        TestSeal.seal(sha256)
+    }
+
+    fn verify(&self, sha256: &str, tag: &str) -> io::Result<bool> {
+        self.0
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .map_err(|_| io::Error::other("broker unavailable"))?;
+        TestSeal.verify(sha256, tag)
+    }
+}
+
+#[test]
+fn a_broker_failure_keeps_unverified_messages_and_in_flight_receipts_queued() {
+    let store = tempfile::tempdir().unwrap();
+    let alpha = Peers::open(store.path(), "alpha", Path::new("/repo")).unwrap();
+    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
+    let chat = endpoint("chat", "same");
+    alpha.publish(std::slice::from_ref(&chat)).unwrap();
+    beta.publish(std::slice::from_ref(&chat)).unwrap();
+    for text in ["one", "two"] {
+        alpha
+            .send(
+                &TestSeal,
+                &chat,
+                "beta",
+                "chat",
+                json!({"text": text}),
+                None,
+                60_000,
+            )
+            .unwrap();
+    }
+    let flaky = FlakySeal(std::sync::atomic::AtomicUsize::new(1));
+    assert_eq!(beta.receive(&flaky).unwrap().len(), 1);
+    assert!(beta.receive(&flaky).is_err());
+    assert_eq!(beta.receive(&TestSeal).unwrap().len(), 1);
+
+    let pending = store
+        .path()
+        .join("peers/receipts/alpha/.1.pending.json.tmp");
+    fs::create_dir_all(pending.parent().unwrap()).unwrap();
+    fs::write(&pending, b"{").unwrap();
+    assert!(alpha.receipts(&TestSeal).unwrap().is_empty());
+    assert!(pending.exists());
+}
+
 #[test]
 fn tampered_and_expired_messages_are_not_delivered() {
     let store = tempfile::tempdir().unwrap();

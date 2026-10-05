@@ -15,7 +15,7 @@ const registry = new URL('agents.json', import.meta.url);
 const record = row => appendFileSync(log, JSON.stringify(row) + '\\n');
 const known = () => existsSync(registry) ? JSON.parse(readFileSync(registry, 'utf8')) : [];
 const usage = { inputTokens: 10, outputTokens: 3, cacheReadTokens: 4, cacheWriteTokens: 2, reasoningTokens: 1 };
-let charged = 0;
+const charges = new URL('charged.json', import.meta.url);
 export class JsonlLocalAgentStore { constructor(root) { this.root = root; } }
 class FakeAgent {
   constructor(agentId) { this.agentId = agentId; }
@@ -30,7 +30,7 @@ class FakeAgent {
       emit({ type: 'thinking-delta', text: 'Thinking.' });
       if (message.text.includes('LIMIT')) return { id: 'run', status: 'error', error: { message: 'usage limit exceeded', code: 'resource_exhausted' } };
       if (message.text.endsWith('HANG')) { await stopped; return { id: 'run', status: 'cancelled' }; }
-      if (message.text.includes('CHARGE')) charged = 2.5;
+      if (message.text.includes('CHARGE')) writeFileSync(charges, '2.5');
       let answer = 'Answer.';
       if (message.text.includes('TOOL')) answer = 'tool:' + JSON.stringify(await call('exec_command', { cmd: 'pwd' }));
       if (message.text.includes('PARALLEL')) answer = 'both:' + (await Promise.all([call('exec_command', { cmd: 'a' }), call('exec_command', { cmd: 'b' })])).join(',');
@@ -44,7 +44,7 @@ class FakeAgent {
     })();
     return { id: 'run-' + this.agentId, requestId: 'req-1', wait: () => work, cancel: async () => { record({ op: 'cancel', agentId: this.agentId }); stop(); } };
   }
-  async getUsage() { return { usage, cost: { rawCostCents: 1.25, chargedCents: charged }, runs: [] }; }
+  async getUsage() { return { usage, cost: { rawCostCents: 1.25, chargedCents: existsSync(charges) ? Number(readFileSync(charges, 'utf8')) : 0 }, runs: [] }; }
 }
 const clean = options => ({ ...options, local: { ...options.local, store: options.local.store instanceof JsonlLocalAgentStore } });
 export const Agent = {
@@ -216,8 +216,10 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   assert.equal(notice.at(-1).response.usage.omd_cursor.plan.plan_usage.includedSpend, 2000);
   child.kill('SIGKILL');
   const restarted = await fixture(t, { root });
-  assert.equal(text(await restarted.call([...base, user('CHARGE'), assistant('Answer.'), user('again'), assistant('Answer.'), user('after restart')], { thread: 'a' })), 'Answer.');
+  assert.equal(text(await restarted.call([...base, user('CHARGE'), assistant('Answer.'), user('again'), assistant('Answer.'), user('after restart')], { thread: 'a', request: 'req-9' })), 'Answer.');
   assert.equal((await calls()).filter(row => row.op === 'resume').length, 1);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepEqual(pendingSettlements(await readFile(join(root, 'data/usage.jsonl'), 'utf8'), 'a', ['req-0', 'req-7']), [{ request_id: 'req-9', microusd: 0, source: 'cursor_sdk.getUsage' }]);
   const lost = { type: 'function_call', call_id: 'omd_cursor_000000000000000000000000', name: 'exec_command', arguments: '{"cmd":"ls"}' };
   assert.equal(text(await restarted.call([user('list'), lost, output(lost, 'a.txt')], { thread: 'c' })), 'Answer.');
   assert.match((await calls()).filter(row => row.op === 'send').at(-1).text, /## User\nlist\n\[called exec_command \{"cmd":"ls"\}\]\n\[result a\.txt\][\s\S]*continue from the tool results/);

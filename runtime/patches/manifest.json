@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.159.1.patch",
-    "sha256": "343cc9398787be10d5b291b7840ebcdea06cfafc692566254bc41a03281ac2b6"
+    "sha256": "f89c0cd18dc0cfdc63c88cc2882427135cf46f009c4c64cf4620d2b8065a932c"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -421,7 +421,7 @@
     },
     "codex-rs/ext/omd/src/accounting_tests.rs": {
       "before": null,
-      "after": "4a9c87703f1206013833316904fc03b62466f3334d92d24f85794ccb2fcb84e5"
+      "after": "ee3d5c1f589cf0db5101816eea3061d2082186b248604f2565773246f828f656"
     },
     "codex-rs/ext/omd/src/config.rs": {
       "before": null,
@@ -469,7 +469,7 @@
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
-      "after": "958bb07fc0a4d2b945d863cdced5c2844adbae587c0541936d5f1b623cff2133"
+      "after": "f9b98f91c3ebcddb4c45d441b872ff79bc1d1186f8249b449d5c7d74c23ee747"
     },
     "codex-rs/ext/omd/src/mods/autonomy.rs": {
       "before": null,
@@ -585,7 +585,7 @@
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
-      "after": "e8c0e14315727884e4b8c64a11b6f46dfe8a8f7b05f0e8003e1e7d456eaac35f"
+      "after": "eeadde2231f42db2f765407c7299095ff9e9243218c604951b8fa556b7b63f5e"
     },
     "codex-rs/omd/src/app_routes.json": {
       "before": null,
@@ -781,11 +781,11 @@
     },
     "codex-rs/omd/src/peers.rs": {
       "before": null,
-      "after": "2175d0899376a1fa626f06cc382500e9bbd5689d75abd045763742c341152901"
+      "after": "b4e43a0b739a865210d7111ae39b63b83dec80ac4ea2dd11125f1cf0cdf33ac0"
     },
     "codex-rs/omd/src/peers_tests.rs": {
       "before": null,
-      "after": "dd513478c25951e5546d2d5fe8402522101a225fb9c4addc71cc35ff1eca8a07"
+      "after": "e84c76511b8a08f16a8ab92eeed2188eea08ca7a94286fa0fa3dcbbbd63df69d"
     },
     "codex-rs/omd/src/plugin_component.rs": {
       "before": null,

@@ -18746,10 +18746,10 @@ index 000000000..cd57a57ee
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..957eda025
+index 000000000..69084c8e4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1101 @@
+@@ -0,0 +1,1122 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -19850,6 +19850,27 @@ index 000000000..957eda025
 +    )
 +    .unwrap();
 +    assert_eq!(capture.settled_task_charge_microusd, 1200);
++    let resumed = Task::open(
++        Limits {
++            requests: 3,
++            exposure_microusd: 20000,
++            seconds: 30,
++            concurrent_workers: 2,
++            max_depth: 2,
++        },
++        root.path().join("evidence"),
++        Some("resume"),
++    )
++    .unwrap();
++    assert_eq!(
++        resumed
++            .attempts()
++            .unwrap()
++            .iter()
++            .map(|record| (record.provider_billed, record.settled_microusd))
++            .collect::<Vec<_>>(),
++        vec![(true, Some(500)), (true, Some(700))]
++    );
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
@@ -26900,7 +26921,7 @@ index 000000000..a20bfa67a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..ab04dd870
+index 000000000..fde86bbaa
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2462 @@
@@ -29227,6 +29248,15 @@ index 000000000..ab04dd870
 +                .collect(),
 +        );
 +        turn.start.final_output_json_schema = shape.schema;
++        let record = core.inventory.start(
++            &thread_id.to_string(),
++            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
++                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
++                "role": start_role, "route": request.route,
++                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
++                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
++        );
++        inventory::notify(&self.notifier.runtime, "start", record);
 +        let job = tokio::spawn(async move {
 +            let deadline = task
 +                .remaining()
@@ -29345,15 +29375,6 @@ index 000000000..ab04dd870
 +            })),
 +        );
 +        admission.transferred = true;
-+        let record = core.inventory.start(
-+            &thread_id.to_string(),
-+            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
-+                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
-+                "role": start_role, "route": request.route,
-+                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
-+                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
-+        );
-+        inventory::notify(&self.notifier.runtime, "start", record);
 +        Ok(
 +            json!({"handle":id,"route":request.route,"permissions":if writable {"isolated_worktree"} else {"read_only"},
 +                "parent_history": history.map(|(_, provenance)| provenance)}),
@@ -39403,10 +39424,10 @@ index 000000000..82e68d714
 +event, capability or host configuration field names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..fc5e3aec5
+index 000000000..38853007e
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1528 @@
+@@ -0,0 +1,1530 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -39869,6 +39890,8 @@ index 000000000..fc5e3aec5
 +                | Some("request_dispatched")
 +                | Some("request_failed")
 +                | Some("request_settled")
++                | Some("request_provider_reported")
++                | Some("request_provider_settled")
 +                | Some("raw_usage_observed") => {
 +                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
 +                    let prior = state.attempts.insert(attempt.request, attempt.clone());
@@ -67188,10 +67211,10 @@ index 000000000..fe9749ea2
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 000000000..f584efb95
+index 000000000..fc7a40323
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
-@@ -0,0 +1,447 @@
+@@ -0,0 +1,454 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
@@ -67310,6 +67333,37 @@ index 000000000..f584efb95
 +    ));
 +    fs::write(&temporary, serde_json::to_vec(value)?)?;
 +    fs::rename(&temporary, path)
++}
++
++/// Opens each complete `.json` entry before removing it; a failure keeps it queued and ends the pass with what was taken.
++fn drain<T>(
++    directory: &Path,
++    mut take: impl FnMut(&Value) -> io::Result<Option<T>>,
++) -> io::Result<(Vec<T>, bool)> {
++    let mut taken = Vec::new();
++    for entry in fs::read_dir(directory).into_iter().flatten().flatten() {
++        let path = entry.path();
++        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
++            continue;
++        }
++        let envelope = fs::read(&path)
++            .ok()
++            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
++        let item = match envelope.as_ref().map(&mut take).transpose() {
++            Ok(item) => item.flatten(),
++            Err(error) if taken.is_empty() => return Err(error),
++            Err(_) => return Ok((taken, false)),
++        };
++        taken.extend(item);
++        if let Err(error) = fs::remove_file(&path) {
++            return if taken.is_empty() {
++                Err(error)
++            } else {
++                Ok((taken, false))
++            };
++        }
++    }
++    Ok((taken, true))
 +}
 +
 +fn identifier(value: &str) -> bool {
@@ -67493,42 +67547,27 @@ index 000000000..f584efb95
 +    /// Takes verified, unexpired, first-seen messages; expired ones get a receipt, replays are dropped.
 +    pub fn receive(&self, seal: &dyn Seal) -> io::Result<Vec<Inbound>> {
 +        let inbox = self.root.join("inbox").join(&self.session);
-+        let Ok(entries) = fs::read_dir(&inbox) else {
-+            return Ok(Vec::new());
-+        };
-+        let mut delivered = Vec::new();
-+        for entry in entries.flatten() {
-+            let path = entry.path();
-+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-+                continue;
-+            }
-+            let envelope = fs::read(&path)
-+                .ok()
-+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-+            fs::remove_file(&path)?;
-+            let Some(envelope) = envelope else {
-+                continue;
-+            };
-+            let Some(message) = opened(seal, "message", &envelope)? else {
-+                continue;
++        let (messages, _) = drain(&inbox, |envelope| {
++            let Some(message) = opened(seal, "message", envelope)? else {
++                return Ok(None);
 +            };
 +            if message["to"]["session"] != self.session.as_str() {
-+                continue;
++                return Ok(None);
 +            }
 +            let id = message["id"].as_str().unwrap_or_default().to_owned();
 +            if !self.seen.lock().is_ok_and(|mut seen| seen.insert(id)) {
-+                continue;
++                return Ok(None);
 +            }
 +            if message["expires_at_ms"]
 +                .as_u64()
 +                .is_none_or(|at| at < now_ms())
 +            {
 +                self.receipt(seal, &message, "expired", None)?;
-+            } else {
-+                delivered.push(Inbound { message });
++                return Ok(None);
 +            }
-+        }
-+        Ok(delivered)
++            Ok(Some(Inbound { message }))
++        })?;
++        Ok(messages)
 +    }
 +
 +    /// Whether `endpoint`'s own project scope admits the message's sender.
@@ -67568,29 +67607,20 @@ index 000000000..f584efb95
 +    /// Verified receipts for messages this session sent, with the sending package, plus
 +    /// `expired` or `closed` for messages whose time ran out without one.
 +    pub fn receipts(&self, seal: &dyn Seal) -> io::Result<Vec<(String, Value)>> {
-+        let mut settled = Vec::new();
 +        let directory = self.root.join("receipts").join(&self.session);
-+        for entry in fs::read_dir(&directory).into_iter().flatten().flatten() {
-+            let path = entry.path();
-+            let envelope = fs::read(&path)
-+                .ok()
-+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-+            fs::remove_file(&path)?;
-+            let Some(receipt) = envelope
-+                .as_ref()
-+                .map(|envelope| opened(seal, "receipt", envelope))
-+                .transpose()?
-+                .flatten()
-+            else {
-+                continue;
++        let (mut settled, complete) = drain(&directory, |envelope| {
++            let Some(receipt) = opened(seal, "receipt", envelope)? else {
++                return Ok(None);
 +            };
-+            let package = self.sent.lock().ok().and_then(|mut sent| {
-+                sent.remove(receipt["id"].as_str().unwrap_or_default())
-+                    .map(|sent| sent.package)
-+            });
-+            if let Some(package) = package {
-+                settled.push((package, receipt));
-+            }
++            Ok(self
++                .sent
++                .lock()
++                .ok()
++                .and_then(|mut sent| sent.remove(receipt["id"].as_str().unwrap_or_default()))
++                .map(|sent| (sent.package, receipt)))
++        })?;
++        if !complete {
++            return Ok(settled);
 +        }
 +        let now = now_ms();
 +        let lapsed = self
@@ -67641,10 +67671,10 @@ index 000000000..f584efb95
 +mod tests;
 diff --git a/codex-rs/omd/src/peers_tests.rs b/codex-rs/omd/src/peers_tests.rs
 new file mode 100644
-index 000000000..edff5c9d2
+index 000000000..1accca7ed
 --- /dev/null
 +++ b/codex-rs/omd/src/peers_tests.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,318 @@
 +use super::*;
 +
 +struct TestSeal;
@@ -67715,6 +67745,60 @@ index 000000000..edff5c9d2
 +    assert_eq!(receipts[0].0, "chat");
 +    assert_eq!(receipts[0].1["status"], "delivered");
 +    assert_eq!(receipts[0].1["correlation"], "c1");
++}
++
++struct FlakySeal(std::sync::atomic::AtomicUsize);
++
++impl Seal for FlakySeal {
++    fn seal(&self, sha256: &str) -> io::Result<String> {
++        TestSeal.seal(sha256)
++    }
++
++    fn verify(&self, sha256: &str, tag: &str) -> io::Result<bool> {
++        self.0
++            .fetch_update(
++                std::sync::atomic::Ordering::SeqCst,
++                std::sync::atomic::Ordering::SeqCst,
++                |left| left.checked_sub(1),
++            )
++            .map_err(|_| io::Error::other("broker unavailable"))?;
++        TestSeal.verify(sha256, tag)
++    }
++}
++
++#[test]
++fn a_broker_failure_keeps_unverified_messages_and_in_flight_receipts_queued() {
++    let store = tempfile::tempdir().unwrap();
++    let alpha = Peers::open(store.path(), "alpha", Path::new("/repo")).unwrap();
++    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
++    let chat = endpoint("chat", "same");
++    alpha.publish(std::slice::from_ref(&chat)).unwrap();
++    beta.publish(std::slice::from_ref(&chat)).unwrap();
++    for text in ["one", "two"] {
++        alpha
++            .send(
++                &TestSeal,
++                &chat,
++                "beta",
++                "chat",
++                json!({"text": text}),
++                None,
++                60_000,
++            )
++            .unwrap();
++    }
++    let flaky = FlakySeal(std::sync::atomic::AtomicUsize::new(1));
++    assert_eq!(beta.receive(&flaky).unwrap().len(), 1);
++    assert!(beta.receive(&flaky).is_err());
++    assert_eq!(beta.receive(&TestSeal).unwrap().len(), 1);
++
++    let pending = store
++        .path()
++        .join("peers/receipts/alpha/.1.pending.json.tmp");
++    fs::create_dir_all(pending.parent().unwrap()).unwrap();
++    fs::write(&pending, b"{").unwrap();
++    assert!(alpha.receipts(&TestSeal).unwrap().is_empty());
++    assert!(pending.exists());
 +}
 +
 +#[test]

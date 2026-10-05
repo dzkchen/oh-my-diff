@@ -2321,6 +2321,15 @@ impl Agents {
                 .collect(),
         );
         turn.start.final_output_json_schema = shape.schema;
+        let record = core.inventory.start(
+            &thread_id.to_string(),
+            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
+                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
+                "role": start_role, "route": request.route,
+                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
+                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
+        );
+        inventory::notify(&self.notifier.runtime, "start", record);
         let job = tokio::spawn(async move {
             let deadline = task
                 .remaining()
@@ -2439,15 +2448,6 @@ impl Agents {
             })),
         );
         admission.transferred = true;
-        let record = core.inventory.start(
-            &thread_id.to_string(),
-            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
-                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
-                "role": start_role, "route": request.route,
-                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
-                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
-        );
-        inventory::notify(&self.notifier.runtime, "start", record);
         Ok(
             json!({"handle":id,"route":request.route,"permissions":if writable {"isolated_worktree"} else {"read_only"},
                 "parent_history": history.map(|(_, provenance)| provenance)}),

@@ -240,7 +240,7 @@ export class Router {
       const [id, known] = found;
       if (known.thread !== thread || this.busy(id)) break;
       try {
-        const agent = this.agents.get(id) ?? await this.sdk.Agent.resume(id, this.options(model));
+        const agent = this.agents.get(id) ?? await this.resumed(id, model);
         this.agents.set(id, agent);
         return { agent, input: messages.slice(index), fresh: false };
       } catch {
@@ -250,6 +250,14 @@ export class Router {
     const agent = await this.sdk.Agent.create(this.options(model));
     this.agents.set(agent.agentId, agent);
     return { agent, input: messages, fresh: true };
+  }
+  // A resumed agent's earlier runs belong to earlier requests, so they are this process's settlement baseline.
+  async resumed(id, model) {
+    const agent = await this.sdk.Agent.resume(id, this.options(model));
+    const report = await agent.getUsage();
+    this.seen.set(id, new Set((report?.runs ?? []).map(run => run.runId)));
+    if (plain(report?.cost)) this.charged.set(id, { raw: report.cost.rawCostCents, charged: report.cost.chargedCents });
+    return agent;
   }
   async start(payload, entry, thread) {
     await this.ready();
