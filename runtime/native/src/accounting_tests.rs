@@ -18,6 +18,7 @@ fn rates() -> Rates {
         input_token_ceiling: 5000,
         included_subscription: false,
         external_subscription: false,
+        provider_billed: false,
     }
 }
 
@@ -1030,4 +1031,71 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
         request.headers["x-omd-attempt"], "2",
         "the retry is a new, numbered attempt"
     );
+}
+
+#[test]
+fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once() {
+    let (root, accounts, task, mut request, _body) = setup();
+    {
+        let mut accounts = accounts.0.lock().unwrap();
+        let child = accounts.get_mut("child").unwrap();
+        child.rates = Some(Rates {
+            reservation_microusd: 0,
+            provider_billed: true,
+            ..rates()
+        });
+    }
+    let body = EncodedJsonBody::encode(&json!({"model": "served-model", "stream": true,
+        "input": [{"type": "message", "role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]}]}))
+    .unwrap();
+    let mut finish = |request_id: &str, usage: Value| {
+        request
+            .headers
+            .insert("x-omd-request-id", request_id.parse().unwrap());
+        let mut attempt = accounts
+            .before_send(&mut request, Some(&body))
+            .unwrap()
+            .unwrap();
+        let mut event = json!({"type": "response.completed", "response": {"usage": usage}});
+        attempt.observe(&mut event, true).unwrap();
+    };
+    finish("req-1", json!({"input_tokens": 10, "output_tokens": 2}));
+    finish(
+        "req-2",
+        json!({"input_tokens": 10, "output_tokens": 2, "cost_microusd": 700}),
+    );
+    let records = task.attempts().unwrap();
+    assert!(records.iter().all(|record| record.provider_billed
+        && record.reserved_microusd == 0
+        && record.model == "served-model"
+        && record.status == "completed"));
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.settled_microusd)
+            .collect::<Vec<_>>(),
+        vec![None, Some(700)]
+    );
+    assert_eq!(
+        accounts.settle_provider("req-1", 500, "fixture", |_| false),
+        Err("ledger_settle_not_route_owner".into())
+    );
+    assert_eq!(
+        accounts.settle_provider("req-2", 500, "fixture", |_| true),
+        Err("ledger_request_not_awaiting_settlement".into())
+    );
+    let settled = accounts
+        .settle_provider("req-1", 500, "fixture", |provider| provider == "fixture")
+        .unwrap();
+    assert_eq!(settled["cost"]["basis"], "provider_reported");
+    assert!(
+        accounts
+            .settle_provider("req-1", 500, "fixture", |_| true)
+            .is_err()
+    );
+    let capture: codex_omd::TaskCostCapture = serde_json::from_slice(
+        &std::fs::read(root.path().join("evidence/task-cost.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(capture.settled_task_charge_microusd, 1200);
 }

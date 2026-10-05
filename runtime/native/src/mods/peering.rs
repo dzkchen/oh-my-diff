@@ -40,7 +40,9 @@ impl Registry {
             Peers::open(&lead.host.root, &thread, &lead.host.repository)
                 .map_err(|error| error.to_string())?,
         );
-        peers.publish(endpoints).map_err(|error| error.to_string())?;
+        peers
+            .publish(endpoints)
+            .map_err(|error| error.to_string())?;
         sessions.insert(thread, peers.clone());
         Ok(peers)
     }
@@ -99,9 +101,14 @@ impl Registry {
 
 pub(super) async fn current_endpoints(core: &Core) -> Vec<Endpoint> {
     let runtime = core.runtime.clone();
-    tokio::task::spawn_blocking(move || runtime.lock().map(|runtime| endpoints(&runtime)).unwrap_or_default())
-        .await
-        .unwrap_or_default()
+    tokio::task::spawn_blocking(move || {
+        runtime
+            .lock()
+            .map(|runtime| endpoints(&runtime))
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Delivers inbox messages and receipts for one lead thread until its session ends.
@@ -159,8 +166,14 @@ async fn deliver(
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?;
     for message in inbound.into_iter().map(|inbound| inbound.message) {
-        let package = message["to"]["package"].as_str().unwrap_or_default().to_owned();
-        let (status, reason) = match endpoints.iter().find(|endpoint| endpoint.package == package) {
+        let package = message["to"]["package"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let (status, reason) = match endpoints
+            .iter()
+            .find(|endpoint| endpoint.package == package)
+        {
             None => ("refused", Some("package_unavailable".to_owned())),
             Some(endpoint) if !peers.admits(endpoint, &message) => {
                 ("refused", Some("peer_scope_denied".to_owned()))

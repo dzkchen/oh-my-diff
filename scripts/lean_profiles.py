@@ -34,7 +34,7 @@ DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods")
 HOST_TOOLS = ("omd", "omd-contract")
-ROUTES = {"claude": "omd_claude_cli", "muse": "omd_muse", "profiles": "omd_profiles"}
+ROUTES = {"claude": "omd_claude_cli", "cursor": "omd_cursor", "muse": "omd_muse", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
@@ -360,16 +360,16 @@ def route(prefix, bin_dir, name, args):
         extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
         result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra],
-                                capture_output=True, text=True)
+                                stdout=subprocess.PIPE, text=True)
         if result.returncode:
-            raise ValueError(result.stderr.strip() or f"{name} setup failed")
+            raise ValueError(f"{name} setup failed")
         details = json.loads(result.stdout)
         record.setdefault("providers", {})[identifier] = details.pop("provider")
         launcher = bin_dir / "codex"
         support.atomic_text(launcher, selected_text(record), 0o755)
         record["activation"]["sha256"] = support.digest(launcher)
         write(prefix, record)
-        if name == "muse":
+        if name in ("cursor", "muse"):
             source = (Path(record["store"]) / "sources" / identifier).resolve()
             mods = json.loads((Path(record["store"]) / "mods.json").read_text())["mods"]
             current = next((item.get("settings") or {} for item in mods if Path(item["path"]).resolve() == source), {})
@@ -753,7 +753,7 @@ def main():
     for name in ROUTES:
         route_parser = commands.add_parser(name, help=f"set up or launch the opt-in {name} route")
         route_parser.add_argument("--setup", action="store_true")
-        route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI path for --setup")
+        route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI or SDK module path for --setup")
         route_parser.add_argument("--model", help="model slug or family shortcut")
         if name == "profiles":
             for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):

@@ -83,6 +83,8 @@ pub struct Attempt {
     pub settled_microusd: Option<u64>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub external_subscription: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub provider_billed: bool,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -1049,6 +1051,7 @@ impl Task {
             raw_usage: None,
             settled_microusd: None,
             external_subscription,
+            provider_billed: false,
         };
         self.record(
             &mut state,
@@ -1199,6 +1202,81 @@ impl Task {
         }
         state.attempts.insert(admission.request, attempt);
         Ok(())
+    }
+
+    /// Completes a provider-billed request with the provider's own cost, or leaves it awaiting `settle_provider`.
+    pub fn settle_reported(
+        &self,
+        admission: &Admission,
+        raw_usage: Option<Value>,
+        microusd: Option<u64>,
+    ) -> io::Result<()> {
+        if admission.task != self.evidence
+            || raw_usage.as_ref().is_some_and(|usage| !usage.is_object())
+        {
+            return Err(denied("invalid provider-reported identity or usage"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let mut attempt = state
+            .attempts
+            .get(&admission.request)
+            .cloned()
+            .ok_or_else(|| denied("unknown request"))?;
+        if attempt.status == "unknown"
+            || attempt.settled_microusd.is_some()
+            || attempt.provider_billed
+        {
+            return Err(denied("request settled or invalid raw usage"));
+        }
+        attempt.provider_billed = true;
+        attempt.raw_usage = raw_usage;
+        attempt.settled_microusd = microusd;
+        attempt.status = if attempt.failure_reason.is_some() {
+            "failed"
+        } else {
+            "completed"
+        }
+        .to_owned();
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "request_provider_reported", "attempt": attempt}),
+        )?;
+        state.attempts.insert(admission.request, attempt);
+        Ok(())
+    }
+
+    /// Records the provider's late settlement of a provider-billed request, once.
+    pub fn settle_provider(
+        &self,
+        request: u32,
+        microusd: u64,
+        source: &str,
+    ) -> io::Result<Attempt> {
+        if source.is_empty() || source.len() > 128 {
+            return Err(denied("invalid settlement source"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let mut attempt = state
+            .attempts
+            .get(&request)
+            .cloned()
+            .ok_or_else(|| denied("unknown request"))?;
+        if !attempt.provider_billed || attempt.settled_microusd.is_some() {
+            return Err(denied("request is not awaiting provider settlement"));
+        }
+        attempt.settled_microusd = Some(microusd);
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "request_provider_settled", "source": source, "attempt": attempt}),
+        )?;
+        state.attempts.insert(request, attempt.clone());
+        Ok(attempt)
     }
 
     pub fn fail(&self, admission: &Admission, reason: &str) -> io::Result<()> {
@@ -1355,6 +1433,7 @@ impl Task {
             raw_usage,
             settled_microusd: None,
             external_subscription: false,
+            provider_billed: false,
         };
         self.record(
             &mut state,

@@ -33,6 +33,25 @@ pub(crate) struct Grant {
     credentials: BTreeSet<String>,
 }
 
+impl Grant {
+    /// The rates of this grant's provider-billed route for `provider`, when it declares one.
+    pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
+        self.route
+            .as_ref()
+            .filter(|route| {
+                route.provider == provider
+                    && route.rates.provider_billed
+                    && !route.rates.included_subscription
+                    && route.rates.reservation_microusd == 0
+            })
+            .map(|route| &route.rates)
+    }
+
+    pub(crate) fn mod_id(&self) -> &str {
+        &self.mod_id
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Services {
     records: tokio::sync::Mutex<BTreeMap<String, Service>>,

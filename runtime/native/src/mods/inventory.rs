@@ -90,7 +90,11 @@ impl Inventory {
             add(usage, "requests", Some(1));
             add(usage, "input_tokens", tokens("/input_tokens"));
             add(usage, "output_tokens", tokens("/output_tokens"));
-            add(usage, "cached_tokens", tokens("/input_tokens_details/cached_tokens"));
+            add(
+                usage,
+                "cached_tokens",
+                tokens("/input_tokens_details/cached_tokens"),
+            );
             let priced = response["cost"]["microusd"].as_u64();
             add(usage, "microusd", priced);
             usage["basis"] = json!(match (usage["basis"].as_str(), priced) {

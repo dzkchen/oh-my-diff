@@ -16630,10 +16630,10 @@ index 000000000..56641fff2
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..0a7120adb
+index 000000000..cd57a57ee
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,1985 @@
+@@ -0,0 +1,2110 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -16668,6 +16668,41 @@ index 000000000..0a7120adb
 +    pub included_subscription: bool,
 +    #[serde(default)]
 +    pub external_subscription: bool,
++    #[serde(default)]
++    pub provider_billed: bool,
++}
++
++fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
++    use std::io::Write;
++
++    let bytes =
++        serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
++    let temporary = account.cost_capture.with_extension(format!(
++        "json.{}.{}.tmp",
++        std::process::id(),
++        std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_err(denied)?
++            .as_nanos()
++    ));
++    let mut file = std::fs::OpenOptions::new()
++        .create_new(true)
++        .write(true)
++        .open(&temporary)
++        .map_err(denied)?;
++    file.write_all(&bytes)
++        .and_then(|_| file.sync_all())
++        .map_err(denied)?;
++    std::fs::rename(&temporary, &account.cost_capture).map_err(denied)?;
++    Ok(())
++}
++
++fn billing(rates: Option<&Rates>) -> &'static str {
++    match rates {
++        Some(rates) if rates.provider_billed => "provider_billed",
++        Some(rates) if !rates.included_subscription => "explicit_paid_api_grant",
++        _ => "included_subscription",
++    }
 +}
 +
 +#[derive(Clone)]
@@ -16787,6 +16822,8 @@ index 000000000..0a7120adb
 +    retries: BTreeMap<String, u32>,
 +    synthetic: BTreeMap<String, (String, Vec<Value>)>,
 +    responses: BTreeMap<String, Vec<Value>>,
++    billed: BTreeMap<String, (String, u32, String)>,
++    billed_order: VecDeque<String>,
 +    verdicts: BTreeMap<String, Option<Edits>>,
 +    verdict_order: VecDeque<String>,
 +}
@@ -16794,6 +16831,7 @@ index 000000000..0a7120adb
 +type Edits = Vec<(usize, usize, String)>;
 +
 +const VERDICTS: usize = 8192;
++const BILLED: usize = 1024;
 +
 +impl RequestState {
 +    fn remember(&mut self, key: String, verdict: Option<Edits>) {
@@ -16818,6 +16856,49 @@ index 000000000..0a7120adb
 +    Mutex<Option<ModNotifier>>,
 +    Arc<Mutex<RequestState>>,
 +);
++
++impl Accounts {
++    /// Applies a provider's late settlement to a provider-billed request whose route `owns` accepts.
++    pub(crate) fn settle_provider(
++        &self,
++        request_id: &str,
++        microusd: u64,
++        source: &str,
++        owns: impl Fn(&str) -> bool,
++    ) -> Result<Value, String> {
++        let (thread, request, provider) = self
++            .6
++            .lock()
++            .map_err(|_| "request state poisoned")?
++            .billed
++            .get(request_id)
++            .cloned()
++            .ok_or("ledger_request_not_awaiting_settlement")?;
++        if !owns(&provider) {
++            return Err("ledger_settle_not_route_owner".into());
++        }
++        let account = self
++            .0
++            .lock()
++            .map_err(|_| "account lock poisoned")?
++            .get(&thread)
++            .cloned()
++            .ok_or("ledger_request_not_awaiting_settlement")?;
++        let attempt = account
++            .task
++            .settle_provider(request, microusd, source)
++            .map_err(|error| error.to_string())?;
++        self.6
++            .lock()
++            .map_err(|_| "request state poisoned")?
++            .billed
++            .remove(request_id);
++        persist_cost_capture(&account).map_err(|error| error.to_string())?;
++        Ok(
++            json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
++        )
++    }
++}
 +
 +const MIDDLEWARE_WAIT: Duration = Duration::from_secs(2);
 +const SEND_POLICY_WAIT: Duration = Duration::from_secs(5);
@@ -17270,7 +17351,7 @@ index 000000000..0a7120adb
 +
 +fn route_info(route: &RequestRoute) -> Value {
 +    json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
-+        "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
++        "roles":["lead"],"billing":billing(Some(&route.rates)),
 +        "tools":[],"available":true,"credential":route.credential})
 +}
 +
@@ -17318,7 +17399,7 @@ index 000000000..0a7120adb
 +            "provider": account.provider,
 +            "reasoning": value.pointer("/reasoning/effort").cloned().unwrap_or(Value::Null),
 +            "roles": [if account.owner == "lead" {"lead"} else {"worker"}],
-+            "billing": if account.rates.as_ref().is_none_or(|rates| rates.included_subscription) {"included_subscription"} else {"explicit_paid_api_grant"},
++            "billing": billing(account.rates.as_ref()),
 +            "tools": [], "available": true, "credential": account.credential});
 +        let mut routes = vec![original.clone()];
 +        if account.owner == "lead" {
@@ -17597,7 +17678,7 @@ index 000000000..0a7120adb
 +        if let Some(rates) = account
 +            .rates
 +            .as_ref()
-+            .filter(|rates| !rates.included_subscription)
++            .filter(|rates| !rates.included_subscription && !rates.provider_billed)
 +        {
 +            if rates.max_output_tokens == 0 {
 +                return Err(denied("missing output ceiling"));
@@ -17746,6 +17827,37 @@ index 000000000..0a7120adb
 +            {
 +                return Err(denied("worker requires the native subscription request"));
 +            }
++        }
++        // The provider bills these requests itself, so the host neither reserves exposure nor bounds the body; it admits, counts and records them.
++        if rates.provider_billed {
++            let model = requested.unwrap_or(model);
++            account
++                .task
++                .authorize_route(&account.provider, &model)
++                .map_err(denied)?;
++            let admission = account
++                .task
++                .admit(&account.owner, &account.provider, &model, 0)
++                .map_err(denied)?;
++            request
++                .headers
++                .insert("x-omd-owner", account.owner.parse().map_err(denied)?);
++            if let Err(error) = account.task.dispatch(&admission, || Ok(())) {
++                let _ = account.task.fail(
++                    &admission,
++                    "local dispatch revalidation rejected the request",
++                );
++                return Err(denied(error));
++            }
++            return Ok(Some(Box::new(self.attempt(
++                account,
++                thread,
++                request_id,
++                attempt,
++                model,
++                Some(admission),
++                None,
++            ))));
 +        }
 +        let bytes = body
 +            .ok_or_else(|| denied("missing JSON request"))?
@@ -18054,28 +18166,7 @@ index 000000000..0a7120adb
 +
 +impl Attempt {
 +    fn persist_cost_capture(&self) -> Result<(), TransportError> {
-+        use std::io::Write;
-+
-+        let bytes = serde_json::to_vec(&self.account.task.cost_capture().map_err(denied)?)
-+            .map_err(denied)?;
-+        let temporary = self.account.cost_capture.with_extension(format!(
-+            "json.{}.{}.tmp",
-+            std::process::id(),
-+            std::time::SystemTime::now()
-+                .duration_since(std::time::UNIX_EPOCH)
-+                .map_err(denied)?
-+                .as_nanos()
-+        ));
-+        let mut file = std::fs::OpenOptions::new()
-+            .create_new(true)
-+            .write(true)
-+            .open(&temporary)
-+            .map_err(denied)?;
-+        file.write_all(&bytes)
-+            .and_then(|_| file.sync_all())
-+            .map_err(denied)?;
-+        std::fs::rename(&temporary, &self.account.cost_capture).map_err(denied)?;
-+        Ok(())
++        persist_cost_capture(&self.account)
 +    }
 +
 +    fn observed(&mut self, usage: Option<Value>, status: &str) -> Result<(), TransportError> {
@@ -18113,6 +18204,37 @@ index 000000000..0a7120adb
 +        };
 +        if !success {
 +            self.fail("provider returned failed or incomplete response");
++        }
++        if rates.provider_billed {
++            let microusd = usage
++                .as_ref()
++                .and_then(|usage| usage.get("cost_microusd"))
++                .and_then(Value::as_u64);
++            self.account
++                .task
++                .settle_reported(&admission, usage, microusd)
++                .map_err(denied)?;
++            if microusd.is_none()
++                && let Ok(mut state) = self.state.lock()
++            {
++                state.billed.insert(
++                    self.request_id.clone(),
++                    (
++                        self.thread.clone(),
++                        admission.request_id(),
++                        self.account.provider.clone(),
++                    ),
++                );
++                state.billed_order.push_back(self.request_id.clone());
++                while state.billed_order.len() > BILLED {
++                    if let Some(oldest) = state.billed_order.pop_front() {
++                        state.billed.remove(&oldest);
++                    }
++                }
++            }
++            self.settled = true;
++            self.microusd = microusd;
++            return persist_cost_capture(&self.account);
 +        }
 +        if let Some(usage) = usage {
 +            self.account
@@ -18485,6 +18607,9 @@ index 000000000..0a7120adb
 +            .collect::<String>();
 +        let cost = match (&self.synthetic, &self.account.rates, self.microusd) {
 +            (Some(_), _, _) => json!({"microusd": 0, "basis": "synthetic"}),
++            (None, Some(rates), Some(amount)) if rates.provider_billed => {
++                json!({"microusd": amount, "basis": "provider_reported"})
++            }
 +            (None, Some(rates), _) if rates.included_subscription => {
 +                json!({"microusd": 0, "basis": "included_subscription"})
 +            }
@@ -18621,10 +18746,10 @@ index 000000000..0a7120adb
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..d6a894458
+index 000000000..957eda025
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1033 @@
+@@ -0,0 +1,1101 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -18645,6 +18770,7 @@ index 000000000..d6a894458
 +        input_token_ceiling: 5000,
 +        included_subscription: false,
 +        external_subscription: false,
++        provider_billed: false,
 +    }
 +}
 +
@@ -19658,12 +19784,79 @@ index 000000000..d6a894458
 +        "the retry is a new, numbered attempt"
 +    );
 +}
++
++#[test]
++fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once() {
++    let (root, accounts, task, mut request, _body) = setup();
++    {
++        let mut accounts = accounts.0.lock().unwrap();
++        let child = accounts.get_mut("child").unwrap();
++        child.rates = Some(Rates {
++            reservation_microusd: 0,
++            provider_billed: true,
++            ..rates()
++        });
++    }
++    let body = EncodedJsonBody::encode(&json!({"model": "served-model", "stream": true,
++        "input": [{"type": "message", "role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]}]}))
++    .unwrap();
++    let mut finish = |request_id: &str, usage: Value| {
++        request
++            .headers
++            .insert("x-omd-request-id", request_id.parse().unwrap());
++        let mut attempt = accounts
++            .before_send(&mut request, Some(&body))
++            .unwrap()
++            .unwrap();
++        let mut event = json!({"type": "response.completed", "response": {"usage": usage}});
++        attempt.observe(&mut event, true).unwrap();
++    };
++    finish("req-1", json!({"input_tokens": 10, "output_tokens": 2}));
++    finish(
++        "req-2",
++        json!({"input_tokens": 10, "output_tokens": 2, "cost_microusd": 700}),
++    );
++    let records = task.attempts().unwrap();
++    assert!(records.iter().all(|record| record.provider_billed
++        && record.reserved_microusd == 0
++        && record.model == "served-model"
++        && record.status == "completed"));
++    assert_eq!(
++        records
++            .iter()
++            .map(|record| record.settled_microusd)
++            .collect::<Vec<_>>(),
++        vec![None, Some(700)]
++    );
++    assert_eq!(
++        accounts.settle_provider("req-1", 500, "fixture", |_| false),
++        Err("ledger_settle_not_route_owner".into())
++    );
++    assert_eq!(
++        accounts.settle_provider("req-2", 500, "fixture", |_| true),
++        Err("ledger_request_not_awaiting_settlement".into())
++    );
++    let settled = accounts
++        .settle_provider("req-1", 500, "fixture", |provider| provider == "fixture")
++        .unwrap();
++    assert_eq!(settled["cost"]["basis"], "provider_reported");
++    assert!(
++        accounts
++            .settle_provider("req-1", 500, "fixture", |_| true)
++            .is_err()
++    );
++    let capture: codex_omd::TaskCostCapture = serde_json::from_slice(
++        &std::fs::read(root.path().join("evidence/task-cost.json")).unwrap(),
++    )
++    .unwrap();
++    assert_eq!(capture.settled_task_charge_microusd, 1200);
++}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
-index 000000000..7aa4300d3
+index 000000000..383e25a92
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/config.rs
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,249 @@
 +use crate::accounting::Rates;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -19873,13 +20066,23 @@ index 000000000..7aa4300d3
 +                    .grant
 +                    .as_ref()
 +                    .is_some_and(|grant| !external(&grant.path) || grant.sha256.len() != 64)
-+                || (route.rates.reservation_microusd == 0) != route.rates.included_subscription
++                || (route.rates.reservation_microusd == 0)
++                    != (route.rates.included_subscription || route.rates.provider_billed)
++                || route.rates.included_subscription && route.rates.provider_billed
 +                || route.roles.contains(&RouteRole::Worker) && route.grant.is_none()
 +            {
 +                return Err(format!("{HOST_CONFIG} route {} is invalid", route.name));
 +            }
 +        }
 +        Ok(())
++    }
++
++    /// The provider-billed service route rates for `provider`, from any grant or only `mod_id`'s.
++    pub(crate) fn billed_rates(&self, provider: &str, mod_id: Option<&str>) -> Option<&Rates> {
++        self.services
++            .iter()
++            .filter(|grant| mod_id.is_none_or(|id| grant.mod_id() == id))
++            .find_map(|grant| grant.billed_rates(provider))
 +    }
 +
 +    pub(crate) fn route(
@@ -22224,10 +22427,10 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..d89085879
+index 000000000..8ec5e1855
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,668 @@
+@@ -0,0 +1,674 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -22702,6 +22905,12 @@ index 000000000..d89085879
 +                    .map_err(|error| error.to_string())?;
 +            }
 +        }
++        let rates = route.map(|route| route.rates.clone()).or_else(|| {
++            // A lead on a provider-billed service route's provider is accounted under that route.
++            (owner == "lead")
++                .then(|| self.route_config().0.billed_rates(&provider, None).cloned())
++                .flatten()
++        });
 +        let account = Account {
 +            task: session.task.clone(),
 +            owner: owner.into(),
@@ -22709,7 +22918,7 @@ index 000000000..d89085879
 +            provider,
 +            url,
 +            max_request_bytes: self.config.max_request_bytes,
-+            rates: route.map(|route| route.rates.clone()),
++            rates,
 +            repository_identity: self.repository_identity.clone(),
 +            cost_capture: session.evidence.join("task-cost.json"),
 +            route: route.map(|route| route.name.clone()),
@@ -23884,10 +24093,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..a6d14cd0d
+index 000000000..595ed2bf3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2076 @@
+@@ -0,0 +1,2086 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -24144,9 +24353,9 @@ index 000000000..a6d14cd0d
 +        turn_store: &codex_extension_api::ExtensionData,
 +        outcome: &str,
 +    ) {
-+        if let Some(record) = self
-+            .inventory
-+            .turn(thread_store.level_id(), turn_store.level_id(), outcome)
++        if let Some(record) =
++            self.inventory
++                .turn(thread_store.level_id(), turn_store.level_id(), outcome)
 +        {
 +            inventory::notify(&self.runtime, "turn", record);
 +        }
@@ -24928,7 +25137,10 @@ index 000000000..a6d14cd0d
 +            self.autonomy.turn_ended(
 +                &self.core,
 +                &lead,
-+                matches!(input.reason, codex_protocol::protocol::TurnAbortReason::Interrupted),
++                matches!(
++                    input.reason,
++                    codex_protocol::protocol::TurnAbortReason::Interrupted
++                ),
 +            );
 +            if let Some(turn) = self.take_turn(&lead.thread) {
 +                expansion::turn_ended(
@@ -24985,7 +25197,11 @@ index 000000000..a6d14cd0d
 +            self.agent_turn(
 +                input.thread_store,
 +                input.turn_store,
-+                if failed.is_some() { "error" } else { "completed" },
++                if failed.is_some() {
++                    "error"
++                } else {
++                    "completed"
++                },
 +            );
 +            let Some(lead) = input
 +                .thread_store
@@ -25186,7 +25402,9 @@ index 000000000..a6d14cd0d
 +            let payload =
 +                json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
 +            let origin = match &provenance {
-+                Some(provenance) => json!({"caller":provenance["package"],"thread_id":thread,"provenance":provenance}),
++                Some(provenance) => {
++                    json!({"caller":provenance["package"],"thread_id":thread,"provenance":provenance})
++                }
 +                None => json!({"caller":"user","thread_id":thread}),
 +            };
 +            let chain = intercept::chain(
@@ -25544,7 +25762,8 @@ index 000000000..a6d14cd0d
 +                Some(_) => Some("completed"),
 +                None => None,
 +            };
-+            if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None)) {
++            if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None))
++            {
 +                inventory::notify(&self.runtime, "end", record);
 +            }
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
@@ -26681,10 +26900,10 @@ index 000000000..a20bfa67a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..38d04bdf3
+index 000000000..ab04dd870
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2457 @@
+@@ -0,0 +1,2462 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -28181,7 +28400,9 @@ index 000000000..38d04bdf3
 +        match request.operation.as_str() {
 +            "agents.cancel" => {
 +                agent.shutdown().await;
-+                if let Some(thread) = handle.handle.strip_prefix(&format!("mod-{}-", agent.mod_id))
++                if let Some(thread) = handle
++                    .handle
++                    .strip_prefix(&format!("mod-{}-", agent.mod_id))
 +                    && let Some(record) = core.inventory.end(
 +                        thread,
 +                        "cancelled",
@@ -28564,7 +28785,10 @@ index 000000000..38d04bdf3
 +            }
 +            if let Some(defined) = &definition.agent.tools {
 +                request.tools = Some(match request.tools.take() {
-+                    Some(tools) => tools.into_iter().filter(|tool| defined.contains(tool)).collect(),
++                    Some(tools) => tools
++                        .into_iter()
++                        .filter(|tool| defined.contains(tool))
++                        .collect(),
 +                    None => defined.clone(),
 +                });
 +            }
@@ -29144,10 +29368,10 @@ index 000000000..38d04bdf3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/autonomy.rs b/codex-rs/ext/omd/src/mods/autonomy.rs
 new file mode 100644
-index 000000000..0096740d6
+index 000000000..8cd69cf2e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/autonomy.rs
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,405 @@
 +use super::*;
 +use codex_protocol::turn_input::StartIfIdleSubmission;
 +use codex_protocol::turn_input::TurnInputRequest;
@@ -29476,13 +29700,19 @@ index 000000000..0096740d6
 +    }
 +
 +    pub(super) fn running(&self, thread: &str) -> Option<String> {
-+        self.with(thread, |queue| queue.running.clone()).ok().flatten()
++        self.with(thread, |queue| queue.running.clone())
++            .ok()
++            .flatten()
 +    }
 +
 +    /// Provenance of the mod prompt being submitted, taken once by the input carrying its text.
 +    pub(super) fn take_submitting(&self, thread: &str, text: &str) -> Option<Value> {
 +        self.with(thread, |queue| {
-+            if queue.submitting.as_ref().is_some_and(|(expected, _)| expected == text) {
++            if queue
++                .submitting
++                .as_ref()
++                .is_some_and(|(expected, _)| expected == text)
++            {
 +                queue.submitting.take().map(|(_, provenance)| provenance)
 +            } else {
 +                None
@@ -32161,10 +32391,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..b836610b0
+index 000000000..3d6b5eeb3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2301 @@
+@@ -0,0 +1,2419 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -34102,11 +34332,20 @@ index 000000000..b836610b0
 +    let offered = mods.offered_agent_roles(&thread_store);
 +    assert_eq!(offered.len(), 1);
 +    assert_eq!(offered[0].name, "reviewer/review");
-+    assert_eq!(offered[0].description, "Reviews diffs [audited] (mod reviewer)");
++    assert_eq!(
++        offered[0].description,
++        "Reviews diffs [audited] (mod reviewer)"
++    );
 +    let role = std::fs::read_to_string(&offered[0].config_file).unwrap();
 +    assert!(role.contains("Review carefully."), "{role}");
-+    assert!(mods.resolve_agent_role(&thread_store, "auditor/review").is_some());
-+    assert!(mods.resolve_agent_role(&thread_store, "missing/review").is_none());
++    assert!(
++        mods.resolve_agent_role(&thread_store, "auditor/review")
++            .is_some()
++    );
++    assert!(
++        mods.resolve_agent_role(&thread_store, "missing/review")
++            .is_none()
++    );
 +    assert!(mods.resolve_agent_role(&thread_store, "explorer").is_none());
 +
 +    static SPAWN: std::sync::LazyLock<ToolName> =
@@ -34132,9 +34371,12 @@ index 000000000..b836610b0
 +        }
 +    };
 +    let ToolInterception::Continue(Some((_, codex_tools::ToolPayload::Function { arguments }))) =
-+        mods.intercept_tool(spawn("spawn-1", r#"{"message":"check","agent_type":"reviewer/review"}"#))
-+            .await
-+            .unwrap()
++        mods.intercept_tool(spawn(
++            "spawn-1",
++            r#"{"message":"check","agent_type":"reviewer/review"}"#,
++        ))
++        .await
++        .unwrap()
 +    else {
 +        panic!("the transformed spawn must reach the native executor");
 +    };
@@ -34166,7 +34408,10 @@ index 000000000..b836610b0
 +        .intercept_tool(spawn("spawn-3", r#"{"message":"escape"}"#))
 +        .await
 +        .unwrap_err();
-+    assert!(escaped.contains("agent_spawn_cwd_outside_session"), "{escaped}");
++    assert!(
++        escaped.contains("agent_spawn_cwd_outside_session"),
++        "{escaped}"
++    );
 +
 +    let child = ThreadId::new();
 +    let child_store = ExtensionData::new(child.to_string());
@@ -34217,10 +34462,10 @@ index 000000000..b836610b0
 +        .await
 +        .unwrap_err();
 +    assert!(refused.starts_with("agent_tool_denied"), "{refused}");
-+    fixture
-+        .core
-+        .inventory
-+        .start("review-thread", json!({"origin": "native", "role": "Review"}));
++    fixture.core.inventory.start(
++        "review-thread",
++        json!({"origin": "native", "role": "Review"}),
++    );
 +    fixture.core.inventory.tokens(
 +        "review-thread",
 +        &codex_protocol::protocol::TokenUsage {
@@ -34237,9 +34482,15 @@ index 000000000..b836610b0
 +    assert_eq!(review["usage"]["source"], "engine");
 +    assert_eq!(review["usage"]["input_tokens"], 40);
 +    assert!(review["usage"]["microusd"].is_null());
-+    fixture.core.inventory.usage(&json!({"scope": {"thread_id": child.to_string()},
++    fixture
++        .core
++        .inventory
++        .usage(&json!({"scope": {"thread_id": child.to_string()},
 +        "usage": {"input_tokens": 10, "output_tokens": 5}, "cost": {"microusd": 7}}));
-+    fixture.core.inventory.answer(&child.to_string(), "looks fine");
++    fixture
++        .core
++        .inventory
++        .answer(&child.to_string(), "looks fine");
 +    mods.agent_turn(&child_store, &turn_store, "completed");
 +    mods.on_thread_stop(ThreadStopInput {
 +        session_store: &session_store,
@@ -34285,7 +34536,10 @@ index 000000000..b836610b0
 +        &cancelled,
 +    )
 +    .await;
-+    assert!(control.is_err(), "observing an agent must not grant control");
++    assert!(
++        control.is_err(),
++        "observing an agent must not grant control"
++    );
 +
 +    expansion::invoke_one(
 +        &fixture.core,
@@ -34327,10 +34581,22 @@ index 000000000..b836610b0
 +        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
 +    let core = &fixture.core;
 +    let thread = fixture.lead.thread.to_string();
-+    expansion::invoke_one(core, &fixture.lead, "monitor".into(), "timer", json!({"key": "poll"}))
-+        .await;
++    expansion::invoke_one(
++        core,
++        &fixture.lead,
++        "monitor".into(),
++        "timer",
++        json!({"key": "poll"}),
++    )
++    .await;
 +    let state = |key: &str| {
-+        core.runtime.lock().unwrap().state("monitor").cloned().unwrap()[key].clone()
++        core.runtime
++            .lock()
++            .unwrap()
++            .state("monitor")
++            .cloned()
++            .unwrap()[key]
++            .clone()
 +    };
 +    let queued = state("queued");
 +    assert_eq!(queued[0]["status"], "queued");
@@ -34358,13 +34624,25 @@ index 000000000..b836610b0
 +        .with(&thread, |queue| queue.running = Some("user".into()))
 +        .unwrap();
 +    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
-+    assert_eq!(core.autonomy.running(&thread).as_deref(), Some("user"), "a busy thread keeps its queue");
++    assert_eq!(
++        core.autonomy.running(&thread).as_deref(),
++        Some("user"),
++        "a busy thread keeps its queue"
++    );
 +    core.autonomy.turn_ended(core, &fixture.lead, true);
-+    assert_eq!(pick(&grants).0, None, "an interrupted thread pauses its queues");
++    assert_eq!(
++        pick(&grants).0,
++        None,
++        "an interrupted thread pauses its queues"
++    );
 +    core.autonomy.user_turn(&thread);
 +    let (first, _) = pick(&grants);
 +    assert_eq!(first.unwrap()["key"], "triage");
-+    assert!(core.autonomy.take_submitting(&thread, "typed by the user").is_none());
++    assert!(
++        core.autonomy
++            .take_submitting(&thread, "typed by the user")
++            .is_none()
++    );
 +    let provenance = core
 +        .autonomy
 +        .take_submitting(
@@ -34374,14 +34652,24 @@ index 000000000..b836610b0
 +        .unwrap();
 +    assert_eq!(provenance["package"], "monitor");
 +    assert_eq!(provenance["event"], "timer");
-+    core.autonomy.with(&thread, |queue| queue.running = None).unwrap();
++    core.autonomy
++        .with(&thread, |queue| queue.running = None)
++        .unwrap();
 +    let mut stale = grants.clone();
 +    stale.get_mut("monitor").unwrap().source_sha256 = "other".into();
 +    let (none, notices) = pick(&stale);
 +    assert_eq!(none, None);
 +    assert_eq!(notices[0].1["reason"], "stale_generation");
 +
-+    let poll = || expansion::invoke_one(core, &fixture.lead, "monitor".into(), "timer", json!({"key": "poll"}));
++    let poll = || {
++        expansion::invoke_one(
++            core,
++            &fixture.lead,
++            "monitor".into(),
++            "timer",
++            json!({"key": "poll"}),
++        )
++    };
 +    poll().await;
 +    core.autonomy
 +        .with(&thread, |queue| {
@@ -34397,8 +34685,17 @@ index 000000000..b836610b0
 +        .unwrap();
 +    poll().await;
 +    let last = settle(|| Some(state("last")).filter(|last| last["status"] == "failed")).await;
-+    assert!(last["reason"].as_str().unwrap().contains("native_thread_manager_stopped"), "{last}");
-+    assert!(core.autonomy.running(&thread).is_none(), "a failed start frees the queue");
++    assert!(
++        last["reason"]
++            .as_str()
++            .unwrap()
++            .contains("native_thread_manager_stopped"),
++        "{last}"
++    );
++    assert!(
++        core.autonomy.running(&thread).is_none(),
++        "a failed start frees the queue"
++    );
 +
 +    let mods = mods(core);
 +    let (session_store, thread_store, turn_store) = (
@@ -34450,21 +34747,72 @@ index 000000000..b836610b0
 +            "correlation": "c", "data": data, "sent_at_ms": 1})
 +    };
 +    assert_eq!(
-+        peering::receive(&fixture.core, &fixture.lead, "chat", &message("hello", "chat")).await,
++        peering::receive(
++            &fixture.core,
++            &fixture.lead,
++            "chat",
++            &message("hello", "chat")
++        )
++        .await,
 +        ("delivered", None)
 +    );
-+    let got = fixture.core.runtime.lock().unwrap().state("chat").cloned().unwrap()["got"].clone();
++    let got = fixture
++        .core
++        .runtime
++        .lock()
++        .unwrap()
++        .state("chat")
++        .cloned()
++        .unwrap()["got"]
++        .clone();
 +    assert_eq!(got["data"], "HELLO");
 +    assert_eq!(got["untrusted"], true);
 +    assert_eq!(got["from"]["session"], "other");
 +    assert_eq!(
-+        peering::receive(&fixture.core, &fixture.lead, "chat", &message("spam", "chat")).await,
++        peering::receive(
++            &fixture.core,
++            &fixture.lead,
++            "chat",
++            &message("spam", "chat")
++        )
++        .await,
 +        ("refused", Some("spam".to_owned()))
 +    );
 +    assert_eq!(
-+        peering::receive(&fixture.core, &fixture.lead, "silent", &message("hi", "silent")).await,
++        peering::receive(
++            &fixture.core,
++            &fixture.lead,
++            "silent",
++            &message("hi", "silent")
++        )
++        .await,
 +        ("refused", Some("no_peer_message_handler".to_owned()))
 +    );
++}
++
++#[test]
++fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let grant = |id: &str, provider: &str, billed: bool| {
++        json!({"id": id, "mod_id": "fixture", "program": "/usr/bin/true", "program_sha256": "0".repeat(64),
++            "route": {"name": id, "provider": provider, "model": "m", "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
++            "roles": ["lead"], "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
++            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
++            "input_token_ceiling": 1000, "included_subscription": !billed, "provider_billed": billed}}})
++    };
++    std::fs::write(
++        fixture.lead.host.root.join("host.json"),
++        json!({"services": [grant("billed", "billed", true), grant("included", "included", false)]}).to_string(),
++    )
++    .unwrap();
++    let (config, error) = fixture.lead.host.route_config();
++    assert_eq!(error, None);
++    assert!(config.billed_rates("billed", None).is_some());
++    assert!(config.billed_rates("billed", Some("fixture")).is_some());
++    assert!(config.billed_rates("billed", Some("other")).is_none());
++    assert!(config.billed_rates("included", None).is_none());
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
@@ -34653,10 +35001,10 @@ index 000000000..6eb8ac3ff
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 000000000..d6cdcd39d
+index 000000000..5f6682cb9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,152 @@
 +use super::*;
 +use std::collections::BTreeSet;
 +
@@ -34749,7 +35097,11 @@ index 000000000..d6cdcd39d
 +            add(usage, "requests", Some(1));
 +            add(usage, "input_tokens", tokens("/input_tokens"));
 +            add(usage, "output_tokens", tokens("/output_tokens"));
-+            add(usage, "cached_tokens", tokens("/input_tokens_details/cached_tokens"));
++            add(
++                usage,
++                "cached_tokens",
++                tokens("/input_tokens_details/cached_tokens"),
++            );
 +            let priced = response["cost"]["microusd"].as_u64();
 +            add(usage, "microusd", priced);
 +            usage["basis"] = json!(match (usage["basis"].as_str(), priced) {
@@ -34807,10 +35159,10 @@ index 000000000..d6cdcd39d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..82581e9dd
+index 000000000..4d1f4bc9d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,631 @@
+@@ -0,0 +1,646 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -35333,6 +35685,21 @@ index 000000000..82581e9dd
 +                .map(|route| route_info(host, route))
 +                .collect::<Vec<_>>()
 +        )),
++        "ledger.settle" => {
++            let arguments = &request.arguments;
++            let (Some(request_id), Some(microusd), Some(source)) = (
++                arguments["request_id"].as_str(),
++                arguments["microusd"].as_u64(),
++                arguments["source"].as_str(),
++            ) else {
++                return Err("ledger_settle_invalid".into());
++            };
++            let config = host.route_config().0;
++            host.accounts
++                .settle_provider(request_id, microusd, source, |provider| {
++                    config.billed_rates(provider, Some(caller.id)).is_some()
++                })
++        }
 +        "session.info" => {
 +            let account = host
 +                .accounts
@@ -35444,10 +35811,10 @@ index 000000000..82581e9dd
 +}
 diff --git a/codex-rs/ext/omd/src/mods/peering.rs b/codex-rs/ext/omd/src/mods/peering.rs
 new file mode 100644
-index 000000000..7c2739941
+index 000000000..89d5c4e69
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/peering.rs
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,254 @@
 +use super::*;
 +use codex_omd::peers::BrokerSeal;
 +use codex_omd::peers::Endpoint;
@@ -35490,7 +35857,9 @@ index 000000000..7c2739941
 +            Peers::open(&lead.host.root, &thread, &lead.host.repository)
 +                .map_err(|error| error.to_string())?,
 +        );
-+        peers.publish(endpoints).map_err(|error| error.to_string())?;
++        peers
++            .publish(endpoints)
++            .map_err(|error| error.to_string())?;
 +        sessions.insert(thread, peers.clone());
 +        Ok(peers)
 +    }
@@ -35549,9 +35918,14 @@ index 000000000..7c2739941
 +
 +pub(super) async fn current_endpoints(core: &Core) -> Vec<Endpoint> {
 +    let runtime = core.runtime.clone();
-+    tokio::task::spawn_blocking(move || runtime.lock().map(|runtime| endpoints(&runtime)).unwrap_or_default())
-+        .await
-+        .unwrap_or_default()
++    tokio::task::spawn_blocking(move || {
++        runtime
++            .lock()
++            .map(|runtime| endpoints(&runtime))
++            .unwrap_or_default()
++    })
++    .await
++    .unwrap_or_default()
 +}
 +
 +/// Delivers inbox messages and receipts for one lead thread until its session ends.
@@ -35609,8 +35983,14 @@ index 000000000..7c2739941
 +        .map_err(|error| error.to_string())?
 +        .map_err(|error| error.to_string())?;
 +    for message in inbound.into_iter().map(|inbound| inbound.message) {
-+        let package = message["to"]["package"].as_str().unwrap_or_default().to_owned();
-+        let (status, reason) = match endpoints.iter().find(|endpoint| endpoint.package == package) {
++        let package = message["to"]["package"]
++            .as_str()
++            .unwrap_or_default()
++            .to_owned();
++        let (status, reason) = match endpoints
++            .iter()
++            .find(|endpoint| endpoint.package == package)
++        {
 +            None => ("refused", Some("package_unavailable".to_owned())),
 +            Some(endpoint) if !peers.admits(endpoint, &message) => {
 +                ("refused", Some("peer_scope_denied".to_owned()))
@@ -35691,15 +36071,15 @@ index 000000000..7c2739941
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 000000000..1414ad357
+index 000000000..2b64ff8cb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,423 @@
 +use super::*;
-+use std::collections::BTreeSet;
 +use codex_extension_api::AgentRoleContributor;
 +use codex_extension_api::ContributedAgentRole;
 +use codex_omd::ModAgentDefinition;
++use std::collections::BTreeSet;
 +
 +const PLAN_PREFIX: &str = "omd-agent-";
 +
@@ -35728,7 +36108,11 @@ index 000000000..1414ad357
 +    }
 +    let parent = path.parent().ok_or("agent_role_path_invalid")?;
 +    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-+    let temporary = parent.join(format!(".{}.{}.tmp", std::process::id(), execution::hash(text.as_bytes())));
++    let temporary = parent.join(format!(
++        ".{}.{}.tmp",
++        std::process::id(),
++        execution::hash(text.as_bytes())
++    ));
 +    std::fs::write(&temporary, text).map_err(|e| e.to_string())?;
 +    std::fs::rename(&temporary, path).map_err(|e| e.to_string())
 +}
@@ -35793,16 +36177,15 @@ index 000000000..1414ad357
 +            }
 +        }
 +        let text = lines.join("\n") + "\n";
-+        let path = agents_dir(&lead.host).join(format!(
-+            "{}.toml",
-+            &execution::hash(text.as_bytes())[..16]
-+        ));
++        let path = agents_dir(&lead.host)
++            .join(format!("{}.toml", &execution::hash(text.as_bytes())[..16]));
 +        write_once(&path, &text)?;
 +        Ok(path)
 +    }
 +
 +    fn plan(&self, host: &Host, name: &str) -> Option<Plan> {
-+        let text = std::fs::read(agents_dir(host).join("plans").join(format!("{name}.json"))).ok()?;
++        let text =
++            std::fs::read(agents_dir(host).join("plans").join(format!("{name}.json"))).ok()?;
 +        serde_json::from_slice(&text).ok()
 +    }
 +
@@ -35810,15 +36193,21 @@ index 000000000..1414ad357
 +    pub(super) fn role_tools(&self, host: &Host, name: &str) -> Option<BTreeSet<String>> {
 +        let (definition, planned) = if name.starts_with(PLAN_PREFIX) {
 +            let plan = self.plan(host, name)?;
-+            (plan.definition.and_then(|name| self.definition(&name)), plan.tools)
++            (
++                plan.definition.and_then(|name| self.definition(&name)),
++                plan.tools,
++            )
 +        } else {
 +            (self.definition(name), None)
 +        };
 +        let defined = definition.and_then(|definition| definition.agent.tools);
 +        match (defined, planned) {
-+            (Some(defined), Some(planned)) => {
-+                Some(planned.into_iter().filter(|tool| defined.contains(tool)).collect())
-+            }
++            (Some(defined), Some(planned)) => Some(
++                planned
++                    .into_iter()
++                    .filter(|tool| defined.contains(tool))
++                    .collect(),
++            ),
 +            (defined, planned) => defined.or(planned).map(|tools| tools.into_iter().collect()),
 +        }
 +    }
@@ -35836,7 +36225,9 @@ index 000000000..1414ad357
 +
 +    fn resolve(&self, lead: &Lead, name: &str) -> Result<Option<ContributedAgentRole>, String> {
 +        let (definition, cwd) = if name.starts_with(PLAN_PREFIX) {
-+            let plan = self.plan(&lead.host, name).ok_or("agent_plan_unavailable")?;
++            let plan = self
++                .plan(&lead.host, name)
++                .ok_or("agent_plan_unavailable")?;
 +            let definition = match &plan.definition {
 +                Some(name) => Some(
 +                    self.definition(name)
@@ -35853,9 +36244,10 @@ index 000000000..1414ad357
 +        } else {
 +            return Ok(None);
 +        };
-+        let description = definition
-+            .as_ref()
-+            .map_or_else(|| "Spawn adjusted by a mod interceptor".to_owned(), |d| d.agent.description.clone());
++        let description = definition.as_ref().map_or_else(
++            || "Spawn adjusted by a mod interceptor".to_owned(),
++            |d| d.agent.description.clone(),
++        );
 +        let config_file = self.role_file(lead, name, &description, definition.as_ref())?;
 +        let cwd = cwd
 +            .map(codex_utils_absolute_path::AbsolutePathBuf::try_from)
@@ -35889,7 +36281,13 @@ index 000000000..1414ad357
 +        if offers.is_empty() {
 +            return Vec::new();
 +        }
-+        let required = *self.expansion.agent_offers.lock().ok().as_deref().unwrap_or(&None);
++        let required = *self
++            .expansion
++            .agent_offers
++            .lock()
++            .ok()
++            .as_deref()
++            .unwrap_or(&None);
 +        let offers = match required {
 +            None => Value::Array(offers),
 +            Some(required) => {
@@ -35942,7 +36340,12 @@ index 000000000..1414ad357
 +    }
 +
 +    /// Model-visible spawn request for an `agent_spawn` chain.
-+    pub(super) fn spawn_payload(&self, lead: &Lead, arguments: &Value, cwd: &std::path::Path) -> Value {
++    pub(super) fn spawn_payload(
++        &self,
++        lead: &Lead,
++        arguments: &Value,
++        cwd: &std::path::Path,
++    ) -> Value {
 +        let prompt = match &arguments["message"] {
 +            Value::String(message) => message.clone(),
 +            _ => arguments["items"]
@@ -36023,14 +36426,18 @@ index 000000000..1414ad357
 +            return Err("agent_spawn_override_requires_definition: express cwd or tool changes as a mod agent definition".into());
 +        }
 +        let plan = Plan {
-+            definition: definition.filter(|name| name.contains('/')).map(str::to_owned),
++            definition: definition
++                .filter(|name| name.contains('/'))
++                .map(str::to_owned),
 +            cwd,
 +            tools,
 +        };
 +        let text = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
 +        let name = format!("{PLAN_PREFIX}{}", &execution::hash(text.as_bytes())[..16]);
 +        write_once(
-+            &agents_dir(&lead.host).join("plans").join(format!("{name}.json")),
++            &agents_dir(&lead.host)
++                .join("plans")
++                .join(format!("{name}.json")),
 +            &text,
 +        )?;
 +        arguments["agent_type"] = json!(name);
@@ -36066,7 +36473,8 @@ index 000000000..1414ad357
 +                        cwd: None,
 +                    }),
 +                    Err(error) => {
-+                        self.views.diagnostic(&self.host, &format!("agent:{name}"), Some(error));
++                        self.views
++                            .diagnostic(&self.host, &format!("agent:{name}"), Some(error));
 +                        None
 +                    }
 +                }
@@ -36083,7 +36491,8 @@ index 000000000..1414ad357
 +        match self.resolve(&lead, name) {
 +            Ok(role) => role,
 +            Err(error) => {
-+                self.views.diagnostic(&self.host, &format!("agent:{name}"), Some(error));
++                self.views
++                    .diagnostic(&self.host, &format!("agent:{name}"), Some(error));
 +                None
 +            }
 +        }
@@ -36091,10 +36500,10 @@ index 000000000..1414ad357
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..db5d59bdf
+index 000000000..4b9707e9f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,676 @@
+@@ -0,0 +1,695 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -36128,6 +36537,25 @@ index 000000000..db5d59bdf
 +    read_hashes: BTreeMap<PathBuf, String>,
 +    #[serde(default)]
 +    credentials: BTreeSet<String>,
++}
++
++impl Grant {
++    /// The rates of this grant's provider-billed route for `provider`, when it declares one.
++    pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
++        self.route
++            .as_ref()
++            .filter(|route| {
++                route.provider == provider
++                    && route.rates.provider_billed
++                    && !route.rates.included_subscription
++                    && route.rates.reservation_microusd == 0
++            })
++            .map(|route| &route.rates)
++    }
++
++    pub(crate) fn mod_id(&self) -> &str {
++        &self.mod_id
++    }
 +}
 +
 +#[derive(Default)]
@@ -38975,10 +39403,10 @@ index 000000000..82e68d714
 +event, capability or host configuration field names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..5be0eb627
+index 000000000..fc5e3aec5
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1449 @@
+@@ -0,0 +1,1528 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -39064,6 +39492,8 @@ index 000000000..5be0eb627
 +    pub settled_microusd: Option<u64>,
 +    #[serde(default, skip_serializing_if = "is_false")]
 +    pub external_subscription: bool,
++    #[serde(default, skip_serializing_if = "is_false")]
++    pub provider_billed: bool,
 +}
 +
 +fn is_false(value: &bool) -> bool {
@@ -40030,6 +40460,7 @@ index 000000000..5be0eb627
 +            raw_usage: None,
 +            settled_microusd: None,
 +            external_subscription,
++            provider_billed: false,
 +        };
 +        self.record(
 +            &mut state,
@@ -40180,6 +40611,81 @@ index 000000000..5be0eb627
 +        }
 +        state.attempts.insert(admission.request, attempt);
 +        Ok(())
++    }
++
++    /// Completes a provider-billed request with the provider's own cost, or leaves it awaiting `settle_provider`.
++    pub fn settle_reported(
++        &self,
++        admission: &Admission,
++        raw_usage: Option<Value>,
++        microusd: Option<u64>,
++    ) -> io::Result<()> {
++        if admission.task != self.evidence
++            || raw_usage.as_ref().is_some_and(|usage| !usage.is_object())
++        {
++            return Err(denied("invalid provider-reported identity or usage"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let mut attempt = state
++            .attempts
++            .get(&admission.request)
++            .cloned()
++            .ok_or_else(|| denied("unknown request"))?;
++        if attempt.status == "unknown"
++            || attempt.settled_microusd.is_some()
++            || attempt.provider_billed
++        {
++            return Err(denied("request settled or invalid raw usage"));
++        }
++        attempt.provider_billed = true;
++        attempt.raw_usage = raw_usage;
++        attempt.settled_microusd = microusd;
++        attempt.status = if attempt.failure_reason.is_some() {
++            "failed"
++        } else {
++            "completed"
++        }
++        .to_owned();
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "request_provider_reported", "attempt": attempt}),
++        )?;
++        state.attempts.insert(admission.request, attempt);
++        Ok(())
++    }
++
++    /// Records the provider's late settlement of a provider-billed request, once.
++    pub fn settle_provider(
++        &self,
++        request: u32,
++        microusd: u64,
++        source: &str,
++    ) -> io::Result<Attempt> {
++        if source.is_empty() || source.len() > 128 {
++            return Err(denied("invalid settlement source"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let mut attempt = state
++            .attempts
++            .get(&request)
++            .cloned()
++            .ok_or_else(|| denied("unknown request"))?;
++        if !attempt.provider_billed || attempt.settled_microusd.is_some() {
++            return Err(denied("request is not awaiting provider settlement"));
++        }
++        attempt.settled_microusd = Some(microusd);
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "request_provider_settled", "source": source, "attempt": attempt}),
++        )?;
++        state.attempts.insert(request, attempt.clone());
++        Ok(attempt)
 +    }
 +
 +    pub fn fail(&self, admission: &Admission, reason: &str) -> io::Result<()> {
@@ -40336,6 +40842,7 @@ index 000000000..5be0eb627
 +            raw_usage,
 +            settled_microusd: None,
 +            external_subscription: false,
++            provider_billed: false,
 +        };
 +        self.record(
 +            &mut state,
@@ -43296,10 +43803,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..1d6be8f10
+index 000000000..46803c93f
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,433 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
@@ -43432,7 +43939,7 @@ index 000000000..1d6be8f10
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
++            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +        )
 +    };
 +    match args {
@@ -43611,6 +44118,27 @@ index 000000000..1d6be8f10
 +            Ok(Value::String(
 +                "selection saved; takes effect at the next turn boundary".into(),
 +            ))
++        }
++        [command, root, action, owner, label, origin]
++            if command == "credentials" && action == "add-secret" =>
++        {
++            let mut value = String::new();
++            io::Read::read_to_string(&mut io::stdin(), &mut value)?;
++            let value = value.trim_end_matches(['\n', '\r']);
++            let profiles = codex_omd::credentials::CredentialProfiles::open(
++                &PathBuf::from(root).canonicalize()?,
++            )?;
++            let existing = profiles.visible(owner)?.into_iter().find(|profile| {
++                profile["kind"] == "secret"
++                    && profile["label"] == label.as_str()
++                    && profile["origin"] == origin.as_str()
++            });
++            let id = match existing {
++                Some(profile) => profile["id"].as_str().unwrap_or_default().to_owned(),
++                None => profiles.create_secret(label, origin, owner)?.id,
++            };
++            profiles.store_secret(&id, value)?;
++            profiles.public(&profiles.profile(&id)?)
 +        }
 +        [command, root] if command == "credentials" => Ok(Value::Array(
 +            codex_omd::credentials::CredentialProfiles::open(&PathBuf::from(root).canonicalize()?)?
@@ -44575,10 +45103,10 @@ index 000000000..ba97c6052
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..57a8769e5
+index 000000000..f9719b786
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,887 @@
+@@ -0,0 +1,890 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -45183,7 +45711,10 @@ index 000000000..57a8769e5
 +                    stored = json!({"key": format!("{}{}", nonce()?, nonce()?)});
 +                    write_private(&path, &stored)?;
 +                }
-+                let tag = hmac(stored["key"].as_str().unwrap_or_default().as_bytes(), entry.as_bytes());
++                let tag = hmac(
++                    stored["key"].as_str().unwrap_or_default().as_bytes(),
++                    entry.as_bytes(),
++                );
 +                if op == "peer.seal" {
 +                    Value::String(tag)
 +                } else {
@@ -45468,10 +45999,10 @@ index 000000000..57a8769e5
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..22dc250c4
+index 000000000..b1bdefdd2
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,281 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -45734,12 +46265,17 @@ index 000000000..22dc250c4
 +    let digest = sha256(b"message");
 +    let tag = client.call("peer.seal", json!({"sha256": digest})).unwrap();
 +    assert_eq!(
-+        client.call("peer.verify", json!({"sha256": digest, "tag": tag})).unwrap(),
++        client
++            .call("peer.verify", json!({"sha256": digest, "tag": tag}))
++            .unwrap(),
 +        true
 +    );
 +    assert_eq!(
 +        client
-+            .call("peer.verify", json!({"sha256": sha256(b"other"), "tag": tag}))
++            .call(
++                "peer.verify",
++                json!({"sha256": sha256(b"other"), "tag": tag})
++            )
 +            .unwrap(),
 +        false
 +    );
@@ -50823,7 +51359,7 @@ index 000000000..20d64a33d
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..2dedb79a0
+index 000000000..384115dde
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,209 @@
@@ -50838,7 +51374,6 @@ index 000000000..2dedb79a0
 +pub mod credentials;
 +pub mod data_store;
 +pub mod event_bus;
-+pub mod peers;
 +pub mod history;
 +pub mod host;
 +pub mod mod_limits;
@@ -50847,6 +51382,7 @@ index 000000000..2dedb79a0
 +mod mods;
 +mod owner;
 +pub mod package_controls;
++pub mod peers;
 +pub mod resource_data;
 +pub mod scoped_data;
 +pub mod sessions;
@@ -50941,9 +51477,9 @@ index 000000000..2dedb79a0
 +pub use mods::ModActivity;
 +pub use mods::ModAgent;
 +pub use mods::ModAgentDefinition;
-+pub use mods::ModAutonomy;
 +pub use mods::ModApprovalScope;
 +pub use mods::ModAsciiBackdrop;
++pub use mods::ModAutonomy;
 +pub use mods::ModBackdrop;
 +pub use mods::ModBackdropOffset;
 +pub use mods::ModBorder;
@@ -50975,7 +51511,6 @@ index 000000000..2dedb79a0
 +pub use mods::ModListRow;
 +pub use mods::ModMcpServer;
 +pub use mods::ModOsAccess;
-+pub use mods::ModPeerAccess;
 +pub use mods::ModPackage;
 +pub use mods::ModPackageGrant;
 +pub use mods::ModPackageLock;
@@ -50983,6 +51518,7 @@ index 000000000..2dedb79a0
 +pub use mods::ModPackageSource;
 +pub use mods::ModPackageTrust;
 +pub use mods::ModPanel;
++pub use mods::ModPeerAccess;
 +pub use mods::ModPolicyScope;
 +pub use mods::ModRange;
 +pub use mods::ModRenderSite;
@@ -52677,10 +53213,10 @@ index 000000000..fe2e0fb34
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..df109f6d0
+index 000000000..25747f03e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4739 @@
+@@ -0,0 +1,4747 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -52998,6 +53534,7 @@ index 000000000..df109f6d0
 +    "agent_lifecycle_v1",
 +    "peer_sessions_v1",
 +    "autonomous_turns_v1",
++    "provider_billing_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -53083,6 +53620,7 @@ index 000000000..df109f6d0
 +    "model.complete",
 +    "model.fork",
 +    "session.info",
++    "ledger.settle",
 +    "time.sleep",
 +    "tools.define",
 +    "tools.invoke",
@@ -57178,11 +57716,14 @@ index 000000000..df109f6d0
 +    pub fn agent_definitions(&self) -> Vec<ModAgentDefinition> {
 +        self.active()
 +            .flat_map(|(id, m)| {
-+                m.registrations.agents.iter().map(|agent| ModAgentDefinition {
-+                    owner: id.to_owned(),
-+                    source_sha256: m.selection.sha256.clone(),
-+                    agent: agent.clone(),
-+                })
++                m.registrations
++                    .agents
++                    .iter()
++                    .map(|agent| ModAgentDefinition {
++                        owner: id.to_owned(),
++                        source_sha256: m.selection.sha256.clone(),
++                        agent: agent.clone(),
++                    })
 +            })
 +            .collect()
 +    }
@@ -57347,7 +57888,10 @@ index 000000000..df109f6d0
 +                "intercept.model_send",
 +                json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only"}),
 +            ),
-+            ("intercept.agent_offers", json!({"thread_id":"observe_only","offers":"replaceable"})),
++            (
++                "intercept.agent_offers",
++                json!({"thread_id":"observe_only","offers":"replaceable"}),
++            ),
 +            (
 +                "intercept.agent_spawn",
 +                json!({"origin":"observe_only","caller":"observe_only","thread_id":"observe_only","agent_id":"observe_only","definition":"replaceable","prompt":"replaceable","model":"replaceable","effort":"replaceable","cwd":"replaceable","tools":"replaceable"}),
@@ -58024,10 +58568,10 @@ index 000000000..b98622986
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..01b9b7275
+index 000000000..49140ead8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,327 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -58066,7 +58610,9 @@ index 000000000..01b9b7275
 +            "sessions.list" | "sessions.read" | "sessions.snapshot" | "sessions.ports" => {
 +                Ok("sessions")
 +            }
-+            "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
++            "routes.list" | "providers.register" | "providers.unregister" | "ledger.settle" => {
++                Ok("model")
++            }
 +            "task.status" | "workspace.integrate" => Ok("agents"),
 +            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict"
 +            | "contract.select" => Ok("contracts"),
@@ -58355,10 +58901,10 @@ index 000000000..01b9b7275
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..183a28317
+index 000000000..ba635ac0d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1642 @@
+@@ -0,0 +1,1648 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -58714,11 +59260,15 @@ index 000000000..183a28317
 +                .as_str()
 +                .is_some_and(|effort| crate::model_request::EFFORTS.contains(&effort)))
 +        && (input["cwd"] == before["cwd"]
-+            || text(&input["cwd"], 4096) && Path::new(input["cwd"].as_str().unwrap_or("")).is_absolute())
++            || text(&input["cwd"], 4096)
++                && Path::new(input["cwd"].as_str().unwrap_or("")).is_absolute())
 +        && match (names(&input["tools"]), names(&before["tools"])) {
 +            (None, None) => input["tools"].is_null(),
 +            (Some(tools), None) => {
-+                tools.len() <= 32 && input["tools"].as_array().is_some_and(|t| t.len() == tools.len())
++                tools.len() <= 32
++                    && input["tools"]
++                        .as_array()
++                        .is_some_and(|t| t.len() == tools.len())
 +            }
 +            (Some(tools), Some(given)) => tools.is_subset(&given),
 +            (None, Some(_)) => false,
@@ -58864,7 +59414,9 @@ index 000000000..183a28317
 +        "agent_spawn" => {
 +            deny || last.is_some_and(|last| {
 +                object.is_some_and(|object| {
-+                    object.keys().all(|key| ["agent_id", "output", "success"].contains(&key.as_str()))
++                    object
++                        .keys()
++                        .all(|key| ["agent_id", "output", "success"].contains(&key.as_str()))
 +                }) && result["agent_id"] == last["agent_id"]
 +                    && result["success"] == last["success"]
 +                    && result["output"]
@@ -62382,7 +62934,7 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..8a677714c
+index 000000000..ff57c8c35
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
 @@ -0,0 +1,606 @@
@@ -62905,7 +63457,7 @@ index 000000000..8a677714c
 +          output, reasoning: number(usage?.output_tokens_details?.reasoning_tokens) },
 +        context: window !== null && input !== null ? { used: input + (output ?? 0), window, ratio: (input + (output ?? 0)) / window } : null,
 +        cost: { microusd: number(response?.cost?.microusd), basis,
-+          source: basis === 'settled' || basis === 'unsettled' ? 'configured_rates' : basis === 'included_subscription' ? 'subscription' : basis === 'synthetic' ? 'none' : 'unknown' },
++          source: basis === 'settled' || basis === 'unsettled' ? 'configured_rates' : basis === 'provider_reported' ? 'provider' : basis === 'included_subscription' ? 'subscription' : basis === 'synthetic' ? 'none' : 'unknown' },
 +        timing: response?.timing ?? null, synthetic: response?.synthetic ?? null,
 +      };
 +    },
@@ -66636,10 +67188,10 @@ index 000000000..fe9749ea2
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 000000000..fdd11b941
+index 000000000..f584efb95
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,447 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
@@ -66698,7 +67250,9 @@ index 000000000..fdd11b941
 +impl BrokerSeal {
 +    fn socket() -> io::Result<SocketSeal> {
 +        if !broker::deployed() {
-+            return Err(failure("peers_unavailable: the authority broker is not deployed"));
++            return Err(failure(
++                "peers_unavailable: the authority broker is not deployed",
++            ));
 +        }
 +        Ok(SocketSeal(PathBuf::from(broker::SOCKET)))
 +    }
@@ -66750,7 +67304,9 @@ index 000000000..fdd11b941
 +    let temporary = parent.join(format!(
 +        ".{}.{}.tmp",
 +        std::process::id(),
-+        path.file_name().and_then(|name| name.to_str()).unwrap_or("entry")
++        path.file_name()
++            .and_then(|name| name.to_str())
++            .unwrap_or("entry")
 +    ));
 +    fs::write(&temporary, serde_json::to_vec(value)?)?;
 +    fs::rename(&temporary, path)
@@ -66809,7 +67365,10 @@ index 000000000..fdd11b941
 +    /// Publishes the packages this session accepts messages for.
 +    pub fn publish(&self, endpoints: &[Endpoint]) -> io::Result<()> {
 +        write_atomic(
-+            &self.root.join("sessions").join(format!("{}.json", self.session)),
++            &self
++                .root
++                .join("sessions")
++                .join(format!("{}.json", self.session)),
 +            &json!({"session": self.session, "repository": self.repository, "pid": std::process::id(),
 +                "packages": endpoints.iter().map(|endpoint| json!({"id": endpoint.package, "projects": endpoint.projects})).collect::<Vec<_>>()}),
 +        )
@@ -66901,14 +67460,23 @@ index 000000000..fdd11b941
 +            .duration_since(std::time::UNIX_EPOCH)
 +            .map_or(0, |elapsed| elapsed.as_nanos());
 +        let id = broker::sha256(
-+            format!("{}:{}:{nanos}:{}", self.session, from.package, std::process::id()).as_bytes(),
++            format!(
++                "{}:{}:{nanos}:{}",
++                self.session,
++                from.package,
++                std::process::id()
++            )
++            .as_bytes(),
 +        )[..32]
 +            .to_owned();
 +        let message = json!({"id": id, "from": {"session": self.session, "repository": self.repository,
 +                "package": from.package, "sha256": from.sha256},
 +            "to": {"session": to, "package": package}, "correlation": correlation, "data": data,
 +            "sent_at_ms": sent_at_ms, "expires_at_ms": sent_at_ms + ttl_ms});
-+        write_atomic(&inbox.join(format!("{id}.json")), &sealed(seal, "message", message)?)?;
++        write_atomic(
++            &inbox.join(format!("{id}.json")),
++            &sealed(seal, "message", message)?,
++        )?;
 +        if let Ok(mut sent) = self.sent.lock() {
 +            sent.insert(
 +                id.clone(),
@@ -66951,7 +67519,10 @@ index 000000000..fdd11b941
 +            if !self.seen.lock().is_ok_and(|mut seen| seen.insert(id)) {
 +                continue;
 +            }
-+            if message["expires_at_ms"].as_u64().is_none_or(|at| at < now_ms()) {
++            if message["expires_at_ms"]
++                .as_u64()
++                .is_none_or(|at| at < now_ms())
++            {
 +                self.receipt(seal, &message, "expired", None)?;
 +            } else {
 +                delivered.push(Inbound { message });
@@ -66962,7 +67533,8 @@ index 000000000..fdd11b941
 +
 +    /// Whether `endpoint`'s own project scope admits the message's sender.
 +    pub fn admits(&self, endpoint: &Endpoint, message: &Value) -> bool {
-+        endpoint.projects == "any" || message["from"]["repository"].as_str() == self.repository.to_str()
++        endpoint.projects == "any"
++            || message["from"]["repository"].as_str() == self.repository.to_str()
 +    }
 +
 +    /// Writes a sealed receipt for `message` back to its sender.
@@ -66973,7 +67545,9 @@ index 000000000..fdd11b941
 +        status: &str,
 +        reason: Option<String>,
 +    ) -> io::Result<()> {
-+        let Some(sender) = message["from"]["session"].as_str().filter(|session| identifier(session))
++        let Some(sender) = message["from"]["session"]
++            .as_str()
++            .filter(|session| identifier(session))
 +        else {
 +            return Ok(());
 +        };
@@ -67067,10 +67641,10 @@ index 000000000..fdd11b941
 +mod tests;
 diff --git a/codex-rs/omd/src/peers_tests.rs b/codex-rs/omd/src/peers_tests.rs
 new file mode 100644
-index 000000000..5e418c506
+index 000000000..edff5c9d2
 --- /dev/null
 +++ b/codex-rs/omd/src/peers_tests.rs
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,264 @@
 +use super::*;
 +
 +struct TestSeal;
@@ -67114,7 +67688,15 @@ index 000000000..5e418c506
 +    assert!(alpha.list(&chat, "other").unwrap().is_empty());
 +
 +    let sent = alpha
-+        .send(&TestSeal, &chat, "beta", "chat", json!({"text": "hi"}), Some("c1".into()), 60_000)
++        .send(
++            &TestSeal,
++            &chat,
++            "beta",
++            "chat",
++            json!({"text": "hi"}),
++            Some("c1".into()),
++            60_000,
++        )
 +        .unwrap();
 +    assert_eq!(sent["status"], "queued");
 +    let replay = fs::read(inbox_file(store.path(), "beta")).unwrap();
@@ -67143,7 +67725,15 @@ index 000000000..5e418c506
 +    let chat = endpoint("chat", "same");
 +    beta.publish(std::slice::from_ref(&chat)).unwrap();
 +    alpha
-+        .send(&TestSeal, &chat, "beta", "chat", json!("original"), None, 60_000)
++        .send(
++            &TestSeal,
++            &chat,
++            "beta",
++            "chat",
++            json!("original"),
++            None,
++            60_000,
++        )
 +        .unwrap();
 +    let path = inbox_file(store.path(), "beta");
 +    let mut envelope: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -67183,7 +67773,15 @@ index 000000000..5e418c506
 +        assert!(alpha.list(&chat, "chat").unwrap().is_empty());
 +    }
 +    let error = alpha
-+        .send(&TestSeal, &endpoint("chat", "any"), "beta", "chat", json!(1), None, 60_000)
++        .send(
++            &TestSeal,
++            &endpoint("chat", "any"),
++            "beta",
++            "chat",
++            json!(1),
++            None,
++            60_000,
++        )
 +        .unwrap_err();
 +    assert!(error.to_string().starts_with("peer_closed"));
 +    assert!(Peers::open(store.path(), "alpha", Path::new("/repo")).is_err());
@@ -67197,7 +67795,15 @@ index 000000000..5e418c506
 +    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
 +    beta.publish(std::slice::from_ref(&chat)).unwrap();
 +    alpha
-+        .send(&TestSeal, &chat, "beta", "chat", json!("while away"), None, 60_000)
++        .send(
++            &TestSeal,
++            &chat,
++            "beta",
++            "chat",
++            json!("while away"),
++            None,
++            60_000,
++        )
 +        .unwrap();
 +    drop(beta);
 +    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
@@ -67229,7 +67835,10 @@ index 000000000..5e418c506
 +        if let Some(value) = check() {
 +            return value;
 +        }
-+        assert!(std::time::Instant::now() < deadline, "peer process timed out");
++        assert!(
++            std::time::Instant::now() < deadline,
++            "peer process timed out"
++        );
 +        std::thread::sleep(std::time::Duration::from_millis(50));
 +    }
 +}
@@ -67258,7 +67867,15 @@ index 000000000..5e418c506
 +    }
 +    until(|| (!peers.list(&chat, "chat").unwrap().is_empty()).then_some(()));
 +    peers
-+        .send(&seal, &chat, "beta", "chat", json!("across processes"), None, 60_000)
++        .send(
++            &seal,
++            &chat,
++            "beta",
++            "chat",
++            json!("across processes"),
++            None,
++            60_000,
++        )
 +        .unwrap();
 +    let receipt = until(|| peers.receipts(&seal).unwrap().pop()).1;
 +    assert_eq!(receipt["status"], "delivered");
@@ -73573,10 +74190,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..60d4d4f57
+index 000000000..3b763fdb7
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,3969 @@
+@@ -0,0 +1,4020 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -77545,6 +78162,57 @@ index 000000000..60d4d4f57
 +        store.selection_status().unwrap()["selections"][0]["authority_current"],
 +        false
 +    );
++}
++
++#[test]
++fn credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin() {
++    use std::io::Write;
++    let temp = TempDir::new().unwrap();
++    let store = temp.path().canonicalize().unwrap();
++    let add = |value: &str| {
++        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
++            .arg("credentials")
++            .arg(&store)
++            .args([
++                "add-secret",
++                "fixture_mod",
++                "fixture",
++                "https://api.example.com",
++            ])
++            .stdin(std::process::Stdio::piped())
++            .stdout(std::process::Stdio::piped())
++            .stderr(std::process::Stdio::piped())
++            .spawn()
++            .unwrap();
++        child
++            .stdin
++            .take()
++            .unwrap()
++            .write_all(value.as_bytes())
++            .unwrap();
++        let output = child.wait_with_output().unwrap();
++        assert!(
++            output.status.success(),
++            "{}",
++            String::from_utf8_lossy(&output.stderr)
++        );
++        serde_json::from_slice::<Value>(&output.stdout).unwrap()
++    };
++    let first = add("first-key\n");
++    assert_eq!(
++        (&first["kind"], &first["label"], &first["status"]),
++        (&json!("secret"), &json!("fixture"), &json!("ready"))
++    );
++    let second = add("second-key");
++    assert_eq!(second["id"], first["id"]);
++    let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
++    let id = first["id"].as_str().unwrap();
++    assert_eq!(
++        profiles.owned_secret(id, "fixture_mod").unwrap()["value"],
++        "second-key"
++    );
++    assert!(profiles.owned_secret(id, "another_mod").is_err());
++    assert!(profiles.visible("").unwrap().is_empty());
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644

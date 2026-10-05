@@ -315,6 +315,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "agent_lifecycle_v1",
     "peer_sessions_v1",
     "autonomous_turns_v1",
+    "provider_billing_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -400,6 +401,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "model.complete",
     "model.fork",
     "session.info",
+    "ledger.settle",
     "time.sleep",
     "tools.define",
     "tools.invoke",
@@ -4495,11 +4497,14 @@ impl ModHost {
     pub fn agent_definitions(&self) -> Vec<ModAgentDefinition> {
         self.active()
             .flat_map(|(id, m)| {
-                m.registrations.agents.iter().map(|agent| ModAgentDefinition {
-                    owner: id.to_owned(),
-                    source_sha256: m.selection.sha256.clone(),
-                    agent: agent.clone(),
-                })
+                m.registrations
+                    .agents
+                    .iter()
+                    .map(|agent| ModAgentDefinition {
+                        owner: id.to_owned(),
+                        source_sha256: m.selection.sha256.clone(),
+                        agent: agent.clone(),
+                    })
             })
             .collect()
     }
@@ -4664,7 +4669,10 @@ impl ModHost {
                 "intercept.model_send",
                 json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only"}),
             ),
-            ("intercept.agent_offers", json!({"thread_id":"observe_only","offers":"replaceable"})),
+            (
+                "intercept.agent_offers",
+                json!({"thread_id":"observe_only","offers":"replaceable"}),
+            ),
             (
                 "intercept.agent_spawn",
                 json!({"origin":"observe_only","caller":"observe_only","thread_id":"observe_only","agent_id":"observe_only","definition":"replaceable","prompt":"replaceable","model":"replaceable","effort":"replaceable","cwd":"replaceable","tools":"replaceable"}),

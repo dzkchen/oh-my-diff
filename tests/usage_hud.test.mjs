@@ -95,14 +95,15 @@ test('provider costs, cache policy and missing usage keep their own labels', () 
     ['app_notification', { method: 'thread/tokenUsage/updated', params: { threadId: 'lead', tokenUsage: { modelContextWindow: 200_000 } }, thread_id: 'lead', coalesced: 0, dropped: 0 }],
     ['model_response', response('o1', { provider: 'openrouter', route: 'openrouter', credential: 'or', scope: { thread_id: 'child', agent_id: 'agent-2', kind: 'subagent' }, cost: { microusd: 900, basis: 'settled' },
       usage: { input_tokens: 100, input_tokens_details: { cached_tokens: 0 }, output_tokens: 10, omd_reported_cost: { usd: 0.0012, basis: 'provider_billed' } } })],
-    ['model_response', response('u1', { provider: 'cursor', route: 'cursor', credential: 'cursor', scope: { thread_id: 'child', agent_id: 'agent-3', kind: 'subagent' }, usage: null, cost: { microusd: null, basis: 'unpriced' } })],
+    ['model_response', response('u1', { provider: 'custom', route: 'custom', credential: 'custom', scope: { thread_id: 'child', agent_id: 'agent-3', kind: 'subagent' }, usage: null, cost: { microusd: null, basis: 'unpriced' } })],
+    ['model_response', response('k5', { provider: 'omd_cursor', route: 'cursor', credential: 'cursor', scope: { thread_id: 'child', agent_id: 'agent-5', kind: 'subagent' }, cost: { microusd: null, basis: 'unsettled' } })],
     ['model_response', response('a1', { provider: 'openai', route: 'api', credential: 'key', scope: { thread_id: 'child', agent_id: 'agent-4', kind: 'subagent' }, cost: { microusd: 2_500_000, basis: 'settled' } })],
   ]);
   const { text } = dialog(state, hud, NOW - 59_000 + 120_000);
   assert.match(text, /Model claude-opus-5-5-20261001 \(requested claude-opus-5-5\)/);
   assert.match(text, /Last response: input 12k \+ output 300 of 200k \(6%\)/);
   assert.match(text, /Lead: 1 included \(~\$0.25 list-equivalent\)/);
-  assert.match(text, /Workers: \$0.00 billed · ~\$2.50 configured-rate est. · 1 unknown cost/);
+  assert.match(text, /Workers: \$0.00 billed · ~\$2.50 configured-rate est. · 1 unsettled · 1 unknown cost/);
   assert.match(text, /Subscription overage: not reported by the provider \(unknown\)/);
   assert.match(text, /cache write 2.0k/);
   assert.match(text, /Cache expiry: ~3m left \(provider TTL from last cache use; projection, not guaranteed\)/);
@@ -119,10 +120,12 @@ test('provider costs, cache policy and missing usage keep their own labels', () 
   state = feed(state, [['app_notification', { method: 'thread/settings/updated', params: { threadId: 'lead', threadSettings: { model: 'claude-opus-5-5', effort: 'high', modelProvider: 'omd_claude_cli' } }, thread_id: 'lead', coalesced: 0, dropped: 0 }]]);
   assert.match(dialog(state).text, /route claude · reasoning high/);
 
-  const published = call(usageMod, { event: 'channel', payload: { publisher: 'omd_usage', channel: 'omd_usage/refresh', data: null, correlation: null, sequence: 1, dropped: 0 }, state, settings: { ...hud, budget_usd: 2 } }, ({ operation }) =>
-    operation === 'task.status' ? { ledger: { thread_id: 'lead', cwd: '/repo', cost: { attempts: [] } }, limits: { requests: 100, exposure_microusd: 5_000_000 }, worker_limits: {} }
-      : operation === 'contract.status' ? { status: 'none' } : { delivered: 1, dropped: 0 }).published.at(-1).data;
-  assert.deepEqual(published.spend, { usd: 2.5012, kind: 'mixed', uncertain: true, list: 0.25 });
+  const refreshed = call(usageMod, { event: 'channel', payload: { publisher: 'omd_usage', channel: 'omd_usage/refresh', data: null, correlation: null, sequence: 1, dropped: 0 }, state, settings: { ...hud, budget_usd: 2 } }, ({ operation }) =>
+    operation === 'task.status' ? { ledger: { thread_id: 'lead', cwd: '/repo', cost: { attempts: [{ request: 5, provider_billed: true, settled_microusd: 1_000_000 }] } }, limits: { requests: 100, exposure_microusd: 5_000_000 }, worker_limits: {} }
+      : operation === 'contract.status' ? { status: 'none' } : { delivered: 1, dropped: 0 });
+  const published = refreshed.published.at(-1).data;
+  assert.match(dialog(refreshed.state).text, /Workers: \$1.00 billed · ~\$2.50 configured-rate est. · 1 unknown cost/);
+  assert.deepEqual(published.spend, { usd: 3.5012, kind: 'mixed', uncertain: true, list: 0.25 });
   assert.equal(published.budget, 'over');
   assert.equal(published.cache.ratio, 0.75);
 });
@@ -171,7 +174,7 @@ test('compaction, rewind and route switches mark the context reading stale; cate
 test('sidebar shows usage, allowance, tasks and workers; theme draws compact cache, cost and quota segments', () => {
   let state = start();
   state = feed(state, [['model_response', response('r1')],
-    ['agent', { phase: 'start', agent_id: 'agent-123456789', parent_agent_id: null, role: 'explorer', status: 'running' }],
+    ['agent', { phase: 'start', agent: { agent_id: 'agent-123456789', thread_id: 'child', parent: { thread_id: 'lead', agent_id: null }, origin: 'model', owner: null, definition: null, role: 'explorer', status: 'running' } }],
     ['tool_call', { call_id: 'c1', agent_id: null, tool: 'exec_command', arguments: {} }],
     ['app_notification', { method: 'turn/plan/updated', params: { threadId: 'lead', plan: [{ step: 'Read', status: 'completed' }, { step: 'Fix', status: 'inProgress' }, { step: 'Test', status: 'pending' }] }, thread_id: 'lead', coalesced: 0, dropped: 0 }]]);
   state.allowance = { used: 1_200_000, limit: 5_000_000, requests: 3, max: 100 };

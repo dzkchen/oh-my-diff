@@ -112,7 +112,8 @@
         "admission_api_policy_v1",
         "agent_lifecycle_v1",
         "peer_sessions_v1",
-        "autonomous_turns_v1"
+        "autonomous_turns_v1",
+        "provider_billing_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -1152,6 +1153,7 @@
         "omd_claude_cli",
         "omd_continue",
         "omd_coordination",
+        "omd_cursor",
         "omd_editor",
         "omd_frecency",
         "omd_git",
@@ -1231,6 +1233,10 @@
     "omd_coordination": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_coordination"
+    },
+    "omd_cursor": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_cursor"
     },
     "omd_editor": {
       "version": "0.1.0-preview.1",

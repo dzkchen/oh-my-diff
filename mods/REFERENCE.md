@@ -41,7 +41,7 @@ native work.
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `unix_sockets` | `exec.run` `unix_sockets` |
-| `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` and `model_response` events |
+| `model` | `routes.list`, `routes.select`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
 | `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
@@ -454,7 +454,18 @@ ChatGPT route at the Codex subscription URL, zero reservation) or `"paid_api_key
 other provider, including a local one, is a paid API route: it needs `paid_api_key`, a nonzero
 `reservation_microusd` and a nonzero `limits.exposure_microusd` (lead) or
 `worker_limits.exposure_microusd` (workers) in `host.json`, both `0` by default. Grant files are
-operator actions; a mod cannot create one to authorize itself. Users select a workflow contract
+operator actions; a mod cannot create one to authorize itself.
+
+A route with `"provider_billed": true` (`provider_billing_v1`; zero reservation, not
+`included_subscription`) is billed by its provider: the host admits and counts its requests
+without reserving exposure or bounding the body, records the provider's own cost from
+`usage.cost_microusd` on the completed response as basis `provider_reported`, and leaves it
+`unsettled` when absent. A lead whose provider is a service grant's provider-billed route is
+accounted under that route. `ledger.settle {request_id, microusd, source}` (`model`) lets the
+grant's own mod settle one such unsettled request later, by the `x-omd-request-id` the host
+sent to the provider; it appends a `request_provider_settled` ledger event, adds the amount
+to the task charge and refuses requests of other providers or mods, settled requests and
+unknown ids. Users select a workflow contract
 with `omd-package contract select ID@VERSION` (or `omd-contract select STORE REPOSITORY ID@VERSION`)
 in the repository, or from the terminal through a mod's `contract.select {contract}`
 (`contracts`, user actions only): the host shows a native confirmation that names any
@@ -542,7 +553,7 @@ and synthetic answer: `request_id`, `attempt`, `ledger_request`, `scope`,
 `served_model`, `status` (`completed`, `incomplete`, `failed`, `cancelled`),
 `stop_reason` (derived: `end_turn`, `tool_use` or the incomplete reason),
 `output {text (first 4 KiB), tool_calls}`, raw `usage`, `cache {read_tokens,
-write_tokens}`, `cost {microusd, basis}` (`settled`, `unsettled`,
+write_tokens}`, `cost {microusd, basis}` (`settled`, `unsettled`, `provider_reported`,
 `included_subscription`, `unpriced` or `synthetic`), `context_window` when the
 session knows it, `timing {started_at_ms, first_event_ms, duration_ms}`,
 `synthetic` and `error`. It is delivered after the response from the delivery
@@ -1139,7 +1150,13 @@ A request to `$OMD_CREDENTIAL_GATEWAY/PROFILE/PATH` is sent over HTTPS to
 `PATH` on that profile's origin with `Authorization: Bearer` (or `x-api-key`
 when the request sets `x-omd-credential-header: x-api-key`) and the response
 streams back; redirects aren't followed. `omd-mod credentials STORE` lists
-profiles without secrets.
+profiles without secrets. `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN`
+reads a value from stdin and stores it as a secret owned by `MOD_ID` for `ORIGIN`, the same
+profile `credentials.request {kind: 'secret'}` creates, replacing the value of that mod's
+existing secret with the same label and origin; it prints the profile and asks for broker
+authorization when the authority broker is deployed. Package setup scripts use it to enroll a
+key without writing it to disk. `providers.register {id, secrets?}` delivers owned secrets
+to a provider service as `sidecars.start` does.
 
 ### Thread store, resume and turn activity (`store_thread_v1`, `turn_activity_v1`)
 
@@ -1663,6 +1680,7 @@ publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
+| `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
 | `omd-mod selection-status STORE` | Show saved user/project selections, precedence, source errors, and setting keys without running mod code |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |

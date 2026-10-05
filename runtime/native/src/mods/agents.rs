@@ -1494,7 +1494,9 @@ impl Agents {
         match request.operation.as_str() {
             "agents.cancel" => {
                 agent.shutdown().await;
-                if let Some(thread) = handle.handle.strip_prefix(&format!("mod-{}-", agent.mod_id))
+                if let Some(thread) = handle
+                    .handle
+                    .strip_prefix(&format!("mod-{}-", agent.mod_id))
                     && let Some(record) = core.inventory.end(
                         thread,
                         "cancelled",
@@ -1877,7 +1879,10 @@ impl Agents {
             }
             if let Some(defined) = &definition.agent.tools {
                 request.tools = Some(match request.tools.take() {
-                    Some(tools) => tools.into_iter().filter(|tool| defined.contains(tool)).collect(),
+                    Some(tools) => tools
+                        .into_iter()
+                        .filter(|tool| defined.contains(tool))
+                        .collect(),
                     None => defined.clone(),
                 });
             }

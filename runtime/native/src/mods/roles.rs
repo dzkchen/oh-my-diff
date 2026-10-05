@@ -1,8 +1,8 @@
 use super::*;
-use std::collections::BTreeSet;
 use codex_extension_api::AgentRoleContributor;
 use codex_extension_api::ContributedAgentRole;
 use codex_omd::ModAgentDefinition;
+use std::collections::BTreeSet;
 
 const PLAN_PREFIX: &str = "omd-agent-";
 
@@ -31,7 +31,11 @@ fn write_once(path: &std::path::Path, text: &str) -> Result<(), String> {
     }
     let parent = path.parent().ok_or("agent_role_path_invalid")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let temporary = parent.join(format!(".{}.{}.tmp", std::process::id(), execution::hash(text.as_bytes())));
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        execution::hash(text.as_bytes())
+    ));
     std::fs::write(&temporary, text).map_err(|e| e.to_string())?;
     std::fs::rename(&temporary, path).map_err(|e| e.to_string())
 }
@@ -96,16 +100,15 @@ impl Core {
             }
         }
         let text = lines.join("\n") + "\n";
-        let path = agents_dir(&lead.host).join(format!(
-            "{}.toml",
-            &execution::hash(text.as_bytes())[..16]
-        ));
+        let path = agents_dir(&lead.host)
+            .join(format!("{}.toml", &execution::hash(text.as_bytes())[..16]));
         write_once(&path, &text)?;
         Ok(path)
     }
 
     fn plan(&self, host: &Host, name: &str) -> Option<Plan> {
-        let text = std::fs::read(agents_dir(host).join("plans").join(format!("{name}.json"))).ok()?;
+        let text =
+            std::fs::read(agents_dir(host).join("plans").join(format!("{name}.json"))).ok()?;
         serde_json::from_slice(&text).ok()
     }
 
@@ -113,15 +116,21 @@ impl Core {
     pub(super) fn role_tools(&self, host: &Host, name: &str) -> Option<BTreeSet<String>> {
         let (definition, planned) = if name.starts_with(PLAN_PREFIX) {
             let plan = self.plan(host, name)?;
-            (plan.definition.and_then(|name| self.definition(&name)), plan.tools)
+            (
+                plan.definition.and_then(|name| self.definition(&name)),
+                plan.tools,
+            )
         } else {
             (self.definition(name), None)
         };
         let defined = definition.and_then(|definition| definition.agent.tools);
         match (defined, planned) {
-            (Some(defined), Some(planned)) => {
-                Some(planned.into_iter().filter(|tool| defined.contains(tool)).collect())
-            }
+            (Some(defined), Some(planned)) => Some(
+                planned
+                    .into_iter()
+                    .filter(|tool| defined.contains(tool))
+                    .collect(),
+            ),
             (defined, planned) => defined.or(planned).map(|tools| tools.into_iter().collect()),
         }
     }
@@ -139,7 +148,9 @@ impl Core {
 
     fn resolve(&self, lead: &Lead, name: &str) -> Result<Option<ContributedAgentRole>, String> {
         let (definition, cwd) = if name.starts_with(PLAN_PREFIX) {
-            let plan = self.plan(&lead.host, name).ok_or("agent_plan_unavailable")?;
+            let plan = self
+                .plan(&lead.host, name)
+                .ok_or("agent_plan_unavailable")?;
             let definition = match &plan.definition {
                 Some(name) => Some(
                     self.definition(name)
@@ -156,9 +167,10 @@ impl Core {
         } else {
             return Ok(None);
         };
-        let description = definition
-            .as_ref()
-            .map_or_else(|| "Spawn adjusted by a mod interceptor".to_owned(), |d| d.agent.description.clone());
+        let description = definition.as_ref().map_or_else(
+            || "Spawn adjusted by a mod interceptor".to_owned(),
+            |d| d.agent.description.clone(),
+        );
         let config_file = self.role_file(lead, name, &description, definition.as_ref())?;
         let cwd = cwd
             .map(codex_utils_absolute_path::AbsolutePathBuf::try_from)
@@ -192,7 +204,13 @@ impl Core {
         if offers.is_empty() {
             return Vec::new();
         }
-        let required = *self.expansion.agent_offers.lock().ok().as_deref().unwrap_or(&None);
+        let required = *self
+            .expansion
+            .agent_offers
+            .lock()
+            .ok()
+            .as_deref()
+            .unwrap_or(&None);
         let offers = match required {
             None => Value::Array(offers),
             Some(required) => {
@@ -245,7 +263,12 @@ impl Core {
     }
 
     /// Model-visible spawn request for an `agent_spawn` chain.
-    pub(super) fn spawn_payload(&self, lead: &Lead, arguments: &Value, cwd: &std::path::Path) -> Value {
+    pub(super) fn spawn_payload(
+        &self,
+        lead: &Lead,
+        arguments: &Value,
+        cwd: &std::path::Path,
+    ) -> Value {
         let prompt = match &arguments["message"] {
             Value::String(message) => message.clone(),
             _ => arguments["items"]
@@ -326,14 +349,18 @@ impl Core {
             return Err("agent_spawn_override_requires_definition: express cwd or tool changes as a mod agent definition".into());
         }
         let plan = Plan {
-            definition: definition.filter(|name| name.contains('/')).map(str::to_owned),
+            definition: definition
+                .filter(|name| name.contains('/'))
+                .map(str::to_owned),
             cwd,
             tools,
         };
         let text = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
         let name = format!("{PLAN_PREFIX}{}", &execution::hash(text.as_bytes())[..16]);
         write_once(
-            &agents_dir(&lead.host).join("plans").join(format!("{name}.json")),
+            &agents_dir(&lead.host)
+                .join("plans")
+                .join(format!("{name}.json")),
             &text,
         )?;
         arguments["agent_type"] = json!(name);
@@ -369,7 +396,8 @@ impl AgentRoleContributor for Mods {
                         cwd: None,
                     }),
                     Err(error) => {
-                        self.views.diagnostic(&self.host, &format!("agent:{name}"), Some(error));
+                        self.views
+                            .diagnostic(&self.host, &format!("agent:{name}"), Some(error));
                         None
                     }
                 }
@@ -386,7 +414,8 @@ impl AgentRoleContributor for Mods {
         match self.resolve(&lead, name) {
             Ok(role) => role,
             Err(error) => {
-                self.views.diagnostic(&self.host, &format!("agent:{name}"), Some(error));
+                self.views
+                    .diagnostic(&self.host, &format!("agent:{name}"), Some(error));
                 None
             }
         }

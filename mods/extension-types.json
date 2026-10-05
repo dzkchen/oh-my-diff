@@ -531,6 +531,12 @@
       "why_mod": "Owns the /mods screen, its actions and the first-run card over public package controls and terminal sites; native code keeps trust, confirmation, package authority and /omd recovery; enabled by default in both profiles."
     },
     {
+      "path": "mods/first-party/omd_cursor",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the Cursor SDK transport, custom-tool relay of OMD tools, usage settlement log and /cursor diagnostics over a host-approved provider service; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_muse",
       "extension_type": "mod",
       "role": "candidate",

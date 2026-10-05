@@ -517,7 +517,7 @@ const api = Object.freeze({
           output, reasoning: number(usage?.output_tokens_details?.reasoning_tokens) },
         context: window !== null && input !== null ? { used: input + (output ?? 0), window, ratio: (input + (output ?? 0)) / window } : null,
         cost: { microusd: number(response?.cost?.microusd), basis,
-          source: basis === 'settled' || basis === 'unsettled' ? 'configured_rates' : basis === 'included_subscription' ? 'subscription' : basis === 'synthetic' ? 'none' : 'unknown' },
+          source: basis === 'settled' || basis === 'unsettled' ? 'configured_rates' : basis === 'provider_reported' ? 'provider' : basis === 'included_subscription' ? 'subscription' : basis === 'synthetic' ? 'none' : 'unknown' },
         timing: response?.timing ?? null, synthetic: response?.synthetic ?? null,
       };
     },

@@ -520,6 +520,21 @@ async fn run(
                 .map(|route| route_info(host, route))
                 .collect::<Vec<_>>()
         )),
+        "ledger.settle" => {
+            let arguments = &request.arguments;
+            let (Some(request_id), Some(microusd), Some(source)) = (
+                arguments["request_id"].as_str(),
+                arguments["microusd"].as_u64(),
+                arguments["source"].as_str(),
+            ) else {
+                return Err("ledger_settle_invalid".into());
+            };
+            let config = host.route_config().0;
+            host.accounts
+                .settle_provider(request_id, microusd, source, |provider| {
+                    config.billed_rates(provider, Some(caller.id)).is_some()
+                })
+        }
         "session.info" => {
             let account = host
                 .accounts

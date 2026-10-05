@@ -1563,6 +1563,32 @@
       "replace_note": null
     },
     {
+      "id": "coordination.provider_billing",
+      "group": "coordination",
+      "decision": "Provider-billed routes and late settlement",
+      "observe": "`model_response` reports `provider_reported` or `unsettled` cost for provider-billed requests",
+      "alter": "a service grant's own mod settles one unsettled provider-billed request with `ledger.settle`",
+      "replace": null,
+      "timing": "after the provider settles; any callback that may call host operations",
+      "ownership": "mod: when and what the provider charged; host: admission, request identity, ownership checks and the ledger",
+      "limits": "zero reservation; one settlement per request; only the route owner's requests; last 1024 unsettled requests per process",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "ledger.settle"
+        ]
+      },
+      "evidence": [
+        "patch:provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once",
+        "patch:provider_billed_service_routes_are_found_only_for_their_provider_and_mod",
+        "rust:credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "context.history",
       "group": "context_recovery",
       "decision": "Model-bound history view",

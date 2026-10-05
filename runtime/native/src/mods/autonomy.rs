@@ -326,13 +326,19 @@ impl Queues {
     }
 
     pub(super) fn running(&self, thread: &str) -> Option<String> {
-        self.with(thread, |queue| queue.running.clone()).ok().flatten()
+        self.with(thread, |queue| queue.running.clone())
+            .ok()
+            .flatten()
     }
 
     /// Provenance of the mod prompt being submitted, taken once by the input carrying its text.
     pub(super) fn take_submitting(&self, thread: &str, text: &str) -> Option<Value> {
         self.with(thread, |queue| {
-            if queue.submitting.as_ref().is_some_and(|(expected, _)| expected == text) {
+            if queue
+                .submitting
+                .as_ref()
+                .is_some_and(|(expected, _)| expected == text)
+            {
                 queue.submitting.take().map(|(_, provenance)| provenance)
             } else {
                 None

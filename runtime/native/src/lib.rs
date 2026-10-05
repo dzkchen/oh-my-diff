@@ -472,6 +472,12 @@ impl Host {
                     .map_err(|error| error.to_string())?;
             }
         }
+        let rates = route.map(|route| route.rates.clone()).or_else(|| {
+            // A lead on a provider-billed service route's provider is accounted under that route.
+            (owner == "lead")
+                .then(|| self.route_config().0.billed_rates(&provider, None).cloned())
+                .flatten()
+        });
         let account = Account {
             task: session.task.clone(),
             owner: owner.into(),
@@ -479,7 +485,7 @@ impl Host {
             provider,
             url,
             max_request_bytes: self.config.max_request_bytes,
-            rates: route.map(|route| route.rates.clone()),
+            rates,
             repository_identity: self.repository_identity.clone(),
             cost_capture: session.evidence.join("task-cost.json"),
             route: route.map(|route| route.name.clone()),

@@ -42,10 +42,11 @@ request category drilldown; both apply from the next turn. Settings:
   Otherwise expiry is "unavailable"; the HUD never claims a warm cache and sends
   no keepalive requests.
 - **Cost.** Each record is billed (provider-reported, such as OpenRouter's
-  `usage.cost`), a configured-rate estimate, unsettled, included subscription
-  use (with the Claude CLI's list-equivalent estimate when reported), unknown
-  (missing cost is not zero) or none (synthetic). Lead, workers and inherited
-  records are totaled separately, and unknown subscription overage is said so.
+  `usage.cost` or a Cursor charge settled later in the ledger), a
+  configured-rate estimate, unsettled, included subscription use (with the
+  Claude CLI's list-equivalent estimate when reported), unknown (missing cost is
+  not zero) or none (synthetic). Lead, workers and inherited records are totaled
+  separately, and unknown subscription overage is said so.
 - **Quota.** `account/rateLimits/read` at start and `account/rateLimits/updated`
   give each reported window (its own duration, used share, reset time and
   extra-usage credits). Readings carry no route, so they belong to the lead's
@@ -70,9 +71,10 @@ Provider coverage comes from the route adapters: Codex subscription and API
 (native Responses usage), the Claude CLI subscription (`omd_claude_cli`: served
 model, cache read/write, TTL, list-equivalent cost), Claude API and OpenRouter
 through `omd_profiles` (served model, cache writes, raw usage, OpenRouter's
-billed cost, Anthropic TTL) and Muse (`omd_muse`: cache writes). Cursor has no
-adapter yet (Batch 4fa); its records would show unknown usage and cost. Live
-routes are not exercised by the tests.
+billed cost, Anthropic TTL), Muse (`omd_muse`: cache writes) and Cursor
+(`omd_cursor`: observed tokens, provider-billed charges that stay unsettled
+until the mod settles them; plan pools are in `/cursor usage`). Live routes are
+not exercised by the tests.
 
 Capabilities: `agents` (`task.status`), `commands`, `store`, `terminal`,
 `events`, `model` (`model_response`), `lifecycle`, `middleware` (`agent` and

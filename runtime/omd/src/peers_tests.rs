@@ -41,7 +41,15 @@ fn sessions_exchange_sealed_messages_and_receipts() {
     assert!(alpha.list(&chat, "other").unwrap().is_empty());
 
     let sent = alpha
-        .send(&TestSeal, &chat, "beta", "chat", json!({"text": "hi"}), Some("c1".into()), 60_000)
+        .send(
+            &TestSeal,
+            &chat,
+            "beta",
+            "chat",
+            json!({"text": "hi"}),
+            Some("c1".into()),
+            60_000,
+        )
         .unwrap();
     assert_eq!(sent["status"], "queued");
     let replay = fs::read(inbox_file(store.path(), "beta")).unwrap();
@@ -70,7 +78,15 @@ fn tampered_and_expired_messages_are_not_delivered() {
     let chat = endpoint("chat", "same");
     beta.publish(std::slice::from_ref(&chat)).unwrap();
     alpha
-        .send(&TestSeal, &chat, "beta", "chat", json!("original"), None, 60_000)
+        .send(
+            &TestSeal,
+            &chat,
+            "beta",
+            "chat",
+            json!("original"),
+            None,
+            60_000,
+        )
         .unwrap();
     let path = inbox_file(store.path(), "beta");
     let mut envelope: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -110,7 +126,15 @@ fn closed_sessions_and_other_projects_are_refused() {
         assert!(alpha.list(&chat, "chat").unwrap().is_empty());
     }
     let error = alpha
-        .send(&TestSeal, &endpoint("chat", "any"), "beta", "chat", json!(1), None, 60_000)
+        .send(
+            &TestSeal,
+            &endpoint("chat", "any"),
+            "beta",
+            "chat",
+            json!(1),
+            None,
+            60_000,
+        )
         .unwrap_err();
     assert!(error.to_string().starts_with("peer_closed"));
     assert!(Peers::open(store.path(), "alpha", Path::new("/repo")).is_err());
@@ -124,7 +148,15 @@ fn a_recovered_recipient_receives_messages_queued_before_it_stopped() {
     let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
     beta.publish(std::slice::from_ref(&chat)).unwrap();
     alpha
-        .send(&TestSeal, &chat, "beta", "chat", json!("while away"), None, 60_000)
+        .send(
+            &TestSeal,
+            &chat,
+            "beta",
+            "chat",
+            json!("while away"),
+            None,
+            60_000,
+        )
         .unwrap();
     drop(beta);
     let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
@@ -156,7 +188,10 @@ fn until<T>(mut check: impl FnMut() -> Option<T>) -> T {
         if let Some(value) = check() {
             return value;
         }
-        assert!(std::time::Instant::now() < deadline, "peer process timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "peer process timed out"
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
@@ -185,7 +220,15 @@ fn peer_process() {
     }
     until(|| (!peers.list(&chat, "chat").unwrap().is_empty()).then_some(()));
     peers
-        .send(&seal, &chat, "beta", "chat", json!("across processes"), None, 60_000)
+        .send(
+            &seal,
+            &chat,
+            "beta",
+            "chat",
+            json!("across processes"),
+            None,
+            60_000,
+        )
         .unwrap();
     let receipt = until(|| peers.receipts(&seal).unwrap().pop()).1;
     assert_eq!(receipt["status"], "delivered");

@@ -602,7 +602,10 @@ impl Broker {
                     stored = json!({"key": format!("{}{}", nonce()?, nonce()?)});
                     write_private(&path, &stored)?;
                 }
-                let tag = hmac(stored["key"].as_str().unwrap_or_default().as_bytes(), entry.as_bytes());
+                let tag = hmac(
+                    stored["key"].as_str().unwrap_or_default().as_bytes(),
+                    entry.as_bytes(),
+                );
                 if op == "peer.seal" {
                     Value::String(tag)
                 } else {

@@ -207,13 +207,23 @@ impl HostConfig {
                     .grant
                     .as_ref()
                     .is_some_and(|grant| !external(&grant.path) || grant.sha256.len() != 64)
-                || (route.rates.reservation_microusd == 0) != route.rates.included_subscription
+                || (route.rates.reservation_microusd == 0)
+                    != (route.rates.included_subscription || route.rates.provider_billed)
+                || route.rates.included_subscription && route.rates.provider_billed
                 || route.roles.contains(&RouteRole::Worker) && route.grant.is_none()
             {
                 return Err(format!("{HOST_CONFIG} route {} is invalid", route.name));
             }
         }
         Ok(())
+    }
+
+    /// The provider-billed service route rates for `provider`, from any grant or only `mod_id`'s.
+    pub(crate) fn billed_rates(&self, provider: &str, mod_id: Option<&str>) -> Option<&Rates> {
+        self.services
+            .iter()
+            .filter(|grant| mod_id.is_none_or(|id| grant.mod_id() == id))
+            .find_map(|grant| grant.billed_rates(provider))
     }
 
     pub(crate) fn route(

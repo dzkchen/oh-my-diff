@@ -1935,11 +1935,20 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
     let offered = mods.offered_agent_roles(&thread_store);
     assert_eq!(offered.len(), 1);
     assert_eq!(offered[0].name, "reviewer/review");
-    assert_eq!(offered[0].description, "Reviews diffs [audited] (mod reviewer)");
+    assert_eq!(
+        offered[0].description,
+        "Reviews diffs [audited] (mod reviewer)"
+    );
     let role = std::fs::read_to_string(&offered[0].config_file).unwrap();
     assert!(role.contains("Review carefully."), "{role}");
-    assert!(mods.resolve_agent_role(&thread_store, "auditor/review").is_some());
-    assert!(mods.resolve_agent_role(&thread_store, "missing/review").is_none());
+    assert!(
+        mods.resolve_agent_role(&thread_store, "auditor/review")
+            .is_some()
+    );
+    assert!(
+        mods.resolve_agent_role(&thread_store, "missing/review")
+            .is_none()
+    );
     assert!(mods.resolve_agent_role(&thread_store, "explorer").is_none());
 
     static SPAWN: std::sync::LazyLock<ToolName> =
@@ -1965,9 +1974,12 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         }
     };
     let ToolInterception::Continue(Some((_, codex_tools::ToolPayload::Function { arguments }))) =
-        mods.intercept_tool(spawn("spawn-1", r#"{"message":"check","agent_type":"reviewer/review"}"#))
-            .await
-            .unwrap()
+        mods.intercept_tool(spawn(
+            "spawn-1",
+            r#"{"message":"check","agent_type":"reviewer/review"}"#,
+        ))
+        .await
+        .unwrap()
     else {
         panic!("the transformed spawn must reach the native executor");
     };
@@ -1999,7 +2011,10 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         .intercept_tool(spawn("spawn-3", r#"{"message":"escape"}"#))
         .await
         .unwrap_err();
-    assert!(escaped.contains("agent_spawn_cwd_outside_session"), "{escaped}");
+    assert!(
+        escaped.contains("agent_spawn_cwd_outside_session"),
+        "{escaped}"
+    );
 
     let child = ThreadId::new();
     let child_store = ExtensionData::new(child.to_string());
@@ -2050,10 +2065,10 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         .await
         .unwrap_err();
     assert!(refused.starts_with("agent_tool_denied"), "{refused}");
-    fixture
-        .core
-        .inventory
-        .start("review-thread", json!({"origin": "native", "role": "Review"}));
+    fixture.core.inventory.start(
+        "review-thread",
+        json!({"origin": "native", "role": "Review"}),
+    );
     fixture.core.inventory.tokens(
         "review-thread",
         &codex_protocol::protocol::TokenUsage {
@@ -2070,9 +2085,15 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
     assert_eq!(review["usage"]["source"], "engine");
     assert_eq!(review["usage"]["input_tokens"], 40);
     assert!(review["usage"]["microusd"].is_null());
-    fixture.core.inventory.usage(&json!({"scope": {"thread_id": child.to_string()},
+    fixture
+        .core
+        .inventory
+        .usage(&json!({"scope": {"thread_id": child.to_string()},
         "usage": {"input_tokens": 10, "output_tokens": 5}, "cost": {"microusd": 7}}));
-    fixture.core.inventory.answer(&child.to_string(), "looks fine");
+    fixture
+        .core
+        .inventory
+        .answer(&child.to_string(), "looks fine");
     mods.agent_turn(&child_store, &turn_store, "completed");
     mods.on_thread_stop(ThreadStopInput {
         session_store: &session_store,
@@ -2118,7 +2139,10 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         &cancelled,
     )
     .await;
-    assert!(control.is_err(), "observing an agent must not grant control");
+    assert!(
+        control.is_err(),
+        "observing an agent must not grant control"
+    );
 
     expansion::invoke_one(
         &fixture.core,
@@ -2160,10 +2184,22 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
     let core = &fixture.core;
     let thread = fixture.lead.thread.to_string();
-    expansion::invoke_one(core, &fixture.lead, "monitor".into(), "timer", json!({"key": "poll"}))
-        .await;
+    expansion::invoke_one(
+        core,
+        &fixture.lead,
+        "monitor".into(),
+        "timer",
+        json!({"key": "poll"}),
+    )
+    .await;
     let state = |key: &str| {
-        core.runtime.lock().unwrap().state("monitor").cloned().unwrap()[key].clone()
+        core.runtime
+            .lock()
+            .unwrap()
+            .state("monitor")
+            .cloned()
+            .unwrap()[key]
+            .clone()
     };
     let queued = state("queued");
     assert_eq!(queued[0]["status"], "queued");
@@ -2191,13 +2227,25 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         .with(&thread, |queue| queue.running = Some("user".into()))
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
-    assert_eq!(core.autonomy.running(&thread).as_deref(), Some("user"), "a busy thread keeps its queue");
+    assert_eq!(
+        core.autonomy.running(&thread).as_deref(),
+        Some("user"),
+        "a busy thread keeps its queue"
+    );
     core.autonomy.turn_ended(core, &fixture.lead, true);
-    assert_eq!(pick(&grants).0, None, "an interrupted thread pauses its queues");
+    assert_eq!(
+        pick(&grants).0,
+        None,
+        "an interrupted thread pauses its queues"
+    );
     core.autonomy.user_turn(&thread);
     let (first, _) = pick(&grants);
     assert_eq!(first.unwrap()["key"], "triage");
-    assert!(core.autonomy.take_submitting(&thread, "typed by the user").is_none());
+    assert!(
+        core.autonomy
+            .take_submitting(&thread, "typed by the user")
+            .is_none()
+    );
     let provenance = core
         .autonomy
         .take_submitting(
@@ -2207,14 +2255,24 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         .unwrap();
     assert_eq!(provenance["package"], "monitor");
     assert_eq!(provenance["event"], "timer");
-    core.autonomy.with(&thread, |queue| queue.running = None).unwrap();
+    core.autonomy
+        .with(&thread, |queue| queue.running = None)
+        .unwrap();
     let mut stale = grants.clone();
     stale.get_mut("monitor").unwrap().source_sha256 = "other".into();
     let (none, notices) = pick(&stale);
     assert_eq!(none, None);
     assert_eq!(notices[0].1["reason"], "stale_generation");
 
-    let poll = || expansion::invoke_one(core, &fixture.lead, "monitor".into(), "timer", json!({"key": "poll"}));
+    let poll = || {
+        expansion::invoke_one(
+            core,
+            &fixture.lead,
+            "monitor".into(),
+            "timer",
+            json!({"key": "poll"}),
+        )
+    };
     poll().await;
     core.autonomy
         .with(&thread, |queue| {
@@ -2230,8 +2288,17 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         .unwrap();
     poll().await;
     let last = settle(|| Some(state("last")).filter(|last| last["status"] == "failed")).await;
-    assert!(last["reason"].as_str().unwrap().contains("native_thread_manager_stopped"), "{last}");
-    assert!(core.autonomy.running(&thread).is_none(), "a failed start frees the queue");
+    assert!(
+        last["reason"]
+            .as_str()
+            .unwrap()
+            .contains("native_thread_manager_stopped"),
+        "{last}"
+    );
+    assert!(
+        core.autonomy.running(&thread).is_none(),
+        "a failed start frees the queue"
+    );
 
     let mods = mods(core);
     let (session_store, thread_store, turn_store) = (
@@ -2283,19 +2350,70 @@ async fn peer_messages_pass_receive_interceptors_as_untrusted_data() {
             "correlation": "c", "data": data, "sent_at_ms": 1})
     };
     assert_eq!(
-        peering::receive(&fixture.core, &fixture.lead, "chat", &message("hello", "chat")).await,
+        peering::receive(
+            &fixture.core,
+            &fixture.lead,
+            "chat",
+            &message("hello", "chat")
+        )
+        .await,
         ("delivered", None)
     );
-    let got = fixture.core.runtime.lock().unwrap().state("chat").cloned().unwrap()["got"].clone();
+    let got = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("chat")
+        .cloned()
+        .unwrap()["got"]
+        .clone();
     assert_eq!(got["data"], "HELLO");
     assert_eq!(got["untrusted"], true);
     assert_eq!(got["from"]["session"], "other");
     assert_eq!(
-        peering::receive(&fixture.core, &fixture.lead, "chat", &message("spam", "chat")).await,
+        peering::receive(
+            &fixture.core,
+            &fixture.lead,
+            "chat",
+            &message("spam", "chat")
+        )
+        .await,
         ("refused", Some("spam".to_owned()))
     );
     assert_eq!(
-        peering::receive(&fixture.core, &fixture.lead, "silent", &message("hi", "silent")).await,
+        peering::receive(
+            &fixture.core,
+            &fixture.lead,
+            "silent",
+            &message("hi", "silent")
+        )
+        .await,
         ("refused", Some("no_peer_message_handler".to_owned()))
     );
+}
+
+#[test]
+fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let grant = |id: &str, provider: &str, billed: bool| {
+        json!({"id": id, "mod_id": "fixture", "program": "/usr/bin/true", "program_sha256": "0".repeat(64),
+            "route": {"name": id, "provider": provider, "model": "m", "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
+            "roles": ["lead"], "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
+            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
+            "input_token_ceiling": 1000, "included_subscription": !billed, "provider_billed": billed}}})
+    };
+    std::fs::write(
+        fixture.lead.host.root.join("host.json"),
+        json!({"services": [grant("billed", "billed", true), grant("included", "included", false)]}).to_string(),
+    )
+    .unwrap();
+    let (config, error) = fixture.lead.host.route_config();
+    assert_eq!(error, None);
+    assert!(config.billed_rates("billed", None).is_some());
+    assert!(config.billed_rates("billed", Some("fixture")).is_some());
+    assert!(config.billed_rates("billed", Some("other")).is_none());
+    assert!(config.billed_rates("included", None).is_none());
 }

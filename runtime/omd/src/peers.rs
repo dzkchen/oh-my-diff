@@ -56,7 +56,9 @@ pub struct BrokerSeal;
 impl BrokerSeal {
     fn socket() -> io::Result<SocketSeal> {
         if !broker::deployed() {
-            return Err(failure("peers_unavailable: the authority broker is not deployed"));
+            return Err(failure(
+                "peers_unavailable: the authority broker is not deployed",
+            ));
         }
         Ok(SocketSeal(PathBuf::from(broker::SOCKET)))
     }
@@ -108,7 +110,9 @@ fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
     let temporary = parent.join(format!(
         ".{}.{}.tmp",
         std::process::id(),
-        path.file_name().and_then(|name| name.to_str()).unwrap_or("entry")
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("entry")
     ));
     fs::write(&temporary, serde_json::to_vec(value)?)?;
     fs::rename(&temporary, path)
@@ -167,7 +171,10 @@ impl Peers {
     /// Publishes the packages this session accepts messages for.
     pub fn publish(&self, endpoints: &[Endpoint]) -> io::Result<()> {
         write_atomic(
-            &self.root.join("sessions").join(format!("{}.json", self.session)),
+            &self
+                .root
+                .join("sessions")
+                .join(format!("{}.json", self.session)),
             &json!({"session": self.session, "repository": self.repository, "pid": std::process::id(),
                 "packages": endpoints.iter().map(|endpoint| json!({"id": endpoint.package, "projects": endpoint.projects})).collect::<Vec<_>>()}),
         )
@@ -259,14 +266,23 @@ impl Peers {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_nanos());
         let id = broker::sha256(
-            format!("{}:{}:{nanos}:{}", self.session, from.package, std::process::id()).as_bytes(),
+            format!(
+                "{}:{}:{nanos}:{}",
+                self.session,
+                from.package,
+                std::process::id()
+            )
+            .as_bytes(),
         )[..32]
             .to_owned();
         let message = json!({"id": id, "from": {"session": self.session, "repository": self.repository,
                 "package": from.package, "sha256": from.sha256},
             "to": {"session": to, "package": package}, "correlation": correlation, "data": data,
             "sent_at_ms": sent_at_ms, "expires_at_ms": sent_at_ms + ttl_ms});
-        write_atomic(&inbox.join(format!("{id}.json")), &sealed(seal, "message", message)?)?;
+        write_atomic(
+            &inbox.join(format!("{id}.json")),
+            &sealed(seal, "message", message)?,
+        )?;
         if let Ok(mut sent) = self.sent.lock() {
             sent.insert(
                 id.clone(),
@@ -309,7 +325,10 @@ impl Peers {
             if !self.seen.lock().is_ok_and(|mut seen| seen.insert(id)) {
                 continue;
             }
-            if message["expires_at_ms"].as_u64().is_none_or(|at| at < now_ms()) {
+            if message["expires_at_ms"]
+                .as_u64()
+                .is_none_or(|at| at < now_ms())
+            {
                 self.receipt(seal, &message, "expired", None)?;
             } else {
                 delivered.push(Inbound { message });
@@ -320,7 +339,8 @@ impl Peers {
 
     /// Whether `endpoint`'s own project scope admits the message's sender.
     pub fn admits(&self, endpoint: &Endpoint, message: &Value) -> bool {
-        endpoint.projects == "any" || message["from"]["repository"].as_str() == self.repository.to_str()
+        endpoint.projects == "any"
+            || message["from"]["repository"].as_str() == self.repository.to_str()
     }
 
     /// Writes a sealed receipt for `message` back to its sender.
@@ -331,7 +351,9 @@ impl Peers {
         status: &str,
         reason: Option<String>,
     ) -> io::Result<()> {
-        let Some(sender) = message["from"]["session"].as_str().filter(|session| identifier(session))
+        let Some(sender) = message["from"]["session"]
+            .as_str()
+            .filter(|session| identifier(session))
         else {
             return Ok(());
         };

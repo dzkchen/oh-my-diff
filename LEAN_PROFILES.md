@@ -173,27 +173,33 @@ Direct work remains available when the package is disabled or the selected
 contract forbids children. Local Batch 2.55 runner coverage does not qualify
 real-model quality or public support.
 
-The OMD+ profile includes inactive `omd_claude_cli` and `omd_muse` route mods.
-`omd_claude_cli` uses the official Claude CLI's logged-in `claude.ai` Pro or Max
-subscription; `omd_muse` uses a separately installed Muse Code with an MSP host
-(`muse serve`). Set a route up once, then launch sessions on it:
+The OMD+ profile includes inactive `omd_claude_cli`, `omd_cursor` and
+`omd_muse` route mods. `omd_claude_cli` uses the official Claude CLI's logged-in
+`claude.ai` Pro or Max subscription; `omd_cursor` uses your Cursor account
+through the official Cursor SDK, which setup installs with pnpm; `omd_muse` uses
+a separately installed Muse Code with an MSP host (`muse serve`). Set a route up once, then launch sessions on it:
 
 ```sh
 /path/to/omd-bin/omd-package claude --setup
 /path/to/omd-bin/omd-package claude --model sonnet
 /path/to/omd-bin/omd-package claude --model haiku exec 'Your task'
+/path/to/omd-bin/omd-package cursor --setup
+/path/to/omd-bin/omd-package cursor --model cursor-auto
 /path/to/omd-bin/omd-package muse --setup
 /path/to/omd-bin/omd-package muse
 ```
 
-Setup checks the CLI, reads its model catalog and measured context windows,
+Setup checks the CLI or SDK, reads its model catalog and context windows,
 adds the route's service grant and local token to the store's `host.json`,
 enables the mod and makes the managed `codex` launcher define the provider.
 Launching adds the provider, model and catalog to an ordinary OMD+ session, so
 enabled mods, their data, `/status` and resume work as usual; `--model` takes a
 slug or family shortcut and further arguments go to `codex`. The Claude route
 requires official Claude CLI `2.1.285` and rejects inherited API-key and cloud
-overrides; there is no API-key fallback. The native host keeps process
+overrides; there is no API-key fallback. Cursor setup enrolls through Cursor's
+browser login, hands the minted key to the broker as a mod-owned secret that only the route's
+service receives, and turns off Cursor's own tools so the agent acts only
+through OMD tools. The native host keeps process
 authority, tool execution, approvals and usage accounting; each Claude model
 call admits one upstream request. `ask_claude: true` gives other leads an
 opt-in Claude delegation tool, and the Muse mod adds a read-only `research`

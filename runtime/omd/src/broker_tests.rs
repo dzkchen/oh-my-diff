@@ -260,12 +260,17 @@ fn peer_tags_verify_only_the_sealed_digest() {
     let digest = sha256(b"message");
     let tag = client.call("peer.seal", json!({"sha256": digest})).unwrap();
     assert_eq!(
-        client.call("peer.verify", json!({"sha256": digest, "tag": tag})).unwrap(),
+        client
+            .call("peer.verify", json!({"sha256": digest, "tag": tag}))
+            .unwrap(),
         true
     );
     assert_eq!(
         client
-            .call("peer.verify", json!({"sha256": sha256(b"other"), "tag": tag}))
+            .call(
+                "peer.verify",
+                json!({"sha256": sha256(b"other"), "tag": tag})
+            )
             .unwrap(),
         false
     );

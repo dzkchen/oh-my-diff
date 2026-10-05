@@ -12,7 +12,7 @@ export type ServiceContract = { name: `${string}.${string}`; version: `${number}
 export type ResourceRef = { reference: string; sha256: string };
 export type HostEvidence = { path: string; sha256: string };
 
-export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant'; tools: string[]; available: boolean; credential: string | null };
+export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null };
 export type ModelScope = { thread_id: string; agent_id: string | null; kind: 'main' | 'subagent' };
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 /** One classified prompt item; `group` is its message (or `instructions`), which it never leaves. */
@@ -43,7 +43,7 @@ export type FinalRequestPage = {
   provider: string | null; route: string | null; model: string | null; page: number; pages: number; cached: number;
   segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[];
 };
-export type CostBasis = 'settled' | 'unsettled' | 'included_subscription' | 'unpriced' | 'synthetic';
+export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
 /** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
 /** `turns_started` counts turns this process started in the thread. */
 export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number };
@@ -55,7 +55,7 @@ export type UsageSummary = {
   tokens: { input: number | null; cached: number | null; cache_write: number | null; output: number | null; reasoning: number | null };
   context: { used: number; window: number; ratio: number } | null;
   /** Charges are projections from configured rates or subscription status, not provider invoices. */
-  cost: { microusd: number | null; basis: CostBasis; source: 'configured_rates' | 'subscription' | 'none' | 'unknown' };
+  cost: { microusd: number | null; basis: CostBasis; source: 'configured_rates' | 'provider' | 'subscription' | 'none' | 'unknown' };
   timing: ModelResponse['timing'] | null; synthetic: string | null;
 };
 export type ModelCallOptions = {
@@ -296,7 +296,7 @@ export interface HostOperations {
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
-  'providers.register': { arguments: { id: string }; result: Json };
+  'providers.register': { arguments: { id: string; secrets?: string[] }; result: Json };
   'providers.unregister': { arguments: { id: string }; result: Json };
   'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string, string>; result: Json; untrusted: true } };
   'sidecars.start': { arguments: { id: string; secrets?: string[] }; result: Json };
@@ -344,6 +344,7 @@ export interface HostOperations {
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
   'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
   'session.info': { arguments: null; result: SessionInfo };
+  'ledger.settle': { arguments: { request_id: string; microusd: number; source: string }; result: Json };
   'time.sleep': { arguments: { ms: number }; result: { slept_ms: number; cancelled: boolean } };
 }
 export interface Events {

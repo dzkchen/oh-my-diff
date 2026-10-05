@@ -63,7 +63,7 @@ export default function activate(api: ModAPI) {
     const entries = state.hud.entries.map(entry => {
       const settled = attempts.find(attempt => attempt.request === entry.billing);
       return entry.cost.basis === 'unsettled' && settled && number(settled.settled_microusd) !== null
-        ? { ...entry, cost: { microusd: settled.settled_microusd, basis: 'settled' as CostBasis }, revision: entry.revision + 1 } : entry;
+        ? { ...entry, cost: { microusd: settled.settled_microusd, basis: (settled.provider_billed === true ? 'provider_reported' : 'settled') as CostBasis }, revision: entry.revision + 1 } : entry;
     });
     return {
       ...state,
@@ -78,6 +78,7 @@ export default function activate(api: ModAPI) {
     const list = entry.reported?.basis === 'client_list_estimate' ? entry.reported.usd : null;
     if (entry.synthetic || entry.cost.basis === 'synthetic') return { kind: 'none', usd: null, list: null };
     if (entry.reported?.basis === 'provider_billed') return { kind: 'billed', usd: entry.reported.usd, list: null };
+    if (entry.cost.basis === 'provider_reported' && entry.cost.microusd !== null) return { kind: 'billed', usd: entry.cost.microusd / 1e6, list: null };
     if (entry.cost.basis === 'settled' && entry.cost.microusd !== null) return { kind: 'estimate', usd: entry.cost.microusd / 1e6, list };
     if (entry.cost.basis === 'unsettled') return { kind: 'pending', usd: null, list };
     if (entry.cost.basis === 'included_subscription') return { kind: 'included', usd: null, list };
@@ -390,8 +391,8 @@ export default function activate(api: ModAPI) {
   });
   api.on('compaction_start', ({ trigger }) => hud(state => { state.compaction = { ...state.compaction, started: state.compaction.started + 1, start: Date.now(), trigger }; }));
   api.on('compaction_end', () => hud(state => { state.compaction = { ...state.compaction, installed: state.compaction.installed + 1, end: Date.now() }; }));
-  api.on('agent', ({ phase, agent_id, role, status }) => hud(state => {
-    state.agents[agent_id] = { role, status: phase === 'start' ? 'running' : status, at: Date.now() };
+  api.on('agent', ({ agent }) => hud(state => {
+    state.agents[agent.agent_id ?? agent.thread_id] = { role: agent.role ?? agent.origin, status: agent.status, at: Date.now() };
     const ids = Object.keys(state.agents).sort((a, b) => state.agents[b].at - state.agents[a].at);
     for (const id of ids.slice(12)) delete state.agents[id];
   }));

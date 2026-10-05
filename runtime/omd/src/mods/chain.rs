@@ -353,11 +353,15 @@ fn spawn_request(input: &Value, before: &Value) -> bool {
                 .as_str()
                 .is_some_and(|effort| crate::model_request::EFFORTS.contains(&effort)))
         && (input["cwd"] == before["cwd"]
-            || text(&input["cwd"], 4096) && Path::new(input["cwd"].as_str().unwrap_or("")).is_absolute())
+            || text(&input["cwd"], 4096)
+                && Path::new(input["cwd"].as_str().unwrap_or("")).is_absolute())
         && match (names(&input["tools"]), names(&before["tools"])) {
             (None, None) => input["tools"].is_null(),
             (Some(tools), None) => {
-                tools.len() <= 32 && input["tools"].as_array().is_some_and(|t| t.len() == tools.len())
+                tools.len() <= 32
+                    && input["tools"]
+                        .as_array()
+                        .is_some_and(|t| t.len() == tools.len())
             }
             (Some(tools), Some(given)) => tools.is_subset(&given),
             (None, Some(_)) => false,
@@ -503,7 +507,9 @@ fn validate_result(
         "agent_spawn" => {
             deny || last.is_some_and(|last| {
                 object.is_some_and(|object| {
-                    object.keys().all(|key| ["agent_id", "output", "success"].contains(&key.as_str()))
+                    object
+                        .keys()
+                        .all(|key| ["agent_id", "output", "success"].contains(&key.as_str()))
                 }) && result["agent_id"] == last["agent_id"]
                     && result["success"] == last["success"]
                     && result["output"]

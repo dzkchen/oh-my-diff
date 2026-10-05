@@ -254,9 +254,9 @@ impl Mods {
         turn_store: &codex_extension_api::ExtensionData,
         outcome: &str,
     ) {
-        if let Some(record) = self
-            .inventory
-            .turn(thread_store.level_id(), turn_store.level_id(), outcome)
+        if let Some(record) =
+            self.inventory
+                .turn(thread_store.level_id(), turn_store.level_id(), outcome)
         {
             inventory::notify(&self.runtime, "turn", record);
         }
@@ -1038,7 +1038,10 @@ impl TurnLifecycleContributor for Mods {
             self.autonomy.turn_ended(
                 &self.core,
                 &lead,
-                matches!(input.reason, codex_protocol::protocol::TurnAbortReason::Interrupted),
+                matches!(
+                    input.reason,
+                    codex_protocol::protocol::TurnAbortReason::Interrupted
+                ),
             );
             if let Some(turn) = self.take_turn(&lead.thread) {
                 expansion::turn_ended(
@@ -1095,7 +1098,11 @@ impl TurnLifecycleContributor for Mods {
             self.agent_turn(
                 input.thread_store,
                 input.turn_store,
-                if failed.is_some() { "error" } else { "completed" },
+                if failed.is_some() {
+                    "error"
+                } else {
+                    "completed"
+                },
             );
             let Some(lead) = input
                 .thread_store
@@ -1296,7 +1303,9 @@ impl TurnLifecycleContributor for Mods {
             let payload =
                 json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
             let origin = match &provenance {
-                Some(provenance) => json!({"caller":provenance["package"],"thread_id":thread,"provenance":provenance}),
+                Some(provenance) => {
+                    json!({"caller":provenance["package"],"thread_id":thread,"provenance":provenance})
+                }
                 None => json!({"caller":"user","thread_id":thread}),
             };
             let chain = intercept::chain(
@@ -1654,7 +1663,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 Some(_) => Some("completed"),
                 None => None,
             };
-            if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None)) {
+            if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None))
+            {
                 inventory::notify(&self.runtime, "end", record);
             }
             let Some(lead) = input.thread_store.get::<Lead>() else {

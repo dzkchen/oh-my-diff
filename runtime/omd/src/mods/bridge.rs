@@ -36,7 +36,9 @@ impl ModHostCall {
             "sessions.list" | "sessions.read" | "sessions.snapshot" | "sessions.ports" => {
                 Ok("sessions")
             }
-            "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
+            "routes.list" | "providers.register" | "providers.unregister" | "ledger.settle" => {
+                Ok("model")
+            }
             "task.status" | "workspace.integrate" => Ok("agents"),
             "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict"
             | "contract.select" => Ok("contracts"),

@@ -3967,3 +3967,54 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         false
     );
 }
+
+#[test]
+fn credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin() {
+    use std::io::Write;
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().canonicalize().unwrap();
+    let add = |value: &str| {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
+            .arg("credentials")
+            .arg(&store)
+            .args([
+                "add-secret",
+                "fixture_mod",
+                "fixture",
+                "https://api.example.com",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(value.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let first = add("first-key\n");
+    assert_eq!(
+        (&first["kind"], &first["label"], &first["status"]),
+        (&json!("secret"), &json!("fixture"), &json!("ready"))
+    );
+    let second = add("second-key");
+    assert_eq!(second["id"], first["id"]);
+    let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
+    let id = first["id"].as_str().unwrap();
+    assert_eq!(
+        profiles.owned_secret(id, "fixture_mod").unwrap()["value"],
+        "second-key"
+    );
+    assert!(profiles.owned_secret(id, "another_mod").is_err());
+    assert!(profiles.visible("").unwrap().is_empty());
+}

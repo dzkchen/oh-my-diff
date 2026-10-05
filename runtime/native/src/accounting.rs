@@ -32,6 +32,41 @@ pub struct Rates {
     pub included_subscription: bool,
     #[serde(default)]
     pub external_subscription: bool,
+    #[serde(default)]
+    pub provider_billed: bool,
+}
+
+fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
+    use std::io::Write;
+
+    let bytes =
+        serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
+    let temporary = account.cost_capture.with_extension(format!(
+        "json.{}.{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(denied)?
+            .as_nanos()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(denied)?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(denied)?;
+    std::fs::rename(&temporary, &account.cost_capture).map_err(denied)?;
+    Ok(())
+}
+
+fn billing(rates: Option<&Rates>) -> &'static str {
+    match rates {
+        Some(rates) if rates.provider_billed => "provider_billed",
+        Some(rates) if !rates.included_subscription => "explicit_paid_api_grant",
+        _ => "included_subscription",
+    }
 }
 
 #[derive(Clone)]
@@ -151,6 +186,8 @@ struct RequestState {
     retries: BTreeMap<String, u32>,
     synthetic: BTreeMap<String, (String, Vec<Value>)>,
     responses: BTreeMap<String, Vec<Value>>,
+    billed: BTreeMap<String, (String, u32, String)>,
+    billed_order: VecDeque<String>,
     verdicts: BTreeMap<String, Option<Edits>>,
     verdict_order: VecDeque<String>,
 }
@@ -158,6 +195,7 @@ struct RequestState {
 type Edits = Vec<(usize, usize, String)>;
 
 const VERDICTS: usize = 8192;
+const BILLED: usize = 1024;
 
 impl RequestState {
     fn remember(&mut self, key: String, verdict: Option<Edits>) {
@@ -182,6 +220,49 @@ pub struct Accounts(
     Mutex<Option<ModNotifier>>,
     Arc<Mutex<RequestState>>,
 );
+
+impl Accounts {
+    /// Applies a provider's late settlement to a provider-billed request whose route `owns` accepts.
+    pub(crate) fn settle_provider(
+        &self,
+        request_id: &str,
+        microusd: u64,
+        source: &str,
+        owns: impl Fn(&str) -> bool,
+    ) -> Result<Value, String> {
+        let (thread, request, provider) = self
+            .6
+            .lock()
+            .map_err(|_| "request state poisoned")?
+            .billed
+            .get(request_id)
+            .cloned()
+            .ok_or("ledger_request_not_awaiting_settlement")?;
+        if !owns(&provider) {
+            return Err("ledger_settle_not_route_owner".into());
+        }
+        let account = self
+            .0
+            .lock()
+            .map_err(|_| "account lock poisoned")?
+            .get(&thread)
+            .cloned()
+            .ok_or("ledger_request_not_awaiting_settlement")?;
+        let attempt = account
+            .task
+            .settle_provider(request, microusd, source)
+            .map_err(|error| error.to_string())?;
+        self.6
+            .lock()
+            .map_err(|_| "request state poisoned")?
+            .billed
+            .remove(request_id);
+        persist_cost_capture(&account).map_err(|error| error.to_string())?;
+        Ok(
+            json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
+        )
+    }
+}
 
 const MIDDLEWARE_WAIT: Duration = Duration::from_secs(2);
 const SEND_POLICY_WAIT: Duration = Duration::from_secs(5);
@@ -634,7 +715,7 @@ struct Intercepted {
 
 fn route_info(route: &RequestRoute) -> Value {
     json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
-        "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
+        "roles":["lead"],"billing":billing(Some(&route.rates)),
         "tools":[],"available":true,"credential":route.credential})
 }
 
@@ -682,7 +763,7 @@ impl Accounts {
             "provider": account.provider,
             "reasoning": value.pointer("/reasoning/effort").cloned().unwrap_or(Value::Null),
             "roles": [if account.owner == "lead" {"lead"} else {"worker"}],
-            "billing": if account.rates.as_ref().is_none_or(|rates| rates.included_subscription) {"included_subscription"} else {"explicit_paid_api_grant"},
+            "billing": billing(account.rates.as_ref()),
             "tools": [], "available": true, "credential": account.credential});
         let mut routes = vec![original.clone()];
         if account.owner == "lead" {
@@ -961,7 +1042,7 @@ impl ResponseObserver for Accounts {
         if let Some(rates) = account
             .rates
             .as_ref()
-            .filter(|rates| !rates.included_subscription)
+            .filter(|rates| !rates.included_subscription && !rates.provider_billed)
         {
             if rates.max_output_tokens == 0 {
                 return Err(denied("missing output ceiling"));
@@ -1110,6 +1191,37 @@ impl ResponseObserver for Accounts {
             {
                 return Err(denied("worker requires the native subscription request"));
             }
+        }
+        // The provider bills these requests itself, so the host neither reserves exposure nor bounds the body; it admits, counts and records them.
+        if rates.provider_billed {
+            let model = requested.unwrap_or(model);
+            account
+                .task
+                .authorize_route(&account.provider, &model)
+                .map_err(denied)?;
+            let admission = account
+                .task
+                .admit(&account.owner, &account.provider, &model, 0)
+                .map_err(denied)?;
+            request
+                .headers
+                .insert("x-omd-owner", account.owner.parse().map_err(denied)?);
+            if let Err(error) = account.task.dispatch(&admission, || Ok(())) {
+                let _ = account.task.fail(
+                    &admission,
+                    "local dispatch revalidation rejected the request",
+                );
+                return Err(denied(error));
+            }
+            return Ok(Some(Box::new(self.attempt(
+                account,
+                thread,
+                request_id,
+                attempt,
+                model,
+                Some(admission),
+                None,
+            ))));
         }
         let bytes = body
             .ok_or_else(|| denied("missing JSON request"))?
@@ -1418,28 +1530,7 @@ fn joined(item: &Value) -> String {
 
 impl Attempt {
     fn persist_cost_capture(&self) -> Result<(), TransportError> {
-        use std::io::Write;
-
-        let bytes = serde_json::to_vec(&self.account.task.cost_capture().map_err(denied)?)
-            .map_err(denied)?;
-        let temporary = self.account.cost_capture.with_extension(format!(
-            "json.{}.{}.tmp",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(denied)?
-                .as_nanos()
-        ));
-        let mut file = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(denied)?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(denied)?;
-        std::fs::rename(&temporary, &self.account.cost_capture).map_err(denied)?;
-        Ok(())
+        persist_cost_capture(&self.account)
     }
 
     fn observed(&mut self, usage: Option<Value>, status: &str) -> Result<(), TransportError> {
@@ -1477,6 +1568,37 @@ impl Attempt {
         };
         if !success {
             self.fail("provider returned failed or incomplete response");
+        }
+        if rates.provider_billed {
+            let microusd = usage
+                .as_ref()
+                .and_then(|usage| usage.get("cost_microusd"))
+                .and_then(Value::as_u64);
+            self.account
+                .task
+                .settle_reported(&admission, usage, microusd)
+                .map_err(denied)?;
+            if microusd.is_none()
+                && let Ok(mut state) = self.state.lock()
+            {
+                state.billed.insert(
+                    self.request_id.clone(),
+                    (
+                        self.thread.clone(),
+                        admission.request_id(),
+                        self.account.provider.clone(),
+                    ),
+                );
+                state.billed_order.push_back(self.request_id.clone());
+                while state.billed_order.len() > BILLED {
+                    if let Some(oldest) = state.billed_order.pop_front() {
+                        state.billed.remove(&oldest);
+                    }
+                }
+            }
+            self.settled = true;
+            self.microusd = microusd;
+            return persist_cost_capture(&self.account);
         }
         if let Some(usage) = usage {
             self.account
@@ -1849,6 +1971,9 @@ impl Attempt {
             .collect::<String>();
         let cost = match (&self.synthetic, &self.account.rates, self.microusd) {
             (Some(_), _, _) => json!({"microusd": 0, "basis": "synthetic"}),
+            (None, Some(rates), Some(amount)) if rates.provider_billed => {
+                json!({"microusd": amount, "basis": "provider_reported"})
+            }
             (None, Some(rates), _) if rates.included_subscription => {
                 json!({"microusd": 0, "basis": "included_subscription"})
             }

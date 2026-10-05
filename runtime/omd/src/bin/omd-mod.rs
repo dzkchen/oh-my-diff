@@ -130,7 +130,7 @@ fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Res
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
         )
     };
     match args {
@@ -309,6 +309,27 @@ fn run(args: &[String]) -> io::Result<Value> {
             Ok(Value::String(
                 "selection saved; takes effect at the next turn boundary".into(),
             ))
+        }
+        [command, root, action, owner, label, origin]
+            if command == "credentials" && action == "add-secret" =>
+        {
+            let mut value = String::new();
+            io::Read::read_to_string(&mut io::stdin(), &mut value)?;
+            let value = value.trim_end_matches(['\n', '\r']);
+            let profiles = codex_omd::credentials::CredentialProfiles::open(
+                &PathBuf::from(root).canonicalize()?,
+            )?;
+            let existing = profiles.visible(owner)?.into_iter().find(|profile| {
+                profile["kind"] == "secret"
+                    && profile["label"] == label.as_str()
+                    && profile["origin"] == origin.as_str()
+            });
+            let id = match existing {
+                Some(profile) => profile["id"].as_str().unwrap_or_default().to_owned(),
+                None => profiles.create_secret(label, origin, owner)?.id,
+            };
+            profiles.store_secret(&id, value)?;
+            profiles.public(&profiles.profile(&id)?)
         }
         [command, root] if command == "credentials" => Ok(Value::Array(
             codex_omd::credentials::CredentialProfiles::open(&PathBuf::from(root).canonicalize()?)?

@@ -28,6 +28,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_cursor",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in Cursor subscription provider over the official Cursor SDK with OMD tools only",
+      "source": "mods/first-party/omd_cursor",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; @cursor/sdk 1.0.35 installed at enrollment; a Cursor account",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_mini",
       "version": "0.1.0-preview.3",
       "extension_type": "mod",
