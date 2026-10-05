@@ -2,8 +2,8 @@
   "schema": 1,
   "virtual_time_ms": 1000,
   "packages": [
-    "../omd_coordination",
-    "../omd_workflow"
+    "../omd_workflow",
+    "../omd_coordination"
   ],
   "settings": {
     "omd_recovery": {
@@ -314,7 +314,10 @@
           "failed-edit"
         ]
       },
-      "expect_error": "task_advisory_attempt_already_used"
+      "expect": {
+        "status": "refused",
+        "reason": "task_advisory_attempt_already_used"
+      }
     }
   ]
 }

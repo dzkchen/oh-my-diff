@@ -72,7 +72,8 @@
             "id": "reviewed_omd"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       }
     ],
@@ -97,7 +98,9 @@
             ],
             "failed_hypotheses": [],
             "status": "active",
-            "decisions": []
+            "decisions": [],
+            "revision": 1,
+            "operations": []
           },
           "revision": 1
         }
@@ -140,7 +143,10 @@
                 },
                 "handle": "reader-1"
               }
-            ]
+            ],
+            "workflow_revision": 1,
+            "revision": 1,
+            "operations": []
           },
           "revision": 3
         }
@@ -198,10 +204,16 @@
                   "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                 }
               }
-            ]
+            ],
+            "workflow_revision": 1,
+            "revision": 2,
+            "operations": []
           },
           "revision": 4
         }
+      },
+      {
+        "result": null
       }
     ],
     "store.put": [
@@ -320,17 +332,21 @@
             "type": "investigate",
             "prompt": "Inspect source.ts"
           }
-        ]
+        ],
+        "operation_id": "run-1",
+        "expected_revision": 0
       },
       "expect": {
         "status": "running",
+        "workflow_revision": 1,
         "tasks": [
           {
             "id": "inspect",
             "handle": "reader-1"
           }
         ],
-        "next": "advance"
+        "next": "advance",
+        "revision": 1
       }
     },
     {
@@ -338,59 +354,29 @@
       "mod": "omd_typed_tasks",
       "event": "tool",
       "name": "advance",
-      "payload": {},
+      "payload": {
+        "operation_id": "advance-1",
+        "expected_revision": 1
+      },
       "expect": {
         "status": "running",
-        "acceptance": {
-          "reference": "fixture-evidence",
-          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        "criteria": [
-          "tests"
-        ],
-        "entries": [
+        "workflow_revision": 1,
+        "tasks": [
           {
-            "task": {
-              "id": "inspect",
-              "type": "investigate",
-              "prompt": "Inspect source.ts"
-            },
-            "type": {
-              "role": "investigator",
-              "route": "reader",
-              "tools": "read_search",
-              "result_schema": {
-                "type": "object",
-                "properties": {
-                  "answer": {
-                    "type": "string",
-                    "maxLength": 100
-                  }
-                },
-                "required": [
-                  "answer"
-                ],
-                "additionalProperties": false
-              }
-            },
+            "id": "inspect",
             "handle": "reader-1",
-            "value": {
-              "result": {
-                "answer": "found"
-              },
-              "sources": [
-                {
-                  "ref": "source.ts:1",
-                  "why": "defines the requested behavior"
-                }
-              ]
+            "result": {
+              "answer": "found"
             },
-            "evidence": {
-              "reference": "fixture-evidence",
-              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-            }
+            "sources": [
+              {
+                "ref": "source.ts:1",
+                "why": "defines the requested behavior"
+              }
+            ]
           }
-        ]
+        ],
+        "revision": 2
       }
     },
     {
@@ -398,59 +384,29 @@
       "mod": "omd_typed_tasks",
       "event": "tool",
       "name": "advance",
-      "payload": {},
+      "payload": {
+        "operation_id": "advance-2",
+        "expected_revision": 2
+      },
       "expect": {
         "status": "completed",
-        "acceptance": {
-          "reference": "fixture-evidence",
-          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        "criteria": [
-          "tests"
-        ],
-        "entries": [
+        "workflow_revision": 1,
+        "tasks": [
           {
-            "task": {
-              "id": "inspect",
-              "type": "investigate",
-              "prompt": "Inspect source.ts"
-            },
-            "type": {
-              "role": "investigator",
-              "route": "reader",
-              "tools": "read_search",
-              "result_schema": {
-                "type": "object",
-                "properties": {
-                  "answer": {
-                    "type": "string",
-                    "maxLength": 100
-                  }
-                },
-                "required": [
-                  "answer"
-                ],
-                "additionalProperties": false
-              }
-            },
+            "id": "inspect",
             "handle": "reader-1",
-            "value": {
-              "result": {
-                "answer": "found"
-              },
-              "sources": [
-                {
-                  "ref": "source.ts:1",
-                  "why": "defines the requested behavior"
-                }
-              ]
+            "result": {
+              "answer": "found"
             },
-            "evidence": {
-              "reference": "fixture-evidence",
-              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-            }
+            "sources": [
+              {
+                "ref": "source.ts:1",
+                "why": "defines the requested behavior"
+              }
+            ]
           }
-        ]
+        ],
+        "revision": 3
       }
     },
     {
@@ -465,9 +421,14 @@
             "type": "unknown",
             "prompt": "Inspect source.ts"
           }
-        ]
+        ],
+        "operation_id": "run-2",
+        "expected_revision": 0
       },
-      "expect_error": "task_invalid"
+      "expect": {
+        "status": "refused",
+        "reason": "task_invalid"
+      }
     }
   ]
 }

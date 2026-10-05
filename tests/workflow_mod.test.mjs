@@ -16,22 +16,32 @@ const candidate = digest('candidate');
 const criterion = 'Preserve the current work';
 const verdict = { summary: 'Inspected the candidate.', assessments: [{ criterion, verdict: 'pass', evidence: ['source.ts:1 inspected; configured check exited 0'] }], findings: [] };
 
+let operations = 0;
+const crash = () => Object.assign(new Error('process_crashed'), { crash: true });
+
 function invoke(name, payload, host, extra = {}) {
+  const { store = host.store, key = 'task', ...options } = extra;
+  if (!options.event && store && payload && typeof payload === 'object' && !('operation_id' in payload)) {
+    payload = { ...payload, operation_id: `operation-${++operations}`, expected_revision: store.get(key)?.value.revision ?? 0 };
+  }
   const receipts = [];
   for (let turn = 0; turn < 33; turn++) {
-    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null,
-      settings: { check: { program: 'check', argv: [] } }, surface, event: 'tool', name, payload, receipts, ...extra };
+    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: ['crypto'], state: null,
+      settings: { check: { program: 'check', argv: [] } }, surface, event: 'tool', name, payload, receipts, ...options };
     const child = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
     assert.ifError(child.error);
     const reply = JSON.parse(child.stdout);
     if (reply.error) throw new Error(reply.error);
     if (!reply.host_call) {
-      if (reply.value?.status === 'refused' && typeof reply.value.reason === 'string' && !extra.refusals) throw new Error(reply.value.reason);
+      if (['refused', 'interrupted', 'partially_integrated'].includes(reply.value?.status) && typeof reply.value.reason === 'string' && !options.refusals) throw new Error(reply.value.reason);
       return reply;
     }
     assert.ok(receipts.length < 32, 'native callback host-call limit');
     try { receipts.push({ call: reply.host_call, value: host(reply.host_call) }); }
-    catch (error) { receipts.push({ call: reply.host_call, error: error.message }); }
+    catch (error) {
+      if (error.crash) throw error;
+      receipts.push({ call: reply.host_call, error: error.message });
+    }
   }
   throw new Error('fixture_operation_limit');
 }
@@ -42,17 +52,18 @@ function fixture(overrides = {}, contract = 'reviewed_omd', findingLedger = {}) 
   const receipts = [];
   const calls = [];
   let next = 0;
-  return { state, receipts, calls, host(call) {
+  const host = call => {
     calls.push(call);
     if (overrides[call.operation]) return overrides[call.operation](call);
     const args = call.arguments;
     switch (call.operation) {
-      case 'contract.status': return { status: 'active', active: { id: contract }, receipts, restrictions: [], finding_ledger: findingLedger };
-      case 'task.status': return { ledger: { thread_id: 'thread-1', cost: null } };
+      case 'contract.status': return structuredClone({ status: 'active', active: { id: contract }, receipts, restrictions: [], finding_ledger: findingLedger });
+      case 'task.status': return { ledger: { thread_id: 'thread-1', cwd: '/fixture', cost: null } };
+      case 'agents.inventory': return { agents: [...agents.keys()].map(handle => ({ agent_id: handle, origin: 'mod', owner: 'omd_workflow', parent: { thread_id: 'thread-1', agent_id: null }, status: 'running' })) };
       case 'store.get': return state.get(args.key) ?? null;
       case 'store.put': {
         const before = state.get(args.key);
-        assert.equal(args.expected_revision, before?.revision ?? null);
+        if (args.expected_revision !== (before?.revision ?? null)) throw new Error(`store_revision_conflict: current ${before?.revision ?? 'absent'}`);
         const revision = (before?.revision ?? 0) + 1;
         state.set(args.key, { value: structuredClone(args.value), revision, provenance: {} });
         return { revision };
@@ -71,13 +82,24 @@ function fixture(overrides = {}, contract = 'reviewed_omd', findingLedger = {}) 
       }
       case 'agents.result': case 'agents.wait': return agents.get(args.handle);
       case 'agents.cancel': return { cancelled: agents.delete(args.handle) };
-      case 'receipts.submit': receipts.push(structuredClone(args)); return args;
-      case 'workspace.integrate': assert.equal(receipts.length, 2); assert.ok(receipts.every(receipt => receipt.acceptance_sha256 === args.acceptance_sha256)); return { status: 'integrated', candidate_sha256: candidate, changed_paths: ['source.ts'], evidence: { path: '/fixture/integration', sha256: candidate } };
+      case 'receipts.submit': {
+        const receipt = { ...structuredClone(args), producer: { kind: args.agent ? 'agent' : args.execution ? 'host' : 'lead', handle: args.agent ?? null } };
+        receipts.push(receipt);
+        return receipt;
+      }
+      case 'workspace.integrate':
+        assert.equal(receipts.length, 2);
+        assert.ok(receipts.every(receipt => receipt.acceptance_sha256 === args.acceptance_sha256));
+        receipts.push({ kind: 'workspace_integration', candidate_sha256: candidate, acceptance_sha256: args.acceptance_sha256, outcome: 'pass',
+          evidence: { reference: `native-integration:${args.handle}`, sha256: candidate }, producer: { kind: 'integration', handle: null } });
+        return { status: 'integrated', candidate_sha256: candidate, changed_paths: ['source.ts'], evidence: { path: '/fixture/integration', sha256: candidate } };
       case 'exec.run': return { candidate_sha256: args.snapshot.sha256, evidence: { reference: 'execution:fixture', sha256: digest('execution') }, exit_code: 0, timed_out: false, signal: null, stdout: 'passed', stderr: '', stdout_truncated: false, stderr_truncated: false, duration_ms: 1, program: { path: '/fixture/check', sha256: digest('check') } };
       case 'task.complete': return { status: 'refused', missing: [{ receipt: 'final_review' }] };
       default: throw new Error(`unexpected_operation: ${call.operation}`);
     }
-  } };
+  };
+  host.store = state;
+  return { state, receipts, calls, agents, host };
 }
 
 function begin(host) { return invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] }, host); }
@@ -110,7 +132,7 @@ test('workflow registers its contracts without running work and rejects missing 
   const denied = fixture({ 'contract.status': () => ({ status: 'none', active: null }) });
   assert.deepEqual(invoke('begin', { objective: 'x', acceptance_criteria: [criterion] }, denied.host, { refusals: true }).value, { status: 'refused', reason: 'select_workflow_contract_first' });
   assert.throws(() => begin(denied.host), /select_workflow_contract_first/);
-  assert.equal(denied.calls.length, 2);
+  assert.deepEqual(denied.calls.map(call => call.operation), ['task.status', 'store.get', 'contract.status', 'task.status', 'store.get', 'contract.status']);
   const oldHost = fixture({ 'contract.status': () => ({ status: 'active', active: { id: 'reviewed_omd' } }) });
   assert.throws(() => begin(oldHost.host), /finding_ledger_required/);
 });
@@ -222,7 +244,7 @@ test('contribution is checked and reviewed on frozen input before integration', 
   const spawned = run.calls.filter(call => call.operation === 'agents.spawn');
   assert.equal(spawned[0].arguments.workspace, 'isolated_worktree');
   assert.ok(spawned.slice(1).every(call => call.arguments.workspace === 'read_only' && call.arguments.snapshot.sha256 === candidate));
-  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review']);
+  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review', 'workspace_integration']);
   assert.equal(run.receipts[0].execution, true);
   assert.equal(run.calls.find(call => call.operation === 'exec.run').arguments.snapshot.sha256, candidate);
   assert.equal(run.calls.filter(call => call.operation === 'agents.cancel').length, 2);
@@ -453,6 +475,140 @@ test('changed route or workspace stops a retry and persisted interruption never 
   assert.equal(invoke('advance', {}, missing.host).value.status, 'idle');
 });
 
+function crashing(run, rules = {}) {
+  const host = call => {
+    const value = run.host(call);
+    if (rules.after?.(call)) {
+      rules.after = null;
+      throw crash();
+    }
+    return value;
+  };
+  host.store = run.state;
+  return host;
+}
+
+test('workflow operations replay committed results across processes and reject conflicting, stale and foreign-thread reuse', () => {
+  let thread = 'thread-1';
+  const run = fixture({ 'task.status': () => ({ ledger: { thread_id: thread, cwd: '/fixture', cost: null } }) });
+  assert.equal(begin(run.host).value.revision, 1);
+  const operation = { remaining_work: ['Run the check'], operation_id: 'checkpoint-1', expected_revision: 1 };
+  const saved = invoke('checkpoint', operation, run.host).value;
+  assert.equal(saved.revision, 2);
+  const before = run.calls.length;
+  assert.deepEqual(invoke('checkpoint', operation, run.host).value, saved);
+  assert.deepEqual(run.calls.slice(before).map(call => call.operation), ['task.status', 'store.get']);
+  assert.equal(run.receipts.filter(receipt => receipt.kind === 'checkpoint').length, 1);
+  assert.throws(() => invoke('checkpoint', { ...operation, remaining_work: ['Something else'] }, run.host), /operation_id_conflict/);
+  assert.throws(() => invoke('checkpoint', { ...operation, operation_id: 'checkpoint-2' }, run.host), /stale_revision: current 2/);
+  assert.equal(invoke('checkpoint', { remaining_work: ['Run the check'] }, run.host, { refusals: true, store: null }).value.reason, 'operation_id_and_expected_revision_required');
+  thread = 'thread-2';
+  assert.throws(() => invoke('checkpoint', operation, run.host), /operation_id_conflict/);
+  assert.deepEqual(run.state.get('task').value.remaining_work, ['Run the check']);
+});
+
+test('a crash after commitment delivers the checkpoint receipt on replay without repeating the change', () => {
+  const run = fixture();
+  const rules = {};
+  const host = crashing(run, rules);
+  begin(host);
+  const operation = { remaining_work: ['Run the check'], operation_id: 'checkpoint-1', expected_revision: 1 };
+  rules.after = call => call.operation === 'evidence.write' && call.arguments.label === 'Workflow checkpoint';
+  assert.throws(() => invoke('checkpoint', operation, host), /process_crashed/);
+  const committed = run.state.get('task').value;
+  assert.deepEqual([committed.revision, committed.remaining_work, committed.operations.at(-1).unacknowledged], [2, ['Run the check'], true]);
+  assert.equal(run.receipts.length, 0);
+  assert.deepEqual(invoke('checkpoint', operation, host).value, committed.operations.at(-1).result);
+  assert.equal(run.state.get('task').value.operations.at(-1).unacknowledged, undefined);
+  invoke('checkpoint', operation, host);
+  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['checkpoint']);
+  assert.equal(run.state.get('task').value.revision, 2);
+});
+
+test('an interrupted spawn is never repeated: its claim blocks other operations until replay or cancel resolves it', () => {
+  const run = fixture();
+  const rules = {};
+  const host = crashing(run, rules);
+  begin(host);
+  const operation = { brief: 'Make the change', operation_id: 'delegate-1', expected_revision: 1 };
+  rules.after = call => call.operation === 'agents.spawn';
+  assert.throws(() => invoke('delegate', operation, host), /process_crashed/);
+  assert.equal(run.state.get('task').value.pending.operation, 'delegate-1');
+  assert.throws(() => invoke('review', { kind: 'final_review' }, host, reviewOptions), /operation_in_progress: delegate-1/);
+  const resolved = invoke('delegate', operation, host, { refusals: true }).value;
+  assert.deepEqual([resolved.status, resolved.reason, run.agents.size], ['interrupted', 'operation_interrupted', 0]);
+  assert.deepEqual(invoke('delegate', operation, host, { refusals: true }).value, resolved);
+  assert.equal(run.calls.filter(call => call.operation === 'agents.spawn').length, 1);
+  rules.after = call => call.operation === 'agents.spawn';
+  assert.throws(() => invoke('delegate', { brief: 'Make the change again' }, host), /process_crashed/);
+  assert.equal(invoke('cancel', {}, host).value.status, 'cancelled');
+  assert.deepEqual([run.agents.size, run.state.get('task').value.pending], [0, null]);
+});
+
+test('host receipts recover an advance that crashed after review attestation or integration without repeating either', () => {
+  const run = fixture();
+  const rules = {};
+  const host = crashing(run, rules);
+  begin(host);
+  invoke('delegate', { brief: 'Implement the requested change' }, host);
+  invoke('advance', {}, host);
+  rules.after = call => call.operation === 'receipts.submit';
+  assert.throws(() => invoke('advance', {}, host), /process_crashed/);
+  rules.after = call => call.operation === 'workspace.integrate';
+  assert.throws(() => invoke('advance', {}, host), /process_crashed/);
+  assert.equal(invoke('advance', {}, host).value.status, 'integrated');
+  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review', 'workspace_integration']);
+  assert.equal(run.calls.filter(call => call.operation === 'workspace.integrate').length, 1);
+  assert.deepEqual([run.state.get('task').value.status, run.state.get('task').value.pending, run.agents.size], ['active', null, 0]);
+});
+
+test('a losing writer cancels only its own spawn and never clears the winning record or claim', () => {
+  for (const race of ['agents.wait', 'agents.spawn']) {
+    const run = fixture();
+    let racing = null;
+    const host = call => {
+      const value = run.host(call);
+      if (call.operation === racing) {
+        racing = null;
+        const entry = run.state.get('task');
+        run.state.set('task', { ...entry, revision: entry.revision + 1, value: { ...entry.value, calls: { [digest('observer')]: { result_sha256: digest('output'), progress_revision: 1, unchanged_calls: 1 } } } });
+      }
+      return value;
+    };
+    host.store = run.state;
+    begin(host);
+    if (race === 'agents.wait') {
+      invoke('delegate', { brief: 'First writer', operation_id: 'delegate-a', expected_revision: 1 }, host);
+      assert.throws(() => invoke('delegate', { brief: 'Second writer', operation_id: 'delegate-b', expected_revision: 1 }, host), /stale_revision: current 2/);
+    }
+    racing = race;
+    assert.throws(() => invoke(race === 'agents.wait' ? 'advance' : 'delegate', race === 'agents.wait' ? {} : { brief: 'Raced writer', operation_id: 'delegate-c', expected_revision: 1 }, host), /store_revision_conflict/);
+    const task = run.state.get('task').value;
+    assert.ok(task.calls[digest('observer')]);
+    if (race === 'agents.wait') {
+      assert.deepEqual([task.pending.handle, run.agents.has('worker-1'), run.calls.filter(call => call.operation === 'agents.spawn').length], ['worker-1', true, 1]);
+      assert.ok(!run.calls.some(call => call.operation === 'agents.cancel'));
+    } else {
+      assert.deepEqual([task.pending.operation, run.agents.size], ['delegate-c', 0]);
+      assert.equal(invoke('delegate', { brief: 'Raced writer', operation_id: 'delegate-c', expected_revision: 1 }, host, { refusals: true }).value.status, 'interrupted');
+    }
+  }
+});
+
+test('operation receipts stay bounded and an evicted replay is stale instead of re-executed', () => {
+  const run = fixture();
+  begin(run.host);
+  const work = index => Array.from({ length: 8 }, (_, item) => `${index}-${item} ${'x'.repeat(490)}`);
+  const first = { remaining_work: work(0), operation_id: 'checkpoint-0', expected_revision: 1 };
+  invoke('checkpoint', first, run.host);
+  for (let index = 1; index < 9; index++) invoke('checkpoint', { remaining_work: work(index) }, run.host);
+  const task = run.state.get('task').value;
+  assert.ok(task.operations.length < 9 && JSON.stringify(task.operations).length <= 32768 + 1024);
+  assert.ok(!task.operations.some(item => item.id === 'checkpoint-0'));
+  assert.throws(() => invoke('checkpoint', first, run.host), /stale_revision: current 10/);
+  assert.deepEqual(run.state.get('task').value.remaining_work, work(8));
+});
+
 const typedSource = readFileSync(new URL('../mods/first-party/omd_typed_tasks/index.ts', import.meta.url), 'utf8');
 const typedManifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_typed_tasks/mod.json', import.meta.url), 'utf8'));
 const resultSchema = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false };
@@ -462,7 +618,7 @@ const typedSettings = { max_fan_out: 4, check: { program: 'check', argv: [] }, r
 } };
 const typedResult = { status: 'completed', text: JSON.stringify({ result: { answer: 'observed' }, sources: [{ ref: 'source.ts:1', why: 'inspected' }] }), candidate_sha256: candidate, evidence: { reference: 'native-thread:typed', sha256: digest('typed') } };
 const typed = (name, payload, run) => invoke(name, payload, call => call.operation === 'mods.service' ? run.state.get('task').value : run.host(call),
-  { source: typedSource, capabilities: typedManifest.capabilities, settings: typedSettings });
+  { source: typedSource, capabilities: typedManifest.capabilities, settings: typedSettings, store: run.state, key: 'batch' });
 
 test('typed tasks validate all results before checks and independently review edits before host integration', () => {
   const run = fixture({ 'agents.wait': call => call.arguments.handle === 'worker-3'
@@ -473,7 +629,7 @@ test('typed tasks validate all results before checks and independently review ed
   assert.ok(!run.calls.some(call => call.operation === 'exec.run'));
   for (let step = 0; step < 5; step++) typed('advance', {}, run);
   assert.equal(run.state.get('batch').value.status, 'completed');
-  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review']);
+  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review', 'workspace_integration']);
   assert.equal(run.calls.filter(call => call.operation === 'workspace.integrate').length, 1);
   const edits = run.calls.filter(call => call.operation === 'agents.spawn');
   assert.deepEqual(edits.map(call => call.arguments.workspace), ['read_only', 'isolated_worktree', 'read_only']);
@@ -520,4 +676,30 @@ test('explicit workflow cancellation releases pending reviewer and writer withou
   assert.equal(run.calls.some(call => call.operation === 'workspace.integrate'), false);
   assert.deepEqual(run.state.get('task').value.acceptance, acceptance);
   assert.equal(invoke('advance', {}, run.host).value.status, 'idle');
+});
+
+test('typed batches bind the workflow revision, replay committed runs and resolve an interrupted admission without respawning', () => {
+  const run = fixture({ 'agents.wait': () => ({ status: 'running' }) });
+  const rules = {};
+  const host = call => {
+    if (call.operation === 'mods.service') return run.state.get('task').value;
+    if (call.operation === 'agents.inventory') return { agents: [...run.agents.keys()].map(handle => ({ agent_id: handle, origin: 'mod', owner: 'omd_typed_tasks', parent: { thread_id: 'thread-1', agent_id: null }, status: 'running' })) };
+    return crashing(run, rules)(call);
+  };
+  const call = (name, payload) => invoke(name, payload, host, { source: typedSource, capabilities: typedManifest.capabilities, settings: typedSettings, store: run.state, key: 'batch', refusals: true }).value;
+  begin(run.host);
+  const first = { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect' }], operation_id: 'run-1', expected_revision: 0 };
+  const started = call('run', first);
+  assert.deepEqual([started.status, started.workflow_revision, started.revision], ['running', 1, 1]);
+  assert.match(run.calls.find(item => item.operation === 'agents.spawn').arguments.prompt, /workflow revision 1/);
+  assert.deepEqual(call('run', first), started);
+  call('cancel', {});
+  const second = { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect again' }], operation_id: 'run-2', expected_revision: 2 };
+  rules.after = item => item.operation === 'agents.spawn';
+  assert.throws(() => call('run', second), /process_crashed/);
+  assert.match(call('advance', {}).reason, /operation_in_progress: run-2/);
+  const resolved = call('run', second);
+  assert.deepEqual([resolved.status, resolved.reason, run.agents.size], ['interrupted', 'operation_interrupted', 0]);
+  assert.deepEqual(call('run', second), resolved);
+  assert.equal(run.calls.filter(item => item.operation === 'agents.spawn').length, 2);
 });

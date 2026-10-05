@@ -1,9 +1,10 @@
-import type { AgentFailure, ContractDocument, ContractRequirement, Json, ModAPI, ReceiptFinding, ResourceRef, RouteInfo } from '../../api.d.ts';
+import type { AgentFailure, ContractDocument, ContractRequirement, ContractStatus, HostOperations, Json, ModAPI, ReceiptFinding, ResourceRef, RouteInfo, ToolSpec } from '../../api.d.ts';
 
 type Delegation = { brief: string; parent_history: boolean; outage_action: 'pause' | 'opposite_lead'; route: RouteInfo; reviewer: RouteInfo; fallback?: RouteInfo; original_lead?: RouteInfo; base_sha256: string; fingerprint?: string };
-type Pending = { handle: string; kind: string; snapshot?: ResourceRef; worker?: string; delegation?: Delegation; eligible_resolutions?: string[] };
+type Pending = { handle: string; kind: string; snapshot?: ResourceRef; worker?: string; delegation?: Delegation; eligible_resolutions?: string[]; operation?: string };
 type CallObservation = { result_sha256: string; progress_revision: number; unchanged_calls: number };
-type Checkpoint = { outage_retries?: number; outage_fallbacks?: number; completed_acceptance?: { candidate_sha256: string; assessments: Assessment[]; evidence: ResourceRef }; pending?: Pending | null; schema: 1; objective: string; acceptance_criteria: string[]; acceptance: ResourceRef; remaining_work: string[]; failed_hypotheses: string[]; status: string; decisions: Json[]; progress_revision?: number; calls?: Record<string, CallObservation> };
+type Operation = { id: string; binding: string; result: Json; unacknowledged?: boolean };
+type Checkpoint = { outage_retries?: number; outage_fallbacks?: number; completed_acceptance?: { candidate_sha256: string; assessments: Assessment[]; evidence: ResourceRef }; pending?: Pending | null; schema: 1; objective: string; acceptance_criteria: string[]; acceptance: ResourceRef; remaining_work: string[]; failed_hypotheses: string[]; status: string; decisions: Json[]; progress_revision?: number; calls?: Record<string, CallObservation>; revision: number; operations: Operation[] };
 type Assessment = { criterion: string; verdict: 'pass' | 'fail'; evidence: string[] };
 type Review = { summary: string; assessments: Assessment[]; findings: ReceiptFinding[]; resolves?: string[] };
 type ChallengeKind = 'missing_wiring' | 'test_weakening' | 'negative_cases';
@@ -20,7 +21,21 @@ const parseCheckpoint = (value: unknown): Checkpoint | null =>
     && value.acceptance_criteria.length > 0 && object(value.acceptance) && sha256(value.acceptance.sha256)
     && strings(value.remaining_work, 32, 512) && strings(value.failed_hypotheses, 32, 512)
     && text(value.status, 64) && Array.isArray(value.decisions)
-    && (value.calls === undefined || object(value.calls)) ? value as unknown as Checkpoint : null;
+    && (value.calls === undefined || object(value.calls)) && Number.isSafeInteger(value.revision) && (value.revision as number) > 0
+    && Array.isArray(value.operations) ? value as unknown as Checkpoint : null;
+const OPERATION_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+const mutation = (properties: Record<string, Json> = {}, required: string[] = []): ToolSpec['parameters'] => ({ type: 'object', properties: { ...properties,
+  operation_id: { type: 'string', description: 'Unique ID of this intended change; reuse it only to retry the same call' },
+  expected_revision: { type: 'integer', description: 'Task revision from the latest result; 0 before begin' } },
+required: [...required, 'operation_id', 'expected_revision'], additionalProperties: false });
+const canonical = (value: Json): Json => Array.isArray(value) ? value.map(canonical)
+  : object(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+const digest = async (value: Json) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(encodeURIComponent(JSON.stringify(canonical(value)))
+  .replace(/%([0-9A-F]{2})/g, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))), character => character.charCodeAt(0))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+const retain = (operations: Operation[]) => {
+  let bytes = 0;
+  return operations.slice(-16).reverse().filter((item, index) => (bytes += JSON.stringify(item).length) <= 32768 || !index).reverse();
+};
 const requirement = (receipt: string, producer: ContractRequirement['producer'] = 'lead', bind: ContractRequirement['bind'] = ['candidate', 'acceptance']): ContractRequirement => ({ receipt, producer, bind, blocking_findings: 'reject' });
 const REVIEWED: ContractDocument = {
   schema: 2, id: 'reviewed_omd', version: 1, description: 'Delegated integration, checkpoint, milestone review, exact-candidate checks, independent final review and adversarial verification',
@@ -120,20 +135,63 @@ export default function activate(api: ModAPI) {
     return result;
   });
   const TASK = { key: 'task', scope: 'thread' as const };
-  const read = () => {
-    const entry = api.host.call('store.get', TASK);
-    const value = parseCheckpoint(entry?.value);
-    if (!entry || !value) throw new Error('begin_task_first');
-    return { ...entry, value };
+  type Entry = { revision: number; value: Checkpoint };
+  type Op = { id: string | null; binding: string; thread: string; entry: Entry | null };
+  const need = (op: Op) => {
+    if (!op.entry) throw new Error('begin_task_first');
+    return op.entry;
   };
-  const save = (entry: ReturnType<typeof read>, value: Checkpoint) => {
-    api.host.call('store.put', { ...TASK, expected_revision: entry.revision, value: value as unknown as Json });
-    return value;
+  const save = (op: Op, value: Checkpoint) => {
+    op.entry = { revision: api.host.call('store.put', { ...TASK, expected_revision: op.entry?.revision ?? null, value: value as unknown as Json }).revision, value };
   };
-  const remember = (decision: Json, status?: string) => {
-    const entry = read();
-    return save(entry, { ...entry.value, status: status ?? entry.value.status, decisions: [...entry.value.decisions, decision].slice(-24) });
+  const commit = (op: Op, value: Checkpoint, result: Record<string, Json>, unacknowledged = false): Json => {
+    const revision = (op.entry?.value.revision ?? 0) + 1;
+    const output = { ...result, revision };
+    save(op, { ...value, revision, operations: op.id ? retain([...value.operations, { id: op.id, binding: op.binding, result: output, ...(unacknowledged ? { unacknowledged } : {}) }]) : value.operations });
+    return output;
   };
+  const decide = (value: Checkpoint, decision: Json, status = value.status): Checkpoint => ({ ...value, status, decisions: [...value.decisions, decision].slice(-24) });
+  const summary = (value: Checkpoint) => ({ status: value.status, remaining_work: value.remaining_work, failed_hypotheses: value.failed_hypotheses });
+  const interrupt = (op: Op, kind: string, reason: string) =>
+    commit(op, decide({ ...need(op).value, pending: null }, { operation: kind, error: reason }, 'interrupted'), { status: 'interrupted', reason });
+  const sweep = (op: Op) => {
+    for (const agent of api.host.call('agents.inventory', null).agents.filter(agent => agent.origin === 'mod' && agent.owner === 'omd_workflow'
+        && agent.parent.thread_id === op.thread && agent.agent_id && ['running', 'completed'].includes(agent.status)).slice(0, 8)) api.host.tryCall('agents.cancel', { handle: agent.agent_id! });
+  };
+  const acknowledge = (op: Op, output: Json) => {
+    const entry = need(op);
+    const candidate = api.host.call('workspace.fingerprint', {});
+    const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Workflow checkpoint', content: output });
+    api.host.call('receipts.submit', { kind: 'checkpoint', candidate_sha256: candidate.candidate_sha256, acceptance_sha256: entry.value.acceptance.sha256, outcome: 'pass', evidence });
+    api.host.tryCall('store.put', { ...TASK, expected_revision: entry.revision, value: { ...entry.value,
+      operations: entry.value.operations.map(item => item.id === op.id ? { id: item.id, binding: item.binding, result: item.result } : item) } as unknown as Json });
+  };
+  const operate = (name: string, handler: (op: Op, input: Record<string, Json>) => Json) => refusing(async input => {
+    if (!object(input) || typeof input.operation_id !== 'string' || !OPERATION_ID.test(input.operation_id)
+        || !Number.isSafeInteger(input.expected_revision)) throw new Error('operation_id_and_expected_revision_required');
+    const { operation_id: id, expected_revision: expected, ...args } = input;
+    const { thread_id: thread, cwd } = api.host.call('task.status', null).ledger;
+    const binding = await digest({ operation: name, thread, cwd, arguments: args, expected_revision: expected });
+    const stored = api.host.call('store.get', TASK);
+    const value = parseCheckpoint(stored?.value);
+    const op: Op = { id: id as string, binding, thread, entry: stored && value ? { revision: stored.revision, value } : null };
+    const prior = value?.operations.find(item => item.id === id);
+    if (prior) {
+      if (prior.binding !== binding) throw new Error('operation_id_conflict');
+      if (prior.unacknowledged) acknowledge(op, prior.result);
+      return prior.result;
+    }
+    if ((value?.revision ?? 0) !== expected) throw new Error(`stale_revision: current ${value?.revision ?? 0}`);
+    const claim = value?.pending?.operation;
+    if (claim === id) {
+      const output = interrupt(op, value!.pending!.kind, 'operation_interrupted');
+      sweep(op);
+      return output;
+    }
+    if (claim && name !== 'cancel') throw new Error(`operation_in_progress: ${claim}`);
+    const result = handler(op, args);
+    return object(result) && result.revision === undefined ? { ...result, revision: op.entry?.value.revision ?? 0 } : result;
+  });
   const selected = () => {
     const contract = api.host.call('contract.status', null);
     if (contract.status !== 'active' || !['reviewed_omd', 'solo_evidence', 'omd_verification_gate'].includes(contract.active?.id ?? '')) throw new Error('select_workflow_contract_first');
@@ -158,26 +216,26 @@ export default function activate(api: ModAPI) {
     if (!found) throw new Error(`authorized_route_unavailable: ${name}`);
     return found;
   };
-  const receipt = (kind: string, candidate: string, checkpoint: Checkpoint, evidence: ResourceRef, verdict: Review | AdversarialReview, agent?: string) => {
+  const receipt = (contract: ContractStatus, kind: string, candidate: string, checkpoint: Checkpoint, evidence: ResourceRef, verdict: Review | AdversarialReview, agent?: string) => {
     const challenges = kind === 'adversarial_verification' ? (verdict as AdversarialReview).challenges : undefined;
     if (kind === 'adversarial_verification' && !challenges) throw new Error('adversarial_categories_required_exactly_once');
     const pass = verdict.assessments.every(value => value.verdict === 'pass') && !verdict.findings.some(value => value.severity === 'blocking')
       && (!challenges || challenges.every(value => value.verdict === 'passed'));
     if (verdict.resolves?.length && (!agent || !pass)) throw new Error('review_resolution_requires_passing_agent');
-    const submitted = api.host.call('receipts.submit', { kind, candidate_sha256: candidate, acceptance_sha256: checkpoint.acceptance.sha256,
-      outcome: pass ? 'pass' : 'fail', evidence, ...(agent ? { agent } : {}), findings: verdict.findings,
-      ...(verdict.resolves?.length ? { resolves: verdict.resolves } : {}) });
-    remember({ operation: kind, candidate, acceptance_sha256: checkpoint.acceptance.sha256, outcome: submitted.outcome, evidence,
+    const submitted = (agent ? contract.receipts.find(value => value.kind === kind && value.producer.kind === 'agent' && value.producer.handle === agent) : undefined)
+      ?? api.host.call('receipts.submit', { kind, candidate_sha256: candidate, acceptance_sha256: checkpoint.acceptance.sha256,
+        outcome: pass ? 'pass' : 'fail', evidence, ...(agent ? { agent } : {}), findings: verdict.findings,
+        ...(verdict.resolves?.length ? { resolves: verdict.resolves } : {}) });
+    return { submitted, value: decide(checkpoint, { operation: kind, candidate, acceptance_sha256: checkpoint.acceptance.sha256, outcome: submitted.outcome, evidence,
       findings: verdict.findings as unknown as Json, ...(verdict.resolves?.length ? { resolves: verdict.resolves } : {}),
-      ...(challenges ? { challenges: challenges as unknown as Json } : {}) }, pass ? 'active' : 'needs_repair');
-    return submitted;
+      ...(challenges ? { challenges: challenges as unknown as Json } : {}) }, pass ? 'active' : 'needs_repair') };
   };
   const currentRoute = (selected: RouteInfo) => {
     const current = api.host.call('routes.list', null).find(value => value.name === selected.name && value.available && value.roles.includes('worker'));
     if (!current || current.model !== selected.model || current.provider !== selected.provider || current.billing !== selected.billing) throw new Error('authorized_route_changed');
     return current;
   };
-  const startReview = (kind: string, snapshot: ResourceRef, checkpoint: Checkpoint, reviewer?: RouteInfo) => {
+  const reviewPlan = (kind: string, snapshot: ResourceRef, checkpoint: Checkpoint, reviewer?: RouteInfo) => {
     const target = reviewer ? currentRoute(reviewer) : route(kind === 'adversarial_verification' ? 'verify_route' : 'review_route', kind === 'adversarial_verification' ? 'verifier' : 'reviewer');
     if (kind !== 'contribution_review') {
       const thread = api.host.call('task.status', null).ledger.thread_id;
@@ -198,9 +256,30 @@ ${kind === 'adversarial_verification' ? JSON.stringify({ candidate_sha256: snaps
 ${JSON.stringify({ open_blocking_findings: open })}
 ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.acceptance_criteria })}`;
     if (prompt.length > 8192) throw new Error('review_prompt_limit');
-    const agent = api.host.call('agents.spawn', { role: kind, route: target.name, prompt, snapshot, workspace: 'read_only', evidence: checkpoint.acceptance,
-      ...(open.length ? { resolution_context: { acceptance_sha256: checkpoint.acceptance.sha256, findings: open.map(value => value.fingerprint) } } : {}) });
-    return { agent, eligible_resolutions: open.map(value => value.fingerprint) };
+    const request: HostOperations['agents.spawn']['arguments'] = { role: kind, route: target.name, prompt, snapshot, workspace: 'read_only', evidence: checkpoint.acceptance,
+      ...(open.length ? { resolution_context: { acceptance_sha256: checkpoint.acceptance.sha256, findings: open.map(value => value.fingerprint) } } : {}) };
+    return { request, eligible_resolutions: open.map(value => value.fingerprint) };
+  };
+  const spawnClaimed = (op: Op, value: Checkpoint, pending: Omit<Pending, 'handle' | 'operation'>, request: HostOperations['agents.spawn']['arguments'], result: (handle: string) => Record<string, Json>): Json => {
+    save(op, { ...value, pending: { ...pending, handle: '', operation: op.id! } });
+    const spawned = api.host.tryCall('agents.spawn', request);
+    if (!spawned.ok) {
+      save(op, value);
+      throw new Error(spawned.error);
+    }
+    try {
+      return commit(op, { ...value, pending: { ...pending, handle: spawned.value.handle } }, result(spawned.value.handle));
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      api.host.tryCall('agents.cancel', { handle: spawned.value.handle });
+      throw error;
+    }
+  };
+  const finish = (op: Op, value: Checkpoint, result: Record<string, Json>, handles: (string | undefined)[], consume?: string) => {
+    const output = commit(op, value, result);
+    if (consume) api.host.tryCall('agents.result', { handle: consume, consume: true });
+    for (const handle of new Set(handles)) if (handle) api.host.tryCall('agents.cancel', { handle });
+    return output;
   };
   const checkSnapshot = (kind: string, snapshot: ResourceRef, task: Checkpoint) => {
     const check = api.settings.check;
@@ -211,42 +290,38 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     return api.host.call('receipts.submit', { kind, candidate_sha256: snapshot.sha256, acceptance_sha256: task.acceptance.sha256,
       outcome, evidence: result.evidence, execution: true });
   };
-  const begin = (input: Json): Json => {
+  const begin = (op: Op, input: Json): Json => {
     selected();
     if (!object(input) || Object.keys(input).some(name => !['objective', 'acceptance_criteria'].includes(name)) || !text(input.objective, 4096)
         || !strings(input.acceptance_criteria, 16, 512) || !input.acceptance_criteria.length) throw new Error('task_objective_and_acceptance_required');
-    if (api.host.call('store.get', TASK)) throw new Error('task_already_initialized');
+    if (op.entry) throw new Error('task_already_initialized');
     const acceptance = api.host.call('evidence.write', { media_type: 'application/json', label: 'Task acceptance', content: input });
     const value: Checkpoint = { schema: 1, objective: input.objective, acceptance_criteria: input.acceptance_criteria, acceptance,
-      remaining_work: input.acceptance_criteria, failed_hypotheses: [], status: 'active', decisions: [], progress_revision: 1, calls: {} };
-    api.host.call('store.put', { ...TASK, expected_revision: null, value: value as unknown as Json });
-    return value as unknown as Json;
+      remaining_work: input.acceptance_criteria, failed_hypotheses: [], status: 'active', decisions: [], progress_revision: 1, calls: {}, revision: 0, operations: [] };
+    return commit(op, value, { ...summary(value), acceptance });
   };
-  const checkpoint = (input: Json): Json => {
+  const checkpoint = (op: Op, input: Json): Json => {
     if (!object(input) || Object.keys(input).some(name => !['remaining_work', 'failed_hypotheses'].includes(name))) throw new Error('checkpoint_fields_invalid');
     const contract = selected();
-    const entry = read();
+    const entry = need(op);
     for (const field of ['remaining_work', 'failed_hypotheses']) if (input[field] !== undefined && !strings(input[field], 32, 512)) throw new Error('checkpoint_field_limit');
     const remaining_work = input.remaining_work ?? entry.value.remaining_work;
     const failed_hypotheses = input.failed_hypotheses ?? entry.value.failed_hypotheses;
     const changed = JSON.stringify(remaining_work) !== JSON.stringify(entry.value.remaining_work)
       || JSON.stringify(failed_hypotheses) !== JSON.stringify(entry.value.failed_hypotheses);
     if (!changed && entry.value.status === 'paused') throw new Error('checkpoint_progress_required_to_resume');
-    const saved = save(entry, { ...entry.value, ...input, status: changed && entry.value.status === 'paused' ? 'active' : entry.value.status,
-      progress_revision: (entry.value.progress_revision ?? 1) + Number(changed), calls: changed ? {} : entry.value.calls } as Checkpoint);
+    const value = { ...entry.value, ...input, status: changed && entry.value.status === 'paused' ? 'active' : entry.value.status,
+      progress_revision: (entry.value.progress_revision ?? 1) + Number(changed), calls: changed ? {} : entry.value.calls } as Checkpoint;
+    const audited = ['reviewed_omd', 'solo_evidence'].includes(contract.active?.id ?? '');
+    const output = commit(op, value, summary(value), audited);
     if (changed && entry.value.status === 'paused') {
       const state = api.state.get();
       const leads = object(state) ? state : {};
-      const thread = api.host.call('task.status', null).ledger.thread_id;
-      api.state.set({ ...leads, [thread]: { ...(object(leads[thread]) ? leads[thread] : {}), no_progress_paused: false } });
+      const existing = leads[op.thread];
+      api.state.set({ ...leads, [op.thread]: { ...(object(existing) ? existing : {}), no_progress_paused: false } });
     }
-    if (['reviewed_omd', 'solo_evidence'].includes(contract.active?.id ?? '')) {
-      const candidate = api.host.call('workspace.fingerprint', {});
-      const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Workflow checkpoint', content: saved as unknown as Json });
-      api.host.call('receipts.submit', { kind: 'checkpoint', candidate_sha256: candidate.candidate_sha256,
-        acceptance_sha256: saved.acceptance.sha256, outcome: 'pass', evidence });
-    }
-    return saved as unknown as Json;
+    if (audited) acknowledge(op, output);
+    return output;
   };
   const noProgressLimit = api.settings.max_no_progress_calls;
   if (noProgressLimit !== undefined && (typeof noProgressLimit !== 'number' || !Number.isInteger(noProgressLimit)
@@ -255,10 +330,9 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       || typeof noProgressLimit === 'number' && noProgressLimit > 0) {
     api.on('turn_start', () => {
       const thread = api.host.call('task.status', null).ledger.thread_id;
-      let entry = api.host.call('store.get', TASK);
+      const entry = api.host.call('store.get', TASK);
       if (!entry && object(api.settings.initial_task) && Object.keys(api.settings.initial_task).length) {
-        begin(api.settings.initial_task!);
-        entry = api.host.call('store.get', TASK);
+        begin({ id: null, binding: '', thread, entry: null }, api.settings.initial_task!);
       }
       if (typeof noProgressLimit === 'number' && noProgressLimit > 0) {
         const state = api.state.get();
@@ -304,12 +378,12 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       return next(e);
     });
   }
-  const delegate = (input: Json): Json => {
+  const delegate = (op: Op, input: Json): Json => {
     if (selected().active?.id === 'solo_evidence') throw new Error('reviewed_contract_required');
     if (!object(input) || !text(input.brief, 6000) || Object.keys(input).some(key => !['brief', 'parent_history', 'outage_action'].includes(key))
         || input.parent_history !== undefined && typeof input.parent_history !== 'boolean'
         || input.outage_action !== undefined && !['pause', 'opposite_lead'].includes(String(input.outage_action))) throw new Error('delegation_brief_required');
-    const entry = read();
+    const entry = need(op);
     if (entry.value.pending) throw new Error('workflow_operation_running');
     const target = route('worker_route', 'contributor');
     const reviewer = route('review_route', 'reviewer');
@@ -317,9 +391,9 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const delegation: Delegation = { brief: input.brief, parent_history: input.parent_history === true, outage_action: input.outage_action === 'opposite_lead' ? 'opposite_lead' : 'pause',
       route: target, reviewer, base_sha256: api.host.call('workspace.fingerprint', {}).candidate_sha256 };
     if (delegation.outage_action === 'opposite_lead') {
-      const thread = api.host.call('task.status', null).ledger.thread_id;
       const state = api.state.get();
-      const observed = object(state) && object(state[thread]) ? state[thread] : null;
+      const lead = object(state) ? state[op.thread] : null;
+      const observed = object(lead) ? lead : null;
       const routes = api.host.call('routes.list', null);
       const original = routes.find(value => value.roles.includes('lead') && value.roles.includes('worker') && value.available && value.model === observed?.model && value.provider === observed?.provider);
       const fallback = route('fallback_route', '');
@@ -328,53 +402,39 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       delegation.fallback = fallback;
       delegation.original_lead = original;
     }
-    const worker = api.host.call('agents.spawn', { role: 'implementation', route: target.name, prompt: input.brief,
-      workspace: 'isolated_worktree', evidence: entry.value.acceptance, parent_history: input.parent_history === true });
-    try {
-      save(entry, { ...entry.value, pending: { handle: worker.handle, kind: 'implementation', delegation } });
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-      api.host.tryCall('agents.cancel', { handle: worker.handle });
-      throw error;
-    }
-    return { status: 'running', handle: worker.handle, next: 'advance' };
+    return spawnClaimed(op, entry.value, { kind: 'implementation', delegation }, { role: 'implementation', route: target.name, prompt: input.brief,
+      workspace: 'isolated_worktree', evidence: entry.value.acceptance, parent_history: input.parent_history === true }, handle => ({ status: 'running', handle, next: 'advance' }));
   };
-  const recoverOutage = (entry: ReturnType<typeof read>, pending: Pending, failure?: AgentFailure | null): Json | null => {
+  const recoverOutage = (op: Op, pending: Pending, failure?: AgentFailure | null): Json | null => {
+    const value = need(op).value;
     const previous = pending.delegation;
-    if (pending.kind !== 'implementation' || !previous || failure?.category !== 'transport' || (entry.value.outage_fallbacks ?? 0) > 0) return null;
+    if (pending.kind !== 'implementation' || !previous || failure?.category !== 'transport' || (value.outage_fallbacks ?? 0) > 0) return null;
     const fingerprint = JSON.stringify(failure.code);
-    const retry = (entry.value.outage_retries ?? 0) === 0;
+    const retry = (value.outage_retries ?? 0) === 0;
     if (!retry && (previous.fingerprint !== fingerprint || previous.outage_action !== 'opposite_lead' || !previous.fallback || !previous.original_lead)) return null;
     const next: Delegation = retry ? { ...previous, fingerprint } : { ...previous, route: previous.fallback!, reviewer: previous.original_lead!, fingerprint };
     currentRoute(next.route);
     currentRoute(next.reviewer);
     api.host.call('workspace.fingerprint', { expected: previous.base_sha256 });
     api.host.call('agents.cancel', { handle: pending.handle });
-    save(entry, { ...entry.value, pending: null, status: 'admitting', outage_retries: 1,
-      outage_fallbacks: retry ? (entry.value.outage_fallbacks ?? 0) : 1,
-      decisions: [...entry.value.decisions, { operation: retry ? 'outage_retry' : 'outage_fallback', failure: failure as unknown as Json, from: previous.route.name, to: next.route.name }].slice(-24) });
-    const reserved = read();
-    const spawned = api.host.call('agents.spawn', { role: retry ? 'implementation' : 'fallback_implementation', route: next.route.name, prompt: next.brief,
-      workspace: 'isolated_worktree', evidence: reserved.value.acceptance, parent_history: next.parent_history });
-    try {
-      save(reserved, { ...reserved.value, status: 'active', pending: { kind: 'implementation', handle: spawned.handle, delegation: next } });
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-      api.host.tryCall('agents.cancel', { handle: spawned.handle });
-      throw error;
-    }
-    return { status: 'running', recovery: retry ? 'same_route_retry' : 'opposite_lead_fallback', handle: spawned.handle, next: 'advance' };
+    const reserved = { ...decide(value, { operation: retry ? 'outage_retry' : 'outage_fallback', failure: failure as unknown as Json, from: previous.route.name, to: next.route.name }, 'active'),
+      outage_retries: 1, outage_fallbacks: retry ? (value.outage_fallbacks ?? 0) : 1 };
+    return spawnClaimed(op, reserved, { kind: 'implementation', delegation: next }, { role: retry ? 'implementation' : 'fallback_implementation', route: next.route.name,
+      prompt: next.brief, workspace: 'isolated_worktree', evidence: value.acceptance, parent_history: next.parent_history },
+    handle => ({ status: 'running', recovery: retry ? 'same_route_retry' : 'opposite_lead_fallback', handle, next: 'advance' }));
   };
-  const advance = (): Json => {
-    selected();
-    const entry = read();
+  const advance = (op: Op): Json => {
+    const contract = selected();
+    const entry = need(op);
     const pending = entry.value.pending;
     if (!pending) return { status: 'idle' };
     try {
+      const integrated = pending.worker && contract.receipts.find(value => value.kind === 'workspace_integration' && value.evidence.reference === `native-integration:${pending.worker}`);
+      if (integrated) return finish(op, { ...entry.value, pending: null, status: 'active' }, { status: 'integrated', receipt: integrated as unknown as Json }, [pending.handle, pending.worker]);
       const result = api.host.call('agents.wait', { handle: pending.handle });
       if (result.status === 'running') return { status: 'running', handle: pending.handle, next: 'advance' };
       if (result.status === 'failed') {
-        const recovered = recoverOutage(entry, pending, result.failure);
+        const recovered = recoverOutage(op, pending, result.failure);
         if (recovered) return recovered;
         throw new Error(result.error);
       }
@@ -383,15 +443,10 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
         const snapshot = api.host.call('workspace.snapshot', { agent: pending.handle, expected: result.candidate_sha256 }).snapshot;
         api.host.call('agents.result', { handle: pending.handle, consume: true });
         const checked = checkSnapshot('contribution_checks', snapshot, entry.value);
-        if (checked.outcome !== 'pass') {
-          api.host.call('agents.cancel', { handle: pending.handle });
-          save(entry, { ...entry.value, pending: null, status: 'needs_repair' });
-          return { status: 'needs_repair', receipt: checked as unknown as Json };
-        }
-        const next = startReview('contribution_review', snapshot, entry.value, pending.delegation?.reviewer);
-        save(entry, { ...entry.value, pending: { handle: next.agent.handle, kind: 'contribution_review', snapshot, worker: pending.handle,
-          eligible_resolutions: next.eligible_resolutions } });
-        return { status: 'running', handle: next.agent.handle, next: 'advance' };
+        if (checked.outcome !== 'pass') return finish(op, { ...entry.value, pending: null, status: 'needs_repair' }, { status: 'needs_repair', receipt: checked as unknown as Json }, [pending.handle]);
+        const plan = reviewPlan('contribution_review', snapshot, entry.value, pending.delegation?.reviewer);
+        return spawnClaimed(op, entry.value, { kind: 'contribution_review', snapshot, worker: pending.handle, eligible_resolutions: plan.eligible_resolutions }, plan.request,
+          handle => ({ status: 'running', handle, next: 'advance' }));
       }
       if (!pending.snapshot || result.candidate_sha256 !== pending.snapshot.sha256) throw new Error('review_candidate_changed');
       const verdict = pending.kind === 'adversarial_verification'
@@ -399,105 +454,104 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
         : review(JSON.parse(result.text), entry.value.acceptance_criteria, true,
           { candidate: pending.snapshot.sha256, acceptance: entry.value.acceptance.sha256 });
       if (verdict.resolves?.some(fingerprint => !pending.eligible_resolutions?.includes(fingerprint))) throw new Error('review_resolution_not_offered');
-      const submitted = receipt(pending.kind, pending.snapshot.sha256, entry.value, result.evidence, verdict, pending.handle);
-      api.host.call('agents.result', { handle: pending.handle, consume: true });
-      api.host.call('agents.cancel', { handle: pending.handle });
-      const current = read();
+      const { submitted, value } = receipt(contract, pending.kind, pending.snapshot.sha256, entry.value, result.evidence, verdict, pending.handle);
       if (submitted.outcome !== 'pass') {
-        if (pending.worker) api.host.call('agents.cancel', { handle: pending.worker });
         const challenges = pending.kind === 'adversarial_verification' ? (verdict as AdversarialReview).challenges : undefined;
-        const status = challenges?.some(value => value.verdict === 'blocked') ? 'blocked'
-          : challenges?.some(value => value.verdict === 'unverified') ? 'unverified' : 'needs_repair';
-        save(current, { ...current.value, pending: null, status });
-        return { status, receipt: submitted as unknown as Json, ...(challenges ? { challenges: challenges as unknown as Json } : {}) };
+        const status = challenges?.some(item => item.verdict === 'blocked') ? 'blocked'
+          : challenges?.some(item => item.verdict === 'unverified') ? 'unverified' : 'needs_repair';
+        return finish(op, { ...value, pending: null, status }, { status, receipt: submitted as unknown as Json, ...(challenges ? { challenges: challenges as unknown as Json } : {}) },
+          [pending.handle, pending.worker], pending.handle);
       }
       if (pending.kind === 'contribution_review' && pending.worker) {
-        const integrated = api.host.call('workspace.integrate', { handle: pending.worker, acceptance_sha256: entry.value.acceptance.sha256 });
-        api.host.call('agents.cancel', { handle: pending.worker });
-        save(current, { ...current.value, pending: null, status: integrated.status === 'integrated' ? 'active' : 'needs_repair' });
-        return integrated as unknown as Json;
+        const merged = api.host.call('workspace.integrate', { handle: pending.worker, acceptance_sha256: entry.value.acceptance.sha256 });
+        return finish(op, { ...value, pending: null, status: merged.status === 'integrated' ? 'active' : 'needs_repair' }, merged as unknown as Record<string, Json>,
+          [pending.handle, pending.worker], pending.handle);
       }
-      save(current, { ...current.value, pending: null });
-      return { status: 'recorded', receipt: submitted as unknown as Json };
+      return finish(op, { ...value, pending: null }, { status: 'recorded', receipt: submitted as unknown as Json }, [pending.handle], pending.handle);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      api.host.tryCall('agents.cancel', { handle: pending.handle });
-      if (pending.worker) api.host.tryCall('agents.cancel', { handle: pending.worker });
-      const current = read();
-      save(current, { ...current.value, pending: null, status: 'interrupted', decisions: [...current.value.decisions, { operation: pending.kind, error: error.message }].slice(-24) });
-      throw error;
+      const output = interrupt(op, pending.kind, error.message);
+      for (const handle of [pending.handle, pending.worker]) if (handle) api.host.tryCall('agents.cancel', { handle });
+      return output;
     }
   };
   api.provide({ name: 'omd.workflow', version: '1.0.0', methods: {
     status: { input: 'null', output: 'object' }, checkpoint: { input: 'object', output: 'object' }, delegate: { input: 'object', output: 'object' },
-  } }, { status: refusing(() => ({ ...read().value, contract: selected() }) as unknown as Json), checkpoint: refusing(checkpoint), delegate: refusing(delegate) });
+  } }, { status: refusing(() => {
+    const value = parseCheckpoint(api.host.call('store.get', TASK)?.value);
+    if (!value) throw new Error('begin_task_first');
+    const { operations: _operations, calls: _calls, ...task } = value;
+    return { ...task, contract: selected() } as unknown as Json;
+  }), checkpoint: operate('checkpoint', checkpoint), delegate: operate('delegate', delegate) });
   api.tool({ name: 'begin', description: 'Record the task objective and immutable acceptance criteria under the user-selected workflow contract',
-    parameters: { type: 'object', properties: { objective: { type: 'string' }, acceptance_criteria: { type: 'array', items: { type: 'string' } } }, required: ['objective', 'acceptance_criteria'], additionalProperties: false } }, refusing(begin));
+    parameters: mutation({ objective: { type: 'string' }, acceptance_criteria: { type: 'array', items: { type: 'string' } } }, ['objective', 'acceptance_criteria']) }, operate('begin', begin));
   api.tool({ name: 'checkpoint', description: 'Persist remaining work and failed hypotheses without changing acceptance criteria',
-    parameters: { type: 'object', properties: { remaining_work: { type: 'array', items: { type: 'string' } }, failed_hypotheses: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } }, refusing(checkpoint));
+    parameters: mutation({ remaining_work: { type: 'array', items: { type: 'string' } }, failed_hypotheses: { type: 'array', items: { type: 'string' } } }) }, operate('checkpoint', checkpoint));
   api.tool({ name: 'acceptance', description: 'Record source-backed assessments for every immutable acceptance criterion on the current candidate',
-    parameters: { type: 'object', properties: { candidate_sha256: { type: 'string' }, review: REVIEW_SCHEMA }, required: ['candidate_sha256', 'review'], additionalProperties: false } }, refusing(input => {
+    parameters: mutation({ candidate_sha256: { type: 'string' }, review: REVIEW_SCHEMA }, ['candidate_sha256', 'review']) }, operate('acceptance', (op, input) => {
     selected();
-    if (!object(input) || !text(input.candidate_sha256, 64)) throw new Error('exact_candidate_required');
-    const entry = read();
+    if (!text(input.candidate_sha256, 64)) throw new Error('exact_candidate_required');
+    const entry = need(op);
     const verdict = review(input.review, entry.value.acceptance_criteria);
     if (verdict.assessments.some(item => item.verdict !== 'pass') || verdict.findings.some(item => item.severity === 'blocking')) throw new Error('acceptance_not_complete');
     const snapshot = api.host.call('workspace.fingerprint', { expected: input.candidate_sha256 });
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Acceptance assessments', content: verdict as unknown as Json });
-    return save(entry, { ...entry.value, completed_acceptance: { candidate_sha256: snapshot.candidate_sha256, assessments: verdict.assessments, evidence } }) as unknown as Json;
+    const value = { ...entry.value, completed_acceptance: { candidate_sha256: snapshot.candidate_sha256, assessments: verdict.assessments, evidence } };
+    return commit(op, value, { ...summary(value), candidate_sha256: snapshot.candidate_sha256 });
   }));
   api.tool({ name: 'delegate', description: 'Implement in an isolated workspace, check and independently review its frozen snapshot, then request conflict-checked integration',
-    parameters: { type: 'object', properties: { brief: { type: 'string' }, parent_history: { type: 'boolean' }, outage_action: { type: 'string', enum: ['pause', 'opposite_lead'] } }, required: ['brief'], additionalProperties: false } }, refusing(delegate));
+    parameters: mutation({ brief: { type: 'string' }, parent_history: { type: 'boolean' }, outage_action: { type: 'string', enum: ['pause', 'opposite_lead'] } }, ['brief']) }, operate('delegate', delegate));
   api.tool({ name: 'advance', description: 'Advance one check, review or integration step; retry one known transport failure, then use at most one explicitly configured equivalent-outage fallback',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(advance));
+    parameters: mutation() }, operate('advance', advance));
   api.tool({ name: 'cancel', description: 'Cancel pending owned workflow agents without reverting integrated work, clearing receipts or resetting spent allowance',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
-    const entry = read();
+    parameters: mutation() }, operate('cancel', op => {
+    const entry = need(op);
     const pending = entry.value.pending;
     if (!pending) return { status: 'idle' };
-    const handles = [...new Set([pending.handle, pending.worker].filter((value): value is string => !!value))];
+    if (pending.operation) sweep(op);
+    const handles = pending.operation ? [] : [...new Set([pending.handle, pending.worker].filter((value): value is string => !!value))];
     const results = handles.map(handle => ({ handle, result: api.host.tryCall('agents.cancel', { handle }) }));
-    save(entry, { ...entry.value, pending: null, status: 'cancelled' });
-    return { status: 'cancelled', agents: results } as unknown as Json;
+    return commit(op, { ...entry.value, pending: null, status: 'cancelled' }, { status: 'cancelled', agents: results as unknown as Json });
   }));
   api.tool({ name: 'check', description: 'Run the configured executable checks and bind the result to the unchanged candidate and task acceptance',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
+    parameters: mutation() }, operate('check', op => {
     selected();
-    const task = read().value;
+    const entry = need(op);
     const before = api.host.call('workspace.snapshot', {});
-    const submitted = checkSnapshot('checks', before.snapshot, task);
-    remember({ operation: 'checks', candidate: before.candidate_sha256, outcome: submitted.outcome, evidence: submitted.evidence }, submitted.outcome === 'pass' ? 'active' : 'needs_repair');
-    return submitted as unknown as Json;
+    const submitted = checkSnapshot('checks', before.snapshot, entry.value);
+    return commit(op, decide(entry.value, { operation: 'checks', candidate: before.candidate_sha256, outcome: submitted.outcome, evidence: submitted.evidence },
+      submitted.outcome === 'pass' ? 'active' : 'needs_repair'), submitted as unknown as Record<string, Json>);
   }));
   api.tool({ name: 'review', description: 'Record a milestone, final review or adversarial verification against a frozen candidate through a configured independent route',
-    parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['milestone_review', 'final_review', 'adversarial_verification'] } }, required: ['kind'], additionalProperties: false } }, refusing(input => {
-    if (selected().active?.id === 'solo_evidence' || !object(input) || !['milestone_review', 'final_review', 'adversarial_verification'].includes(String(input.kind))) throw new Error('review_kind_or_contract_invalid');
-    const entry = read();
+    parameters: mutation({ kind: { type: 'string', enum: ['milestone_review', 'final_review', 'adversarial_verification'] } }, ['kind']) }, operate('review', (op, input) => {
+    if (selected().active?.id === 'solo_evidence' || !['milestone_review', 'final_review', 'adversarial_verification'].includes(String(input.kind))) throw new Error('review_kind_or_contract_invalid');
+    const entry = need(op);
     if (entry.value.pending) throw new Error('workflow_operation_running');
     const snapshot = api.host.call('workspace.snapshot', {}).snapshot;
-    const agent = startReview(String(input.kind), snapshot, entry.value);
-    save(entry, { ...entry.value, pending: { handle: agent.agent.handle, kind: String(input.kind), snapshot,
-      eligible_resolutions: agent.eligible_resolutions } });
-    return { status: 'running', handle: agent.agent.handle, next: 'advance' };
+    const plan = reviewPlan(String(input.kind), snapshot, entry.value);
+    return spawnClaimed(op, entry.value, { kind: String(input.kind), snapshot, eligible_resolutions: plan.eligible_resolutions }, plan.request,
+      handle => ({ status: 'running', handle, next: 'advance' }));
   }));
   api.tool({ name: 'self_verify', description: 'Record evidence-backed self-review or self-verification; this never claims independent verification',
-    parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['self_review', 'self_verification'] }, candidate_sha256: { type: 'string' }, review: REVIEW_SCHEMA }, required: ['kind', 'candidate_sha256', 'review'], additionalProperties: false } }, refusing(input => {
-    if (selected().active?.id !== 'solo_evidence' || !object(input) || !['self_review', 'self_verification'].includes(String(input.kind)) || !text(input.candidate_sha256, 64)) throw new Error('solo_verification_required');
-    const task = read().value;
+    parameters: mutation({ kind: { type: 'string', enum: ['self_review', 'self_verification'] }, candidate_sha256: { type: 'string' }, review: REVIEW_SCHEMA }, ['kind', 'candidate_sha256', 'review']) }, operate('self_verify', (op, input) => {
+    const contract = selected();
+    if (contract.active?.id !== 'solo_evidence' || !['self_review', 'self_verification'].includes(String(input.kind)) || !text(input.candidate_sha256, 64)) throw new Error('solo_verification_required');
+    const entry = need(op);
     const candidate = api.host.call('workspace.fingerprint', { expected: input.candidate_sha256 });
-    const verdict = review(input.review, task.acceptance_criteria);
+    const verdict = review(input.review, entry.value.acceptance_criteria);
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: String(input.kind), content: verdict as unknown as Json });
-    return receipt(String(input.kind), candidate.candidate_sha256, task, evidence, verdict) as unknown as Json;
+    const { submitted, value } = receipt(contract, String(input.kind), candidate.candidate_sha256, entry.value, evidence, verdict);
+    return commit(op, value, submitted as unknown as Record<string, Json>);
   }));
   api.tool({ name: 'complete', description: 'Request host completion only after all selected contract receipts cover the current candidate and acceptance',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
+    parameters: mutation() }, operate('complete', op => {
     selected();
-    const entry = read();
+    const entry = need(op);
     const candidate = api.host.call('workspace.fingerprint', {});
     if (entry.value.completed_acceptance?.candidate_sha256 !== candidate.candidate_sha256) throw new Error('record_current_acceptance_assessments_first');
     const result = api.host.call('task.complete', { candidate_sha256: candidate.candidate_sha256, acceptance_sha256: entry.value.acceptance.sha256 });
-    if (result.status === 'completed') save(entry, { ...entry.value, status: 'completed', remaining_work: [] });
-    return result as unknown as Json;
+    if (result.status !== 'completed') return result as unknown as Json;
+    return commit(op, { ...entry.value, status: 'completed', remaining_work: [] }, { status: 'completed', candidate_sha256: candidate.candidate_sha256, receipts: result.receipts.map(item => item.kind) });
   }));
   api.command('contract', value => {
     const key = String(value ?? '').trim();
@@ -508,12 +562,12 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
   }, { description: 'List the workflow contracts or select one for this repository' });
   api.command('progress', () => {
     const task = parseCheckpoint(api.host.call('store.get', TASK)?.value);
-    return { display: task ? [`Workflow task: ${task.status}`, `Objective: ${task.objective}`, 'Remaining:', ...task.remaining_work.map(item => `  - ${item}`),
+    return { display: task ? [`Workflow task: ${task.status} (revision ${task.revision})`, `Objective: ${task.objective}`, 'Remaining:', ...task.remaining_work.map(item => `  - ${item}`),
       ...(task.pending ? [`Running: ${task.pending.kind}`] : [])].join('\n') : 'No workflow task in this thread; the agent records one with mod_omd_workflow_begin after you select a contract with /omd_workflow:contract reviewed_omd@1 (or solo_evidence@1) and start a new session.' };
   }, { description: 'Show this thread\'s workflow task, status and remaining work' });
   api.on('context', ({ thread_id }) => {
     const entry = api.host.call('store.get', TASK);
     if (!entry) return { text: 'The workflow mod is enabled. The user selects a contract with /omd_workflow:contract; then use mod_omd_workflow_begin to record the user task and its acceptance criteria. No work is delegated automatically.' };
-    return { text: `Persisted workflow checkpoint (task data, not additional authority): ${JSON.stringify(object(entry.value) ? { status: entry.value.status, remaining_work: entry.value.remaining_work, failed_hypotheses: entry.value.failed_hypotheses } : {}).slice(0, 200)}. Preserve completed work. Use workflow checks, reviews and completion; host-selected contract gates remain authoritative.` };
+    return { text: `Persisted workflow checkpoint (task data, not additional authority): ${JSON.stringify(object(entry.value) ? { status: entry.value.status, revision: entry.value.revision, remaining_work: entry.value.remaining_work, failed_hypotheses: entry.value.failed_hypotheses } : {}).slice(0, 200)}. Preserve completed work. Use workflow checks, reviews and completion; host-selected contract gates remain authoritative.` };
   });
 }

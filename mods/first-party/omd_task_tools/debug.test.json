@@ -2,15 +2,17 @@
   "schema": 1,
   "virtual_time_ms": 1000,
   "packages": [
+    "../omd_workflow",
     "../omd_coordination",
     "../omd_recovery",
     "../omd_workspace",
     "../omd_session_anchor",
     "../omd_verification_gate"
   ],
+  "host_operations": {"store.get": [{"result": null}]},
   "steps": [
     {"type": "status"},
-    {"type": "tool_exposure", "thread_id": "task", "payload": {"remaining_work": ["fix src/view.ts"]}, "expect": ["mod_omd_coordination_delegate", "mod_omd_coordination_investigate", "mod_omd_recovery_recover", "mod_omd_recovery_delegate", "mod_omd_task_tools_check_typescript", "mod_omd_verification_gate_seal_candidate"]},
+    {"type": "tool_exposure", "thread_id": "task", "payload": {"remaining_work": ["fix src/view.ts"]}, "expect": ["mod_omd_workflow_begin", "mod_omd_workflow_checkpoint", "mod_omd_workflow_acceptance", "mod_omd_workflow_delegate", "mod_omd_workflow_advance", "mod_omd_workflow_cancel", "mod_omd_workflow_check", "mod_omd_workflow_review", "mod_omd_workflow_self_verify", "mod_omd_workflow_complete", "mod_omd_coordination_delegate", "mod_omd_coordination_investigate", "mod_omd_coordination_investigation_result", "mod_omd_recovery_recover", "mod_omd_recovery_advice", "mod_omd_recovery_delegate", "mod_omd_verification_gate_seal_candidate"]},
     {"type": "event", "event": "context", "payload": {"thread_id": "task", "turn_id": "one", "checkpoint": {"remaining_work": ["fix src/view.ts"]}}},
     {"type": "event", "event": "compaction", "payload": {"token_limit": 20000, "context_window": 30000}},
     {"type": "reload"},

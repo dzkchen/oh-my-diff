@@ -1,6 +1,91 @@
 {
   "schema": 1,
+  "packages": [
+    "../omd_repository_analysis"
+  ],
   "steps": [
-    { "type": "invoke", "mod": "omd_graph_navigator", "event": "command", "name": "select", "payload": "unknown", "expect": { "display": "select a visible graph node first" } }
+    {
+      "type": "event",
+      "event": "channel",
+      "payload": {
+        "channel": "omd_graph_navigator/request",
+        "data": {
+          "op": "select",
+          "argument": "unknown"
+        }
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_graph_navigator",
+      "event": "terminal",
+      "name": "",
+      "payload": {
+        "event": "idle",
+        "ledger": null
+      },
+      "expect": {
+        "sites": {
+          "dialog": {
+            "mode": "replace",
+            "components": [
+              {
+                "type": "dialog",
+                "id": "omd_graph_dialog",
+                "label": "Oh My Diff code graph",
+                "title": "Oh My Diff code/impact graph",
+                "children": [
+                  {
+                    "type": "text",
+                    "id": "omd_graph_repository",
+                    "label": "Repository",
+                    "text": "select a visible graph node first",
+                    "tone": "failure"
+                  },
+                  {
+                    "type": "input",
+                    "id": "omd_graph_query",
+                    "label": "Search graph",
+                    "value": "",
+                    "placeholder": "symbol, module, test, path",
+                    "action": {
+                      "command": "omd_graph_navigator:graph",
+                      "args": "search"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "id": "omd_graph_empty",
+                    "label": "Nodes",
+                    "text": "Graph unavailable",
+                    "tone": "muted"
+                  },
+                  {
+                    "type": "button",
+                    "id": "omd_graph_refresh",
+                    "label": "Refresh live source graph",
+                    "text": "Refresh",
+                    "action": {
+                      "command": "omd_graph_navigator:graph",
+                      "args": "refresh"
+                    }
+                  },
+                  {
+                    "type": "button",
+                    "id": "omd_graph_close",
+                    "label": "Close graph navigator",
+                    "text": "Close",
+                    "action": {
+                      "command": "omd_graph_navigator:graph",
+                      "args": "close"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
   ]
 }

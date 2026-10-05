@@ -1,6 +1,6 @@
 {
   "schema": 1,
   "steps": [
-    { "type": "invoke", "mod": "omd_inspector", "event": "command", "name": "close", "payload": "" }
+    { "type": "invoke", "mod": "omd_inspector", "event": "command", "name": "inspect", "payload": "close" }
   ]
 }

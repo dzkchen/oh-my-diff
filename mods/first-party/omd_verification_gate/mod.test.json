@@ -13,7 +13,8 @@
             "id": "omd_verification_gate"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       },
       {
@@ -23,7 +24,8 @@
             "id": "omd_verification_gate"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       },
       {
@@ -33,7 +35,8 @@
             "id": "omd_verification_gate"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       },
       {
@@ -43,7 +46,8 @@
             "id": "omd_verification_gate"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       },
       {
@@ -53,7 +57,8 @@
             "id": "omd_verification_gate"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       },
       {
@@ -63,33 +68,8 @@
             "id": "omd_verification_gate"
           },
           "receipts": [],
-          "restrictions": []
-        }
-      }
-    ],
-    "task.status": [
-      {
-        "result": {
-          "ledger": {
-            "thread_id": "fixture-thread",
-            "cost": null
-          }
-        }
-      },
-      {
-        "result": {
-          "ledger": {
-            "thread_id": "fixture-thread",
-            "cost": null
-          }
-        }
-      },
-      {
-        "result": {
-          "ledger": {
-            "thread_id": "fixture-thread",
-            "cost": null
-          }
+          "restrictions": [],
+          "finding_ledger": {}
         }
       }
     ],
@@ -124,7 +104,9 @@
                 }
               ]
             },
-            "pending": null
+            "pending": null,
+            "revision": 1,
+            "operations": []
           },
           "revision": 1
         }
@@ -160,7 +142,9 @@
                 }
               ]
             },
-            "pending": null
+            "pending": null,
+            "revision": 1,
+            "operations": []
           },
           "revision": 1
         }
@@ -195,7 +179,9 @@
                 }
               ]
             },
-            "pending": null
+            "pending": null,
+            "revision": 1,
+            "operations": []
           },
           "revision": 1
         }
@@ -257,7 +243,10 @@
       "payload": {
         "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
-      "expect_error": "current complete acceptance assessments required before sealing"
+      "expect": {
+        "status": "refused",
+        "reason": "current complete acceptance assessments required before sealing"
+      }
     },
     {
       "type": "reload"
@@ -270,7 +259,10 @@
       "payload": {
         "candidate_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       },
-      "expect_error": "current complete acceptance assessments required before sealing"
+      "expect": {
+        "status": "refused",
+        "reason": "current complete acceptance assessments required before sealing"
+      }
     }
   ]
 }

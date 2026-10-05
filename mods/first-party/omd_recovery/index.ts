@@ -82,12 +82,15 @@ export default function activate(api: ModAPI) {
     return value;
   });
   tool({ name: 'delegate', label: 'Recovery-aware delegation', description: 'Apply coordination context and the explicitly selected bounded outage policy',
-    parameters: { type: 'object', properties: { brief: { type: 'string' }, selected_evidence: { type: 'array', items: { type: 'string' } } }, required: ['brief'], additionalProperties: false },
+    parameters: { type: 'object', properties: { brief: { type: 'string' }, selected_evidence: { type: 'array', items: { type: 'string' } },
+      operation_id: { type: 'string', description: 'Unique ID of this workflow delegation; reuse it only to retry the same call' },
+      expected_revision: { type: 'integer', description: 'Workflow task revision from the latest result' } }, required: ['brief', 'operation_id', 'expected_revision'], additionalProperties: false },
   }, input => {
+    const request = object(input);
     const prepared = object(api.services.call('omd.coordination', 'prepare_delegation', input));
     const outage = api.settings.outage_action === 'pause' ? 'pause' : 'opposite_lead';
     remember({ operation: 'delegation', outage_action: outage });
-    return api.services.call('omd.workflow', 'delegate', { ...prepared, outage_action: outage });
+    return api.services.call('omd.workflow', 'delegate', { ...prepared, outage_action: outage, operation_id: request.operation_id ?? null, expected_revision: request.expected_revision ?? null });
   });
   api.intercept('tool', { match: { tool: ['omd_escalate', 'omd_contribute'] } }, (e, next) =>
     next({ ...e, tool: e.tool === 'omd_escalate' ? 'mod_omd_recovery_recover' : 'mod_omd_recovery_delegate' }));

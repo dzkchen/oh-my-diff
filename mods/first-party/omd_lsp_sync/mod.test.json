@@ -1,6 +1,12 @@
 {
   "schema": 1,
   "host_operations": {
+    "store.get": [
+      {"result": null}
+    ],
+    "store.put": [
+      {"result": {"revision": 1}}
+    ],
     "process.which": [
       {"result": {"found": []}}
     ]

@@ -781,11 +781,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "a481cbcddd1d8fd194ff3cd2206125c43fa4759bb4d7ce5181236bc7b1f05609",
-        "mod.json": "e7aebbfc41f4205ad4163fda1872e52d6fae4ae1bcf230922b815560599ef7e5"
+        "index.ts": "ce8b9f61f532ec004b738e592f713e66af1a45e976742ee2827fb9333e6e62e9",
+        "mod.json": "8ac782fc7e46e1a39443d8a902a175b52090681909fd0e53b061e869ad880dea"
       },
       "id": "omd_typed_tasks",
-      "package_sha256": "53c541ae4fff93b399b60cff4c0f1b7f730d4e0421a94e1001f3794233c55dd9",
+      "package_sha256": "9aadd319594be5588ff29ca8bad0b5a123983256249c7b1966e68249c9a45547",
       "source": "mods/first-party/omd_typed_tasks",
       "version": "0.2.0-preview.1"
     },

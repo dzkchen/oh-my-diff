@@ -21,6 +21,7 @@
     "store",
     "tools"
   ],
+  "environment": ["crypto"],
   "settings_schema": {
     "type": "object",
     "properties": {
@@ -76,7 +77,9 @@
       "workspace_snapshots_v1",
       "snapshot_exec_v1",
       "store_v1",
-      "service_dispatch_v1"
+      "service_dispatch_v1",
+      "integration_receipts_v1",
+      "agent_lifecycle_v1"
     ]
   },
   "services": {

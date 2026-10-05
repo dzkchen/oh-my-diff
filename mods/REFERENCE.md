@@ -794,7 +794,7 @@ summed from `model_response` reports (`source: accounting`; `basis: unknown`
 when nothing was priced, `partial` when some responses were unpriced) or, for
 engine sub-agents outside OMD accounting such as review, the engine's token
 totals (`source: engine`, request count and cost unknown) and the failure or
-cancel reason.
+cancel reason. A mod worker's `agent_id` is its handle.
 At most 64 finished records are kept. The `agent` middleware event delivers
 `{phase: 'start' | 'turn' | 'end', agent}` with the same record. Observation
 grants nothing: `agents.message`, `agents.wait`, `agents.result` and
@@ -1783,8 +1783,9 @@ checked delta. It refuses conflicting parent edits, a changed candidate, a
 failed check or review, or a changed parent before apply. The native ledger
 owns allowance, permissions, lifecycle, and evidence. A failed apply retains
 diagnostic evidence and may need operator inspection; external concurrent
-writers are not locked. Cancellation, mod disable, and turn end retire owned
-handles and clean their worktrees. Direct mode never loads this mod.
+writers are not locked. Cancellation, a failed tool callback, mod disable or
+failure, and session stop retire owned handles and clean their worktrees; turn
+end does not. Direct mode never loads this mod.
 
 ## Workspace reads, transactions, and write observation
 

@@ -11,19 +11,19 @@
         "ledger": null
       },
       "expect": {
-        "foreground": 255,
-        "background": 235,
+        "foreground": 254,
+        "background": 234,
         "theme": {
-          "accent": "#80d8ff",
-          "success": "#91e6aa",
-          "attention": "#ffe08a",
-          "failure": "#ff9b9b",
-          "diff_added": "#91e6aa",
-          "diff_removed": "#ff9b9b",
-          "muted": "#b4beca",
-          "user_message_background": "#262626",
-          "border": "plain",
-          "density": "comfortable",
+          "accent": "#8fb8c9",
+          "success": "#9bd4a9",
+          "attention": "#e3c88f",
+          "failure": "#ef9f9f",
+          "diff_added": "#9bd4a9",
+          "diff_removed": "#ef9f9f",
+          "muted": "#9ba2ac",
+          "user_message_background": "#25272b",
+          "border": "rounded",
+          "density": "compact",
           "icons": "ascii",
           "glyphs": {},
           "syntax": "catppuccin-mocha"
@@ -31,15 +31,15 @@
         "greeting": "",
         "surface_styles": {
           "composer": {
-            "top": "#262626",
-            "bottom": "#262626",
-            "foreground": "#eeeeee",
+            "top": "#17191d",
+            "bottom": "#17191d",
+            "foreground": "#e3e5e8",
             "opacity": 1
           },
           "backdrop": {
-            "top": "#262626",
-            "bottom": "#262626",
-            "foreground": "#eeeeee",
+            "top": "#17191d",
+            "bottom": "#17191d",
+            "foreground": "#e3e5e8",
             "opacity": 1
           }
         },

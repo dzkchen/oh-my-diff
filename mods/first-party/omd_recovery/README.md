@@ -3,7 +3,8 @@
 Opt-in; needs `omd_coordination`. When an eligible tool step fails with an
 allowed failure class, `recover` escalates it to one bounded read-only advisory
 call on `advisory_route` with the exact failing evidence; `advice` returns the
-answer and `delegate` hands a repair to the workflow. `outage_action` decides
+answer and `delegate` hands a repair to the workflow with the caller's
+`operation_id` and `expected_revision`. `outage_action` decides
 what happens on a provider outage (`opposite_lead` or `pause`).
 
 `/omd_recovery:outage` shows the outage action and recorded decisions. Settings:

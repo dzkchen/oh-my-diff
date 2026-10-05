@@ -31,22 +31,6 @@
             "cost": null
           }
         }
-      },
-      {
-        "result": {
-          "ledger": {
-            "thread_id": "fixture-thread",
-            "cost": null
-          }
-        }
-      },
-      {
-        "result": {
-          "ledger": {
-            "thread_id": "fixture-thread",
-            "cost": null
-          }
-        }
       }
     ],
     "store.get": [
@@ -68,7 +52,9 @@
             ],
             "failed_hypotheses": [],
             "status": "active",
-            "decisions": []
+            "decisions": [],
+            "revision": 1,
+            "operations": []
           }
         }
       },
@@ -90,7 +76,9 @@
             ],
             "failed_hypotheses": [],
             "status": "active",
-            "decisions": []
+            "decisions": [],
+            "revision": 1,
+            "operations": []
           }
         }
       }
@@ -103,7 +91,8 @@
             "id": "reviewed_omd"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       },
       {
@@ -113,7 +102,8 @@
             "id": "reviewed_omd"
           },
           "receipts": [],
-          "restrictions": []
+          "restrictions": [],
+          "finding_ledger": {}
         }
       }
     ],

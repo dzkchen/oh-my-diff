@@ -22,6 +22,7 @@
     "interception",
     "lifecycle"
   ],
+  "environment": ["crypto"],
   "compatibility": {
     "required_features": [
       "contracts_v2",
@@ -36,6 +37,7 @@
       "task_resume_v1",
       "service_dispatch_v1",
       "integration_receipts_v1",
+      "agent_lifecycle_v1",
       "tool_result_fingerprints_v1"
     ]
   },

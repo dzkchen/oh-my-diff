@@ -82,8 +82,9 @@ export default function activate(api: ModAPI) {
       if (selected.length > 8) throw new Error('selected_evidence_limit');
       context = selected.length ? api.host.call('workspace.read', { paths: selected }) : { files: {} };
     } else if (policy === 'shared_task_packet') {
-      context = api.services.call('omd.workflow', 'status', null);
-      if (context && typeof context === 'object' && !Array.isArray(context) && context.status === 'refused') throw new Error(`task_packet_unavailable: ${String(context.reason)}`);
+      const task = api.services.call('omd.workflow', 'status', null);
+      if (!task || typeof task !== 'object' || Array.isArray(task) || task.status === 'refused') throw new Error(`task_packet_unavailable: ${String(task && typeof task === 'object' && !Array.isArray(task) ? task.reason : task)}`);
+      context = { objective: task.objective, acceptance_criteria: task.acceptance_criteria, remaining_work: task.remaining_work, failed_hypotheses: task.failed_hypotheses };
     } else {
       context = { delivery: 'host-frozen parent history, including tool records' };
     }
@@ -123,16 +124,19 @@ export default function activate(api: ModAPI) {
       description: 'Apply the selected worker-context policy and run the workflow mod reviewed contribution',
       parameters: {
         type: 'object',
-        properties: { brief: { type: 'string' }, selected_evidence: { type: 'array', items: { type: 'string' } } },
-        required: ['brief'],
+        properties: { brief: { type: 'string' }, selected_evidence: { type: 'array', items: { type: 'string' } },
+          operation_id: { type: 'string', description: 'Unique ID of this workflow delegation; reuse it only to retry the same call' },
+          expected_revision: { type: 'integer', description: 'Workflow task revision from the latest result' } },
+        required: ['brief', 'operation_id', 'expected_revision'],
       },
     },
     argument => {
       const policy = contextPolicy();
       const prepared = prepareDelegation(argument);
+      const request = argument && typeof argument === 'object' && !Array.isArray(argument) ? argument : {};
       api.progress(`worker context: ${policy}`);
       try {
-        return api.services.call('omd.workflow', 'delegate', prepared);
+        return api.services.call('omd.workflow', 'delegate', { ...(prepared as Record<string, Json>), operation_id: request.operation_id ?? null, expected_revision: request.expected_revision ?? null });
       } catch (error) {
         return failed(error);
       }
