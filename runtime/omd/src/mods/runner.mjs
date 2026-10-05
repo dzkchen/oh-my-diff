@@ -61,6 +61,7 @@ const interceptors = [];
 const surface = request.surface;
 registrations.services = [];
 registrations.virtual_reads = [];
+registrations.agents = [];
 const serviceHandlers = new Map();
 const virtualReaders = new Map();
 const updates = [];
@@ -385,6 +386,12 @@ const api = Object.freeze({
     if (dynamicTools || typeof handler !== 'function') throw new Error('conflict: dynamicTools');
     dynamicTools = handler;
     registrations.dynamic_tools = true;
+  },
+  agent(definition) {
+    requireCapability('agents');
+    if (!activating) throw new Error('agent_registration_outside_activation');
+    if (registrations.agents.some(entry => entry.name === definition?.name)) throw new Error('conflict: ' + definition?.name);
+    registrations.agents.push(structuredCloneFallback(definition));
   },
   tool(spec, handler) {
     requireCapability('tools');

@@ -42,7 +42,7 @@ native work.
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `unix_sockets` | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` and `model_response` events |
-| `agents` | `agents.*`, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
+| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
@@ -67,6 +67,8 @@ native work.
 | `fs.external` | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
 | `mcp` | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
+| `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
+| `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -76,7 +78,7 @@ the mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve` and `approve.override` are authority grants. The manifest
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers` and `autonomous` are authority grants. The manifest
 declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
@@ -742,6 +744,109 @@ thread identity, original limits and saved journal must validate. Implicit
 reopening, changed limits and completed tasks are refused. Agent handles and snapshot handles do not survive process restart;
 mods must reconcile saved pending work without silently spawning replacements.
 
+### Agent definitions, inventory and spawn interception (`agent_lifecycle_v1`)
+
+`api.agent({name, description, instructions, route?, effort?, tools?, offer?})`
+registers up to 8 definitions per mod during activation, named
+`<mod>/<name>`. Configured and built-in role names always win. With `offer:
+true` the definition appears in the native `spawn_agent` role list (after
+`agent_offers` interceptors, which may drop or re-describe offers but never add,
+rename or reassign one). A model that names it, or a mod that calls
+`agents.spawn {definition, prompt}`, gets the definition's instructions as
+subordinate developer instructions, its route (a lead route on the thread's own
+provider for native spawns, a worker route for mod spawns), its effort and, when
+`tools` is set, only those tools: other tools are hidden from the child and
+refused if called (`agent_tool_denied`). A definition that disappears with its
+mod's reload or disable can no longer be spawned (`agent_definition_unavailable`);
+running agents keep going and their inventory records keep the source digest.
+
+`agent_spawn` interceptors see every model `spawn_agent` call and every mod
+`agents.spawn` as `{origin, caller, thread_id, agent_id, definition, prompt,
+model, effort, cwd, tools}`. They may change `definition` (retarget), `prompt`,
+`model`, `effort`, `cwd` (native spawns only: the session root or one of its
+`git worktree list` entries) and `tools` (narrow only), or answer `{deny}`.
+`next` runs the spawn and resolves `{agent_id, output, success}`; outer handlers
+may rewrite `output` but not the identity or outcome. A `cwd` or `tools` change
+on a configured role is refused (`agent_spawn_override_requires_definition`):
+express it as a definition. The host re-checks route admission, worker limits
+and the parent's permission profile after the transform; nested tool and model
+calls of the child go through interception and admission as usual. With
+`agent_spawn` interceptors registered, native spawn calls reach them instead of
+`tool` interceptors.
+
+`agents.inventory` returns every agent of the session: model spawns, mod workers
+and engine-started sub-agents (`origin`), each with parent thread and agent,
+owner mod, definition and source digest, role, status (`running`, `completed`,
+`failed`, `cancelled`), start and end time, duration, turn count, the last turn's
+outcome and visible answer, the final visible answer (4,096 characters), usage
+summed from `model_response` reports (`source: accounting`; `basis: unknown`
+when nothing was priced, `partial` when some responses were unpriced) or, for
+engine sub-agents outside OMD accounting such as review, the engine's token
+totals (`source: engine`, request count and cost unknown) and the failure or
+cancel reason.
+At most 64 finished records are kept. The `agent` middleware event delivers
+`{phase: 'start' | 'turn' | 'end', agent}` with the same record. Observation
+grants nothing: `agents.message`, `agents.wait`, `agents.result` and
+`agents.cancel` still address only the caller's own handles.
+
+### Peer sessions (`peer_sessions_v1`)
+
+A mod with the `peers` authority grant declares `peer_access: {projects:
+"same" | "any"}`. While at least one loaded mod holds the grant, each lead thread
+registers a peer session in the mod store (`peers/`), live while its process
+holds the session lock. `peers.list {package?}` lists other live sessions where
+that package (the caller by default) accepts messages; sessions in other
+repositories appear only when both packages declare `"any"`. `peers.send {to,
+package?, data, correlation?, ttl_ms?}` (at most 64 KiB of data, TTL 1 s to 1 h,
+default 60 s, 64 waiting messages per recipient) writes the message to the
+recipient's mailbox and returns `{id, status: 'queued'}`; a closed recipient
+fails with `peer_closed`, a scope mismatch with `peer_scope_denied`.
+
+Every message and receipt is countersigned by the authority broker over the
+canonical digest of its sender identity (session, repository, package and source
+digest), recipient, correlation, data and expiry, so only pinned OMD binaries can
+mint one. Without a deployed broker every peer operation fails closed
+(`peers_unavailable`). The recipient session verifies the tag, drops replays of
+a message ID it already took, answers expired messages with `expired`, re-checks
+its own package's scope, runs `peer_receive` interceptors (which may transform
+`data` or refuse) and calls the package's `peer_message` handler with `untrusted:
+true`. Senders' `peer_send` interceptors may transform `data` or refuse before
+the message is written. The sender's package gets `peer_receipt` events:
+`delivered`, `refused` (with reason), `failed` (the handler threw), `expired`,
+or `closed` when the recipient's time ran out without a receipt and its session
+is gone. Receiving never starts a turn, changes roots or routes, or lends
+authority; a receiver that wants to act queues its own work under its own grants.
+Revoking or expiring the grant, disabling the mod or stopping the session closes
+the registration.
+
+### Autonomous turns (`autonomous_turns_v1`)
+
+A mod with the `autonomous` authority grant declares `autonomy: {max_queued
+(1-16), max_turns (1-100), max_continuations? (0-4), spend_microusd?}`.
+`turns.queue {prompt, key, priority?, deadline_ms?}` (8 KiB prompt; `high`,
+`normal` or `low`; deadline 1 s to 24 h) works from any callback, including
+timers, channels and peer messages, and queues the prompt for the caller's lead
+thread; a key already queued by the same mod returns `duplicate`. The host
+starts the best entry (priority, then age) one second after the thread goes
+idle, through the engine's start-if-idle path, so typed input that arrives first
+wins and the entry waits for the next idle. The turn's message begins with
+`[Queued by mod <id> on <event> (key <key>); not typed by the user]`, its trigger
+is `mod:<id>`, the `prompt` event's `provenance` and the `input` interceptors'
+`origin` name the package, source digest, originating event and key. The turn
+keeps the thread's route, permissions and approvals. `turns.queued` lists the
+caller's entries, turns started and settled spend; `turns.dequeue {key}` removes
+one. The owner gets `turn_queue` events: `started`, `expired`, `dropped`
+(`stale_generation` after a source change or unload, `grant_expired`), `denied`
+(`turn_budget_exhausted`, `spend_budget_exhausted`) and `failed`.
+
+Interrupting a turn (Esc) pauses every mod queue of the thread until the user
+next sends input; disabling the mod or revoking its grant drops its entries.
+`turn_stop` interceptors run when the model would end a lead turn, with `{turn_id,
+message, continued, limit, provenance}`; answering `{continue: prompt}` keeps the
+same turn sampling with a labelled continuation, at most `max_continuations` per
+turn for that mod and 4 in total. Continuations cannot mark verifiers passed or
+submit receipts; a failed turn can only be retried by queuing a new prompt.
+
 ### Framed processes
 
 `process.start` takes `framing: "content-length"` (default) or `"ndjson"` and
@@ -1002,7 +1107,7 @@ only the session; read the exit status with `process.status`.
 `events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
 `{key}` to the calling mod after 1 s to 24 h; scheduling a key again replaces
 it, `events.cancel {key}` stops it, 16 timers per mod. A timer never starts a
-turn.
+turn by itself; only `turns.queue` under an `autonomous` grant can.
 
 ### Credentials, secrets and routes (`credentials_v1`, `secrets_v1`)
 

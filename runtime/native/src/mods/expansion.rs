@@ -81,6 +81,11 @@ pub(super) struct State {
     pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
     pub(super) invoked: Mutex<BTreeMap<String, String>>,
     pub(super) invocations: AtomicU64,
+    pub(super) definitions: Mutex<Vec<codex_omd::ModAgentDefinition>>,
+    pub(super) agent_offers: Mutex<Option<bool>>,
+    pub(super) agent_spawn: Mutex<Option<bool>>,
+    pub(super) turn_stop: Mutex<Option<bool>>,
+    pub(super) peers: AtomicBool,
 }
 
 struct Delivery {
@@ -178,6 +183,26 @@ impl State {
         if let Ok(mut subscriptions) = self.subscriptions.lock() {
             *subscriptions = runtime.subscriptions();
         }
+        if let Ok(mut definitions) = self.definitions.lock() {
+            *definitions = runtime.agent_definitions();
+        }
+        if let Ok(mut offers) = self.agent_offers.lock() {
+            *offers = runtime.intercepts("agent_offers");
+        }
+        if let Ok(mut spawn) = self.agent_spawn.lock() {
+            *spawn = runtime.intercepts("agent_spawn");
+        }
+        if let Ok(mut stop) = self.turn_stop.lock() {
+            *stop = runtime.intercepts("turn_stop");
+        }
+        self.peers.store(
+            runtime.owners().iter().any(|(id, _)| {
+                runtime
+                    .grants(id)
+                    .is_some_and(|grants| grants.peer_access.is_some())
+            }),
+            Ordering::Release,
+        );
         let recording = runtime.uses_operation("turns.activity");
         self.recording.swap(recording, Ordering::AcqRel) && !recording
     }
@@ -201,6 +226,9 @@ pub(super) fn event_allows(event: &str) -> bool {
             | "timer"
             | "tool_output"
             | "model_response"
+            | "turn_queue"
+            | "peer_message"
+            | "peer_receipt"
     )
 }
 

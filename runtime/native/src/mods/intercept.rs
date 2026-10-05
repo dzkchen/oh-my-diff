@@ -86,6 +86,10 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
     core.host.accounts.install_mod_notifier(Arc::new(
         move |event: &'static str, payload: Value| {
             if let Some(core) = notified.upgrade() {
+                if event == "model_response" {
+                    core.inventory.usage(&payload);
+                    core.autonomy.charge(&payload);
+                }
                 expansion::broadcast(&core.expansion, event, payload);
             }
         },

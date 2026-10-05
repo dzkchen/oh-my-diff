@@ -51,6 +51,8 @@ struct Link {
 pub(super) enum Core<'c> {
     Call(&'c mut dyn FnMut(Value) -> Result<Value>),
     Host { caller: String, generation: u64 },
+    Spawn { caller: String, arguments: Value },
+    Peer { caller: String, arguments: Value },
 }
 
 type HostFn<'h> = dyn FnMut(&str, ModHostCall) -> Result<Value> + 'h;
@@ -206,6 +208,9 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "config_list" => &["rows"],
         "config_set" => &["value"],
         "render" => &["props"],
+        "agent_offers" => &["offers"],
+        "agent_spawn" => &["definition", "prompt", "model", "effort", "cwd", "tools"],
+        "peer_send" | "peer_receive" => &["data"],
         _ => &[],
     };
     let (Some(original), Some(object)) = (before.as_object(), input.as_object()) else {
@@ -252,6 +257,13 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
             .is_some_and(|args| args.len() <= 8192),
         "config_set" => serde_json::to_vec(&input["value"])?.len() <= 65_536,
         "render" => render::valid_input(before, input),
+        "host_operation" => {
+            input["operation"] != "turns.queue"
+                || input["arguments"]["event"] == before["arguments"]["event"]
+        }
+        "agent_offers" => offers(&input["offers"], &original["offers"]),
+        "agent_spawn" => spawn_request(input, before),
+        "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
         _ => true,
     };
     if unchanged && typed {
@@ -289,6 +301,67 @@ fn tool_specs(tools: &Value, given: &Value) -> bool {
                 && (tool["parameters"].is_object() || tool["parameters"].is_null())
                 && tool["deferred"].is_boolean()
         })
+}
+
+/// Agent offers may be dropped or re-described, never added, renamed or reassigned.
+fn offers(offers: &Value, given: &Value) -> bool {
+    let given = given
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|offer| Some((offer["name"].as_str()?, offer)))
+        .collect::<BTreeMap<_, _>>();
+    let Some(offers) = offers.as_array() else {
+        return false;
+    };
+    let names = offers
+        .iter()
+        .filter_map(|offer| offer["name"].as_str())
+        .collect::<BTreeSet<_>>();
+    names.len() == offers.len()
+        && offers.iter().all(|offer| {
+            offer["name"]
+                .as_str()
+                .and_then(|name| given.get(name))
+                .is_some_and(|original| {
+                    offer.as_object().is_some_and(|object| object.len() == 3)
+                        && offer["owner"] == original["owner"]
+                        && offer["description"].as_str().is_some_and(|text| {
+                            !text.trim().is_empty() && text.chars().count() <= 512
+                        })
+                })
+        })
+}
+
+/// Spawn requests keep their shape; tool lists may only narrow.
+fn spawn_request(input: &Value, before: &Value) -> bool {
+    let text = |value: &Value, limit: usize| {
+        value
+            .as_str()
+            .is_some_and(|text| !text.is_empty() && text.len() <= limit)
+    };
+    fn names(value: &Value) -> Option<BTreeSet<&str>> {
+        value
+            .as_array()
+            .map(|tools| tools.iter().filter_map(Value::as_str).collect())
+    }
+    text(&input["prompt"], 61_440)
+        && (input["definition"].is_null() || text(&input["definition"], 128))
+        && (input["model"].is_null() || text(&input["model"], 128))
+        && (input["effort"].is_null()
+            || input["effort"]
+                .as_str()
+                .is_some_and(|effort| crate::model_request::EFFORTS.contains(&effort)))
+        && (input["cwd"] == before["cwd"]
+            || text(&input["cwd"], 4096) && Path::new(input["cwd"].as_str().unwrap_or("")).is_absolute())
+        && match (names(&input["tools"]), names(&before["tools"])) {
+            (None, None) => input["tools"].is_null(),
+            (Some(tools), None) => {
+                tools.len() <= 32 && input["tools"].as_array().is_some_and(|t| t.len() == tools.len())
+            }
+            (Some(tools), Some(given)) => tools.is_subset(&given),
+            (None, Some(_)) => false,
+        }
 }
 
 /// List rows may be hidden, re-described or hinted, never added, renamed or changed when protected, managed or secret.
@@ -423,6 +496,28 @@ fn validate_result(
                 }
         }
         "render" => render::valid_result(result),
+        "agent_offers" => {
+            object.is_some_and(|object| object.len() == 1)
+                && last.is_some_and(|last| offers(&result["offers"], &last["offers"]))
+        }
+        "agent_spawn" => {
+            deny || last.is_some_and(|last| {
+                object.is_some_and(|object| {
+                    object.keys().all(|key| ["agent_id", "output", "success"].contains(&key.as_str()))
+                }) && result["agent_id"] == last["agent_id"]
+                    && result["success"] == last["success"]
+                    && result["output"]
+                        .as_str()
+                        .is_some_and(|output| output.len() <= RESULT_BYTES)
+            })
+        }
+        "peer_send" | "peer_receive" => deny,
+        "turn_stop" => {
+            object.is_some_and(|object| object.len() == 1)
+                && result["continue"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty() && text.len() <= 8192)
+        }
         "model_request" => deny || last.is_none() && crate::model_request::valid_answer(result),
         "response_stream" => crate::model_request::valid_stream_result(result, input),
         "model_send" => {
@@ -576,6 +671,18 @@ impl Chain {
                 Core::Call(run) => run(input.clone()),
                 Core::Host { caller, generation } => {
                     effective_call(access, host, caller, *generation, &input, active, scope)
+                }
+                Core::Spawn { caller, arguments } => {
+                    spawn_call(access, host, caller, arguments, &input)
+                }
+                Core::Peer { caller, arguments } => {
+                    let mut arguments = arguments.clone();
+                    arguments["data"] = input["data"].clone();
+                    let call = ModHostCall {
+                        operation: "peers.send".into(),
+                        arguments,
+                    };
+                    forward(access, host, caller, call).map(|receipt| json!({"receipt": receipt}))
                 }
             };
             self.executed |= result.is_ok();
@@ -892,6 +999,64 @@ pub fn access_receipt(
     Some(receipt)
 }
 
+/// Runs a mod's `agents.spawn` with the request its `agent_spawn` chain settled on.
+fn spawn_call(
+    access: &mut Access<'_>,
+    host: &mut HostFn<'_>,
+    caller: &str,
+    original: &Value,
+    input: &Value,
+) -> Result<Value> {
+    if !input["cwd"].is_null() || !input["effort"].is_null() {
+        return Err(failure(
+            "agent_spawn_unsupported: mod spawns choose their workspace and route, not cwd or effort",
+        ));
+    }
+    let mut arguments = original.clone();
+    for (field, key) in [
+        ("definition", "definition"),
+        ("prompt", "prompt"),
+        ("model", "route"),
+        ("tools", "tools"),
+    ] {
+        match &input[field] {
+            Value::Null => {
+                if let Some(object) = arguments.as_object_mut() {
+                    object.remove(key);
+                }
+            }
+            value => arguments[key] = value.clone(),
+        }
+    }
+    let call = ModHostCall {
+        operation: "agents.spawn".into(),
+        arguments,
+    };
+    let value = forward(access, host, caller, call)?;
+    Ok(json!({"agent_id": value["handle"], "output": value.to_string(), "success": true}))
+}
+
+fn forward(
+    access: &mut Access<'_>,
+    host: &mut HostFn<'_>,
+    caller: &str,
+    call: ModHostCall,
+) -> Result<Value> {
+    let request = call.clone();
+    let result = host(caller, call);
+    if let Some(receipt) = access_receipt(
+        caller,
+        &request,
+        result.as_ref().map_err(ToString::to_string),
+    ) {
+        let _ = access.with(|runtime| {
+            runtime.record_access(receipt);
+            Ok(())
+        });
+    }
+    result
+}
+
 /// Runs a host call for `caller`, routing service calls to their provider.
 pub(super) fn dispatch(
     access: &mut Access<'_>,
@@ -902,20 +1067,70 @@ pub(super) fn dispatch(
     active: &dyn Fn() -> bool,
     scope: &InvocationScope,
 ) -> Result<Value> {
-    if call.operation != "mods.service" {
-        let request = call.clone();
-        let result = host(caller, call);
-        if let Some(receipt) = access_receipt(
-            caller,
-            &request,
-            result.as_ref().map_err(ToString::to_string),
-        ) {
-            let _ = access.with(|runtime| {
-                runtime.record_access(receipt);
-                Ok(())
-            });
+    if call.operation == "agents.spawn"
+        && call.arguments.is_object()
+        && let Some(required) = access
+            .with(|runtime| Ok(runtime.intercepts("agent_spawn")))
+            .ok()
+            .flatten()
+    {
+        let field = |key: &str| call.arguments.get(key).cloned().unwrap_or(Value::Null);
+        let input = json!({"origin": "mod", "caller": caller, "thread_id": bound_thread(),
+            "agent_id": null, "definition": field("definition"), "prompt": field("prompt"),
+            "model": field("route"), "effort": null, "cwd": null, "tools": field("tools")});
+        let origin = json!({"caller": caller, "thread_id": bound_thread()});
+        let chain = intercept(
+            access,
+            host,
+            &mut Core::Spawn {
+                caller: caller.to_owned(),
+                arguments: call.arguments,
+            },
+            "agent_spawn",
+            required,
+            input,
+            origin,
+            active,
+            scope,
+        )?;
+        if let Some(reason) = chain.result["deny"].as_str() {
+            return Err(failure(format!("agent_spawn_denied: {reason}")));
         }
-        return result;
+        return serde_json::from_str(chain.result["output"].as_str().unwrap_or_default())
+            .map_err(|_| failure("agent_spawn_result_unavailable"));
+    }
+    if call.operation == "peers.send"
+        && call.arguments.is_object()
+        && let Some(required) = access
+            .with(|runtime| Ok(runtime.intercepts("peer_send")))
+            .ok()
+            .flatten()
+    {
+        let input = json!({"to": {"session": call.arguments["to"], "package": call.arguments.get("package").cloned().unwrap_or(json!(caller))},
+            "correlation": call.arguments.get("correlation").cloned().unwrap_or(Value::Null),
+            "data": call.arguments.get("data").cloned().unwrap_or(Value::Null)});
+        let origin = json!({"caller": caller, "thread_id": bound_thread()});
+        let chain = intercept(
+            access,
+            host,
+            &mut Core::Peer {
+                caller: caller.to_owned(),
+                arguments: call.arguments,
+            },
+            "peer_send",
+            required,
+            input,
+            origin,
+            active,
+            scope,
+        )?;
+        if let Some(reason) = chain.result["deny"].as_str() {
+            return Err(failure(format!("peer_send_denied: {reason}")));
+        }
+        return Ok(chain.result["receipt"].clone());
+    }
+    if call.operation != "mods.service" {
+        return forward(access, host, caller, call);
     }
     let mut guarded = |caller: &str, call: ModHostCall| {
         if matches!(call.operation.as_str(), "tools.define" | "tools.undefine") {
@@ -970,6 +1185,18 @@ pub(super) fn intercept(
             Core::Call(run) => run(input.clone()),
             Core::Host { caller, generation } => {
                 effective_call(access, host, caller, *generation, &input, active, scope)
+            }
+            Core::Spawn { caller, arguments } => {
+                spawn_call(access, host, caller, arguments, &input)
+            }
+            Core::Peer { caller, arguments } => {
+                let mut arguments = arguments.clone();
+                arguments["data"] = input["data"].clone();
+                let call = ModHostCall {
+                    operation: "peers.send".into(),
+                    arguments,
+                };
+                forward(access, host, caller, call).map(|receipt| json!({"receipt": receipt}))
             }
         }?;
         return Ok(ModChain {

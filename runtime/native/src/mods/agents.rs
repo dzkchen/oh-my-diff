@@ -412,15 +412,6 @@ struct Notifier {
 }
 
 impl Notifier {
-    fn agent(&self, payload: Value) {
-        let runtime = self.runtime.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Ok(mut runtime) = runtime.lock() {
-                let _ = runtime.event("agent", payload);
-            }
-        });
-    }
-
     fn agent_end(&self, mod_id: String, generation: u64, payload: Value, lead: Lead) {
         let handle = tokio::runtime::Handle::current();
         let notifier = self.clone();
@@ -714,9 +705,13 @@ impl Drop for Agent {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Spawn {
+    #[serde(default)]
     role: String,
+    #[serde(default)]
     route: String,
     prompt: String,
+    #[serde(default)]
+    definition: Option<String>,
     #[serde(default)]
     workspace: Option<String>,
     #[serde(default)]
@@ -1471,6 +1466,9 @@ impl Agents {
             }
             _ => {}
         }
+        if request.operation == "agents.inventory" {
+            return Ok(json!({"agents": core.inventory.list()}));
+        }
         if request.operation == "agents.list" {
             let mut listed = Vec::new();
             for (id, slot) in self.slots().await {
@@ -1496,6 +1494,15 @@ impl Agents {
         match request.operation.as_str() {
             "agents.cancel" => {
                 agent.shutdown().await;
+                if let Some(thread) = handle.handle.strip_prefix(&format!("mod-{}-", agent.mod_id))
+                    && let Some(record) = core.inventory.end(
+                        thread,
+                        "cancelled",
+                        Some(format!("cancelled by {}", caller.id)),
+                    )
+                {
+                    inventory::notify(&self.notifier.runtime, "end", record);
+                }
                 self.remove(&handle.handle, &slot).await;
                 Ok(json!({"cancelled":true}))
             }
@@ -1847,13 +1854,42 @@ impl Agents {
         lead: &Lead,
         caller: &operations::Caller<'_>,
         value: Value,
-        shape: Shape,
+        mut shape: Shape,
     ) -> Result<Value, String> {
         let mut request: Spawn = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let definition = match &request.definition {
+            Some(name) => Some(
+                core.definition(name)
+                    .ok_or_else(|| format!("unknown_agent_definition: {name}"))?,
+            ),
+            None => None,
+        };
+        if let Some(definition) = &definition {
+            if request.role.is_empty() {
+                request.role = definition.agent.name.clone();
+            }
+            if request.route.is_empty() {
+                request.route = definition
+                    .agent
+                    .route
+                    .clone()
+                    .ok_or("agent_definition_route_required")?;
+            }
+            if let Some(defined) = &definition.agent.tools {
+                request.tools = Some(match request.tools.take() {
+                    Some(tools) => tools.into_iter().filter(|tool| defined.contains(tool)).collect(),
+                    None => defined.clone(),
+                });
+            }
+            if shape.effort.is_none() {
+                shape.effort = definition.agent.effort.clone();
+            }
+        }
         if request.prompt.is_empty()
             || request.prompt.len() > 8192
             || request.role.is_empty()
             || request.role.len() > 64
+            || request.route.is_empty()
         {
             return Err("agent_prompt_or_role_limit".into());
         }
@@ -2132,6 +2168,16 @@ impl Agents {
                 context
             ));
         }
+        if let Some(definition) = &definition {
+            config.developer_instructions = Some(format!(
+                "{}\nAgent definition {}/{} from mod {}, subordinate to the role above and current user instructions:\n{}",
+                config.developer_instructions.take().unwrap_or_default(),
+                definition.owner,
+                definition.agent.name,
+                definition.owner,
+                definition.agent.instructions
+            ));
+        }
         if let Some(system) = &shape.system {
             config.developer_instructions = Some(format!(
                 "{}\nInstructions from mod {}, subordinate to the role above and current user instructions:\n{system}",
@@ -2253,7 +2299,6 @@ impl Agents {
         let notifier = self.notifier.clone();
         let start_role = request.role.clone();
         let parent_agent = lead.owner.clone();
-        let end_parent_agent = parent_agent.clone();
         let role = request.role;
         let owning_mod = caller.id.to_owned();
         let generation = caller.generation;
@@ -2345,13 +2390,26 @@ impl Agents {
                 Err(error) => json!({"handle":handle,"role":role,"status":"failed","error":error,
                     "failure":failed.lock().ok().and_then(|failure| failure.clone())}),
             };
+            if let Some(core) = notifier.core.upgrade() {
+                let thread = thread_id.to_string();
+                let record = match &completed {
+                    Ok(text) => {
+                        core.inventory.answer(&thread, text);
+                        core.inventory.turn(&thread, "", "completed");
+                        core.inventory.end(&thread, "completed", None)
+                    }
+                    Err(error) => {
+                        core.inventory.turn(&thread, "", "error");
+                        core.inventory.end(&thread, "failed", Some(error.clone()))
+                    }
+                };
+                if let Some(record) = record {
+                    inventory::notify(&notifier.runtime, "end", record);
+                }
+            }
             if let Ok(mut output) = output.lock() {
                 *output = Some(completed);
             }
-            notifier.agent(
-                json!({"phase":"end","agent_id":handle,"parent_agent_id":end_parent_agent,
-                "role":role,"status":payload["status"]}),
-            );
             notifier.agent_end(owning_mod, generation, payload, end_lead);
         });
         self.records.lock().await.insert(
@@ -2376,10 +2434,15 @@ impl Agents {
             })),
         );
         admission.transferred = true;
-        self.notifier.agent(
-            json!({"phase":"start","agent_id":id,"parent_agent_id":parent_agent,
-            "role":start_role,"status":"running"}),
+        let record = core.inventory.start(
+            &thread_id.to_string(),
+            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
+                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
+                "role": start_role, "route": request.route,
+                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
+                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
         );
+        inventory::notify(&self.notifier.runtime, "start", record);
         Ok(
             json!({"handle":id,"route":request.route,"permissions":if writable {"isolated_worktree"} else {"read_only"},
                 "parent_history": history.map(|(_, provenance)| provenance)}),

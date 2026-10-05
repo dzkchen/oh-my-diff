@@ -99,7 +99,10 @@ impl ToolOutputContributor for Mods {
             let mut text = None;
             let mut replaced_by = "feedback".to_owned();
             match self.resume(input.call_id, Ok(executed.clone())).await {
-                Some(Ok(chain)) if chain.result != executed => {
+                Some(Ok(chain))
+                    if chain.result.get("deny").is_some()
+                        || chain.result["output"] != executed["output"] =>
+                {
                     replaced_by = super::super::intercept::settled_by(&chain);
                     text = Some(match chain.result["deny"].as_str() {
                         Some(reason) => format!("mod_tool_denied: {replaced_by}: {reason}"),

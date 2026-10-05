@@ -37,6 +37,7 @@ pub(super) fn adjustment(original: &[Value], tools: &Value) -> ToolSpecAdjustmen
 impl ToolSpecContributor for Mods {
     fn adjusting(&self, thread_store: &ExtensionData) -> bool {
         self.expansion.tool_specs.load(Ordering::Acquire) && lead_thread(thread_store)
+            || thread_store.get::<roles::AgentTools>().is_some()
     }
 
     fn adjust_tool_specs(
@@ -44,6 +45,16 @@ impl ToolSpecContributor for Mods {
         thread_store: &ExtensionData,
         specs: &[ToolSpecView],
     ) -> Option<ToolSpecAdjustment> {
+        if let Some(allowed) = thread_store.get::<roles::AgentTools>() {
+            return Some(ToolSpecAdjustment {
+                hide: specs
+                    .iter()
+                    .filter(|spec| !allowed.0.contains(&spec.name))
+                    .map(|spec| spec.name.clone())
+                    .collect(),
+                ..ToolSpecAdjustment::default()
+            });
+        }
         if !self.adjusting(thread_store) {
             return None;
         }

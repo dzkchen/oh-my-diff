@@ -181,6 +181,24 @@ pub struct Anchor {
     pub last: Option<String>,
 }
 
+fn hmac(key: &[u8], message: &[u8]) -> String {
+    let mut block = [0u8; 64];
+    let used = key.len().min(64);
+    block[..used].copy_from_slice(&key[..used]);
+    let pad = |byte: u8| block.iter().map(|key| key ^ byte).collect::<Vec<_>>();
+    let inner = Sha256::new()
+        .chain_update(pad(0x36))
+        .chain_update(message)
+        .finalize();
+    format!(
+        "{:x}",
+        Sha256::new()
+            .chain_update(pad(0x5c))
+            .chain_update(inner)
+            .finalize()
+    )
+}
+
 pub fn chain(head: &str, sha256: &str) -> String {
     self::sha256(format!("{head}{sha256}").as_bytes())
 }
@@ -575,6 +593,21 @@ impl Broker {
                 policy[key] = arguments["value"].clone();
                 write_private(&path, &policy)?;
                 Value::Null
+            }
+            "peer.seal" | "peer.verify" => {
+                let entry = digest_text(&arguments, "sha256")?;
+                let path = self.root.join("peer-key.json");
+                let mut stored = read_json(&path, json!({}))?;
+                if !stored["key"].is_string() {
+                    stored = json!({"key": format!("{}{}", nonce()?, nonce()?)});
+                    write_private(&path, &stored)?;
+                }
+                let tag = hmac(stored["key"].as_str().unwrap_or_default().as_bytes(), entry.as_bytes());
+                if op == "peer.seal" {
+                    Value::String(tag)
+                } else {
+                    Value::Bool(text(&arguments, "tag")? == tag)
+                }
             }
             "anchor.get" | "anchor.append" | "anchor.seed" => {
                 let stream = text(&arguments, "stream")?;

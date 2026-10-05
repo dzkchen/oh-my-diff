@@ -252,3 +252,25 @@ fn deployed_broker_holds_credentials_and_detects_ledger_tampering() {
         "evidence_anchor_mismatch"
     );
 }
+
+#[test]
+fn peer_tags_verify_only_the_sealed_digest() {
+    let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
+    let mut client = Client::at(&socket).unwrap();
+    let digest = sha256(b"message");
+    let tag = client.call("peer.seal", json!({"sha256": digest})).unwrap();
+    assert_eq!(
+        client.call("peer.verify", json!({"sha256": digest, "tag": tag})).unwrap(),
+        true
+    );
+    assert_eq!(
+        client
+            .call("peer.verify", json!({"sha256": sha256(b"other"), "tag": tag}))
+            .unwrap(),
+        false
+    );
+    assert_eq!(
+        client.call("peer.seal", json!({"sha256": digest})).unwrap(),
+        tag
+    );
+}

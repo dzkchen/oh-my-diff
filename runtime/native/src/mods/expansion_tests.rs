@@ -87,6 +87,10 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         services: services::Services::default(),
         views,
         expansion: State::default(),
+        inventory: inventory::Inventory::default(),
+        autonomy: autonomy::Queues::default(),
+        peering: peering::Registry::default(),
+        this: core.clone(),
     });
     let thread = ThreadId::new();
     let session = host.open_session(thread, false).unwrap();
@@ -122,6 +126,7 @@ fn mods(core: &Arc<Core>) -> Mods {
         worktrees: Mutex::new(BTreeMap::new()),
         pending: Mutex::new(BTreeMap::new()),
         answered: Mutex::new(BTreeMap::new()),
+        child_errors: Mutex::new(BTreeMap::new()),
     }
 }
 
@@ -1867,5 +1872,430 @@ async fn structured_http_reassesses_redirects_streams_cancels_and_records_receip
     assert_eq!(
         (normalized["origin"].clone(), normalized["path"].clone()),
         (json!("https://api.example.com"), json!("/v1"))
+    );
+}
+
+fn caller<'a>(core: &Core, id: &'a str) -> Caller<'a> {
+    Caller {
+        id,
+        source: "",
+        grants: core.runtime.lock().unwrap().grants(id),
+        generation: 0,
+        origin: Origin::Event,
+        record_changes: false,
+    }
+}
+
+async fn settle<T>(check: impl Fn() -> Option<T>) -> T {
+    for _ in 0..200 {
+        if let Some(value) = check() {
+            return value;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("condition not reached");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "reviewer",
+            capabilities: &["agents"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.agent({ name: 'review', description: 'Reviews diffs', instructions: 'Review carefully.', tools: ['read_file'], offer: true });\n}\n",
+        },
+        Package {
+            id: "auditor",
+            capabilities: &["agents"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.agent({ name: 'review', description: 'Audits changes', instructions: 'Audit.' });\n  api.intercept('agent_offers', async (e, next) => { const r = await next(e); return { offers: r.offers.map(o => ({ ...o, description: o.description + ' [audited]' })) }; });\n  api.intercept('agent_spawn', (e, next) => {\n    if (e.model === 'huge') return { deny: 'model not allowed' };\n    if (e.prompt === 'escape') return next({ ...e, cwd: '/' });\n    return next({ ...e, definition: e.definition ?? 'auditor/review', tools: ['read_file'] });\n  });\n}\n",
+        },
+        Package {
+            id: "observer",
+            capabilities: &["agents", "events", "store"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.on('timer', () => { api.state.set({ spawn: api.host.tryCall('agents.spawn', { definition: 'reviewer/review', route: 'huge', prompt: 'look' }) }); });\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new(fixture.lead.thread.to_string()),
+        ExtensionData::new("turn-1".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+
+    use codex_extension_api::AgentRoleContributor as _;
+    use codex_extension_api::ToolSpecContributor as _;
+    let offered = mods.offered_agent_roles(&thread_store);
+    assert_eq!(offered.len(), 1);
+    assert_eq!(offered[0].name, "reviewer/review");
+    assert_eq!(offered[0].description, "Reviews diffs [audited] (mod reviewer)");
+    let role = std::fs::read_to_string(&offered[0].config_file).unwrap();
+    assert!(role.contains("Review carefully."), "{role}");
+    assert!(mods.resolve_agent_role(&thread_store, "auditor/review").is_some());
+    assert!(mods.resolve_agent_role(&thread_store, "missing/review").is_none());
+    assert!(mods.resolve_agent_role(&thread_store, "explorer").is_none());
+
+    static SPAWN: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("spawn_agent"));
+    let spawn = |call_id: &'static str, arguments: &'static str| {
+        let payload = Box::leak(Box::new(codex_tools::ToolPayload::Function {
+            arguments: arguments.to_owned(),
+        }));
+        ToolStartInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            root_turn_id: None,
+            call_id,
+            originating_item_id: None,
+            tool_name: &SPAWN,
+            mcp_tool: None,
+            permissions: Box::pin(async { None }),
+            payload,
+            conversation_history: Arc::new(NoHistory),
+            source: codex_extension_api::ToolCallSource::Direct,
+        }
+    };
+    let ToolInterception::Continue(Some((_, codex_tools::ToolPayload::Function { arguments }))) =
+        mods.intercept_tool(spawn("spawn-1", r#"{"message":"check","agent_type":"reviewer/review"}"#))
+            .await
+            .unwrap()
+    else {
+        panic!("the transformed spawn must reach the native executor");
+    };
+    let arguments: Value = serde_json::from_str(&arguments).unwrap();
+    let plan = arguments["agent_type"].as_str().unwrap().to_owned();
+    assert!(plan.starts_with("omd-agent-"), "{arguments}");
+    assert_eq!(arguments["message"], "check");
+    assert_eq!(
+        mods.replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id: "spawn-1",
+            tool_name: &SPAWN,
+            arguments: None,
+            success: true,
+            text: r#"{"agent_id":"child","nickname":null}"#,
+        })
+        .await,
+        None
+    );
+    let denied = mods
+        .intercept_tool(spawn("spawn-2", r#"{"message":"go","model":"huge"}"#))
+        .await
+        .unwrap_err();
+    assert!(denied.contains("model not allowed"), "{denied}");
+    let escaped = mods
+        .intercept_tool(spawn("spawn-3", r#"{"message":"escape"}"#))
+        .await
+        .unwrap_err();
+    assert!(escaped.contains("agent_spawn_cwd_outside_session"), "{escaped}");
+
+    let child = ThreadId::new();
+    let child_store = ExtensionData::new(child.to_string());
+    child_store.insert(Lead {
+        owner: format!("agent:{child}"),
+        depth: 1,
+        thread: child,
+        ..fixture.lead.clone()
+    });
+    mods.native_agent_started(
+        child,
+        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: fixture.lead.thread,
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: Some(plan),
+        }),
+        &child_store,
+    );
+    let hidden = mods
+        .adjust_tool_specs(
+            &child_store,
+            &[
+                codex_extension_api::ToolSpecView {
+                    name: "read_file".into(),
+                    description: String::new(),
+                    parameters: Value::Null,
+                },
+                codex_extension_api::ToolSpecView {
+                    name: "exec_command".into(),
+                    description: String::new(),
+                    parameters: Value::Null,
+                },
+            ],
+        )
+        .unwrap()
+        .hide;
+    assert_eq!(hidden, vec!["exec_command".to_owned()]);
+    static EXEC: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("exec_command"));
+    let refused = mods
+        .intercept_tool(ToolStartInput {
+            thread_store: &child_store,
+            tool_name: &EXEC,
+            ..spawn("child-1", r#"{"cmd":"ls"}"#)
+        })
+        .await
+        .unwrap_err();
+    assert!(refused.starts_with("agent_tool_denied"), "{refused}");
+    fixture
+        .core
+        .inventory
+        .start("review-thread", json!({"origin": "native", "role": "Review"}));
+    fixture.core.inventory.tokens(
+        "review-thread",
+        &codex_protocol::protocol::TokenUsage {
+            input_tokens: 40,
+            output_tokens: 3,
+            ..Default::default()
+        },
+    );
+    let review = fixture.core.inventory.list();
+    let review = review
+        .iter()
+        .find(|record| record["thread_id"] == "review-thread")
+        .unwrap();
+    assert_eq!(review["usage"]["source"], "engine");
+    assert_eq!(review["usage"]["input_tokens"], 40);
+    assert!(review["usage"]["microusd"].is_null());
+    fixture.core.inventory.usage(&json!({"scope": {"thread_id": child.to_string()},
+        "usage": {"input_tokens": 10, "output_tokens": 5}, "cost": {"microusd": 7}}));
+    fixture.core.inventory.answer(&child.to_string(), "looks fine");
+    mods.agent_turn(&child_store, &turn_store, "completed");
+    mods.on_thread_stop(ThreadStopInput {
+        session_store: &session_store,
+        thread_store: &child_store,
+    })
+    .await;
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let call = |operation: &str, arguments: Value| ModHostCall {
+        operation: operation.into(),
+        arguments,
+    };
+    let inventory = operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        caller(&fixture.core, "observer"),
+        None,
+        call("agents.inventory", Value::Null),
+        &cancelled,
+    )
+    .await
+    .unwrap();
+    let record = inventory["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["thread_id"] == child.to_string())
+        .unwrap();
+    assert_eq!(record["origin"], "model");
+    assert_eq!(record["definition"]["name"], "reviewer/review");
+    assert_eq!(record["status"], "completed");
+    assert_eq!(record["turns"], 1);
+    assert_eq!(record["answer"], "looks fine");
+    assert_eq!(record["usage"]["microusd"], 7);
+    assert_eq!(record["usage"]["basis"], "settled");
+    assert!(record["duration_ms"].is_u64());
+    let control = operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        caller(&fixture.core, "observer"),
+        None,
+        call("agents.cancel", json!({"handle": format!("agent:{child}")})),
+        &cancelled,
+    )
+    .await;
+    assert!(control.is_err(), "observing an agent must not grant control");
+
+    expansion::invoke_one(
+        &fixture.core,
+        &fixture.lead,
+        "observer".into(),
+        "timer",
+        json!({"key": "spawn"}),
+    )
+    .await;
+    let state = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(state["spawn"]["ok"], false);
+    assert!(
+        state["spawn"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("agent_spawn_denied: model not allowed"),
+        "{state}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt() {
+    let Some(fixture) = fixture(&[Package {
+        id: "monitor",
+        capabilities: &["events", "autonomous", "store"],
+        manifest: json!({"autonomy": {"max_queued": 2, "max_turns": 1, "max_continuations": 1}}),
+        source: "export default function (api) {\n  api.on('timer', () => { api.state.set({ queued: [\n    api.host.call('turns.queue', { prompt: 'check CI', key: 'ci' }),\n    api.host.call('turns.queue', { prompt: 'check CI', key: 'ci' }),\n    api.host.tryCall('turns.queue', { prompt: 'triage', key: 'triage', priority: 'high' }),\n    api.host.tryCall('turns.queue', { prompt: 'more', key: 'more' }),\n  ] }); });\n  api.on('turn_queue', e => { api.state.set({ ...api.state.get(), last: e }); });\n  api.intercept('turn_stop', (e, next) => e.continued === 0 ? { continue: 'verify once more' } : next(e));\n}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let core = &fixture.core;
+    let thread = fixture.lead.thread.to_string();
+    expansion::invoke_one(core, &fixture.lead, "monitor".into(), "timer", json!({"key": "poll"}))
+        .await;
+    let state = |key: &str| {
+        core.runtime.lock().unwrap().state("monitor").cloned().unwrap()[key].clone()
+    };
+    let queued = state("queued");
+    assert_eq!(queued[0]["status"], "queued");
+    assert_eq!(queued[1]["status"], "duplicate");
+    assert_eq!(queued[2]["ok"], true);
+    assert_eq!(queued[3]["error"], "turn_queue_full");
+
+    let grants = BTreeMap::from([(
+        "monitor".to_owned(),
+        core.runtime.lock().unwrap().grants("monitor").unwrap(),
+    )]);
+    let pick = |grants: &BTreeMap<String, codex_omd::ModGrants>| {
+        let mut notices = Vec::new();
+        let entry = core
+            .autonomy
+            .with(&thread, |queue| {
+                queue
+                    .pick(grants, codex_omd::peers::now_ms(), &mut notices)
+                    .map(|entry| entry.view())
+            })
+            .unwrap();
+        (entry, notices)
+    };
+    core.autonomy
+        .with(&thread, |queue| queue.running = Some("user".into()))
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+    assert_eq!(core.autonomy.running(&thread).as_deref(), Some("user"), "a busy thread keeps its queue");
+    core.autonomy.turn_ended(core, &fixture.lead, true);
+    assert_eq!(pick(&grants).0, None, "an interrupted thread pauses its queues");
+    core.autonomy.user_turn(&thread);
+    let (first, _) = pick(&grants);
+    assert_eq!(first.unwrap()["key"], "triage");
+    assert!(core.autonomy.take_submitting(&thread, "typed by the user").is_none());
+    let provenance = core
+        .autonomy
+        .take_submitting(
+            &thread,
+            "[Queued by mod monitor on timer (key triage); not typed by the user]\ntriage",
+        )
+        .unwrap();
+    assert_eq!(provenance["package"], "monitor");
+    assert_eq!(provenance["event"], "timer");
+    core.autonomy.with(&thread, |queue| queue.running = None).unwrap();
+    let mut stale = grants.clone();
+    stale.get_mut("monitor").unwrap().source_sha256 = "other".into();
+    let (none, notices) = pick(&stale);
+    assert_eq!(none, None);
+    assert_eq!(notices[0].1["reason"], "stale_generation");
+
+    let poll = || expansion::invoke_one(core, &fixture.lead, "monitor".into(), "timer", json!({"key": "poll"}));
+    poll().await;
+    core.autonomy
+        .with(&thread, |queue| {
+            queue.started.insert("monitor".into(), 1);
+        })
+        .unwrap();
+    let (none, notices) = pick(&grants);
+    assert_eq!(none, None);
+    assert_eq!(notices[0].1["reason"], "turn_budget_exhausted");
+
+    core.autonomy
+        .with(&thread, |queue| queue.started.clear())
+        .unwrap();
+    poll().await;
+    let last = settle(|| Some(state("last")).filter(|last| last["status"] == "failed")).await;
+    assert!(last["reason"].as_str().unwrap().contains("native_thread_manager_stopped"), "{last}");
+    assert!(core.autonomy.running(&thread).is_none(), "a failed start frees the queue");
+
+    let mods = mods(core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new(thread.clone()),
+        ExtensionData::new("turn-9".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let ask = |continued| {
+        mods.continue_turn(codex_extension_api::TurnContinueInput {
+            turn_id: "turn-9",
+            last_agent_message: Some("done"),
+            continued,
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+        })
+    };
+    let continuation = ask(0).await.unwrap();
+    assert_eq!(continuation.source, "mod:monitor");
+    assert!(continuation.prompt.ends_with("verify once more"));
+    assert!(ask(1).await.is_none());
+    assert!(ask(0).await.is_none(), "max_continuations bounds each turn");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_messages_pass_receive_interceptors_as_untrusted_data() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "chat",
+            capabilities: &["peers", "store"],
+            manifest: json!({"peer_access": {"projects": "same"}}),
+            source: "export default function (api) {\n  api.intercept('peer_receive', (e, next) => e.data === 'spam' ? { deny: 'spam' } : next({ ...e, data: String(e.data).toUpperCase() }));\n  api.on('peer_message', e => { api.state.set({ got: e }); });\n}\n",
+        },
+        Package {
+            id: "silent",
+            capabilities: &["peers"],
+            manifest: json!({"peer_access": {"projects": "any"}}),
+            source: "export default function () {}\n",
+        },
+    ]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let message = |data: &str, package: &str| {
+        json!({"id": "m1", "from": {"session": "other", "repository": "/repo", "package": "chat", "sha256": "a"},
+            "to": {"session": fixture.lead.thread.to_string(), "package": package},
+            "correlation": "c", "data": data, "sent_at_ms": 1})
+    };
+    assert_eq!(
+        peering::receive(&fixture.core, &fixture.lead, "chat", &message("hello", "chat")).await,
+        ("delivered", None)
+    );
+    let got = fixture.core.runtime.lock().unwrap().state("chat").cloned().unwrap()["got"].clone();
+    assert_eq!(got["data"], "HELLO");
+    assert_eq!(got["untrusted"], true);
+    assert_eq!(got["from"]["session"], "other");
+    assert_eq!(
+        peering::receive(&fixture.core, &fixture.lead, "chat", &message("spam", "chat")).await,
+        ("refused", Some("spam".to_owned()))
+    );
+    assert_eq!(
+        peering::receive(&fixture.core, &fixture.lead, "silent", &message("hi", "silent")).await,
+        ("refused", Some("no_peer_message_handler".to_owned()))
     );
 }

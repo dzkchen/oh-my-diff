@@ -551,6 +551,14 @@ async fn run(
             Ok(json!({"ledger": lead.ledger(), "limits": config.limits,
             "worker_limits": config.worker_limits}))
         }
+        "peers.list" | "peers.send" => {
+            let endpoints = super::peering::current_endpoints(core).await;
+            core.peering.call(lead, &caller, request, endpoints)
+        }
+        "turns.queue" | "turns.queued" | "turns.dequeue" => {
+            let core = core.this.upgrade().ok_or("native_host_stopped")?;
+            core.autonomy.call(&core, lead, &caller, request)
+        }
         "receipts.submit" => submit_receipt(core, lead, &caller, request.arguments).await,
         "task.complete" => complete(core, lead, request.arguments).await,
         "contract.status" => Ok(lead

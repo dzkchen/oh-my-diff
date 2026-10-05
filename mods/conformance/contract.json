@@ -1690,6 +1690,105 @@
         "rust:admission_policy_refuses_withholds_rejudges_and_fails_closed",
         "rust:host_operation_continuations_retry_and_answer_under_the_actual_caller"
       ]
+    },
+    {
+      "id": "coordination.agent_lifecycle",
+      "group": "coordination",
+      "decision": "Agent definitions, offers, spawn interception and session-wide agent inventory",
+      "observe": "every model, mod and engine-started agent of the session: parent, origin, owner, definition and source digest, status, turns, visible answers, duration, usage and failure or cancel reason (`agents.inventory`, the `agent` event)",
+      "alter": "register `<mod>/<name>` definitions with `api.agent`, offer them to models, drop or re-describe offers (`agent_offers`), and transform (definition, prompt, model, effort, session-root cwd, narrowed tools) or deny every spawn (`agent_spawn`)",
+      "replace": null,
+      "timing": "offers at every tool plan; spawn interception before the native or mod spawn runs; inventory and events as agents start, finish turns and stop",
+      "ownership": "host: configured role names win, route admission, worker limits and the parent's permissions are re-checked after transforms, definition tools are enforced on the child; observing an agent never grants message or cancel authority",
+      "limits": "8 definitions per mod; cwd or tool changes need a definition; native definitions use lead routes on the thread's own provider; 64 finished inventory records; usage is summed from model_response reports and marked partial when unpriced",
+      "native": "native `spawn_agent` roles; mod definitions use the same role layer",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "agents.inventory"
+        ],
+        "intercepts": [
+          "agent_offers",
+          "agent_spawn"
+        ]
+      },
+      "evidence": [
+        "patch:agent_definitions_are_offered_wrapped_and_observed_without_control",
+        "patch:contributed_agent_roles_are_offered_in_spawn_guidance",
+        "patch:spawn_agent_applies_a_contributed_role_layer_and_working_directory"
+      ]
+    },
+    {
+      "id": "coordination.peer_sessions",
+      "group": "coordination",
+      "decision": "Explicitly granted peer-session messaging",
+      "observe": "live peer sessions where a package accepts messages (`peers.list`), inbound messages as untrusted data with host-stamped sender identity (`peer_message`) and delivery receipts (`peer_receipt`)",
+      "alter": "send messages (`peers.send`), transform or refuse them outbound (`peer_send`) and inbound (`peer_receive`)",
+      "replace": null,
+      "timing": "delivered within about a second while the recipient session runs; receipts follow delivery, refusal, failure, expiry or a closed recipient",
+      "ownership": "user: the hash-bound, expiring and revocable `peers` grant with `peer_access`; host: broker countersignature, replay and expiry checks, both sides' project scope, mailbox limits",
+      "limits": "fails closed without the deployed authority broker; same-store sessions only; 64 KiB data, 1 s to 1 h TTL, 64 waiting messages per recipient; receiving never starts a turn or lends authority",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "peers"
+        ],
+        "events": [
+          "peer_message",
+          "peer_receipt"
+        ],
+        "replacements": [],
+        "operations": [
+          "peers.list",
+          "peers.send"
+        ],
+        "intercepts": [
+          "peer_send",
+          "peer_receive"
+        ]
+      },
+      "evidence": [
+        "patch:sessions_exchange_sealed_messages_and_receipts",
+        "patch:closed_sessions_and_other_projects_are_refused",
+        "patch:peer_messages_pass_receive_interceptors_as_untrusted_data",
+        "patch:peer_tags_verify_only_the_sealed_digest",
+        "patch:two_processes_exchange_broker_sealed_messages"
+      ]
+    },
+    {
+      "id": "coordination.autonomous_turns",
+      "group": "coordination",
+      "decision": "Opt-in attributed autonomous prompt queues and turn continuation",
+      "observe": "the caller's queued entries, turns started and settled spend (`turns.queued`) and queue outcomes (`turn_queue`)",
+      "alter": "queue prompts that start turns when the thread is idle (`turns.queue`, `turns.dequeue`) and continue a lead turn the model would end (`turn_stop` answering `{continue}`)",
+      "replace": null,
+      "timing": "a queued entry starts one second after the thread goes idle, after typed input; continuations run at the engine's stop point",
+      "ownership": "user: the hash-bound, expiring and revocable `autonomous` grant with `autonomy` limits; Esc pauses the thread's queues until the user types; host: provenance on the message, prompt event and input interceptors, route and permissions unchanged",
+      "limits": "max_queued, max_turns, max_continuations (4 at most per turn) and optional spend_microusd; stale sources, expired grants and passed deadlines drop entries; continuations cannot pass verifiers or submit receipts",
+      "native": "upstream Stop hooks and the thread queue are not mod-reachable",
+      "covers": {
+        "capabilities": [
+          "autonomous"
+        ],
+        "events": [
+          "turn_queue"
+        ],
+        "replacements": [],
+        "operations": [
+          "turns.queue",
+          "turns.queued",
+          "turns.dequeue"
+        ],
+        "intercepts": [
+          "turn_stop"
+        ]
+      },
+      "evidence": [
+        "patch:autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt",
+        "patch:extension_continuation_keeps_the_turn_sampling_until_it_declines"
+      ]
     }
   ],
   "composition": [

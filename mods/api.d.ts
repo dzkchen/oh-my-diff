@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy';
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -87,6 +87,17 @@ export type Ledger = { thread_id: string; cwd: string; cost: Json | null };
 export type Context = { thread_id: string; turn_id: string; ledger: Ledger };
 export type ContextResult = { text: string };
 export type Agent = { handle: string; route: string; permissions: 'read_only' | 'isolated_worktree'; parent_history?: { sha256: string; bytes: number; items: number; revision: number } | null };
+export type AgentDefinition = { name: string; description: string; instructions: string; route?: string; effort?: ReasoningEffort; tools?: string[]; offer?: boolean };
+export type AgentRecord = { agent_id: string | null; thread_id: string; parent: { thread_id: string | null; agent_id: string | null }; origin: 'model' | 'mod' | 'native';
+  owner: string | null; definition: { name: string; owner: string; source_sha256: string } | null; role: string | null; route?: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled'; started_at_ms: number; ended_at_ms: number | null; duration_ms: number | null; turns: number;
+  last_turn: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; at_ms: number; answer: string | null } | null; answer: string | null;
+  usage: { requests: number | null; input_tokens: number; output_tokens: number; cached_tokens: number; microusd: number | null; basis: 'unknown' | 'settled' | 'partial'; source: 'accounting' | 'engine' | null }; reason: string | null };
+export type AgentSpawnRequest = { origin: 'model' | 'mod'; caller: string; thread_id: string | null; agent_id: string | null; definition: string | null; prompt: string; model: string | null; effort: ReasoningEffort | null; cwd: string | null; tools: string[] | null };
+export type PeerAddress = { session: string; package: string };
+export type PeerSender = { session: string; repository: string; package: string; sha256: string };
+export type PeerReceipt = { id: string; status: 'queued' | 'delivered' | 'refused' | 'failed' | 'expired' | 'closed'; reason?: string | null; at_ms?: number; by?: { session: string; package: string | null }; correlation?: string | null; to?: PeerAddress };
+export type TurnQueueEntry = { key: string; priority: 'high' | 'normal' | 'low'; event: string; queued_at_ms: number; deadline_ms: number | null };
 export type AgentFailure = { category: 'transport' | 'rate_limit' | 'authorization' | 'sandbox' | 'allowance' | 'invalid_request' | 'unknown'; code: Json; message: string };
 export type AgentResult = { status: 'running' } | { status: 'failed'; error: string; failure?: AgentFailure | null } | { status: 'completed'; text: string; consumed: boolean; evidence: ResourceRef; candidate_sha256?: string; changed_paths?: string[] };
 
@@ -268,12 +279,18 @@ export interface HostOperations {
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
   'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
-  'agents.spawn': { arguments: { role: string; route: string; prompt: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] } }; result: Agent };
+  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] } }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
   'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.wait': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.list': { arguments: null; result: { handle: string; finished: boolean; consumed: boolean }[] };
+  'agents.inventory': { arguments: null; result: { agents: AgentRecord[] } };
+  'peers.list': { arguments: { package?: string } | null; result: { session: string; peers: { session: string; package: string; repository: string; same_project: boolean }[] } };
+  'peers.send': { arguments: { to: string; package?: string; data: Json; correlation?: string; ttl_ms?: number }; result: PeerReceipt };
+  'turns.queue': { arguments: { prompt: string; key: string; priority?: 'high' | 'normal' | 'low'; deadline_ms?: number }; result: { key: string; status: 'queued' | 'duplicate'; paused?: boolean } };
+  'turns.queued': { arguments: null; result: { paused: boolean; started: number; spent_microusd: number; entries: TurnQueueEntry[] } };
+  'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
   'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none' }; result: { session: string; running: true } };
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
@@ -353,7 +370,7 @@ export interface Events {
   model_response: { input: ModelResponse; output: void };
   prompt: { input: { thread_id: string; turn_id: string; original: string; effective: string; provenance: Json[] }; output: void };
   session: { input: { phase: 'start' | 'resume' | 'idle' | 'stop'; thread_id: string; cause?: string }; output: void };
-  agent: { input: { phase: 'start' | 'end'; agent_id: string; parent_agent_id: string | null; role: string; status: string }; output: void };
+  agent: { input: { phase: 'start' | 'turn' | 'end'; agent: AgentRecord }; output: void };
   tool_call: { input: { call_id: string; agent_id: string | null; tool: string; arguments: Json }; output: void };
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
   app_notification: { input: { method: string; params: Json; thread_id: string | null; coalesced: number; dropped: number }; output: void };
@@ -374,6 +391,9 @@ export interface Events {
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
   config_change: { input: { key: string; original: Json; effective: Json; source: string; scope: 'codex' | 'mod'; caller: string }; output: void };
+  peer_message: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json; sent_at_ms: number }; output: void };
+  peer_receipt: { input: PeerReceipt; output: void };
+  turn_queue: { input: { key: string; status: 'started' | 'expired' | 'dropped' | 'denied' | 'failed'; reason?: string; turn_id?: string }; output: void };
 }
 export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
 export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };
@@ -396,6 +416,11 @@ export interface InterceptSurfaces {
   model_send: { input: FinalRequestPage; result: { edits: FinalRequestEdit[]; cache?: false }; answer: { edits: FinalRequestEdit[]; cache?: false } | { deny: string } };
   response_stream: { input: StreamChunk; result: { chunks: (StreamChunk | InjectedChunk)[] }; answer: { chunks: (StreamChunk | InjectedChunk)[] } | StreamStop };
   render: { input: RenderEvent; result: RenderTree; answer: RenderTree };
+  agent_offers: { input: { thread_id: string; offers: { name: string; description: string; owner: string }[] }; result: { offers: { name: string; description: string; owner: string }[] }; answer: never };
+  agent_spawn: { input: AgentSpawnRequest; result: { agent_id: string | null; output: string; success: boolean }; answer: { deny: string } };
+  peer_send: { input: { to: PeerAddress; correlation: string | null; data: Json }; result: { receipt: PeerReceipt }; answer: { deny: string } };
+  peer_receive: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json }; result: { data: Json }; answer: { deny: string } };
+  turn_stop: { input: { thread_id: string; turn_id: string; message: string | null; continued: number; limit: number; provenance: { kind: 'mod'; package: string } | null }; result: { stop: true }; answer: { continue: string } };
 }
 export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
 export type Next<S extends keyof InterceptSurfaces> = ((input: InterceptSurfaces[S]['input']) => Promise<InterceptSurfaces[S]['result']>) & {
@@ -434,6 +459,8 @@ export interface ModAPI {
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;
+  /** Registers an agent definition named `<mod>/<name>` (capability `agents`); `offer` lists it to models. */
+  agent(definition: AgentDefinition): void;
   dynamicTools(handler: (call: { name: string; arguments: Json }) => Json | Promise<Json>): void;
   virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string; args_hint?: string; immediate?: boolean }): void;

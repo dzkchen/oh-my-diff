@@ -1,9 +1,13 @@
 mod access;
 mod agents;
+mod autonomy;
 mod evidence;
 mod expansion;
 mod intercept;
+mod inventory;
 mod operations;
+mod peering;
+mod roles;
 pub(crate) mod services;
 mod snapshots;
 mod tools;
@@ -149,6 +153,10 @@ pub(super) struct Core {
     services: services::Services,
     views: Arc<view::Views>,
     expansion: expansion::State,
+    inventory: inventory::Inventory,
+    autonomy: autonomy::Queues,
+    peering: peering::Registry,
+    this: std::sync::Weak<Core>,
 }
 
 struct Mods {
@@ -159,6 +167,7 @@ struct Mods {
     worktrees: Mutex<BTreeMap<std::path::PathBuf, Arc<Host>>>,
     pending: Mutex<BTreeMap<String, PendingTool>>,
     answered: Mutex<BTreeMap<String, String>>,
+    child_errors: Mutex<BTreeMap<String, String>>,
 }
 
 /// A tool chain waiting at its native executor for the call's result.
@@ -198,6 +207,58 @@ impl Mods {
         };
         if let Ok(mut pending) = self.pending.lock() {
             pending.retain(|_, entry| entry.thread != thread);
+        }
+    }
+
+    /// Records a sub-agent the engine or a model started; mod workers are recorded at spawn.
+    fn native_agent_started(
+        &self,
+        thread: ThreadId,
+        source: &SessionSource,
+        thread_store: &codex_extension_api::ExtensionData,
+    ) {
+        let SessionSource::SubAgent(kind) = source else {
+            return;
+        };
+        if self.inventory.contains(&thread.to_string()) {
+            return;
+        }
+        let fields = match kind {
+            SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                agent_role,
+                agent_nickname,
+                ..
+            } => {
+                let role = agent_role.clone().unwrap_or_else(|| "default".into());
+                let definition = self.role_definition(&self.host, &role);
+                if let Some(tools) = self.role_tools(&self.host, &role) {
+                    thread_store.insert(roles::AgentTools(tools));
+                }
+                json!({"agent_id": format!("agent:{thread}"), "origin": "model",
+                    "parent": {"thread_id": parent_thread_id.to_string(), "agent_id": null},
+                    "role": agent_nickname.clone().unwrap_or(role),
+                    "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
+                        "owner": definition.owner, "source_sha256": definition.source_sha256}))})
+            }
+            other => json!({"agent_id": format!("agent:{thread}"), "origin": "native",
+                "role": format!("{other:?}").chars().take(64).collect::<String>()}),
+        };
+        let record = self.inventory.start(&thread.to_string(), fields);
+        inventory::notify(&self.runtime, "start", record);
+    }
+
+    fn agent_turn(
+        &self,
+        thread_store: &codex_extension_api::ExtensionData,
+        turn_store: &codex_extension_api::ExtensionData,
+        outcome: &str,
+    ) {
+        if let Some(record) = self
+            .inventory
+            .turn(thread_store.level_id(), turn_store.level_id(), outcome)
+        {
+            inventory::notify(&self.runtime, "turn", record);
         }
     }
 
@@ -350,6 +411,10 @@ pub(super) fn install(
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),
+            inventory: inventory::Inventory::default(),
+            autonomy: autonomy::Queues::default(),
+            peering: peering::Registry::default(),
+            this: core.clone(),
         }),
         turns: Mutex::new(BTreeMap::new()),
         sessions: Mutex::new(BTreeMap::new()),
@@ -357,6 +422,7 @@ pub(super) fn install(
         worktrees: Mutex::new(BTreeMap::new()),
         pending: Mutex::new(BTreeMap::new()),
         answered: Mutex::new(BTreeMap::new()),
+        child_errors: Mutex::new(BTreeMap::new()),
     });
     intercept::install_dispatcher(&extension.core);
     registry.config_contributor(extension.clone());
@@ -367,6 +433,8 @@ pub(super) fn install(
     registry.tool_output_contributor(extension.clone());
     registry.approval_gate_contributor(extension.clone());
     registry.tool_spec_contributor(extension.clone());
+    registry.agent_role_contributor(extension.clone());
+    registry.token_usage_contributor(extension.clone());
     registry.tool_batch_contributor(extension.clone());
     registry.tool_contributor(extension);
     Ok(())
@@ -954,6 +1022,10 @@ impl TurnLifecycleContributor for Mods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             self.release_pending(thread_id(input.thread_store));
+            if let Ok(mut errors) = self.child_errors.lock() {
+                errors.remove(input.thread_store.level_id());
+            }
+            self.agent_turn(input.thread_store, input.turn_store, "aborted");
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -963,6 +1035,11 @@ impl TurnLifecycleContributor for Mods {
             };
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
+            self.autonomy.turn_ended(
+                &self.core,
+                &lead,
+                matches!(input.reason, codex_protocol::protocol::TurnAbortReason::Interrupted),
+            );
             if let Some(turn) = self.take_turn(&lead.thread) {
                 expansion::turn_ended(
                     &self.core,
@@ -993,6 +1070,14 @@ impl TurnLifecycleContributor for Mods {
             {
                 turn.error = Some(format!("{:?}", input.error));
             }
+            if !lead_thread(input.thread_store)
+                && let Ok(mut errors) = self.child_errors.lock()
+            {
+                errors.insert(
+                    input.thread_store.level_id().to_owned(),
+                    format!("{:?}", input.error),
+                );
+            }
         })
     }
 
@@ -1002,6 +1087,16 @@ impl TurnLifecycleContributor for Mods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             self.release_pending(thread_id(input.thread_store));
+            let failed = self
+                .child_errors
+                .lock()
+                .ok()
+                .and_then(|mut errors| errors.remove(input.thread_store.level_id()));
+            self.agent_turn(
+                input.thread_store,
+                input.turn_store,
+                if failed.is_some() { "error" } else { "completed" },
+            );
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1009,6 +1104,7 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
+            self.autonomy.turn_ended(&self.core, &lead, false);
             let Some(turn) = self.take_turn(&lead.thread) else {
                 return;
             };
@@ -1046,6 +1142,99 @@ impl TurnLifecycleContributor for Mods {
         })
     }
 
+    fn continue_turn<'a>(
+        &'a self,
+        input: codex_extension_api::TurnContinueInput<'a>,
+    ) -> ExtensionFuture<'a, Option<codex_extension_api::TurnContinuation>> {
+        Box::pin(async move {
+            let required = (*self.expansion.turn_stop.lock().ok()?)?;
+            let lead = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")?;
+            let thread = lead.thread.to_string();
+            let payload = json!({"thread_id": thread, "turn_id": input.turn_id,
+                "message": input.last_agent_message.map(|message| message.chars().take(8192).collect::<String>()),
+                "continued": input.continued, "limit": autonomy::CONTINUATIONS,
+                "provenance": self.autonomy.running(&thread).map(|owner| json!({"kind": "mod", "package": owner}))});
+            let chain = intercept::chain(
+                self.core.clone(),
+                lead,
+                self.runtime.clone(),
+                "turn_stop",
+                required,
+                payload,
+                json!({"caller": "engine", "thread_id": thread}),
+                Arc::new(AtomicBool::new(false)),
+                |_| Ok(json!({"stop": true})),
+            )
+            .await;
+            let chain = match chain {
+                Ok(chain) => chain,
+                Err(error) => {
+                    self.views.diagnostic(
+                        &self.host,
+                        "turn_stop",
+                        Some(format!("{error}; the turn ended")),
+                    );
+                    return None;
+                }
+            };
+            let prompt = chain.result["continue"].as_str()?.to_owned();
+            let owner = chain
+                .answered_by
+                .clone()
+                .unwrap_or_else(|| intercept::settled_by(&chain));
+            let (runtime, id) = (self.runtime.clone(), owner.clone());
+            let limit = tokio::task::spawn_blocking(move || {
+                runtime
+                    .lock()
+                    .ok()?
+                    .grants(&id)?
+                    .autonomy
+                    .map(|autonomy| autonomy.max_continuations)
+            })
+            .await
+            .ok()
+            .flatten()?;
+            if !self
+                .autonomy
+                .continue_turn(&thread, input.turn_id, &owner, limit)
+            {
+                return None;
+            }
+            Some(codex_extension_api::TurnContinuation {
+                source: format!("mod:{owner}"),
+                prompt: format!(
+                    "[Continuation requested by mod {owner}; not typed by the user]\n{prompt}"
+                ),
+            })
+        })
+    }
+
+    fn on_item_completed<'a>(
+        &'a self,
+        thread_store: &'a codex_extension_api::ExtensionData,
+        _turn_store: &'a codex_extension_api::ExtensionData,
+        item: &'a codex_protocol::items::TurnItem,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let thread = thread_store.level_id();
+            if let codex_protocol::items::TurnItem::AgentMessage(message) = item
+                && self.inventory.contains(thread)
+            {
+                let text = message
+                    .content
+                    .iter()
+                    .map(|content| match content {
+                        codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
+                    })
+                    .collect::<String>();
+                self.inventory.answer(thread, &text);
+            }
+        })
+    }
+
     fn disabled_collaboration_modes(&self) -> Vec<String> {
         // Input interception reloads this runtime before the core reads the turn's modes.
         match self.input_runtime.try_lock() {
@@ -1075,8 +1264,14 @@ impl TurnLifecycleContributor for Mods {
             };
             let runtime = self.input_runtime.clone();
             let thread = thread_id(input.thread_store);
+            let provenance = self
+                .autonomy
+                .take_submitting(&lead.thread.to_string(), input.text);
+            if provenance.is_none() {
+                self.autonomy.user_turn(&lead.thread.to_string());
+            }
             let prompt = json!({"thread_id":thread,"turn_id":Value::Null,
-                "original":input.text,"effective":input.text,"provenance":[]});
+                "original":input.text,"effective":input.text,"provenance":provenance.iter().collect::<Vec<_>>()});
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let unavailable = |error: String| UserInputDecision::Deny {
@@ -1100,7 +1295,10 @@ impl TurnLifecycleContributor for Mods {
             };
             let payload =
                 json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
-            let origin = json!({"caller":"user","thread_id":thread});
+            let origin = match &provenance {
+                Some(provenance) => json!({"caller":provenance["package"],"thread_id":thread,"provenance":provenance}),
+                None => json!({"caller":"user","thread_id":thread}),
+            };
             let chain = intercept::chain(
                 self.core.clone(),
                 lead,
@@ -1225,6 +1423,20 @@ impl ContextContributor for Mods {
     }
 }
 
+impl codex_extension_api::TokenUsageContributor for Mods {
+    fn on_token_usage<'a>(
+        &'a self,
+        _session_store: &'a codex_extension_api::ExtensionData,
+        thread_store: &'a codex_extension_api::ExtensionData,
+        _turn_store: &'a codex_extension_api::ExtensionData,
+        token_usage: &'a codex_protocol::protocol::TokenUsageInfo,
+    ) -> ExtensionFuture<'a, ()> {
+        self.inventory
+            .tokens(thread_store.level_id(), &token_usage.total_token_usage);
+        Box::pin(std::future::ready(()))
+    }
+}
+
 impl ThreadLifecycleContributor<Config> for Mods {
     fn on_thread_start<'a>(
         &'a self,
@@ -1234,6 +1446,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
                 return;
             };
+            self.native_agent_started(thread, input.session_source, input.thread_store);
             let Some(host) = self.host_for(input.config.cwd.as_path()) else {
                 self.views.diagnostic(
                     &self.host,
@@ -1355,6 +1568,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                         .get::<codex_extension_api::ForkedFromThread>()
                         .map(|forked| forked.0);
                     expansion::lead_started(&self.core, &lead, forked);
+                    peering::start(&self.core, lead.thread);
                 }
                 self.event(
                     "session",
@@ -1427,6 +1641,22 @@ impl ThreadLifecycleContributor<Config> for Mods {
 
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            let thread = input.thread_store.level_id();
+            let status = match self
+                .inventory
+                .list()
+                .into_iter()
+                .find(|record| record["thread_id"] == thread)
+            {
+                Some(record) if record["origin"] == "mod" => None,
+                Some(record) if record["last_turn"]["outcome"] == "error" => Some("failed"),
+                Some(record) if record["last_turn"]["outcome"] == "aborted" => Some("cancelled"),
+                Some(_) => Some("completed"),
+                None => None,
+            };
+            if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None)) {
+                inventory::notify(&self.runtime, "end", record);
+            }
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
@@ -1503,6 +1733,15 @@ impl ToolLifecycleContributor for Mods {
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return Ok(ToolInterception::Continue(None));
             };
+            if let Some(tools) = input.thread_store.get::<roles::AgentTools>()
+                && !tools.0.contains(&input.tool_name.name)
+                && !tools.0.contains(&input.tool_name.to_string())
+            {
+                return Err(format!(
+                    "agent_tool_denied: {} is outside this agent's tools",
+                    input.tool_name
+                ));
+            }
             let invoker = input
                 .thread_store
                 .get_or_init(codex_extension_api::ToolInvokerSlot::default);
@@ -1528,24 +1767,37 @@ impl ToolLifecycleContributor for Mods {
             } else {
                 serde_json::from_str(raw).map_err(|e| e.to_string())?
             };
-            let mut payload = expansion::tool_before_payload(
-                input.turn_store,
-                input.call_id,
-                input.tool_name,
-                &arguments,
-                &raw_arguments,
-            );
-            payload["thread_id"] = json!(lead.thread.to_string());
-            payload["agent_id"] = json!(scope_agent_id);
+            let spawn = arguments.is_object()
+                && roles::is_spawn(input.tool_name)
+                && self
+                    .expansion
+                    .agent_spawn
+                    .lock()
+                    .is_ok_and(|intercepts| intercepts.is_some());
+            let surface = if spawn { "agent_spawn" } else { "tool" };
+            let payload = if spawn {
+                self.spawn_payload(&lead, &arguments, &lead.host.repository)
+            } else {
+                let mut payload = expansion::tool_before_payload(
+                    input.turn_store,
+                    input.call_id,
+                    input.tool_name,
+                    &arguments,
+                    &raw_arguments,
+                );
+                payload["thread_id"] = json!(lead.thread.to_string());
+                payload["agent_id"] = json!(scope_agent_id);
+                payload
+            };
             let runtime = self.runtime.clone();
-            let observed = json!({"tool":original_tool.to_string(),"arguments":payload["arguments"],
-                "call_id":payload["call_id"],"agent_id":scope_agent_id});
+            let observed = json!({"tool":original_tool.to_string(),"arguments":arguments,
+                "call_id":input.call_id,"agent_id":scope_agent_id});
             let thread = lead.thread.to_string();
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(Some(thread));
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
                 let _ = runtime.event_guarded("tool_call", observed, || true);
-                Ok::<_, String>(runtime.intercepts("tool"))
+                Ok::<_, String>(runtime.intercepts(surface))
             })
             .await
             .map_err(|e| e.to_string())??;
@@ -1553,6 +1805,7 @@ impl ToolLifecycleContributor for Mods {
                 self.cleanup_failed(Some(&lead)).await;
                 return Ok(ToolInterception::Continue(None));
             };
+            let lead_thread_id = lead.thread.to_string();
             let cancelled = Arc::new(AtomicBool::new(false));
             let cancellation = Cancellation(cancelled.clone());
             let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -1564,7 +1817,23 @@ impl ToolLifecycleContributor for Mods {
                 tokio::runtime::Handle::current(),
             );
             let mut retries = 0;
+            let (spawn_lead, spawn_arguments, spawn_before) =
+                (lead.clone(), arguments.clone(), payload.clone());
+            let spawn_tool = original_tool.to_string();
             let executor = move |effective: Value| -> std::io::Result<Value> {
+                let effective = if spawn {
+                    if reached.is_none() {
+                        return Err(std::io::Error::other(
+                            "agent_spawn_retry_unsupported: a spawn runs once",
+                        ));
+                    }
+                    let arguments = core
+                        .spawn_arguments(&spawn_lead, &spawn_arguments, &spawn_before, &effective)
+                        .map_err(std::io::Error::other)?;
+                    json!({"tool": spawn_tool, "arguments": arguments})
+                } else {
+                    effective
+                };
                 let Some(first) = reached.take() else {
                     let invoker = invoker.get().ok_or_else(|| {
                         std::io::Error::other(
@@ -1601,7 +1870,17 @@ impl ToolLifecycleContributor for Mods {
                         return Err(std::io::Error::other("callback_cancelled"));
                     }
                     match results.recv_timeout(std::time::Duration::from_millis(20)) {
-                        Ok(result) => return result.map_err(std::io::Error::other),
+                        Ok(result) => {
+                            return result
+                                .map(|result| {
+                                    if spawn {
+                                        roles::spawn_result(&result)
+                                    } else {
+                                        result
+                                    }
+                                })
+                                .map_err(std::io::Error::other);
+                        }
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                             return Err(std::io::Error::other("tool_result_unavailable"));
@@ -1609,8 +1888,8 @@ impl ToolLifecycleContributor for Mods {
                     }
                 }
             };
-            let mut origin = json!({"caller":"model","thread_id":payload["thread_id"],
-                "agent_id":payload["agent_id"],"call_id":payload["call_id"]});
+            let mut origin = json!({"caller":"model","thread_id":lead.thread.to_string(),
+                "agent_id":scope_agent_id,"call_id":input.call_id});
             if let Some(caller) = invoked_by {
                 origin["caller"] = json!(caller);
             } else if let codex_tools::ToolCallSource::CodeMode { cell_id, .. } = &input.source {
@@ -1621,7 +1900,7 @@ impl ToolLifecycleContributor for Mods {
                 self.core.clone(),
                 lead,
                 self.runtime.clone(),
-                "tool",
+                surface,
                 required,
                 payload.clone(),
                 origin,
@@ -1633,20 +1912,26 @@ impl ToolLifecycleContributor for Mods {
                     pending.insert(
                         input.call_id.to_owned(),
                         PendingTool {
-                            thread: payload["thread_id"].as_str().unwrap_or_default().to_owned(),
+                            thread: lead_thread_id.clone(),
                             result,
                             chain,
                             _cancellation: cancellation,
                         },
                     );
                 }
-                if effective["tool"] == payload["tool"]
-                    && effective["arguments"] == payload["arguments"]
-                {
+                let (tool, arguments) = if spawn {
+                    (original_tool.to_string(), arguments)
+                } else {
+                    (
+                        payload["tool"].as_str().unwrap_or_default().to_owned(),
+                        payload["arguments"].clone(),
+                    )
+                };
+                if effective["tool"] == tool && effective["arguments"] == arguments {
                     return Ok(ToolInterception::Continue(None));
                 }
                 let target = match effective["tool"].as_str() {
-                    Some(tool) if effective["tool"] != payload["tool"] => ToolName::plain(tool),
+                    Some(name) if name != tool => ToolName::plain(name),
                     _ => original_tool,
                 };
                 let payload = match &effective["arguments"] {

@@ -2659,7 +2659,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
             {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1025},
             {"type":"invoke","mod":"harness","event":"tool","name":"exercise","expect":{"task":{"status":"running"},"agent":{"handle":"agent-1","route":"sol","permissions":"read_only"},"result":{"status":"completed","text":"done","consumed":true},"checkpoint":{"saved":true}}},
             {"type":"tool_outcome","payload":{"call_id":"call-1","agent_id":null,"tool":"exercise","outcome":{"status":"ok"}},"expect":[{"mod":"harness","value":null}]},
-            {"type":"agent","payload":{"phase":"end","agent_id":"agent-1","parent_agent_id":null,"role":"worker","status":"completed"},"expect":[{"mod":"harness","value":null}]},
+            {"type":"agent","payload":{"phase":"end","agent":{"agent_id":"agent-1","origin":"mod","role":"worker","status":"completed"}},"expect":[{"mod":"harness","value":null}]},
             {"type":"intercept","surface":"response_stream","payload":{"kind":"text","index":0,"text":"hello","protected":false},"core":[{"value":{"chunks":[{"kind":"text","index":0,"text":"HELLO","protected":false}]}}]},
             {"type":"invoke","mod":"consumer","event":"command","name":"call","expect":"HELLO"},
             {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","sites":{"dialog":{"components":[{"type":"button","id":"ping_button","label":"Ping button","text":"Ping","action":{"command":"harness:ping"}}]}},"keybindings":{"F2":{"command":"harness:ping"}}}},

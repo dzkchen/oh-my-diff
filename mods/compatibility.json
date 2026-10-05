@@ -102,7 +102,10 @@
       "session_ports_v1",
       "structured_access_v1",
       "command_config_middleware_v1",
-      "admission_api_policy_v1"
+      "admission_api_policy_v1",
+      "agent_lifecycle_v1",
+      "peer_sessions_v1",
+      "autonomous_turns_v1"
     ]
   },
   "apis": [

@@ -312,6 +312,9 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "structured_access_v1",
     "command_config_middleware_v1",
     "admission_api_policy_v1",
+    "agent_lifecycle_v1",
+    "peer_sessions_v1",
+    "autonomous_turns_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -351,6 +354,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "agents.result",
     "agents.wait",
     "agents.list",
+    "agents.inventory",
     "process.which",
     "process.start",
     "process.exchange",
@@ -410,6 +414,11 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "mcp.connect",
     "mcp.disconnect",
     "environment.read",
+    "peers.list",
+    "peers.send",
+    "turns.queue",
+    "turns.queued",
+    "turns.dequeue",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
     &[(MOD_API_VERSION, "experimental", "2027-03-20")];
@@ -457,6 +466,8 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "mcp",
     "policy",
     "request_policy",
+    "peers",
+    "autonomous",
 ];
 pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "os",
@@ -466,6 +477,8 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "fs.external",
     "mcp",
     "policy",
+    "peers",
+    "autonomous",
 ];
 
 /// What a user accepts by granting the authority capabilities, shown before trust and in status.
@@ -492,6 +505,12 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     }
     if granted("policy") {
         exposure.push("policy: this mod may refuse other mods at load and withhold the host namespaces listed in policy.namespaces from them; it cannot grant anything, change managed policy or judge itself, and disabling it in /omd restores the other mods.");
+    }
+    if granted("peers") {
+        exposure.push("peers: this mod may discover and message instances of mods in your other OMD sessions on this mod store (in other repositories only when peer_access.projects is \"any\" on both sides) and receive their messages as untrusted data; delivery never starts a turn or shares authority, and messages are countersigned by the authority broker, so peers work only while it is deployed.");
+    }
+    if granted("autonomous") {
+        exposure.push("autonomous: this mod may queue prompts that start turns while you are idle and continue a finished turn, within its autonomy limits; queued turns are labelled with the mod, keep your permissions and route, pause when you interrupt, and stop when you disable or revoke the mod.");
     }
     exposure
 }
@@ -536,6 +555,9 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("completion", "composer"),
     ("history", "history"),
     ("config_change", "config"),
+    ("peer_message", "peers"),
+    ("peer_receipt", "peers"),
+    ("turn_queue", "autonomous"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "routing",
@@ -559,6 +581,11 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("config_set", "config.write"),
     ("admission", "policy"),
     ("render", "terminal"),
+    ("agent_offers", "agents"),
+    ("agent_spawn", "agents"),
+    ("peer_send", "peers"),
+    ("peer_receive", "peers"),
+    ("turn_stop", "autonomous"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "prompt",
@@ -1098,6 +1125,10 @@ pub struct ModPackage {
     pub mcp_servers: BTreeMap<String, ModMcpServer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<ModPolicyScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_access: Option<ModPeerAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy: Option<ModAutonomy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1207,6 +1238,48 @@ pub struct ModMcpServer {
 pub struct ModPolicyScope {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub namespaces: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModPeerAccess {
+    pub projects: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModAutonomy {
+    pub max_queued: u32,
+    pub max_turns: u32,
+    #[serde(default)]
+    pub max_continuations: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_microusd: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModAgent {
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub offer: bool,
+}
+
+/// A registered agent definition with the package source that registered it.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct ModAgentDefinition {
+    pub owner: String,
+    pub source_sha256: String,
+    #[serde(flatten)]
+    pub agent: ModAgent,
 }
 
 /// The policy namespace of a host call: `service:<provider>/<method>` for service calls, else the operation's prefix.
@@ -1576,6 +1649,27 @@ impl ModPackage {
         {
             return Err(failure(
                 "invalid_policy: the policy capability needs policy.namespaces (up to 16 namespace patterns)",
+            ));
+        }
+        if declared("peers") != self.peer_access.is_some()
+            || self
+                .peer_access
+                .as_ref()
+                .is_some_and(|scope| !["same", "any"].contains(&scope.projects.as_str()))
+        {
+            return Err(failure(
+                "invalid_peer_access: the peers capability needs peer_access.projects (\"same\" or \"any\")",
+            ));
+        }
+        if declared("autonomous") != self.autonomy.is_some()
+            || self.autonomy.as_ref().is_some_and(|scope| {
+                !(1..=16).contains(&scope.max_queued)
+                    || !(1..=100).contains(&scope.max_turns)
+                    || scope.max_continuations > 4
+            })
+        {
+            return Err(failure(
+                "invalid_autonomy: the autonomous capability needs autonomy.max_queued (1-16), max_turns (1-100) and optional max_continuations (0-4) and spend_microusd",
             ));
         }
         if declared("request_policy") && !declared("middleware") {
@@ -2146,6 +2240,8 @@ struct Registrations {
     dynamic_tools: bool,
     #[serde(default)]
     interceptors: Vec<ModInterceptor>,
+    #[serde(default)]
+    agents: Vec<ModAgent>,
 }
 
 #[derive(Deserialize)]
@@ -2231,6 +2327,8 @@ pub struct ModGrants {
     pub http_access: Option<ModHttpAccess>,
     pub fs_access: Option<ModFsAccess>,
     pub mcp_servers: BTreeMap<String, ModMcpServer>,
+    pub peer_access: Option<ModPeerAccess>,
+    pub autonomy: Option<ModAutonomy>,
 }
 
 pub struct ModHost {
@@ -2427,6 +2525,12 @@ fn invoke(
                 }
                 if call.operation == "time.sleep" {
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
+                }
+                let mut call = call;
+                if call.operation == "turns.queue"
+                    && let Some(arguments) = call.arguments.as_object_mut()
+                {
+                    arguments.insert("event".into(), json!(event));
                 }
                 let private = call.operation.starts_with("sessions.")
                     || call.operation.starts_with("evidence.");
@@ -3374,6 +3478,31 @@ impl ModHost {
                 || serde_json::to_vec(&tool.parameters)?.len() > 8192
             {
                 return Err(failure("invalid_tool_registration"));
+            }
+        }
+        names.clear();
+        for agent in &registrations.agents {
+            if !has("agents")
+                || registrations.agents.len() > 8
+                || !identifier(&agent.name)
+                || agent.name.len() > 32
+                || !names.insert(&agent.name)
+                || !visible(&agent.description, 512)
+                || agent.instructions.trim().is_empty()
+                || agent.instructions.len() > 16_384
+                || agent
+                    .route
+                    .as_deref()
+                    .is_some_and(|route| !visible(route, 64))
+                || agent
+                    .effort
+                    .as_deref()
+                    .is_some_and(|effort| !crate::model_request::EFFORTS.contains(&effort))
+                || agent.tools.as_ref().is_some_and(|tools| {
+                    tools.len() > 32 || tools.iter().any(|tool| !visible(tool, 128))
+                })
+            {
+                return Err(failure("invalid_agent_registration"));
             }
         }
         names.clear();
@@ -4356,8 +4485,23 @@ impl ModHost {
                 } else {
                     BTreeMap::new()
                 },
+                peer_access: m.package.peer_access.clone().filter(|_| current),
+                autonomy: m.package.autonomy.clone().filter(|_| current),
             }
         })
+    }
+
+    /// Agent definitions registered by active mods, in load order.
+    pub fn agent_definitions(&self) -> Vec<ModAgentDefinition> {
+        self.active()
+            .flat_map(|(id, m)| {
+                m.registrations.agents.iter().map(|agent| ModAgentDefinition {
+                    owner: id.to_owned(),
+                    source_sha256: m.selection.sha256.clone(),
+                    agent: agent.clone(),
+                })
+            })
+            .collect()
     }
 
     /// The mod holding the exclusive replacement slot for a decision point.
@@ -4488,7 +4632,7 @@ impl ModHost {
             "terminal": {"identity":"observe_only","presentation":"observe_only","greeting":"last_writer","session_title_suffix":"last_writer","welcome":"last_writer"},
             "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
-            "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
+            "agent": {"phase":"observe_only","agent":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
             "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
             "intercept.input": {"thread_id":"observe_only","text":"replaceable","attachments":"observe_only"},
@@ -4519,6 +4663,23 @@ impl ModHost {
             (
                 "intercept.model_send",
                 json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only"}),
+            ),
+            ("intercept.agent_offers", json!({"thread_id":"observe_only","offers":"replaceable"})),
+            (
+                "intercept.agent_spawn",
+                json!({"origin":"observe_only","caller":"observe_only","thread_id":"observe_only","agent_id":"observe_only","definition":"replaceable","prompt":"replaceable","model":"replaceable","effort":"replaceable","cwd":"replaceable","tools":"replaceable"}),
+            ),
+            (
+                "intercept.peer_send",
+                json!({"to":"observe_only","correlation":"observe_only","data":"replaceable"}),
+            ),
+            (
+                "intercept.peer_receive",
+                json!({"id":"observe_only","from":"observe_only","to":"observe_only","correlation":"observe_only","untrusted":"observe_only","data":"replaceable"}),
+            ),
+            (
+                "intercept.turn_stop",
+                json!({"thread_id":"observe_only","turn_id":"observe_only","message":"observe_only","continued":"observe_only","limit":"observe_only","provenance":"observe_only"}),
             ),
         ] {
             policies[surface] = fields;
@@ -4555,7 +4716,8 @@ impl ModHost {
                 "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
-                    "policy": m.package.policy, "withheld": m.withheld,
+                    "policy": m.package.policy, "peer_access": m.package.peer_access,
+                    "autonomy": m.package.autonomy, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
                     "exposure": authority_exposure(&m.package.capabilities)});
                 status }).collect::<Vec<_>>()});
