@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const examples = new URL('../mods/examples/', import.meta.url);
@@ -29,9 +30,7 @@ function runRaw(name, event, payload = null, options = {}) {
   const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
   const request = { source, filename: `${name}/index.ts`, api: manifest.api, capabilities: manifest.capabilities,
     surface, state: null, settings: {}, event, payload, hook_budget_ms: 1000, ...options };
-  const result = spawnSync(process.execPath,
-    ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-    { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
+  const result = runnerSync(request);
   assert.ifError(result.error);
   return JSON.parse(result.stdout);
 }

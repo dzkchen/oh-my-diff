@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../mods/first-party/omd_coordination/index.ts', import.meta.url), 'utf8');
@@ -15,8 +16,7 @@ function prepare(brief, maximum) {
   const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities,
     state: null, settings: { worker_context: 'focused_brief', worker_context_max_bytes: maximum }, surface,
     event: 'service', name: 'omd.coordination.prepare_delegation', payload: { brief }, receipts: [] };
-  const child = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-    { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
+  const child = runnerSync(request);
   assert.ifError(child.error);
   assert.ok(child.status === 0 || child.status === 1, child.stdout + child.stderr);
   return JSON.parse(child.stdout);

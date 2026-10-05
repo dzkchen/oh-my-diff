@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
@@ -28,9 +29,7 @@ const refusal = output => output.value?.status === 'refused' ? { ...output, erro
 function invoke(event, name, payload, receipts = []) {
   const request = { source, filename: 'omd_guideline_governance.ts', api: '0.2.0-experimental.5', capabilities: ['tools', 'commands', 'store', 'fs.read'],
     environment: ['crypto'], state: null, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 3000 };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify(request), encoding: 'utf8', timeout: 6000,
-  });
+  const result = runnerSync(request);
   assert.ifError(result.error);
   assert.ok(result.stdout, result.stderr);
   return refusal(JSON.parse(result.stdout));

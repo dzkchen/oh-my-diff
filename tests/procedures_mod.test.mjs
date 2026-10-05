@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const component = new URL('../plugins/optional/plugins/omd-procedures/mod/', import.meta.url);
@@ -52,8 +53,7 @@ function workspace(files = {}) {
     const receipts = [];
     for (;;) {
       const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 5000 };
-      const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-        { input: JSON.stringify(request), encoding: 'utf8', timeout: 10000 }).stdout);
+      const output = JSON.parse(runnerSync(request).stdout);
       assert.equal(output.error, undefined, output.error);
       if (!output.host_call) return event === 'command' ? output.value.display : output.value;
       try { receipts.push({ call: output.host_call, value: host(output.host_call) }); } catch (error) { receipts.push({ call: output.host_call, error: error.message }); }

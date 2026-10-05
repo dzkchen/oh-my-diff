@@ -2,9 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { callback } from './mod_runner.mjs';
 
-const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../mods/first-party/omd_workflow/index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_workflow/mod.json', import.meta.url), 'utf8'));
 const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
@@ -27,10 +26,9 @@ function invoke(name, payload, host, extra = {}) {
   const receipts = [];
   for (let turn = 0; turn < 33; turn++) {
     const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: ['crypto'], state: null,
-      settings: { check: { program: 'check', argv: [] } }, surface, event: 'tool', name, payload, receipts, ...options };
-    const child = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
-    assert.ifError(child.error);
-    const reply = JSON.parse(child.stdout);
+      settings: { check: { program: 'check', argv: [] } }, surface, event: 'tool', name, payload, ...options };
+    const reply = callback(request, host, receipts);
+    assert.ok(receipts.length <= 32, 'native callback host-call limit');
     if (reply.error) throw new Error(reply.error);
     if (!reply.host_call) {
       if (['refused', 'interrupted', 'partially_integrated'].includes(reply.value?.status) && typeof reply.value.reason === 'string' && !options.refusals) throw new Error(reply.value.reason);

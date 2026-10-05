@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const source = read('./index.ts');
@@ -47,7 +48,7 @@ function session(settings = {}, prompt = 'accepted') {
     for (;;) {
       const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: manifest.environment, state, settings,
         event, name, payload, receipts, surface, hook_budget_ms: 2000 };
-      const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
+      const result = runnerSync(request);
       const output = JSON.parse(result.stdout);
       if (output.error) throw new Error(output.error.split('\n')[0]);
       if (!output.host_call) {

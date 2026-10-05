@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
@@ -13,10 +14,7 @@ const currentSurface = {
   state: 'store', contracts: 'contracts',
 };
 function run(source, extra = {}) {
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', surface: currentSurface, ...extra }),
-    encoding: 'utf8', timeout: 5000,
-  });
+  const result = runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', surface: currentSurface, ...extra });
   assert.ifError(result.error);
   return JSON.parse(result.stdout);
 }

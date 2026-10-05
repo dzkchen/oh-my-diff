@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const component = new URL('../plugins/bundled/oh-my-diff/plugins/omd-review-policy/mod/', import.meta.url);
@@ -16,8 +17,7 @@ function simplify(repository, text) {
   for (;;) {
     const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {},
       event: 'command', name: 'simplify', payload: text, receipts, surface, hook_budget_ms: 5000 };
-    const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-      { input: JSON.stringify(request), encoding: 'utf8', timeout: 10000 }).stdout);
+    const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
     if (!output.host_call) return output.value;
     const { program, argv } = output.host_call.arguments;

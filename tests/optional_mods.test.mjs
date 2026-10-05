@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const root = new URL('../mods/', import.meta.url);
@@ -18,11 +19,9 @@ function run(name, event, payload = null, state = null, settings = {}, capabilit
   const manifest = JSON.parse(readFileSync(packageFile(name, 'mod.json'), 'utf8'));
   assert.equal(manifest.api, '0.2.0-experimental.5');
   const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
-  const result = spawnSync(process.execPath,
-    ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-    { input: JSON.stringify({ source, filename: `${name}/index.ts`, api: manifest.api,
+  const result = runnerSync({ source, filename: `${name}/index.ts`, api: manifest.api,
       capabilities: capabilities ?? manifest.capabilities, surface, state, settings, event,
-      name: command, payload, hook_budget_ms: 1000 }), encoding: 'utf8', timeout: 5000 });
+      name: command, payload, hook_budget_ms: 1000 });
   assert.ifError(result.error);
   const reply = JSON.parse(result.stdout);
   if (reply.error) assert.fail(reply.error);
@@ -55,11 +54,9 @@ test('session anchor requires the current store capability', () => {
   assert.ok(manifest.capabilities.includes('store'));
   assert.ok(!manifest.capabilities.includes('state'));
   const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
-  const result = spawnSync(process.execPath,
-    ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-    { input: JSON.stringify({ source, filename: `${name}/index.ts`, api: manifest.api,
+  const result = runnerSync({ source, filename: `${name}/index.ts`, api: manifest.api,
       capabilities: manifest.capabilities.filter(value => value !== 'store'), surface, state: null,
-      settings: {}, event: 'start', payload: {} }), encoding: 'utf8', timeout: 5000 });
+      settings: {}, event: 'start', payload: {} });
   assert.match(JSON.parse(result.stdout).error, /capability_denied: store/);
 });
 

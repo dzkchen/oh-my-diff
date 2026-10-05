@@ -5,6 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runnerSync } from '../tests/mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = {
@@ -13,10 +14,7 @@ const surface = {
 };
 const source = name => readFileSync(new URL(`./first-party/${name}/index.ts`, import.meta.url), 'utf8');
 function run(name, input) {
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input }),
-    encoding: 'utf8', timeout: 5000,
-  });
+  const result = runnerSync({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input });
   assert.ifError(result.error);
   const output = JSON.parse(result.stdout);
   assert.equal(result.status, 0, `${result.stderr}\n${output.error ?? ''}`);

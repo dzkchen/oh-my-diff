@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { callback } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const mod = new URL('../mods/first-party/omd_editor/', import.meta.url);
@@ -76,8 +77,7 @@ function fixture() {
     const receipts = [];
     for (;;) {
       const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { git: true, lsp: true }, event, name, payload, receipts, surface, hook_budget_ms: 10000 };
-      const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-        { input: JSON.stringify(request), encoding: 'utf8', timeout: 20000 }).stdout);
+      const output = callback(request, host => call(host.operation, host.arguments), receipts);
       if (output.error) throw new Error(output.error);
       assert.ok(receipts.length <= 32, 'host call limit');
       assert.ok(Buffer.byteLength(JSON.stringify(receipts)) <= 131_072, 'host receipt limit');

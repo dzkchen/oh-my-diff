@@ -11,6 +11,7 @@ import shutil
 import signal
 import struct
 import subprocess
+import tempfile
 import termios
 import threading
 import time
@@ -34,6 +35,8 @@ def git(repo, *argv):
 
 class Provider(http.server.BaseHTTPRequestHandler):
     requests = []
+    reply = None
+    headers_for = None
 
     def log_message(self, *_):
         pass
@@ -43,26 +46,38 @@ class Provider(http.server.BaseHTTPRequestHandler):
         type(self).requests.append(body)
         if "SLOW_TURN" in json.dumps(body.get("input", [])):
             time.sleep(12)
-        item = {"type": "message", "id": "m1", "role": "assistant", "content": [{"type": "output_text", "text": "FIXTURE_DONE"}]}
+        count = len(type(self).requests)
+        items = type(self).reply(body, count) if type(self).reply else [
+            {"type": "message", "id": "m1", "role": "assistant", "content": [{"type": "output_text", "text": "FIXTURE_DONE"}]}]
         usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 5,
                  "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 15}
         try:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
+            for name, value in (type(self).headers_for(count) if type(self).headers_for else {}).items():
+                self.send_header(name, str(value))
             self.end_headers()
-            for event in ({"type": "response.created", "response": {"id": "r1"}},
-                          {"type": "response.output_item.done", "item": item},
-                          {"type": "response.completed", "response": {"id": "r1", "model": body["model"], "usage": usage}}):
+            for event in ({"type": "response.created", "response": {"id": f"r{count}"}},
+                          *({"type": "response.output_item.done", "item": item} for item in items),
+                          {"type": "response.completed", "response": {"id": f"r{count}", "model": body["model"], "usage": usage}}):
                 self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass
 
 
-def provider():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+def provider(reply=None, headers=None):
+    handler = type("ScriptedProvider", (Provider,), {"requests": [], "reply": staticmethod(reply) if reply else None,
+                                                     "headers_for": staticmethod(headers) if headers else None})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://127.0.0.1:{server.server_port}/v1"
+
+
+def fresh(name):
+    root = Path("/private/tmp/omd-pty")
+    root.mkdir(exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{name}-", dir=root)).resolve()
 
 
 def environment(base, binaries, repo, store, url, name="main", profile="full"):
@@ -90,10 +105,10 @@ def environment(base, binaries, repo, store, url, name="main", profile="full"):
 
 
 class Session:
-    def __init__(self, binary, repo, env, columns=150, rows=46, cwd=None):
+    def __init__(self, binary, repo, env, columns=150, rows=46, cwd=None, args=()):
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-        self.process = subprocess.Popen([str(binary), "-C", str(repo)], cwd=cwd or repo, env=env, stdin=slave,
+        self.process = subprocess.Popen([str(binary), *map(str, args), "-C", str(repo)], cwd=cwd or repo, env=env, stdin=slave,
                                         stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         self.raw = bytearray()
@@ -125,6 +140,14 @@ class Session:
                 return False
         return False
 
+    def ready(self, seconds=90):
+        return self.wait("mods on", seconds)
+
+    def type(self, text, delay=0.03):
+        for char in text:
+            os.write(self.master, char.encode())
+            self.pump(delay)
+
     def keys(self, data, settle=0.6):
         mark = len(self.raw)
         os.write(self.master, data)
@@ -133,8 +156,9 @@ class Session:
 
     def command(self, value, expected, seconds=30):
         mark = len(self.raw)
-        os.write(self.master, b"\x15" + value.encode())
-        self.pump(1.2)
+        os.write(self.master, b"\x15")
+        self.type(value)
+        self.pump(1.0)
         os.write(self.master, b"\r")
         return self.wait(expected, seconds, mark)
 

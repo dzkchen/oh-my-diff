@@ -33,3 +33,6 @@ run = "python3 scripts/batch_tree.py"
 
 [tasks."batch:brief"]
 run = "python3 scripts/batch_brief.py"
+
+[tasks."nightly"]
+run = "python3 scripts/nightly.py"

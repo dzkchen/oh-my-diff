@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
@@ -53,8 +54,7 @@ function run(world, state, event, name, payload) {
   for (;;) {
     const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {},
       event, name, payload, receipts, surface, hook_budget_ms: 2000 };
-    const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-      { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 }).stdout);
+    const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
     if (!output.host_call) return { value: output.value, state: output.state ?? state };
     receipts.push({ call: output.host_call, ...world.call(output.host_call) });

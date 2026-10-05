@@ -49,14 +49,13 @@ def checkboxes(openings):
 
 
 def progress():
-    status = {}
+    status = {batch: f"{batch} closed (archived)" for _, _, title, _, _ in sections(DOCS / "archive" / "ROADMAP-completed.md")
+              if (batch := ids(title))}
     for _, _, title, body, _ in sections(DOCS / "ROADMAP.md"):
         if batch := ids(title):
             done = sum(bool(re.match(r"\s*- \[x\]", line)) for line in body)
             total = done + sum(bool(re.match(r"\s*- \[ \]", line)) for line in body)
-            archived = any("](archive/" in line for line in body) and not total
-            status[batch] = f"{batch} closed (archived)" if archived else \
-                f"{batch} {'closed' if total and done == total else 'open'} {done}/{total}"
+            status[batch] = f"{batch} {'closed' if total and done == total else 'open'} {done}/{total}"
     return status
 
 
@@ -64,7 +63,8 @@ def main():
     parser = argparse.ArgumentParser(description="Print one batch's TODO and ROADMAP sections and its referenced batches")
     parser.add_argument("batch", nargs="+", help="for example 4ec, 4.1a or post-launch 1a")
     batch = " ".join(" ".join(parser.parse_args().batch).lower().replace("batch", " ").split())
-    text = []
+    text = next((["=== Standing decisions (ROADMAP.md)"] + body[1:] for _, _, title, body, _ in sections(DOCS / "ROADMAP.md")
+                 if title == "Standing decisions"), [])
     for name in ("TODO.md", "ROADMAP.md"):
         parents, body = find(DOCS / name, batch)
         if not body and name == "ROADMAP.md":

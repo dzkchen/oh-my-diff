@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -16,10 +17,7 @@ const packet = { schema: 1, graph_generator: search.generator, repository_identi
   nodes: [{ id: node }], relationships: [], coverage: [], guidance: 'Verify inferred and unknown relationships against source.', provenance };
 const call = (method, input) => ({ operation: 'mods.service', arguments: { name: 'omd.repository_analysis', method, input } });
 function execute(input) {
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: manifest.capabilities, settings: {}, state: null, event: 'inspect', ...input }),
-    encoding: 'utf8', timeout: 5000,
-  });
+  const result = runnerSync({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: manifest.capabilities, settings: {}, state: null, event: 'inspect', ...input });
   assert.ifError(result.error);
   const output = JSON.parse(result.stdout);
   return { result, output };

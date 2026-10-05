@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
@@ -11,9 +12,7 @@ const capabilities = ['tools', 'context', 'exec', 'fs.write', 'lifecycle', 'serv
 function run(event, payload, state = null, receipts = [], settings = {}, name = '') {
   const request = { source, filename: 'omd_task_tools.ts', api: '0.2.0-experimental.5', capabilities, state, settings,
     event, name, payload, receipts, surface, hook_budget_ms: 1000 };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify(request), encoding: 'utf8', timeout: 5000,
-  });
+  const result = runnerSync(request);
   assert.ifError(result.error);
   return JSON.parse(result.stdout);
 }

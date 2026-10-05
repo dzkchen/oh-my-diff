@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { callback } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../mods/first-party/omd_worktree/index.ts', import.meta.url), 'utf8');
@@ -61,7 +62,7 @@ function fixture(settings = {}) {
     const receipts = [];
     for (let turn = 0; turn < 40; turn++) {
       const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, surface, state, event, name, payload, receipts, hook_budget_ms: 10000 };
-      const reply = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 20000 }).stdout);
+      const reply = callback(request, host, receipts);
       if (reply.error) throw new Error(reply.error);
       if (!reply.host_call) {
         state = reply.state;

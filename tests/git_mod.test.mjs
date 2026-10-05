@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../mods/first-party/omd_git/index.ts', import.meta.url), 'utf8');
@@ -49,7 +50,7 @@ function command(host, name, payload, state) {
   for (let turn = 0; turn < 64; turn++) {
     const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, surface,
       state, event: 'command', name, payload, receipts, hook_budget_ms: 5000 };
-    const child = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 10000 });
+    const child = runnerSync(request);
     assert.ifError(child.error);
     const reply = JSON.parse(child.stdout);
     if (reply.error) throw new Error(reply.error);

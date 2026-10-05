@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const mod = new URL('../mods/first-party/omd_mini/', import.meta.url);
@@ -20,8 +21,7 @@ function session(env) {
     const receipts = [];
     for (;;) {
       const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, receipts, surface, virtual_time_ms: time };
-      const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-        { input: JSON.stringify(request), encoding: 'utf8', timeout: 20000 }).stdout);
+      const output = JSON.parse(runnerSync(request).stdout);
       if (output.error) throw new Error(output.error);
       if (!output.host_call) { state = output.state; return output.value; }
       const { operation, arguments: args } = output.host_call;

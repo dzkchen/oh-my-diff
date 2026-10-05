@@ -131,6 +131,23 @@ class Host:
         steps = json.dumps(output["steps"]) if output else error or ""
         return set(re.findall(r"offline_unmocked_host_operation: ([\w.]+)", steps))
 
+    def scenario(self, path, providers):
+        file = path / "mod.test.json"
+        scenario = json.loads(file.read_text())
+        extra = [(path / package).resolve() for package in scenario.get("packages", [])]
+        location, refused = self.store(f"scenario-{path.parent.name}-{path.name}", [*extra, path], providers)
+        found = [f"scenario {name}: {reason}" for name, reason in refused.items()]
+        for mod, settings in scenario.get("settings", {}).items():
+            target = next((item for item in [*extra, path] if manifest(item)["id"] == mod), providers.get(mod))
+            _, error = self.run("settings", location, target, json.dumps(settings), check=False)
+            if error:
+                found.append(f"scenario settings {mod}: {error}")
+        output, error = self.run("test", location, file, check=False, timeout=300)
+        if error:
+            return found + [f"scenario: {error}"]
+        return found + [f"scenario step {index}: {json.dumps(step['error'])[:300]}"
+                        for index, step in enumerate(output["steps"]) if "error" in step]
+
 
 @functools.cache
 def registered(path):
@@ -180,7 +197,7 @@ def collisions(status, ids):
     return found
 
 
-def check(host, paths, providers, commands):
+def check(host, paths, providers, commands, scenarios):
     report = {}
     ids = {manifest(path)["id"]: path for path in packages([])}
     first_party = [path for path in paths if path.parent.name in ("first-party", "optional")]
@@ -207,6 +224,8 @@ def check(host, paths, providers, commands):
                     reason in error for reason in ("host_operation_unavailable", "client_surface_unavailable")):
                 found.append(f"/{mod}:{name} threw {error.removeprefix('Error: ').splitlines()[0][:200]}")
             found += problems_from_status(host.status(location), f"after /{mod}:{name}", ids)
+        if scenarios and (path / "mod.test.json").is_file():
+            found += host.scenario(path, providers)
         report[f"{path.parent.name}/{path.name}"] = sorted(set(found))
     return {name: found for name, found in report.items() if found}
 
@@ -216,6 +235,7 @@ def main():
     parser.add_argument("--omd-mod", default=shutil.which("omd-mod"), help="omd-mod binary built from the applied runtime patch")
     parser.add_argument("--node", default=None, help="Node 24 executable (default: mise which node)")
     parser.add_argument("--no-commands", action="store_true", help="skip running each registered command")
+    parser.add_argument("--scenarios", action="store_true", help="also run each package's offline mod.test.json scenario")
     parser.add_argument("--json", action="store_true", help="print the full report as JSON")
     parser.add_argument("packages", nargs="*", help="limit to these package directory names or mod IDs")
     args = parser.parse_args()
@@ -227,7 +247,7 @@ def main():
     providers |= {service["name"]: path for path in every
                   for service in manifest(path).get("services", {}).get("exports", [])}
     with tempfile.TemporaryDirectory(prefix="omd-host-check-") as work:
-        report = check(Host(Path(args.omd_mod).resolve(), node, Path(work)), packages(args.packages), providers, not args.no_commands)
+        report = check(Host(Path(args.omd_mod).resolve(), node, Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
     if args.json:
         print(json.dumps(report, indent=2))
     else:

@@ -2,15 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const { capabilities } = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const surface = { events: { terminal: 'terminal', app_notification: 'threads', start: 'lifecycle', resume: 'lifecycle', turn_end: 'lifecycle', timer: 'events', channel: 'events' }, replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
 function run(event, name = '', payload = '', options = {}) {
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities, settings: {}, state: null, event, name, payload, ...options }), encoding: 'utf8', timeout: 5000,
-  });
+  const result = runnerSync({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities, settings: {}, state: null, event, name, payload, ...options });
   assert.ifError(result.error);
   const output = JSON.parse(result.stdout);
   assert.equal(result.status, 0, `${result.stderr}\n${output.error ?? ''}`);

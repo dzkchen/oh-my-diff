@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../mods/first-party/omd_recovery/index.ts', import.meta.url), 'utf8');
@@ -25,8 +26,7 @@ function recover(settings = {}, changes = {}, failure_class = 'edit') {
     settings: { advisory_route: 'opposite', allowed_failure_classes: ['edit'], evidence_bytes: 100000, ...settings },
     surface, event: 'tool', name: 'recover', payload: { failure_class, summary: 'The exact edit failed', call_ids: ['failed-edit'] }, receipts };
   for (let turn = 0; turn < 24; turn++) {
-    const child = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-      { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
+    const child = runnerSync(request);
     assert.ifError(child.error);
     const reply = JSON.parse(child.stdout);
     if (!reply.host_call) return { reply: reply.value?.status === 'refused' ? { ...reply, error: reply.value.reason } : reply, calls };

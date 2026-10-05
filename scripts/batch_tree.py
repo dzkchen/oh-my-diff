@@ -108,7 +108,7 @@ def cargo_env(batch):
            if key not in ("CODEX_SQLITE_HOME", "FORCE_COLOR", "COLORTERM", "NO_COLOR")}
     env.update({
         "CARGO_TARGET_DIR": str(batch / "target"),
-        "CARGO_INCREMENTAL": "0",
+        "CARGO_INCREMENTAL": os.environ.get("CARGO_INCREMENTAL", "0"),
         "OMD_TEST_NODE": run("mise", "which", "node", cwd=ROOT).decode().strip(),
         "RUST_MIN_STACK": "16777216",
         "RUSTY_V8_ARCHIVE": str(V8 / "librusty_v8_ptrcomp_sandbox_release_aarch64-apple-darwin.a.gz"),
@@ -264,6 +264,15 @@ def locks(args):
     raise SystemExit(1 if failed else 0)
 
 
+def prune_workspace_artifacts(debug):
+    for path in [*debug.glob("deps/codex*"), *debug.glob("deps/libcodex*"), *debug.glob(".fingerprint/codex-*"),
+                 *debug.glob("build/codex-*"), debug / "incremental"]:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
 def clean(args):
     batch = batch_dir(args.batch)
     target = batch / "target"
@@ -271,7 +280,8 @@ def clean(args):
         if args.keep_warm:
             shutil.rmtree(WARM, ignore_errors=True)
             target.rename(WARM)
-            print(f"moved {target} to {WARM}")
+            prune_workspace_artifacts(WARM / "debug")
+            print(f"moved {target} to {WARM} without workspace crate artifacts; {du(WARM)}")
         else:
             shutil.rmtree(target)
             print(f"removed {target}")
@@ -281,7 +291,7 @@ def clean(args):
 
 
 def du(path):
-    return run("du", "-sh", path).decode().split()[0] if path.exists() else "-"
+    return run("du", "-sh", path, allowed=(0, 1)).decode().split()[0] if path.exists() else "-"
 
 
 def status(args):

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const mod = new URL('../mods/first-party/omd_preview/', import.meta.url);
@@ -21,8 +22,7 @@ function invoke(repository, state, event, payload, name) {
   for (;;) {
     const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload,
       receipts, surface, hook_budget_ms: 10000, assets: { 'render.mjs': { text: renderer, sha256: '0' } } };
-    const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-      { input: JSON.stringify(request), encoding: 'utf8', timeout: 20000 }).stdout);
+    const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
     if (!output.host_call) return { value: output.value, state: output.state, calls };
     const { operation, arguments: args } = output.host_call;

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
@@ -10,8 +11,7 @@ const surface = { events: { app_notification: 'threads', terminal: 'terminal' },
 
 function run(event, payload, state, name = '') {
   const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { rows: 6 }, event, name, payload, surface, hook_budget_ms: 2000 };
-  const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
-    { input: JSON.stringify(request), encoding: 'utf8', timeout: 10000 }).stdout);
+  const output = JSON.parse(runnerSync(request).stdout);
   if (output.error) throw new Error(output.error);
   return output;
 }

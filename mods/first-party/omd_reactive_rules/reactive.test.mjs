@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
@@ -13,7 +14,7 @@ function session(rules) {
   return (event, payload = {}, extra = {}) => {
     const request = { source, filename: 'omd_reactive_rules.ts', api: '0.2.0-experimental.5', capabilities: ['context', 'lifecycle', 'middleware', 'store'],
       state, settings: { rules }, event, payload, surface, hook_budget_ms: 2000, ...extra };
-    const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
+    const result = runnerSync(request);
     const output = JSON.parse(result.stdout);
     if (output.error) throw new Error(output.error);
     if (!output.host_call) state = output.state;
