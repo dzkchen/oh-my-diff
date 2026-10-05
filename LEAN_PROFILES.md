@@ -13,13 +13,13 @@ These internal selectors, installation paths, schema-1 records and lock filename
 remain unchanged. They identify the same profiles; the public labels and status
 metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
-These are local Apple Silicon candidate profiles for the active Codex `0.159.1`
+These are local Apple Silicon candidate profiles for the active Codex `0.160.1`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `omd-mod`, `omd`, and `omd-contract` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node 24.18 or a
-later 24.x (`mise which node`); any upstream Codex `0.159.x` serves as the
+later 24.x (`mise which node`); any upstream Codex `0.160.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod and the `omd_mods`
 control screen. It does not change
@@ -240,7 +240,7 @@ The mod store and Codex state remain. To protect credentials, grants and evidenc
 While the broker is deployed, installing a package adds its binaries to the pins, and `install.sh` upgrades and rollbacks re-pin exactly the active and previous installations; each asks for sudo once. `install.sh uninstall` and `omd-package uninstall` refuse while the broker is deployed; pruning an older installation uses `omd-package uninstall --keep-broker`. The protection boundary is described in [mods/REFERENCE.md](mods/REFERENCE.md#protected-authority-macos).
 
 The installer refuses removal if its
-launcher changed, no upstream Codex `0.159.x` remains on `PATH`, or the prefix
+launcher changed, no upstream Codex `0.160.x` remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
 fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,

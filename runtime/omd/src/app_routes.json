@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.159.1",
-  "commit": "8e68a98ef03cdde76d2e6800791ebdf1b3b95b24"
+  "tag": "rust-v0.160.1",
+  "commit": "d27764b82f7118f674371e6d6e76271d9d606edb"
  },
  "requests": {
   "account/gatewayOAuth/read": {
@@ -1427,6 +1427,8 @@
   "apps._default",
   "auto_review",
   "auto_review.circuit_break_action",
+  "auto_review.conversation_history_max_output_tokens",
+  "auto_review.experimental_conversation_history_prompt",
   "auto_review.experimental_policy_template",
   "auto_review.extra_policy",
   "auto_review.policy",
@@ -1451,10 +1453,12 @@
   "features.exec_permission_approvals",
   "features.experimental_windows_sandbox",
   "features.guardian_approval",
+  "features.guardian_conversation_history_tools",
   "features.guardian_enhanced_node_repl_transcripts",
   "features.guardian_ext",
   "features.guardian_node_repl_transcript_images",
   "features.guardian_reuse_parent_compaction",
+  "features.guardian_root_handoff_context",
   "features.guardianv2",
   "features.mcp_oauth_refresh_coordination",
   "features.network_proxy",

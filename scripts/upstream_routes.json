@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.159.1",
-  "commit": "8e68a98ef03cdde76d2e6800791ebdf1b3b95b24"
+  "tag": "rust-v0.160.1",
+  "commit": "d27764b82f7118f674371e6d6e76271d9d606edb"
  },
  "routes": {
   "app.request": "Q1 `app.request`: invoke this pinned app-server client request on the session's own app-server connection. `class` is the required capability; `contexts` limits where it may be called (`user` = a user-invoked command, key or component action; `event` = lifecycle or notification handlers); `confirm` requires a native confirmation naming the mod; `scope` binds thread arguments to threads the caller may see; `refuse` lists parameters a mod may not set; `root` parameters must name the session root or one of its worktrees; `route_fields` must match a configured route; `keys` names the config keys the call writes, checked against `authority_config`.",
@@ -2169,6 +2169,12 @@
   "config_key:auto_review.circuit_break_action": {
    "exclude": "authority_config"
   },
+  "config_key:auto_review.conversation_history_max_output_tokens": {
+   "exclude": "authority_config"
+  },
+  "config_key:auto_review.experimental_conversation_history_prompt": {
+   "exclude": "authority_config"
+  },
   "config_key:auto_review.experimental_policy_template": {
    "exclude": "authority_config"
   },
@@ -2427,6 +2433,9 @@
   "config_key:features.guardian_approval": {
    "exclude": "authority_config"
   },
+  "config_key:features.guardian_conversation_history_tools": {
+   "exclude": "authority_config"
+  },
   "config_key:features.guardian_enhanced_node_repl_transcripts": {
    "exclude": "authority_config"
   },
@@ -2437,6 +2446,9 @@
    "exclude": "authority_config"
   },
   "config_key:features.guardian_reuse_parent_compaction": {
+   "exclude": "authority_config"
+  },
+  "config_key:features.guardian_root_handoff_context": {
    "exclude": "authority_config"
   },
   "config_key:features.guardianv2": {

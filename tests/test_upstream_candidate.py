@@ -168,6 +168,7 @@ class UpstreamCandidateTests(unittest.TestCase):
         code, summary, report = self.run_candidate("rust-v1.0.0")
         self.assertEqual((code, summary["status"], summary["lag_stable_releases"]), (0, "no_new_release", 0))
         self.assertIsNone(report)
+        self.assertEqual(self.run_candidate("rust-v0.9.0")[1]["status"], "no_new_release")
         self.assert_active_unchanged()
 
     def test_clean_candidate_replays_and_rolls_back(self):

@@ -140,7 +140,7 @@ test('greeting byte bounds and short-dialog recovery actions remain usable after
 test('powerline presets show session, Git, context and OMD state; below adds one status segment; Alt+z stashes', () => {
   const thread = 'thread-123456789';
   const ledger = { thread_id: thread, cwd: '/Users/me/work/project', cost: { settled_task_charge_microusd: 1_250_000 } };
-  const identity = { codex_version: '0.159.1', install_profile: 'full', mode: 'omd', mods: { installed: 9, enabled: 5, active: 5 } };
+  const identity = { codex_version: '0.160.1', install_profile: 'full', mode: 'omd', mods: { installed: 9, enabled: 5, active: 5 } };
   const on = { statusline: 'default' };
   const notify = (state, method, params) => run('app_notification', '', { method, params: { threadId: thread, ...params }, thread_id: thread, coalesced: 0, dropped: 0 }, { state, settings: on }).state;
   assert.equal(run('app_notification', '', { method: 'thread/settings/updated', params: { threadId: thread }, thread_id: thread, coalesced: 0, dropped: 0 }).state, null);

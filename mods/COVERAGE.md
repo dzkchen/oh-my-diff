@@ -100,7 +100,7 @@ operation that is not documented here fails `scripts/mod_conformance.py`.
 
 ## What this adds over the native plugins and hooks
 
-Pinned Codex 0.159.1 ships plugins (`plugin.json`: skills, prompts, MCP servers,
+Pinned Codex 0.160.1 ships plugins (`plugin.json`: skills, prompts, MCP servers,
 hook files) and hooks for `pre_tool_use`, `permission_request`, `post_tool_use`,
 `pre_compact`, `post_compact`, `session_start`, `session_end`,
 `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.

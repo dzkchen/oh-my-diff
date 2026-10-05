@@ -176,6 +176,8 @@ class Candidate:
         pin = self.active["tag"]
         self.report.update(active={"tag": pin, "commit": self.active["commit"]}, target={"tag": target},
                            lag_stable_releases=len([t for t in releases if version_key(t) > version_key(pin)]))
+        if not self.args.release and version_key(target) < version_key(pin):
+            return "no_new_release"
         tag_object, commit = remote_tag(self.url, target)
         self.report["target"].update(tag_object=tag_object, commit=commit)
         if target == pin and commit == self.active["commit"]:

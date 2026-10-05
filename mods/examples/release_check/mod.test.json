@@ -69,24 +69,6 @@
         }
       }
     ],
-    "routes.list": [
-      {
-        "result": [
-          {
-            "name": "fast",
-            "model": "m",
-            "provider": "p",
-            "reasoning": "low",
-            "roles": [
-              "lead"
-            ],
-            "billing": "included_subscription",
-            "tools": [],
-            "available": true
-          }
-        ]
-      }
-    ],
     "workspace.snapshot": [
       {
         "result": {
@@ -124,10 +106,10 @@
       "type": "invoke",
       "mod": "release_check",
       "event": "command",
-      "name": "routes",
-      "payload": null,
+      "name": "picked",
+      "payload": 3,
       "expect": {
-        "display": "fast"
+        "display": "Picked row 3"
       }
     },
     {

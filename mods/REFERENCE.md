@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.159.1`. The package's
+`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.160.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and

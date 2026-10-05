@@ -304,8 +304,14 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         panic!("the effective call must reach the native executor");
     };
     assert_eq!(
-        (tool.name.as_str(), arguments.as_str()),
-        ("read", r#"{"checked":true,"path":"a.txt"}"#)
+        (
+            tool.name.as_str(),
+            serde_json::from_str::<serde_json::Value>(&arguments).unwrap()
+        ),
+        (
+            "read",
+            serde_json::json!({"checked": true, "path": "a.txt"})
+        )
     );
     assert_eq!(
         mods.replace_tool_output(output("call-1", "hello world"))
