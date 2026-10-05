@@ -311,6 +311,14 @@ impl Accounts {
         }
     }
 
+    /// Drops the per-thread request state a closed thread can no longer use.
+    pub fn forget_thread(&self, thread: &str) {
+        if let Ok(mut state) = self.6.lock() {
+            state.retries.remove(thread);
+            state.fingerprints.remove(thread);
+        }
+    }
+
     pub fn take_responses(&self, thread: &str) -> Vec<Value> {
         self.6
             .lock()
@@ -825,11 +833,18 @@ impl Accounts {
                 )),
             },
             |input| {
-                let mut probe = value.clone();
-                if let Some(effective) = input["sections"].as_array() {
-                    codex_omd::model_request::apply_sections(&mut probe, &sections, effective);
-                }
-                let current = codex_omd::model_request::fingerprints(&probe);
+                // Only an edited request needs its own copy; the common unchanged case fingerprints the body in place.
+                let current = match input["sections"]
+                    .as_array()
+                    .filter(|effective| effective.as_slice() != sections.as_slice())
+                {
+                    Some(effective) => {
+                        let mut probe = value.clone();
+                        codex_omd::model_request::apply_sections(&mut probe, &sections, effective);
+                        codex_omd::model_request::fingerprints(&probe)
+                    }
+                    None => codex_omd::model_request::fingerprints(value),
+                };
                 let from = state.lock().ok().and_then(|mut state| {
                     let previous = state
                         .fingerprints

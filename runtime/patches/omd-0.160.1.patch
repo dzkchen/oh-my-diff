@@ -328,7 +328,7 @@ index b4872ba6a..30d13ca0a 100644
  pub(crate) use responses::process_responses_event;
 -pub use responses::spawn_response_stream;
 diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
-index 6b2a7ed47..ca6909e2d 100644
+index 6b2a7ed47..d6fc03234 100644
 --- a/codex-rs/codex-api/src/sse/responses.rs
 +++ b/codex-rs/codex-api/src/sse/responses.rs
 @@ -9,7 +9,6 @@ use crate::rate_limits::parse_all_rate_limits;
@@ -347,10 +347,10 @@ index 6b2a7ed47..ca6909e2d 100644
  pub fn spawn_response_stream(
 -    stream_response: StreamResponse,
 +    stream_response: codex_client::StreamResponse,
-     idle_timeout: Duration,
-     telemetry: Option<Arc<dyn SseTelemetry>>,
-     turn_state: Option<Arc<OnceLock<String>>>,
- ) -> ResponseStream {
++    idle_timeout: Duration,
++    telemetry: Option<Arc<dyn SseTelemetry>>,
++    turn_state: Option<Arc<OnceLock<String>>>,
++) -> ResponseStream {
 +    spawn_observed_response_stream(
 +        crate::request_observer::ObservedStream {
 +            response: stream_response,
@@ -364,10 +364,10 @@ index 6b2a7ed47..ca6909e2d 100644
 +
 +pub(crate) fn spawn_observed_response_stream(
 +    observed: crate::request_observer::ObservedStream,
-+    idle_timeout: Duration,
-+    telemetry: Option<Arc<dyn SseTelemetry>>,
-+    turn_state: Option<Arc<OnceLock<String>>>,
-+) -> ResponseStream {
+     idle_timeout: Duration,
+     telemetry: Option<Arc<dyn SseTelemetry>>,
+     turn_state: Option<Arc<OnceLock<String>>>,
+ ) -> ResponseStream {
 +    let crate::request_observer::ObservedStream {
 +        response: stream_response,
 +        attempt,
@@ -446,7 +446,7 @@ index 6b2a7ed47..ca6909e2d 100644
                  debug!(
                      error_category = ?e.classify(),
                      error_line = e.line(),
-@@ -585,67 +638,111 @@ async fn process_sse_with_treatment(
+@@ -585,67 +638,112 @@ async fn process_sse_with_treatment(
                  continue;
              }
          };
@@ -456,22 +456,26 @@ index 6b2a7ed47..ca6909e2d 100644
 -
 -        if let Some(model) = event.response_model()
 -            && last_server_model.as_deref() != Some(model.as_str())
-+        let valid = serde_json::from_value::<ResponsesStreamEvent>(raw.clone()).is_ok();
-+        let mut stopped = None;
-+        if let Some(attempt) = attempt.as_mut()
-+            && let Err(error) = attempt.observe(&mut raw, valid)
-         {
+-        {
 -            if tx_event
 -                .send(Ok(ResponseEvent::ServerModel(model.clone())))
 -                .await
 -                .is_err()
 -            {
-+            let message = error.to_string();
-+            if crate::request_observer::stream_control(&message).is_none() {
-+                let _ = tx_event
-+                    .send(Err(ApiError::InvalidRequest { message }))
-+                    .await;
-                 return;
+-                return;
++        let mut stopped = None;
++        if let Some(attempt) = attempt.as_mut() {
++            // Only an observer needs the up-front validity check; it borrows the parsed value rather than copying it.
++            let valid = ResponsesStreamEvent::deserialize(&raw).is_ok();
++            if let Err(error) = attempt.observe(&mut raw, valid) {
++                let message = error.to_string();
++                if crate::request_observer::stream_control(&message).is_none() {
++                    let _ = tx_event
++                        .send(Err(ApiError::InvalidRequest { message }))
++                        .await;
++                    return;
++                }
++                stopped = Some(ApiError::InvalidRequest { message });
              }
 -            last_server_model = Some(model);
 -        }
@@ -482,7 +486,6 @@ index 6b2a7ed47..ca6909e2d 100644
 -                .is_err()
 -        {
 -            return;
-+            stopped = Some(ApiError::InvalidRequest { message });
          }
 -        if let Some(metadata) = turn_moderation_metadata
 -            && tx_event
@@ -608,7 +611,7 @@ index 6b2a7ed47..ca6909e2d 100644
      }
  }
 
-@@ -730,6 +827,52 @@ mod tests {
+@@ -730,6 +828,52 @@ mod tests {
          Duration::from_millis(1000)
      }
 
@@ -19217,10 +19220,10 @@ index 000000000..e69aaed34
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..80e386c1c
+index 000000000..dbe916b3f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2170 @@
+@@ -0,0 +1,2185 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -19531,6 +19534,14 @@ index 000000000..80e386c1c
 +    pub fn forget_retry(&self, thread: &str) {
 +        if let Ok(mut state) = self.6.lock() {
 +            state.retries.remove(thread);
++        }
++    }
++
++    /// Drops the per-thread request state a closed thread can no longer use.
++    pub fn forget_thread(&self, thread: &str) {
++        if let Ok(mut state) = self.6.lock() {
++            state.retries.remove(thread);
++            state.fingerprints.remove(thread);
 +        }
 +    }
 +
@@ -20048,11 +20059,18 @@ index 000000000..80e386c1c
 +                )),
 +            },
 +            |input| {
-+                let mut probe = value.clone();
-+                if let Some(effective) = input["sections"].as_array() {
-+                    codex_omd::model_request::apply_sections(&mut probe, &sections, effective);
-+                }
-+                let current = codex_omd::model_request::fingerprints(&probe);
++                // Only an edited request needs its own copy; the common unchanged case fingerprints the body in place.
++                let current = match input["sections"]
++                    .as_array()
++                    .filter(|effective| effective.as_slice() != sections.as_slice())
++                {
++                    Some(effective) => {
++                        let mut probe = value.clone();
++                        codex_omd::model_request::apply_sections(&mut probe, &sections, effective);
++                        codex_omd::model_request::fingerprints(&probe)
++                    }
++                    None => codex_omd::model_request::fingerprints(value),
++                };
 +                let from = state.lock().ok().and_then(|mut state| {
 +                    let previous = state
 +                        .fingerprints
@@ -21393,10 +21411,10 @@ index 000000000..80e386c1c
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..1d41a28aa
+index 000000000..f515c3e84
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1206 @@
+@@ -0,0 +1,1217 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -22493,6 +22511,17 @@ index 000000000..1d41a28aa
 +    assert_eq!(
 +        request.headers["x-omd-attempt"], "1",
 +        "a retry core declined does not number the next turn's request"
++    );
++    accounts
++        .6
++        .lock()
++        .unwrap()
++        .fingerprints
++        .insert("child".into(), vec![("i0".into(), "sha".into())]);
++    accounts.forget_thread("child");
++    assert!(
++        accounts.6.lock().unwrap().fingerprints.is_empty(),
++        "a closed thread keeps no request fingerprints"
 +    );
 +}
 +
@@ -25188,10 +25217,10 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..db467b635
+index 000000000..79b0239b6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,683 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -25790,15 +25819,10 @@ index 000000000..db467b635
 +impl Lead {
 +    /// Every callback receives this, so it carries the totals, the newest attempts and only a count of observed requests.
 +    fn ledger(&self) -> Value {
-+        let mut cost = json!(self.session.task.cost_capture().ok());
++        let summary = self.session.task.cost_summary(LEDGER_ATTEMPTS).ok();
++        let observed = summary.as_ref().map_or(0, |(_, observed)| *observed);
++        let mut cost = json!(summary.map(|(capture, _)| capture));
 +        if let Some(cost) = cost.as_object_mut() {
-+            if let Some(Value::Array(attempts)) = cost.get_mut("attempts") {
-+                attempts.drain(..attempts.len().saturating_sub(LEDGER_ATTEMPTS));
-+            }
-+            let observed = cost
-+                .remove("observed")
-+                .and_then(|observed| observed.as_array().map(Vec::len))
-+                .unwrap_or_default();
 +            cost.insert("observed_requests".into(), observed.into());
 +        }
 +        json!({"thread_id": self.thread.to_string(), "cwd": self.host.repository, "cost": cost})
@@ -26868,10 +26892,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..fa6fee461
+index 000000000..5c5064c05
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2330 @@
+@@ -0,0 +1,2331 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -28780,6 +28804,7 @@ index 000000000..fa6fee461
 +            if let Ok(mut accounts) = self.host.accounts.0.lock() {
 +                accounts.remove(&lead.thread.to_string());
 +            }
++            self.host.accounts.forget_thread(&lead.thread.to_string());
 +            if let Ok(mut invokers) = self.expansion.invokers.lock() {
 +                invokers.remove(&lead.thread.to_string());
 +            }
@@ -33023,10 +33048,10 @@ index 000000000..67d413e98
 +}
 diff --git a/codex-rs/ext/omd/src/mods/elicitation.rs b/codex-rs/ext/omd/src/mods/elicitation.rs
 new file mode 100644
-index 000000000..0366a58dd
+index 000000000..610182cf3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/elicitation.rs
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,163 @@
 +use super::*;
 +use codex_extension_api::ElicitationAnswer;
 +use codex_extension_api::ElicitationInterceptInput;
@@ -33045,7 +33070,11 @@ index 000000000..0366a58dd
 +        .collect()
 +}
 +
-+pub(super) fn redact(content: Option<&Value>, secrets: &[String]) -> Value {
++/// Without the request's secret list the fields cannot be told apart, so the whole answer is withheld.
++pub(super) fn redact(content: Option<&Value>, secrets: Option<&[String]>) -> Value {
++    let Some(secrets) = secrets else {
++        return content.map_or(Value::Null, |_| json!("[redacted]"));
++    };
 +    let mut content = content.cloned().unwrap_or(Value::Null);
 +    if let Some(object) = content.as_object_mut() {
 +        for name in secrets {
@@ -33085,7 +33114,7 @@ index 000000000..0366a58dd
 +        let secrets = secret_fields(schema);
 +        if let Ok(mut pending) = self.elicitations.lock() {
 +            if pending.len() >= 64 {
-+                pending.clear();
++                pending.pop_first();
 +            }
 +            pending.insert(
 +                format!("{}\0{}", input.server, input.request_id),
@@ -33174,18 +33203,13 @@ index 000000000..0366a58dd
 +        else {
 +            return;
 +        };
-+        let secrets = self
-+            .elicitations
-+            .lock()
-+            .ok()
-+            .and_then(|mut pending| {
-+                pending.remove(&format!("{}\0{}", input.server, input.request_id))
-+            })
-+            .unwrap_or_default();
++        let secrets = self.elicitations.lock().ok().and_then(|mut pending| {
++            pending.remove(&format!("{}\0{}", input.server, input.request_id))
++        });
 +        self.event(
 +            "elicitation_result",
 +            json!({"server": input.server, "request_id": input.request_id, "action": input.action,
-+                "content": redact(input.content, &secrets), "by": input.by}),
++                "content": redact(input.content, secrets.as_deref()), "by": input.by}),
 +            Some(&*lead),
 +        )
 +        .await;
@@ -35813,10 +35837,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..0c5a521a4
+index 000000000..2313e2219
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2778 @@
+@@ -0,0 +1,2793 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -38526,6 +38550,16 @@ index 000000000..0c5a521a4
 +        thread_store,
 +    })
 +    .await;
++    mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
++        server: "docs",
++        request_id: "evicted",
++        action: "accept",
++        content: Some(&json!({"token": "hunter2"})),
++        by: None,
++        session_store,
++        thread_store,
++    })
++    .await;
 +    let log = fixture
 +        .core
 +        .runtime
@@ -38543,6 +38577,11 @@ index 000000000..0c5a521a4
 +    assert_eq!(log[1]["reason"], "explicit");
 +    assert_eq!(log[2]["content"], json!({"token": "[redacted]"}));
 +    assert_eq!(log[2]["by"], Value::Null);
++    assert_eq!(
++        log[3]["content"],
++        json!("[redacted]"),
++        "an answer with no recorded schema is withheld"
++    );
 +
 +    let failed = mods
 +        .continue_turn(codex_extension_api::TurnContinueInput {
@@ -43236,10 +43275,10 @@ index 000000000..82e68d714
 +event, capability or host configuration field names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..b516a7589
+index 000000000..ae1342ed9
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1525 @@
+@@ -0,0 +1,1545 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -44730,33 +44769,53 @@ index 000000000..b516a7589
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        let attempts = state.attempts.values().cloned().collect::<Vec<_>>();
-+        let settled_task_charge_microusd = attempts
-+            .iter()
++        Self::capture(&state, usize::MAX, state.observed.clone())
++    }
++
++    /// Totals over every attempt, but only the newest `attempts` cloned and observed requests counted, not copied.
++    pub fn cost_summary(&self, attempts: usize) -> io::Result<(TaskCostCapture, usize)> {
++        let state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        Ok((
++            Self::capture(&state, attempts, Vec::new())?,
++            state.observed.len(),
++        ))
++    }
++
++    fn capture(
++        state: &State,
++        newest: usize,
++        observed: Vec<Attempt>,
++    ) -> io::Result<TaskCostCapture> {
++        let all = || state.attempts.values();
++        let settled_task_charge_microusd = all()
 +            .filter(|attempt| !attempt.external_subscription)
 +            .filter_map(|attempt| attempt.settled_microusd)
 +            .sum();
-+        let subscription_list_equivalent_microusd = attempts
-+            .iter()
++        let subscription_list_equivalent_microusd = all()
 +            .filter(|attempt| attempt.external_subscription)
 +            .filter_map(|attempt| attempt.settled_microusd)
 +            .sum();
-+        let retained_exposure_upper_bound_microusd = attempts.iter().map(Attempt::exposure).sum();
-+        let raw_usage_attempts = attempts
-+            .iter()
++        let retained_exposure_upper_bound_microusd = all().map(Attempt::exposure).sum();
++        let raw_usage_attempts = all()
 +            .filter(|attempt| attempt.raw_usage.is_some())
 +            .count()
 +            .try_into()
 +            .map_err(|_| denied("raw usage attempt count overflow"))?;
-+        let uncertain_requests = attempts
-+            .iter()
++        let uncertain_requests = all()
 +            .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
 +            .map(|attempt| attempt.request)
++            .collect();
++        let attempts = all()
++            .skip(state.attempts.len().saturating_sub(newest))
++            .cloned()
 +            .collect();
 +        Ok(TaskCostCapture {
 +            schema: 1,
 +            attempts,
-+            observed: state.observed.clone(),
++            observed,
 +            settled_task_charge_microusd,
 +            subscription_list_equivalent_microusd,
 +            retained_exposure_upper_bound_microusd,
@@ -75795,10 +75854,10 @@ index 000000000..3c79277f7
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 000000000..4dd06a9c3
+index 000000000..63054c349
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,427 @@
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::VersionMarker;
@@ -75841,6 +75900,30 @@ index 000000000..4dd06a9c3
 +    assert_eq!(capture.settled_task_charge_microusd, 0);
 +    assert_eq!(capture.subscription_list_equivalent_microusd, 7);
 +    assert_eq!(capture.raw_usage_attempts, 1);
++}
++
++#[test]
++fn cost_summary_totals_every_attempt_but_keeps_only_the_newest() {
++    let directory = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), directory.path().join("task")).unwrap();
++    task.authorize_route("vendor", "model-a").unwrap();
++    for charge in [3, 4, 5] {
++        let admitted = task.admit("lead", "vendor", "model-a", 20).unwrap();
++        task.dispatch(&admitted, || Ok(())).unwrap();
++        task.settle(&admitted, json!({"input_tokens": 1}), charge)
++            .unwrap();
++    }
++    let full = task.cost_capture().unwrap();
++    let (summary, observed) = task.cost_summary(2).unwrap();
++    assert_eq!(observed, 0);
++    assert!(summary.observed.is_empty());
++    assert_eq!(summary.attempts, full.attempts[1..]);
++    assert_eq!(summary.settled_task_charge_microusd, 12);
++    assert_eq!(
++        summary.settled_task_charge_microusd,
++        full.settled_task_charge_microusd
++    );
++    assert_eq!(summary.raw_usage_attempts, 3);
 +}
 +
 +fn worker() -> WorkerLimits {
@@ -98750,10 +98833,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..8b88df875
+index 000000000..6980e9110
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,613 @@
+@@ -0,0 +1,647 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -98789,48 +98872,82 @@ index 000000000..8b88df875
 +    effective_mode().is_ok_and(|mode| mode.mode.mod_host_enabled())
 +}
 +
++/// Every frame asks for this, so the parsed view is reused until `mod-view.json` or `mod-status.json` changes.
 +pub(crate) fn mod_snapshot() -> (bool, codex_omd::ModViewSnapshot) {
-+    mod_paths().map_or_else(
-+        || (false, codex_omd::ModViewSnapshot::default()),
-+        |paths| {
-+            let mut snapshot =
-+                codex_omd::ModViewSnapshot::read(&paths.evidence.join("mod-view.json"))
-+                    .unwrap_or_default();
-+            if let Some(status) = mod_status() {
-+                let errors = status["mods"]
-+                    .as_array()
-+                    .into_iter()
-+                    .flatten()
-+                    .filter_map(|item| {
-+                        item["error"].as_str().map(|error| {
-+                            format!("{}: {error}", item["id"].as_str().unwrap_or("mod"))
-+                                .chars()
-+                                .filter(|character| !character.is_control())
-+                                .take(180)
-+                                .collect::<String>()
-+                        })
-+                    })
-+                    .take(16)
-+                    .collect::<Vec<_>>();
-+                if !errors.is_empty()
-+                    && !snapshot
-+                        .view
-+                        .panels
-+                        .iter()
-+                        .any(|panel| panel.title == "Mod errors")
-+                {
-+                    snapshot.view.panels.insert(
-+                        0,
-+                        codex_omd::ModPanel {
-+                            title: "Mod errors".into(),
-+                            lines: errors,
-+                        },
-+                    );
-+                }
-+            }
-+            (true, snapshot)
-+        },
-+    )
++    type Cached = (PathBuf, [Option<FileStamp>; 2], codex_omd::ModViewSnapshot);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let Some(paths) = mod_paths() else {
++        return (false, codex_omd::ModViewSnapshot::default());
++    };
++    let (view, status) = (
++        paths.evidence.join("mod-view.json"),
++        paths.evidence.join("mod-status.json"),
++    );
++    let stamps = [file_stamp(&view), file_stamp(&status)];
++    let mut cache = CACHE
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some((evidence, cached, snapshot)) = cache.as_ref()
++        && *evidence == paths.evidence
++        && *cached == stamps
++    {
++        return (true, snapshot.clone());
++    }
++    let snapshot = read_mod_snapshot(&view, &status);
++    *cache = Some((paths.evidence, stamps, snapshot.clone()));
++    (true, snapshot)
++}
++
++/// Modification time, length and (on Unix) inode, so a same-tick rename-over still reads as a change.
++type FileStamp = (std::time::SystemTime, u64, u64);
++
++fn file_stamp(path: &Path) -> Option<FileStamp> {
++    let metadata = std::fs::symlink_metadata(path).ok()?;
++    #[cfg(unix)]
++    let inode = std::os::unix::fs::MetadataExt::ino(&metadata);
++    #[cfg(not(unix))]
++    let inode = 0;
++    Some((metadata.modified().ok()?, metadata.len(), inode))
++}
++
++fn read_mod_snapshot(view: &Path, status: &Path) -> codex_omd::ModViewSnapshot {
++    let mut snapshot = codex_omd::ModViewSnapshot::read(view).unwrap_or_default();
++    if let Some(status) = bounded_read(status, 262_144)
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++    {
++        let errors = status["mods"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .filter_map(|item| {
++                item["error"].as_str().map(|error| {
++                    format!("{}: {error}", item["id"].as_str().unwrap_or("mod"))
++                        .chars()
++                        .filter(|character| !character.is_control())
++                        .take(180)
++                        .collect::<String>()
++                })
++            })
++            .take(16)
++            .collect::<Vec<_>>();
++        if !errors.is_empty()
++            && !snapshot
++                .view
++                .panels
++                .iter()
++                .any(|panel| panel.title == "Mod errors")
++        {
++            snapshot.view.panels.insert(
++                0,
++                codex_omd::ModPanel {
++                    title: "Mod errors".into(),
++                    lines: errors,
++                },
++            );
++        }
++    }
++    snapshot
 +}
 +
 +pub(crate) fn mod_paths() -> Option<ModPaths> {

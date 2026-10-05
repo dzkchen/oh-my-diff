@@ -16,7 +16,11 @@ fn secret_fields(schema: &Value) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn redact(content: Option<&Value>, secrets: &[String]) -> Value {
+/// Without the request's secret list the fields cannot be told apart, so the whole answer is withheld.
+pub(super) fn redact(content: Option<&Value>, secrets: Option<&[String]>) -> Value {
+    let Some(secrets) = secrets else {
+        return content.map_or(Value::Null, |_| json!("[redacted]"));
+    };
     let mut content = content.cloned().unwrap_or(Value::Null);
     if let Some(object) = content.as_object_mut() {
         for name in secrets {
@@ -56,7 +60,7 @@ impl Mods {
         let secrets = secret_fields(schema);
         if let Ok(mut pending) = self.elicitations.lock() {
             if pending.len() >= 64 {
-                pending.clear();
+                pending.pop_first();
             }
             pending.insert(
                 format!("{}\0{}", input.server, input.request_id),
@@ -145,18 +149,13 @@ impl Mods {
         else {
             return;
         };
-        let secrets = self
-            .elicitations
-            .lock()
-            .ok()
-            .and_then(|mut pending| {
-                pending.remove(&format!("{}\0{}", input.server, input.request_id))
-            })
-            .unwrap_or_default();
+        let secrets = self.elicitations.lock().ok().and_then(|mut pending| {
+            pending.remove(&format!("{}\0{}", input.server, input.request_id))
+        });
         self.event(
             "elicitation_result",
             json!({"server": input.server, "request_id": input.request_id, "action": input.action,
-                "content": redact(input.content, &secrets), "by": input.by}),
+                "content": redact(input.content, secrets.as_deref()), "by": input.by}),
             Some(&*lead),
         )
         .await;
