@@ -219,10 +219,14 @@ export default function activate(api: ModAPI) {
   api.on('channel', ({ channel, data }) => {
     if (channel !== 'omd_usage/hud') return refresh('session');
     const hud = data as (Hud & { thread?: string | null }) | null;
-    if (!hud?.thread || !PRESETS[current(readState()).statusline]) return;
+    const saved = readState();
+    if (!hud?.thread || !PRESETS[current(saved).statusline]) return;
+    const next = { cache: hud.cache ?? null, spend: hud.spend, quota: hud.quota ?? null, budget: hud.budget ?? null };
+    // An unchanged HUD must not bump seq: each state change republishes the view and re-runs every terminal mod.
+    if (JSON.stringify(saved.live.threads[hud.thread]?.hud) === JSON.stringify(next)) return;
     live(state => {
       const usage = state.threads[hud.thread!] ??= { seq: 0 }; usage.seq = ++state.seq;
-      usage.hud = { cache: hud.cache ?? null, spend: hud.spend, quota: hud.quota ?? null, budget: hud.budget ?? null };
+      usage.hud = next;
     });
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
