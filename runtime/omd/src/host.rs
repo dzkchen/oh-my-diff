@@ -137,6 +137,38 @@ fn credential_paths() -> Vec<PathBuf> {
 }
 
 /// Denies mod commands reading or writing protected paths, Codex home and credential locations.
+/// Serves one session host call for a thread: `(thread, caller, call, active)`.
+pub type SessionDispatcher = Arc<
+    dyn Fn(&str, &str, crate::ModHostCall, &dyn Fn() -> bool) -> std::io::Result<Value>
+        + Send
+        + Sync,
+>;
+
+static SESSION_DISPATCHER: Mutex<Option<SessionDispatcher>> = Mutex::new(None);
+
+/// Lets callbacks outside the session (terminal commands) reach the session's model operations.
+pub fn install_session_dispatcher(dispatcher: SessionDispatcher) {
+    if let Ok(mut installed) = SESSION_DISPATCHER.lock() {
+        *installed = Some(dispatcher);
+    }
+}
+
+pub fn session_call(
+    thread: &str,
+    caller: &str,
+    call: crate::ModHostCall,
+    active: &dyn Fn() -> bool,
+) -> std::io::Result<Value> {
+    let dispatcher = SESSION_DISPATCHER
+        .lock()
+        .ok()
+        .and_then(|installed| installed.clone())
+        .ok_or_else(|| {
+            std::io::Error::other("host_operation_unavailable: no session in this process")
+        })?;
+    dispatcher(thread, caller, call, active)
+}
+
 pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
     for root in protected.iter().cloned().chain(credential_paths()) {
         for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {

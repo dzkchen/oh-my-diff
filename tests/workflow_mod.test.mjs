@@ -10,7 +10,7 @@ const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_workfl
 const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
 const intercepts = Object.fromEntries([...native.match(/pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]]));
-const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], middleware: ['model_request'], intercept: intercepts, state: 'store', contracts: 'contracts' };
+const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], middleware: [], intercept: intercepts, state: 'store', contracts: 'contracts' };
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const candidate = digest('candidate');
 const criterion = 'Preserve the current work';
@@ -157,7 +157,7 @@ test('no-progress policy pauses repeated complete results and resumes only after
   const executed = { output: 'ran', success: true };
   const intercept = input => {
     const host = call => call.operation === 'continuation.next' ? { result: executed, trace: [] } : run.host(call);
-    const reply = invoke('0', { surface: 'tool', input, origin: { caller: 'model' } }, host, { event: 'intercept', settings, state: modState });
+    const reply = invoke('1', { surface: 'tool', input, origin: { caller: 'model' } }, host, { event: 'intercept', settings, state: modState });
     modState = reply.state;
     return reply.value.result;
   };

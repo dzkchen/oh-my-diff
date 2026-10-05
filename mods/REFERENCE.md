@@ -41,23 +41,23 @@ native work.
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `unix_sockets` | `exec.run` `unix_sockets` |
-| `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` event |
-| `agents` | `agents.*`, `model.complete`, `task.status`, `workspace.integrate` |
+| `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` and `model_response` events |
+| `agents` | `agents.*`, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane` |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` |
-| `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
+| `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, the `completion` replacement |
 | `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` interceptors |
-| `middleware` | `host_operation` and `model_request` interceptors and the middleware events |
+| `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
 | `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
 | `os` | `sandbox: "none"` on `exec.run`, `process.start` and `terminal.pty` start (`unrestricted_process_v1`) |
@@ -422,8 +422,8 @@ lists `routes` with `name, provider, model, reasoning_effort, responses_url,
 rates, roles (lead|worker), tools, mods, grant`. `routes.list` returns the
 routes visible to the calling mod with `billing` and `available`. The
 `routing` replacement returns `{route}` to choose a configured lead route at
-thread start; `model_request` middleware returns `{route}` to switch a request
-among the lead routes on the same provider; `agents.spawn.route` names a worker
+thread start; a `model_request` interceptor switches one request among the
+thread's lead routes (see Model requests and streams); `agents.spawn.route` names a worker
 route or a registered provider. Worker routes require a grant file whose hash,
 repository, provider, model and URL are rechecked on every request. Route lookups
 recheck `host.json` (`route_reload_v1`): an edited route list applies to new
@@ -468,16 +468,163 @@ when its model matches a configured lead route with rates. OMD sessions use the
 observed HTTP Responses transport; WebSocket transport is disabled for their
 threads and refused if any request would use it.
 
-### Stream control
+### Model requests and streams (`model_turn_interception_v1`)
 
-A `response_stream` middleware may return `{stop: {reason}}` or `{stop:
-{reason}, retry: {inject}}` only for an event with `boundary: true` (a
-completed output item). The host keeps that completed item in the
-transcript, records a developer note that a mod stopped the response, ends the
-response, optionally adds `inject` as lower-priority developer context and
-retries under the same turn and admission, at most twice per turn across all
-of its sampling requests. Older APIs and non-boundary events cannot stop a
-stream.
+Every lead, native sub-agent and mod worker request passes the `model_request`
+and `response_stream` interceptors (capability `middleware`) before and while
+it streams; see Continuation middleware for ordering, `required` and failure rules.
+
+`model_request` input: `request_id` (also sent as `x-omd-request-id`),
+`attempt` (2 or 3 after a mod's stop-and-retry), `scope {thread_id, agent_id,
+kind}`, `routes`, `original`, `route`, `model`, `provider`, `effort`, `tools`
+(names) and `sections`. A handler may change:
+
+- `route`: one of `routes`. The lead sees its thread's lead routes: those on
+  its provider, and those on another provider that name their own credential
+  profile. Switching provider sends the request to that route's URL with its
+  credential and rates, leaves the thread's opaque reasoning items out of that
+  request (the transcript keeps them) and strips item metadata the provider
+  does not accept. A route without its own credential cannot cross providers.
+- `effort`: `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, only when
+  the request carries reasoning.
+- `sections`: every classified prompt item `{id, kind, role, group, protected,
+  text, bytes, truncated}` in request order: `instructions`, each context
+  fragment by its kind (`agents_md.instructions`, `environments.environment_context`,
+  `git_attribution.*`, reminders and attachments such as `generic.turn_aborted`
+  or `images.resize_notice`, repeated kinds as `kind#2`), expanded skills from
+  `$`/slash mentions and spawn items as `skill:<name>` and `skills.read`
+  outputs as `skill:<package>`. Previews total 48 KiB (4 KiB each); a
+  `truncated` section can be replaced whole. Ordinary sections may be
+  rewritten, dropped, reordered within their `group` (message) or joined by up
+  to 8 inserted `{id: 'mod:…', text}` sections, which the host frames as
+  mod-provided context. An inserted section joins the developer or user message
+  of the section before it, else the nearest such message after (or before)
+  it, else a new developer message at the start of the input. Protected sections
+  (permissions, approved prefixes and network rules, managed developer
+  instructions, collaboration mode, guardian policy, user answers) and tool
+  outputs cannot be changed, dropped or moved, and no section crosses a
+  protected one. Native policy is enforced independently of this text.
+
+`next` resolves to `{route, effort, cache: {from}}`: `from` is the first
+section (or `tools`) whose content differs from the thread's previous request,
+where a provider's prompt cache stops matching; `null` means an unchanged
+prefix. A handler may answer without `next`: `{response: {output: [{type:
+'message', text} | {type: 'tool_call', tool, namespace?, arguments}]}}` (at
+most 16 items). The host streams it as a complete response without contacting
+a provider, admitting or billing anything; it carries no usage, `synthetic`
+names the mod, and tool calls get `mod-<id>-<request>-<n>` call IDs and pass
+tool interception, native permissions and approvals like any call.
+
+`response_stream` input is one chunk with `request_id`, `scope`, `synthetic`
+and `protected`: `text` (a visible text delta), `message` (a completed message;
+`text` is what streamed), `tool_call` (a call starts: `call_id`, `tool`,
+`format` `json` or `freeform`), `tool_input` (an argument delta), `tool_done`
+(the complete call with `arguments`), `reasoning` and `stop` (`status`,
+`usage`). `next` resolves to `{chunks}`; a handler returns chunks derived from
+it: change `text`, `tool` or `arguments` (JSON-object arguments for `json`
+tools), drop the chunk (`{chunks: []}`; dropping a `tool_call` drops the whole
+call, which never runs) or add `{kind: 'message', text}` and `{kind:
+'tool_done', tool, arguments}` chunks, which get fresh `mod-…` IDs (added to a
+`stop` chunk they come before the response ends). Text changes are both shown
+and recorded: a `message` whose deltas changed is recorded as streamed.
+`reasoning` and `stop` chunks are observe-only. At a `message`, `tool_done` or
+`stop` chunk a handler may return `{stop: {reason}}` or `{stop: {reason},
+retry: {inject}}`: the host keeps the item, records a developer note that a
+mod stopped the response, ends it and optionally retries with `inject` as
+developer context, at most twice per turn. The retried request is a new
+attempt with its own admission and settlement.
+
+`on('model_response')` (capability `model`) fires once per provider attempt
+and synthetic answer: `request_id`, `attempt`, `ledger_request`, `scope`,
+`route`, `provider`, `credential` (profile ID), `requested_model`,
+`served_model`, `status` (`completed`, `incomplete`, `failed`, `cancelled`),
+`stop_reason` (derived: `end_turn`, `tool_use` or the incomplete reason),
+`output {text (first 4 KiB), tool_calls}`, raw `usage`, `cache {read_tokens,
+write_tokens}`, `cost {microusd, basis}` (`settled`, `unsettled`,
+`included_subscription`, `unpriced` or `synthetic`), `context_window` when the
+session knows it, `timing {started_at_ms, first_event_ms, duration_ms}`,
+`synthetic` and `error`. It is delivered after the response from the delivery
+queue and may call host operations. Live routes beyond the configured fixture
+providers are not exercised by OMD's tests.
+
+### Final-request policy (`final_request_policy_v1`)
+
+`model_send` (capability `middleware`) runs on the exact body each request
+sends, after history, `model_request` and the host's route, effort, section and
+output-ceiling edits; only the removal of item metadata a provider rejects and
+compression follow. It covers lead, sub-agent and mod worker requests
+(`model.complete`, `model.fork`) and the session's internal requests (titles,
+reviews, memory, guardian), whose `scope.kind` is `internal` and which have
+no `provider` or `route`. Every attempt runs it again: turn and stream retries,
+a mod's stop-and-retry, compaction and route switches rebuild the body, and a
+transport retry resends the bytes that passed. A synthetic answer sends nothing
+and skips it.
+
+The input is one page: `request_id`, `attempt`, `scope`, `provider`,
+`route`, `model`, `page` and `pages` (1-based), `cached`, `segments` and
+`opaque`. `segments` are the non-empty string leaves of `instructions`,
+`input`, `tools` and `text`, except structural fields (`type`, `id`,
+`call_id`, `status`, `role`, `name`, `namespace`, `detail`, item metadata):
+`{id, kind, role, editable, text, bytes, sha256}`, where `id` is the JSON
+pointer (`/input/3/content/0/text`), `kind` is the content kind
+(`agents_md.instructions`, `user.text`, or `message.<role>` without one),
+`instructions`, `tool_call.arguments`, `tool_call.input`, `tool_output`,
+`reasoning`, `tool_spec`, `output_schema` or the item type. A page holds up to
+256 KiB of text (`bytes` is the UTF-8 size); a longer segment arrives in
+256 KiB pieces, each with `offset` (where the piece starts in the whole text)
+and up to 1 KiB of read-only `before` and `after` context, so a match across a
+boundary is visible from both pieces. `opaque` names values that are not
+scanned: encrypted reasoning and compaction, images, audio and files (up to
+256). More than 64 pages refuses the request (`final_request_too_large`).
+
+`next` resolves to `{edits}` from the policies beneath. A handler calls `next`
+and returns `{edits}` keeping all of those plus its own, or returns `{deny}`
+(with or without `next`). An edit `{segment, start, end, text}` replaces
+`text.slice(start, end)` of that segment on this page; `start`, `end` and
+`offset` are JavaScript string indices, never inside a surrogate pair (up to
+4 KiB of replacement text, 256 edits, no overlap). Only `editable` segments take edits:
+message text of any role, including user prompts, tool-call arguments (which
+must still parse as JSON when they did) and freeform input, tool output text
+and instructions. Policy floors (`permissions.`, `network_proxy.`,
+`managed_config.`, `collaboration_mode.` and `guardian.` kinds), reasoning,
+tool specs and output schemas can only be denied. After the edits are applied every policy sees the
+changed segments again; a second round of edits refuses the request
+(`final_request_unsettled`), so every policy approved the exact bytes sent.
+
+Verdicts are reused by segment digest, kind, role and `editable` for the same
+policy mods, their trusted sources, settings and the host generation, and the
+same provider, route, model and `scope` (thread, agent and kind), so a request
+pages only new text (`cached` counts the rest). An edit that leaves the text
+unchanged is ignored. A policy whose decision depends on anything else adds
+`cache: false` to its result, which every handler above it must keep, and those
+segments are paged again on the next request. At least one page runs for every request, with no
+segments when all are cached.
+
+A request is refused, visibly as a turn or call error starting
+`final_request_refused`, when a required `model_send` interceptor fails,
+times out, returns an invalid result, belongs to a faulted mod or waits more
+than 5 s for a busy runtime, when any policy denies, and when edits are invalid.
+A selection trusted with capability `request_policy` (which needs `middleware`)
+is a declared policy: while it is enabled, every request is refused
+(`request_policy_unavailable`) unless that mod is loaded, healthy and has a
+required interceptor selecting `model_send`, including after a rejected
+selection, failed activation, fault or failed reload. While a required
+`model_send` interceptor or a declared policy exists, transports that cannot
+pass the stage are refused (`request_policy_unsupported_transport`): realtime
+calls and their websockets, image generation, web search and memory
+summarization; Responses websockets are always off under OMD. Disable the mod
+in `/mods` or `/omd` to send again. Without `model_send` interceptors or
+declared policies the stage does not run and the body is untouched.
+
+Records keep digests, never segment text: chain traces hash each page's
+input and result, and the request evidence records `final_request` (pages,
+scanned and cached segments, each edit's segment, range and the digest of the
+replaced bytes) or `final_request_refused` with its reason. Transcripts,
+rollouts and resume data keep the original text; a retried or later request
+applies the same cached edits again. Coverage is the text listed above; images,
+audio, files, encrypted reasoning, provider-side tools, mods' own HTTP and
+sidecars, and terminal, log and resume originals are outside it, and the stage
+proves only what its policies detect.
 
 ### Built-in controls
 
@@ -698,7 +845,7 @@ runs or prompts. `approval_result` reports the decision and its source.
 `api.intercept(pattern, [options,] (e, next) => result)` wraps an operation.
 `pattern` is a surface name, `*`, a `*` glob or a `!` negation, and selects only
 surfaces the package's capabilities entitle: `tool` (`interception`), `input`
-(`input`), `model_request` and `host_operation` (`middleware`), `tool_specs`
+(`input`), `model_request`, `response_stream` and `host_operation` (`middleware`), `tool_specs`
 (`tools`), `command_list` and `command` (`commands`), `config_list`
 (`config`), `config_set` (`config.write`), `admission` (`policy`) and `render`
 (`terminal`). Options are
@@ -718,7 +865,8 @@ of the chain and then the native executor. Only the listed fields may change:
 | `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 64 KiB, an answer without calling `next`, or `{deny}` |
 | `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
-| `model_request` | `route`, one of `routes` | `{route}` | what `next` returned, or `{deny}` |
+| `model_request` | `route` (one of `routes`), `effort`, `sections` | `{route, effort, cache}` | what `next` returned, `{deny}`, or a synthetic `{response}` without calling `next` |
+| `response_stream` | `text`, `tool`, `arguments` | `{chunks}` | `{chunks}` built from the received chunk plus added ones, or a boundary `{stop}` |
 | `tool_specs` | `tools` (drop, re-describe or set `deferred`) | `{tools}` | `{tools}` derived from what `next` returned: drop, defer or re-describe entries, never add or rename one |
 | `command_list` | `commands` (hide, `description`, `args_hint` of ordinary rows) | `{commands}` | `{commands}` derived from what `next` returned |
 | `command` | `args` | `{result}` | a changed `{result}`, an answer without calling `next`, or `{deny}` |
@@ -736,8 +884,10 @@ through the same chain with their own call IDs. Output beyond 48 KiB arrives
 truncated with `truncated: true`. A tool or host-operation answer runs nothing: the host
 records the answering mod as `answered_by` on `tool_result` and in turn
 evidence, and the answer cannot attest that a file changed or a process ran.
-Input and model-request handlers cannot answer for the engine, so an outer
-handler cannot bypass an inner required one. When a chain changes a tool's
+Input handlers cannot answer for the engine, so an outer handler cannot bypass
+an inner required one. A model-request answer skips the interceptors beneath
+it but sends nothing to a provider; its tool calls still pass every tool
+interceptor and native check. When a chain changes a tool's
 output, the host keeps the original as readable evidence of the mod that
 settled the result.
 
@@ -1191,14 +1341,83 @@ stale results are dropped. While the user types arguments to a mod command
 `{items: [{insert}]}` and the list opens only when it has items. A mod can
 therefore complete its own commands without owning `@` mention ranking.
 
-### One-shot model calls (`model_complete_v1`)
+### One-shot model calls and forks (`model_complete_v2`)
 
-`model.complete {route, prompt, timeout_ms?}` runs one tool-less, read-only
-completion on a configured worker route under the task's admission, ledger
-and allowance and returns `{text}`. Prompts are at most 8 KiB, the timeout at
-most 300 s, and completions count against agent limits. It is available in
-event and tool callbacks during a task, ends with the callback when it is
-cancelled, and does not block other mods' hooks while it waits.
+`model.complete {route, prompt, system?, context?, output?, effort?,
+max_output_tokens?, timeout_ms?}` (capability `agents`) runs one tool-less,
+read-only worker turn. `route` is a configured worker route the mod may use, or
+`lead`: the thread's lead route, only when that route lists the mod in its
+`mods`. `system` (8 KiB) is added beneath the host's own role instructions,
+`context` (up to 8 blocks, 32 KiB) precedes the prompt (8 KiB), `output.schema`
+asks for structured JSON output, `effort` picks the reasoning effort and
+`max_output_tokens` (at most 128,000, never above a paid route's own ceiling)
+is sent on every route, the included subscription too. `model.fork {prompt,
+route?, tools?, …}` (capabilities `agents` and `sessions`) does the same on a
+snapshot of the current conversation: the thread's committed model-visible
+history, with opaque reasoning kept for a same-provider route and left out
+for another provider, on `lead` unless `route` names a worker route. It is
+tool-less unless `tools` lists tools; their calls come back in `tool_calls`
+with `executed: false` and never run.
+
+Both return `{status, text, content, tool_calls, stop_reason, error, route,
+model, request_ids, usage, cache, cost, timing}` from the
+worker's `model_response` records: `usage` and `cache` are the last request's
+raw values, `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
+the provider cut at its token limit returns `status: 'incomplete'` with the
+text that streamed and `stop_reason` (`max_output_tokens`). A provider
+failure returns `status: 'failed'` with `error`; a timeout (at most 300 s) or
+cancellation ends the worker and throws. Every request passes the
+`model_request` and `response_stream` interceptors and its own admission and
+settlement under `worker_limits`; no task or turn is started for the caller.
+They run in event, tool, timer and channel callbacks and in terminal slash
+commands, which reach the session in the same process (`no session in this
+process` otherwise). Prompt cache reuse is reported by `cache.read_tokens`,
+not promised: a fork is a separate internal session whose cache key and
+instructions differ from the lead's.
+
+### SDK helpers (`sdk_helpers_v1`)
+
+The runner adds small helpers to `api`; each calls the host operations named
+here under the mod's own grants, and none starts paid work implicitly.
+
+- `api.package` is `{id, version, sha256}` of the running source.
+- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd,
+  codex_version, model, provider, route, turns_started}` for the session
+  thread, also from terminal commands in the same process. `turns_started`
+  counts turns this process started in the thread.
+- `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the
+  callback's process ends and it replays from its receipts afterwards, so the
+  wait holds no runtime lock and does not count as own time; cancellation
+  wakes it and ends the callback. Callbacks that hold the runtime (offline
+  steps aside) get `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
+  timeout_ms})` polls `check` between sleeps within the 32 host calls.
+  `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
+  interval_ms, handler)` register during activation (1 s to 24 h) and return
+  `{start(), cancel()}` over `events.schedule`/`events.cancel` key
+  `time:<key>`; `every` reschedules after each handler run until `cancel()`,
+  the handler returns `false`, or a reload with changed source, disable or
+  session end drops it (the host timer limits apply). A mod uses these or its
+  own `on('timer')`, not both.
+- `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and
+  `api.fs.ancestors(name, from?)` (nearest first, from the session's cwd up to
+  the workspace root) normalize workspace-relative paths and read through
+  `workspace.stat` (`fs.read`); symlinked components and paths outside the
+  workspace are refused there.
+- `api.classify(text, labels, {route, instructions?, effort?, timeout_ms?,
+  max_output_tokens?})` makes one `model.complete` on the named route with a
+  JSON schema enumerating `labels` and returns `{label, result}` (`label` is
+  `null` when the answer is not one of them).
+- `api.usage.summarize(response)` turns a `model_response` into
+  `{measured, tokens, context, cost, timing, …}`: tokens are provider facts
+  (`measured: false` without usage), `context.ratio` uses the session's context
+  window when known, and `cost.source` says whether a charge is projected from
+  configured rates (`configured_rates`), covered by a subscription, synthetic
+  or unknown. `api.usage.rateLimits()` reads `account/rateLimits/read` when the
+  mod holds `account`; window expiry stays as the provider reports it.
+
+Offline scenarios serve `events.schedule` and `events.cancel` themselves:
+`advance_time` fires due timers in order at their virtual times (the step
+returns `timers`), and `time.sleep` returns at once.
 
 ### Model-bound history (`history_v1`)
 

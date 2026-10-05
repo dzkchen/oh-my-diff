@@ -131,28 +131,27 @@
       }
     },
     {
-      "type": "event",
-      "event": "response_stream",
+      "type": "intercept",
+      "surface": "response_stream",
       "payload": {
-        "kind": "response.output_item.done",
-        "raw_sha256": "x",
-        "raw_usage": null,
-        "opaque_reasoning": false,
-        "protected": false,
+        "kind": "message",
+        "index": 0,
+        "item_id": "m",
         "text": "done TODO",
-        "boundary": true,
-        "attempt": 1
+        "protected": false
       },
-      "expect": [
+      "core": [
         {
-          "mod": "release_check",
           "value": {
-            "stop": {
-              "reason": "unfinished marker"
-            },
-            "retry": {
-              "inject": "Remove TODO markers before finishing."
-            }
+            "chunks": [
+              {
+                "kind": "message",
+                "index": 0,
+                "item_id": "m",
+                "text": "done TODO",
+                "protected": false
+              }
+            ]
           }
         }
       ]

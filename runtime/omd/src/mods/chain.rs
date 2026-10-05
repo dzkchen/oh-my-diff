@@ -4,7 +4,6 @@ use std::time::Duration;
 const INTERCEPTOR_LIMIT: usize = 16;
 const ATTEMPT_LIMIT: usize = 3;
 const TRACE_LIMIT: usize = 64;
-const TRACE_VALUE_BYTES: usize = 2048;
 const RESULT_BYTES: usize = 65_536;
 const CHAIN_LOG: usize = 16;
 pub(super) const REQUIRED_WAIT: Duration = Duration::from_secs(5);
@@ -72,6 +71,12 @@ fn glob(pattern: &str, text: &str) -> bool {
         }
         found.is_some()
     })
+}
+
+pub struct SendPolicy {
+    pub required: bool,
+    pub unavailable: Option<String>,
+    pub fingerprint: String,
 }
 
 /// Like `selects`, but an expired grant no longer entitles authority surfaces.
@@ -193,7 +198,8 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "tool" => &["tool", "arguments"],
         "host_operation" => &["arguments"],
         "input" => &["text"],
-        "model_request" => &["route"],
+        "model_request" => &["route", "effort", "sections"],
+        "response_stream" => &["text", "tool", "arguments"],
         "tool_specs" => &["tools"],
         "command_list" => &["commands"],
         "command" => &["args"],
@@ -219,11 +225,25 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "input" => input["text"]
             .as_str()
             .is_some_and(|text| !text.trim().is_empty() && text.len() <= 61_440),
-        "model_request" => input["routes"].as_array().is_some_and(|routes| {
-            routes
-                .iter()
-                .any(|route| route["name"] == input["route"] && route["name"].is_string())
-        }),
+        "model_request" => {
+            input["routes"].as_array().is_some_and(|routes| {
+                routes
+                    .iter()
+                    .any(|route| route["name"] == input["route"] && route["name"].is_string())
+            }) && (input["effort"] == before["effort"]
+                || !before["effort"].is_null()
+                    && input["effort"]
+                        .as_str()
+                        .is_some_and(|effort| crate::model_request::EFFORTS.contains(&effort)))
+                && (input["sections"] == before["sections"]
+                    || crate::model_request::valid_sections(
+                        &input["sections"],
+                        &before["sections"],
+                    ))
+        }
+        "response_stream" => {
+            crate::model_request::valid_stream_result(&json!({"chunks": [input]}), before)
+        }
         "tool_specs" => tool_specs(&input["tools"], &original["tools"]),
         "command_list" => rows(&input["commands"], &original["commands"], "command"),
         "config_list" => rows(&input["rows"], &original["rows"], "key"),
@@ -320,7 +340,12 @@ fn rows(rows: &Value, given: &Value, key: &str) -> bool {
         })
 }
 
-fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Result<()> {
+fn validate_result(
+    surface: &str,
+    result: &Value,
+    last: Option<&Value>,
+    input: &Value,
+) -> Result<()> {
     if last == Some(result) {
         return Ok(());
     }
@@ -398,6 +423,12 @@ fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Resul
                 }
         }
         "render" => render::valid_result(result),
+        "model_request" => deny || last.is_none() && crate::model_request::valid_answer(result),
+        "response_stream" => crate::model_request::valid_stream_result(result, input),
+        "model_send" => {
+            deny || last
+                .is_some_and(|last| crate::model_request::valid_send_result(result, last, input))
+        }
         _ => deny,
     };
     if valid {
@@ -407,12 +438,15 @@ fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Resul
     }
 }
 
-fn bounded(value: &Value) -> Value {
-    let bytes = serde_json::to_vec(value).unwrap_or_default();
-    if bytes.len() <= TRACE_VALUE_BYTES {
-        return value.clone();
+use crate::model_request::bounded;
+
+/// Final-request pages carry provider-bound text, so their records keep only digests.
+fn recorded(surface: &str, value: &Value) -> Value {
+    if surface == "model_send" {
+        let bytes = serde_json::to_vec(value).unwrap_or_default();
+        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
     }
-    json!({"sha256": digest(&bytes), "bytes": bytes.len()})
+    bounded(value)
 }
 
 #[derive(Default)]
@@ -453,13 +487,13 @@ impl Chain {
         let own = elapsed.saturating_sub(attempts.downstream);
         let mut entry = json!({"index": index, "mod": link.map_or("engine", |link| link.id.as_str()),
             "outcome": outcome, "attempts": attempts.count, "ms": own.as_millis() as u64,
-            "received": bounded(received)});
+            "received": recorded(&self.surface, received)});
         if let Some(link) = link {
             entry["location"] = json!(link.location);
             entry["required"] = json!(link.required);
         }
         if let Some(returned) = returned {
-            entry["returned"] = bounded(returned);
+            entry["returned"] = recorded(&self.surface, returned);
         }
         if let Some(reason) = reason {
             entry["reason"] = json!(reason.chars().take(256).collect::<String>());
@@ -582,7 +616,12 @@ impl Chain {
             );
             return self.link(access, host, core, active, scope, k + 1, input);
         }
-        let payload = json!({"surface": self.surface, "input": input, "original": self.original,
+        // A final-request page is read-only, so its original would only repeat the input.
+        let original = match self.surface.as_str() {
+            "model_send" => Value::Null,
+            _ => self.original.clone(),
+        };
+        let payload = json!({"surface": self.surface, "input": input, "original": original,
             "origin": self.origin});
         let reply = self.call(
             access,
@@ -615,7 +654,7 @@ impl Chain {
         let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str| {
             reply.and_then(|reply| {
                 let result = reply.get("result").cloned().unwrap_or(Value::Null);
-                validate_result(surface, &result, last(attempts).as_ref())?;
+                validate_result(surface, &result, last(attempts).as_ref(), &input)?;
                 Ok(result)
             })
         };
@@ -960,7 +999,7 @@ pub(super) fn intercept(
         trace: chain.trace,
         reads: chain.reads,
     };
-    let logged = json!({"result": bounded(&record.result), "input": bounded(&record.input),
+    let logged = json!({"result": recorded(surface, &record.result), "input": recorded(surface, &record.input),
         "answered_by": record.answered_by, "trace": record.trace});
     let entry = json!({"surface": surface, "origin": chain.origin, "error": result.as_ref().err().map(ToString::to_string), "chain": logged});
     // Renders repeat per frame, so only failed ones join the chain log.
@@ -1133,6 +1172,62 @@ impl ModHost {
                 });
             }
         }
+    }
+
+    /// The final-request stage, absent without `model_send` interceptors or an enabled `request_policy` selection.
+    pub fn send_policy(&self) -> Option<SendPolicy> {
+        let required = self.intercepts("model_send");
+        if required.is_none() && self.policies.is_empty() {
+            return None;
+        }
+        let unavailable = self.policies.iter().find_map(|path| {
+            let Some(loaded) = self
+                .loaded
+                .values()
+                .find(|loaded| &loaded.selection.path == path)
+            else {
+                let rejection = self
+                    .rejected
+                    .iter()
+                    .find(|rejection| &rejection.path == path);
+                return Some(match rejection {
+                    Some(rejection) => format!(
+                        "{}: {}",
+                        rejection.id.as_deref().unwrap_or("mod"),
+                        rejection.reason
+                    ),
+                    None => format!("{} is not loaded", path.display()),
+                });
+            };
+            let id = &loaded.package.id;
+            if let Some(error) = &loaded.error {
+                return Some(format!("{id}: {error}"));
+            }
+            (!loaded.registrations.interceptors.iter().any(|interceptor| {
+                interceptor.required && granted(loaded, &interceptor.pattern, "model_send")
+            }))
+            .then(|| format!("{id} registers no required model_send interceptor"))
+        });
+        let policies = self
+            .loaded
+            .iter()
+            .filter(|(_, loaded)| {
+                loaded
+                    .registrations
+                    .interceptors
+                    .iter()
+                    .any(|interceptor| granted(loaded, &interceptor.pattern, "model_send"))
+            })
+            .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
+            .collect::<Vec<_>>();
+        let fingerprint = crate::mods::digest(
+            &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
+        );
+        Some(SendPolicy {
+            required: required == Some(true) || !self.policies.is_empty(),
+            unavailable,
+            fingerprint,
+        })
     }
 
     /// `Some(true)` when a required interceptor, including a faulted mod's, selects `surface`.

@@ -117,7 +117,7 @@ export default function activate(api: ModAPI) {
       room -= bytes(text) + 2;
     }
     const answer = api.host.tryCall('model.complete', { route, prompt: [header, ...body].join('\n\n'), timeout_ms: 180_000 });
-    const advice = answer.ok ? answer.value.text.trim() : `Advisor unavailable: ${answer.error}`;
+    const advice = answer.ok && answer.value.status !== 'failed' ? answer.value.text.trim() : `Advisor unavailable: ${answer.ok ? answer.value.error : answer.error}`;
     api.state.set({ ...current(), consulted: { trigger, advice: safe(advice) } });
     return advice;
   };

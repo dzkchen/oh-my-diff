@@ -7,7 +7,12 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 pub trait ResponseAttempt: Send + Sync {
+    /// Observes one raw event; replacing it with `Value::Null` drops it.
     fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError>;
+    /// Raw events to deliver after the one just observed.
+    fn injected(&mut self) -> Vec<Value> {
+        Vec::new()
+    }
     fn failed(&mut self, reason: &str);
 }
 
@@ -26,6 +31,22 @@ pub trait ResponseObserver: Send + Sync {
         let _ = thread;
         true
     }
+    /// Whether a required final-request policy must see every provider request.
+    fn policed(&self) -> bool {
+        false
+    }
+    /// Raw events answering an admitted request without sending it.
+    fn answer(&self, request: &Request) -> Option<Vec<Value>> {
+        let _ = request;
+        None
+    }
+}
+
+/// Marks a request whose items carry metadata the provider does not accept; it is removed after `prepare`.
+pub const STRIP_ITEM_METADATA: &str = "x-codex-strip-item-metadata";
+
+pub fn installed() -> bool {
+    OBSERVER.get().is_some()
 }
 
 pub const STREAM_CONTROL: &str = "stream_control:";
@@ -72,9 +93,19 @@ pub(crate) fn admit(
     }
 }
 
+pub(crate) fn reject_policed_transport() -> Result<(), crate::error::ApiError> {
+    if OBSERVER.get().is_some_and(|observer| observer.policed()) {
+        return Err(crate::error::ApiError::InvalidRequest {
+            message: "local OMD request policy: final_request_refused: request_policy_unsupported_transport: a final-request policy is active and this provider transport cannot pass it".into(),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn reject_unobserved_transport(
     headers: &http::HeaderMap,
 ) -> Result<(), crate::error::ApiError> {
+    reject_policed_transport()?;
     let thread = headers
         .get("thread-id")
         .and_then(|value| value.to_str().ok());
@@ -105,5 +136,35 @@ pub(crate) fn prepare(
     if let Some(observer) = OBSERVER.get() {
         observer.prepare(request, body)?;
     }
+    if request.headers.remove(STRIP_ITEM_METADATA).is_some()
+        && let Some(encoded) = body.as_ref()
+    {
+        let build = |error: serde_json::Error| TransportError::Build(error.to_string());
+        let mut value: Value = serde_json::from_slice(encoded.as_bytes()).map_err(build)?;
+        for item in value["input"].as_array_mut().into_iter().flatten() {
+            if let Some(item) = item.as_object_mut() {
+                item.remove("internal_chat_message_metadata_passthrough");
+            }
+        }
+        *body = Some(EncodedJsonBody::encode(&value).map_err(build)?);
+    }
     Ok(())
+}
+
+pub(crate) fn answer(request: &Request) -> Option<StreamResponse> {
+    let events = OBSERVER.get()?.answer(request)?;
+    let chunks = events
+        .into_iter()
+        .map(|event| Ok(bytes::Bytes::from(format!("data: {event}\n\n"))))
+        .collect::<Vec<_>>();
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("text/event-stream"),
+    );
+    Some(StreamResponse {
+        status: http::StatusCode::OK,
+        headers,
+        bytes: Box::pin(futures::stream::iter(chunks)),
+    })
 }

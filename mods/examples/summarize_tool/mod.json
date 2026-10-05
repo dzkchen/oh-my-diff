@@ -7,6 +7,6 @@
   "license": "Apache-2.0",
   "capabilities": ["tools", "agents"],
   "compatibility": {
-    "required_features": ["model_complete_v1"]
+    "required_features": ["model_complete_v2"]
   }
 }

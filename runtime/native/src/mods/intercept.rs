@@ -82,8 +82,17 @@ pub(super) fn settled_by(chain: &codex_omd::ModChain) -> String {
 
 /// Lets model-request interceptors call host operations from the transport thread.
 pub(super) fn install_dispatcher(core: &Arc<Core>) {
+    let notified = Arc::downgrade(core);
+    core.host.accounts.install_mod_notifier(Arc::new(
+        move |event: &'static str, payload: Value| {
+            if let Some(core) = notified.upgrade() {
+                expansion::broadcast(&core.expansion, event, payload);
+            }
+        },
+    ));
     let weak = Arc::downgrade(core);
-    core.host.accounts.install_mod_dispatcher(Arc::new(
+    let session = tokio::runtime::Handle::try_current().ok();
+    let dispatcher: codex_omd::host::SessionDispatcher = Arc::new(
         move |thread: &str, caller: &str, request: ModHostCall, active: &dyn Fn() -> bool| {
             let unavailable = |reason: &str| {
                 std::io::Error::other(format!("host_operation_unavailable: {reason}"))
@@ -91,16 +100,24 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
             let core = weak
                 .upgrade()
                 .ok_or_else(|| unavailable("native host stopped"))?;
-            let handle = tokio::runtime::Handle::try_current()
-                .ok()
-                .filter(|handle| {
-                    handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
-                })
-                .ok_or_else(|| {
-                    unavailable(
-                        "model_request interceptors need the multi-threaded session runtime",
-                    )
-                })?;
+            let (handle, worker) = match tokio::runtime::Handle::try_current() {
+                Ok(handle)
+                    if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
+                {
+                    (handle, true)
+                }
+                Ok(_) => {
+                    return Err(unavailable(
+                        "host calls from this thread need the multi-threaded session runtime",
+                    ));
+                }
+                Err(_) => (
+                    session
+                        .clone()
+                        .ok_or_else(|| unavailable("no session runtime"))?,
+                    false,
+                ),
+            };
             if !operations::event_allows("intercept", &request.operation) {
                 return Err(unavailable(&request.operation));
             }
@@ -120,32 +137,39 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
             };
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
-            tokio::task::block_in_place(|| {
-                handle.block_on(async {
-                    tokio::select! {
-                        value = operations::dispatch(
-                            &core,
-                            &lead,
-                            Caller {
-                                id: caller,
-                                source: &source,
-                                grants,
-                                generation,
-                                origin: Origin::Event,
-                                record_changes: true,
-                            },
-                            None,
-                            request,
-                            &cancelled,
-                        ) => value.map_err(std::io::Error::other),
-                        () = async {
-                            while active() {
-                                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                            }
-                        } => Err(std::io::Error::other("callback_cancelled")),
-                    }
-                })
-            })
+            let future = async {
+                tokio::select! {
+                    value = operations::dispatch(
+                        &core,
+                        &lead,
+                        Caller {
+                            id: caller,
+                            source: &source,
+                            grants,
+                            generation,
+                            origin: Origin::Event,
+                            record_changes: true,
+                        },
+                        None,
+                        request,
+                        &cancelled,
+                    ) => value.map_err(std::io::Error::other),
+                    () = async {
+                        while active() {
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                    } => Err(std::io::Error::other("callback_cancelled")),
+                }
+            };
+            if worker {
+                tokio::task::block_in_place(|| handle.block_on(future))
+            } else {
+                handle.block_on(future)
+            }
         },
-    ));
+    );
+    core.host
+        .accounts
+        .install_mod_dispatcher(dispatcher.clone());
+    codex_omd::host::install_session_dispatcher(dispatcher);
 }

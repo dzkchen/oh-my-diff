@@ -161,21 +161,21 @@
     {
       "id": "kernel.request_stream_middleware",
       "group": "coordination",
-      "decision": "Request, stream and session middleware",
-      "observe": "`model_request`, `response_stream`, `prompt`, `session`, `agent`, `tool_call` and `host_operation` middleware observe in order",
-      "alter": "`response_stream` may rewrite unprotected text or stop at an output boundary with an optional retry instruction; `model_request` may pick a configured route; `intercept('model_request')` and `intercept('host_operation')` wrap the route choice and every mod host call as continuations under the caller's grants; `host_operation` inputs carry the typed `namespace` (`service:<name>/<method>` for service calls) and `origin` names the actual caller, the service `provider` and the caller `chain`",
+      "decision": "Model request, stream and session interception",
+      "observe": "`prompt`, `session`, `agent`, `tool_call` and `host_operation` middleware observe in order; `model_response` reports every provider attempt and synthetic answer with usage, cache, cost basis and timing",
+      "alter": "`intercept('model_request')` changes the route among the thread's lead routes (another provider only with its own credential), the reasoning effort and ordinary prompt sections, or answers with a synthetic response that calls no provider; `intercept('response_stream')` rewrites, drops or adds text and tool-call chunks and may stop at an output boundary with an optional retry; `intercept('host_operation')` wraps every mod host call under the caller's grants; `host_operation` inputs carry the typed `namespace` and `origin`",
       "replace": null,
-      "timing": "per request and per streamed event",
-      "ownership": "mod: the transformation; host: protected fields, boundaries, retry limit and provenance",
-      "limits": "protected fields are observe-only; stop only at a completed output item; at most two retries per sampling request; older APIs cannot stop",
-      "native": "native hooks cannot see or change the model stream",
+      "timing": "per request, per streamed chunk and per settled attempt",
+      "ownership": "mod: the transformation or synthetic answer; host: protected sections, opaque reasoning, admission, settlement, boundaries, retry limit and provenance",
+      "limits": "protected sections and reasoning/stop chunks are observe-only; inserted sections are framed as mod context; synthetic answers carry no usage; stop only at a completed item; at most two retries per turn",
+      "native": "the native transport, accounting and policy floors run on the effective request",
       "covers": {
         "capabilities": [
-          "middleware"
+          "middleware",
+          "model"
         ],
         "events": [
-          "model_request",
-          "response_stream",
+          "model_response",
           "prompt",
           "session",
           "agent",
@@ -186,16 +186,53 @@
         "operations": [],
         "intercepts": [
           "model_request",
+          "response_stream",
           "host_operation"
         ]
       },
       "evidence": [
-        "rust:request_and_stream_middleware_preserve_authority_and_provenance",
-        "rust:stream_control_is_bounded_to_output_boundaries_and_current_api",
+        "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only",
+        "rust:routing_and_prompt_wrappers_compose_on_one_model_request",
+        "patch:sections_name_every_classified_item_and_protect_policy",
+        "patch:ordinary_sections_rewrite_drop_reorder_and_insert_around_fixed_policy",
+        "patch:stream_results_keep_identity_and_validate_tool_arguments",
+        "patch:request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_tool_calls",
         "patch:stream_control_stops_only_at_output_boundaries_and_carries_the_retry",
-        "node:typed middleware and services register without ambient authority",
+        "patch:middleware_switches_only_configured_lead_routes_and_transforms_text",
         "rust:host_operation_continuations_retry_and_answer_under_the_actual_caller",
         "rust:input_and_model_request_continuations_pass_downstream_results_or_deny"
+      ]
+    },
+    {
+      "id": "kernel.final_request_policy",
+      "group": "coordination",
+      "decision": "Final-request policy over the exact provider-bound body",
+      "observe": "`intercept('model_send')` pages every non-empty text leaf of the body each lead, worker, completion, fork and internal request sends, after every editable wrapper and host edit, with opaque values named",
+      "alter": "policies return range edits that keep the edits beneath them, or deny; the host re-checks changed text until no policy edits it",
+      "replace": null,
+      "timing": "per provider attempt, before the request is admitted and sent",
+      "ownership": "mod: detection, edits and refusal reasons; host: segment walk, paging, edit validation, verdict reuse, fixed point, fail-closed refusal, declared policies and unsupported-transport refusal",
+      "limits": "256 edits of 4 KiB per page; 96 KiB encoded text per page and 128 pages per request; policy floors, reasoning, tool specs and schemas deny-only; images, audio, files and encrypted reasoning are opaque; `cache: false` opts a page out of verdict reuse",
+      "native": "the native transport sends only the checked body; records keep digests and the transcript keeps the original",
+      "covers": {
+        "capabilities": [
+          "middleware",
+          "request_policy"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [],
+        "intercepts": [
+          "model_send"
+        ]
+      },
+      "evidence": [
+        "patch:send_segments_cover_every_text_leaf_and_name_opaque_values",
+        "patch:send_pages_pack_short_segments_and_split_long_ones_with_context",
+        "patch:send_results_keep_inner_edits_and_stay_inside_editable_text",
+        "patch:final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed",
+        "patch:declared_request_policies_refuse_until_disabled_and_are_inert_without_policies",
+        "patch:an_active_final_request_policy_refuses_transports_that_cannot_pass_it"
       ]
     },
     {
@@ -1476,24 +1513,52 @@
     {
       "id": "coordination.model_complete",
       "group": "coordination",
-      "decision": "One-shot model completions",
+      "decision": "One-shot model completions and conversation forks",
       "observe": "no",
-      "alter": "`model.complete` runs one tool-less completion on a configured worker route",
+      "alter": "`model.complete` runs one tool-less worker turn with system, context, output schema, effort and output-cap options; `model.fork` runs it on a snapshot of the conversation, returning requested tool calls unexecuted",
       "replace": null,
-      "timing": "event and tool callbacks during a task",
-      "ownership": "mod: prompt and route; host: admission, ledger, allowance and cancellation",
-      "limits": "prompt ≤ 8 KiB; ≤ 300 s and ends with a cancelled callback; needs `agents`; counts against agent limits; unknown routes are refused",
+      "timing": "event, tool, timer and channel callbacks and terminal commands in the session's process",
+      "ownership": "mod: prompt, options and route; host: route grants, admission, settlement, interception and cancellation",
+      "limits": "prompt ≤ 8 KiB, system ≤ 8 KiB, context ≤ 32 KiB; ≤ 300 s; `agents` (and `sessions` for forks); `lead` only for a lead route listing the mod; a response cut at `max_output_tokens` returns `incomplete` with its streamed text",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
         "events": [],
         "replacements": [],
         "operations": [
-          "model.complete"
+          "model.complete",
+          "model.fork"
         ]
       },
       "evidence": [
-        "patch:model_completions_use_only_configured_worker_routes"
+        "patch:model_completions_use_only_configured_worker_routes",
+        "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "coordination.sdk_helpers",
+      "group": "coordination",
+      "decision": "SDK helpers over host views",
+      "observe": "`api.session()` reads `session.info`; `api.usage.summarize` reads a `model_response`",
+      "alter": "`api.time` sleeps without holding the runtime and schedules generation-owned timers; `api.fs`, `api.classify` and `api.usage` wrap workspace, model and usage views",
+      "replace": null,
+      "timing": "inside the calling callback",
+      "ownership": "mod: when to call; host: the underlying operations and their grants",
+      "limits": "sleep ≤ 60 s; timers 1 s to 24 h under the host timer limits; classification needs an explicit route",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "session.info",
+          "time.sleep"
+        ]
+      },
+      "evidence": [
+        "rust:sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views",
+        "rust:time_sleep_releases_the_runtime_and_wakes_on_cancellation"
       ],
       "replace_note": null
     },

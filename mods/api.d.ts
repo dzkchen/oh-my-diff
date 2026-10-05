@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override';
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -13,9 +13,70 @@ export type ResourceRef = { reference: string; sha256: string };
 export type HostEvidence = { path: string; sha256: string };
 
 export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant'; tools: string[]; available: boolean; credential: string | null };
-export type ModelRequestEvent = { request_id: string; scope: { thread_id: string; agent_id: string | null; kind: 'main' | 'subagent' }; routes: RouteInfo[]; original: RouteInfo; effective: RouteInfo; provenance: Json[] };
-export type ResponseStreamEvent = { kind: string; raw_sha256: string; raw_usage: Json; opaque_reasoning: boolean; protected: boolean; text: string | null; boundary: boolean; attempt: number; original?: string | null; effective?: string | null; provenance?: Json[] };
-export type StreamDecision = { text: string } | { stop: { reason: string } } | { stop: { reason: string }; retry: { inject: string } } | null;
+export type ModelScope = { thread_id: string; agent_id: string | null; kind: 'main' | 'subagent' };
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+/** One classified prompt item; `group` is its message (or `instructions`), which it never leaves. */
+export type PromptSection = { id: string; kind: string; role: 'system' | 'developer' | 'user' | 'tool'; group: string; protected: boolean; text: string | null; bytes: number; truncated: boolean };
+export type InsertedSection = { id: `mod:${string}`; text: string };
+export type ModelRequest = {
+  request_id: string; attempt: number; scope: ModelScope; routes: RouteInfo[]; original: RouteInfo; route: string;
+  model: string; provider: string; effort: ReasoningEffort | null; sections: PromptSection[]; tools: string[];
+};
+export type ModelAnswer = { response: { output: ({ type: 'message'; text: string } | { type: 'tool_call'; tool: string; namespace?: string; arguments: Json })[] } };
+type StreamContext = { request_id: string; scope: ModelScope; synthetic: string | null; protected: boolean };
+type ToolChunk = { index: number; item_id: string | null; call_id: string; tool: string; format: 'json' | 'freeform' };
+export type StreamChunk = StreamContext & (
+  | { kind: 'text' | 'message'; index: number; item_id: string | null; text: string }
+  | ({ kind: 'tool_call' } & ToolChunk)
+  | ({ kind: 'tool_input'; text: string } & ToolChunk)
+  | ({ kind: 'tool_done'; arguments: string } & ToolChunk)
+  | { kind: 'reasoning'; index: number; item_id: string | null }
+  | { kind: 'stop'; index: null; status: 'completed' | 'incomplete' | 'failed'; usage: Json });
+export type InjectedChunk = { kind: 'message'; text: string } | { kind: 'tool_done'; tool: string; namespace?: string; format?: 'json' | 'freeform'; arguments: string };
+export type StreamStop = { stop: { reason: string }; retry?: { inject: string } };
+/** One provider-bound text leaf, addressed by its JSON pointer; a piece of a longer one has `offset` and read-only `before`/`after` context. */
+export type FinalRequestSegment = { id: string; kind: string; role: string; editable: boolean; text: string; bytes: number; sha256: string; offset?: number; before?: string; after?: string };
+/** Replaces `text.slice(start, end)` of a segment on this page (JavaScript string indices). */
+export type FinalRequestEdit = { segment: string; start: number; end: number; text: string };
+export type FinalRequestPage = {
+  request_id: string; attempt: number; scope: { thread_id: string | null; agent_id: string | null; kind: 'main' | 'subagent' | 'internal' };
+  provider: string | null; route: string | null; model: string | null; page: number; pages: number; cached: number;
+  segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[];
+};
+export type CostBasis = 'settled' | 'unsettled' | 'included_subscription' | 'unpriced' | 'synthetic';
+/** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
+/** `turns_started` counts turns this process started in the thread. */
+export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number };
+export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
+export type UsageSummary = {
+  request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
+  /** Provider-reported token counts; `false` when the response carried none. */
+  measured: boolean;
+  tokens: { input: number | null; cached: number | null; cache_write: number | null; output: number | null; reasoning: number | null };
+  context: { used: number; window: number; ratio: number } | null;
+  /** Charges are projections from configured rates or subscription status, not provider invoices. */
+  cost: { microusd: number | null; basis: CostBasis; source: 'configured_rates' | 'subscription' | 'none' | 'unknown' };
+  timing: ModelResponse['timing'] | null; synthetic: string | null;
+};
+export type ModelCallOptions = {
+  prompt: string; system?: string; context?: string[]; output?: { schema: Json }; effort?: ReasoningEffort;
+  max_output_tokens?: number; timeout_ms?: number;
+};
+export type ModelCallResult = {
+  /** `incomplete`: the provider stopped at `max_output_tokens` (or another limit in `stop_reason`); `text` is what streamed. */
+  status: 'completed' | 'incomplete' | 'failed'; text: string; content: { type: 'text'; text: string }[];
+  tool_calls: { call_id: string; tool: string; arguments: string; executed: false }[]; stop_reason: string | null; error: string | null;
+  route: string; model: string | null; request_ids: string[]; usage: Json; cache: ModelResponse['cache'] | null;
+  cost: { microusd: number | null; basis: CostBasis | 'mixed' | 'unknown' }; timing: { duration_ms: number; first_event_ms: number | null };
+};
+export type ModelResponse = {
+  request_id: string; attempt: number; ledger_request: number | null; scope: ModelScope; route: string; provider: string; credential: string | null;
+  requested_model: string; served_model: string | null; status: 'completed' | 'incomplete' | 'failed' | 'cancelled'; stop_reason: string | null;
+  output: { text: string; tool_calls: { call_id: string; tool: string }[] }; usage: Json;
+  cache: { read_tokens: number | null; write_tokens: number | null }; cost: { microusd: number | null; basis: CostBasis };
+  context_window: number | null; timing: { started_at_ms: number; first_event_ms: number | null; duration_ms: number };
+  synthetic: string | null; error: string | null;
+};
 
 export type ToolSpec = { name: string; label?: string; description: string; parameters: { type: 'object'; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean }; task_scoped?: boolean };
 export type VirtualReadRequest = { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number };
@@ -263,7 +324,10 @@ export interface HostOperations {
     result: { status: 'accepted'; value?: string; values?: string[]; other?: boolean } | Declined };
   'terminal.pane': { arguments: { action: 'open' | 'close' | 'focus' | 'reveal'; id: string } | { action: 'scroll'; id: string; offset: number }; result: { applied: true } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
-  'model.complete': { arguments: { route: string; prompt: string; timeout_ms?: number }; result: { text: string } };
+  'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
+  'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
+  'session.info': { arguments: null; result: SessionInfo };
+  'time.sleep': { arguments: { ms: number }; result: { slept_ms: number; cancelled: boolean } };
 }
 export interface Events {
   context: { input: Context; output: ContextResult | null };
@@ -286,8 +350,7 @@ export interface Events {
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string; failure?: AgentFailure | null; text?: string; sha256?: string }; output: void };
   contract: { input: { gate: 'complete' | 'integrate'; outcome: 'passed' | 'refused'; missing: ContractRequirement[]; candidate_sha256: string }
     | { gate: 'complete'; outcome: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[]; candidate_sha256: string }; output: void };
-  model_request: { input: ModelRequestEvent; output: { route: string } | null };
-  response_stream: { input: ResponseStreamEvent; output: StreamDecision };
+  model_response: { input: ModelResponse; output: void };
   prompt: { input: { thread_id: string; turn_id: string; original: string; effective: string; provenance: Json[] }; output: void };
   session: { input: { phase: 'start' | 'resume' | 'idle' | 'stop'; thread_id: string; cause?: string }; output: void };
   agent: { input: { phase: 'start' | 'end'; agent_id: string; parent_agent_id: string | null; role: string; status: string }; output: void };
@@ -329,7 +392,9 @@ export interface InterceptSurfaces {
   config_set: { input: { key: string; value: Json; original: Json; source: string; scope: 'codex' | 'mod' }; result: { value: Json }; answer: { deny: string } };
   admission: { input: { package: AdmissionPackage; reason: 'load' }; result: { admit: true } | { withhold: string[] } | { deny: string }; answer: { withhold: string[] } | { deny: string } };
   input: { input: { thread_id: string | null; text: string; attachments: number }; result: { text: string }; answer: { deny: string } };
-  model_request: { input: { request_id: string; scope: Json; routes: RouteInfo[]; original: RouteInfo; route: string }; result: { route: string }; answer: { deny: string } };
+  model_request: { input: ModelRequest; result: { route: string; effort: ReasoningEffort | null; cache: { from: string | null } }; answer: ModelAnswer | { deny: string } };
+  model_send: { input: FinalRequestPage; result: { edits: FinalRequestEdit[]; cache?: false }; answer: { edits: FinalRequestEdit[]; cache?: false } | { deny: string } };
+  response_stream: { input: StreamChunk; result: { chunks: (StreamChunk | InjectedChunk)[] }; answer: { chunks: (StreamChunk | InjectedChunk)[] } | StreamStop };
   render: { input: RenderEvent; result: RenderTree; answer: RenderTree };
 }
 export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
@@ -359,7 +424,7 @@ export interface ModAPI {
   readonly assets: { read(name: string): { text: string; sha256: string } };
   readonly services: { call<T extends Json = Json>(name: string, method: string, input?: Json): T };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
-  middleware<K extends 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation' | 'approval'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  middleware<K extends 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation' | 'approval'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   intercept<S extends keyof InterceptSurfaces>(pattern: S, handler: InterceptHandler<S>): InterceptRegistration<S>;
   intercept<S extends keyof InterceptSurfaces>(pattern: S, options: InterceptOptions, handler: InterceptHandler<S>): InterceptRegistration<S>;
   intercept(pattern: string, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
@@ -383,5 +448,30 @@ export interface ModAPI {
   /** Runs `handler` once, after the callback that changed the value; registered during activation. */
   subscribe<T extends Json>(target: Atom<T> | Derived<T>, handler: (value: T, previous: T | undefined) => void | Promise<void>): () => void;
   unsupported(operation: string): never;
+  readonly package: { readonly id: string | null; readonly version: string | null; readonly sha256: string | null };
+  /** `session.info` (capability `inventory`). */
+  session(): SessionInfo;
+  readonly time: {
+    /** Suspends the callback without holding the runtime (at most 60 s; capability `events`). */
+    sleep(ms: number): { slept_ms: number; cancelled: boolean };
+    wait<T>(check: () => T | Promise<T>, options?: { interval_ms?: number; timeout_ms?: number }): Promise<{ value: T; waited_ms: number; timed_out: boolean; cancelled: boolean }>;
+    /** Registered during activation; `start()` schedules it from a callback. */
+    after(key: string, delay_ms: number, handler: (event: { key: string }) => void | Promise<void>): Timer;
+    /** Repeats until `cancel()`, the handler returns `false`, or the mod's generation ends. */
+    every(key: string, interval_ms: number, handler: (event: { key: string }) => void | boolean | Promise<void | boolean>): Timer;
+  };
+  /** Workspace-relative reads through `workspace.stat` (capability `fs.read`). */
+  readonly fs: {
+    exists(path: string): boolean;
+    canonical(path: string): { path: string; kind: FileStat['kind']; sha256: string | null } | null;
+    ancestors(name: string, from?: string): { path: string; kind: FileStat['kind'] }[];
+  };
+  /** One `model.complete` on `options.route` constrained to `labels`. */
+  classify<L extends string>(text: string, labels: L[], options: { route: string; instructions?: string; effort?: ReasoningEffort; timeout_ms?: number; max_output_tokens?: number }): { label: L | null; result: ModelCallResult };
+  readonly usage: {
+    summarize(response: ModelResponse): UsageSummary;
+    /** `account/rateLimits/read` when the mod holds `account`. */
+    rateLimits(): { available: true; value: Json } | { available: false; reason: string };
+  };
 }
 export default function activate(api: ModAPI): void | Promise<void>;

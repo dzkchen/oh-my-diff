@@ -27,10 +27,12 @@ export default function activate(api: ModAPI) {
     return api.host.call('task.complete', { candidate_sha256: candidate });
   });
   api.command('picked', value => ({ display: `Picked row ${String(value)}` }));
-  api.middleware('response_stream', event =>
-    event.boundary && /\bTODO\b/.test(event.text ?? '')
+  api.intercept('response_stream', { match: { kind: 'message' } }, async (event, next) => {
+    const result = await next(event);
+    return event.kind === 'message' && /\bTODO\b/.test(event.text)
       ? { stop: { reason: 'unfinished marker' }, retry: { inject: 'Remove TODO markers before finishing.' } }
-      : null);
+      : result;
+  });
   api.intercept('render', { match: { component: 'list' } }, input => {
     const event = (input as RenderEvent<'list'>).props;
     const rows = event.items.map(item => ({

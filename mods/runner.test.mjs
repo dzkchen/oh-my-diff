@@ -125,19 +125,13 @@ test('reactive atoms track reads, recompute derived values and run keyed subscri
 test('typed middleware and services register without ambient authority', () => {
   const contract = { name: 'fixture.echo', version: '1.0.0', methods: { echo: { input: 'string', output: 'string' } } };
   const source = `export default api => {
-    api.middleware('model_request', event => ({route:event.routes[0].name}));
-    api.middleware('response_stream', event => event.protected ? null : ({text:String(event.text).toUpperCase()}));
     api.middleware('tool_result', () => undefined);
     api.provide(${JSON.stringify(contract)}, {echo: input => input});
     api.command('call', () => api.services.call('fixture.echo','echo','hello'));
   }`;
   const inspect = run(source, { capabilities: ['middleware', 'services', 'commands'] });
   assert.deepEqual(inspect.registrations.services, [contract]);
-  assert.deepEqual(inspect.registrations.events, ['model_request', 'response_stream', 'tool_result']);
-  const request = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'model_request', payload: {routes:[{name:'sol'}]} });
-  assert.deepEqual(request.value, {route:'sol'});
-  const stream = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'response_stream', payload: {protected:false,text:'hi'} });
-  assert.deepEqual(stream.value, {text:'HI'});
+  assert.deepEqual(inspect.registrations.events, ['tool_result']);
   assert.equal(run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'tool_result', payload: {} }).value, null);
   const service = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'service', name: 'fixture.echo.echo', payload: 'hello' });
   assert.equal(service.value, 'hello');

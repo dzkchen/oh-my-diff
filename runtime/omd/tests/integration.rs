@@ -349,43 +349,16 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
 }
 
 #[test]
-fn repeated_stream_validation_faults_disable_the_mod() {
-    let temp = TempDir::new().unwrap();
-    let (root, store) = workspace(&temp);
-    let stream = written(
-        &root,
-        "stream",
-        "export default api => api.middleware('response_stream', () => ({text: 'x'}))",
-        &["middleware"],
-        json!({}),
-    );
-    trust(&store, &stream, &["middleware"]);
-    let mut runtime = host(&temp);
-    let delta = json!({"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,
-        "opaque_reasoning":false,"protected":true,"text":"hello"});
-    for _ in 0..5 {
-        runtime.response_stream(delta.clone(), || true).unwrap();
-    }
-    assert_eq!(
-        runtime.status()["mods"][0]["error"],
-        json!("protected_stream_field_is_observe_only")
-    );
-}
-
-#[test]
 fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
-    let middleware = |transform: &str| {
-        format!(
-            "export default api => api.middleware('response_stream', event => ({{text: {transform}}}))"
-        )
-    };
+    let middleware =
+        |text: &str| format!("export default api => api.on('context', () => ({{text: '{text}'}}))");
     let stream = written(
         &root,
         "stream",
-        &middleware("String(event.text).toUpperCase()"),
-        &["middleware"],
+        &middleware("HELLO"),
+        &["context"],
         json!({}),
     );
     let worker = written(
@@ -402,18 +375,23 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
         &["compaction"],
         json!({}),
     );
-    trust(&store, &stream, &["middleware"]);
+    trust(&store, &stream, &["context"]);
     trust(&store, &worker, &["tools", "agents"]);
     trust(&store, &ui, &["compaction"]);
 
     let mut runtime = host(&temp);
     let generation = runtime.generation();
-    let delta = json!({"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,
-        "opaque_reasoning":false,"protected":false,"text":"hello"});
-    assert_eq!(
-        runtime.response_stream(delta.clone(), || true).unwrap()["effective"],
-        json!("HELLO")
-    );
+    let text = |runtime: &mut codex_omd::ModHost| {
+        runtime
+            .event("context", json!({}))
+            .into_iter()
+            .find(|(id, _)| id == "stream")
+            .unwrap()
+            .1
+            .unwrap()["text"]
+            .clone()
+    };
+    assert_eq!(text(&mut runtime), json!("HELLO"));
 
     let mut updates = Vec::new();
     let value = runtime
@@ -425,11 +403,8 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
             json!({}),
             || true,
             |_| {
-                std::fs::write(
-                    stream.join("index.ts"),
-                    middleware("String(event.text)+'!'"),
-                )?;
-                trust(&store, &stream, &["middleware"]);
+                std::fs::write(stream.join("index.ts"), middleware("hello!"))?;
+                trust(&store, &stream, &["context"]);
                 Ok(json!({"task":"running"}))
             },
             |update| updates.push(update),
@@ -437,17 +412,11 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
         .unwrap();
     assert_eq!(value, json!({"task":"running"}));
     assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
-    assert_eq!(
-        runtime.response_stream(delta.clone(), || true).unwrap()["effective"],
-        json!("HELLO")
-    );
+    assert_eq!(text(&mut runtime), json!("HELLO"));
 
     assert!(runtime.reload().unwrap());
     assert_ne!(runtime.generation(), generation);
-    assert_eq!(
-        runtime.response_stream(delta, || true).unwrap()["effective"],
-        json!("hello!")
-    );
+    assert_eq!(text(&mut runtime), json!("hello!"));
     assert!(
         runtime
             .invoke("worker", generation, "tool", "work", json!({}))

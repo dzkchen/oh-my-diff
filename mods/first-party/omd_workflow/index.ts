@@ -108,16 +108,16 @@ function adversarialReview(value: unknown, criteria: string[], candidate: string
 export default function activate(api: ModAPI) {
   api.contract(REVIEWED);
   api.contract(SOLO);
-  api.middleware('model_request', event => {
-    if (event.scope.kind === 'main') {
-      const state = api.state.get();
-      const leads = object(state) ? state : {};
-      const existing = leads[event.scope.thread_id];
-      api.state.set(Object.fromEntries([...Object.entries(leads).filter(([thread]) => thread !== event.scope.thread_id).slice(-127),
-        [event.scope.thread_id, { ...(object(existing) ? existing : {}),
-          model: event.effective.model, provider: event.effective.provider }]]));
-    }
-    return null;
+  api.intercept('model_request', { match: { scope: { kind: 'main' } } }, async (event, next) => {
+    const result = await next(event);
+    const route = event.routes.find(item => item.name === result.route) ?? event.original;
+    const state = api.state.get();
+    const leads = object(state) ? state : {};
+    const existing = leads[event.scope.thread_id];
+    api.state.set(Object.fromEntries([...Object.entries(leads).filter(([thread]) => thread !== event.scope.thread_id).slice(-127),
+      [event.scope.thread_id, { ...(object(existing) ? existing : {}),
+        model: route.model, provider: route.provider }]]));
+    return result;
   });
   const TASK = { key: 'task', scope: 'thread' as const };
   const read = () => {

@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
@@ -48,6 +49,9 @@ pub struct Account {
     pub lead_routes: Vec<RequestRoute>,
     pub worker_authorization: Option<(std::path::PathBuf, String)>,
     pub credential: Option<String>,
+    pub context_window: Option<i64>,
+    pub max_output_tokens: Option<u64>,
+    pub capture_tools: bool,
 }
 
 static CREDENTIAL_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
@@ -57,6 +61,18 @@ pub fn set_credential_root(root: std::path::PathBuf) {
 }
 
 const ROUTE_HEADER: &str = "x-omd-route";
+const REQUEST_HEADER: &str = "x-omd-request-id";
+const SYNTHETIC_HEADER: &str = "x-omd-synthetic";
+const SUMMARY_TEXT_BYTES: usize = 4096;
+const COLLECTED_TEXT_BYTES: usize = 32_768;
+
+fn cut(text: &str, limit: usize) -> &str {
+    let mut end = limit.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
 
 fn mark_route(request: &mut Request, name: &str) -> Result<(), TransportError> {
     let value = http::HeaderValue::from_str(name)
@@ -106,6 +122,8 @@ pub struct RequestRoute {
     #[serde(skip)]
     pub rates: Rates,
     pub credential: Option<String>,
+    #[serde(skip)]
+    pub url: String,
 }
 
 static GLOBAL: std::sync::OnceLock<Arc<Accounts>> = std::sync::OnceLock::new();
@@ -120,14 +138,39 @@ pub fn global() -> Arc<Accounts> {
         .clone()
 }
 
-/// Serves a model interceptor's own host call for a thread: `(thread, caller, call, active)`.
-pub type ModDispatcher = Arc<
-    dyn Fn(&str, &str, codex_omd::ModHostCall, &dyn Fn() -> bool) -> std::io::Result<Value>
-        + Send
-        + Sync,
->;
+pub type ModDispatcher = codex_omd::host::SessionDispatcher;
+
+/// Delivers an observer event to mods outside the transport thread.
+pub type ModNotifier = Arc<dyn Fn(&'static str, Value) + Send + Sync>;
 
 type RequiredSurfaces = Arc<Mutex<Vec<&'static str>>>;
+
+#[derive(Default)]
+struct RequestState {
+    fingerprints: BTreeMap<String, Vec<(String, String)>>,
+    retries: BTreeMap<String, u32>,
+    synthetic: BTreeMap<String, (String, Vec<Value>)>,
+    responses: BTreeMap<String, Vec<Value>>,
+    verdicts: BTreeMap<String, Option<Edits>>,
+    verdict_order: VecDeque<String>,
+}
+
+type Edits = Vec<(usize, usize, String)>;
+
+const VERDICTS: usize = 8192;
+
+impl RequestState {
+    fn remember(&mut self, key: String, verdict: Option<Edits>) {
+        if self.verdicts.insert(key.clone(), verdict).is_none() {
+            self.verdict_order.push_back(key);
+        }
+        while self.verdict_order.len() > VERDICTS {
+            if let Some(oldest) = self.verdict_order.pop_front() {
+                self.verdicts.remove(&oldest);
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Accounts(
@@ -136,9 +179,12 @@ pub struct Accounts(
     AtomicU64,
     Arc<AtomicUsize>,
     Mutex<Option<ModDispatcher>>,
+    Mutex<Option<ModNotifier>>,
+    Arc<Mutex<RequestState>>,
 );
 
 const MIDDLEWARE_WAIT: Duration = Duration::from_secs(2);
+const SEND_POLICY_WAIT: Duration = Duration::from_secs(5);
 const MIDDLEWARE_LOG_BYTES: u64 = 8 * 1024 * 1024;
 
 enum Hook<T> {
@@ -162,6 +208,294 @@ impl Accounts {
         if let Ok(mut installed) = self.4.lock() {
             *installed = Some(dispatcher);
         }
+    }
+
+    pub fn install_mod_notifier(&self, notifier: ModNotifier) {
+        if let Ok(mut installed) = self.5.lock() {
+            *installed = Some(notifier);
+        }
+    }
+
+    /// Keeps the `model_response` records of a thread until `take_responses`.
+    pub fn collect(&self, thread: &str) {
+        if let Ok(mut state) = self.6.lock() {
+            state.responses.insert(thread.to_owned(), Vec::new());
+        }
+    }
+
+    pub fn take_responses(&self, thread: &str) -> Vec<Value> {
+        self.6
+            .lock()
+            .ok()
+            .and_then(|mut state| state.responses.remove(thread))
+            .unwrap_or_default()
+    }
+
+    fn dispatcher(&self) -> Option<ModDispatcher> {
+        self.4.lock().ok().and_then(|dispatcher| dispatcher.clone())
+    }
+
+    fn notifier(&self) -> Option<ModNotifier> {
+        self.5.lock().ok().and_then(|notifier| notifier.clone())
+    }
+
+    /// Whether `surface` has interceptors (`Some(required)`), waiting for a busy runtime unless a mod-owned
+    /// request would deadlock on its own in-flight callback.
+    fn intercepting(
+        mods: &Mutex<codex_omd::ModHost>,
+        holders: &AtomicUsize,
+        account: &Account,
+        surface: &'static str,
+        required: bool,
+    ) -> Result<Option<bool>, TransportError> {
+        let deadline = Instant::now() + MIDDLEWARE_WAIT;
+        loop {
+            match mods.try_lock() {
+                Ok(runtime) => return Ok(runtime.intercepts(surface)),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(denied("mod runtime poisoned"));
+                }
+                Err(std::sync::TryLockError::WouldBlock)
+                    if account.owner.starts_with("mod-")
+                        && holders.load(Ordering::Acquire) == 0
+                        && !required =>
+                {
+                    Self::record_middleware(
+                        account,
+                        &json!({"kind":"intercept_skipped","surface":surface,"reason":"mod_callback_in_flight"}),
+                    )?;
+                    return Ok(None);
+                }
+                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(std::sync::TryLockError::WouldBlock) if required => return Ok(Some(true)),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    Self::record_middleware(
+                        account,
+                        &json!({"kind":"intercept_skipped","surface":surface,"reason":"mod_runtime_busy"}),
+                    )?;
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    /// The final-request stage under the runtime lock; a busy runtime refuses when a policy is required.
+    fn send_policy(
+        &self,
+        mods: &Mutex<codex_omd::ModHost>,
+        owner: Option<&str>,
+    ) -> Result<Option<codex_omd::SendPolicy>, TransportError> {
+        let required = self.required("model_send");
+        let deadline = Instant::now()
+            + if required {
+                SEND_POLICY_WAIT
+            } else {
+                MIDDLEWARE_WAIT
+            };
+        loop {
+            match mods.try_lock() {
+                Ok(runtime) => return Ok(runtime.send_policy()),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(denied("mod runtime poisoned"));
+                }
+                Err(std::sync::TryLockError::WouldBlock)
+                    if !required
+                        && (owner.is_some_and(|owner| owner.starts_with("mod-"))
+                            && self.3.load(Ordering::Acquire) == 0
+                            || Instant::now() >= deadline) =>
+                {
+                    return Ok(None);
+                }
+                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    return Err(denied(
+                        "final_request_refused: intercept_required_failed: mod_runtime_busy",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
+    #[allow(clippy::too_many_arguments)]
+    fn police(
+        &self,
+        mods: &Mutex<codex_omd::ModHost>,
+        account: Option<&Account>,
+        thread: &str,
+        request_id: &str,
+        attempt: u32,
+        value: &mut Value,
+    ) -> Result<bool, TransportError> {
+        let Some(policy) = self.send_policy(mods, account.map(|account| account.owner.as_str()))?
+        else {
+            return Ok(false);
+        };
+        let refuse = |reason: String| {
+            if let Some(account) = account {
+                let _ = Self::record_middleware(
+                    account,
+                    &json!({"kind":"final_request_refused","request_id":request_id,"reason":reason}),
+                );
+            }
+            denied(format!("final_request_refused: {reason}"))
+        };
+        if let Some(reason) = policy.unavailable {
+            return Err(refuse(format!("request_policy_unavailable: {reason}")));
+        }
+        let scope = match account {
+            Some(account) => payload_scope(account, thread),
+            None => {
+                json!({"thread_id":(!thread.is_empty()).then_some(thread),"agent_id":null,"kind":"internal"})
+            }
+        };
+        let provider = account.map_or(Value::Null, |account| account.provider.clone().into());
+        let route = account
+            .and_then(|account| account.route.clone())
+            .map_or(Value::Null, Value::from);
+        let context =
+            json!([policy.fingerprint, provider, route, value["model"], scope]).to_string();
+        let key = |segment: &Value| {
+            crate::execution::hash(
+                json!([
+                    context,
+                    segment["kind"],
+                    segment["role"],
+                    segment["editable"],
+                    segment["sha256"]
+                ])
+                .to_string()
+                .as_bytes(),
+            )
+        };
+        let origin =
+            json!({"caller":"engine","thread_id":scope["thread_id"],"agent_id":scope["agent_id"]});
+        let dispatcher = self.dispatcher();
+        let active = || account.is_none_or(|account| account.task.check_active().is_ok());
+        let _thread =
+            codex_omd::StateThread::enter((!thread.is_empty()).then(|| thread.to_owned()));
+        let (mut pages_run, mut scanned, mut cached) = (0, 0, 0);
+        let mut applied = Vec::new();
+        for round in 0..2 {
+            let (segments, opaque) = codex_omd::model_request::send_segments(value);
+            let mut edits = BTreeMap::<String, Edits>::new();
+            let mut keys = Vec::new();
+            let mut pending = Vec::new();
+            {
+                let state = self
+                    .6
+                    .lock()
+                    .map_err(|_| denied("request state poisoned"))?;
+                for segment in segments {
+                    let id = segment["id"].as_str().unwrap_or_default().to_owned();
+                    let segment_key = key(&segment);
+                    match state.verdicts.get(&segment_key) {
+                        Some(None) => cached += 1,
+                        Some(Some(_)) if round > 0 => {
+                            return Err(refuse(format!("final_request_unsettled: {id}")));
+                        }
+                        Some(Some(known)) => {
+                            cached += 1;
+                            edits.insert(id, known.clone());
+                        }
+                        None => {
+                            keys.push((id, segment_key));
+                            pending.push(segment);
+                        }
+                    }
+                }
+            }
+            scanned += pending.len();
+            let mut pages = codex_omd::model_request::send_pages(pending);
+            if pages.len() > codex_omd::model_request::SEND_PAGES {
+                return Err(refuse(format!(
+                    "final_request_too_large: {} pages",
+                    pages.len()
+                )));
+            }
+            if pages.is_empty() && round == 0 {
+                pages.push(Vec::new());
+            }
+            let count = pages.len();
+            let mut found = BTreeMap::<String, Edits>::new();
+            let mut uncached = std::collections::BTreeSet::new();
+            for (index, page) in pages.into_iter().enumerate() {
+                let input = json!({"request_id":request_id,"attempt":attempt,"scope":scope,
+                    "provider":provider,"route":route,"model":value["model"],"page":index + 1,
+                    "pages":count,"cached":cached,"segments":page,"opaque":opaque});
+                let chain = codex_omd::intercept_shared(
+                    mods,
+                    "model_send",
+                    policy.required,
+                    input,
+                    origin.clone(),
+                    active,
+                    |caller, call| match &dispatcher {
+                        Some(dispatch) => dispatch(thread, caller, call, &active),
+                        None => Err(std::io::Error::other(
+                            "host_operation_unavailable: no session dispatcher",
+                        )),
+                    },
+                    |_| Ok(json!({"edits": []})),
+                )
+                .map_err(|error| refuse(error.to_string()))?;
+                pages_run += 1;
+                if let Some(reason) = chain.result["deny"].as_str() {
+                    return Err(refuse(format!("{}: {reason}", settled_by(&chain))));
+                }
+                if chain.result["cache"] == false {
+                    uncached.extend(
+                        page.iter()
+                            .filter_map(|segment| segment["id"].as_str().map(str::to_owned)),
+                    );
+                }
+                for (segment, start, end, text) in
+                    codex_omd::model_request::page_edits(&chain.result, &page, value)
+                        .map_err(|error| refuse(error))?
+                {
+                    found.entry(segment).or_default().push((start, end, text));
+                }
+            }
+            if let Some(segment) = found.keys().next().filter(|_| round > 0) {
+                return Err(refuse(format!("final_request_unsettled: {segment}")));
+            }
+            if let Ok(mut state) = self.6.lock() {
+                for (id, segment_key) in keys.into_iter().filter(|(id, _)| !uncached.contains(id)) {
+                    state.remember(segment_key, found.get(&id).cloned());
+                }
+            }
+            for (id, ranges) in found {
+                edits.entry(id).or_default().extend(ranges);
+            }
+            if edits.is_empty() {
+                break;
+            }
+            for (id, ranges) in &edits {
+                let text = value
+                    .pointer(id)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                for (start, end, _) in ranges {
+                    let original = text.get(*start..*end).unwrap_or_default();
+                    applied.push(json!({"segment":id,"start":start,"end":end,
+                        "sha256":crate::execution::hash(original.as_bytes())}));
+                }
+            }
+            codex_omd::model_request::apply_send_edits(value, &edits)
+                .map_err(|error| refuse(error))?;
+        }
+        if let Some(account) = account {
+            Self::record_middleware(
+                account,
+                &json!({"kind":"final_request","request_id":request_id,"attempt":attempt,
+                    "pages":pages_run,"scanned":scanned,"cached":cached,"edits":applied}),
+            )?;
+        }
+        Ok(!applied.is_empty())
     }
 
     fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
@@ -290,15 +624,59 @@ pub fn denied(message: impl ToString) -> TransportError {
     }
 }
 
+#[derive(Default)]
+struct Intercepted {
+    route: Option<RequestRoute>,
+    effort: Option<Value>,
+    sections: Option<(Vec<Value>, Vec<Value>)>,
+    answer: Option<(String, Value)>,
+}
+
+fn route_info(route: &RequestRoute) -> Value {
+    json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
+        "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
+        "tools":[],"available":true,"credential":route.credential})
+}
+
+/// The mod whose result settled a chain: the outermost link that returned or caught.
+fn settled_by(chain: &codex_omd::ModChain) -> String {
+    chain
+        .trace
+        .iter()
+        .rev()
+        .find(|entry| matches!(entry["outcome"].as_str(), Some("returned" | "caught")))
+        .and_then(|entry| entry["mod"].as_str())
+        .unwrap_or("mod")
+        .to_owned()
+}
+
+fn chain_record(surface: &str, request_id: &str, chain: &codex_omd::ModChain) -> Value {
+    json!({"kind":"intercept","surface":surface,"request_id":request_id,
+        "answered_by":chain.answered_by,"trace":chain.trace,
+        "result":codex_omd::model_request::bounded(&chain.result)})
+}
+
 impl Accounts {
-    fn request_route(
+    #[allow(clippy::too_many_arguments)]
+    fn intercept_request(
         &self,
         mods: &Mutex<codex_omd::ModHost>,
         account: &Account,
         thread: &str,
         value: &Value,
-    ) -> Result<Option<RequestRoute>, TransportError> {
-        let request_id = format!("mod-request-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+        request_id: &str,
+        attempt: u32,
+    ) -> Result<Intercepted, TransportError> {
+        let Some(required) = Self::intercepting(
+            mods,
+            &self.3,
+            account,
+            "model_request",
+            self.required("model_request"),
+        )?
+        else {
+            return Ok(Intercepted::default());
+        };
         let original = json!({"name": account.route.clone().unwrap_or_else(|| "session".into()),
             "model": value.get("model").cloned().unwrap_or(Value::Null),
             "provider": account.provider,
@@ -308,121 +686,98 @@ impl Accounts {
             "tools": [], "available": true, "credential": account.credential});
         let mut routes = vec![original.clone()];
         if account.owner == "lead" {
-            routes.extend(account.lead_routes.iter().map(|route| {
-                json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
-                    "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
-                    "tools":[],"available":true,"credential":route.credential})
-            }));
+            routes.extend(account.lead_routes.iter().map(route_info));
         }
-        let payload = json!({"request_id":request_id,"scope":payload_scope(account, thread),
-            "routes":routes,"original":original,"effective":original,"provenance":[]});
-        let mut selected = original["name"].as_str().unwrap_or_default().to_owned();
-        match Self::middleware(
-            mods,
-            &self.3,
-            !account.owner.starts_with("mod-"),
-            "model_request",
-            |runtime| runtime.model_request(payload, || account.task.check_active().is_ok()),
-        )? {
-            Hook::Ran(effective) => {
-                let effective = effective.map_err(denied)?;
-                if effective["provenance"]
-                    .as_array()
-                    .is_some_and(|provenance| !provenance.is_empty())
-                {
-                    Self::record_middleware(
-                        account,
-                        &json!({"kind":"model_request","value":effective}),
-                    )?;
-                }
-                selected = effective["effective"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned();
-            }
-            Hook::Absent => {}
-            Hook::Skipped(reason) => {
-                Self::record_middleware(
-                    account,
-                    &json!({"kind":"middleware_skipped","hook":"model_request","request_id":request_id,"reason":reason}),
-                )?;
-            }
-        }
-        let deadline = Instant::now() + MIDDLEWARE_WAIT;
-        let intercepting = loop {
-            match mods.try_lock() {
-                Ok(runtime) => break runtime.intercepts("model_request"),
-                Err(std::sync::TryLockError::Poisoned(_)) => {
-                    return Err(denied("mod runtime poisoned"));
-                }
-                Err(std::sync::TryLockError::WouldBlock)
-                    if account.owner.starts_with("mod-")
-                        && self.3.load(Ordering::Acquire) == 0
-                        && !self.required("model_request") =>
-                {
-                    Self::record_middleware(
-                        account,
-                        &json!({"kind":"intercept_skipped","surface":"model_request","request_id":request_id,"reason":"mod_callback_in_flight"}),
-                    )?;
-                    break None;
-                }
-                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                Err(std::sync::TryLockError::WouldBlock) => break Some(true),
-            }
-        };
-        if let Some(required) = intercepting {
-            let dispatcher = self.4.lock().ok().and_then(|dispatcher| dispatcher.clone());
-            let active = || account.task.check_active().is_ok();
-            let input = json!({"request_id":request_id,"scope":payload_scope(account, thread),
-                "routes":routes,"original":original,"route":selected});
-            let origin = json!({"caller":"engine","thread_id":thread,
-                "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
-            let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
-            let chain = codex_omd::intercept_shared(
-                mods,
-                "model_request",
-                required,
-                input,
-                origin,
-                active,
-                |caller, call| match &dispatcher {
-                    Some(dispatch) => dispatch(thread, caller, call, &active),
-                    None => Err(std::io::Error::other(
-                        "host_operation_unavailable: no session dispatcher",
-                    )),
-                },
-                |input| Ok(json!({"route": input["route"]})),
-            )
-            .map_err(denied)?;
-            if !chain.trace.is_empty() {
-                Self::record_middleware(
-                    account,
-                    &json!({"kind":"intercept","surface":"model_request","value":chain}),
-                )?;
-            }
-            if let Some(reason) = chain.result["deny"].as_str() {
-                return Err(denied(format!(
-                    "a mod refused this model request: {reason}"
-                )));
-            }
-            selected = chain.result["route"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-        }
-        if selected == original["name"].as_str().unwrap_or_default() {
-            return Ok(None);
-        }
-        account
-            .lead_routes
-            .iter()
-            .find(|route| route.name == selected)
-            .filter(|_| account.owner == "lead")
+        let sections = codex_omd::model_request::sections(value);
+        let effort = value
+            .pointer("/reasoning/effort")
             .cloned()
-            .map(Some)
-            .ok_or_else(|| denied("mod selected a route that is not configured for this thread"))
+            .unwrap_or(Value::Null);
+        let tools = value["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        let input = json!({"request_id":request_id,"attempt":attempt,"scope":payload_scope(account, thread),
+            "routes":routes,"original":original,"route":original["name"],"model":original["model"],
+            "provider":account.provider,"effort":effort,"sections":sections,"tools":tools});
+        let origin = json!({"caller":"engine","thread_id":thread,
+            "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
+        let dispatcher = self.dispatcher();
+        let active = || account.task.check_active().is_ok();
+        let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
+        let state = self.6.clone();
+        let chain = codex_omd::intercept_shared(
+            mods,
+            "model_request",
+            required,
+            input,
+            origin,
+            active,
+            |caller, call| match &dispatcher {
+                Some(dispatch) => dispatch(thread, caller, call, &active),
+                None => Err(std::io::Error::other(
+                    "host_operation_unavailable: no session dispatcher",
+                )),
+            },
+            |input| {
+                let mut probe = value.clone();
+                if let Some(effective) = input["sections"].as_array() {
+                    codex_omd::model_request::apply_sections(&mut probe, &sections, effective);
+                }
+                let current = codex_omd::model_request::fingerprints(&probe);
+                let from = state.lock().ok().and_then(|mut state| {
+                    let previous = state
+                        .fingerprints
+                        .insert(thread.to_owned(), current.clone())
+                        .unwrap_or_default();
+                    codex_omd::model_request::changed_from(&previous, &current)
+                });
+                Ok(json!({"route": input["route"], "effort": input["effort"], "cache": {"from": from}}))
+            },
+        )
+        .map_err(denied)?;
+        if !chain.trace.is_empty() {
+            Self::record_middleware(account, &chain_record("model_request", request_id, &chain))?;
+        }
+        if let Some(reason) = chain.result["deny"].as_str() {
+            return Err(denied(format!(
+                "a mod refused this model request: {reason}"
+            )));
+        }
+        if chain.answered_by.is_some() && chain.result.get("response").is_some() {
+            return Ok(Intercepted {
+                answer: Some((settled_by(&chain), chain.result)),
+                ..Intercepted::default()
+            });
+        }
+        let effective = chain.input;
+        let selected = effective["route"].as_str().unwrap_or_default();
+        let route = if selected == original["name"].as_str().unwrap_or_default() {
+            None
+        } else {
+            Some(
+                account
+                    .lead_routes
+                    .iter()
+                    .find(|route| route.name == selected)
+                    .filter(|_| account.owner == "lead")
+                    .cloned()
+                    .ok_or_else(|| {
+                        denied("mod selected a route that is not configured for this thread")
+                    })?,
+            )
+        };
+        Ok(Intercepted {
+            route,
+            effort: (effective["effort"] != effort).then(|| effective["effort"].clone()),
+            sections: effective["sections"]
+                .as_array()
+                .filter(|effective| **effective != sections)
+                .map(|effective| (sections.clone(), effective.clone())),
+            answer: None,
+        })
     }
 }
 
@@ -438,10 +793,25 @@ fn switch_route(
     account: &mut Account,
     route: &RequestRoute,
 ) -> Result<(), TransportError> {
+    if route.provider != account.provider {
+        if route.credential.is_none() {
+            return Err(denied(
+                "a route on another provider needs its own credential profile",
+            ));
+        }
+        // Opaque reasoning belongs to the provider that produced it; the transcript keeps it.
+        if let Some(input) = value["input"].as_array_mut() {
+            input.retain(|item| item["type"] != "reasoning");
+        }
+        request.headers.insert(
+            codex_api::request_observer::STRIP_ITEM_METADATA,
+            http::HeaderValue::from_static("1"),
+        );
+    }
     mark_route(request, &route.name)?;
     value["model"] = route.model.clone().into();
     value["reasoning"]["effort"] = route.reasoning.clone().into();
-    account.rates = account.rates.as_ref().map(|_| route.rates.clone());
+    account.rates = Some(route.rates.clone());
     Ok(())
 }
 
@@ -451,14 +821,12 @@ impl ResponseObserver for Accounts {
         request: &mut Request,
         body: &mut Option<EncodedJsonBody>,
     ) -> Result<(), TransportError> {
-        let Some(thread) = request
+        let thread = request
             .headers
             .get("thread-id")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
-        else {
-            return Ok(());
-        };
+            .unwrap_or_default();
         let Some(mut account) = self
             .0
             .lock()
@@ -466,6 +834,15 @@ impl ResponseObserver for Accounts {
             .get(&thread)
             .cloned()
         else {
+            // Unenrolled internal requests (titles, reviews, guardians) still pass the final-request stage.
+            let (Some(mods), Some(encoded)) = (self.mods(), body.as_ref()) else {
+                return Ok(());
+            };
+            let mut value: Value = serde_json::from_slice(encoded.as_bytes()).map_err(denied)?;
+            let request_id = format!("req-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+            if self.police(&mods, None, &thread, &request_id, 1, &mut value)? {
+                *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
+            }
             return Ok(());
         };
         let mut value: Value = serde_json::from_slice(
@@ -486,6 +863,7 @@ impl ResponseObserver for Accounts {
             switch_route(request, &mut value, &mut account, &route)?;
             account.credential = route.credential;
             account.route = Some(route.name);
+            account.provider = route.provider;
             edited = true;
         }
         let mods = self.mods();
@@ -531,12 +909,55 @@ impl ResponseObserver for Accounts {
                 }
             }
         }
-        if let Some(mods) = &mods
-            && let Some(route) = self.request_route(mods, &account, &thread, &value)?
-        {
-            switch_route(request, &mut value, &mut account, &route)?;
-            edited = true;
+        let request_id = format!("req-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+        request
+            .headers
+            .insert(REQUEST_HEADER, request_id.parse().map_err(denied)?);
+        let attempt = self
+            .6
+            .lock()
+            .ok()
+            .and_then(|mut state| state.retries.remove(&thread))
+            .unwrap_or(1);
+        if let Some(mods) = &mods {
+            let intercepted =
+                self.intercept_request(mods, &account, &thread, &value, &request_id, attempt)?;
+            if let Some((owner, answer)) = intercepted.answer {
+                let mut next = 0;
+                let events = codex_omd::model_request::synthetic_events(
+                    &answer,
+                    &format!("{request_id}-{owner}"),
+                    &mut || {
+                        next += 1;
+                        format!("mod-{owner}-{request_id}-{next}")
+                    },
+                );
+                if let Ok(mut state) = self.6.lock() {
+                    state.synthetic.insert(request_id.clone(), (owner, events));
+                }
+                request
+                    .headers
+                    .insert(SYNTHETIC_HEADER, request_id.parse().map_err(denied)?);
+                return Ok(());
+            }
+            if let Some(route) = &intercepted.route {
+                switch_route(request, &mut value, &mut account, route)?;
+                account.route = Some(route.name.clone());
+                account.provider = route.provider.clone();
+                edited = true;
+            }
+            if let Some(effort) = intercepted.effort {
+                value["reasoning"]["effort"] = effort;
+                edited = true;
+            }
+            if let Some((given, effective)) = intercepted.sections {
+                edited |= codex_omd::model_request::apply_sections(&mut value, &given, &effective);
+            }
         }
+        request.headers.insert(
+            "x-omd-attempt",
+            attempt.to_string().parse().map_err(denied)?,
+        );
         if let Some(rates) = account
             .rates
             .as_ref()
@@ -545,9 +966,25 @@ impl ResponseObserver for Accounts {
             if rates.max_output_tokens == 0 {
                 return Err(denied("missing output ceiling"));
             }
-            value["max_output_tokens"] = rates.max_output_tokens.into();
+            value["max_output_tokens"] = rates
+                .max_output_tokens
+                .min(account.max_output_tokens.unwrap_or(u64::MAX))
+                .into();
             value["service_tier"] = "default".into();
             edited = true;
+        } else if let Some(tokens) = account.max_output_tokens {
+            value["max_output_tokens"] = tokens.into();
+            edited = true;
+        }
+        if let Some(mods) = &mods {
+            edited |= self.police(
+                mods,
+                Some(&account),
+                &thread,
+                &request_id,
+                attempt,
+                &mut value,
+            )?;
         }
         if edited {
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
@@ -577,6 +1014,37 @@ impl ResponseObserver for Accounts {
         else {
             return Ok(None);
         };
+        let header = |request: &Request, name: &str| {
+            request
+                .headers
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        let request_id = header(request, REQUEST_HEADER).unwrap_or_default();
+        let attempt = request
+            .headers
+            .remove("x-omd-attempt")
+            .and_then(|value| value.to_str().ok()?.parse().ok())
+            .unwrap_or(1);
+        if let Some(key) = header(request, SYNTHETIC_HEADER) {
+            let owner = self
+                .6
+                .lock()
+                .ok()
+                .and_then(|state| state.synthetic.get(&key).map(|(owner, _)| owner.clone()))
+                .ok_or_else(|| denied("synthetic answer missing"))?;
+            let model = account.model.clone();
+            return Ok(Some(Box::new(self.attempt(
+                account,
+                thread,
+                request_id,
+                attempt,
+                model,
+                None,
+                Some(owner),
+            ))));
+        }
         let requested = body
             .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())
             .and_then(|value| {
@@ -605,33 +1073,23 @@ impl ResponseObserver for Accounts {
             None => account.credential.clone(),
         };
         inject_credential(request, credential.as_deref())?;
-        let Some(rates) = account.rates.clone() else {
-            let value = body
-                .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())
-                .unwrap_or(Value::Null);
-            return Ok(Some(Box::new(Attempt {
-                model: value
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or(&account.model)
-                    .to_owned(),
-                account,
-                admission: None,
-                mods: self.mods(),
-                holders: self.3.clone(),
-                settled: false,
-                failed: false,
-                boundary_items: 0,
-            })));
-        };
         let mut account = account;
-        let rates = match switched {
-            Some(route) => {
-                account.model = route.model;
-                account.rates = Some(route.rates.clone());
-                route.rates
+        account.credential = credential;
+        let mut url = account.url.clone();
+        if let Some(route) = switched {
+            account.model = route.model;
+            account.rates = Some(route.rates);
+            account.route = Some(route.name);
+            account.provider = route.provider;
+            if !route.url.is_empty() {
+                url = route.url;
             }
-            None => rates,
+        }
+        let Some(rates) = account.rates.clone() else {
+            let model = requested.unwrap_or_else(|| account.model.clone());
+            return Ok(Some(Box::new(self.attempt(
+                account, thread, request_id, attempt, model, None, None,
+            ))));
         };
         let model = account.model.clone();
         if let Some((path, sha)) = &account.worker_authorization {
@@ -665,8 +1123,8 @@ impl ResponseObserver for Accounts {
         {
             return Err(denied("unapproved model or nonstreaming request"));
         }
-        if !account.url.is_empty() {
-            request.url = account.url.clone();
+        if !url.is_empty() {
+            request.url = url;
         }
         if rates.included_subscription && rates.reservation_microusd != 0 {
             return Err(denied("invalid included-subscription billing declaration"));
@@ -814,10 +1272,6 @@ impl ResponseObserver for Accounts {
                 rates.external_subscription,
             )
             .map_err(denied)?;
-        request.headers.insert(
-            "x-omd-request-id",
-            admission.request_id().to_string().parse().map_err(denied)?,
-        );
         request
             .headers
             .insert("x-omd-owner", account.owner.parse().map_err(denied)?);
@@ -828,16 +1282,35 @@ impl ResponseObserver for Accounts {
             );
             return Err(denied(error));
         }
-        Ok(Some(Box::new(Attempt {
-            model,
+        Ok(Some(Box::new(self.attempt(
             account,
-            admission: Some(admission),
-            mods: self.mods(),
-            holders: self.3.clone(),
-            settled: false,
-            failed: false,
-            boundary_items: 0,
-        })))
+            thread,
+            request_id,
+            attempt,
+            model,
+            Some(admission),
+            None,
+        ))))
+    }
+
+    fn answer(&self, request: &Request) -> Option<Vec<Value>> {
+        let key = request.headers.get(SYNTHETIC_HEADER)?.to_str().ok()?;
+        self.6
+            .lock()
+            .ok()?
+            .synthetic
+            .remove(key)
+            .map(|(_, events)| events)
+    }
+
+    fn policed(&self) -> bool {
+        self.1.lock().ok().is_some_and(|installed| {
+            installed.as_ref().is_some_and(|(_, required)| {
+                required
+                    .lock()
+                    .map_or(true, |required| required.contains(&"model_send"))
+            })
+        })
     }
 
     fn requires_observation(&self, thread: Option<&str>) -> bool {
@@ -851,15 +1324,96 @@ impl ResponseObserver for Accounts {
     }
 }
 
+#[derive(Default)]
+struct Stream {
+    dropped: std::collections::BTreeSet<u64>,
+    renamed: BTreeMap<u64, Value>,
+    texts: BTreeMap<u64, (String, bool)>,
+    calls: BTreeMap<u64, (Value, Value, &'static str)>,
+    injected: u64,
+}
+
 struct Attempt {
     account: Account,
+    thread: String,
+    request_id: String,
+    attempt: u32,
     admission: Option<Admission>,
     model: String,
     mods: Option<Arc<Mutex<codex_omd::ModHost>>>,
     holders: Arc<AtomicUsize>,
+    dispatcher: Option<ModDispatcher>,
+    notifier: Option<ModNotifier>,
+    state: Arc<Mutex<RequestState>>,
+    required: bool,
+    synthetic: Option<String>,
     settled: bool,
     failed: bool,
-    boundary_items: u32,
+    reported: bool,
+    started: Instant,
+    started_at_ms: u128,
+    first_event: Option<Duration>,
+    served_model: Option<String>,
+    usage: Option<Value>,
+    microusd: Option<u64>,
+    text: Vec<(u64, String)>,
+    tool_calls: Vec<Value>,
+    stream: Stream,
+    injected: Vec<Value>,
+}
+
+impl Accounts {
+    #[allow(clippy::too_many_arguments)]
+    fn attempt(
+        &self,
+        account: Account,
+        thread: String,
+        request_id: String,
+        attempt: u32,
+        model: String,
+        admission: Option<Admission>,
+        synthetic: Option<String>,
+    ) -> Attempt {
+        Attempt {
+            account,
+            thread,
+            request_id,
+            attempt,
+            admission,
+            model,
+            mods: self.mods(),
+            holders: self.3.clone(),
+            dispatcher: self.dispatcher(),
+            notifier: self.notifier(),
+            state: self.6.clone(),
+            required: self.required("response_stream"),
+            synthetic,
+            settled: false,
+            failed: false,
+            reported: false,
+            started: Instant::now(),
+            started_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis()),
+            first_event: None,
+            served_model: None,
+            usage: None,
+            microusd: None,
+            text: Vec::new(),
+            tool_calls: Vec::new(),
+            stream: Stream::default(),
+            injected: Vec::new(),
+        }
+    }
+}
+
+fn joined(item: &Value) -> String {
+    item["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["text"].as_str())
+        .collect()
 }
 
 impl Attempt {
@@ -922,7 +1476,7 @@ impl Attempt {
             return self.observed(usage, if success { "completed" } else { "failed" });
         };
         if !success {
-            self.failed("provider returned failed or incomplete response");
+            self.fail("provider returned failed or incomplete response");
         }
         if let Some(usage) = usage {
             self.account
@@ -942,7 +1496,7 @@ impl Attempt {
                 if !rates.included_subscription
                     && (input > rates.input_token_ceiling || output > rates.max_output_tokens)
                 {
-                    self.failed("provider usage exceeded admitted token ceilings");
+                    self.fail("provider usage exceeded admitted token ceilings");
                     self.account.task.stop().map_err(denied)?;
                     return Err(denied("provider usage exceeded admitted token ceilings"));
                 }
@@ -978,121 +1532,17 @@ impl Attempt {
                     .settle(&admission, usage.clone(), amount)
                     .map_err(denied)?;
                 self.settled = true;
+                self.microusd = Some(amount);
                 self.persist_cost_capture()?;
             }
         }
         if !self.settled {
-            self.failed("terminal response has unpriced or missing usage");
+            self.fail("terminal response has unpriced or missing usage");
         }
         Ok(())
     }
 
-    fn event(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError> {
-        let raw = event.clone();
-        if !valid
-            && !matches!(
-                raw["type"].as_str(),
-                Some("response.failed" | "response.incomplete" | "error")
-            )
-        {
-            self.failed("malformed provider event");
-        }
-        match raw.get("type").and_then(Value::as_str) {
-            Some("response.completed" | "response.failed" | "response.incomplete") => {
-                self.settle(&raw)?;
-            }
-            Some("error") => self.failed("provider stream error"),
-            _ => {}
-        }
-        let Some(mods) = self.mods.clone() else {
-            return Ok(());
-        };
-        let kind = raw["type"].as_str().unwrap_or("invalid");
-        let text_key = if kind == "response.output_text.delta" {
-            Some("delta")
-        } else if kind == "response.output_text.done" {
-            Some("text")
-        } else {
-            None
-        };
-        let boundary = kind == "response.output_item.done";
-        if boundary {
-            self.boundary_items = self.boundary_items.saturating_add(1);
-        }
-        let text = text_key
-            .and_then(|key| raw.get(key).and_then(Value::as_str))
-            .map(str::to_owned)
-            .or_else(|| {
-                boundary
-                    .then(|| {
-                        raw.pointer("/item/content")
-                            .and_then(Value::as_array)
-                            .map(|content| {
-                                content
-                                    .iter()
-                                    .filter_map(|part| part.get("text").and_then(Value::as_str))
-                                    .collect::<Vec<_>>()
-                                    .join("")
-                            })
-                    })
-                    .flatten()
-            });
-        let payload = json!({"kind":kind,"raw_sha256":crate::execution::hash(&serde_json::to_vec(&raw).map_err(denied)?),
-            "raw_usage":raw.pointer("/response/usage").cloned().unwrap_or(Value::Null),
-            "opaque_reasoning":kind.contains("reasoning"),"protected":text_key.is_none(),"text":text,
-            "boundary":boundary,"attempt":self.boundary_items});
-        let active = || self.account.task.check_active().is_ok();
-        let transformed = match Accounts::middleware(
-            &mods,
-            &self.holders,
-            false,
-            "response_stream",
-            |runtime| runtime.response_stream(payload, active),
-        )? {
-            Hook::Ran(transformed) => transformed.map_err(denied)?,
-            Hook::Absent => {
-                self.mods = None;
-                return Ok(());
-            }
-            Hook::Skipped(reason) => {
-                self.mods = None;
-                return Accounts::record_middleware(
-                    &self.account,
-                    &json!({"kind":"middleware_skipped","hook":"response_stream","reason":reason}),
-                );
-            }
-        };
-        if let Some(key) = text_key
-            && let Some(text) = transformed["effective"].as_str()
-        {
-            event[key] = text.into();
-        }
-        if ["provenance", "fallback"].iter().any(|field| {
-            transformed[*field]
-                .as_array()
-                .is_some_and(|entries| !entries.is_empty())
-        }) || !transformed["control"].is_null()
-        {
-            Accounts::record_middleware(
-                &self.account,
-                &json!({"kind":"response_stream","value":transformed}),
-            )?;
-        }
-        if !transformed["control"].is_null() {
-            return Err(codex_api::request_observer::stream_control_error(
-                &transformed["control"],
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl ResponseAttempt for Attempt {
-    fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError> {
-        self.event(event, valid)
-    }
-
-    fn failed(&mut self, reason: &str) {
+    fn fail(&mut self, reason: &str) {
         if self.failed || self.settled {
             return;
         }
@@ -1107,12 +1557,425 @@ impl ResponseAttempt for Attempt {
             }
         }
     }
+
+    fn chunk(&mut self, event: &Value) -> Option<Value> {
+        let index = event["output_index"].as_u64();
+        let item = &event["item"];
+        let mut chunk = match event["type"].as_str()? {
+            "response.output_text.delta" => {
+                json!({"kind":"text","index":index?,"item_id":event["item_id"],"text":event["delta"].as_str()?})
+            }
+            "response.output_item.added"
+                if matches!(
+                    item["type"].as_str(),
+                    Some("function_call" | "custom_tool_call")
+                ) =>
+            {
+                let format = if item["type"] == "custom_tool_call" {
+                    "freeform"
+                } else {
+                    "json"
+                };
+                self.stream.calls.insert(
+                    index?,
+                    (item["call_id"].clone(), item["name"].clone(), format),
+                );
+                json!({"kind":"tool_call","index":index,"item_id":item["id"],"call_id":item["call_id"],
+                    "tool":item["name"],"format":format})
+            }
+            "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
+                let (call_id, tool, format) = self.stream.calls.get(&index?)?.clone();
+                json!({"kind":"tool_input","index":index,"item_id":event["item_id"],"call_id":call_id,
+                    "tool":tool,"format":format,"text":event["delta"].as_str()?})
+            }
+            "response.output_item.done" => match item["type"].as_str()? {
+                "message" => {
+                    let text = self
+                        .stream
+                        .texts
+                        .get(&index?)
+                        .filter(|(_, changed)| *changed)
+                        .map_or_else(|| joined(item), |(text, _)| text.clone());
+                    json!({"kind":"message","index":index,"item_id":item["id"],"text":text})
+                }
+                "function_call" => {
+                    json!({"kind":"tool_done","index":index,"item_id":item["id"],"call_id":item["call_id"],
+                        "tool":item["name"],"format":"json","arguments":item["arguments"]})
+                }
+                "custom_tool_call" => {
+                    json!({"kind":"tool_done","index":index,"item_id":item["id"],"call_id":item["call_id"],
+                        "tool":item["name"],"format":"freeform","arguments":item["input"]})
+                }
+                "reasoning" => json!({"kind":"reasoning","index":index,"item_id":item["id"]}),
+                _ => return None,
+            },
+            kind @ ("response.completed" | "response.incomplete" | "response.failed") => {
+                json!({"kind":"stop","index":null,"status":kind.trim_start_matches("response."),
+                    "usage":event.pointer("/response/usage").cloned().unwrap_or(Value::Null)})
+            }
+            _ => return None,
+        };
+        chunk["protected"] = matches!(chunk["kind"].as_str(), Some("reasoning" | "stop")).into();
+        chunk["request_id"] = self.request_id.clone().into();
+        chunk["scope"] = payload_scope(&self.account, &self.thread);
+        chunk["synthetic"] = self.synthetic.clone().into();
+        Some(chunk)
+    }
+
+    fn apply(&mut self, event: &mut Value, chunk: &Value, effective: &Value) {
+        let index = chunk["index"].as_u64().unwrap_or_default();
+        match chunk["kind"].as_str() {
+            Some("text") => {
+                let text = effective["text"].as_str().unwrap_or_default();
+                event["delta"] = text.into();
+                let entry = self.stream.texts.entry(index).or_default();
+                entry.0.push_str(text);
+                entry.1 |= effective["text"] != chunk["text"];
+            }
+            Some("tool_input") => event["delta"] = effective["text"].clone(),
+            Some("tool_call") if effective["tool"] != chunk["tool"] => {
+                event["item"]["name"] = effective["tool"].clone();
+                self.stream.renamed.insert(index, effective["tool"].clone());
+            }
+            Some("message") if effective["text"].as_str() != Some(&joined(&event["item"])) => {
+                event["item"]["content"] =
+                    json!([{"type":"output_text","text":effective["text"],"annotations":[]}]);
+            }
+            Some("tool_done") => {
+                event["item"]["name"] = effective["tool"].clone();
+                let field = if chunk["format"] == "freeform" {
+                    "input"
+                } else {
+                    "arguments"
+                };
+                event["item"][field] = effective["arguments"].clone();
+            }
+            _ => {}
+        }
+    }
+
+    fn inject(&mut self, chunk: &Value, origin: &str) -> Vec<Value> {
+        self.stream.injected += 1;
+        let id = format!("mod-{origin}-{}-{}", self.request_id, self.stream.injected);
+        let item = codex_omd::model_request::output_item(chunk, &id);
+        let index = 100_000 + self.stream.injected;
+        let mut events = Vec::new();
+        if item["type"] == "message" {
+            let mut added = item.clone();
+            added["status"] = "in_progress".into();
+            added["content"] = json!([]);
+            events.push(
+                json!({"type":"response.output_item.added","output_index":index,"item":added}),
+            );
+        }
+        events.push(json!({"type":"response.output_item.done","output_index":index,"item":item}));
+        events
+    }
+
+    /// Runs the stream chunk chain; returns a stop control when a handler stopped the response.
+    fn transform(&mut self, event: &mut Value) -> Result<Option<Value>, TransportError> {
+        let index = event["output_index"].as_u64();
+        if self.account.capture_tools
+            && let Some(index) = index
+            && matches!(
+                event["type"].as_str(),
+                Some("response.output_item.added" | "response.output_item.done")
+            )
+            && matches!(
+                event["item"]["type"].as_str(),
+                Some("function_call" | "custom_tool_call")
+            )
+        {
+            // A fork returns the calls its model asked for; they never run.
+            if event["type"] == "response.output_item.done" && self.tool_calls.len() < 32 {
+                let item = &event["item"];
+                let arguments = item.get("arguments").unwrap_or(&item["input"]);
+                self.tool_calls
+                    .push(json!({"call_id":item["call_id"],"tool":item["name"],
+                    "arguments":arguments,"executed":false}));
+            }
+            self.stream.dropped.insert(index);
+            *event = Value::Null;
+            return Ok(None);
+        }
+        if index.is_some_and(|index| self.stream.dropped.contains(&index)) {
+            *event = Value::Null;
+            return Ok(None);
+        }
+        if event["type"] == "response.output_item.done"
+            && let Some(tool) = index.and_then(|index| self.stream.renamed.get(&index))
+        {
+            event["item"]["name"] = tool.clone();
+        }
+        let Some(mods) = self.mods.clone() else {
+            return Ok(None);
+        };
+        let Some(chunk) = self.chunk(event) else {
+            return Ok(None);
+        };
+        let Some(required) = Accounts::intercepting(
+            &mods,
+            &self.holders,
+            &self.account,
+            "response_stream",
+            self.required,
+        )?
+        else {
+            // Registrations change only at reload, so the rest of this response needs no checks.
+            self.mods = None;
+            return Ok(None);
+        };
+        let dispatcher = self.dispatcher.clone();
+        let thread = self.thread.clone();
+        let task = self.account.task.clone();
+        let active = || task.check_active().is_ok();
+        let _thread = codex_omd::StateThread::enter(Some(thread.clone()));
+        let origin = json!({"caller":"engine","thread_id":thread,
+            "agent_id":if self.account.owner == "lead" { Value::Null } else { Value::String(self.account.owner.clone()) }});
+        let chain = codex_omd::intercept_shared(
+            &mods,
+            "response_stream",
+            required,
+            chunk.clone(),
+            origin,
+            active,
+            |caller, call| match &dispatcher {
+                Some(dispatch) => dispatch(&thread, caller, call, &active),
+                None => Err(std::io::Error::other(
+                    "host_operation_unavailable: no session dispatcher",
+                )),
+            },
+            |input| Ok(json!({"chunks": [input]})),
+        )
+        .map_err(denied)?;
+        if chain.result == json!({"chunks": [chunk]}) {
+            self.apply(event, &chunk, &chunk);
+            return Ok(None);
+        }
+        Accounts::record_middleware(
+            &self.account,
+            &chain_record("response_stream", &self.request_id, &chain),
+        )?;
+        let origin = settled_by(&chain);
+        if let Some(stop) = chain.result.get("stop") {
+            if chain.result.get("retry").is_some()
+                && let Ok(mut state) = self.state.lock()
+            {
+                state.retries.insert(self.thread.clone(), self.attempt + 1);
+            }
+            return Ok(Some(
+                json!({"origin":origin,"reason":stop["reason"],"retry":chain.result.get("retry")}),
+            ));
+        }
+        let chunks = chain.result["chunks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        match chunks.iter().find(|chunk| chunk.get("index").is_some()) {
+            Some(effective) => self.apply(event, &chunk, effective),
+            None => {
+                if let Some(index) = index {
+                    match chunk["kind"].as_str() {
+                        Some("tool_call") => {
+                            self.stream.dropped.insert(index);
+                        }
+                        Some("text") => self.stream.texts.entry(index).or_default().1 = true,
+                        _ => {}
+                    }
+                }
+                *event = Value::Null;
+            }
+        }
+        let injected = chunks
+            .iter()
+            .filter(|chunk| chunk.get("index").is_none())
+            .flat_map(|chunk| self.inject(chunk, &origin))
+            .collect::<Vec<_>>();
+        if chunk["kind"] == "stop" && !injected.is_empty() {
+            let terminal = std::mem::take(event);
+            self.injected.extend(injected);
+            self.injected.push(terminal);
+        } else {
+            self.injected.extend(injected);
+        }
+        Ok(None)
+    }
+
+    /// Keeps the visible text per output item as streamed, replaced by the recorded text once the item completes.
+    fn summarize(&mut self, event: &Value) {
+        let index = event["output_index"].as_u64().unwrap_or_default();
+        let item = &event["item"];
+        let mut entry = |text: &mut dyn FnMut(&mut String)| {
+            if !self.text.iter().any(|(item, _)| *item == index) && self.text.len() < 32 {
+                self.text.push((index, String::new()));
+            }
+            if let Some((_, kept)) = self.text.iter_mut().find(|(item, _)| *item == index) {
+                text(kept);
+            }
+        };
+        match (event["type"].as_str(), item["type"].as_str()) {
+            (Some("response.output_text.delta"), _) => {
+                let delta = event["delta"].as_str().unwrap_or_default();
+                entry(&mut |kept| {
+                    if kept.len() < COLLECTED_TEXT_BYTES {
+                        kept.push_str(delta);
+                    }
+                });
+            }
+            (Some("response.output_item.done"), Some("message")) => {
+                let recorded = joined(item);
+                entry(&mut |kept| *kept = recorded.clone());
+            }
+            (Some("response.output_item.done"), Some("function_call" | "custom_tool_call"))
+                if self.tool_calls.len() < 32 =>
+            {
+                self.tool_calls
+                    .push(json!({"call_id":item["call_id"],"tool":item["name"]}));
+            }
+            _ => {}
+        }
+    }
+
+    fn report(&mut self, status: &str, stop_reason: Option<String>, error: Option<&str>) {
+        if self.reported {
+            return;
+        }
+        self.reported = true;
+        let usage = self.usage.clone().unwrap_or(Value::Null);
+        let text = self
+            .text
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<String>();
+        let cost = match (&self.synthetic, &self.account.rates, self.microusd) {
+            (Some(_), _, _) => json!({"microusd": 0, "basis": "synthetic"}),
+            (None, Some(rates), _) if rates.included_subscription => {
+                json!({"microusd": 0, "basis": "included_subscription"})
+            }
+            (None, Some(_), Some(amount)) => json!({"microusd": amount, "basis": "settled"}),
+            (None, Some(_), None) => json!({"microusd": null, "basis": "unsettled"}),
+            (None, None, _) => json!({"microusd": null, "basis": "unpriced"}),
+        };
+        let payload = json!({"request_id": self.request_id, "attempt": self.attempt,
+            "ledger_request": self.admission.as_ref().map(Admission::request_id),
+            "scope": payload_scope(&self.account, &self.thread),
+            "route": self.account.route.clone().unwrap_or_else(|| "session".into()),
+            "provider": self.account.provider, "credential": self.account.credential,
+            "requested_model": self.model, "served_model": self.served_model,
+            "status": status, "stop_reason": stop_reason,
+            "output": {"text": cut(&text, SUMMARY_TEXT_BYTES), "tool_calls": self.tool_calls},
+            "usage": usage,
+            "cache": {"read_tokens": usage.pointer("/input_tokens_details/cached_tokens"),
+                "write_tokens": usage.pointer("/input_tokens_details/cache_write_tokens")},
+            "cost": cost, "context_window": self.account.context_window,
+            "timing": {"started_at_ms": self.started_at_ms,
+                "first_event_ms": self.first_event.map(|elapsed| elapsed.as_millis() as u64),
+                "duration_ms": self.started.elapsed().as_millis() as u64},
+            "synthetic": self.synthetic, "error": error});
+        if let Ok(mut state) = self.state.lock()
+            && let Some(collected) = state.responses.get_mut(&self.thread)
+            && collected.len() < 16
+        {
+            let mut kept = payload.clone();
+            kept["output"]["text"] = cut(&text, COLLECTED_TEXT_BYTES).into();
+            collected.push(kept);
+        }
+        if let Some(notify) = &self.notifier {
+            notify("model_response", payload);
+        }
+    }
+
+    fn event(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError> {
+        self.first_event
+            .get_or_insert_with(|| self.started.elapsed());
+        let raw = event.clone();
+        let kind = raw["type"].as_str().unwrap_or("invalid").to_owned();
+        if !valid
+            && !matches!(
+                kind.as_str(),
+                "response.failed" | "response.incomplete" | "error"
+            )
+        {
+            self.fail("malformed provider event");
+        }
+        if let Some(model) = raw.pointer("/response/model").and_then(Value::as_str) {
+            self.served_model = Some(model.to_owned());
+        }
+        let terminal = matches!(
+            kind.as_str(),
+            "response.completed" | "response.failed" | "response.incomplete"
+        );
+        if terminal {
+            self.usage = raw
+                .pointer("/response/usage")
+                .filter(|usage| usage.is_object())
+                .cloned();
+            if self.synthetic.is_some() {
+                self.settled = true;
+            } else {
+                self.settle(&raw)?;
+            }
+        }
+        if kind == "error" {
+            self.fail("provider stream error");
+        }
+        let control = self.transform(event)?;
+        let delivered = std::iter::once(event.clone())
+            .chain(self.injected.iter().cloned())
+            .collect::<Vec<_>>();
+        for item in &delivered {
+            self.summarize(item);
+        }
+        if terminal {
+            let status = kind.trim_start_matches("response.").to_owned();
+            let stop_reason = match status.as_str() {
+                "completed" if self.tool_calls.is_empty() => Some("end_turn".to_owned()),
+                "completed" => Some("tool_use".to_owned()),
+                "incomplete" => raw
+                    .pointer("/response/incomplete_details/reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                _ => None,
+            };
+            let error = raw
+                .pointer("/response/error/message")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            self.report(&status, stop_reason, error.as_deref());
+        }
+        if let Some(control) = control {
+            return Err(codex_api::request_observer::stream_control_error(&control));
+        }
+        Ok(())
+    }
+}
+
+impl ResponseAttempt for Attempt {
+    fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError> {
+        self.event(event, valid)
+    }
+
+    fn injected(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.injected)
+    }
+
+    fn failed(&mut self, reason: &str) {
+        self.fail(reason);
+        self.report("failed", None, Some(reason));
+    }
 }
 
 impl Drop for Attempt {
     fn drop(&mut self) {
+        if self.synthetic.is_some()
+            && let Ok(mut state) = self.state.lock()
+        {
+            state.synthetic.remove(&self.request_id);
+        }
         if !self.settled {
-            self.failed("request cancelled, dropped, or closed without priced final usage");
+            let reason = "request cancelled, dropped, or closed without priced final usage";
+            self.report("cancelled", None, Some(reason));
+            self.fail(reason);
         }
     }
 }

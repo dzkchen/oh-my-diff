@@ -9,13 +9,13 @@ const names = ['context', 'coordination', 'guard', 'interception', 'kernel', 're
   'service-consumer', 'service-provider', 'service_request', 'terminal', 'virtual_reader', 'workflow', 'workspace'];
 const surface = {
   events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
-    model_request: 'middleware', response_stream: 'middleware', tool_result: 'lifecycle',
+    model_response: 'model', tool_result: 'lifecycle',
     compaction: 'compaction', routing: 'model', terminal: 'terminal',
     workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals', component_event: 'terminal', timer: 'events', channel: 'events' },
   replacements: ['context', 'routing', 'compaction'],
-  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', input: 'input', tool_specs: 'tools',
+  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
     command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal' },
-  middleware: ['model_request', 'response_stream', 'tool_result', 'approval'], state: 'store', contracts: 'contracts',
+  middleware: ['tool_result', 'approval'], state: 'store', contracts: 'contracts',
 };
 
 function packageFile(name, file) {
@@ -85,13 +85,14 @@ test('model routing examples select only available included routes and protect s
     { name: 'astra', model: 'astra', provider: 'fixture', billing: 'explicit_paid_api_grant', available: true, roles: ['lead'] },
     { name: 'sol', model: 'sol', provider: 'fixture', billing: 'included_subscription', available: true, roles: ['lead'] },
   ];
-  assert.equal(run('kernel', 'model_request', { routes, original: routes[1], effective: routes[1] }).value, null);
+  const intercept = (index, surface, input) => run('kernel', 'intercept', { surface, input, origin: { caller: 'engine' } }, { name: index });
+  assert.equal(intercept('0', 'model_request', { routes, original: routes[1], route: 'sol' }).host_call.arguments.input.route, 'sol');
   assert.deepEqual(run('routing', 'routing', { routes }, { settings: { route: 'sol' } }).value, { route: 'sol' });
   assert.match(runRaw('routing', 'routing', { routes }, { settings: { route: 'astra' } }).error,
     /configured_included_route_unavailable/);
-  assert.deepEqual(run('kernel', 'response_stream', { protected: false, text: 'experimental' }).value,
-    { text: 'preview' });
-  assert.equal(run('kernel', 'response_stream', { protected: true, text: 'experimental' }).value, null);
+  assert.equal(intercept('1', 'response_stream', { kind: 'text', index: 0, protected: false, text: 'experimental' }).host_call.arguments.input.text,
+    'preview');
+  assert.deepEqual(intercept('1', 'response_stream', { kind: 'reasoning', index: 1, protected: true }).value, { unmatched: true });
 });
 
 test('recovery preserves compaction guidance and refuses unavailable checkpoint reads', () => {

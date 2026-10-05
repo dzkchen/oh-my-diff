@@ -16,8 +16,10 @@ API = '0.2.0-experimental.5'
 GATE = '''export default function activate(api) {
   api.contract({ schema: 2, id: 'probe_gate', version: 1, description: 'A passing check before completion',
     assurance: 'checked', gates: { complete: [{ receipt: 'checks', bind: ['candidate'] }] } });
-  api.middleware('response_stream', event => event.boundary && /RETRY_ME/.test(event.text ?? '')
-    ? { stop: { reason: 'probe marker' }, retry: { inject: 'PROBE_INJECTED_RETRY' } } : null);
+  api.intercept('response_stream', { match: { kind: 'message' } }, async (event, next) => {
+    const result = await next(event);
+    return /RETRY_ME/.test(event.text) ? { stop: { reason: 'probe marker' }, retry: { inject: 'PROBE_INJECTED_RETRY' } } : result;
+  });
 }
 '''
 

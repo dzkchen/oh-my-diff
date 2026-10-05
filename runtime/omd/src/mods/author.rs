@@ -6,6 +6,7 @@ struct OfflineHost {
     replies: BTreeMap<String, VecDeque<Value>>,
     calls: Vec<Value>,
     now_ms: u64,
+    timers: BTreeMap<(String, String), u64>,
 }
 
 impl OfflineHost {
@@ -41,6 +42,26 @@ impl OfflineHost {
             json!({"at_ms":self.now_ms,"caller":caller,"operation":call.operation,
             "arguments":call.arguments}),
         );
+        let key = call.arguments["key"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        match call.operation.as_str() {
+            "events.schedule" => {
+                let delay = call.arguments["delay_ms"]
+                    .as_u64()
+                    .filter(|delay| (1000..=86_400_000).contains(delay))
+                    .ok_or_else(|| failure("timer_delay_invalid"))?;
+                self.timers
+                    .insert((caller.to_owned(), key.clone()), self.now_ms + delay);
+                return Ok(json!({"key": key, "delay_ms": delay}));
+            }
+            "events.cancel" => {
+                let cancelled = self.timers.remove(&(caller.to_owned(), key)).is_some();
+                return Ok(json!({"cancelled": cancelled}));
+            }
+            _ => {}
+        }
         let response = self
             .replies
             .get_mut(&call.operation)
@@ -233,10 +254,44 @@ impl ModHost {
                     .get("ms")
                     .and_then(Value::as_u64)
                     .ok_or_else(|| failure("offline_advance_ms_required"))?;
-                *now_ms = now_ms
+                let until = now_ms
                     .checked_add(delta)
                     .ok_or_else(|| failure("offline_virtual_time_overflow"))?;
-                Ok(json!({"now_ms":now_ms}))
+                let mut fired = Vec::new();
+                // Due timers fire in due order at their own virtual time; a handler may reschedule.
+                while let Some(((owner, key), due)) = host
+                    .timers
+                    .iter()
+                    .filter(|(_, due)| **due <= until)
+                    .min_by_key(|(_, due)| **due)
+                    .map(|(timer, due)| (timer.clone(), *due))
+                {
+                    if fired.len() >= 256 {
+                        return Err(failure("offline_timer_limit"));
+                    }
+                    host.timers.remove(&(owner.clone(), key.clone()));
+                    (*now_ms, host.now_ms) = (due, due);
+                    self.virtual_time_ms = Some(due);
+                    let value = self.invoke_scoped_with(
+                        &owner,
+                        self.generation,
+                        "timer",
+                        "",
+                        json!({"key": key}),
+                        || active,
+                        |caller, call| host.call(caller, call),
+                    );
+                    fired.push(match value {
+                        Ok(_) => json!({"mod": owner, "key": key, "at_ms": due}),
+                        Err(error) => json!({"mod": owner, "key": key, "at_ms": due, "error": error.to_string()}),
+                    });
+                }
+                *now_ms = until;
+                let mut value = json!({"now_ms": now_ms});
+                if !fired.is_empty() {
+                    value["timers"] = json!(fired);
+                }
+                Ok(value)
             }
             "status" => Ok(self.status()),
             "reload" => {
@@ -247,7 +302,6 @@ impl ModHost {
                 }
                 Ok(json!({"generation":self.generation,"reload_error":self.reload_error}))
             }
-            "model_request" => self.model_request(payload, || active),
             "tool_exposure" => {
                 let thread_id = step
                     .get("thread_id")
@@ -261,7 +315,6 @@ impl ModHost {
                         .collect::<Vec<_>>()
                 ))
             }
-            "response_stream" => self.response_stream(payload, || active),
             "intercept" => {
                 let surface = required_string(step, "surface")?;
                 let mut replies = step

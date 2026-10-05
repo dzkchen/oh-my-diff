@@ -1718,31 +1718,50 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
 }
 
 #[test]
-fn request_and_stream_middleware_preserve_authority_and_provenance() {
-    let source = "export default api => { api.middleware('model_request',()=>({route:'astra'})); api.middleware('response_stream',event=>event.protected?null:{text:String(event.text).toUpperCase()}); api.middleware('tool_result',()=>({forged:true})); }";
+fn request_and_stream_interceptors_compose_and_keep_observers_observe_only() {
+    let source = "export default api => { api.intercept('model_request', (e, next) => next({...e, route: 'astra', effort: 'low'})); \
+         api.intercept('response_stream', {match: {kind: 'text'}}, (e, next) => next({...e, text: e.text.toUpperCase()})); \
+         api.intercept('response_stream', {match: {kind: 'reasoning'}}, () => ({chunks: []})); \
+         api.middleware('tool_result', () => ({forged: true})); }";
     let (temp, _, _) = fixture(source, &["middleware"]);
-    let mut runtime = host(&temp);
-    let routed = runtime
-        .model_request(
-            json!({"request_id":"r1","scope":{"kind":"main"},
-                "routes":[{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},{"name":"astra","model":"a","provider":"openai","reasoning":"high"}],
-                "original":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},
-                "effective":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},"provenance":[]}),
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let run = |surface: &str, input: Value, core: fn(Value) -> Value| {
+        codex_omd::intercept_shared(
+            &runtime,
+            surface,
+            false,
+            input,
+            json!({"caller":"engine"}),
             || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |input| Ok(core(input)),
         )
-        .unwrap();
-    assert_eq!(routed["effective"]["name"], "astra", "{}", runtime.status());
-    assert_eq!(routed["provenance"][0]["tier"], "user");
-    let stream = runtime
-        .response_stream(
-            json!({"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,
-                "opaque_reasoning":false,"protected":false,"text":"hello"}),
-            || true,
-        )
-        .unwrap();
-    assert_eq!(stream["original"], "hello");
-    assert_eq!(stream["effective"], "HELLO");
-    let tool = runtime.event(
+        .unwrap()
+    };
+    let request = run(
+        "model_request",
+        json!({"request_id":"r1","route":"sol","routes":[{"name":"sol"},{"name":"astra"}],"effort":"high","sections":[]}),
+        |input| json!({"route": input["route"], "effort": input["effort"]}),
+    );
+    assert_eq!(request.result, json!({"route":"astra","effort":"low"}));
+    let stream = run(
+        "response_stream",
+        json!({"kind":"text","index":0,"text":"hello","protected":false}),
+        |input| json!({"chunks": [input]}),
+    );
+    assert_eq!(stream.result["chunks"][0]["text"], "HELLO");
+    let reasoning = json!({"kind":"reasoning","index":1,"protected":true});
+    let kept = run(
+        "response_stream",
+        reasoning.clone(),
+        |input| json!({"chunks": [input]}),
+    );
+    assert_eq!(
+        kept.result,
+        json!({"chunks": [reasoning]}),
+        "protected chunks cannot be dropped"
+    );
+    let tool = runtime.lock().unwrap().event(
         "tool_result",
         json!({"call_id":"c","tool":"x","outcome":"ok"}),
     );
@@ -1889,8 +1908,14 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
-    assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
-    assert_eq!(policies["model_request"]["effective"], "alterable");
+    assert_eq!(
+        policies["intercept.response_stream"]["usage"],
+        "observe_only"
+    );
+    assert_eq!(
+        policies["intercept.model_request"]["sections"],
+        "replaceable"
+    );
     assert_eq!(policies["intercept.tool"]["arguments"], "replaceable");
 }
 
@@ -2614,7 +2639,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     let stream = package(
         &root,
         "stream",
-        "export default api => api.middleware('response_stream',event=>event.protected?null:{text:String(event.text).toUpperCase()})",
+        "export default api => api.intercept('response_stream',(e,next)=>next({...e,text:e.text.toUpperCase()}))",
         &["middleware"],
     );
     trust(&store, &stream, &["middleware"]);
@@ -2635,7 +2660,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
             {"type":"invoke","mod":"harness","event":"tool","name":"exercise","expect":{"task":{"status":"running"},"agent":{"handle":"agent-1","route":"sol","permissions":"read_only"},"result":{"status":"completed","text":"done","consumed":true},"checkpoint":{"saved":true}}},
             {"type":"tool_outcome","payload":{"call_id":"call-1","agent_id":null,"tool":"exercise","outcome":{"status":"ok"}},"expect":[{"mod":"harness","value":null}]},
             {"type":"agent","payload":{"phase":"end","agent_id":"agent-1","parent_agent_id":null,"role":"worker","status":"completed"},"expect":[{"mod":"harness","value":null}]},
-            {"type":"response_stream","payload":{"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,"opaque_reasoning":false,"protected":false,"text":"hello"}},
+            {"type":"intercept","surface":"response_stream","payload":{"kind":"text","index":0,"text":"hello","protected":false},"core":[{"value":{"chunks":[{"kind":"text","index":0,"text":"HELLO","protected":false}]}}]},
             {"type":"invoke","mod":"consumer","event":"command","name":"call","expect":"HELLO"},
             {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","sites":{"dialog":{"components":[{"type":"button","id":"ping_button","label":"Ping button","text":"Ping","action":{"command":"harness:ping"}}]}},"keybindings":{"F2":{"command":"harness:ping"}}}},
             {"type":"terminal_interact","mod":"harness","key":"F2","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":1}},
@@ -2649,8 +2674,132 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     assert_eq!(result["paid_requests"], 0);
     assert_eq!(result["virtual_time_ms"], 1025);
     assert_eq!(result["host_calls"].as_array().unwrap().len(), 4);
-    assert_eq!(result["steps"][6]["value"]["effective"], "HELLO");
+    assert_eq!(result["steps"][6]["value"]["input"]["text"], "HELLO");
     assert_eq!(result["steps"][11]["value"]["generation"], 2);
+}
+
+#[test]
+fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let capabilities = ["commands", "events", "store", "fs.read", "agents"];
+    let sdk = package(
+        &root,
+        "sdk",
+        "export default api => { \
+         const pulse = api.time.every('pulse', 1000, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
+         api.command('start', () => { pulse.start(); return api.package; }); \
+         api.command('nap', () => api.time.sleep(1500)); \
+         api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
+         api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
+         api.command('usage', () => api.usage.summarize({ request_id: 'r', usage: { input_tokens: 600, output_tokens: 100, input_tokens_details: { cached_tokens: 200 } }, context_window: 1000, cost: { microusd: 12, basis: 'settled' } })); }",
+        &capabilities,
+    );
+    trust(&store, &sdk, &capabilities);
+    let mut runtime = host(&temp);
+    let file = json!({"kind":"file","size":1,"mtime_ms":0});
+    let result = runtime
+        .offline_test(json!({
+            "schema": 1,
+            "virtual_time_ms": 1000,
+            "host_operations": {
+                "workspace.stat": [
+                    {"result": {"files": {"src/a.ts": file}}},
+                    {"result": {"files": {"src/a.ts": {"kind":"file","size":1,"mtime_ms":0,"sha256":"abc"}}}},
+                    {"result": {"files": {"src/deep/package.json": null, "src/package.json": null, "package.json": file}}}
+                ],
+                "model.complete": [{"result": {"status": "completed", "text": "{\"label\":\"yes\"}"}}]
+            },
+            "steps": [
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "start"},
+                {"type": "advance_time", "ms": 3500},
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "nap", "expect": {"slept_ms": 1500, "cancelled": false}},
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "look", "expect": {"exists": true,
+                    "canonical": {"path": "src/a.ts", "kind": "file", "sha256": "abc"}, "ancestors": [{"path": "package.json", "kind": "file"}]}},
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "label", "expect": "yes"},
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"}
+            ]
+        }))
+        .unwrap();
+    assert_eq!(result["steps"][0]["value"]["id"], "sdk");
+    let ticks = result["steps"][1]["value"]["timers"].as_array().unwrap();
+    assert_eq!(
+        ticks
+            .iter()
+            .map(|tick| tick["at_ms"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [2000, 3000, 4000],
+        "the repeating timer stops when its handler returns false"
+    );
+    assert_eq!(result["virtual_time_ms"], 4500);
+    let complete = result["host_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|call| call["operation"] == "model.complete")
+        .unwrap();
+    assert_eq!(
+        complete["arguments"]["output"]["schema"]["properties"]["label"]["enum"],
+        json!(["yes", "no"])
+    );
+    let usage = &result["steps"][5]["value"];
+    assert_eq!(usage["context"]["ratio"], 0.7);
+    assert_eq!(usage["tokens"]["cached"], 200);
+    assert_eq!(usage["cost"]["source"], "configured_rates");
+    assert_eq!(result["unused_mock_replies"], json!([]));
+}
+
+#[test]
+fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
+    let (temp, _, _) = fixture(
+        "export default api => api.command('nap', () => api.time.sleep(300))",
+        &["commands", "events"],
+    );
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let generation = runtime.lock().unwrap().generation();
+    let nap = |active: &dyn Fn() -> bool| {
+        codex_omd::invoke_shared(
+            &runtime,
+            "fixture",
+            generation,
+            "command",
+            "nap",
+            Value::Null,
+            active,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |_| {},
+        )
+    };
+    std::thread::scope(|scope| {
+        let sleeper = scope.spawn(|| nap(&|| true));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            runtime.try_lock().is_ok(),
+            "the runtime is free while a callback sleeps"
+        );
+        assert_eq!(
+            sleeper.join().unwrap().unwrap(),
+            json!({"slept_ms": 300, "cancelled": false})
+        );
+    });
+    let checks = std::sync::atomic::AtomicUsize::new(0);
+    let started = std::time::Instant::now();
+    let woken = nap(&|| checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6).unwrap_err();
+    assert!(woken.to_string().contains("callback_cancelled"), "{woken}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(300),
+        "the sleep woke early"
+    );
+    let held = runtime
+        .lock()
+        .unwrap()
+        .invoke("fixture", generation, "command", "nap", Value::Null)
+        .unwrap_err();
+    assert!(
+        held.to_string().contains("time_sleep_unavailable"),
+        "{held}"
+    );
 }
 
 #[test]
@@ -3524,6 +3673,63 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
     assert_eq!(
         dispatch(&|| true, &mut { ran }).unwrap().result["output"],
         "ran x y2"
+    );
+}
+
+#[test]
+fn routing_and_prompt_wrappers_compose_on_one_model_request() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "router",
+            "export default api => api.intercept('model_request', (e, next) => next({...e, route: e.sections.some(s => s.kind === 'agents_md.instructions') ? 'cheap' : e.route, effort: 'low'}))",
+            &["middleware"],
+        ),
+        (
+            "prompter",
+            "export default api => api.intercept('model_request', async (e, next) => { const result = await next({...e, sections: [...e.sections.filter(s => s.kind !== 'apps.instructions'), {id: 'mod:style', text: 'Be brief.'}]}); return result; })",
+            &["middleware"],
+        ),
+    ]);
+    let section = |id: &str, protected: bool| json!({"id":id,"kind":id,"role":"developer","group":"0","protected":protected,"text":id,"bytes":id.len(),"truncated":false});
+    let sections = json!([
+        section("permissions.instructions", true),
+        section("apps.instructions", false),
+        section("agents_md.instructions", false)
+    ]);
+    let chain = codex_omd::intercept_shared(
+        &runtime,
+        "model_request",
+        false,
+        json!({"request_id":"r","route":"lead","routes":[{"name":"lead"},{"name":"cheap"}],"effort":"high","sections":sections}),
+        json!({"caller":"engine"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |input| Ok(json!({"route": input["route"], "effort": input["effort"], "cache": {"from": null}})),
+    )
+    .unwrap();
+    assert_eq!(chain.result["route"], "cheap");
+    assert_eq!(chain.result["effort"], "low");
+    let ids = chain.input["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|section| section["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "permissions.instructions",
+            "agents_md.instructions",
+            "mod:style"
+        ]
+    );
+    assert_eq!(
+        outcomes(&chain),
+        [
+            ("engine".to_owned(), "returned".to_owned()),
+            ("router".to_owned(), "passed".to_owned()),
+            ("prompter".to_owned(), "passed".to_owned())
+        ]
     );
 }
 

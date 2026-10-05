@@ -13,7 +13,7 @@
   "capabilities": ["agents", "commands", "fs.read", "history", "lifecycle", "model", "store", "terminal", "tools"],
   "environment": ["crypto"],
   "compatibility": {
-    "required_features": ["history_v1", "store_thread_v1", "routes_v1", "model_complete_v1", "terminal_prompt_v1"]
+    "required_features": ["history_v1", "store_thread_v1", "routes_v1", "model_complete_v2", "terminal_prompt_v1"]
   },
   "settings_schema": {
     "type": "object",

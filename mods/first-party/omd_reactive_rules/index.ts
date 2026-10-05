@@ -98,14 +98,16 @@ export default function activate(api: ModAPI) {
     const state = load();
     if (!state.tools) save({ ...state, tools: true });
   });
-  api.middleware('response_stream', event => {
-    if (!event.boundary || !event.text) return null;
-    const matched = configured.filter(rule => rule.regex.test(event.text!));
-    if (matched.length !== 1) return null;
+  api.intercept('response_stream', { match: { kind: 'message' } }, async (event, next) => {
+    const result = await next(event);
+    if (event.kind !== 'message' || !event.text) return result;
+    const text = event.text;
+    const matched = configured.filter(rule => rule.regex.test(text));
+    if (matched.length !== 1) return result;
     const rule = matched[0];
     const state = load();
     const count = state.counts[rule.id] ?? 0;
-    if (count >= rule.max_activations || state.stops >= MAX_STOPS_PER_TURN) return null;
+    if (count >= rule.max_activations || state.stops >= MAX_STOPS_PER_TURN) return result;
     save({ ...state, counts: { ...state.counts, [rule.id]: count + 1 }, stops: state.stops + 1, active: { ...state.active, [rule.id]: rule.reminder } });
     const effects = state.tools ? ' Tool calls that completed earlier in this turn remain in effect; they were not undone.' : '';
     return { stop: { reason: `reactive rule ${rule.id}` }, retry: { inject: `Reactive rule ${rule.id}: ${rule.reminder}${effects}` } };

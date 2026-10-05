@@ -25,6 +25,11 @@ pub(super) use delivery::release_owner;
 pub(super) use delivery::retain_sources;
 pub(super) use tool_batch::tool_before_payload;
 
+/// Queues an observer event for every registered mod on the delivery task.
+pub(super) fn broadcast(state: &State, event: &'static str, payload: Value) {
+    delivery::push(state, delivery::Pending::Broadcast { event, payload });
+}
+
 const CORE_OPERATIONS: &[&str] = &[
     "app.routes",
     "workspace.watch",
@@ -62,6 +67,7 @@ pub(super) struct State {
     threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
     commands: Mutex<std::collections::HashSet<String>>,
     running: Mutex<BTreeMap<String, String>>,
+    pub(super) turns: Mutex<BTreeMap<String, u64>>,
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
     subscribed: Mutex<BTreeSet<String>>,
@@ -189,7 +195,12 @@ pub(super) fn served(operation: &str) -> bool {
 pub(super) fn event_allows(event: &str) -> bool {
     matches!(
         event,
-        "process_event" | "channel" | "approval_result" | "timer" | "tool_output"
+        "process_event"
+            | "channel"
+            | "approval_result"
+            | "timer"
+            | "tool_output"
+            | "model_response"
     )
 }
 

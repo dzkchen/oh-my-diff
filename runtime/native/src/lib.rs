@@ -232,7 +232,14 @@ fn request_route(route: &Route) -> accounting::RequestRoute {
             .unwrap_or_default(),
         rates: route.rates.clone(),
         credential: route.credential.clone(),
+        url: route.responses_url.clone(),
     }
+}
+
+/// A lead route a request may switch to: the thread's provider, or another one with its own credential.
+fn lead_candidate(route: &Route, provider: &str) -> bool {
+    route.roles.contains(&config::RouteRole::Lead)
+        && (route.provider == provider || route.credential.is_some())
 }
 
 impl Host {
@@ -313,8 +320,10 @@ impl Host {
             let task = account.task.clone();
             let provider = account.provider.clone();
             account.lead_routes.retain_mut(|candidate| {
-                let Some(route) = find(&candidate.name, &provider)
-                    .filter(|route| route.roles.contains(&config::RouteRole::Lead))
+                let Some(route) = config
+                    .routes
+                    .iter()
+                    .find(|route| route.name == candidate.name && lead_candidate(route, &provider))
                 else {
                     return false;
                 };
@@ -448,11 +457,7 @@ impl Host {
             .0
             .routes
             .iter()
-            .filter(|candidate| {
-                route.is_some()
-                    && candidate.roles.contains(&config::RouteRole::Lead)
-                    && candidate.provider == provider
-            })
+            .filter(|candidate| route.is_some() && lead_candidate(candidate, &provider))
             .map(request_route)
             .collect::<Vec<_>>();
         if owner == "lead" && route.is_some() {
@@ -483,6 +488,9 @@ impl Host {
                 .and_then(|route| route.grant.as_ref())
                 .map(|grant| (grant.path.clone(), grant.sha256.clone())),
             credential: route.and_then(|route| route.credential.clone()),
+            context_window: config.and_then(|config| config.model_context_window),
+            max_output_tokens: None,
+            capture_tools: false,
         };
         let mut accounts = self
             .accounts

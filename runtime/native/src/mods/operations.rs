@@ -59,6 +59,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                     "store.get"
                         | "store.list"
                         | "routes.list"
+                        | "session.info"
                         | "task.status"
                         | "contract.status"
                         | "workspace.fingerprint"
@@ -452,6 +453,7 @@ async fn run(
                 | "workspace.snapshot"
                 | "workspace.fingerprint"
                 | "model.complete"
+                | "model.fork"
         )
     {
         let scoped = match (operation.as_str(), call) {
@@ -518,6 +520,31 @@ async fn run(
                 .map(|route| route_info(host, route))
                 .collect::<Vec<_>>()
         )),
+        "session.info" => {
+            let account = host
+                .accounts
+                .0
+                .lock()
+                .map_err(|_| "account lock poisoned")?
+                .get(&lead.thread.to_string())
+                .cloned();
+            let config = super::agents::parent_config(lead).await?;
+            let turns = core
+                .expansion
+                .turns
+                .lock()
+                .map_err(|_| "turn_count_poisoned")?
+                .get(&lead.thread.to_string())
+                .copied()
+                .unwrap_or(0);
+            Ok(
+                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
+                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
+                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
+                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
+                "route": account.and_then(|account| account.route), "turns_started": turns}),
+            )
+        }
         "task.status" => {
             host.refresh_session(&lead.session)?;
             let config = host.route_config().0;

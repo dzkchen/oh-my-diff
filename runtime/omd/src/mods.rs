@@ -4,6 +4,7 @@ mod chain;
 mod render;
 pub use chain::ModChain;
 pub use chain::ModInterceptor;
+pub use chain::SendPolicy;
 pub use chain::access_receipt;
 pub use chain::compose_rows;
 pub use chain::continue_operation;
@@ -258,7 +259,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "contract_scoped_restrictions_v1",
     "store_v1",
     "routes_v1",
-    "stream_control_v1",
+    "model_turn_interception_v1",
+    "final_request_policy_v1",
     "continuation_middleware_v1",
     "builtins_v1",
     "contracts_v2",
@@ -289,7 +291,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_import_lifetime_v1",
     "secrets_v1",
     "terminal_prompt_v1",
-    "model_complete_v1",
+    "model_complete_v2",
+    "sdk_helpers_v1",
     "history_v1",
     "terminal_pty_v1",
     "dynamic_tools_v1",
@@ -391,6 +394,9 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.pane",
     "terminal.pty",
     "model.complete",
+    "model.fork",
+    "session.info",
+    "time.sleep",
     "tools.define",
     "tools.invoke",
     "tools.check",
@@ -450,6 +456,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "fs.external",
     "mcp",
     "policy",
+    "request_policy",
 ];
 pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "os",
@@ -508,8 +515,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("compaction_end", "lifecycle"),
     ("agent_end", "lifecycle"),
     ("contract", "contracts"),
-    ("model_request", "middleware"),
-    ("response_stream", "middleware"),
+    ("model_response", "model"),
     ("prompt", "middleware"),
     ("session", "middleware"),
     ("agent", "middleware"),
@@ -543,6 +549,8 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("tool", "interception"),
     ("host_operation", "middleware"),
     ("model_request", "middleware"),
+    ("response_stream", "middleware"),
+    ("model_send", "middleware"),
     ("input", "input"),
     ("tool_specs", "tools"),
     ("command_list", "commands"),
@@ -553,8 +561,6 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("render", "terminal"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
-    "model_request",
-    "response_stream",
     "prompt",
     "session",
     "agent",
@@ -572,7 +578,7 @@ fn failure(message: impl ToString) -> io::Error {
     io::Error::other(message.to_string())
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -977,12 +983,29 @@ fn source_use(
                 })
                 .map(|(_, capability)| (*capability).to_owned()),
         );
+        if interceptor.required
+            && chain::selects(&interceptor.pattern, "model_send", &package.capabilities)
+        {
+            capabilities.insert("request_policy".to_owned());
+        }
     }
     if [".state.get(", ".state.set(", ".atom(", ".member("]
         .iter()
         .any(|call| source.contains(call))
     {
         capabilities.insert("store".to_owned());
+    }
+    // SDK helpers call host operations on the mod's behalf.
+    for (call, capability) in [
+        (".time.", "events"),
+        (".session(", "inventory"),
+        (".fs.", "fs.read"),
+        (".classify(", "agents"),
+        (".rateLimits(", "account"),
+    ] {
+        if source.contains(call) {
+            capabilities.insert(capability.to_owned());
+        }
     }
     for operation in &operations {
         capabilities.extend(used_capabilities(operation)?);
@@ -1553,6 +1576,11 @@ impl ModPackage {
         {
             return Err(failure(
                 "invalid_policy: the policy capability needs policy.namespaces (up to 16 namespace patterns)",
+            ));
+        }
+        if declared("request_policy") && !declared("middleware") {
+            return Err(failure(
+                "invalid_request_policy: the request_policy capability needs middleware",
             ));
         }
         let requires: BTreeSet<_> = self.requires.iter().collect();
@@ -2228,6 +2256,7 @@ pub struct ModHost {
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Brokered)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    policies: Vec<PathBuf>,
 }
 
 enum Access<'a> {
@@ -2320,6 +2349,42 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
     Ok(())
 }
 
+const SLEEP_LIMIT_MS: u64 = 60_000;
+
+/// `time.sleep` waits outside the runtime lock and wakes early when the callback is cancelled.
+fn sleep(
+    access: &mut Access<'_>,
+    arguments: &Value,
+    virtual_time_ms: Option<u64>,
+    active: &dyn Fn() -> bool,
+) -> Result<Value> {
+    let ms = arguments
+        .as_object()
+        .filter(|object| object.len() == 1)
+        .and_then(|_| arguments["ms"].as_u64())
+        .filter(|ms| *ms <= SLEEP_LIMIT_MS)
+        .ok_or_else(|| failure("time_sleep_ms_invalid: 0 to 60000"))?;
+    if virtual_time_ms.is_some() {
+        return Ok(json!({"slept_ms": ms, "cancelled": false}));
+    }
+    if matches!(access, Access::Held(_)) {
+        return Err(failure(
+            "time_sleep_unavailable: this callback holds the mod runtime",
+        ));
+    }
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(ms);
+    while Instant::now() < deadline {
+        if !active() {
+            return Ok(
+                json!({"slept_ms": started.elapsed().as_millis() as u64, "cancelled": true}),
+            );
+        }
+        std::thread::sleep((deadline - Instant::now()).min(Duration::from_millis(25)));
+    }
+    Ok(json!({"slept_ms": ms, "cancelled": false}))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn invoke(
     access: &mut Access<'_>,
@@ -2359,6 +2424,9 @@ fn invoke(
                         Some(next) => next(&mut *access, &mut *host, input),
                         None => Err(failure("continuation_outside_interceptor")),
                     };
+                }
+                if call.operation == "time.sleep" {
+                    return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
                 }
                 let private = call.operation.starts_with("sessions.")
                     || call.operation.starts_with("evidence.");
@@ -2582,6 +2650,7 @@ impl ModHost {
             admissions: BTreeMap::new(),
             brokered: None,
             required_surfaces: Arc::default(),
+            policies: Vec::new(),
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -2676,6 +2745,13 @@ impl ModHost {
         if config.schema != 1 || !config.node.is_absolute() {
             return Err(failure("invalid_mod_configuration"));
         }
+        self.policies = config
+            .mods
+            .iter()
+            .filter(|m| m.enabled && m.capabilities.iter().any(|c| c == "request_policy"))
+            .map(|m| m.path.clone())
+            .collect();
+        self.publish_required_surfaces();
         let initial = self.configuration_sha256.is_empty();
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
@@ -2866,7 +2942,10 @@ impl ModHost {
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
-            .filter(|surface| self.intercepts(surface) == Some(true))
+            .filter(|surface| {
+                self.intercepts(surface) == Some(true)
+                    || *surface == "model_send" && !self.policies.is_empty()
+            })
             .collect();
         if let Ok(mut published) = self.required_surfaces.lock() {
             *published = surfaces;
@@ -3834,178 +3913,6 @@ impl ModHost {
         Ok((!value.is_null()).then_some((owner, value)))
     }
 
-    pub fn model_request(
-        &mut self,
-        mut payload: Value,
-        active: impl Fn() -> bool,
-    ) -> Result<Value> {
-        let routes = payload["routes"]
-            .as_array()
-            .ok_or_else(|| failure("routes_required"))?
-            .clone();
-        let mut effective = payload["effective"]
-            .as_object()
-            .cloned()
-            .ok_or_else(|| failure("effective_route_required"))?;
-        let ids = self.event_ids("model_request");
-        let mut provenance = Vec::new();
-        for (order, id) in ids.into_iter().enumerate() {
-            payload["effective"] = Value::Object(effective.clone());
-            let value = self.invoke_guarded(
-                &id,
-                self.generation,
-                "model_request",
-                "",
-                payload.clone(),
-                &active,
-            )?;
-            if value.is_null() {
-                continue;
-            }
-            let object = value
-                .as_object()
-                .filter(|object| object.len() == 1)
-                .ok_or_else(|| failure("invalid_model_request_result"))?;
-            let selected = object
-                .get("route")
-                .and_then(Value::as_str)
-                .ok_or_else(|| failure("invalid_model_request_result"))?;
-            let route = routes
-                .iter()
-                .find(|route| route["name"].as_str() == Some(selected))
-                .and_then(Value::as_object)
-                .ok_or_else(|| failure(format!("unauthorized_request_route: {selected}")))?;
-            let previous = effective.get("name").cloned().unwrap_or(Value::Null);
-            effective = route.clone();
-            if let Some(loaded) = self.loaded.get(&id) {
-                provenance.push(
-                    json!({"order":order,"origin":id,"version":loaded.package.version,
-                    "sha256":loaded.selection.sha256,"tier":loaded.selection.scope,
-                    "from":previous,"to":selected}),
-                );
-            }
-        }
-        payload["effective"] = Value::Object(effective);
-        payload["provenance"] = Value::Array(provenance);
-        Ok(payload)
-    }
-
-    fn stream_fault(&mut self, id: &str, prior: u32, error: &str) {
-        if let Some(loaded) = self.loaded.get_mut(id) {
-            loaded.telemetry.faults = prior;
-            loaded.fault(error.to_owned());
-        }
-    }
-
-    pub fn response_stream(
-        &mut self,
-        mut payload: Value,
-        active: impl Fn() -> bool,
-    ) -> Result<Value> {
-        let protected = payload["protected"].as_bool().unwrap_or(true);
-        let boundary = payload["boundary"].as_bool().unwrap_or(false);
-        let original = payload.get("text").cloned().unwrap_or(Value::Null);
-        let mut effective = original.clone();
-        let mut provenance = Vec::new();
-        let mut fallback = Vec::new();
-        let mut control = Value::Null;
-        for (order, id) in self.event_ids("response_stream").into_iter().enumerate() {
-            if !control.is_null() {
-                break;
-            }
-            payload["text"] = effective.clone();
-            let prior = self
-                .loaded
-                .get(&id)
-                .map_or(0, |loaded| loaded.telemetry.faults);
-            let value = match self.invoke_guarded(
-                &id,
-                self.generation,
-                "response_stream",
-                "",
-                payload.clone(),
-                &active,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    fallback.push(json!({"origin":id,"error":error.to_string()}));
-                    continue;
-                }
-            };
-            if value.is_null() {
-                continue;
-            }
-            if let Some(stop) = value.get("stop") {
-                let reason = stop
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .filter(|reason| !reason.is_empty() && reason.len() <= 256);
-                let inject = value.get("retry").map(|retry| {
-                    retry
-                        .get("inject")
-                        .and_then(Value::as_str)
-                        .filter(|text| !text.trim().is_empty() && text.len() <= 4096)
-                });
-                let shape = value
-                    .as_object()
-                    .is_some_and(|object| object.keys().all(|key| key == "stop" || key == "retry"))
-                    && stop.as_object().is_some_and(|object| object.len() == 1)
-                    && value.get("retry").is_none_or(|retry| {
-                        retry.as_object().is_some_and(|object| object.len() == 1)
-                    });
-                let error = if !boundary {
-                    Some("stream_control_requires_output_boundary")
-                } else if !shape || reason.is_none() || inject == Some(None) {
-                    Some("invalid_stream_control")
-                } else {
-                    None
-                };
-                if let Some(error) = error {
-                    self.stream_fault(&id, prior, error);
-                    fallback.push(json!({"origin":id,"error":error}));
-                    continue;
-                }
-                control = json!({"origin": id, "order": order, "reason": reason,
-                    "retry": inject.flatten().map(|inject| json!({"inject": inject}))});
-                continue;
-            }
-            if protected {
-                let error = "protected_stream_field_is_observe_only";
-                self.stream_fault(&id, prior, error);
-                fallback.push(json!({"origin":id,"error":error}));
-                continue;
-            }
-            let Some(text) = value
-                .as_object()
-                .filter(|object| object.len() == 1)
-                .and_then(|object| object.get("text"))
-                .and_then(Value::as_str)
-                .filter(|text| text.len() <= 8192)
-            else {
-                let error = "invalid_stream_transformation";
-                self.stream_fault(&id, prior, error);
-                fallback.push(json!({"origin":id,"error":error}));
-                continue;
-            };
-            let previous = effective.clone();
-            effective = Value::String(text.to_owned());
-            if let Some(loaded) = self.loaded.get(&id) {
-                provenance.push(
-                    json!({"order":order,"origin":id,"version":loaded.package.version,
-                    "sha256":loaded.selection.sha256,"tier":loaded.selection.scope,
-                    "from_sha256":digest(serde_json::to_string(&previous)?.as_bytes()),
-                    "to_sha256":digest(serde_json::to_string(&effective)?.as_bytes())}),
-                );
-            }
-        }
-        payload["original"] = original;
-        payload["effective"] = effective;
-        payload["provenance"] = Value::Array(provenance);
-        payload["fallback"] = Value::Array(fallback);
-        payload["control"] = control;
-        Ok(payload)
-    }
-
     fn event_ids(&self, event: &str) -> Vec<String> {
         self.active()
             .filter(|(_, loaded)| {
@@ -4579,16 +4486,14 @@ impl ModHost {
     pub fn field_policies() -> Value {
         let mut policies = json!({
             "terminal": {"identity":"observe_only","presentation":"observe_only","greeting":"last_writer","session_title_suffix":"last_writer","welcome":"last_writer"},
-            "model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
-            "response_stream": {"kind":"observe_only","raw_sha256":"observe_only","raw_usage":"observe_only","opaque_reasoning":"observe_only","protected":"observe_only","text":"alterable","original":"observe_only","effective":"observe_only","provenance":"observe_only","fallback":"observe_only"},
             "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
             "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
             "intercept.input": {"thread_id":"observe_only","text":"replaceable","attachments":"observe_only"},
-            "intercept.model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable"},
-            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
+            "intercept.model_request": {"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable","model":"observe_only","provider":"observe_only","effort":"replaceable","sections":"replaceable","tools":"observe_only"},
+            "intercept.response_stream": {"request_id":"observe_only","scope":"observe_only","synthetic":"observe_only","kind":"observe_only","index":"observe_only","item_id":"observe_only","protected":"observe_only","call_id":"observe_only","format":"observe_only","text":"replaceable","tool":"replaceable","arguments":"replaceable","status":"observe_only","usage":"observe_only"},            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
         });
@@ -4610,6 +4515,10 @@ impl ModHost {
             (
                 "intercept.admission",
                 json!({"package":"observe_only","reason":"observe_only"}),
+            ),
+            (
+                "intercept.model_send",
+                json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only"}),
             ),
         ] {
             policies[surface] = fields;

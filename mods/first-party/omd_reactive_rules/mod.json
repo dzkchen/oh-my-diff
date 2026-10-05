@@ -12,7 +12,7 @@
   },
   "capabilities": ["context", "lifecycle", "middleware", "store"],
   "compatibility": {
-    "required_features": ["stream_control_v1"]
+    "required_features": ["model_turn_interception_v1"]
   },
   "settings_schema": {
     "type": "object",

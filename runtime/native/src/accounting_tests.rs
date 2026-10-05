@@ -36,6 +36,9 @@ fn account(task: &Arc<Task>, root: &Path, owner: &str) -> Account {
         lead_routes: Vec::new(),
         worker_authorization: None,
         credential: None,
+        context_window: Some(1000),
+        max_output_tokens: None,
+        capture_tools: false,
     }
 }
 
@@ -114,6 +117,15 @@ fn host_tool_schema_fields_are_not_mistaken_for_nontext_input() {
 }
 
 fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
+    install_package(accounts, root, source, &["middleware"]);
+}
+
+fn install_package(
+    accounts: &Accounts,
+    root: &Path,
+    source: &str,
+    capabilities: &[&str],
+) -> (ModStore, std::path::PathBuf, Arc<Mutex<ModHost>>) {
     let node = std::path::PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let store = ModStore::create(root.join("mod-store"), node).unwrap();
     let package = root.join("request_router");
@@ -121,7 +133,7 @@ fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
     std::fs::write(
         package.join("mod.json"),
         serde_json::to_vec(&json!({"schema":1,"id":"request_router","version":"1.0.0",
-            "api":MOD_API_VERSION,"state_version":1,"capabilities":["middleware"]}))
+            "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities}))
         .unwrap(),
     )
     .unwrap();
@@ -132,14 +144,171 @@ fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
         .trust(
             package.clone(),
             inspected["sha256"].as_str().unwrap(),
-            vec!["middleware".into()],
+            capabilities
+                .iter()
+                .map(|capability| (*capability).to_owned())
+                .collect(),
             "user",
         )
         .unwrap();
     store.enable(&package, true).unwrap();
     let runtime = ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap();
     let required = runtime.required_surfaces();
-    accounts.install_mod_runtime(Arc::new(Mutex::new(runtime)), required);
+    let runtime = Arc::new(Mutex::new(runtime));
+    accounts.install_mod_runtime(runtime.clone(), required);
+    (store, package, runtime)
+}
+
+fn prepared(accounts: &Accounts, thread: &str, body: &Value) -> Result<Value, TransportError> {
+    let mut request = Request::new(http::Method::POST, "http://localhost/responses".into());
+    request.headers.insert("thread-id", thread.parse().unwrap());
+    let mut encoded = Some(EncodedJsonBody::encode(body).unwrap());
+    accounts.prepare(&mut request, &mut encoded)?;
+    Ok(serde_json::from_slice(encoded.unwrap().as_bytes()).unwrap())
+}
+
+fn final_records(root: &Path) -> Vec<Value> {
+    std::fs::read_to_string(root.join("evidence").join("mod-middleware.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| {
+            record["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("final_request"))
+        })
+        .collect()
+}
+
+#[test]
+fn final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed() {
+    let (root, accounts, _task, _request, _body) = setup();
+    let source = r"export default api => {
+        api.intercept('model_request', (e, next) => next({...e, sections: [...e.sections, {id: 'mod:late', text: 'late SECRET-2'}]}));
+        api.intercept('model_send', async (e, next) => { await next(e); return {edits: []}; });
+        api.intercept('model_send', {required: true}, async (e, next) => {
+            const inner = await next(e);
+            if (e.segments.some(s => s.text.includes('BLOCK'))) return {deny: 'blocked marker'};
+            const edits = e.segments.filter(s => s.editable).flatMap(s =>
+                [...s.text.matchAll(/SECRET-\d+|LOOP/g)].map(m => ({segment: s.id, start: m.index, end: m.index + m[0].length,
+                    text: m[0] === 'LOOP' ? 'LOOP+' : '[secret]'})));
+            const fresh = e.segments.some(s => s.text.includes('FRESH')) ? {cache: false} : {};
+            return {edits: [...inner.edits, ...edits], ...fresh};
+        });
+    }";
+    install_package(
+        &accounts,
+        root.path(),
+        source,
+        &["middleware", "request_policy"],
+    );
+    assert!(ResponseObserver::policed(&accounts));
+    let long = format!("{} SECRET-4", "é".repeat(140_000));
+    let body = |user: &str| {
+        json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true,"instructions":"base",
+            "input":[
+                {"type":"message","role":"developer","content":[{"type":"input_text","text":"sandbox SECRET-9"}],
+                    "internal_chat_message_metadata_passthrough":{"content_item_kinds":["permissions.instructions"]}},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":user}]},
+                {"type":"function_call","name":"exec","call_id":"c1","arguments":"{\"cmd\":\"echo SECRET-3\"}"},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":long}]}]})
+    };
+    let sent = prepared(&accounts, "child", &body("token SECRET-1 é")).unwrap();
+    let input = &sent["input"];
+    assert_eq!(input[0]["content"][0]["text"], "sandbox SECRET-9");
+    assert_eq!(
+        input[0]["content"][1]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("late [secret]"),
+        true
+    );
+    assert_eq!(input[1]["content"][0]["text"], "token [secret] é");
+    assert_eq!(input[2]["arguments"], "{\"cmd\":\"echo [secret]\"}");
+    assert!(
+        input[3]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("é [secret]")
+    );
+    let first = final_records(root.path());
+    assert_eq!(first[0]["pages"], 10);
+    assert_eq!(first[0]["edits"].as_array().unwrap().len(), 4);
+
+    assert_eq!(
+        prepared(&accounts, "child", &body("token SECRET-1 é")).unwrap(),
+        sent
+    );
+    let second = final_records(root.path());
+    assert_eq!(
+        (second[1]["pages"].clone(), second[1]["scanned"].clone()),
+        (json!(1), json!(0))
+    );
+    let records = serde_json::to_string(&second).unwrap();
+    assert!(!records.contains("SECRET") && !records.contains("token"));
+
+    for _ in 0..2 {
+        let fresh = prepared(&accounts, "child", &body("FRESH SECRET-7")).unwrap();
+        assert_eq!(fresh["input"][1]["content"][0]["text"], "FRESH [secret]");
+        assert_ne!(final_records(root.path()).last().unwrap()["scanned"], 0);
+    }
+
+    let internal = prepared(&accounts, "title-thread", &body("name SECRET-5")).unwrap();
+    assert_eq!(internal["input"][1]["content"][0]["text"], "name [secret]");
+
+    let blocked = prepared(&accounts, "child", &body("BLOCK"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        blocked.contains("final_request_refused: request_router: blocked marker"),
+        "{blocked}"
+    );
+    let looping = prepared(&accounts, "child", &body("LOOP"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        looping.contains("final_request_unsettled: /input/1/content/0/text"),
+        "{looping}"
+    );
+    assert_eq!(
+        final_records(root.path()).last().unwrap()["kind"],
+        "final_request_refused"
+    );
+}
+
+#[test]
+fn declared_request_policies_refuse_until_disabled_and_are_inert_without_policies() {
+    let (root, accounts, _task, _request, _body) = setup();
+    let source = "export default api => { throw new Error('policy failed to start'); }";
+    let (store, package, runtime) = install_package(
+        &accounts,
+        root.path(),
+        source,
+        &["middleware", "request_policy"],
+    );
+    let body = json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true,
+        "input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]});
+    for thread in ["child", "title-thread"] {
+        let refused = prepared(&accounts, thread, &body).unwrap_err().to_string();
+        assert!(
+            refused.contains("request_policy_unavailable: request_router: "),
+            "{refused}"
+        );
+        assert!(refused.contains("policy failed to start"), "{refused}");
+    }
+    assert!(ResponseObserver::policed(&accounts));
+
+    store.enable(&package, false).unwrap();
+    runtime.lock().unwrap().reload().unwrap();
+    assert!(!ResponseObserver::policed(&accounts));
+    let internal = prepared(&accounts, "title-thread", &body).unwrap();
+    assert_eq!(internal, body);
+    assert!(prepared(&accounts, "child", &body).is_ok());
+    assert!(
+        final_records(root.path())
+            .iter()
+            .all(|record| record["kind"] == "final_request_refused")
+    );
 }
 
 fn fast_route() -> RequestRoute {
@@ -150,6 +319,7 @@ fn fast_route() -> RequestRoute {
         reasoning: "xhigh".into(),
         rates: rates(),
         credential: None,
+        url: String::new(),
     }
 }
 
@@ -208,7 +378,7 @@ fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
 #[test]
 fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     let (root, accounts, task, mut request, body) = setup();
-    let source = "export default api => { api.middleware('model_request', event => ({route:'fast'})); api.middleware('response_stream', event => event.protected?null:{text:String(event.text).toUpperCase()}); }";
+    let source = "export default api => { api.intercept('model_request', (e, next) => next({...e, route: 'fast'})); api.intercept('response_stream', {match: {kind: 'text'}}, (e, next) => next({...e, text: e.text.toUpperCase()})); }";
     install_middleware(&accounts, root.path(), source);
     let mut prepared = Some(body.clone());
     assert!(accounts.prepare(&mut request, &mut prepared).is_err());
@@ -230,9 +400,17 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
         .before_send(&mut request, prepared.as_ref())
         .unwrap()
         .unwrap();
-    let mut delta = json!({"type":"response.output_text.delta","delta":"hello"});
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hello"});
     attempt.observe(&mut delta, true).unwrap();
     assert_eq!(delta["delta"], "HELLO");
+    let mut done = json!({"type":"response.output_item.done","output_index":0,"item":{"type":"message",
+        "id":"m","role":"assistant","content":[{"type":"output_text","text":"hello"}]}});
+    attempt.observe(&mut done, true).unwrap();
+    assert_eq!(
+        done["item"]["content"][0]["text"], "HELLO",
+        "the recorded text matches what streamed"
+    );
     let usage =
         json!({"input_tokens":100,"input_tokens_details":{"cached_tokens":50},"output_tokens":10});
     let mut completed = json!({"type":"response.completed","response":{"usage":usage}});
@@ -242,7 +420,236 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     assert_eq!(recorded.model, "fixture-fast");
     assert_eq!(recorded.raw_usage, Some(usage));
     let log = std::fs::read_to_string(root.path().join("evidence/mod-middleware.jsonl")).unwrap();
-    assert!(log.contains("fast") && log.contains("raw_usage"));
+    assert!(log.contains("fast") && log.contains("response_stream"));
+}
+
+#[test]
+fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_tool_calls() {
+    let (root, accounts, task, mut request, _body) = setup();
+    let source = "export default api => {
+        api.intercept('model_request', (e, next) => {
+            const last = e.sections.at(-1)?.text;
+            if (last === 'cache me') return {response: {output: [{type: 'message', text: 'cached answer'}, {type: 'tool_call', tool: 'exec_command', arguments: {cmd: 'ls'}}]}};
+            if (last === 'elsewhere') return next({...e, route: 'other'});
+            return next({...e, effort: 'low', sections: [...e.sections.filter(s => s.id !== 'apps.instructions'), {id: 'mod:note', text: 'hint'}]});
+        });
+        api.intercept('response_stream', (e, next) => {
+            if (e.kind === 'tool_call' && e.tool === 'blocked') return {chunks: []};
+            if (e.kind === 'tool_done') return next({...e, arguments: JSON.stringify({cmd: 'pwd'})});
+            if (e.kind === 'stop') return {chunks: [{kind: 'message', text: 'appended'}, e]};
+            return next(e);
+        });
+    }";
+    install_middleware(&accounts, root.path(), source);
+    let notified = Arc::new(Mutex::new(Vec::new()));
+    let sink = notified.clone();
+    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+        sink.lock().unwrap().push((event, payload));
+    }));
+    let mut lead = account(&task, root.path(), "lead");
+    lead.route = Some("main".into());
+    let mut other = fast_route();
+    other.name = "other".into();
+    other.provider = "elsewhere".into();
+    other.model = "elsewhere-model".into();
+    lead.lead_routes = vec![fast_route(), other];
+    accounts.0.lock().unwrap().insert("main".into(), lead);
+    for model in ["fixture-model", "fixture-fast"] {
+        task.authorize_route("fixture", model).unwrap();
+    }
+    task.authorize_route("elsewhere", "elsewhere-model")
+        .unwrap();
+    request.headers.insert("thread-id", "main".parse().unwrap());
+    let body = |last: &str| {
+        let mut input = vec![json!({"type":"message","role":"developer",
+            "content":[{"type":"input_text","text":"sandbox"},{"type":"input_text","text":"apps"},{"type":"input_text","text":last}],
+            "internal_chat_message_metadata_passthrough":{"content_item_kinds":
+                ["permissions.instructions","apps.instructions","hooks.additional_context"]}})];
+        if last == "elsewhere" {
+            input.push(json!({"type":"reasoning","summary":[],"encrypted_content":"opaque"}));
+        }
+        EncodedJsonBody::encode(
+            &json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true,
+            "max_output_tokens":128,"instructions":"base","input":input}),
+        )
+        .unwrap()
+    };
+
+    let mut prepared = Some(body("cache me"));
+    accounts.prepare(&mut request, &mut prepared).unwrap();
+    let mut attempt = accounts
+        .before_send(&mut request, prepared.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut delivered = Vec::new();
+    for mut event in accounts.answer(&request).unwrap() {
+        attempt.observe(&mut event, true).unwrap();
+        delivered.extend(Some(event).filter(|event| !event.is_null()));
+        delivered.extend(attempt.injected());
+    }
+    drop(attempt);
+    let done = delivered
+        .iter()
+        .filter(|event| event["type"] == "response.output_item.done")
+        .map(|event| event["item"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(done[0]["content"][0]["text"], "cached answer");
+    assert_eq!(done[1]["arguments"], "{\"cmd\":\"pwd\"}");
+    assert!(
+        done[1]["call_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("mod-request_router-req-")
+    );
+    assert_eq!(done[2]["content"][0]["text"], "appended");
+    assert_eq!(delivered.last().unwrap()["type"], "response.completed");
+    assert!(
+        task.attempts().unwrap().is_empty(),
+        "no provider attempt was admitted"
+    );
+    let (event, synthetic) = notified.lock().unwrap().remove(0);
+    assert_eq!(event, "model_response");
+    assert_eq!(synthetic["synthetic"], "request_router");
+    assert_eq!(synthetic["cost"]["basis"], "synthetic");
+    assert_eq!(synthetic["usage"], Value::Null);
+    assert_eq!(
+        synthetic["output"]["tool_calls"].as_array().unwrap().len(),
+        1
+    );
+
+    request.headers.remove("x-omd-synthetic");
+    let mut prepared = Some(body("plain"));
+    accounts.prepare(&mut request, &mut prepared).unwrap();
+    let edited: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
+    assert_eq!(edited["reasoning"]["effort"], "low");
+    let parts = edited["input"][0]["content"].as_array().unwrap();
+    assert_eq!(parts.len(), 3);
+    assert_eq!(parts[0]["text"], "sandbox");
+    assert_eq!(parts[1]["text"], "plain");
+    assert!(parts[2]["text"].as_str().unwrap().ends_with("hint"));
+    let mut attempt = accounts
+        .before_send(&mut request, prepared.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut delivered = Vec::new();
+    for mut event in [
+        json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"f","call_id":"c","name":"blocked","arguments":""}}),
+        json!({"type":"response.function_call_arguments.delta","output_index":1,"item_id":"f","delta":"{}"}),
+        json!({"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"f","call_id":"c","name":"blocked","arguments":"{}"}}),
+        json!({"type":"response.completed","response":{"model":"fixture-model-2026","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":40},"output_tokens":10}}}),
+    ] {
+        attempt.observe(&mut event, true).unwrap();
+        delivered.extend(Some(event).filter(|event| !event.is_null()));
+        delivered.extend(attempt.injected());
+    }
+    drop(attempt);
+    assert_eq!(
+        delivered.len(),
+        3,
+        "the dropped call left nothing but the appended message"
+    );
+    let (_, settled) = notified.lock().unwrap().remove(0);
+    assert_eq!(settled["status"], "completed");
+    assert_eq!(settled["stop_reason"], "end_turn");
+    assert_eq!(settled["served_model"], "fixture-model-2026");
+    assert_eq!(settled["cache"]["read_tokens"], 40);
+    assert_eq!(settled["cost"]["basis"], "settled");
+    assert_eq!(settled["context_window"], 1000);
+    assert_eq!(settled["synthetic"], Value::Null);
+    let partial = accounts
+        .before_send(&mut request, prepared.as_ref())
+        .unwrap()
+        .unwrap();
+    drop(partial);
+    let (_, cancelled) = notified.lock().unwrap().remove(0);
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["cost"]["basis"], "unsettled");
+
+    let mut prepared = Some(body("elsewhere"));
+    let refused = accounts.prepare(&mut request, &mut prepared).unwrap_err();
+    assert!(format!("{refused:?}").contains("own credential profile"));
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .get_mut("main")
+        .unwrap()
+        .lead_routes[1]
+        .credential = Some("profile".into());
+    let mut prepared = Some(body("elsewhere"));
+    accounts.prepare(&mut request, &mut prepared).unwrap();
+    let switched: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
+    assert_eq!(switched["model"], "elsewhere-model");
+    assert_eq!(
+        switched["input"].as_array().unwrap().len(),
+        1,
+        "foreign reasoning left out"
+    );
+    assert!(
+        request
+            .headers
+            .contains_key(codex_api::request_observer::STRIP_ITEM_METADATA)
+    );
+}
+
+#[test]
+fn completion_workers_cap_output_capture_tool_calls_and_collect_their_responses() {
+    let (_root, accounts, _task, mut request, body) = setup();
+    {
+        let mut accounts = accounts.0.lock().unwrap();
+        let child = accounts.get_mut("child").unwrap();
+        child.capture_tools = true;
+        child.max_output_tokens = Some(64);
+    }
+    accounts.collect("child");
+    let mut prepared = Some(body);
+    accounts.prepare(&mut request, &mut prepared).unwrap();
+    let capped: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
+    assert_eq!(capped["max_output_tokens"], 64);
+    let mut attempt = accounts
+        .before_send(&mut request, prepared.as_ref())
+        .unwrap()
+        .unwrap();
+    for mut event in [
+        json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"f","call_id":"c","name":"read_file","arguments":""}}),
+        json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"f","delta":"{\"path\":\"a\"}"}),
+        json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"f","call_id":"c","name":"read_file","arguments":"{\"path\":\"a\"}"}}),
+    ] {
+        attempt.observe(&mut event, true).unwrap();
+        assert!(event.is_null(), "a captured call never reaches the engine");
+    }
+    let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":4},"output_tokens":5}}});
+    attempt.observe(&mut completed, true).unwrap();
+    drop(attempt);
+    let responses = accounts.take_responses("child");
+    assert_eq!(responses.len(), 1);
+    let call = &responses[0]["output"]["tool_calls"][0];
+    assert_eq!(call["arguments"], "{\"path\":\"a\"}");
+    assert_eq!(call["executed"], false);
+    assert_eq!(responses[0]["stop_reason"], "tool_use");
+    assert_eq!(responses[0]["cache"]["read_tokens"], 4);
+    assert!(accounts.take_responses("child").is_empty());
+
+    accounts.collect("child");
+    let mut attempt = accounts
+        .before_send(&mut request, prepared.as_ref())
+        .unwrap()
+        .unwrap();
+    for delta in ["one, two, ", "three"] {
+        let mut event = json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":delta});
+        attempt.observe(&mut event, true).unwrap();
+    }
+    let mut cut = json!({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"},
+        "usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":0},"output_tokens":64}}});
+    attempt.observe(&mut cut, true).unwrap();
+    drop(attempt);
+    let capped = accounts.take_responses("child").remove(0);
+    assert_eq!(capped["status"], "incomplete");
+    assert_eq!(capped["stop_reason"], "max_output_tokens");
+    assert_eq!(
+        capped["output"]["text"], "one, two, three",
+        "the capped answer keeps what streamed"
+    );
 }
 
 #[test]
@@ -285,7 +692,7 @@ fn observe_only_accounts_record_usage_without_admission() {
         .before_send(&mut request, Some(&body))
         .unwrap()
         .unwrap();
-    assert!(!request.headers.contains_key("x-omd-request-id"));
+    assert!(!request.headers.contains_key("x-omd-owner"));
     let usage = json!({"input_tokens":7,"output_tokens":3});
     let mut completed = json!({"type":"response.completed","response":{"usage":usage}});
     attempt.observe(&mut completed, true).unwrap();
@@ -407,7 +814,7 @@ fn provider_ceiling_violation_keeps_usage_and_stops_admission() {
         .before_send(&mut request, Some(&body))
         .unwrap()
         .unwrap();
-    assert_eq!(request.headers["x-omd-request-id"], "1");
+    assert_eq!(request.headers["x-omd-owner"], "worker");
     let usage = json!({"input_tokens": 100, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 129});
     let mut event = json!({"type": "response.completed", "response": {"usage": usage}});
     assert!(attempt.observe(&mut event, true).is_err());
@@ -594,16 +1001,20 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
 #[test]
 fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
     let (root, accounts, _task, mut request, body) = setup();
-    let source = "export default api => { api.middleware('response_stream', event => event.boundary && /forbidden/.test(event.text ?? '') ? {stop:{reason:'rule'},retry:{inject:'Avoid the forbidden word.'}} : null); }";
+    let source = "export default api => { api.intercept('response_stream', async (e, next) => { const result = await next(e); if (/forbidden/.test(e.text ?? '') && e.kind === 'text') return {stop:{reason:'rule'}}; return e.kind === 'message' && /forbidden/.test(e.text) ? {stop:{reason:'rule'},retry:{inject:'Avoid the forbidden word.'}} : result; }); }";
     install_middleware(&accounts, root.path(), source);
     let mut attempt = accounts
         .before_send(&mut request, Some(&body))
         .unwrap()
         .unwrap();
-    let mut delta = json!({"type":"response.output_text.delta","delta":"forbidden"});
+    let mut delta = json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"forbidden"});
     attempt.observe(&mut delta, true).unwrap();
-    let mut done = json!({"type":"response.output_item.done","item":{"type":"message",
-        "content":[{"type":"output_text","text":"forbidden"}]}});
+    assert_eq!(
+        delta["delta"], "forbidden",
+        "a stop outside a boundary is rejected and the text kept"
+    );
+    let mut done = json!({"type":"response.output_item.done","output_index":0,"item":{"type":"message",
+        "id":"m","content":[{"type":"output_text","text":"forbidden"}]}});
     let error = attempt.observe(&mut done, true).unwrap_err();
     let message = match error {
         TransportError::Build(message) => message,
@@ -612,4 +1023,11 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
     let control = codex_api::request_observer::stream_control(&message).unwrap();
     assert_eq!(control["reason"], "rule");
     assert_eq!(control["retry"]["inject"], "Avoid the forbidden word.");
+    drop(attempt);
+    let mut retried = Some(body);
+    accounts.prepare(&mut request, &mut retried).unwrap();
+    assert_eq!(
+        request.headers["x-omd-attempt"], "2",
+        "the retry is a new, numbered attempt"
+    );
 }

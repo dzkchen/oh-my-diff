@@ -8,7 +8,9 @@
   "settings": {
     "omd_recovery": {
       "advisory_route": "opposite",
-      "allowed_failure_classes": ["edit"],
+      "allowed_failure_classes": [
+        "edit"
+      ],
       "evidence_bytes": 100000
     }
   },
@@ -106,7 +108,10 @@
         "result": [
           {
             "name": "lead",
-            "roles": ["lead", "worker"],
+            "roles": [
+              "lead",
+              "worker"
+            ],
             "available": true,
             "provider": "fixture",
             "model": "lead",
@@ -135,7 +140,12 @@
             "reference": "fixture-evidence",
             "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
           },
-          "provenance": {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "bytes": 4096, "items": 1, "revision": 1}
+          "provenance": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "bytes": 4096,
+            "items": 1,
+            "revision": 1
+          }
         }
       }
     ],
@@ -182,7 +192,8 @@
   },
   "steps": [
     {
-      "type": "model_request",
+      "type": "intercept",
+      "surface": "model_request",
       "payload": {
         "request_id": "fixture",
         "scope": {
@@ -190,16 +201,31 @@
           "thread_id": "fixture-thread"
         },
         "original": {
+          "name": "lead",
+          "roles": [
+            "lead",
+            "worker"
+          ],
+          "available": true,
           "provider": "fixture",
           "model": "lead",
-          "reasoning": "high"
+          "reasoning": "high",
+          "billing": "included_subscription"
         },
-        "effective": {
-          "provider": "fixture",
-          "model": "lead",
-          "reasoning": "high"
-        },
+        "route": "lead",
         "routes": [
+          {
+            "name": "lead",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "available": true,
+            "provider": "fixture",
+            "model": "lead",
+            "reasoning": "high",
+            "billing": "included_subscription"
+          },
           {
             "name": "opposite",
             "roles": [
@@ -213,7 +239,18 @@
             "billing": "included_subscription"
           }
         ]
-      }
+      },
+      "core": [
+        {
+          "value": {
+            "route": "lead",
+            "effort": null,
+            "cache": {
+              "from": null
+            }
+          }
+        }
+      ]
     },
     {
       "type": "invoke",

@@ -25,11 +25,11 @@ export default function activate(api: ModAPI) {
     const previous = api.state.get();
     api.state.set([...(Array.isArray(previous) ? previous : []), entry].slice(-24));
   };
-  api.middleware('model_request', event => {
-    if (event.scope.kind === 'main') {
-      remember({ kind: 'lead', thread: event.scope.thread_id, model: event.effective.model, provider: event.effective.provider });
-    }
-    return null;
+  api.intercept('model_request', { match: { scope: { kind: 'main' } } }, async (event, next) => {
+    const result = await next(event);
+    const route = event.routes.find(item => item.name === result.route) ?? event.original;
+    remember({ kind: 'lead', thread: event.scope.thread_id, model: route.model, provider: route.provider });
+    return result;
   });
   tool({ name: 'recover', label: 'Recovery policy', description: 'Bind one read-only advisory escalation to exact preserved tool calls and outputs; the lead retains every edit decision',
     parameters: { type: 'object', properties: { failure_class: { type: 'string', enum: CLASSES }, summary: { type: 'string' }, call_ids: { type: 'array', items: { type: 'string' } } }, required: ['failure_class', 'summary', 'call_ids'], additionalProperties: false },

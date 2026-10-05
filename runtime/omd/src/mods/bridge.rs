@@ -2,6 +2,9 @@ use super::*;
 use std::time::Duration;
 use std::time::Instant;
 
+/// Host calls that end the callback's process; it replays from its receipts once they settle.
+pub(super) const SUSPENDING: &[&str] = &["continuation.next", "time.sleep"];
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModHostCall {
@@ -43,7 +46,8 @@ impl ModHostCall {
                 .and_then(crate::app_routes::route)
                 .map(|route| route.class.as_str())
                 .ok_or_else(|| failure("app_method_unrouted")),
-            "app.routes" => Ok("inventory"),
+            "app.routes" | "session.info" => Ok("inventory"),
+            "time.sleep" => Ok("events"),
             "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
             "events.publish" | "events.schedule" | "events.cancel" => Ok("events"),
             "credentials.list" | "credentials.request" => Ok("credentials"),
@@ -59,7 +63,7 @@ impl ModHostCall {
             | "terminal.prompt"
             | "terminal.pane" => Ok("terminal"),
             "terminal.pty" => Ok("pty"),
-            "model.complete" => Ok("agents"),
+            "model.complete" | "model.fork" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
             "tools.invoke" | "tools.check" => Ok("interception"),
             "composer.read" | "composer.write" => Ok("composer"),
@@ -91,6 +95,9 @@ impl ModHostCall {
 
     pub fn capabilities(&self) -> Result<Vec<&'static str>> {
         let mut capabilities = vec![self.capability()?];
+        if self.operation == "model.fork" {
+            capabilities.push("sessions");
+        }
         if self.operation == "terminal.pty" {
             if self.arguments["write"] == true {
                 capabilities.push("fs.write");
@@ -150,6 +157,7 @@ pub(super) fn run(
         "assets": loaded.assets,
         "entrypoint": loaded.package.entrypoint,
         "entrypoint_sha256": digest(loaded.source.as_bytes()),
+        "package": {"id": loaded.package.id, "version": loaded.package.version},
         "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
         "state": loaded.state, "event": event, "name": name, "payload": payload, "interactive": true,
         "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
@@ -247,12 +255,12 @@ pub(super) fn run(
         let Some(call) = reply
             .host_call
             .clone()
-            .filter(|call| call.operation == "continuation.next")
+            .filter(|call| SUSPENDING.contains(&call.operation.as_str()))
             .filter(|call| reply.calls.split_last() == Some((call, &expected[..])))
         else {
             break reply;
         };
-        if event != "intercept" {
+        if call.operation == "continuation.next" && event != "intercept" {
             return Err(failure("continuation_outside_interceptor"));
         }
         if expected.len() >= 32 {

@@ -1570,51 +1570,6 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     let grants = runtime.grants("modern").unwrap();
     assert_eq!(grants.exec_environment, vec!["FIXTURE_ENV"]);
     assert!(grants.capabilities.contains(&"exec".to_owned()));
-    let stream = runtime
-        .response_stream(json!({"kind":"response.output_item.done","raw_sha256":"x","raw_usage":null,"opaque_reasoning":false,"protected":false,"text":"x","boundary":true,"attempt":0}), || true)
-        .unwrap();
-    assert!(stream["control"].is_null());
-}
-
-#[test]
-fn stream_control_is_bounded_to_output_boundaries_and_current_api() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let guard = package(
-        &root,
-        "guard",
-        json!({"capabilities":["middleware"]}),
-        "export default api => api.middleware('response_stream', event => event.text?.includes('forbidden') ? {stop:{reason:'rule'}, retry:{inject:'Avoid the forbidden pattern.'}} : null)",
-        &[],
-    );
-    trust(&store, &guard);
-    let mut runtime = ModHost::open(root.join("store")).unwrap();
-    let event = |boundary: bool, text: &str| {
-        json!({"kind":"response.output_item.done","raw_sha256":"x","raw_usage":null,"opaque_reasoning":false,
-            "protected":false,"text":text,"boundary":boundary,"attempt":0})
-    };
-    let stopped = runtime
-        .response_stream(event(true, "a forbidden word"), || true)
-        .unwrap();
-    assert_eq!(stopped["control"]["reason"], "rule");
-    assert_eq!(
-        stopped["control"]["retry"]["inject"],
-        "Avoid the forbidden pattern."
-    );
-    assert_eq!(stopped["control"]["origin"], "guard");
-    let passed = runtime
-        .response_stream(event(true, "fine"), || true)
-        .unwrap();
-    assert!(passed["control"].is_null());
-    let mid = runtime
-        .response_stream(event(false, "forbidden"), || true)
-        .unwrap();
-    assert!(mid["control"].is_null());
-    assert_eq!(
-        mid["fallback"][0]["error"],
-        "stream_control_requires_output_boundary"
-    );
 }
 
 #[test]
@@ -1625,7 +1580,7 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
     let empty = ModHost::open(root.join("store")).unwrap();
     assert!(empty.builtin_controls().is_empty());
     assert!(empty.contract_documents().is_empty());
-    assert!(!empty.has_event("response_stream"));
+    assert!(!empty.has_event("model_response"));
     assert!(!empty.has_event("workspace_change"));
     let registering = "export default api => { api.builtins({modes:{disable:['plan']}}); \
          api.contract({schema:2,id:'gate',version:1,description:'Gate',assurance:'checked',gates:{integrate:[{receipt:'checks'}]}}); }";

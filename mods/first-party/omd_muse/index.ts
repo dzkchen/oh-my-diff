@@ -88,7 +88,7 @@ export default function activate(api: ModAPI): void {
     while (calls < 32) {
       calls++;
       const done = api.host.tryCall('model.complete', { route: service, prompt, timeout_ms: 300000 });
-      if (!done.ok) return { status: 'failed', reason: done.error, findings };
+      if (!done.ok || done.value.status === 'failed') return { status: 'failed', reason: done.ok ? done.value.error : done.error, findings };
       const match = marker.exec(done.value.text);
       findings += match ? done.value.text.slice(0, match.index) : done.value.text;
       if (!match) return { status: 'completed', findings: findings.trim(), source: 'muse', decision_owner: 'lead' };

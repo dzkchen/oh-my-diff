@@ -1398,6 +1398,54 @@ async fn model_completions_use_only_configured_worker_routes() {
     assert_eq!(unknown, "provider_not_registered_or_stopped");
     let malformed = run(json!({"prompt": "x"})).await.unwrap_err();
     assert!(malformed.contains("route"), "{malformed}");
+    for (arguments, expected) in [
+        (
+            json!({"route": "w", "prompt": "x", "effort": "turbo"}),
+            "model_call_option_invalid",
+        ),
+        (
+            json!({"route": "w", "prompt": "x", "max_output_tokens": 0}),
+            "model_call_option_invalid",
+        ),
+        (
+            json!({"route": "w", "prompt": "x", "output": {"schema": "text"}}),
+            "model_call_option_invalid",
+        ),
+        (
+            json!({"route": "w", "prompt": "x", "context": vec!["c"; 9]}),
+            "model_call_option_invalid",
+        ),
+        (
+            json!({"route": "w", "prompt": "x", "tools": ["read_file"]}),
+            "model_tools_require_fork",
+        ),
+        (
+            json!({"route": "lead", "prompt": "x"}),
+            "lead_route_unconfigured",
+        ),
+    ] {
+        assert_eq!(run(arguments).await.unwrap_err(), expected);
+    }
+    let fork = operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        Caller {
+            grants: caller.grants.clone(),
+            ..caller
+        },
+        None,
+        ModHostCall {
+            operation: "model.fork".into(),
+            arguments: json!({"prompt": "summarize the thread"}),
+        },
+        &cancelled,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        fork, "native_thread_manager_stopped",
+        "a fork needs the live thread"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

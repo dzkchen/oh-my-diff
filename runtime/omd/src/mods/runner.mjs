@@ -100,7 +100,7 @@ function hostTryCall(operation, arguments_ = null) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  if (request.interactive && operation !== 'continuation.next') {
+  if (request.interactive && operation !== 'continuation.next' && operation !== 'time.sleep') {
     const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
     return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
   }
@@ -275,6 +275,39 @@ function unique(map, name, handler) {
   if (typeof handler !== 'function') throw new Error('handler_required: ' + name);
   map.set(name, handler);
 }
+const timers = new Map();
+async function dispatchTimer(event) {
+  const entry = timers.get(event?.key);
+  if (!entry) return null;
+  const result = await entry.handler({ key: entry.key });
+  if (entry.repeat && result !== false) hostCall('events.schedule', { key: event.key, delay_ms: entry.ms });
+  return null;
+}
+function timer(key, ms, handler, repeat) {
+  requireCapability('events');
+  if (!activating) throw new Error('timer_registration_outside_activation');
+  if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,58}$/.test(key)) throw new Error('invalid_timer_key: ' + key);
+  if (!Number.isSafeInteger(ms) || ms < 1000 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
+  if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
+  const scheduled = 'time:' + key;
+  if (timers.has(scheduled)) throw new Error('conflict: ' + scheduled);
+  if (!timers.size) {
+    unique(handlers, 'timer', dispatchTimer);
+    registrations.events.push('timer');
+  }
+  timers.set(scheduled, { key, ms, handler, repeat });
+  return Object.freeze({
+    start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
+    cancel() { return hostCall('events.cancel', { key: scheduled }); },
+  });
+}
+function workspacePath(path) {
+  if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\0')) throw new Error('invalid_workspace_path: ' + path);
+  const parts = path.split('/').filter(part => part && part !== '.');
+  if (!parts.length || parts.includes('..')) throw new Error('invalid_workspace_path: ' + path);
+  return parts.join('/');
+}
+function number(value) { return Number.isFinite(value) ? value : null; }
 const api = Object.freeze({
   version: request.api,
   fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
@@ -399,6 +432,93 @@ const api = Object.freeze({
     return () => { entry.active = false; };
   },
   unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
+  package: Object.freeze({ id: request.package?.id ?? null, version: request.package?.version ?? null, sha256: request.entrypoint_sha256 ?? null }),
+  session() { return hostCall('session.info', null); },
+  time: Object.freeze({
+    sleep(ms) { return hostCall('time.sleep', { ms }); },
+    async wait(check, options = {}) {
+      const interval = options.interval_ms ?? 1000;
+      const timeout = options.timeout_ms ?? 10000;
+      let waited = 0;
+      for (;;) {
+        const value = await check();
+        if (value) return { value, waited_ms: waited, timed_out: false, cancelled: false };
+        if (waited >= timeout) return { value, waited_ms: waited, timed_out: true, cancelled: false };
+        const slept = hostCall('time.sleep', { ms: Math.min(interval, timeout - waited) });
+        waited += slept.slept_ms;
+        if (slept.cancelled) return { value, waited_ms: waited, timed_out: false, cancelled: true };
+      }
+    },
+    after(key, delay_ms, handler) { return timer(key, delay_ms, handler, false); },
+    every(key, interval_ms, handler) { return timer(key, interval_ms, handler, true); },
+  }),
+  fs: Object.freeze({
+    exists(path) {
+      const normalized = workspacePath(path);
+      return hostCall('workspace.stat', { paths: [normalized] }).files[normalized] !== null;
+    },
+    canonical(path) {
+      const normalized = workspacePath(path);
+      const stat = hostCall('workspace.stat', { paths: [normalized], hash: true }).files[normalized];
+      return stat ? { path: normalized, kind: stat.kind, sha256: stat.sha256 ?? null } : null;
+    },
+    ancestors(name, from) {
+      if (typeof name !== 'string' || !name || name.includes('/')) throw new Error('invalid_ancestor_name: ' + name);
+      let start = from;
+      if (start === undefined) {
+        const session = hostCall('session.info', null);
+        const root = String(session.root);
+        const cwd = String(session.cwd ?? root);
+        start = cwd.startsWith(root + '/') ? cwd.slice(root.length + 1) : '';
+      }
+      const parts = start ? workspacePath(start).split('/') : [];
+      const candidates = [];
+      for (let depth = parts.length; depth >= 0 && candidates.length < 64; depth -= 1) candidates.push([...parts.slice(0, depth), name].join('/'));
+      const files = hostCall('workspace.stat', { paths: candidates }).files;
+      return candidates.filter(path => files[path]).map(path => ({ path, kind: files[path].kind }));
+    },
+  }),
+  classify(text, labels, options = {}) {
+    if (!Array.isArray(labels) || labels.length < 2 || labels.length > 32 || new Set(labels).size !== labels.length
+      || labels.some(label => typeof label !== 'string' || !label || label.length > 64)) throw new Error('invalid_classify_labels');
+    if (typeof options.route !== 'string') throw new Error('classify_route_required');
+    const instructions = 'Classify the text into exactly one of these labels: ' + labels.join(', ') + '.'
+      + (options.instructions ? ' ' + options.instructions : '') + ' Reply with JSON {"label": <label>}.';
+    const call = { route: options.route, prompt: text, system: instructions,
+      output: { schema: { type: 'object', properties: { label: { type: 'string', enum: labels } }, required: ['label'], additionalProperties: false } } };
+    for (const key of ['effort', 'timeout_ms', 'max_output_tokens']) if (options[key] !== undefined) call[key] = options[key];
+    const result = hostCall('model.complete', call);
+    let label = null;
+    try {
+      const parsed = JSON.parse(result.text);
+      if (labels.includes(parsed?.label)) label = parsed.label;
+    } catch {}
+    return { label, result };
+  },
+  usage: Object.freeze({
+    summarize(response) {
+      const usage = response?.usage && typeof response.usage === 'object' ? response.usage : null;
+      const input = number(usage?.input_tokens);
+      const output = number(usage?.output_tokens);
+      const window = number(response?.context_window);
+      const basis = response?.cost?.basis ?? 'unpriced';
+      return {
+        request_id: response?.request_id ?? null, route: response?.route ?? null, provider: response?.provider ?? null,
+        credential: response?.credential ?? null, requested_model: response?.requested_model ?? null, served_model: response?.served_model ?? null,
+        measured: usage !== null,
+        tokens: { input, cached: number(usage?.input_tokens_details?.cached_tokens), cache_write: number(usage?.input_tokens_details?.cache_write_tokens),
+          output, reasoning: number(usage?.output_tokens_details?.reasoning_tokens) },
+        context: window !== null && input !== null ? { used: input + (output ?? 0), window, ratio: (input + (output ?? 0)) / window } : null,
+        cost: { microusd: number(response?.cost?.microusd), basis,
+          source: basis === 'settled' || basis === 'unsettled' ? 'configured_rates' : basis === 'included_subscription' ? 'subscription' : basis === 'synthetic' ? 'none' : 'unknown' },
+        timing: response?.timing ?? null, synthetic: response?.synthetic ?? null,
+      };
+    },
+    rateLimits() {
+      const read = hostTryCall('app.request', { method: 'account/rateLimits/read', params: {} });
+      return read.ok ? { available: true, value: read.value } : { available: false, reason: read.error };
+    },
+  }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => rendering ? request.state : state, request, calls,

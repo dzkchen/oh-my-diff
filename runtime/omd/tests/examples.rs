@@ -20,7 +20,7 @@ const HOST_FEATURES: &[&str] = &[
     "terminal_media_v1",
     "secrets_v1",
     "terminal_prompt_v1",
-    "model_complete_v1",
+    "model_complete_v2",
     "history_v1",
     "terminal_pty_v1",
     "dynamic_tools_v1",

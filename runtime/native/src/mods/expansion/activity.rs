@@ -59,6 +59,9 @@ pub(in crate::mods) async fn turn_started(core: &Arc<Core>, lead: &Lead, turn_id
     if stopped && let Some(log) = log(lead) {
         let _ = log.append(&ActivityRecord::Paused { at: now() });
     }
+    if let Ok(mut turns) = core.expansion.turns.lock() {
+        *turns.entry(thread.clone()).or_default() += 1;
+    }
     if let Ok(mut running) = core.expansion.running.lock() {
         running.insert(thread, turn_id.to_owned());
     }
