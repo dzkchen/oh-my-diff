@@ -67,7 +67,8 @@ function fixture() {
         return { revision };
       }
       case 'terminal.prompt': return host.confirm ? { status: 'accepted' } : { status: 'declined' };
-      case 'composer.write': return { text: args.insert, cursor: 0 };
+      case 'composer.read': return { text: '', cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
+      case 'composer.write': return { text: args.edit.text, cursor: 0, revision: 2 };
       default: return { delivered: 1, dropped: 0, stopped: true };
     }
   };
@@ -161,7 +162,7 @@ test('editor buffers edit with undo, find, Git markers and composer quotes, then
   assert.match(view().find('_find').text, /4 matches/);
 
   keys(key('Shift+Down'), key('Ctrl+e'));
-  assert.deepEqual(calls.filter(item => item.operation === 'composer.write').at(-1).args, { insert: 'src/app.ts:2\n```\nconst b = 2; // two\n```\n' });
+  assert.deepEqual(calls.filter(item => item.operation === 'composer.write').at(-1).args, { revision: 1, edit: { kind: 'insert', text: 'src/app.ts:2\n```\nconst b = 2; // two\n```\n' } });
   const state = JSON.parse(JSON.stringify(fx.state));
   keys(key('Esc'), key('Ctrl+s'));
   assert.equal(readFileSync(join(repository, 'src/app.ts'), 'utf8'), 'const a = 1;\r\nconst b = 2;\r\nconst c = 3;');

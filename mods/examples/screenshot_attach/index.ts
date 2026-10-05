@@ -10,6 +10,6 @@ export default function activate(api: ModAPI) {
     if (channel !== 'screenshot_attach/attach') return;
     const run = api.host.call('exec.run', { program: 'base64', argv: ['-i', 'screenshot.png'], max_output_bytes: 8_000_000 });
     const image = api.host.call('evidence.write', { media_type: 'image/png', base64: run.stdout.replace(/\s+/g, ''), label: 'screenshot' });
-    api.host.call('composer.write', { attach: [{ image }] });
+    api.host.call('composer.write', { revision: api.host.call('composer.read', null).revision, attach: [{ image }] });
   });
 }

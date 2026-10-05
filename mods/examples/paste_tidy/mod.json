@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "paste_tidy",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": ["composer"],
+  "compatibility": {"required_features": ["composer_v2"]}
+}

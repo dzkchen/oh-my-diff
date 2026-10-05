@@ -193,6 +193,11 @@ pub(crate) const LIFECYCLE_EVENTS: &[&str] = &[
     "compaction_start",
     "compaction_end",
     "agent_end",
+    "tool_batch_end",
+    "instructions_loaded",
+    "thread_settings",
+    "worktree",
+    "elicitation_result",
 ];
 
 pub(crate) fn event_allows(event: &str, operation: &str) -> bool {

@@ -1,4 +1,4 @@
-import type { CommandResult, Json, KeyAction, KeyName, ModAPI, TerminalComponent, TerminalListRow, TerminalRenderSite, TerminalTone } from '../../api.d.ts';
+import type { CommandResult, ComposerEdit, Json, KeyAction, KeyName, ModAPI, TerminalComponent, TerminalListRow, TerminalRenderSite, TerminalTone } from '../../api.d.ts';
 
 type Status = 'working' | 'waiting' | 'done' | 'error';
 type Thread = { id: string; name: string; cwd: string; branch: string | null; project: string; model: string | null; status: Status; updated: number; loaded: boolean };
@@ -173,10 +173,14 @@ export default function activate(api: ModAPI) {
     const read = api.host.tryCall('composer.read', null);
     return read.ok ? read.value.text : '';
   };
+  const writeDraft = (edit: ComposerEdit) => {
+    const read = api.host.tryCall('composer.read', null);
+    if (read.ok) api.host.tryCall('composer.write', { revision: read.value.revision, edit });
+  };
   const fill = (state: State, text: string) => {
     const draft = composerText();
     if (draft.trim()) state.restore = draft;
-    api.host.tryCall('composer.write', { text });
+    writeDraft({ kind: 'fill', text });
   };
   const resume = (state: State, id: string): string | null => {
     if (id === state.current) return 'Already in this session';
@@ -317,7 +321,7 @@ export default function activate(api: ModAPI) {
     }
     state.picker = null;
     if (value === 'restore') {
-      api.host.tryCall('composer.write', { text: state.restore ?? '' });
+      writeDraft({ kind: 'fill', text: state.restore ?? '' });
       state.restore = null;
       return null;
     }
@@ -351,7 +355,7 @@ export default function activate(api: ModAPI) {
     if (kind === 'tab') return (service<{ display: string | null }>(() => api.services.call('omd.panes', 'show_tab', { index: Number(target) })))?.display ?? null;
     if (kind === 'file') {
       const shown = service<{ display: string | null }>(() => api.services.call('omd.panes', 'open', { path: target }));
-      if (!shown) api.host.tryCall('composer.write', { insert: `@${target} ` });
+      if (!shown) writeDraft({ kind: 'insert', text: `@${target} ` });
       return shown?.display ?? null;
     }
     return null;
@@ -573,7 +577,7 @@ export default function activate(api: ModAPI) {
     const draft = state.drafts[thread_id];
     if (draft) {
       delete state.drafts[thread_id];
-      if (!composerText().trim()) api.host.tryCall('composer.write', { text: draft });
+      if (!composerText().trim()) writeDraft({ kind: 'fill', text: draft });
     }
     save(state);
   });

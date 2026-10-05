@@ -113,7 +113,11 @@
         "agent_lifecycle_v1",
         "peer_sessions_v1",
         "autonomous_turns_v1",
-        "provider_billing_v1"
+        "provider_billing_v1",
+        "compaction_intercept_v1",
+        "composer_v2",
+        "lifecycle_events_v1",
+        "user_submissions_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -160,6 +164,7 @@
         "terminal.image_sample",
         "composer.read",
         "composer.write",
+        "composer.suggest",
         "builtins.invoke",
         "terminal.open",
         "terminal.prompt",
@@ -1178,6 +1183,7 @@
         "omd_profiles",
         "omd_programmable_context",
         "omd_project_pi_prompts",
+        "omd_prompt_queue",
         "omd_reactive_rules",
         "omd_recovery",
         "omd_repository_analysis",
@@ -1290,10 +1296,6 @@
       "version": "0.1.0-preview.3",
       "source": "mods/first-party/omd_mini"
     },
-    "omd_usage": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_usage"
-    },
     "omd_model_picker": {
       "version": "0.3.0-preview.2",
       "source": "mods/first-party/omd_model_picker"
@@ -1338,6 +1340,10 @@
       "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_project_pi_prompts"
     },
+    "omd_prompt_queue": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_prompt_queue"
+    },
     "omd_reactive_rules": {
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_reactive_rules"
@@ -1373,6 +1379,10 @@
     "omd_typed_tasks": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_typed_tasks"
+    },
+    "omd_usage": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_usage"
     },
     "omd_workflow": {
       "version": "0.2.0-preview.2",

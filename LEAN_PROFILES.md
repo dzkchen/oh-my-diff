@@ -146,6 +146,10 @@ interface at the next quit ([details](mods/first-party/omd_mini/README.md)).
 cache, cost and quota panels, a Usage dialog (Alt+a) and the data for the
 theme's status-line segments ([details](mods/first-party/omd_usage/README.md)).
 
+`omd-package mod enable omd_prompt_queue` adds `/queue` and Alt+q: prompts you
+capture are kept per thread, can be edited, reordered and joined, and are sent
+as you, in order, when the session is idle ([details](mods/first-party/omd_prompt_queue/README.md)).
+
 Git mutations also need an explicit permission-profile grant for the repository's
 Git metadata and affected files. Codex's default `.git` protection is respected;
 enabling `omd_git` alone does not authorize writes. Run from the repository root.

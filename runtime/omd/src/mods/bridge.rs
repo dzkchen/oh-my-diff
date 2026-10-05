@@ -68,7 +68,10 @@ impl ModHostCall {
             "model.complete" | "model.fork" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
             "tools.invoke" | "tools.check" => Ok("interception"),
-            "composer.read" | "composer.write" => Ok("composer"),
+            "composer.read" | "composer.write" | "composer.suggest" => Ok("composer"),
+            "prompts.consent" | "prompts.submit" | "prompts.status" | "prompts.revoke" => {
+                Ok("composer")
+            }
             "builtins.invoke" | "commands.invoke" => Ok("builtins"),
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),

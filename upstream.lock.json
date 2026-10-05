@@ -17,7 +17,7 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "f89c0cd18dc0cfdc63c88cc2882427135cf46f009c4c64cf4620d2b8065a932c"
+      "sha256": "6d311f20158c49bc653337780165d2e416b2711275942625e3604edc6ee6f629"
     }
   ],
   "compatibility_evidence": ".docs/audits/batch4ca-focused-input-approval-20261001.md"

@@ -142,6 +142,10 @@ const rank = (code: string) => code.includes('U') || code === 'AA' || code === '
 const tone = (code?: string): TerminalTone => !code ? 'normal' : code === '!!' ? 'muted' : code === '??' ? 'accent' : rank(code) === 4 ? 'failure' : rank(code) === 3 ? 'attention' : 'success';
 
 export default function activate(api: ModAPI) {
+  const insertDraft = (text: string) => {
+    const draft = api.host.tryCall('composer.read', null);
+    if (draft.ok) api.host.tryCall('composer.write', { revision: draft.value.revision, edit: { kind: 'insert', text } });
+  };
   const glyph = api.settings.icons === 'ascii' ? { open: '- ', closed: '+ ', active: '*', idle: 'o' } : { open: '▾ ', closed: '▸ ', active: '●', idle: '○' };
   const empty = (): State => ({ layout: chat(), revision: null, repository: null, prefix: null, running: [], expanded: [], listings: {}, truncated: [], status: {}, dirs: {},
     selected: null, find: null, views: {}, diffs: {}, backup: null, watch: null, watched: [], search: null });
@@ -617,7 +621,7 @@ export default function activate(api: ModAPI) {
       case 'open':
         return kind === 'file' ? openFile(state, path) : null;
       case 'insert':
-        api.host.tryCall('composer.write', { insert: `${path} ` });
+        insertDraft(`${path} `);
         return null;
       case 'editor': {
         const root = repository(state);
@@ -709,7 +713,7 @@ export default function activate(api: ModAPI) {
         return null;
       }
       case 'insert':
-        api.host.tryCall('composer.write', { insert: `${view.path}:${span} ` });
+        insertDraft(`${view.path}:${span} `);
         return null;
       case 'editor': {
         const root = repository(state);

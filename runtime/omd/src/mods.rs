@@ -316,6 +316,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "peer_sessions_v1",
     "autonomous_turns_v1",
     "provider_billing_v1",
+    "compaction_intercept_v1",
+    "composer_v2",
+    "lifecycle_events_v1",
+    "user_submissions_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -388,6 +392,11 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.image_sample",
     "composer.read",
     "composer.write",
+    "composer.suggest",
+    "prompts.consent",
+    "prompts.submit",
+    "prompts.status",
+    "prompts.revoke",
     "builtins.invoke",
     "packages.list",
     "packages.preview",
@@ -560,6 +569,13 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("peer_message", "peers"),
     ("peer_receipt", "peers"),
     ("turn_queue", "autonomous"),
+    ("tool_batch_end", "lifecycle"),
+    ("instructions_loaded", "lifecycle"),
+    ("thread_settings", "lifecycle"),
+    ("worktree", "lifecycle"),
+    ("elicitation_result", "approvals"),
+    ("composer", "composer"),
+    ("prompt_expanded", "middleware"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "routing",
@@ -588,6 +604,9 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("peer_send", "peers"),
     ("peer_receive", "peers"),
     ("turn_stop", "autonomous"),
+    ("compaction", "compaction"),
+    ("elicitation", "approvals"),
+    ("composer_edit", "composer"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "prompt",
@@ -2635,6 +2654,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
         | "credentials.list"
         | "turns.activity"
         | "composer.read"
+        | "prompts.status"
         | "packages.list"
         | "packages.preview"
         | "exec.output_page"
@@ -4635,12 +4655,13 @@ impl ModHost {
     pub fn field_policies() -> Value {
         let mut policies = json!({
             "terminal": {"identity":"observe_only","presentation":"observe_only","greeting":"last_writer","session_title_suffix":"last_writer","welcome":"last_writer"},
-            "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},
+            "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"observe_only","provenance":"observe_only"},
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
             "agent": {"phase":"observe_only","agent":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
             "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
-            "intercept.input": {"thread_id":"observe_only","text":"replaceable","attachments":"observe_only"},
+            "intercept.input": {"thread_id":"observe_only","text":"replaceable","revision":"observe_only","attachments":"observe_only","elements":"observe_only"},
+            "intercept.composer_edit": {"source":"observe_only","caller":"observe_only","revision":"observe_only","edit":"replaceable"},
             "intercept.model_request": {"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable","model":"observe_only","provider":"observe_only","effort":"replaceable","sections":"replaceable","tools":"observe_only"},
             "intercept.response_stream": {"request_id":"observe_only","scope":"observe_only","synthetic":"observe_only","kind":"observe_only","index":"observe_only","item_id":"observe_only","protected":"observe_only","call_id":"observe_only","format":"observe_only","text":"replaceable","tool":"replaceable","arguments":"replaceable","status":"observe_only","usage":"observe_only"},            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
@@ -4688,6 +4709,14 @@ impl ModHost {
             (
                 "intercept.turn_stop",
                 json!({"thread_id":"observe_only","turn_id":"observe_only","message":"observe_only","continued":"observe_only","limit":"observe_only","provenance":"observe_only"}),
+            ),
+            (
+                "intercept.elicitation",
+                json!({"thread_id":"observe_only","turn_id":"observe_only","server":"observe_only","request_id":"observe_only","mode":"observe_only","message":"observe_only","schema":"observe_only"}),
+            ),
+            (
+                "intercept.compaction",
+                json!({"thread_id":"observe_only","turn_id":"observe_only","trigger":"observe_only","reason":"observe_only","phase":"observe_only","implementation":"observe_only","budget":"observe_only","items":"observe_only","history":"observe_only","summary_prompt":"replaceable"}),
             ),
         ] {
             policies[surface] = fields;

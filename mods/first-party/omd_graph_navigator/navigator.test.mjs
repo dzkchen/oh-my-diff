@@ -32,7 +32,8 @@ function run(input) {
 }
 const ask = (op, argument = '', state = null, receipts = []) => run({ event: 'channel', state, receipts,
   payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op, argument }, correlation: null, sequence: 1, dropped: 0 } });
-const write = insert => ({ call: { operation: 'composer.write', arguments: { insert } }, value: { written: true } });
+const draft = { call: { operation: 'composer.read', arguments: null }, value: { text: '', cursor: 0, selection: null, revision: 4, attachments: [], suggestion: null } };
+const write = insert => ({ call: { operation: 'composer.write', arguments: { revision: 4, edit: { kind: 'insert', text: insert } } }, value: { text: insert, cursor: 0, revision: 5 } });
 const open = (response = search) => ask('', '', null, [{ call: call('search', { query: '', page: 0, root: '' }), value: response }]);
 function rowFor(state) {
   const view = run({ event: 'terminal', state, payload: { event: 'idle' } });
@@ -52,10 +53,10 @@ test('the graph command hops to the native handler, which inserts only revalidat
   const mounted = run({ event: 'terminal', state: opened.state, payload: { event: 'idle' } });
   assert.equal(mounted.value.sites.dialog.components[0].children.find(item => item.type === 'list').selected, row.value);
   const packetCall = { call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: packet };
-  const insert = execute({ event: 'channel', state: opened.state, receipts: [packetCall], payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: row.value }, correlation: null, sequence: 1, dropped: 0 } }).output.host_call.arguments.insert;
+  const insert = execute({ event: 'channel', state: opened.state, receipts: [packetCall, draft], payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: row.value }, correlation: null, sequence: 1, dropped: 0 } }).output.host_call.arguments.edit.text;
   assert.match(insert, /live source code-graph evidence/);
   assert.match(insert, /"workspace_snapshot":false/);
-  const selected = ask('select', row.value, opened.state, [packetCall, write(insert)]);
+  const selected = ask('select', row.value, opened.state, [packetCall, draft, write(insert)]);
   assert.equal(selected.state.open, false);
 });
 
@@ -83,27 +84,27 @@ test('provider-valid long node IDs survive state, terminal selection, and servic
   const row = rowFor(opened.state);
   assert.notEqual(row.value, long);
   assert.ok(Buffer.byteLength(row.value, 'utf8') <= 256);
-  const selected = execute({ event: 'channel', state: opened.state, receipts: [{ call: call('select', { node_id: long, expected_source_digest: digest, root: '' }), value: { ...packet, nodes: [{ id: long }] } }],
+  const selected = execute({ event: 'channel', state: opened.state, receipts: [{ call: call('select', { node_id: long, expected_source_digest: digest, root: '' }), value: { ...packet, nodes: [{ id: long }] } }, draft],
     payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: row.value }, correlation: null, sequence: 1, dropped: 0 } }).output;
-  assert.match(selected.host_call.arguments.insert, /live source code-graph evidence/);
+  assert.match(selected.host_call.arguments.edit.text, /live source code-graph evidence/);
   assert.match(open({ ...response, rows: [{ ...response.rows[0], id: `${long}x` }] }).state.error, /service response is invalid/);
 });
 
 test('UTF-8 insert limit refuses oversized evidence before closing the dialog', () => {
   const opened = open();
   const token = rowFor(opened.state).value;
-  const attempt = evidence => execute({ event: 'channel', state: opened.state, receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: evidence }],
+  const attempt = (evidence, read = [draft]) => execute({ event: 'channel', state: opened.state, receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: evidence }, ...read],
     payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: token }, correlation: null, sequence: 1, dropped: 0 } }).output;
-  const baseline = attempt({ ...packet, guidance: '' }).host_call.arguments.insert;
+  const baseline = attempt({ ...packet, guidance: '' }).host_call.arguments.edit.text;
   const padding = 16_384 - Buffer.byteLength(baseline, 'utf8');
   assert.ok(padding > 0);
-  assert.equal(Buffer.byteLength(attempt({ ...packet, guidance: 'x'.repeat(padding) }).host_call.arguments.insert, 'utf8'), 16_384);
-  const over = attempt({ ...packet, guidance: 'x'.repeat(padding + 1) });
+  assert.equal(Buffer.byteLength(attempt({ ...packet, guidance: 'x'.repeat(padding) }).host_call.arguments.edit.text, 'utf8'), 16_384);
+  const over = attempt({ ...packet, guidance: 'x'.repeat(padding + 1) }, []);
   assert.match(over.state.error, /composer insertion limit/);
   assert.equal(over.state.open, true);
   const oversized = { ...packet, guidance: 'é'.repeat(8100) };
   assert.ok(Buffer.byteLength(JSON.stringify(oversized), 'utf8') < 32 * 1024);
-  const refused = attempt(oversized);
+  const refused = attempt(oversized, []);
   assert.match(refused.state.error, /composer insertion limit/);
   assert.equal(refused.state.digest, digest);
 });

@@ -64,6 +64,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_prompt_queue",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Persistent per-thread queue of the user's prompts: capture, edit, reorder, join and send as the user when idle",
+      "source": "mods/first-party/omd_prompt_queue",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; composer_v2, user_submissions_v1, store_thread_v1, state_scopes_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_usage",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",

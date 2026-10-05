@@ -106,6 +106,108 @@ pub fn view(items: &[Value]) -> Value {
     )
 }
 
+const COMPACTION_PREVIEW_BYTES: usize = 512;
+const COMPACTION_VIEW_ITEMS: usize = 1024;
+const COMPACTION_VIEW_TEXT: usize = 131_072;
+
+/// Newest items first get text previews until the budget is spent; older ones keep their shape.
+pub fn compaction_view(items: &[Value]) -> Value {
+    let start = items.len().saturating_sub(COMPACTION_VIEW_ITEMS);
+    let mut budget = COMPACTION_VIEW_TEXT;
+    let mut view = items
+        .iter()
+        .enumerate()
+        .skip(start)
+        .rev()
+        .map(|(index, item)| {
+            let body = text(item);
+            let mut end = body.as_deref().map_or(0, |body| {
+                body.len().min(COMPACTION_PREVIEW_BYTES).min(budget)
+            });
+            let preview = body.as_deref().map(|body| {
+                while !body.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &body[..end]
+            });
+            budget -= end;
+            json!({"index": index, "type": item["type"], "role": item.get("role"),
+                "call_id": call_id(item), "editable": editable(item), "images": images(item),
+                "text": preview, "bytes": body.as_deref().map_or(0, str::len)})
+        })
+        .collect::<Vec<_>>();
+    view.reverse();
+    Value::Array(view)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompactionEdit {
+    keep: Vec<usize>,
+    #[serde(default)]
+    insert: Vec<Insert>,
+}
+
+/// Builds a replacement history from kept items and inserted user or developer text.
+pub fn compact(items: &[Value], edit: CompactionEdit) -> Result<Vec<Value>, String> {
+    let invalid = |reason: &str| Err(format!("compaction_history_invalid: {reason}"));
+    let bytes = edit.insert.iter().map(|i| i.text.len()).sum::<usize>();
+    if bytes > EDIT_BYTES || edit.keep.len() + edit.insert.len() > 4096 {
+        return invalid("limit");
+    }
+    let kept: BTreeSet<usize> = edit.keep.iter().copied().collect();
+    if kept.iter().any(|&index| index >= items.len()) {
+        return invalid("keep");
+    }
+    let reasoning = |index: usize| items[index]["type"] == "reasoning";
+    for &index in &kept {
+        if reasoning(index) && !kept.contains(&(index + 1)) {
+            return invalid("reasoning_pair");
+        }
+        if index > 0 && reasoning(index - 1) && !kept.contains(&(index - 1)) {
+            return invalid("reasoning_pair");
+        }
+        if let Some(id) = call_id(&items[index])
+            && items
+                .iter()
+                .enumerate()
+                .any(|(other, item)| call_id(item) == Some(id) && !kept.contains(&other))
+        {
+            return invalid("unpaired_call");
+        }
+    }
+    let mut inserted: BTreeMap<usize, Vec<Value>> = BTreeMap::new();
+    for insert in edit.insert {
+        if insert.before > items.len()
+            || !matches!(insert.role.as_str(), "user" | "developer")
+            || insert.text.trim().is_empty()
+        {
+            return invalid("insert");
+        }
+        if insert.before > 0 && reasoning(insert.before - 1) && kept.contains(&(insert.before - 1))
+        {
+            return invalid("reasoning_pair");
+        }
+        inserted
+            .entry(insert.before)
+            .or_default()
+            .push(json!({"type": "message",
+            "role": insert.role, "content": [{"type": "input_text", "text": insert.text}]}));
+    }
+    let mut result = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        result.extend(inserted.remove(&index).unwrap_or_default());
+        if kept.contains(&index) {
+            result.push(item.clone());
+        }
+    }
+    result.extend(inserted.remove(&items.len()).unwrap_or_default());
+    if result.is_empty() {
+        return invalid("empty");
+    }
+    Ok(result)
+}
+
 pub fn apply(items: &[Value], edit: HistoryEdit) -> Result<Vec<Value>, String> {
     let invalid = |reason: &str| Err(format!("history_edit_invalid: {reason}"));
     let last = items.len().checked_sub(1).ok_or("history_empty")?;

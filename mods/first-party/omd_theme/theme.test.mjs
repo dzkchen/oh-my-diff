@@ -180,8 +180,8 @@ test('powerline presets show session, Git, context and OMD state; below adds one
       const { operation, arguments: args } = output.host_call;
       const value = operation === 'store.get' ? stash && { value: stash, revision: 1, provenance: {} }
         : operation === 'store.put' ? (stash = args.value, { revision: 2 })
-        : operation === 'composer.read' ? { text: composer.text, cursor: 0, attachments: [] }
-        : (composer.text = args.text ?? composer.text + args.insert, { text: composer.text, cursor: 0 });
+        : operation === 'composer.read' ? { text: composer.text, cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null }
+        : (composer.text = args.edit.kind === 'fill' ? args.edit.text : composer.text + args.edit.text, { text: composer.text, cursor: 0, revision: 2 });
       receipts.push({ call: output.host_call, value });
     }
   };

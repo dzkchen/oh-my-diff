@@ -90,7 +90,8 @@ export default function activate(api: ModAPI) {
     if (content.length > 32 * 1024) return 'graph selection exceeds the bounded evidence limit';
     const insert = `Use this live source code-graph evidence. Verify inferred and unknown relationships against source before relying on them.\n\`\`\`json\n${content}\n\`\`\`\n`;
     if (utf8Bytes(insert) > INSERT_BYTES_LIMIT) return 'graph selection exceeds the composer insertion limit';
-    const written = api.host.tryCall('composer.write', { insert });
+    const draft = api.host.tryCall('composer.read', null);
+    const written = draft.ok ? api.host.tryCall('composer.write', { revision: draft.value.revision, edit: { kind: 'insert', text: insert } }) : draft;
     if (!written.ok) return written.error;
     save({ ...state, open: false });
     return null;

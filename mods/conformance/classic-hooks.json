@@ -1,0 +1,203 @@
+{
+  "note": "Every classic hook name `api.hook` accepts, the native event or interceptor it maps to, the owner of that seam and the check exercising it. Later batches add their contracts here; the final coverage audit belongs to Batch 4el.",
+  "hooks": [
+    {
+      "hook": "PreToolUse",
+      "native": "tool",
+      "owner": "4ea tool continuation",
+      "check": "node:classic hooks map onto native events and interceptors with glob and negated matchers"
+    },
+    {
+      "hook": "PostToolUse",
+      "native": "tool_result",
+      "owner": "lifecycle",
+      "check": "node:classic hooks map onto native events and interceptors with glob and negated matchers"
+    },
+    {
+      "hook": "PostToolUseFailure",
+      "native": "tool_result",
+      "owner": "lifecycle",
+      "check": "node:classic hooks map onto native events and interceptors with glob and negated matchers"
+    },
+    {
+      "hook": "PostToolBatch",
+      "native": "tool_batch_end",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:settled_batches_are_reported_and_failed_turns_may_continue"
+    },
+    {
+      "hook": "PermissionRequest",
+      "native": "approval",
+      "owner": "4ec approval middleware",
+      "check": "patch:approval_gates_tighten_before_automatic_review"
+    },
+    {
+      "hook": "PermissionDenied",
+      "native": "approval_result",
+      "owner": "4ec approval middleware",
+      "check": "patch:approval_gates_tighten_before_automatic_review"
+    },
+    {
+      "hook": "UserPromptSubmit",
+      "native": "input",
+      "owner": "4ea input interception",
+      "check": "rust:input_and_model_request_continuations_pass_downstream_results_or_deny"
+    },
+    {
+      "hook": "UserPromptExpansion",
+      "native": "prompt_expanded",
+      "owner": "4eh composer_v2",
+      "check": "patch:edits_compare_revisions_and_keep_cursor_and_selection"
+    },
+    {
+      "hook": "SessionStart",
+      "native": "session",
+      "owner": "lifecycle middleware",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "SessionEnd",
+      "native": "session",
+      "owner": "lifecycle middleware",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "Setup",
+      "native": "start",
+      "owner": "lifecycle",
+      "check": "rust:command_descriptions_tool_labels_and_lifecycle_events_register"
+    },
+    {
+      "hook": "Stop",
+      "native": "turn_stop",
+      "owner": "4eg autonomous_turns_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "StopFailure",
+      "native": "turn_stop",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "SubagentStart",
+      "native": "agent",
+      "owner": "4eg agent_lifecycle_v1",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "SubagentStop",
+      "native": "agent",
+      "owner": "4eg agent_lifecycle_v1",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "TaskCreated",
+      "native": "agent",
+      "owner": "4eg agent_lifecycle_v1",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "TaskCompleted",
+      "native": "agent",
+      "owner": "4eg agent_lifecycle_v1",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "TeammateIdle",
+      "native": "idle",
+      "owner": "lifecycle",
+      "check": "rust:command_descriptions_tool_labels_and_lifecycle_events_register"
+    },
+    {
+      "hook": "PreCompact",
+      "native": "compaction",
+      "owner": "4eh compaction_intercept_v1",
+      "check": "patch:compaction_chains_answer_skip_replace_and_fail_closed"
+    },
+    {
+      "hook": "PostCompact",
+      "native": "compaction_end",
+      "owner": "4eh compaction_intercept_v1",
+      "check": "patch:a_summary_answer_replaces_manual_compaction_without_a_provider_call"
+    },
+    {
+      "hook": "PreModelSwitch",
+      "native": "model_request",
+      "owner": "4ee model interception",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "PostModelSwitch",
+      "native": "thread_settings",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "CwdChanged",
+      "native": "thread_settings",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "DirectoryAdded",
+      "native": "thread_settings",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "ConfigChange",
+      "native": "config_change",
+      "owner": "4ed command and config middleware",
+      "check": "rust:command_and_config_interceptors_compose_transform_and_keep_floors"
+    },
+    {
+      "hook": "InstructionsLoaded",
+      "native": "instructions_loaded",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "FileChanged",
+      "native": "workspace_change",
+      "owner": "events_v1 watches",
+      "check": "rust:workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions"
+    },
+    {
+      "hook": "WorktreeCreate",
+      "native": "worktree",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "WorktreeRemove",
+      "native": "worktree",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "Elicitation",
+      "native": "elicitation",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "ElicitationResult",
+      "native": "elicitation_result",
+      "owner": "4eh lifecycle_events_v1",
+      "check": "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations"
+    },
+    {
+      "hook": "MessageDisplay",
+      "native": "model_response",
+      "owner": "4ee model interception",
+      "check": "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only"
+    },
+    {
+      "hook": "Notification",
+      "native": "app_notification",
+      "owner": "app_v1",
+      "check": "patch:capability_context_and_unrouted_methods_are_enforced"
+    }
+  ]
+}

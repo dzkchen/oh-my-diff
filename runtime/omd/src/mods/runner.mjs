@@ -136,9 +136,17 @@ function surfaces(pattern) {
   return Object.keys(surface.intercept).filter(name => request.capabilities.includes(surface.intercept[name])
     && globMatch(negated ? pattern.slice(1) : pattern, name) !== negated);
 }
+const MATCH = Symbol('match');
+function tagged(kind, value) {
+  const matcher = { ['$' + kind]: value };
+  Object.defineProperty(matcher, MATCH, { value: kind });
+  return Object.freeze(matcher);
+}
 function serializeMatcher(value, depth = 0) {
   if (depth > 6) throw new Error('invalid_interceptor_matcher: deeper than 6 levels');
   if (value instanceof RegExp) return { $regex: value.source, $flags: value.flags };
+  if (value?.[MATCH] === 'glob') return { $glob: value.$glob };
+  if (value?.[MATCH] === 'not') return { $not: serializeMatcher(value.$not, depth + 1) };
   if (Array.isArray(value)) return value.map(item => serializeMatcher(item, depth + 1));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => {
     if (key.startsWith('$')) throw new Error('invalid_interceptor_matcher: keys cannot start with $');
@@ -148,6 +156,10 @@ function serializeMatcher(value, depth = 0) {
   throw new Error('invalid_interceptor_matcher');
 }
 function matches(matcher, value) {
+  if (matcher?.[MATCH] === 'not') return !matches(matcher.$not, value);
+  if (matcher?.[MATCH] === 'glob') {
+    return typeof value === 'string' ? globMatch(matcher.$glob, value) : Array.isArray(value) && value.some(item => matches(matcher, item));
+  }
   if (Array.isArray(matcher)) return matcher.some(alternative => matches(alternative, value));
   if (Array.isArray(value)) return value.some(item => matches(matcher, item));
   if (matcher instanceof RegExp) {
@@ -276,6 +288,82 @@ function unique(map, name, handler) {
   if (typeof handler !== 'function') throw new Error('handler_required: ' + name);
   map.set(name, handler);
 }
+// Classic hook name: [native surface or event, kind, subject, when].
+const CLASSIC = {
+  PreToolUse: ['tool', 'intercept', e => e.tool],
+  PostToolUse: ['tool_result', 'on', e => e.tool, e => e.outcome === 'succeeded'],
+  PostToolUseFailure: ['tool_result', 'on', e => e.tool, e => e.outcome !== 'succeeded'],
+  PostToolBatch: ['tool_batch_end', 'on', e => e.calls.map(call => call.tool)],
+  PermissionRequest: ['approval', 'middleware', e => e.kind],
+  PermissionDenied: ['approval_result', 'on', e => e.kind, e => ['denied', 'aborted', 'timed_out'].includes(e.decision)],
+  UserPromptSubmit: ['input', 'intercept', e => e.text],
+  UserPromptExpansion: ['prompt_expanded', 'on', e => e.items.map(item => item.kind)],
+  SessionStart: ['session', 'middleware', e => e.phase, e => e.phase === 'start' || e.phase === 'resume'],
+  SessionEnd: ['session', 'middleware', e => e.phase, e => e.phase === 'stop'],
+  Setup: ['start', 'on', () => null],
+  Stop: ['turn_stop', 'intercept', e => e.outcome, e => e.outcome !== 'error'],
+  StopFailure: ['turn_stop', 'intercept', e => e.error, e => e.outcome === 'error'],
+  SubagentStart: ['agent', 'middleware', e => e.agent.origin, e => e.phase === 'start' && e.agent.origin === 'model'],
+  SubagentStop: ['agent', 'middleware', e => e.agent.origin, e => e.phase === 'end' && e.agent.origin === 'model'],
+  TaskCreated: ['agent', 'middleware', e => e.agent.role, e => e.phase === 'start' && e.agent.origin !== 'model'],
+  TaskCompleted: ['agent', 'middleware', e => e.agent.role, e => e.phase === 'end' && e.agent.origin !== 'model'],
+  TeammateIdle: ['idle', 'on', () => null],
+  PreCompact: ['compaction', 'intercept', e => e.trigger],
+  PostCompact: ['compaction_end', 'on', e => e.trigger],
+  PreModelSwitch: ['model_request', 'intercept', e => e.route],
+  PostModelSwitch: ['thread_settings', 'on', e => e.model.after, e => e.model.before !== e.model.after],
+  CwdChanged: ['thread_settings', 'on', e => e.cwd.after, e => e.cwd.before !== e.cwd.after],
+  DirectoryAdded: ['thread_settings', 'on', e => e.roots.added, e => e.roots.added.length > 0],
+  ConfigChange: ['config_change', 'on', e => e.key],
+  InstructionsLoaded: ['instructions_loaded', 'on', e => e.source],
+  FileChanged: ['workspace_change', 'on', e => e.changes.map(change => change.path)],
+  WorktreeCreate: ['worktree', 'on', e => e.path, e => e.phase === 'created'],
+  WorktreeRemove: ['worktree', 'on', e => e.path, e => e.phase === 'removed'],
+  Elicitation: ['elicitation', 'intercept', e => e.server],
+  ElicitationResult: ['elicitation_result', 'on', e => e.server],
+  MessageDisplay: ['model_response', 'on', e => e.route ?? null],
+  Notification: ['app_notification', 'on', e => e.method],
+};
+const classic = new Map();
+function envelope(name, native, input, subject, next, delivery) {
+  return Object.freeze({ hook: name, event: native, subject, thread_id: input?.thread_id ?? next?.origin?.thread_id ?? null,
+    turn_id: input?.turn_id ?? null, origin: next?.origin ?? null, generation: request.entrypoint_sha256 ?? null,
+    original: next ? next.original : input, effective: input, delivery });
+}
+function hook(name, options, handler) {
+  if (handler === undefined) [options, handler] = [{}, options];
+  const entry = Object.hasOwn(CLASSIC, name) ? CLASSIC[name] : undefined;
+  if (!entry) throw new Error('unsupported_classic_hook: ' + name);
+  if (typeof handler !== 'function') throw new Error('handler_required: ' + name);
+  for (const key of Object.keys(options ?? {})) if (!['match', 'required'].includes(key)) throw new Error('unsupported_hook_option: ' + key);
+  const [native, kind, subject, when = () => true] = entry;
+  const match = options?.match;
+  const selected = input => when(input) && (match === undefined || matches(match, subject(input)));
+  if (kind === 'intercept') {
+    const delivery = options?.required === true ? 'required' : 'optional';
+    return api.intercept(native, { required: options?.required === true }, async (input, next) => {
+      if (!selected(input)) return next(input);
+      const answer = await handler(envelope(name, native, input, subject(input), next, delivery));
+      return answer === undefined || answer === null ? next(input) : answer;
+    });
+  }
+  if (options?.required === true) throw new Error('classic_hook_delivery_optional: ' + name);
+  if (!classic.has(native)) {
+    classic.set(native, []);
+    const dispatch = async input => {
+      let answer = null;
+      for (const [hookName, selectedBy, run] of classic.get(native)) {
+        if (!selectedBy(input)) continue;
+        const result = await run(envelope(hookName, native, input, CLASSIC[hookName][2](input), null, 'optional'));
+        if (answer === null && result !== undefined && result !== null) answer = result;
+      }
+      return kind === 'middleware' ? answer : undefined;
+    };
+    if (kind === 'middleware') api.middleware(native, dispatch);
+    else api.on(native, dispatch);
+  }
+  classic.get(native).push([name, selected, handler]);
+}
 const timers = new Map();
 async function dispatchTimer(event) {
   const entry = timers.get(event?.key);
@@ -355,6 +443,11 @@ const api = Object.freeze({
       registration.catch = true;
     } });
   },
+  hook,
+  match: Object.freeze({ glob: pattern => {
+    if (typeof pattern !== 'string' || !pattern || pattern.length > 256) throw new Error('invalid_glob_matcher');
+    return tagged('glob', pattern);
+  }, not: matcher => tagged('not', matcher) }),
   replace(point, handler) {
     if (!surface.replacements.includes(point)) throw new Error('unsupported_replacement_point: ' + point);
     api.on(point, handler);

@@ -70,10 +70,10 @@ function fixture() {
         if (args.name === 'omd.panes') return { display: null };
         if (args.name === 'omd.workflow' && workflow) return workflow;
         throw new Error('optional_service_unavailable');
-      case 'composer.read': return { text: composer, cursor: 0, attachments: [] };
+      case 'composer.read': return { text: composer, cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
       case 'composer.write':
-        composer = args.text ?? `${composer}${args.insert ?? ''}`;
-        return { text: composer, cursor: 0 };
+        composer = args.edit.kind === 'fill' ? args.edit.text : `${composer}${args.edit.text}`;
+        return { text: composer, cursor: 0, revision: 2 };
       default: return { invoked: true };
     }
   };

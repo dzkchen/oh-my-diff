@@ -246,17 +246,18 @@ export default function activate(api: ModAPI) {
       return { display };
     };
     if (argument === 'list') return { display: stash.history.length ? stash.history.map((text, index) => `${index + 1}. ${visible(text.replace(/\s+/g, ' '), 72)}`).join('\n') : 'No stashed drafts' };
-    if (argument) { const text = stash.history[Number(argument) - 1]; if (!/^\d+$/.test(argument) || text === undefined) throw new Error('Use /omd_theme:stash, stash list or stash N'); api.host.call('composer.write', { insert: text }); return null; }
-    const draft = api.host.call('composer.read', null).text;
+    if (argument) { const text = stash.history[Number(argument) - 1]; if (!/^\d+$/.test(argument) || text === undefined) throw new Error('Use /omd_theme:stash, stash list or stash N'); const read = api.host.call('composer.read', null); api.host.call('composer.write', { revision: read.revision, edit: { kind: 'insert', text } }); return null; }
+    const read = api.host.call('composer.read', null);
+    const draft = read.text;
     if (!draft.trim()) {
       if (stash.active === null) return { display: 'Nothing to stash' };
-      api.host.call('composer.write', { text: stash.active });
+      api.host.call('composer.write', { revision: read.revision, edit: { kind: 'fill', text: stash.active } });
       return put(null, stash.history, 'Stash restored');
     }
     if (bytes(draft) > 16384) throw new Error('Drafts over 16 KiB are not stashed');
     const history = [draft, ...stash.history.filter(text => text !== draft)].slice(0, STASH_HISTORY);
     const result = put(draft, history, stash.active === null ? 'Draft stashed; Alt+z restores it' : 'Stash updated; Alt+z restores it');
-    api.host.call('composer.write', { text: '' });
+    api.host.call('composer.write', { revision: read.revision, edit: { kind: 'fill', text: '' } });
     return result;
   }), { description: 'Stash the composer draft or restore it (Alt+z); stash list, stash N inserts a recent one' });
 

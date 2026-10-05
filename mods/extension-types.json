@@ -297,6 +297,18 @@
       "why_mod": "Tightens live native approval decisions before hooks and automatic review, which hooks cannot force."
     },
     {
+      "path": "mods/examples/ghost_history",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Suggests the rest of a recent prompt as revision-bound ghost text from draft change events, which skills and hooks cannot draw."
+    },
+    {
+      "path": "mods/examples/paste_tidy",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Rewrites or refuses pasted draft text through the composer_edit interceptor chain before it reaches the draft."
+    },
+    {
       "path": "mods/examples/approval_delegate",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -583,6 +595,12 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, compact tool summaries, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_prompt_queue",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the user prompt queue: thread-scoped entries, capture from the draft, edit/reorder/join/send commands, idle draining through host consents and pause on a stopped turn; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_usage",

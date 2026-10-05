@@ -100,13 +100,19 @@ pub(super) fn selects(pattern: &str, surface: &str, capabilities: &[String]) -> 
     entitled && pattern != "!*" && glob(selector, surface) != negated
 }
 
-/// A RegExp leaf can only be decided by the runner, so it always passes this filter.
+/// RegExp and negated leaves can only be decided by the runner, so they pass this filter.
 fn may_match(matcher: &Value, value: &Value) -> bool {
     match (matcher, value) {
         (Value::Array(alternatives), _) => alternatives.iter().any(|item| may_match(item, value)),
         (_, Value::Array(items)) => items.iter().any(|item| may_match(matcher, item)),
         (Value::Object(object), _) if object.contains_key("$regex") => {
             !value.is_object() && !value.is_null()
+        }
+        (Value::Object(object), _) if object.contains_key("$not") => true,
+        (Value::Object(object), Value::String(text)) if object.contains_key("$glob") => {
+            object["$glob"]
+                .as_str()
+                .is_some_and(|pattern| glob(pattern, text))
         }
         (Value::Object(object), Value::Object(value)) => object
             .iter()
@@ -211,6 +217,8 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_offers" => &["offers"],
         "agent_spawn" => &["definition", "prompt", "model", "effort", "cwd", "tools"],
         "peer_send" | "peer_receive" => &["data"],
+        "compaction" => &["summary_prompt"],
+        "composer_edit" => &["edit"],
         _ => &[],
     };
     let (Some(original), Some(object)) = (before.as_object(), input.as_object()) else {
@@ -264,6 +272,14 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_offers" => offers(&input["offers"], &original["offers"]),
         "agent_spawn" => spawn_request(input, before),
         "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
+        "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
+        "compaction" => {
+            input["summary_prompt"] == before["summary_prompt"]
+                || before["summary_prompt"].is_string()
+                    && input["summary_prompt"]
+                        .as_str()
+                        .is_some_and(|text| !text.trim().is_empty() && text.len() <= 32_768)
+        }
         _ => true,
     };
     if unchanged && typed {
@@ -271,6 +287,21 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
     } else {
         Err(failure(format!("invalid_continuation_input: {surface}")))
     }
+}
+
+/// A draft edit may change only its text.
+fn composer_edit(edit: &Value, given: &Value) -> bool {
+    edit.as_object()
+        .zip(given.as_object())
+        .is_some_and(|(edit, given)| {
+            edit.len() == given.len()
+                && edit
+                    .iter()
+                    .all(|(key, value)| key == "text" || given.get(key) == Some(value))
+        })
+        && edit["text"]
+            .as_str()
+            .is_some_and(|text| text.len() <= 65_536)
 }
 
 /// Tool specs may drop, defer or re-describe tools they were given, never add or rename one.
@@ -518,6 +549,33 @@ fn validate_result(
             })
         }
         "peer_send" | "peer_receive" => deny,
+        "composer_edit" => {
+            deny || object.is_some_and(|object| object.len() == 1)
+                && composer_edit(&result["edit"], &input["edit"])
+        }
+        "elicitation" => {
+            object.is_some_and(|object| object.len() == 1)
+                && (result["accept"].is_object()
+                    && serde_json::to_vec(&result["accept"])?.len() <= 65_536
+                    || text("decline", 512)
+                    || text("cancel", 512))
+        }
+        "compaction" => {
+            let reason = |key: &str| {
+                object.is_some_and(|object| object.len() == 1)
+                    && result[key]
+                        .as_str()
+                        .is_some_and(|text| !text.trim().is_empty() && text.len() <= 512)
+            };
+            let summary = object.is_some_and(|object| object.len() == 1)
+                && result["summary"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty() && text.len() <= 65_536);
+            let history = object.is_some_and(|object| object.len() == 1)
+                && result["history"]["keep"].is_array()
+                && serde_json::to_vec(&result["history"])?.len() <= 262_144;
+            summary || history || last.is_none() && (reason("skip") || reason("defer"))
+        }
         "turn_stop" => {
             object.is_some_and(|object| object.len() == 1)
                 && result["continue"]

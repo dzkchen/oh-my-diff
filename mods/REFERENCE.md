@@ -49,17 +49,17 @@ native work.
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane` |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` |
-| `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` |
+| `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
-| `composer` | `composer.read`, `composer.write`, the `completion` replacement |
+| `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` interceptor and the `completion` replacement |
 | `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` interceptors |
 | `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
-| `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
+| `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events; `compaction` also owns the `compaction` interceptor |
 | `os` | `sandbox: "none"` on `exec.run`, `process.start` and `terminal.pty` start (`unrestricted_process_v1`) |
 | `approve` | `{approve}` from the `approval` middleware inside the manifest's `approves` scope (`delegated_approval_v1`) |
 | `approve.override` | delegated approval of commands the user's own execpolicy rules forbid |
@@ -852,11 +852,87 @@ one. The owner gets `turn_queue` events: `started`, `expired`, `dropped`
 
 Interrupting a turn (Esc) pauses every mod queue of the thread until the user
 next sends input; disabling the mod or revoking its grant drops its entries.
-`turn_stop` interceptors run when the model would end a lead turn, with `{turn_id,
-message, continued, limit, provenance}`; answering `{continue: prompt}` keeps the
-same turn sampling with a labelled continuation, at most `max_continuations` per
-turn for that mod and 4 in total. Continuations cannot mark verifiers passed or
-submit receipts; a failed turn can only be retried by queuing a new prompt.
+`turn_stop` interceptors run when the model would end a lead turn, and after a
+lead turn fails without being interrupted, with `{turn_id, outcome, error,
+message, continued, limit, provenance}` (`outcome` is `completed` or `error`);
+answering `{continue: prompt}` keeps the same turn sampling with a labelled
+continuation, at most `max_continuations` per turn for that mod and 4 in total.
+Continuations cannot mark verifiers passed or submit receipts.
+
+### User prompt submissions (`user_submissions_v1`)
+
+A mod with `composer` can hold prompts the user captured and send them later as
+the user's own messages. `prompts.consent {text, attachments?}` (61,440 bytes,
+at most 8 image resources) runs only in user contexts (a command, key binding or
+user component action) and records a single-use consent bound to the mod, the
+thread and the exact content; at most 64 are pending per mod and thread, and
+consents of mods that are no longer loaded are dropped. Consents live in the mod
+store outside mod state and are not copied into forks.
+`prompts.submit {consent, text, attachments?, mode, client_id?}` works from any
+context: it spends the consent on exactly that content and submits it through
+the terminal's own path as a user message, `mode: 'turn'` starting a turn when
+the thread is idle and `'steer'` steering the running turn, under the thread's
+permissions, route and spending. It returns `{status: 'started' | 'steered',
+client_id}` or, without spending the consent, `{status: 'not_submitted',
+reason}` (`busy`, `no_active_turn`, `session_starting`); a spent, changed or
+missing consent fails. `prompts.status {consent}` is `pending`, `missing`,
+`delivered` (the message with that `client_id` was committed to the thread,
+also when replayed on resume) or `unconfirmed` (spent, but no commit seen), so a
+caller can reconcile an uncertain submission instead of sending twice;
+`prompts.revoke {consent}` drops one. A consent never grants autonomous
+authority: anything not captured by the user still needs `autonomous`.
+
+### Lifecycle events and classic hooks (`lifecycle_events_v1`)
+
+Observe-only events (capability `lifecycle` unless noted), all for the lead
+thread:
+
+- `tool_batch_end {turn_id, calls: [{call_id, tool, outcome}]}` after every
+  call one model response dispatched has settled.
+- `instructions_loaded {kind, source, sha256, bytes, reason}` when the host
+  loads AGENTS.md instructions (`instructions`, at `session_start` or on
+  `refresh` when they change), a skill (`skill`, `explicit` or `implicit`) or a
+  user attachment (`attachment`).
+- `thread_settings {cwd, roots: {added, removed}, model, effort, provider}`
+  with `before`/`after` values after the thread's working directory, workspace
+  roots or model settings change.
+- `worktree {phase: 'created' | 'removed', path, owner: 'agent' | 'tui'}` for
+  isolated agent worktrees and worktrees the terminal creates or removes.
+- `elicitation_result {server, request_id, action, content, by}` (capability
+  `approvals`) after an MCP elicitation is answered; password and write-only
+  fields are `[redacted]`.
+
+`api.intercept('elicitation', …)` (capability `approvals`) sees MCP form
+elicitations before the user is asked: `{server, request_id, mode, message,
+schema}`. A handler may answer `{accept: content}` (only declared fields and
+every required one), `{decline}` or `{cancel}`; passing it on asks the user.
+URL and user-verification elicitations and forms with password or write-only
+fields are never offered to mods.
+
+`api.hook(name, [options], handler)` adapts the 33 classic hook names onto
+these events and the existing events and interceptors: `PreToolUse` (`tool`),
+`PostToolUse` and `PostToolUseFailure` (`tool_result`), `PostToolBatch`
+(`tool_batch_end`), `PermissionRequest` (`approval`), `PermissionDenied`
+(`approval_result`), `UserPromptSubmit` (`input`), `UserPromptExpansion`
+(`prompt_expanded`), `SessionStart` and `SessionEnd` (`session`), `Setup`
+(`start`), `Stop` and `StopFailure` (`turn_stop`), `SubagentStart` and
+`SubagentStop` (`agent`, model-spawned), `TaskCreated` and `TaskCompleted`
+(`agent`, other workers), `TeammateIdle` (`idle`), `PreCompact` (`compaction`),
+`PostCompact` (`compaction_end`), `PreModelSwitch` (`model_request`),
+`PostModelSwitch`, `CwdChanged` and `DirectoryAdded` (`thread_settings`),
+`ConfigChange` (`config_change`), `InstructionsLoaded` (`instructions_loaded`),
+`FileChanged` (`workspace_change`), `WorktreeCreate` and `WorktreeRemove`
+(`worktree`), `Elicitation` (`elicitation`), `ElicitationResult`
+(`elicitation_result`), `MessageDisplay` (`model_response`) and `Notification`
+(`app_notification`). The handler receives `{hook, event, subject, thread_id,
+turn_id, origin, generation, original, effective, delivery}`; `options.match`
+filters the hook's subject (for example the tool name) with exact values,
+arrays, regular expressions, `api.match.glob(pattern)` and
+`api.match.not(matcher)`, which also work in interceptor `match` options.
+Interceptor-backed hooks may be `required` and may return an answer such as
+`{deny}` or `{continue}`; returning nothing passes the call on. Event-backed
+hooks are delivered best-effort (`delivery: 'optional'`); a mod that uses a hook
+cannot also register the same native event itself.
 
 ### Framed processes
 
@@ -1355,8 +1431,9 @@ and dialogs (`ui_composition_v1`). Operations:
   thread's background terminals and their child processes, read by the host
   outside the mod sandbox (at most 32 ports, 3 s per probe).
 - `terminal.show_thread`, `terminal.import_file` (confirmed, at most 8 MiB),
-  `composer.read` and `composer.write` (text and `{image}` resource
-  attachments). The import confirmation shows the resolved path.
+  `composer.read`, `composer.write` and `composer.suggest` (see [Composer
+  drafts and suggestions](#composer-drafts-and-suggestions-composer_v2)). The
+  import confirmation shows the resolved path.
 - `terminal.open {url} | {path}` opens an http(s) URL or an existing HTML,
   Markdown, text, PDF or image file after a native confirmation;
   `{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file in
@@ -1463,6 +1540,46 @@ stale results are dropped. While the user types arguments to a mod command
 `{items: [{insert}]}` and the list opens only when it has items. A mod can
 therefore complete its own commands without owning `@` mention ranking.
 
+### Composer drafts and suggestions (`composer_v2`)
+
+`composer.read` returns `{text, cursor, selection, revision, attachments,
+suggestion}`. `revision` advances whenever the draft's text or attachments
+change, whoever changed them. Each attachment has a stable `id`, its placeholder
+`label`, its `owner` (`user` or the mod that attached it) and an immutable image
+`resource` bound to the reading mod (PNG and JPEG up to 8 MiB; otherwise
+`null`). `composer.write {revision, edit?, cursor?, selection?, attach?,
+detach?}` applies only to that revision and fails with `stale_revision`
+otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:
+'splice', start, end, text}` (byte offsets on character boundaries), `cursor`
+and `selection: {start, end}` place the cursor or select, `attach` adds image
+resources and `detach` removes attachments by placeholder. A write never
+submits. Images a mod attached leave the draft when that mod is unloaded,
+reloaded or disabled.
+
+`composer.suggest {revision, id, text}` shows one dimmed suggestion after the
+cursor while the cursor is at the end of that revision (4 KiB, first line
+shown); a newer suggestion replaces an older one. The user accepts it with the
+move-right key at the end of the draft (so a remapped `editor.move_right`
+applies) or by clicking it, and dismisses it with Esc. Any draft change, a turn
+start, an open dialog or the owner's reload clears it; `{clear: true}` withdraws
+the caller's own. The `composer` event (capability `composer`) reports `{kind:
+'change', revision, origin}` to every subscriber, debounced to 250 ms, and
+`{kind: 'suggestion', id, status: 'accepted' | 'dismissed' | 'cleared',
+reason?}` to the suggestion's owner.
+
+`api.intercept('composer_edit', …)` sees every mod write and native fill before
+it reaches the draft: `{source: 'mod' | 'paste' | 'history' | 'completion',
+caller, revision, edit}`; handlers may change only `edit.text` or answer
+`{deny}`, which leaves the draft unchanged and tells the user. They run while
+the terminal applies the edit, so they get no host operations. The `input`
+interceptors also receive the submitted draft's `revision`, `attachments`
+(`{kind, source}`) and placeholder `elements` (`{kind: 'paste' | 'mention' |
+'skill' | 'image', start?, end?, name?, source}`). After skills and mentions are
+expanded, `prompt_expanded` (capability `middleware`) lists them by name, path
+and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never
+their content, and the `prompt` event's `effective` is the text the model
+receives.
+
 ### One-shot model calls and forks (`model_complete_v2`)
 
 `model.complete {route, prompt, system?, context?, output?, effort?,
@@ -1553,6 +1670,44 @@ items are dropped as pairs; the last item (the current input) is kept; inserts
 are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
+
+### Compaction interception (`compaction_intercept_v1`)
+
+`api.intercept('compaction', (input, next) => …)` (capability `compaction`)
+sees every compaction of the lead thread once: manual `/compact` and
+automatic pre-turn, mid-turn and post-turn compaction, through local
+summarization (`implementation: 'local'`), provider compaction (`'remote'`)
+or a token-budget reset (`'budget'`). The input carries `trigger`, the
+upstream `reason` (`user_requested`, `context_limit`, `model_downshift`,
+`comp_hash_changed`) and `phase` (`standalone_turn`, `pre_turn`,
+`mid_turn`, `post_turn`), `budget: {tokens, auto_limit, context_window,
+hard}`, the item count and a bounded `history` view (the newest 1,024 items,
+512-byte previews within 128 KiB) and `summary_prompt`, which `next` may
+change only for local summarization. `next` runs the host's compaction once
+(each provider attempt passes route admission, accounting and request
+policy) and returns `{summary, history, usage, provider_call}`, where
+`history` views the new history.
+
+A handler that does not call `next` may answer `{skip: reason}` (no
+compaction; automatic compaction is not offered again this turn), `{defer:
+reason}` (no compaction; offered again at the next trigger), `{summary}`
+(the host builds its standard history: recent user messages plus the
+summary, with no provider call) or `{history: {keep, insert?}}`. A handler
+that called `next` may replace its result with `{summary}` or `{history}`,
+whose indices then refer to the new history. `keep` lists the items kept
+verbatim; tool calls and their outputs, and a reasoning item and the item it
+precedes, are kept or dropped together; `insert` adds `user` or `developer`
+text `before` an index. The host refuses a replacement it estimates at the
+context window or more (`compaction_replacement_over_limit`), and a skip or
+deferral when the context is already full (`budget.hard`) fails the turn with
+`compaction_required` naming the mod instead of compacting anyway. A custom
+summarizer calls `model.fork` (the conversation on its own route) or
+`model.complete` and answers `{summary}`. Interrupting the turn cancels a
+waiting chain; the installed result persists as the normal compaction
+checkpoint, so resume reads it. `compaction_end` reports `outcome`
+(`compacted`, `replaced`, `skipped`, `deferred` or `failed`), `by` and
+`provider_call`. A failing required interceptor fails the compaction; a
+failure after `next` keeps the host's result with a diagnostic.
 
 ### Binary evidence and package controls
 

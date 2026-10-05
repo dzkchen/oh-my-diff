@@ -88,6 +88,31 @@ test('lifecycle events and interceptors require their capabilities', () => {
   assert.deepEqual(replayed.value, { result: { text: 'hi!' } });
   assert.deepEqual(run(source, { ...extra, payload: { ...payload, input: { text: 'yo', attachments: 0 } } }).value, { unmatched: true });
 });
+test('classic hooks map onto native events and interceptors with glob and negated matchers', () => {
+  const source = `export default api => {
+    api.hook('PostToolUseFailure', { match: api.match.not(api.match.glob('mcp__*')) }, e => api.state.set({ failed: e.subject, hook: e.hook, delivery: e.delivery }));
+    api.hook('PostToolUse', { match: [/^read/, 'write'] }, e => api.state.set({ ok: e.subject }));
+    api.hook('PreToolUse', { match: api.match.glob('exec_*'), required: true }, e => e.subject === 'exec_rm' ? { deny: 'no rm from ' + e.origin.caller } : undefined);
+  }`;
+  const caps = { capabilities: ['lifecycle', 'interception', 'store'] };
+  const inspect = run(source, caps);
+  assert.deepEqual(inspect.registrations.events, ['tool_result']);
+  assert.equal(inspect.registrations.interceptors[0].required, true);
+  const result = (tool, outcome) => run(source, { ...caps, event: 'tool_result', payload: { tool, outcome, thread_id: 't' } }).state;
+  assert.deepEqual(result('exec_command', 'failed'), { failed: 'exec_command', hook: 'PostToolUseFailure', delivery: 'optional' });
+  assert.equal(result('mcp__docs__search', 'failed'), null);
+  assert.deepEqual(result('read_file', 'succeeded'), { ok: 'read_file' });
+  assert.equal(result('list', 'succeeded'), null);
+  const tool = name => run(source, { ...caps, event: 'intercept', name: '0',
+    payload: { surface: 'tool', input: { tool: name, arguments: {} }, origin: { caller: 'model', thread_id: 't' } } });
+  assert.deepEqual(tool('exec_rm').value, { result: { deny: 'no rm from model' } });
+  assert.equal(tool('exec_ls').host_call.operation, 'continuation.next');
+  assert.equal(tool('read_file').host_call.operation, 'continuation.next');
+  assert.match(run('export default api => api.hook("Nope", () => {})', caps).error, /unsupported_classic_hook: Nope/);
+  assert.match(run('export default api => api.hook("PostToolUse", { required: true }, () => {})', caps).error, /classic_hook_delivery_optional/);
+  const negated = run('export default api => api.intercept("input", { match: { text: api.match.not(api.match.glob("/*")) } }, (e, next) => next(e))', { capabilities: ['input'] });
+  assert.deepEqual(negated.registrations.interceptors[0].match, { text: { $not: { $glob: '/*' } } });
+});
 
 test('reactive atoms track reads, recompute derived values and run keyed subscriptions once per change', () => {
   const source = `export default api => {

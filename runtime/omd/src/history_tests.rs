@@ -80,3 +80,34 @@ fn call_arguments_and_image_messages_can_be_rewritten() {
     assert_eq!(edited[1]["arguments"], "{\"token\":\"[redacted]\"}");
     assert_eq!(edited[2], items[2]);
 }
+
+#[test]
+fn compaction_replacements_keep_calls_and_reasoning_whole() {
+    let items = items();
+    let compact_with = |value: Value| compact(&items, serde_json::from_value(value).unwrap());
+    let kept = compact_with(json!({"keep": [1, 2, 3, 5],
+        "insert": [{"before": 0, "role": "developer", "text": "summary"}]}))
+    .unwrap();
+    assert_eq!(kept.len(), 5);
+    assert_eq!(kept[0]["content"][0]["text"], "summary");
+    assert_eq!(kept[1], items[1]);
+    assert_eq!(kept[4], items[5]);
+    for (edit, reason) in [
+        (json!({"keep": [2, 3, 5]}), "reasoning_pair"),
+        (json!({"keep": [1, 2, 5]}), "unpaired_call"),
+        (json!({"keep": [9]}), "keep"),
+        (
+            json!({"keep": [], "insert": [{"before": 0, "role": "assistant", "text": "x"}]}),
+            "insert",
+        ),
+        (json!({"keep": []}), "empty"),
+    ] {
+        assert_eq!(
+            compact_with(edit),
+            Err(format!("compaction_history_invalid: {reason}"))
+        );
+    }
+    let view = compaction_view(&items);
+    assert_eq!(view.as_array().map(Vec::len), Some(items.len()));
+    assert_eq!(view[3]["call_id"], "c1");
+}

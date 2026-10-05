@@ -403,7 +403,8 @@ export default function activate(api: ModAPI) {
     const range = selection(buffer);
     const [start, end] = range ? [range[0][0], range[1][0] - (range[1][1] === 0 && range[1][0] > range[0][0] ? 1 : 0)] : [buffer.row, buffer.row];
     const text = buffer.lines.slice(start, end + 1).join('\n').slice(0, 8_000);
-    api.host.tryCall('composer.write', { insert: `${buffer.path}:${start + 1}${end > start ? `-${end + 1}` : ''}\n\`\`\`\n${text}\n\`\`\`\n` });
+    const draft = api.host.tryCall('composer.read', null);
+    if (draft.ok) api.host.tryCall('composer.write', { revision: draft.value.revision, edit: { kind: 'insert', text: `${buffer.path}:${start + 1}${end > start ? `-${end + 1}` : ''}\n\`\`\`\n${text}\n\`\`\`\n` } });
   };
   const next = (root: Root, buffer: Buffer) => {
     if (!root.find) return;

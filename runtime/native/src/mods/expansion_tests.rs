@@ -127,6 +127,8 @@ fn mods(core: &Arc<Core>) -> Mods {
         pending: Mutex::new(BTreeMap::new()),
         answered: Mutex::new(BTreeMap::new()),
         child_errors: Mutex::new(BTreeMap::new()),
+        settled: Mutex::new(BTreeMap::new()),
+        elicitations: Mutex::new(BTreeMap::new()),
     }
 }
 
@@ -2311,6 +2313,7 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         mods.continue_turn(codex_extension_api::TurnContinueInput {
             turn_id: "turn-9",
             last_agent_message: Some("done"),
+            error: None,
             continued,
             session_store: &session_store,
             thread_store: &thread_store,
@@ -2416,4 +2419,277 @@ fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
     assert!(config.billed_rates("billed", Some("fixture")).is_some());
     assert!(config.billed_rates("billed", Some("other")).is_none());
     assert!(config.billed_rates("included", None).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compaction_chains_answer_skip_replace_and_fail_closed() {
+    use codex_extension_api::CompactionPlan;
+    use codex_extension_api::CompactionReplacement;
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "a_keep",
+            capabilities: &["compaction"],
+            manifest: json!({}),
+            source: "export default function (api) {\n  api.intercept('compaction', async (e, next) => {\n    if (e.phase === 'mid_turn') return { skip: 'busy' };\n    if (e.phase !== 'post_turn') return next(e);\n    const done = await next(e);\n    return { history: { keep: [done.history.length - 1], insert: [{ before: 0, role: 'developer', text: 'kept tail' }] } };\n  });\n}\n",
+        },
+        Package {
+            id: "b_sum",
+            capabilities: &["compaction"],
+            manifest: json!({}),
+            source: "export default function (api) {\n  api.intercept('compaction', (e, next) => {\n    if (e.trigger === 'manual') return { summary: 'summary of ' + e.items };\n    if (e.implementation === 'remote') return { history: { keep: [99] } };\n    return next(e.summary_prompt === null ? e : { ...e, summary_prompt: 'shorter' });\n  });\n}\n",
+        },
+        Package {
+            id: "c_fail",
+            capabilities: &["compaction"],
+            manifest: json!({}),
+            source: "export default function (api) {\n  api.intercept('compaction', { required: true }, (e, next) => {\n    if (e.reason === 'model_downshift') throw new Error('refused');\n    return next(e);\n  });\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new(fixture.lead.thread.to_string()),
+        ExtensionData::new("turn-1".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let history = vec![
+        json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+        json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "yo"}]}),
+    ];
+    let plan = |trigger, reason, phase, implementation, prompt| {
+        mods.compaction_plan(codex_extension_api::CompactionInterceptInput {
+            turn_id: "turn-1",
+            trigger,
+            reason,
+            phase,
+            implementation,
+            tokens: 900,
+            auto_limit: Some(800),
+            context_window: Some(1000),
+            hard: false,
+            history: &history,
+            summary_prompt: prompt,
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+        })
+    };
+    match plan(
+        "manual",
+        "user_requested",
+        "standalone_turn",
+        "local",
+        Some("p"),
+    )
+    .await
+    {
+        CompactionPlan::Replace(CompactionReplacement::Summary { by, text }) => {
+            assert_eq!((by.as_str(), text.as_str()), ("b_sum", "summary of 2"));
+        }
+        _ => panic!("the inner mod answers without the host"),
+    }
+    match plan("auto", "context_limit", "mid_turn", "local", Some("p")).await {
+        CompactionPlan::Skip { by, reason } => {
+            assert_eq!((by.as_str(), reason.as_str()), ("a_keep", "busy"));
+        }
+        _ => panic!("the outer mod skips"),
+    }
+    match plan("auto", "context_limit", "pre_turn", "remote", None).await {
+        CompactionPlan::Fail(reason) => {
+            assert_eq!(reason, "compaction_history_invalid: keep (b_sum)");
+        }
+        _ => panic!("an invalid history fails the occurrence"),
+    }
+    match plan("auto", "model_downshift", "pre_turn", "local", Some("p")).await {
+        CompactionPlan::Fail(reason) => {
+            assert!(reason.starts_with("mod_interception_failed"), "{reason}");
+        }
+        _ => panic!("a failing required interceptor fails closed"),
+    }
+    let CompactionPlan::Native {
+        summary_prompt,
+        settle,
+    } = plan("auto", "context_limit", "pre_turn", "local", Some("p")).await
+    else {
+        panic!("the host compacts with the rewritten prompt");
+    };
+    assert_eq!(summary_prompt.as_deref(), Some("shorter"));
+    drop(settle);
+    let CompactionPlan::Native {
+        settle: Some(settle),
+        ..
+    } = plan("auto", "context_limit", "post_turn", "local", Some("p")).await
+    else {
+        panic!("a dropped settle releases its chain");
+    };
+    let installed = vec![
+        json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+        json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "summary"}]}),
+    ];
+    let replaced = settle(codex_extension_api::CompactionSettled {
+        summary: Some("native".into()),
+        history: installed.clone(),
+        provider_call: true,
+        usage: None,
+    })
+    .await;
+    let Some(CompactionReplacement::History { by, items }) = replaced else {
+        panic!("the outer mod rewrites the host's history");
+    };
+    assert_eq!(by, "a_keep");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["content"][0]["text"], "kept tail");
+    assert_eq!(items[1], installed[1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["lifecycle", "approvals", "autonomous", "store"],
+        manifest: json!({"autonomy": {"max_queued": 1, "max_turns": 1, "max_continuations": 1}}),
+        source: "export default function (api) {\n  const log = e => api.state.set([...(api.state.get() ?? []), e]);\n  api.on('tool_batch_end', log);\n  api.on('instructions_loaded', log);\n  api.on('elicitation_result', log);\n  api.on('worktree', log);\n  api.on('thread_settings', log);\n  api.intercept('elicitation', (e, next) => e.server === 'docs' ? { accept: { name: 'omd' } } : e.server === 'extra' ? { accept: { other: 1 } } : next(e));\n  api.intercept('turn_stop', (e, next) => e.outcome === 'error' ? { continue: 'retry after ' + e.error } : next(e));\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new(fixture.lead.thread.to_string()),
+        ExtensionData::new("turn-2".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    mods.settled
+        .lock()
+        .unwrap()
+        .insert("c1".into(), ("exec_command".into(), "failed".into()));
+    mods.on_tool_batch_end(codex_extension_api::ToolBatchEndInput {
+        turn_id: "turn-2",
+        call_ids: &["c1".into(), "c2".into()],
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+    })
+    .await;
+    mods.on_instructions_loaded(codex_extension_api::InstructionsLoadedInput {
+        kind: "skill",
+        source: "/skills/review/SKILL.md",
+        sha256: Some("ab"),
+        bytes: 12,
+        reason: "explicit",
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: None,
+    })
+    .await;
+    let (mods, session_store, thread_store) = (&mods, &session_store, &thread_store);
+    let form = |server: &'static str, schema: Value| async move {
+        let request = json!({"mode": "form", "message": "who?", "requested_schema": schema});
+        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
+            turn_id: "turn-2",
+            server,
+            request_id: "7",
+            request: &request,
+            session_store,
+            thread_store,
+        })
+        .await
+    };
+    let schema =
+        json!({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]});
+    let answer = form("docs", schema.clone()).await.unwrap();
+    assert_eq!(
+        (answer.action.as_str(), answer.by.as_str()),
+        ("accept", "observer")
+    );
+    assert_eq!(answer.content, Some(json!({"name": "omd"})));
+    assert!(
+        form("extra", schema).await.is_none(),
+        "undeclared fields go to the user"
+    );
+    let secret = json!({"type": "object", "properties": {"token": {"type": "string", "format": "password"}}});
+    assert!(
+        form("docs", secret).await.is_none(),
+        "secret forms are never offered to mods"
+    );
+    mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+        server: "docs",
+        request_id: "7",
+        action: "accept",
+        content: Some(&json!({"token": "hunter2"})),
+        by: None,
+        session_store,
+        thread_store,
+    })
+    .await;
+    let log = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        log[0]["calls"],
+        json!([{"call_id": "c1", "tool": "exec_command", "outcome": "failed"},
+            {"call_id": "c2", "tool": "", "outcome": ""}])
+    );
+    assert_eq!(log[1]["kind"], "skill");
+    assert_eq!(log[1]["reason"], "explicit");
+    assert_eq!(log[2]["content"], json!({"token": "[redacted]"}));
+    assert_eq!(log[2]["by"], Value::Null);
+
+    let failed = mods
+        .continue_turn(codex_extension_api::TurnContinueInput {
+            turn_id: "turn-2",
+            last_agent_message: None,
+            error: Some("stream disconnected"),
+            continued: 0,
+            session_store,
+            thread_store,
+            turn_store: &turn_store,
+        })
+        .await
+        .unwrap();
+    assert!(failed.prompt.ends_with("retry after stream disconnected"));
+
+    let view = |cwd: &str, roots: Value, model: &str| json!({"cwd": cwd, "roots": roots, "model": model, "effort": "high", "provider": "openai"});
+    let change = settings_change(
+        &view("/repo", json!(["/repo"]), "a"),
+        &view("/repo/sub", json!(["/repo", "/extra"]), "b"),
+    )
+    .unwrap();
+    assert_eq!(
+        change["cwd"],
+        json!({"before": "/repo", "after": "/repo/sub"})
+    );
+    assert_eq!(change["roots"], json!({"added": ["/extra"], "removed": []}));
+    assert_eq!(change["model"]["after"], "b");
+    assert!(settings_change(&view("/r", json!([]), "a"), &view("/r", json!([]), "a")).is_none());
+
+    let core = &fixture.core;
+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    expansion::worktree(
+        &core.expansion,
+        "created",
+        Path::new("/scratch/agent"),
+        "agent",
+    );
+    expansion::broadcast(&core.expansion, "thread_settings", change);
+    assert!(!delivery::deliver(core).await);
+    let log = core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        log[3],
+        json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
+    );
+    assert_eq!(log[4]["roots"]["added"], json!(["/extra"]));
 }

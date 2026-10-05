@@ -592,6 +592,15 @@ struct Workspace {
     root: std::path::PathBuf,
     directory: std::path::PathBuf,
     integrable: bool,
+    events: std::sync::Weak<Core>,
+}
+
+impl Workspace {
+    fn announce(&self, phase: &str) {
+        if let Some(core) = self.events.upgrade() {
+            expansion::worktree(&core.expansion, phase, &self.root, "agent");
+        }
+    }
 }
 
 struct IntegrationScratch {
@@ -618,6 +627,7 @@ impl Drop for IntegrationScratch {
 
 impl Drop for Workspace {
     fn drop(&mut self) {
+        self.announce("removed");
         if let Some(parent) = self.directory.parent() {
             let _ = codex_omd::cleanup_owned_directory(parent, &self.directory);
         }
@@ -2070,7 +2080,9 @@ impl Agents {
                 root,
                 directory,
                 integrable: writable,
+                events: self.notifier.core.clone(),
             };
+            workspace.announce("created");
             std::fs::create_dir(workspace.root.join(".omd-tmp")).map_err(|e| e.to_string())?;
             Some(workspace)
         } else {

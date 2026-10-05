@@ -30,6 +30,14 @@ pub(super) fn broadcast(state: &State, event: &'static str, payload: Value) {
     delivery::push(state, delivery::Pending::Broadcast { event, payload });
 }
 
+pub(super) fn worktree(state: &State, phase: &str, path: &std::path::Path, owner: &str) {
+    broadcast(
+        state,
+        "worktree",
+        json!({"phase": phase, "path": path.display().to_string(), "owner": owner}),
+    );
+}
+
 const CORE_OPERATIONS: &[&str] = &[
     "app.routes",
     "workspace.watch",

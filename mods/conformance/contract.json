@@ -1815,6 +1815,124 @@
         "patch:autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt",
         "patch:extension_continuation_keeps_the_turn_sampling_until_it_declines"
       ]
+    },
+    {
+      "id": "context_recovery.compaction_interception",
+      "group": "context_recovery",
+      "decision": "Per-occurrence compaction control",
+      "observe": "every manual and automatic local, remote and token-budget compaction of the lead thread with its trigger, reason, phase, budget and a bounded history view (`compaction`), and the outcome (`compaction_end`)",
+      "alter": "the local summarization prompt, the host's result after it compacts, or the occurrence itself: skip, defer, a summary or a validated kept-and-inserted history (`compaction` interceptors)",
+      "replace": null,
+      "timing": "after PreCompact hooks and before the provider call; a result replacement runs before the history is installed",
+      "ownership": "host: hard-limit refusal (`compaction_required`), size estimate, tool-call and reasoning pairing, persistence as the normal compaction checkpoint; mods: the decision and any summarizer call they make on their own routes",
+      "limits": "1,024-item view with 128 KiB of previews, 64 KiB summaries, 256 KiB history edits; one host compaction per occurrence",
+      "native": "upstream PreCompact/PostCompact hooks observe or stop compaction but cannot replace it",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [],
+        "intercepts": [
+          "compaction"
+        ]
+      },
+      "evidence": [
+        "patch:a_summary_answer_replaces_manual_compaction_without_a_provider_call",
+        "patch:a_settled_remote_compaction_installs_the_contributor_history",
+        "patch:a_skip_holds_below_the_window_and_fails_at_it",
+        "patch:compaction_chains_answer_skip_replace_and_fail_closed",
+        "patch:compaction_replacements_keep_calls_and_reasoning_whole"
+      ]
+    },
+    {
+      "id": "terminal.composer_drafts",
+      "group": "terminal",
+      "decision": "Revision-bound drafts, ghost suggestions and edit interception",
+      "observe": "draft revisions, cursor, selection and attachment resources (`composer.read`), changes and suggestion outcomes (`composer`), submitted draft context (`input`) and prompt expansion by identity (`prompt_expanded`)",
+      "alter": "the draft at a known revision (`composer.write`), one ghost suggestion (`composer.suggest`) and every mod write or native fill (`composer_edit`)",
+      "replace": null,
+      "timing": "writes apply only at the revision they name; suggestions clear on any edit, turn start, dialog or owner reload; change events are debounced to 250 ms",
+      "ownership": "user: acceptance (move-right at the draft end or a click), dismissal and submission; host: revisions, owner-bound attachment resources and revocation; mods: suggestion and formatting policy",
+      "limits": "64 KiB edits, 4 KiB suggestions, 8 MiB image resources; no write submits",
+      "native": "upstream composer offers no programmatic draft API",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "composer",
+          "prompt_expanded"
+        ],
+        "replacements": [],
+        "operations": [
+          "composer.suggest"
+        ],
+        "intercepts": [
+          "composer_edit"
+        ]
+      },
+      "evidence": [
+        "patch:edits_compare_revisions_and_keep_cursor_and_selection",
+        "patch:one_suggestion_shows_at_the_end_and_resolves_explicitly",
+        "patch:mod_attachments_leave_with_their_owner"
+      ]
+    },
+    {
+      "id": "coordination.lifecycle_events",
+      "group": "coordination",
+      "decision": "Lifecycle seams and the classic-hook adapter",
+      "observe": "settled tool batches, instruction, skill and attachment loads, thread settings, worktrees and elicitation results (`tool_batch_end`, `instructions_loaded`, `thread_settings`, `worktree`, `elicitation_result`)",
+      "alter": "answer MCP form elicitations without secret fields (`elicitation`) and continue a failed turn (`turn_stop` with `outcome: 'error'`); `api.hook` maps all 33 classic hook names onto events and interceptors",
+      "replace": null,
+      "timing": "after the native step completes; elicitation interceptors run before the user is asked",
+      "ownership": "user: secret entry, URL and user-verification elicitations; host: redaction, required-field validation and lead-thread scope",
+      "limits": "64 KiB elicitation answers; event-backed classic hooks are optional deliveries",
+      "native": "upstream hooks cover a subset of events with external commands and cannot answer elicitations",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "tool_batch_end",
+          "instructions_loaded",
+          "thread_settings",
+          "worktree",
+          "elicitation_result"
+        ],
+        "replacements": [],
+        "operations": [],
+        "intercepts": [
+          "elicitation"
+        ]
+      },
+      "evidence": [
+        "node:classic hooks map onto native events and interceptors with glob and negated matchers",
+        "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations",
+        "patch:settled_batches_are_reported_and_failed_turns_may_continue"
+      ]
+    },
+    {
+      "id": "coordination.user_submissions",
+      "group": "coordination",
+      "decision": "User-captured prompts delivered as the user",
+      "observe": "consent and delivery state (`prompts.status`)",
+      "alter": "submit exactly the content the user consented to, once, as a new turn or steering (`prompts.consent` in user contexts, `prompts.submit`, `prompts.revoke`)",
+      "replace": null,
+      "timing": "submission runs on the terminal's own path; delivery is confirmed when the message with the client id is committed, including on resume",
+      "ownership": "user: consent per captured, edited or joined prompt; host: single-use content-bound consents per thread, outside mod state and forks",
+      "limits": "61,440-byte prompts, 8 images, 64 pending consents per mod and thread",
+      "native": "upstream queued messages are local to the terminal and not mod-reachable",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "prompts.consent",
+          "prompts.submit",
+          "prompts.status",
+          "prompts.revoke"
+        ],
+        "intercepts": []
+      },
+      "evidence": [
+        "patch:consents_are_single_use_content_bound_and_reconciled_by_client_id"
+      ]
     }
   ],
   "composition": [

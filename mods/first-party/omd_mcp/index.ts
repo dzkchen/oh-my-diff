@@ -35,7 +35,8 @@ export default function activate(api: ModAPI) {
   const known = (name: string) => Object.values(saved().threads).map(entry => entry.servers[name]).find(Boolean);
   const draft = (argv: string[], next: string) => {
     if (argv.some(word => /[\u0000-\u001f\u007f]/.test(word))) return { display: 'Arguments cannot contain control characters.' };
-    const written = api.host.tryCall('composer.write', { text: `!${['codex', 'mcp', ...argv].map(quote).join(' ')}` });
+    const read = api.host.tryCall('composer.read', null);
+    const written = read.ok ? api.host.tryCall('composer.write', { revision: read.value.revision, edit: { kind: 'fill', text: `!${['codex', 'mcp', ...argv].map(quote).join(' ')}` } }) : read;
     return { display: written.ok ? `Review the drafted upstream command in the composer and press Enter to run it with your own permissions. ${next}` : written.error };
   };
 

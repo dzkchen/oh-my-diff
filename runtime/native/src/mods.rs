@@ -1,6 +1,8 @@
 mod access;
 mod agents;
 mod autonomy;
+mod compaction;
+mod elicitation;
 mod evidence;
 mod expansion;
 mod intercept;
@@ -168,6 +170,10 @@ struct Mods {
     pending: Mutex<BTreeMap<String, PendingTool>>,
     answered: Mutex<BTreeMap<String, String>>,
     child_errors: Mutex<BTreeMap<String, String>>,
+    /// Tool and outcome of each lead call until its batch settles or the next turn starts.
+    settled: Mutex<BTreeMap<String, (String, String)>>,
+    /// Secret fields of each pending elicitation, redacted from its result.
+    elicitations: Mutex<BTreeMap<String, Vec<String>>>,
 }
 
 /// A tool chain waiting at its native executor for the call's result.
@@ -423,6 +429,8 @@ pub(super) fn install(
         pending: Mutex::new(BTreeMap::new()),
         answered: Mutex::new(BTreeMap::new()),
         child_errors: Mutex::new(BTreeMap::new()),
+        settled: Mutex::new(BTreeMap::new()),
+        elicitations: Mutex::new(BTreeMap::new()),
     });
     intercept::install_dispatcher(&extension.core);
     registry.config_contributor(extension.clone());
@@ -773,12 +781,13 @@ impl Mods {
             self.views
                 .diagnostic(&self.host, "turn_evidence", Some(error));
         }
-        self.event(
-            event,
-            json!({"turn_id":input.turn_id,"trigger":input.trigger}),
-            lead.as_deref(),
-        )
-        .await;
+        let mut payload = json!({"turn_id":input.turn_id,"trigger":input.trigger});
+        if let Some(outcome) = input.outcome {
+            payload["outcome"] = json!(outcome);
+            payload["by"] = json!(input.by);
+            payload["provider_call"] = json!(input.provider_call);
+        }
+        self.event(event, payload, lead.as_deref()).await;
     }
 
     fn compaction_decision(
@@ -1006,6 +1015,93 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         self.compaction_decision(&mut runtime, config)?;
         self.routing_decision(&mut runtime, config)
     }
+
+    fn on_config_changed(
+        &self,
+        _session_store: &codex_extension_api::ExtensionData,
+        thread_store: &codex_extension_api::ExtensionData,
+        previous: &Config,
+        next: &Config,
+    ) {
+        if lead_thread(thread_store)
+            && let Some(change) = settings_change(&settings_view(previous), &settings_view(next))
+        {
+            expansion::broadcast(&self.expansion, "thread_settings", change);
+        }
+    }
+}
+
+/// Attachments and placeholder elements of a submitted prompt, with their source identity.
+fn submission_context(items: &[Value]) -> (Vec<Value>, Vec<Value>) {
+    let (mut attachments, mut elements) = (Vec::new(), Vec::new());
+    for item in items {
+        match item["type"].as_str() {
+            Some("text") => {
+                for element in item["text_elements"].as_array().into_iter().flatten() {
+                    let placeholder = element["placeholder"].as_str().unwrap_or_default();
+                    let kind = if placeholder.starts_with("[Image") {
+                        "image"
+                    } else if placeholder.starts_with("[Pasted") {
+                        "paste"
+                    } else {
+                        "mention"
+                    };
+                    elements.push(
+                        json!({"kind": kind, "start": element["byte_range"]["start"],
+                        "end": element["byte_range"]["end"], "source": placeholder}),
+                    );
+                }
+            }
+            Some(kind @ ("skill" | "mention")) => {
+                elements.push(json!({"kind": kind, "name": item["name"], "source": item["path"]}));
+            }
+            Some("local_image") => {
+                attachments.push(json!({"kind": "image", "source": item["path"]}))
+            }
+            Some("image") => attachments.push(json!({"kind": "image", "source": "inline"})),
+            Some(kind @ ("audio" | "local_audio")) => {
+                attachments.push(
+                    json!({"kind": kind, "source": item.get("path").unwrap_or(&json!("inline"))}),
+                );
+            }
+            _ => {}
+        }
+    }
+    (attachments, elements)
+}
+
+fn settings_view(config: &Config) -> Value {
+    let roots = config
+        .workspace_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    json!({"cwd": config.cwd.display().to_string(), "roots": roots, "model": config.model,
+        "effort": config.model_reasoning_effort, "provider": config.model_provider_id})
+}
+
+/// The `thread_settings` payload, or `None` when nothing a mod observes changed.
+fn settings_change(previous: &Value, next: &Value) -> Option<Value> {
+    let roots = |value: &Value| {
+        value["roots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let (before, after) = (roots(previous), roots(next));
+    let mut change = json!({"roots": {"added": after.difference(&before).collect::<Vec<_>>(),
+        "removed": before.difference(&after).collect::<Vec<_>>()}});
+    for key in ["cwd", "model", "effort", "provider"] {
+        change[key] = json!({"before": previous[key], "after": next[key]});
+    }
+    let changed = before != after
+        || ["cwd", "model", "effort", "provider"]
+            .iter()
+            .any(|key| previous[key] != next[key]);
+    changed.then_some(change)
 }
 
 impl TurnLifecycleContributor for Mods {
@@ -1161,6 +1257,8 @@ impl TurnLifecycleContributor for Mods {
                 .filter(|lead| lead.owner == "lead")?;
             let thread = lead.thread.to_string();
             let payload = json!({"thread_id": thread, "turn_id": input.turn_id,
+                "outcome": if input.error.is_some() { "error" } else { "completed" },
+                "error": input.error.map(|error| error.chars().take(2048).collect::<String>()),
                 "message": input.last_agent_message.map(|message| message.chars().take(8192).collect::<String>()),
                 "continued": input.continued, "limit": autonomy::CONTINUATIONS,
                 "provenance": self.autonomy.running(&thread).map(|owner| json!({"kind": "mod", "package": owner}))});
@@ -1277,19 +1375,29 @@ impl TurnLifecycleContributor for Mods {
             if provenance.is_none() {
                 self.autonomy.user_turn(&lead.thread.to_string());
             }
-            let prompt = json!({"thread_id":thread,"turn_id":Value::Null,
-                "original":input.text,"effective":input.text,"provenance":provenance.iter().collect::<Vec<_>>()});
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let unavailable = |error: String| UserInputDecision::Deny {
                 notice: format!("Mod input interception failed; the prompt was not sent: {error}"),
             };
             let (flag, scoped) = (cancelled.clone(), thread.clone());
+            let announce = |effective: &str| {
+                let prompt = json!({"thread_id":thread,"turn_id":Value::Null,
+                    "original":input.text,"effective":effective,"provenance":provenance.iter().collect::<Vec<_>>()});
+                let (runtime, flag, scoped) = (runtime.clone(), flag.clone(), thread.clone());
+                tokio::task::spawn_blocking(move || {
+                    let _thread = codex_omd::StateThread::enter(scoped);
+                    if let Ok(mut runtime) = runtime.lock() {
+                        let _ = runtime
+                            .event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
+                    }
+                })
+            };
+            let boundary = runtime.clone();
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(scoped);
-                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+                let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime.turn_boundary();
-                let _ = runtime.event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
                 Ok::<_, String>(runtime.intercepts("input"))
             })
             .await
@@ -1297,11 +1405,16 @@ impl TurnLifecycleContributor for Mods {
             .and_then(|result| result);
             let required = match intercepting {
                 Ok(Some(required)) => required,
-                Ok(None) => return UserInputDecision::Keep,
+                Ok(None) => {
+                    let _ = announce(input.text).await;
+                    return UserInputDecision::Keep;
+                }
                 Err(error) => return unavailable(error),
             };
-            let payload =
-                json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
+            let (attachments, elements) = submission_context(input.items);
+            let payload = json!({"thread_id":thread,"text":input.text,
+                "revision": input.client_id.and_then(codex_omd::drafts::take),
+                "attachments":attachments,"elements":elements});
             let origin = match &provenance {
                 Some(provenance) => {
                     json!({"caller":provenance["package"],"thread_id":thread,"provenance":provenance})
@@ -1316,11 +1429,11 @@ impl TurnLifecycleContributor for Mods {
                 required,
                 payload,
                 origin,
-                cancelled,
+                cancelled.clone(),
                 |input| Ok(json!({"text": input["text"]})),
             )
             .await;
-            match chain {
+            let decision = match chain {
                 Err(error) => unavailable(error),
                 Ok(chain) => match (chain.result["deny"].as_str(), chain.result["text"].as_str()) {
                     (Some(reason), _) => UserInputDecision::Deny {
@@ -1338,7 +1451,17 @@ impl TurnLifecycleContributor for Mods {
                     },
                     _ => UserInputDecision::Keep,
                 },
+            };
+            match &decision {
+                UserInputDecision::Keep => {
+                    let _ = announce(input.text).await;
+                }
+                UserInputDecision::Rewrite { text, .. } => {
+                    let _ = announce(text).await;
+                }
+                UserInputDecision::Deny { .. } => {}
             }
+            decision
         })
     }
 
@@ -1356,6 +1479,105 @@ impl TurnLifecycleContributor for Mods {
         Box::pin(self.compaction("compaction_end", input))
     }
 
+    fn on_tool_batch_end<'a>(
+        &'a self,
+        input: codex_extension_api::ToolBatchEndInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
+                return;
+            };
+            let calls = {
+                let mut settled = self.settled.lock().ok();
+                input
+                    .call_ids
+                    .iter()
+                    .map(|call_id| {
+                        let (tool, outcome) = settled
+                            .as_mut()
+                            .and_then(|settled| settled.remove(call_id))
+                            .unwrap_or_default();
+                        json!({"call_id": call_id, "tool": tool, "outcome": outcome})
+                    })
+                    .collect::<Vec<_>>()
+            };
+            self.event(
+                "tool_batch_end",
+                json!({"turn_id": input.turn_id, "calls": calls}),
+                Some(&*lead),
+            )
+            .await;
+        })
+    }
+
+    fn on_prompt_expanded<'a>(
+        &'a self,
+        input: codex_extension_api::PromptExpandedInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
+                return;
+            };
+            self.event(
+                "prompt_expanded",
+                json!({"turn_id": input.turn_id, "items": input.items}),
+                Some(&*lead),
+            )
+            .await;
+        })
+    }
+
+    fn on_instructions_loaded<'a>(
+        &'a self,
+        input: codex_extension_api::InstructionsLoadedInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
+                return;
+            };
+            self.event(
+                "instructions_loaded",
+                json!({"kind": input.kind, "source": input.source, "sha256": input.sha256,
+                    "bytes": input.bytes, "reason": input.reason}),
+                Some(&*lead),
+            )
+            .await;
+        })
+    }
+
+    fn intercept_elicitation<'a>(
+        &'a self,
+        input: codex_extension_api::ElicitationInterceptInput<'a>,
+    ) -> ExtensionFuture<'a, Option<codex_extension_api::ElicitationAnswer>> {
+        Box::pin(self.elicitation_answer(input))
+    }
+
+    fn on_elicitation_result<'a>(
+        &'a self,
+        input: codex_extension_api::ElicitationResultInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(self.elicitation_result(input))
+    }
+
+    fn plan_compaction<'a>(
+        &'a self,
+        input: codex_extension_api::CompactionInterceptInput<'a>,
+    ) -> ExtensionFuture<'a, codex_extension_api::CompactionPlan> {
+        Box::pin(self.compaction_plan(input))
+    }
+
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             let Some(lead) = input
@@ -1367,6 +1589,10 @@ impl TurnLifecycleContributor for Mods {
             };
             self.views
                 .presentation(&lead.thread.to_string(), Some("started"));
+            // Batches settle within their turn; calls an aborted turn left behind are dropped here.
+            if let Ok(mut settled) = self.settled.lock() {
+                settled.clear();
+            }
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
             let host = lead.host.clone();
@@ -2040,6 +2266,17 @@ impl ToolLifecycleContributor for Mods {
                 .lock()
                 .ok()
                 .and_then(|mut answered| answered.remove(input.call_id));
+            if lead.owner == "lead"
+                && let Ok(mut settled) = self.settled.lock()
+            {
+                settled.insert(
+                    input.call_id.to_owned(),
+                    (
+                        input.tool_name.to_string(),
+                        tool_outcome(input.outcome).to_owned(),
+                    ),
+                );
+            }
             let event_lead = (lead.owner == "lead").then_some(&*lead);
             self.event(
                 "tool_result",

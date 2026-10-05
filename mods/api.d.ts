@@ -225,6 +225,25 @@ export type InvocationContext = 'user' | 'event';
 export type AppRoute = { method: string; class: Capability; contexts: InvocationContext[]; confirm: boolean };
 export type CredentialProfile = { id: string; label: string; kind: 'chatgpt' | 'api_key' | 'provider' | 'secret'; provider: string | null; origin: string | null; status: 'ready' | 'not_enrolled'; default: boolean };
 export type HistoryItem = { index: number; type: string; role: string | null; call_id: string | null; editable: boolean; images: number; text: string | null; bytes: number };
+export type CompactionOccurrence = { thread_id: string; turn_id: string; trigger: 'manual' | 'auto'; reason: 'user_requested' | 'context_limit' | 'model_downshift' | 'comp_hash_changed';
+  phase: 'standalone_turn' | 'pre_turn' | 'mid_turn' | 'post_turn'; implementation: 'local' | 'remote' | 'budget';
+  budget: { tokens: number; auto_limit: number | null; context_window: number | null; hard: boolean }; items: number; history: HistoryItem[]; summary_prompt: string | null };
+export type CompactionHistory = { keep: number[]; insert?: { before: number; role: 'user' | 'developer'; text: string }[] };
+export type CompactionResult = { summary: string | null; history: HistoryItem[]; usage: Json | null; provider_call: boolean } | { summary: string } | { history: CompactionHistory };
+/** One draft edit; `insert` goes at the cursor, `splice` replaces byte range `start..end`. */
+export type ComposerEdit = { kind: 'fill' | 'insert' | 'append'; text: string } | { kind: 'splice'; text: string; start: number; end: number };
+export type ComposerDraft = { text: string; cursor: number; selection: { start: number; end: number } | null; revision: number;
+  /** `label` is the placeholder in `text`; `resource` is an image resource bound to the reading mod, or null for unsupported media. */
+  attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null }[];
+  suggestion: { owner: string; id: string } | null };
+export type ClassicHook = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'PermissionRequest' | 'PermissionDenied'
+  | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Setup' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop'
+  | 'TaskCreated' | 'TaskCompleted' | 'TeammateIdle' | 'PreCompact' | 'PostCompact' | 'PreModelSwitch' | 'PostModelSwitch' | 'CwdChanged'
+  | 'DirectoryAdded' | 'ConfigChange' | 'InstructionsLoaded' | 'FileChanged' | 'WorktreeCreate' | 'WorktreeRemove' | 'Elicitation'
+  | 'ElicitationResult' | 'MessageDisplay' | 'Notification';
+/** The common envelope every classic hook receives; `event` is the native event or surface it maps to. */
+export type ClassicEnvelope = { hook: ClassicHook; event: string; subject: Json; thread_id: string | null; turn_id: string | null;
+  origin: Json | null; generation: string | null; original: Json; effective: Json; delivery: 'required' | 'optional' };
 export type HistoryEdit = { drop?: number[]; replace?: { index: number; text: string }[]; insert?: { before: number; role: 'user' | 'developer'; text: string }[] };
 export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback'; sandbox?: 'none' } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
 export type TurnActivity = {
@@ -327,8 +346,15 @@ export interface HostOperations {
   'sessions.ports': { arguments: null; result: { ports: { port: number; pid: number; address: string }[] } };
   'terminal.import_file': { arguments: { path: string; max_bytes?: number; lifetime?: 'thread' | 'package' }; result: ResourceRef | Declined };
   'terminal.image_sample': { arguments: { resource: ResourceRef; columns: number; rows: number }; result: { width: number; height: number; rgba: number[] } };
-  'composer.read': { arguments: null; result: { text: string; cursor: number; attachments: { kind: 'image'; label: string }[] } };
-  'composer.write': { arguments: { text?: string; insert?: string; attach?: { image: ResourceRef }[] }; result: { text: string; cursor: number } };
+  'composer.read': { arguments: null; result: ComposerDraft };
+  'composer.write': { arguments: { revision: number; edit?: ComposerEdit; cursor?: number; selection?: { start: number; end: number }; attach?: { image: ResourceRef }[]; detach?: string[] };
+    result: { text: string; cursor: number; revision: number } };
+  'composer.suggest': { arguments: { revision: number; id: string; text: string } | { clear: true }; result: { shown: true } | { cleared: true } };
+  'prompts.consent': { arguments: { text: string; attachments?: ResourceRef[] }; result: { consent: string; sha256: string } };
+  'prompts.submit': { arguments: { consent: string; text: string; attachments?: ResourceRef[]; mode: 'turn' | 'steer'; client_id?: string };
+    result: { status: 'started' | 'steered'; client_id: string } | { status: 'not_submitted'; reason: string } };
+  'prompts.status': { arguments: { consent: string }; result: { state: 'pending' | 'missing' } | { state: 'delivered'; client_id: string; turn_id: string } | { state: 'unconfirmed'; client_id: string } };
+  'prompts.revoke': { arguments: { consent: string }; result: { revoked: number } };
   'builtins.invoke': { arguments: { action: KeymapAction }; result: { invoked: boolean } };
   'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; conflicts: string[] } };
@@ -364,7 +390,7 @@ export interface Events {
   turn_start: { input: { turn_id: string }; output: void };
   turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: string; evidence?: ResourceRef }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
-  compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
+  compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto'; outcome: 'compacted' | 'replaced' | 'skipped' | 'deferred' | 'failed'; by: string | null; provider_call: boolean }; output: void };
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string; failure?: AgentFailure | null; text?: string; sha256?: string }; output: void };
   contract: { input: { gate: 'complete' | 'integrate'; outcome: 'passed' | 'refused'; missing: ContractRequirement[]; candidate_sha256: string }
     | { gate: 'complete'; outcome: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[]; candidate_sha256: string }; output: void };
@@ -395,6 +421,15 @@ export interface Events {
   peer_message: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json; sent_at_ms: number }; output: void };
   peer_receipt: { input: PeerReceipt; output: void };
   turn_queue: { input: { key: string; status: 'started' | 'expired' | 'dropped' | 'denied' | 'failed'; reason?: string; turn_id?: string }; output: void };
+  tool_batch_end: { input: { turn_id: string; calls: { call_id: string; tool: string; outcome: string }[] }; output: void };
+  instructions_loaded: { input: { kind: 'instructions' | 'skill' | 'attachment'; source: string; sha256: string | null; bytes: number; reason: 'session_start' | 'refresh' | 'explicit' | 'implicit' }; output: void };
+  thread_settings: { input: { cwd: { before: string; after: string }; roots: { added: string[]; removed: string[] }; model: { before: string | null; after: string | null };
+    effort: { before: ReasoningEffort | null; after: ReasoningEffort | null }; provider: { before: string; after: string } }; output: void };
+  worktree: { input: { phase: 'created' | 'removed'; path: string; owner: 'agent' | 'tui' }; output: void };
+  elicitation_result: { input: { server: string; request_id: string; action: 'accept' | 'decline' | 'cancel'; content: Json; by: string | null }; output: void };
+  composer: { input: { kind: 'change'; revision: number; origin: string } | { kind: 'suggestion'; id: string; status: 'accepted' | 'dismissed' | 'cleared'; reason?: string }; output: void };
+  prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }
+    | { kind: 'image'; source?: string; start?: number; end?: number; bytes?: number; sha256?: string } | { kind: 'paste'; start: number; end: number; bytes: number; sha256: string })[] }; output: void };
 }
 export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
 export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };
@@ -412,7 +447,8 @@ export interface InterceptSurfaces {
   config_list: { input: { rows: ConfigRow[] }; result: { rows: ConfigRow[] }; answer: never };
   config_set: { input: { key: string; value: Json; original: Json; source: string; scope: 'codex' | 'mod' }; result: { value: Json }; answer: { deny: string } };
   admission: { input: { package: AdmissionPackage; reason: 'load' }; result: { admit: true } | { withhold: string[] } | { deny: string }; answer: { withhold: string[] } | { deny: string } };
-  input: { input: { thread_id: string | null; text: string; attachments: number }; result: { text: string }; answer: { deny: string } };
+  input: { input: { thread_id: string | null; text: string; revision: number | null; attachments: { kind: 'image' | 'audio' | 'local_audio'; source: string }[];
+    elements: { kind: 'paste' | 'mention' | 'skill' | 'image'; start?: number; end?: number; name?: string; source: string }[] }; result: { text: string }; answer: { deny: string } };
   model_request: { input: ModelRequest; result: { route: string; effort: ReasoningEffort | null; cache: { from: string | null } }; answer: ModelAnswer | { deny: string } };
   model_send: { input: FinalRequestPage; result: { edits: FinalRequestEdit[]; cache?: false }; answer: { edits: FinalRequestEdit[]; cache?: false } | { deny: string } };
   response_stream: { input: StreamChunk; result: { chunks: (StreamChunk | InjectedChunk)[] }; answer: { chunks: (StreamChunk | InjectedChunk)[] } | StreamStop };
@@ -421,7 +457,11 @@ export interface InterceptSurfaces {
   agent_spawn: { input: AgentSpawnRequest; result: { agent_id: string | null; output: string; success: boolean }; answer: { deny: string } };
   peer_send: { input: { to: PeerAddress; correlation: string | null; data: Json }; result: { receipt: PeerReceipt }; answer: { deny: string } };
   peer_receive: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json }; result: { data: Json }; answer: { deny: string } };
-  turn_stop: { input: { thread_id: string; turn_id: string; message: string | null; continued: number; limit: number; provenance: { kind: 'mod'; package: string } | null }; result: { stop: true }; answer: { continue: string } };
+  turn_stop: { input: { thread_id: string; turn_id: string; outcome: 'completed' | 'error'; error: string | null; message: string | null; continued: number; limit: number; provenance: { kind: 'mod'; package: string } | null }; result: { stop: true }; answer: { continue: string } };
+  composer_edit: { input: { source: 'mod' | 'paste' | 'history' | 'completion'; caller: string; revision: number; edit: ComposerEdit }; result: { edit: ComposerEdit }; answer: { deny: string } };
+  elicitation: { input: { thread_id: string; turn_id: string; server: string; request_id: string; mode: 'form' | 'openai/form' | 'openaiForm'; message: string; schema: Json };
+    result: { action: 'ask' }; answer: { accept: Record<string, Json> } | { decline: string } | { cancel: string } };
+  compaction: { input: CompactionOccurrence; result: CompactionResult; answer: { skip: string } | { defer: string } | { summary: string } | { history: CompactionHistory } };
 }
 export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
 export type Next<S extends keyof InterceptSurfaces> = ((input: InterceptSurfaces[S]['input']) => Promise<InterceptSurfaces[S]['result']>) & {
@@ -456,6 +496,10 @@ export interface ModAPI {
   intercept(pattern: string, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
   intercept(pattern: string, options: InterceptOptions, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
   replace<K extends 'context' | 'routing' | 'compaction' | 'tool_batch' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  /** A classic hook over its native event or surface; `match` filters the hook's subject, and only interceptor hooks may be `required`. */
+  hook(name: ClassicHook, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
+  hook(name: ClassicHook, options: { match?: InterceptMatcher; required?: boolean }, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
+  readonly match: { glob(pattern: string): InterceptMatcher; not(matcher: InterceptMatcher): InterceptMatcher };
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;

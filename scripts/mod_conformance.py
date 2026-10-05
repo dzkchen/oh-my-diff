@@ -7,6 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "mods/conformance/contract.json"
+CLASSIC = ROOT / "mods/conformance/classic-hooks.json"
+RUNNER = ROOT / "runtime/omd/src/mods/runner.mjs"
 COVERAGE = ROOT / "mods/COVERAGE.md"
 HOST = ROOT / "runtime/omd/src/mods.rs"
 BRIDGE = ROOT / "runtime/omd/src/mods/bridge.rs"
@@ -96,6 +98,20 @@ def check(contract, version, sets):
         for reference in entry["evidence"]:
             if not resolve(reference):
                 problems.append(f"{entry['id']}: unresolved evidence {reference}")
+    classic = json.loads(CLASSIC.read_text())["hooks"]
+    adapter = re.search(r"const CLASSIC = \{(.*?)\n\};", RUNNER.read_text(), re.S).group(1)
+    mapped = dict(re.findall(r"^\s+(\w+): \['(\w+)'", adapter, re.M))
+    typed = set(re.findall(r"'(\w+)'", re.search(r"export type ClassicHook = (.*?);", (ROOT / "mods/api.d.ts").read_text(), re.S).group(1)))
+    names = [entry["hook"] for entry in classic]
+    if len(names) != 33 or set(names) != set(mapped) or set(names) != typed:
+        problems.append("classic hooks disagree between classic-hooks.json, runner.mjs and api.d.ts")
+    for entry in classic:
+        if mapped.get(entry["hook"]) != entry["native"]:
+            problems.append(f"classic hook {entry['hook']}: ledger maps {entry['native']}, runner maps {mapped.get(entry['hook'])}")
+        if entry["native"] not in sets["events"] | sets["intercepts"]:
+            problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
+        if not entry["check"] or not resolve(entry["check"]):
+            problems.append(f"classic hook {entry['hook']}: unresolved check {entry['check']}")
     return problems
 
 
@@ -174,6 +190,10 @@ def render(contract):
     ]
     for rule in contract["composition"]:
         out += [f"- **{rule['id']}** — {rule['rule']}", ""]
+    classic = json.loads(CLASSIC.read_text())
+    out += ["## Classic hook coverage", "", classic["note"], "",
+            table([(f"`{entry['hook']}`", f"`{entry['native']}`", entry["owner"], f"`{entry['check']}`") for entry in classic["hooks"]],
+                  ["Classic hook", "Native event or interceptor", "Owner", "Check"]), ""]
     out += ["## Not supported and not replaceable", ""]
     out += [f"- {item}" for item in contract["unsupported"]] + [""]
     out += [

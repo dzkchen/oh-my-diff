@@ -11,11 +11,13 @@ const surface = {
   events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
     model_response: 'model', tool_result: 'lifecycle',
     compaction: 'compaction', routing: 'model', terminal: 'terminal',
-    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals', component_event: 'terminal', timer: 'events', channel: 'events' },
+    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals', component_event: 'terminal', timer: 'events', channel: 'events',
+    composer: 'composer', prompt: 'middleware' },
   replacements: ['context', 'routing', 'compaction'],
   intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
-    command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal' },
-  middleware: ['tool_result', 'approval'], state: 'store', contracts: 'contracts',
+    command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
+    composer_edit: 'composer' },
+  middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
 };
 
 function packageFile(name, file) {
@@ -240,4 +242,25 @@ test('reactive dashboard keeps a form, streamed status and derived summary on ke
     { name: '0', state: ticked.state, receipts: [{ call: first.host_call, value: { result: { tree: [{ type: 'native' }] }, trace: [] } }] }).value;
   assert.equal(drawn.result.tree[1].text, 'stream · 1 ticks');
   assert.deepEqual(drawn.reads, ['ticks']);
+});
+
+test('composer examples suggest a recent prompt and tidy pastes through the edit chain', () => {
+  const sent = run('ghost_history', 'prompt', { thread_id: 't', turn_id: 'u', original: 'run the tests', effective: 'run the tests', provenance: [] });
+  const change = { kind: 'change', revision: 4, origin: 'user' };
+  const read = run('ghost_history', 'composer', change, { state: sent.state });
+  assert.deepEqual(read.host_call, { operation: 'composer.read', arguments: null });
+  const draft = { text: 'run t', cursor: 5, selection: null, revision: 4, attachments: [], suggestion: null };
+  const suggested = run('ghost_history', 'composer', change, { state: sent.state, receipts: [{ call: read.host_call, value: draft }] });
+  assert.deepEqual(suggested.host_call, { operation: 'composer.suggest', arguments: { revision: 4, id: 'h4', text: 'he tests' } });
+  const stale = run('ghost_history', 'composer', change, { state: sent.state,
+    receipts: [{ call: read.host_call, value: draft }, { call: suggested.host_call, error: 'stale_revision' }] });
+  assert.equal(stale.error, undefined, 'a stale suggestion is dropped');
+  assert.equal(run('ghost_history', 'composer', { ...change, origin: 'ghost_history' }, { state: sent.state, package: { id: 'ghost_history' } }).host_call ?? null, null);
+
+  const paste = text => ({ surface: 'composer_edit', input: { source: 'paste', caller: 'user', revision: 2, edit: { kind: 'insert', text } }, origin: { caller: 'user' } });
+  assert.deepEqual(run('paste_tidy', 'intercept', paste('a  \nb\t'), { name: '0' }).host_call,
+    { operation: 'continuation.next', arguments: { input: { source: 'paste', caller: 'user', revision: 2, edit: { kind: 'insert', text: 'a\nb' } } } });
+  assert.deepEqual(run('paste_tidy', 'intercept', paste('-----BEGIN OPENSSH PRIVATE KEY-----'), { name: '0' }).value, { result: { deny: 'the paste looks like a private key' } });
+  const history = { ...paste('x '), input: { ...paste('x ').input, source: 'history' } };
+  assert.deepEqual(run('paste_tidy', 'intercept', history, { name: '0' }).value, { unmatched: true });
 });
