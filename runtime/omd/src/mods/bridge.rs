@@ -138,6 +138,39 @@ impl ModHostCall {
     }
 }
 
+fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
+    let capabilities = call.capabilities()?;
+    if call.operation.starts_with("context.")
+        && !loaded
+            .package
+            .capabilities
+            .iter()
+            .any(|cap| cap == "context")
+    {
+        return Err(failure("capability_denied: context"));
+    }
+    if let Some(missing) = capabilities
+        .iter()
+        .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
+    {
+        return Err(failure(format!("capability_denied: {missing}")));
+    }
+    if let Some(expired) = capabilities.iter().find(|capability| {
+        AUTHORITY_CAPABILITIES.contains(capability) && !loaded.selection.authority_current()
+    }) {
+        return Err(failure(format!("grant_expired: {expired}")));
+    }
+    let namespace = host_namespace(&call.operation, &call.arguments);
+    if loaded
+        .withheld
+        .iter()
+        .any(|pattern| namespace_matches(pattern, &namespace))
+    {
+        return Err(failure(format!("capability_withheld: {namespace}")));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     node: &Path,
@@ -194,35 +227,7 @@ pub(super) fn run(
             if expected.len() >= 32 {
                 return Err(failure("host_call_limit"));
             }
-            let capabilities = call.capabilities()?;
-            if call.operation.starts_with("context.")
-                && !loaded
-                    .package
-                    .capabilities
-                    .iter()
-                    .any(|cap| cap == "context")
-            {
-                return Err(failure("capability_denied: context"));
-            }
-            if let Some(missing) = capabilities
-                .iter()
-                .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
-            {
-                return Err(failure(format!("capability_denied: {missing}")));
-            }
-            if let Some(expired) = capabilities.iter().find(|capability| {
-                AUTHORITY_CAPABILITIES.contains(capability) && !loaded.selection.authority_current()
-            }) {
-                return Err(failure(format!("grant_expired: {expired}")));
-            }
-            let namespace = host_namespace(&call.operation, &call.arguments);
-            if loaded
-                .withheld
-                .iter()
-                .any(|pattern| namespace_matches(pattern, &namespace))
-            {
-                return Err(failure(format!("capability_withheld: {namespace}")));
-            }
+            authorize(loaded, &call)?;
             if !active() {
                 return Err(failure("callback_cancelled"));
             }
@@ -269,6 +274,9 @@ pub(super) fn run(
         };
         if call.operation == "continuation.next" && event != "intercept" {
             return Err(failure("continuation_outside_interceptor"));
+        }
+        if call.operation == "time.sleep" {
+            authorize(loaded, &call)?;
         }
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));

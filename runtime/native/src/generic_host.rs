@@ -42,6 +42,10 @@ impl Authority for NativeAuthority<'_> {
             access,
         )
     }
+
+    fn protected(&self) -> &[PathBuf] {
+        &self.protected
+    }
 }
 
 pub(crate) fn sandboxed_command(

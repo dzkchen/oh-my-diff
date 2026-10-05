@@ -164,7 +164,12 @@ fn sealed(seal: &dyn Seal, key: &str, body: Value) -> io::Result<Value> {
 
 fn opened(seal: &dyn Seal, key: &str, envelope: &Value) -> io::Result<Option<Value>> {
     let body = &envelope[key];
-    let tag = envelope["tag"].as_str().unwrap_or_default();
+    let Some(tag) = envelope["tag"]
+        .as_str()
+        .filter(|tag| !tag.is_empty() && tag.len() <= 4096)
+    else {
+        return Ok(None);
+    };
     Ok(seal
         .verify(&broker::sha256(broker::canonical(body).as_bytes()), tag)?
         .then(|| body.clone()))

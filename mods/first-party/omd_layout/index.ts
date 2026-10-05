@@ -1,4 +1,4 @@
-import type { CommandResult, ComposerEdit, Json, KeyAction, KeyName, ModAPI, TerminalComponent, TerminalListRow, TerminalRenderSite, TerminalTone } from '../../api.d.ts';
+import type { CommandResult, ComposerEdit, Json, KeyAction, KeyName, ModAPI, TerminalComponent, TerminalListRow, TerminalRenderSite, TerminalSpan, TerminalTone } from '../../api.d.ts';
 
 type Status = 'working' | 'waiting' | 'done' | 'error';
 type Thread = { id: string; name: string; cwd: string; branch: string | null; project: string; model: string | null; status: Status; updated: number; loaded: boolean };
@@ -429,13 +429,15 @@ export default function activate(api: ModAPI) {
         const tree = state.worktrees.find(item => item.path === thread.cwd);
         const brief = briefOf(state, thread);
         const detail = [base(thread.cwd), thread.model, activity.context !== undefined ? `ctx ${activity.context}%` : null, activity.ports?.length ? activity.ports.map(port => `:${port}`).join(' ') : null, activity.note].filter(Boolean).join(' · ');
-        return { value: thread.id, label: `${thread.status}${unread(state, thread) ? ' unread' : ''} ${thread.name}`, spans: [
+        const spans: TerminalSpan[] = [
           { text: `${unread(state, thread) ? glyph.unread : ' '}${glyph[thread.status]} `, tone: tones[thread.status] },
           { text: fit(thread.name, 60), bold: thread.id === state.current || unread(state, thread) },
           ...(thread.branch ? [{ text: fit(` ${thread.branch}`, 40), tone: 'accent' as const }] : []),
-          ...(tree?.issue ? [{ text: fit(` #${tree.issue}`, 20), tone: 'accent' as const }] : []),
-          ...(brief ? [{ text: fit(`  “${brief}”`, 100) }] : []),
-          { text: fit(`  ${detail}`, 120), tone: 'muted' as const }] };
+          ...(tree?.issue ? [{ text: fit(` #${tree.issue}`, 20), tone: 'accent' as const }] : [])];
+        const room = () => 256 - spans.reduce((total, span) => total + [...span.text].length, 0);
+        if (brief) spans.push({ text: fit(`  “${brief}”`, Math.min(100, room() - 30)) });
+        spans.push({ text: fit(`  ${detail}`, Math.min(120, room())), tone: 'muted' });
+        return { value: thread.id, label: `${thread.status}${unread(state, thread) ? ' unread' : ''} ${thread.name}`, spans };
       })]);
   };
   const sessionList = (state: State, height: number, site: keyof typeof LIST_BYTES): TerminalComponent[] => {
@@ -478,6 +480,7 @@ export default function activate(api: ModAPI) {
   };
   const briefLines = (state: State) => {
     const line = (id: string, label: string, text: string, tone: TerminalTone = 'normal') => ({ type: 'text' as const, id: `omd_layout_brief_${id}`, label, text: fit(text, 512), tone });
+    const lines = (id: string, label: string, items: string[], tone: TerminalTone = 'normal') => ({ ...line(id, label, '', tone), text: fit(items.join('\n'), 4096, true) });
     const thread = state.threads.find(item => item.id === state.current);
     const brief = state.brief;
     const mark = brief && flag(state, brief);
@@ -489,8 +492,8 @@ export default function activate(api: ModAPI) {
         line('age', 'Agent brief age', `Agent brief · ${age(brief.at)}${mark ? ` · ${mark}` : ''}`, mark ? 'attention' : 'muted'),
         line('current', 'Current work', `Now: ${brief.current}`),
         line('next', 'Next step', `Next: ${brief.next}`),
-        ...brief.remaining.map((item, index) => line(`remaining_${index}`, `Remaining task ${index + 1}`, `- ${item}`)),
-        ...brief.questions.map((item, index) => line(`question_${index}`, `Question ${index + 1}`, `? ${item}`, 'attention')),
+        ...(brief.remaining.length ? [lines('remaining', 'Remaining tasks', brief.remaining.map(item => `- ${item}`))] : []),
+        ...(brief.questions.length ? [lines('questions', 'Open questions', brief.questions.map(item => `? ${item}`), 'attention')] : []),
         line('estimate', 'Completion estimate', brief.estimate ? `Estimate (declared): ${brief.estimate}` : 'Estimate: unknown', 'muted')]),
     ];
   };

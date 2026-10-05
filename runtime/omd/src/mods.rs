@@ -2470,6 +2470,24 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
 
 const SLEEP_LIMIT_MS: u64 = 60_000;
 
+/// Callbacks documented to run without host operations.
+fn hostless(event: &str, payload: &Value) -> bool {
+    event == "terminal"
+        || event == "intercept"
+            && matches!(
+                payload["surface"].as_str(),
+                Some(
+                    "render"
+                        | "command_list"
+                        | "config_list"
+                        | "tool_specs"
+                        | "agent_offers"
+                        | "admission"
+                        | "composer_edit"
+                )
+            )
+}
+
 /// `time.sleep` waits outside the runtime lock and wakes early when the callback is cancelled.
 fn sleep(
     access: &mut Access<'_>,
@@ -2545,6 +2563,11 @@ fn invoke(
                     };
                 }
                 if call.operation == "time.sleep" {
+                    if hostless(event, &payload) {
+                        return Err(failure(format!(
+                            "host_operation_unavailable: time.sleep is not available during {event}"
+                        )));
+                    }
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
                 }
                 let mut call = call;
@@ -4250,21 +4273,22 @@ impl ModHost {
             let Ok(mut patch) = parsed else {
                 continue;
             };
-            if view
-                .sites
-                .get("dialog")
-                .is_some_and(|dialog| !dialog.components.is_empty())
-            {
+            if view.sites.get("dialog").is_some_and(|dialog| {
+                dialog.mode == ModSiteMode::Replace && !dialog.components.is_empty()
+            }) {
                 patch.sites.remove("dialog");
             }
-            let components = view::site_component_ids(&patch.sites);
+            let before = view::site_component_ids(&view.sites);
             match patch.apply(&mut view, &mut claims, &id, &origin) {
                 Ok(lost) => {
                     conflicts.extend(lost);
                     component_owners.extend(
-                        components
+                        view::site_component_ids(&view.sites)
                             .into_iter()
-                            .filter(|component| !component_owners.contains_key(component))
+                            .filter(|component| {
+                                !before.contains(component)
+                                    && !component_owners.contains_key(component)
+                            })
                             .map(|component| (component, id.clone()))
                             .collect::<Vec<_>>(),
                     );

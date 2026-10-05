@@ -113,7 +113,8 @@ function hostCall(operation, arguments_ = null) {
   if (!result.ok) throw new Error(result.error);
   return result.value;
 }
-function structuredCloneFallback(value) { return JSON.parse(JSON.stringify(value)); }
+function structuredCloneFallback(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
+const own = (object, name) => object !== null && typeof object === 'object' && Object.hasOwn(object, name) ? object[name] : undefined;
 function deepFreeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(deepFreeze); Object.freeze(value); }
   return value;
@@ -223,21 +224,20 @@ function keyed() {
 }
 function cell(key, fallback, path) {
   if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(key)) throw new Error('invalid_atom_key: ' + key);
+  const current = () => {
+    const value = path === undefined ? own(keyed(), key) : own(own(keyed(), key), path);
+    return value === undefined ? fallback : value;
+  };
   const read = () => {
     track(key);
-    const value = path === undefined ? keyed()[key] : keyed()[key]?.[path];
-    return structuredCloneFallback(value === undefined ? fallback : value);
+    return structuredCloneFallback(current());
   };
   const write = value => {
     if (value === undefined) throw new Error('atom_value_required: ' + key);
-    const next = { ...keyed() };
-    next[key] = path === undefined ? value : { ...(next[key] ?? {}), [path]: value };
-    writeState(next);
+    const before = keyed();
+    writeState({ ...before, [key]: path === undefined ? value : { ...(own(before, key) ?? {}), [path]: value } });
   };
-  const atom = { key: path === undefined ? key : key + '/' + path, get: read, set: write, update(change) { write(change(read())); }, peek: () => {
-    const value = path === undefined ? keyed()[key] : keyed()[key]?.[path];
-    return JSON.stringify(value === undefined ? fallback : value);
-  } };
+  const atom = { key: path === undefined ? key : key + '/' + path, get: read, set: write, update(change) { write(change(read())); }, peek: () => JSON.stringify(current()) };
   return Object.freeze(atom);
 }
 function derive(compute) {
@@ -245,7 +245,7 @@ function derive(compute) {
   let cached;
   let deps = null;
   let seen = null;
-  const signature = () => JSON.stringify(deps.map(key => key === '*' ? state : keyed()[key]));
+  const signature = () => JSON.stringify(deps.map(key => key === '*' ? state : own(keyed(), key)));
   const run = () => {
     const outer = tracking;
     tracking = new Set();
@@ -277,7 +277,7 @@ async function flushSubscriptions() {
       const previous = seen[index] === undefined ? undefined : JSON.parse(seen[index]);
       seen[index] = now;
       changed = true;
-      await entry.handler(JSON.parse(now), previous);
+      await entry.handler(now === undefined ? undefined : JSON.parse(now), previous);
     }
     if (!changed) return;
   }
@@ -368,8 +368,16 @@ const timers = new Map();
 async function dispatchTimer(event) {
   const entry = timers.get(event?.key);
   if (!entry) return null;
-  const result = await entry.handler({ key: entry.key });
-  if (entry.repeat && result !== false) hostCall('events.schedule', { key: event.key, delay_ms: entry.ms });
+  entry.cancelled = false;
+  let failure = null;
+  try {
+    if (await entry.handler({ key: entry.key }) === false) entry.cancelled = true;
+  } catch (error) {
+    if (error === suspension) throw error;
+    failure = error;
+  }
+  if (entry.repeat && !entry.cancelled) hostCall('events.schedule', { key: event.key, delay_ms: entry.ms });
+  if (failure) throw failure;
   return null;
 }
 function timer(key, ms, handler, repeat) {
@@ -384,10 +392,11 @@ function timer(key, ms, handler, repeat) {
     unique(handlers, 'timer', dispatchTimer);
     registrations.events.push('timer');
   }
-  timers.set(scheduled, { key, ms, handler, repeat });
+  const entry = { key, ms, handler, repeat, cancelled: false };
+  timers.set(scheduled, entry);
   return Object.freeze({
     start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
-    cancel() { return hostCall('events.cancel', { key: scheduled }); },
+    cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
   });
 }
 function workspacePath(path) {
@@ -566,10 +575,13 @@ const api = Object.freeze({
       if (typeof name !== 'string' || !name || name.includes('/')) throw new Error('invalid_ancestor_name: ' + name);
       let start = from;
       if (start === undefined) {
-        const session = hostCall('session.info', null);
-        const root = String(session.root);
-        const cwd = String(session.cwd ?? root);
-        start = cwd.startsWith(root + '/') ? cwd.slice(root.length + 1) : '';
+        start = '';
+        if (request.capabilities.includes('inventory')) {
+          const session = hostCall('session.info', null);
+          const root = String(session.root);
+          const cwd = String(session.cwd ?? root);
+          start = cwd.startsWith(root + '/') ? cwd.slice(root.length + 1) : '';
+        }
       }
       const parts = start ? workspacePath(start).split('/') : [];
       const candidates = [];

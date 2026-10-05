@@ -148,8 +148,8 @@ without an unrestricted child process.
   no symlinked components, opened without following links, and expected
   versions on every transaction path (`stale expected version for ...`). The
   root must be canonical (`fs_root_not_canonical`) and cannot overlap the
-  workspace, mod stores, Codex home or credential directories
-  (`fs_root_protected`); writes need `write: true`. External changes are not
+  workspace, mod stores, Codex home, credential directories or the `host.json`
+  protected and secret paths (`fs_root_protected`); writes need `write: true`. External changes are not
   workspace changes.
 - `mcp_servers: {name: {command, args?} | {url, credential?}}` lists up to 8
   servers. `mcp.connect {server}` adds `mod_<id>_<name>` to the mod's thread
@@ -212,8 +212,9 @@ Host and service calls are intercepted with `api.intercept('host_operation')`
 `next.origin` names the actual `caller`, the service `provider` when a provider
 makes the call on someone's behalf, and the caller `chain`; the host sets them
 and a mod cannot. Interception covers every host operation and service call,
-including nested provider calls. Pure SDK functions and local rendering are not
-host operations and are not intercepted.
+including nested provider calls, except calls made inside an interceptor
+callback and `sessions.*` and `evidence.*` calls. Pure SDK functions and local
+rendering are not host operations and are not intercepted.
 
 A manifest may list up to 16 `exec_environment` names that `exec.run` passes
 through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
@@ -476,7 +477,8 @@ applies: 'next_session'}` or `{status: 'declined'}`. It applies from the next se
 
 Every lead and native sub-agent request is observed and recorded in the
 session ledger (`task.status`, the `ledger` field of `context` and `terminal`
-events). Limits are enforced only on mod-initiated agents, and on the lead
+events). The ledger a mod receives carries the cost totals, the newest 64
+attempts and `observed_requests` (a count). Limits are enforced only on mod-initiated agents, and on the lead
 when its model matches a configured lead route with rates. OMD sessions use the
 observed HTTP Responses transport; WebSocket transport is disabled for their
 threads and refused if any request would use it.
@@ -487,7 +489,8 @@ Every lead, native sub-agent and mod worker request passes the `model_request`
 and `response_stream` interceptors (capability `middleware`) before and while
 it streams; see Continuation middleware for ordering, `required` and failure rules.
 
-`model_request` input: `request_id` (also sent as `x-omd-request-id`),
+`model_request` input: `request_id` (unique across processes, also sent as
+`x-omd-request-id`),
 `attempt` (2 or 3 after a mod's stop-and-retry), `scope {thread_id, agent_id,
 kind}`, `routes`, `original`, `route`, `model`, `provider`, `effort`, `tools`
 (names) and `sections`. A handler may change:
@@ -522,7 +525,8 @@ kind}`, `routes`, `original`, `route`, `model`, `provider`, `effort`, `tools`
 section (or `tools`) whose content differs from the thread's previous request,
 where a provider's prompt cache stops matching; `null` means an unchanged
 prefix. A handler may answer without `next`: `{response: {output: [{type:
-'message', text} | {type: 'tool_call', tool, namespace?, arguments}]}}` (at
+'message', text} | {type: 'tool_call', tool, namespace?, arguments}]}}`, where
+`arguments` is an object for a JSON tool or a string for a freeform tool (at
 most 16 items). The host streams it as a complete response without contacting
 a provider, admitting or billing anything; it carries no usage, `synthetic`
 names the mod, and tool calls get `mod-<id>-<request>-<n>` call IDs and pass
@@ -536,9 +540,10 @@ and `protected`: `text` (a visible text delta), `message` (a completed message;
 `usage`). `next` resolves to `{chunks}`; a handler returns chunks derived from
 it: change `text`, `tool` or `arguments` (JSON-object arguments for `json`
 tools), drop the chunk (`{chunks: []}`; dropping a `tool_call` drops the whole
-call, which never runs) or add `{kind: 'message', text}` and `{kind:
-'tool_done', tool, arguments}` chunks, which get fresh `mod-…` IDs (added to a
-`stop` chunk they come before the response ends). Text changes are both shown
+call, which never runs) or, at a `message`, `tool_done` or `stop` chunk, add
+`{kind: 'message', text}` and `{kind: 'tool_done', tool, arguments}` chunks,
+which get fresh `mod-…` IDs (added to a `stop` chunk they come before the
+response ends). A returned received chunk keeps every field it arrived with. Text changes are both shown
 and recorded: a `message` whose deltas changed is recorded as streamed.
 `reasoning` and `stop` chunks are observe-only. At a `message`, `tool_done` or
 `stop` chunk a handler may return `{stop: {reason}}` or `{stop: {reason},
@@ -583,12 +588,12 @@ pointer (`/input/3/content/0/text`), `kind` is the content kind
 (`agents_md.instructions`, `user.text`, or `message.<role>` without one),
 `instructions`, `tool_call.arguments`, `tool_call.input`, `tool_output`,
 `reasoning`, `tool_spec`, `output_schema` or the item type. A page holds up to
-256 KiB of text (`bytes` is the UTF-8 size); a longer segment arrives in
-256 KiB pieces, each with `offset` (where the piece starts in the whole text)
+96 KiB of JSON-encoded text (`bytes` is the UTF-8 size); a longer segment
+arrives in pieces of up to 80 KiB, each with `offset` (where the piece starts in the whole text)
 and up to 1 KiB of read-only `before` and `after` context, so a match across a
 boundary is visible from both pieces. `opaque` names values that are not
 scanned: encrypted reasoning and compaction, images, audio and files (up to
-256). More than 64 pages refuses the request (`final_request_too_large`).
+256). More than 128 pages refuses the request (`final_request_too_large`).
 
 `next` resolves to `{edits}` from the policies beneath. A handler calls `next`
 and returns `{edits}` keeping all of those plus its own, or returns `{deny}`
@@ -796,7 +801,8 @@ engine sub-agents outside OMD accounting such as review, the engine's token
 totals (`source: engine`, request count and cost unknown) and the failure or
 cancel reason. A mod worker's `agent_id` is its handle.
 At most 64 finished records are kept. The `agent` middleware event delivers
-`{phase: 'start' | 'turn' | 'end', agent}` with the same record. Observation
+`{phase: 'start' | 'turn' | 'end', agent}` with the same record, in order and
+under the state of the session thread at the root of the agent's parents. Observation
 grants nothing: `agents.message`, `agents.wait`, `agents.result` and
 `agents.cancel` still address only the caller's own handles.
 
@@ -1066,6 +1072,11 @@ of the chain and then the native executor. Only the listed fields may change:
 | `config_set` | `value` | `{value}` | what `next` returned, or `{deny}` |
 | `admission` | nothing | `{admit: true}`, `{withhold}` or `{deny}` | the same or a tighter decision |
 | `render` | `props` keys the native drawing reads (see Render hooks) | `{tree}` | a `{tree}` of presentation components holding `{type: 'native'}` at most once, with or without calling `next` |
+
+A `{deny}` refuses only before the native executor runs: once `next` has run
+a `command`, `config_set`, `peer_send` or `agent_spawn`, a deny is an invalid
+result, so an ordinary handler's inner result stands and a required handler
+fails.
 
 Tool inputs also carry `call_id`, `thread_id`, `agent_id`, `schema`,
 `raw_arguments` and `batch`; `arguments` is an object for function tools and
@@ -1628,7 +1639,9 @@ here under the mod's own grants, and none starts paid work implicitly.
   callback's process ends and it replays from its receipts afterwards, so the
   wait holds no runtime lock and does not count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
-  steps aside) get `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
+  steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
+  `config_list`, `tool_specs`, `agent_offers`, `admission` and `composer_edit` callbacks run
+  without host operations and get `host_operation_unavailable`. `api.time.wait(check, {interval_ms,
   timeout_ms})` polls `check` between sleeps within the 32 host calls.
   `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
   interval_ms, handler)` register during activation (1 s to 24 h) and return
@@ -1638,8 +1651,8 @@ here under the mod's own grants, and none starts paid work implicitly.
   session end drops it (the host timer limits apply). A mod uses these or its
   own `on('timer')`, not both.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and
-  `api.fs.ancestors(name, from?)` (nearest first, from the session's cwd up to
-  the workspace root) normalize workspace-relative paths and read through
+  `api.fs.ancestors(name, from?)` (nearest first, up to the workspace root
+  from `from`, else from the session's cwd with `inventory` or the root) normalize workspace-relative paths and read through
   `workspace.stat` (`fs.read`); symlinked components and paths outside the
   workspace are refused there.
 - `api.classify(text, labels, {route, instructions?, effort?, timeout_ms?,

@@ -97,8 +97,11 @@ impl Inventory {
             );
             let priced = response["cost"]["microusd"].as_u64();
             add(usage, "microusd", priced);
+            let first = usage["requests"] == 1;
             usage["basis"] = json!(match (usage["basis"].as_str(), priced) {
-                (Some("unknown") | Some("settled"), Some(_)) => "settled",
+                (Some("unknown"), None) => "unknown",
+                (Some("unknown"), Some(_)) if first => "settled",
+                (Some("settled"), Some(_)) => "settled",
                 _ => "partial",
             });
         });
@@ -132,6 +135,24 @@ impl Inventory {
         .filter(|record| record["reason"] == json!(reason) && record["status"] == status)
     }
 
+    /// The session thread at the root of `thread`'s parent chain; a thread without an agent record is its own root.
+    pub(super) fn root_thread(&self, thread: &str) -> String {
+        let Ok(records) = self.records.lock() else {
+            return thread.to_owned();
+        };
+        let mut root = thread;
+        for _ in 0..16 {
+            match records
+                .get(root)
+                .and_then(|record| record["parent"]["thread_id"].as_str())
+            {
+                Some(parent) => root = parent,
+                None => break,
+            }
+        }
+        root.to_owned()
+    }
+
     pub(super) fn list(&self) -> Vec<Value> {
         self.records
             .lock()
@@ -140,13 +161,34 @@ impl Inventory {
     }
 }
 
-/// Publishes an `agent` lifecycle event to every observer.
-pub(super) fn notify(runtime: &Arc<Mutex<ModHost>>, phase: &str, record: Value) {
-    let runtime = runtime.clone();
-    let payload = json!({"phase": phase, "agent": record});
-    tokio::task::spawn_blocking(move || {
-        if let Ok(mut runtime) = runtime.lock() {
-            let _ = runtime.event("agent", payload);
-        }
+/// Publishes an `agent` lifecycle event to every observer, in order, under the session thread's state.
+pub(super) fn notify(
+    runtime: &Arc<Mutex<ModHost>>,
+    inventory: &Inventory,
+    phase: &str,
+    record: Value,
+) {
+    type Delivery = (Arc<Mutex<ModHost>>, Option<String>, Value);
+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<Delivery>> =
+        std::sync::OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<Delivery>();
+        std::thread::spawn(move || {
+            for (runtime, thread, payload) in receiver {
+                let _thread = codex_omd::StateThread::enter(thread);
+                if let Ok(mut runtime) = runtime.lock() {
+                    let _ = runtime.event("agent", payload);
+                }
+            }
+        });
+        sender
     });
+    let thread = record["parent"]["thread_id"]
+        .as_str()
+        .map(|parent| inventory.root_thread(parent));
+    let _ = queue.send((
+        runtime.clone(),
+        thread,
+        json!({"phase": phase, "agent": record}),
+    ));
 }

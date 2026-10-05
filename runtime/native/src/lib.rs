@@ -99,6 +99,8 @@ pub(crate) struct Lead {
     permission_profile: Arc<std::sync::Mutex<codex_protocol::models::PermissionProfile>>,
 }
 
+const LEDGER_ATTEMPTS: usize = 64;
+
 struct OperationGuard {
     repository_identity: String,
 }
@@ -592,8 +594,20 @@ impl Session {
 }
 
 impl Lead {
+    /// Every callback receives this, so it carries the totals, the newest attempts and only a count of observed requests.
     fn ledger(&self) -> Value {
-        json!({"thread_id": self.thread.to_string(), "cwd": self.host.repository, "cost": self.session.task.cost_capture().ok()})
+        let mut cost = json!(self.session.task.cost_capture().ok());
+        if let Some(cost) = cost.as_object_mut() {
+            if let Some(Value::Array(attempts)) = cost.get_mut("attempts") {
+                attempts.drain(..attempts.len().saturating_sub(LEDGER_ATTEMPTS));
+            }
+            let observed = cost
+                .remove("observed")
+                .and_then(|observed| observed.as_array().map(Vec::len))
+                .unwrap_or_default();
+            cost.insert("observed_requests".into(), observed.into());
+        }
+        json!({"thread_id": self.thread.to_string(), "cwd": self.host.repository, "cost": cost})
     }
 
     fn restricted(&self, operation: &str, arguments: &Value) -> Result<(), String> {

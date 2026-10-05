@@ -91,6 +91,16 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
+impl Attempt {
+    /// Provider-billed costs never count against the exposure ceiling.
+    fn exposure(&self) -> u64 {
+        match self.settled_microusd {
+            Some(settled) if !self.provider_billed => settled,
+            _ => self.reserved_microusd,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct TaskCostCapture {
     pub schema: u32,
@@ -472,12 +482,8 @@ impl Task {
                                 .checked_add(1)
                                 .ok_or_else(|| denied("resume worker request count overflow"))?;
                         }
-                        let prior_exposure = prior.as_ref().map_or(0, |prior| {
-                            prior.settled_microusd.unwrap_or(prior.reserved_microusd)
-                        });
-                        let exposure = attempt
-                            .settled_microusd
-                            .unwrap_or(attempt.reserved_microusd);
+                        let prior_exposure = prior.as_ref().map_or(0, Attempt::exposure);
+                        let exposure = attempt.exposure();
                         worker.exposure = worker
                             .exposure
                             .checked_sub(prior_exposure)
@@ -546,11 +552,7 @@ impl Task {
         }
         state.exposure = state.attempts.values().try_fold(0u64, |total, attempt| {
             total
-                .checked_add(
-                    attempt
-                        .settled_microusd
-                        .unwrap_or(attempt.reserved_microusd),
-                )
+                .checked_add(attempt.exposure())
                 .ok_or_else(|| denied("resume exposure overflow"))
         })?;
         for worker in state.workers.values_mut() {
@@ -1497,14 +1499,7 @@ impl Task {
             .filter(|attempt| attempt.external_subscription)
             .filter_map(|attempt| attempt.settled_microusd)
             .sum();
-        let retained_exposure_upper_bound_microusd = attempts
-            .iter()
-            .map(|attempt| {
-                attempt
-                    .settled_microusd
-                    .unwrap_or(attempt.reserved_microusd)
-            })
-            .sum();
+        let retained_exposure_upper_bound_microusd = attempts.iter().map(Attempt::exposure).sum();
         let raw_usage_attempts = attempts
             .iter()
             .filter(|attempt| attempt.raw_usage.is_some())

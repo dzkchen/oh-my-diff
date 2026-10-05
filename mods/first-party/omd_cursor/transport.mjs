@@ -84,7 +84,7 @@ export function conversation(input) {
 
 const fingerprint = messages => digest(messages.map(({ role, text, images }) => [role, text, images.map(item => item.data)]));
 
-export function prompt(messages, context, fresh, cwd, orphaned = false) {
+export function prompt(messages, context, fresh, orphaned = false) {
   const images = messages.flatMap(message => message.images);
   if (!fresh) {
     const text = messages.map(message => message.text).join('\n\n');
@@ -93,7 +93,7 @@ export function prompt(messages, context, fresh, cwd, orphaned = false) {
   }
   const transcript = messages.map(message => [`## ${message.role === 'user' ? 'User' : 'Assistant'}`, message.text, ...message.notes].join('\n')).join('\n\n');
   const text = [
-    `You are the lead coding agent of an Oh My Diff session in ${cwd}. You have no built-in Cursor tools: act only through the tools of the custom-user-tools MCP server, which Oh My Diff runs in that workspace under its own permissions and approvals. A refused or failed call means the user or the host declined it; do not retry it another way.`,
+    'You are the lead coding agent of an Oh My Diff session. You have no built-in Cursor tools: act only through the tools of the custom-user-tools MCP server, which Oh My Diff runs in the session workspace named by the environment context under its own permissions and approvals. A refused or failed call means the user or the host declined it; do not retry it another way.',
     ...context.filter(Boolean).map(text => `<context>\n${text}\n</context>`),
     messages.length > 1 || orphaned ? `Conversation so far:\n\n${transcript}` : transcript,
     ...orphaned ? ['The previous Cursor run ended while its tool calls were running; continue from the tool results above.'] : []].join('\n\n');
@@ -152,6 +152,7 @@ class Turn {
     this.events = [];
     this.waiting = null;
     this.calls = new Map();
+    this.handed = new Set();
     this.tools = {};
     this.text = '';
     this.pending = null;
@@ -196,10 +197,9 @@ class Turn {
 }
 
 export class Router {
-  constructor(route, apiKey, cwd) {
+  constructor(route, apiKey) {
     this.route = route;
     this.apiKey = apiKey;
-    this.cwd = cwd;
     this.sdk = null;
     this.store = null;
     this.state = { agents: {} };
@@ -213,11 +213,11 @@ export class Router {
     this.planAt = 0;
   }
   async ready() {
-    if (this.sdk) return;
     if (!this.apiKey) throw new Error('cursor_not_enrolled:run omd-package cursor --setup');
     if (this.route.credential_expires_at_ms && this.route.credential_expires_at_ms <= Date.now()) {
       throw new Error('cursor_credential_expired:rerun omd-package cursor --setup');
     }
+    if (this.sdk) return;
     const sdk = await loadSdk(this.route.sdk);
     await mkdir(join(this.route.data, 'workspace'), { recursive: true, mode: 0o700 });
     this.store = new sdk.JsonlLocalAgentStore(join(this.route.data, 'agents'));
@@ -276,7 +276,7 @@ export class Router {
     const key = callId();
     this.turns.set(key, turn);
     try {
-      turn.run = await agent.send(prompt(input, context, fresh, this.cwd, orphaned), { model, local: { customTools: turn.customTools() },
+      turn.run = await agent.send(prompt(input, context, fresh, orphaned), { model, local: { customTools: turn.customTools() },
         onDelta: ({ update }) => {
           if (update?.type === 'text-delta' && update.text) turn.push({ kind: 'text', delta: update.text });
           else if (update?.type === 'thinking-delta' && update.text) turn.push({ kind: 'reasoning', delta: update.text });
@@ -307,7 +307,12 @@ export class Router {
       turn.calls.delete(item.call_id);
       try { call.resolve(toolResult(item)); } catch (error) { call.reject(error); }
     }
-    turn.abandon('tool_output_missing');
+    // Calls the run started after the last response stay queued for this one.
+    for (const id of turn.handed) {
+      turn.calls.get(id)?.reject(new Error('tool_output_missing'));
+      turn.calls.delete(id);
+    }
+    turn.handed.clear();
     return { key, turn };
   }
   park(key, turn) {
@@ -395,24 +400,31 @@ async function drain(router, key, turn, send, signal) {
   const id = `cursor-${randomBytes(8).toString('hex')}`;
   let text = false;
   let reasoning = '';
+  let items = 0;
+  const index = {};
   send({ type: 'response.created', response: { id } });
   const think = delta => {
     if (!reasoning) {
-      send({ type: 'response.output_item.added', item: { type: 'reasoning', id: `${id}-reasoning`, summary: [] } });
+      index.reasoning = items++;
+      send({ type: 'response.output_item.added', output_index: index.reasoning, item: { type: 'reasoning', id: `${id}-reasoning`, summary: [] } });
       send({ type: 'response.reasoning_summary_part.added', item_id: `${id}-reasoning`, summary_index: 0 });
     }
     reasoning += delta;
     send({ type: 'response.reasoning_summary_text.delta', item_id: `${id}-reasoning`, summary_index: 0, delta });
   };
   const say = delta => {
-    if (text === false) { text = ''; send({ type: 'response.output_item.added', item: { type: 'message', id: `${id}-text`, role: 'assistant', content: [] } }); }
+    if (text === false) {
+      text = '';
+      index.text = items++;
+      send({ type: 'response.output_item.added', output_index: index.text, item: { type: 'message', id: `${id}-text`, role: 'assistant', content: [] } });
+    }
     text += delta;
-    send({ type: 'response.output_text.delta', delta });
+    send({ type: 'response.output_text.delta', output_index: index.text, item_id: `${id}-text`, content_index: 0, delta });
   };
   const close = () => {
-    if (reasoning) send({ type: 'response.output_item.done', item: { type: 'reasoning', id: `${id}-reasoning`,
+    if (reasoning) send({ type: 'response.output_item.done', output_index: index.reasoning, item: { type: 'reasoning', id: `${id}-reasoning`,
       summary: [{ type: 'summary_text', text: reasoning }] } });
-    if (text !== false) send({ type: 'response.output_item.done', item: { type: 'message', id: `${id}-text`,
+    if (text !== false) send({ type: 'response.output_item.done', output_index: index.text, item: { type: 'message', id: `${id}-text`,
       role: 'assistant', content: [{ type: 'output_text', text }] } });
   };
   const meta = extra => ({ agent_id: turn.agentId, run_id: turn.run?.id ?? null, request_id: turn.run?.requestId ?? null,
@@ -437,11 +449,15 @@ async function drain(router, key, turn, send, signal) {
           if (next.kind !== 'call') { turn.events.unshift(next); break; }
           ids.push(next.id);
         }
+        const live = ids.filter(id => turn.calls.has(id));
+        if (!live.length) continue;
+        live.forEach(id => turn.handed.add(id));
         close();
-        for (const callKey of ids) {
+        for (const callKey of live) {
           const item = callItem(turn.calls.get(callKey));
-          send({ type: 'response.output_item.added', item });
-          send({ type: 'response.output_item.done', item });
+          const output_index = items++;
+          send({ type: 'response.output_item.added', output_index, item });
+          send({ type: 'response.output_item.done', output_index, item });
         }
         const segment = turn.pending;
         turn.pending = null;
@@ -483,7 +499,8 @@ export async function serve(routePath) {
   await privateDirectory(route.data);
   process.env.HOME = route.data;
   process.env.TMPDIR = route.data;
-  const router = new Router(route, apiKey, process.cwd());
+  const router = new Router(route, apiKey);
+  const identity = digest([route, apiKey]);
   let nonce = ready;
   let active = 0;
   let stopping = false;
@@ -493,8 +510,20 @@ export async function serve(routePath) {
     if (request.method !== 'POST' || !['/v1/responses', '/_omd/nonce'].includes(request.url)) { response.writeHead(404).end(); return; }
     if (request.headers.authorization !== `Bearer ${token}`) { response.writeHead(401).end(); return; }
     const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    if (request.url === '/_omd/nonce') { nonce = Buffer.concat(chunks).toString().slice(0, 256); response.writeHead(204).end(); return; }
+    try {
+      for await (const chunk of request) chunks.push(chunk);
+    } catch {
+      response.destroy();
+      return;
+    }
+    if (request.url === '/_omd/nonce') {
+      const [handed, from] = Buffer.concat(chunks).toString().split(' ');
+      nonce = handed.slice(0, 256);
+      response.writeHead(204).end();
+      // A transport started after setup changed the key or route takes the port once this one drains.
+      if (from !== identity) stop();
+      return;
+    }
     let payload;
     let entry;
     try {
@@ -524,7 +553,7 @@ export async function serve(routePath) {
   const stop = () => { stopping = true; server.close(); if (!active) exit(); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
-  await claim(server, route.port, token, ready);
+  await claim(server, route.port, token, `${ready} ${identity}`);
 }
 
 // Concurrent sessions share the store's fixed port: a later transport hands its readiness nonce to the owner during the host's 3 s readiness window and takes the port over once the owner has drained and exited.

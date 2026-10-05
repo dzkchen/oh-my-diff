@@ -2,6 +2,8 @@ import type { Json, ModAPI } from '../../api.d.ts';
 
 const service = 'cursor';
 const settleKey = 'settle';
+// The shared log only grows; its newest rows fit one host result with room for the settle calls.
+const LOG_TAIL_BYTES = 32_768;
 
 type Row = Record<string, any>;
 type State = { ours: boolean; applied: string[]; polls: number };
@@ -69,8 +71,8 @@ export default function activate(api: ModAPI): void {
       .map(profile => profile.id) : [];
     return api.host.tryCall('providers.register', { id: service, secrets }).ok;
   };
-  const read = (path: string) => {
-    const run = api.host.tryCall('exec.run', { program: '/bin/cat', argv: [path] });
+  const read = (path: string, tail = false) => {
+    const run = api.host.tryCall('exec.run', tail ? { program: '/usr/bin/tail', argv: ['-c', String(LOG_TAIL_BYTES), path] } : { program: '/bin/cat', argv: [path] });
     return run.ok && run.value.exit_code === 0 ? run.value.stdout : null;
   };
   const route = (): Row | null => {
@@ -89,7 +91,7 @@ export default function activate(api: ModAPI): void {
     if (!current.ours) return;
     const config = route();
     const info = api.host.tryCall('session.info', null);
-    const log = config && info.ok ? read(`${config.data}/usage.jsonl`) : null;
+    const log = config && info.ok ? read(`${config.data}/usage.jsonl`, true) : null;
     const applied = [...current.applied];
     for (const settlement of log && info.ok ? pendingSettlements(log, info.value.thread_id, applied).slice(0, 8) : []) {
       const result = api.host.tryCall('ledger.settle', settlement);
@@ -112,7 +114,7 @@ export default function activate(api: ModAPI): void {
     const action = String(argument ?? '').trim() || 'doctor';
     const config = route();
     if (!config) return { display: 'Cursor is not enrolled for this store; run `omd-package cursor --setup`.' };
-    if (action === 'usage') return { display: usageReport(read(`${config.data}/usage.jsonl`) ?? '') };
+    if (action === 'usage') return { display: usageReport(read(`${config.data}/usage.jsonl`, true) ?? '') };
     const expires = config.credential_expires_at_ms ? new Date(config.credential_expires_at_ms).toISOString() : 'not reported';
     return { display: [
       `Cursor SDK ${config.sdk_version} (${config.sdk})`,

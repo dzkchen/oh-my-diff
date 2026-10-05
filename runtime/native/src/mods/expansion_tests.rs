@@ -692,6 +692,59 @@ async fn turn_activity_records_only_while_a_mod_reads_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn agent_events_reach_thread_scoped_observers_of_the_session() {
+    let Some(fixture) = fixture(&[Package {
+        id: "watcher",
+        capabilities: &["middleware", "commands", "store"],
+        manifest: json!({"state_scope": "thread"}),
+        source: "export default function (api) {\n  api.on('agent', e => { api.state.set([...(api.state.get() ?? []), e.phase]); });\n  api.command('seen', () => api.state.get());\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let child = ThreadId::new();
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: fixture.lead.thread,
+        depth: 1,
+        agent_path: None,
+        agent_nickname: None,
+        agent_role: None,
+    });
+    mods.native_agent_started(child, &source, &ExtensionData::new(child.to_string()));
+    let lead = fixture.lead.thread.to_string();
+    let seen = settle(|| {
+        let _thread = codex_omd::StateThread::enter(Some(lead.clone()));
+        Some(command(&fixture.core, "watcher", "seen")).filter(|seen| !seen.is_null())
+    })
+    .await;
+    assert_eq!(seen, json!(["start"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_ledger_handed_to_mods_counts_observed_requests() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    for _ in 0..70 {
+        fixture
+            .lead
+            .session
+            .task
+            .observe(
+                "lead",
+                "openai",
+                "gpt",
+                Some(json!({"input_tokens": 1})),
+                "completed",
+            )
+            .unwrap();
+    }
+    let ledger = fixture.lead.ledger();
+    assert_eq!(ledger["cost"]["observed_requests"], 70);
+    assert!(ledger["cost"].get("observed").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn turn_activity_stays_empty_without_a_reader() {
     let Some(fixture) = fixture(&[Package {
         id: "plain",
@@ -2017,6 +2070,20 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         escaped.contains("agent_spawn_cwd_outside_session"),
         "{escaped}"
     );
+    std::fs::write(
+        fixture
+            .lead
+            .host
+            .root
+            .join("agents/plans/omd-agent-foreign.json"),
+        r#"{"definition":null,"cwd":"/","tools":null}"#,
+    )
+    .unwrap();
+    assert!(
+        mods.resolve_agent_role(&thread_store, "omd-agent-foreign")
+            .is_none(),
+        "a plan from another session's workspace is refused"
+    );
 
     let child = ThreadId::new();
     let child_store = ExtensionData::new(child.to_string());
@@ -2026,36 +2093,36 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         thread: child,
         ..fixture.lead.clone()
     });
-    mods.native_agent_started(
-        child,
-        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: fixture.lead.thread,
-            depth: 1,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: Some(plan),
-        }),
-        &child_store,
-    );
-    let hidden = mods
-        .adjust_tool_specs(
-            &child_store,
-            &[
-                codex_extension_api::ToolSpecView {
-                    name: "read_file".into(),
-                    description: String::new(),
-                    parameters: Value::Null,
-                },
-                codex_extension_api::ToolSpecView {
-                    name: "exec_command".into(),
-                    description: String::new(),
-                    parameters: Value::Null,
-                },
-            ],
-        )
-        .unwrap()
-        .hide;
-    assert_eq!(hidden, vec!["exec_command".to_owned()]);
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: fixture.lead.thread,
+        depth: 1,
+        agent_path: None,
+        agent_nickname: None,
+        agent_role: Some(plan),
+    });
+    let reopened = ExtensionData::new(child.to_string());
+    for store in [&child_store, &reopened] {
+        mods.native_agent_started(child, &source, store);
+        let hidden = mods
+            .adjust_tool_specs(
+                store,
+                &[
+                    codex_extension_api::ToolSpecView {
+                        name: "read_file".into(),
+                        description: String::new(),
+                        parameters: Value::Null,
+                    },
+                    codex_extension_api::ToolSpecView {
+                        name: "exec_command".into(),
+                        description: String::new(),
+                        parameters: Value::Null,
+                    },
+                ],
+            )
+            .unwrap()
+            .hide;
+        assert_eq!(hidden, vec!["exec_command".to_owned()]);
+    }
     static EXEC: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("exec_command"));
     let refused = mods
@@ -2178,7 +2245,7 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         id: "monitor",
         capabilities: &["events", "autonomous", "store"],
         manifest: json!({"autonomy": {"max_queued": 2, "max_turns": 1, "max_continuations": 1}}),
-        source: "export default function (api) {\n  api.on('timer', () => { api.state.set({ queued: [\n    api.host.call('turns.queue', { prompt: 'check CI', key: 'ci' }),\n    api.host.call('turns.queue', { prompt: 'check CI', key: 'ci' }),\n    api.host.tryCall('turns.queue', { prompt: 'triage', key: 'triage', priority: 'high' }),\n    api.host.tryCall('turns.queue', { prompt: 'more', key: 'more' }),\n  ] }); });\n  api.on('turn_queue', e => { api.state.set({ ...api.state.get(), last: e }); });\n  api.intercept('turn_stop', (e, next) => e.continued === 0 ? { continue: 'verify once more' } : next(e));\n}\n",
+        source: "export default function (api) {\n  api.on('timer', () => { api.state.set({ queued: [\n    api.host.call('turns.queue', { prompt: 'check CI', key: 'ci' }),\n    api.host.call('turns.queue', { prompt: 'check CI', key: 'ci' }),\n    api.host.tryCall('turns.queue', { prompt: 'triage', key: 'triage', priority: 'high' }),\n    api.host.tryCall('turns.queue', { prompt: 'more', key: 'more' }),\n  ] }); });\n  api.on('turn_queue', e => { api.state.set({ ...api.state.get(), last: e }); });\n  api.intercept('turn_stop', (e, next) => e.continued === 0 || e.continued >= 4 ? { continue: 'verify once more' } : next(e));\n}\n",
     }]) else {
         return;
     };
@@ -2243,6 +2310,12 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
     core.autonomy.user_turn(&thread);
     let (first, _) = pick(&grants);
     assert_eq!(first.unwrap()["key"], "triage");
+    core.autonomy.turn_ended(core, &fixture.lead, false);
+    assert_eq!(
+        core.autonomy.running(&thread).as_deref(),
+        Some("monitor"),
+        "a turn ending while a dispatch starts leaves the picked entry to it"
+    );
     assert!(
         core.autonomy
             .take_submitting(&thread, "typed by the user")
@@ -2320,6 +2393,10 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
             turn_store: &turn_store,
         })
     };
+    assert!(
+        ask(4).await.is_none(),
+        "at most four continuations per turn in total"
+    );
     let continuation = ask(0).await.unwrap();
     assert_eq!(continuation.source, "mod:monitor");
     assert!(continuation.prompt.ends_with("verify once more"));

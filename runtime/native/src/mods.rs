@@ -206,11 +206,12 @@ impl Mods {
         )
     }
 
-    /// Cancels chains whose call never reported a result before its turn ended.
+    /// Cancels chains whose call never reported a result before its turn ended, and any stream retry core declined.
     fn release_pending(&self, thread: Option<String>) {
         let Some(thread) = thread else {
             return;
         };
+        self.host.accounts.forget_retry(&thread);
         if let Ok(mut pending) = self.pending.lock() {
             pending.retain(|_, entry| entry.thread != thread);
         }
@@ -226,6 +227,12 @@ impl Mods {
         let SessionSource::SubAgent(kind) = source else {
             return;
         };
+        if let SubAgentSource::ThreadSpawn { agent_role, .. } = kind
+            && let Some(tools) =
+                self.role_tools(&self.host, agent_role.as_deref().unwrap_or("default"))
+        {
+            thread_store.insert(roles::AgentTools(tools));
+        }
         if self.inventory.contains(&thread.to_string()) {
             return;
         }
@@ -238,9 +245,6 @@ impl Mods {
             } => {
                 let role = agent_role.clone().unwrap_or_else(|| "default".into());
                 let definition = self.role_definition(&self.host, &role);
-                if let Some(tools) = self.role_tools(&self.host, &role) {
-                    thread_store.insert(roles::AgentTools(tools));
-                }
                 json!({"agent_id": format!("agent:{thread}"), "origin": "model",
                     "parent": {"thread_id": parent_thread_id.to_string(), "agent_id": null},
                     "role": agent_nickname.clone().unwrap_or(role),
@@ -251,7 +255,7 @@ impl Mods {
                 "role": format!("{other:?}").chars().take(64).collect::<String>()}),
         };
         let record = self.inventory.start(&thread.to_string(), fields);
-        inventory::notify(&self.runtime, "start", record);
+        inventory::notify(&self.runtime, &self.inventory, "start", record);
     }
 
     fn agent_turn(
@@ -264,7 +268,7 @@ impl Mods {
             self.inventory
                 .turn(thread_store.level_id(), turn_store.level_id(), outcome)
         {
-            inventory::notify(&self.runtime, "turn", record);
+            inventory::notify(&self.runtime, &self.inventory, "turn", record);
         }
     }
 
@@ -1251,6 +1255,9 @@ impl TurnLifecycleContributor for Mods {
     ) -> ExtensionFuture<'a, Option<codex_extension_api::TurnContinuation>> {
         Box::pin(async move {
             let required = (*self.expansion.turn_stop.lock().ok()?)?;
+            if input.continued >= autonomy::CONTINUATIONS {
+                return None;
+            }
             let lead = input
                 .thread_store
                 .get::<Lead>()
@@ -1891,7 +1898,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             };
             if let Some(record) = status.and_then(|status| self.inventory.end(thread, status, None))
             {
-                inventory::notify(&self.runtime, "end", record);
+                inventory::notify(&self.runtime, &self.inventory, "end", record);
             }
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;

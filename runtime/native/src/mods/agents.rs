@@ -1269,7 +1269,21 @@ impl Agents {
             let mut agent = slot.lock().await;
             if selected(&agent) && self.remove(&id, &slot).await {
                 agent.shutdown().await;
+                self.stopped(&id, &agent, "stopped with its mod or session");
             }
+        }
+    }
+
+    /// Ends the inventory record of a worker stopped before its job reported.
+    fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
+        if let (Some(core), Some(thread)) = (
+            self.notifier.core.upgrade(),
+            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
+        ) && let Some(record) = core
+            .inventory
+            .end(thread, "cancelled", Some(reason.to_owned()))
+        {
+            inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
         }
     }
 
@@ -1513,7 +1527,7 @@ impl Agents {
                         Some(format!("cancelled by {}", caller.id)),
                     )
                 {
-                    inventory::notify(&self.notifier.runtime, "end", record);
+                    inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
                 }
                 self.remove(&handle.handle, &slot).await;
                 Ok(json!({"cancelled":true}))
@@ -1787,6 +1801,7 @@ impl Agents {
                 }
                 Err(reason) => {
                     agent.shutdown().await;
+                    self.stopped(&handle, &agent, reason);
                     drop(agent);
                     self.remove(&handle, &slot).await;
                     lead.host.accounts.take_responses(&thread);
@@ -2341,7 +2356,7 @@ impl Agents {
                 "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
                     "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
         );
-        inventory::notify(&self.notifier.runtime, "start", record);
+        inventory::notify(&self.notifier.runtime, &core.inventory, "start", record);
         let job = tokio::spawn(async move {
             let deadline = task
                 .remaining()
@@ -2430,7 +2445,7 @@ impl Agents {
                     }
                 };
                 if let Some(record) = record {
-                    inventory::notify(&notifier.runtime, "end", record);
+                    inventory::notify(&notifier.runtime, &core.inventory, "end", record);
                 }
             }
             if let Ok(mut output) = output.lock() {

@@ -145,6 +145,28 @@ test('reactive atoms track reads, recompute derived values and run keyed subscri
   assert.match(run(source, { capabilities, state: 5, event: 'command', name: 'search', payload: 'a' }).error, /state_not_keyed/);
   assert.match(run('export default api => api.command("late", () => api.subscribe(api.atom("a", 0), () => {}))',
     { capabilities: ['commands', 'store'], event: 'command', name: 'late' }).error, /subscription_outside_activation/);
+  const edge = run(`export default api => {
+    const name = api.member('notes', 'constructor', 'none');
+    const missing = api.derive(() => [1, 2].find(item => item === 3));
+    const proto = api.atom('__proto__', 0);
+    api.command('edge', () => { proto.set(7); return { name: name.get(), missing: missing.get() ?? null, proto: proto.get() }; });
+  }`, { capabilities: ['commands', 'store'], event: 'command', name: 'edge', state: { notes: {} } });
+  assert.deepEqual(edge.value, { name: 'none', missing: null, proto: 7 });
+});
+
+test('repeating timers stop when cancelled inside their handler and keep running after a throw', () => {
+  const source = `export default api => {
+    const poll = api.time.every('poll', 1000, () => { if (api.state.get()?.stop) poll.cancel(); if (api.state.get()?.boom) throw new Error('boom'); });
+  }`;
+  const tick = (state, receipts = []) => run(source, { capabilities: ['events', 'store'], event: 'timer', payload: { key: 'time:poll' }, state, receipts });
+  const stopping = tick({ stop: true });
+  assert.equal(stopping.host_call.operation, 'events.cancel');
+  const stopped = tick({ stop: true }, [{ call: stopping.host_call, value: null }]);
+  assert.equal(stopped.host_call, null);
+  assert.deepEqual(stopped.calls.map(call => call.operation), ['events.cancel']);
+  const failing = tick({ boom: true });
+  assert.equal(failing.host_call.operation, 'events.schedule');
+  assert.match(tick({ boom: true }, [{ call: failing.host_call, value: null }]).error, /boom/);
 });
 
 test('typed middleware and services register without ambient authority', () => {

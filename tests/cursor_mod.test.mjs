@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { connect } from 'node:net';
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +35,11 @@ class FakeAgent {
       let answer = 'Answer.';
       if (message.text.includes('TOOL')) answer = 'tool:' + JSON.stringify(await call('exec_command', { cmd: 'pwd' }));
       if (message.text.includes('PARALLEL')) answer = 'both:' + (await Promise.all([call('exec_command', { cmd: 'a' }), call('exec_command', { cmd: 'b' })])).join(',');
+      if (message.text.includes('LATE')) {
+        const first = call('exec_command', { cmd: 'a' });
+        await new Promise(resolve => setTimeout(resolve, 150));
+        answer = 'late:' + (await Promise.all([first, call('exec_command', { cmd: 'b' })])).join(',');
+      }
       if (message.text.includes('SEARCH')) {
         const found = await call('tool_search', { query: 'notes' });
         answer = found.includes('notes__add') + ':' + await call('omd_call', { name: 'notes__add', arguments: { text: 'x' } });
@@ -120,6 +126,7 @@ test('Cursor lead runs only OMD tools through Codex, reports usage and continues
     { type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] };
   const context = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'sandbox: workspace-write' }] };
   const first = await call([context, opening], { reasoning: { effort: 'high' } });
+  assert.ok(first.filter(event => /^response\.output_(item|text)/.test(event.type)).every(event => Number.isInteger(event.output_index)));
   const [request] = items(first, 'function_call');
   assert.equal(request.name, 'exec_command');
   assert.deepEqual(JSON.parse(request.arguments), { cmd: 'pwd' });
@@ -159,6 +166,12 @@ test('Cursor parallel calls and tool search reach Codex as host tool calls', asy
   const pair = items(await call([ask]), 'function_call');
   assert.deepEqual(pair.map(item => JSON.parse(item.arguments).cmd), ['a', 'b']);
   assert.equal(text(await call([ask, ...pair, output(pair[0], 'A'), output(pair[1], 'B')])), 'both:A,B');
+  const late = user('LATE');
+  const [a] = items(await call([late], { thread: 't3' }), 'function_call');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const [b] = items(await call([late, a, output(a, 'A')], { thread: 't3' }), 'function_call');
+  assert.equal(JSON.parse(b.arguments).cmd, 'b', 'a call started after the response reaches the next one');
+  assert.equal(text(await call([late, a, output(a, 'A'), b, output(b, 'B')], { thread: 't3' })), 'late:A,B');
   const search = [{ type: 'tool_search', description: 'Find tools', parameters: { type: 'object', properties: { query: { type: 'string' } } } }];
   const find = user('SEARCH');
   const [lookup] = items(await call([find], { tools: search, thread: 't2' }), 'tool_search_call');
@@ -227,6 +240,22 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   assert.equal((await missing.call([user('hi')])).at(-1).response.error.code, 'cursor_not_enrolled');
   const expired = await fixture(t, { route: { credential_expires_at_ms: 1 } });
   assert.equal((await expired.call([user('hi')])).at(-1).response.error.code, 'cursor_credential_expired');
+});
+
+test('Cursor transport survives aborted uploads and yields the port to a transport with a new key or route', async t => {
+  const { call, child, root } = await fixture(t);
+  const port = JSON.parse(await readFile(join(root, 'route.json'), 'utf8')).port;
+  const socket = connect(port, '127.0.0.1');
+  await new Promise(resolve => socket.once('connect', resolve));
+  socket.write(`POST /v1/responses HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer ${token}\r\ncontent-length: 100000\r\n\r\n{"model"`);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  socket.destroy();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(child.exitCode, null);
+  assert.equal(text(await call([user('hi')])), 'Answer.');
+  const exited = new Promise(resolve => child.once('exit', resolve));
+  await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: 'next other-identity' });
+  assert.equal(await exited, 0);
 });
 
 test('Cursor setup enrolls through the SDK login, hands the key to the broker and refuses a denied enrollment', async () => {

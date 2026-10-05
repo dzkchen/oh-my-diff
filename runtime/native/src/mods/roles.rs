@@ -158,6 +158,13 @@ impl Core {
                 ),
                 None => None,
             };
+            if let Some(cwd) = &plan.cwd
+                && !std::fs::canonicalize(cwd).is_ok_and(|cwd| {
+                    codex_omd::app_routes::session_roots(&lead.host.repository).contains(&cwd)
+                })
+            {
+                return Err("agent_spawn_cwd_outside_session".into());
+            }
             (definition, plan.cwd)
         } else if name.contains('/') {
             let definition = self

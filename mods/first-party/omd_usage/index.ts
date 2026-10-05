@@ -67,7 +67,7 @@ export default function activate(api: ModAPI) {
     });
     return {
       ...state,
-      ledger: task.ok ? task.value.ledger : state.ledger,
+      ledger: task.ok ? { ...task.value.ledger, cost: { settled_task_charge_microusd: number(cost.settled_task_charge_microusd) } } : state.ledger,
       error: task.ok ? null : `Task status unavailable: ${visible(task.error, 120)}`,
       allowance: task.ok && number(limits.exposure_microusd) ? { used: number(cost.retained_exposure_upper_bound_microusd) ?? 0, limit: limits.exposure_microusd, requests: attempts.length, max: number(limits.requests) ?? 0 } : null,
       hud: { ...state.hud, entries },

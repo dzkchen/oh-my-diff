@@ -1683,7 +1683,12 @@ impl ModViewPatch {
             };
             candidate.sites.insert(name, composed);
         }
+        let composed = site_component_ids(&candidate.sites);
         for (key, action) in self.keybindings {
+            // A focus key into a site this patch lost has nothing to focus.
+            if matches!(&action, ModKeyAction::Focus { focus } if !composed.contains(focus)) {
+                continue;
+            }
             if claim(format!("keybindings.{key}")) {
                 candidate.keybindings.insert(key, action);
             }

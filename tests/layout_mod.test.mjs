@@ -196,8 +196,8 @@ test('agent briefs stay per session, label stale, resumed and forked copies, fol
     assert.throws(() => tool('brief', { current: 'Fix', next: 'Test', questions: Array(7).fill('?') }), /brief_field_invalid: questions/);
     const pane = (thread = 't1') => view(thread).sites.sidebar.components.find(item => item.id === 'omd_layout_brief')?.children.map(line => line.text);
     assert.deepEqual(pane(), ['Session: Working', 'No agent brief yet']);
-    assert.deepEqual(tool('brief', { current: 'Fixing the login redirect', next: 'Run the auth tests', remaining: ['Update docs'], questions: ['Keep the old cookie name?'] }), { updated: true });
-    assert.deepEqual(pane(), ['Session: Working', 'Agent brief · just now', 'Now: Fixing the login redirect', 'Next: Run the auth tests', '- Update docs', '? Keep the old cookie name?', 'Estimate: unknown']);
+    assert.deepEqual(tool('brief', { current: 'Fixing the login redirect', next: 'Run the auth tests', remaining: ['Update docs', 'Ship'], questions: ['Keep the old cookie name?'] }), { updated: true });
+    assert.deepEqual(pane(), ['Session: Working', 'Agent brief · just now', 'Now: Fixing the login redirect', 'Next: Run the auth tests', '- Update docs\n- Ship', '? Keep the old cookie name?', 'Estimate: unknown']);
     assert.equal(store.get('s:t1').value.brief, 'Fixing the login redirect · 1 question');
     assert.equal(store.get('s:t3').value.brief, 'Porting the site');
     command('sessions', 'refresh');
@@ -205,6 +205,14 @@ test('agent briefs stay per session, label stale, resumed and forked copies, fol
     assert.equal(rows()[1], ' ● Fix login main  “Fixing the login redirect · 1 question”  app · gpt-6 · :5173');
     assert.equal(rows()[2], ' ◆ Write docs omd/docs #7  “Drafting docs”  omd-docs · gpt-6');
     assert.equal(rows()[4], ' ● Other project  “Porting the site”  site · :8080 · in another terminal');
+    const [docs, shared] = [threads[1], store.get('s:t2')];
+    threads[1] = { ...docs, preview: 'w'.repeat(80), gitInfo: { ...docs.gitInfo, branch: 'b'.repeat(60) } };
+    store.set('s:t2', { value: { ...shared.value, brief: 'd'.repeat(200), note: 'n'.repeat(120) }, revision: shared.revision + 1 });
+    command('sessions', 'refresh');
+    assert.ok(rows().every(row => [...row].length <= 256), 'a session row stays within the host span budget');
+    threads[1] = docs;
+    store.set('s:t2', { value: shared.value, revision: shared.revision + 2 });
+    command('sessions', 'refresh');
 
     event('turn_start', { turn_id: 'turn-2' });
     assert.equal(pane()[1], 'Agent brief · just now · stale');

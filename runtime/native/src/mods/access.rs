@@ -327,7 +327,6 @@ fn response_headers(response: &reqwest::Response) -> Value {
     Value::Object(headers)
 }
 
-/// Text when the bytes are UTF-8, otherwise base64.
 /// The length without a trailing incomplete UTF-8 character, when that leaves valid text.
 fn text_end(bytes: &[u8]) -> usize {
     match std::str::from_utf8(bytes) {
@@ -336,6 +335,7 @@ fn text_end(bytes: &[u8]) -> usize {
     }
 }
 
+/// Text when the bytes are UTF-8, otherwise base64.
 fn content(field: &str, bytes: &[u8]) -> (String, Value) {
     match std::str::from_utf8(bytes) {
         Ok(text) => (field.to_owned(), json!(text)),

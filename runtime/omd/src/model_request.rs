@@ -219,8 +219,7 @@ fn writable_group(given: &[Value], group: &str) -> bool {
 
 const NEW_GROUP: &str = "new";
 
-/// The message an inserted section joins: the preceding section's when it is a developer or user message, else
-/// the nearest such message after it, else before it, else a new developer message at the start of the input.
+/// An inserted section joins the nearest developer or user message, preferring the preceding section's, else a new one.
 fn insertion_group(given: &[Value], effective: &[Value], position: usize) -> String {
     let group = |section: &Value| {
         let id = section["id"].as_str()?;
@@ -243,8 +242,7 @@ fn insertion_group(given: &[Value], effective: &[Value], position: usize) -> Str
         .unwrap_or_else(|| NEW_GROUP.to_owned())
 }
 
-/// Ordinary sections may be rewritten, dropped, reordered or joined by inserted ones; protected sections,
-/// tool outputs and each section's message stay fixed, and no section moves across a protected one.
+/// Ordinary sections may change; protected sections, tool outputs and section messages stay fixed in place.
 pub fn valid_sections(effective: &Value, given: &Value) -> bool {
     let (Some(effective), Some(given)) = (effective.as_array(), given.as_array()) else {
         return false;
@@ -483,8 +481,7 @@ fn arguments(value: &Value, format: &Value) -> bool {
     }
 }
 
-/// A stream chunk a handler passes on: the received chunk (only `text`, `tool` and `arguments` may change)
-/// or an injected `message` or `tool_done` chunk without an index.
+/// The received chunk with only `text`, `tool` or `arguments` changed, or an added index-less `message` or `tool_done`.
 fn valid_chunk(chunk: &Value, input: &Value, seen: &mut bool) -> bool {
     let Some(object) = chunk.as_object() else {
         return false;
@@ -502,7 +499,9 @@ fn valid_chunk(chunk: &Value, input: &Value, seen: &mut bool) -> bool {
         };
         return object.keys().all(|key| input.get(key).is_some())
             && input.as_object().into_iter().flatten().all(|(key, value)| {
-                mutable.contains(&key.as_str()) || chunk.get(key).is_none_or(|item| item == value)
+                chunk
+                    .get(key)
+                    .is_some_and(|item| mutable.contains(&key.as_str()) || item == value)
             })
             && chunk
                 .get("text")
@@ -566,9 +565,9 @@ pub fn valid_stream_result(result: &Value, input: &Value) -> bool {
     let mut seen = false;
     result.as_object().is_some_and(|object| object.len() == 1)
         && chunks.len() <= CHUNKS
-        && chunks
-            .iter()
-            .all(|chunk| valid_chunk(chunk, input, &mut seen))
+        && chunks.iter().all(|chunk| {
+            (boundary || chunk.get("index").is_some()) && valid_chunk(chunk, input, &mut seen)
+        })
         && (input["protected"] != true
             || chunks
                 .iter()
@@ -841,8 +840,7 @@ fn encoded_cut(text: &str, limit: usize) -> &str {
     text
 }
 
-/// Pages of at most `SEND_PAGE_BYTES` of JSON-encoded text; a longer segment arrives in pieces with read-only
-/// context around each.
+/// Pages of at most `SEND_PAGE_BYTES` of encoded text; a longer segment arrives in pieces with read-only context.
 pub fn send_pages(segments: Vec<Value>) -> Vec<Vec<Value>> {
     let mut pages: Vec<Vec<Value>> = Vec::new();
     let mut room = 0;
@@ -928,8 +926,7 @@ fn send_edits(result: &Value) -> Option<Vec<(&str, usize, usize, &str)>> {
         .collect()
 }
 
-/// `{edits, cache?}` keeping every edit and `cache: false` beneath it, each edit a non-overlapping string range of an
-/// editable segment on this page.
+/// `{edits, cache?}` keeping every edit and `cache: false` beneath it, in non-overlapping ranges of editable segments.
 pub fn valid_send_result(result: &Value, last: &Value, input: &Value) -> bool {
     let (Some(edits), Some(inner)) = (send_edits(result), send_edits(last)) else {
         return false;

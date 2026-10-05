@@ -59,6 +59,10 @@ impl Authority for TestAuthority {
         command.args(&argv[1..]);
         Ok(command)
     }
+
+    fn protected(&self) -> &[PathBuf] {
+        &self.read_denied
+    }
 }
 
 fn setup() -> (TempDir, PathBuf, PathBuf, TestAuthority) {
@@ -1792,10 +1796,13 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
 
 #[test]
 fn external_roots_keep_canonical_paths_expected_versions_and_grant_scope() {
-    let (temp, repository, data, authority) = setup();
+    let (temp, repository, data, mut authority) = setup();
     let outside = temp.path().canonicalize().unwrap().join("outside");
     let notes = outside.join("notes");
     let readonly = outside.join("readonly");
+    let shared = outside.join("shared");
+    std::fs::create_dir_all(shared.join("keys")).unwrap();
+    authority.read_denied.push(shared.join("keys/provider.key"));
     std::fs::create_dir_all(notes.join("sub")).unwrap();
     std::fs::create_dir_all(&readonly).unwrap();
     std::fs::write(notes.join("a.md"), "a\n").unwrap();
@@ -1809,6 +1816,7 @@ fn external_roots_keep_canonical_paths_expected_versions_and_grant_scope() {
             (&readonly, false),
             (&outside.join("linked"), true),
             (&repository, true),
+            (&shared, true),
         ]
         .into_iter()
         .map(|(root, write)| codex_omd::ModFsRoot {
@@ -1898,6 +1906,14 @@ fn external_roots_keep_canonical_paths_expected_versions_and_grant_scope() {
         )
         .unwrap_err(),
         format!("fs_root_protected: {}", path(&repository))
+    );
+    assert_eq!(
+        call(
+            "workspace.read",
+            json!({"root": path(&shared), "paths": ["keys/provider.key"]})
+        )
+        .unwrap_err(),
+        format!("fs_root_protected: {}", path(&shared))
     );
     assert_eq!(
         call(

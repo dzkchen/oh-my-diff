@@ -88,7 +88,10 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
             if let Some(core) = notified.upgrade() {
                 if event == "model_response" {
                     core.inventory.usage(&payload);
-                    core.autonomy.charge(&payload);
+                    if let Some(thread) = payload["scope"]["thread_id"].as_str() {
+                        core.autonomy
+                            .charge(&core.inventory.root_thread(thread), &payload);
+                    }
                 }
                 expansion::broadcast(&core.expansion, event, payload);
             }

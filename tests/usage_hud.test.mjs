@@ -128,6 +128,7 @@ test('provider costs, cache policy and missing usage keep their own labels', () 
   assert.deepEqual(published.spend, { usd: 3.5012, kind: 'mixed', uncertain: true, list: 0.25 });
   assert.equal(published.budget, 'over');
   assert.equal(published.cache.ratio, 0.75);
+  assert.deepEqual(refreshed.state.ledger.cost, { settled_task_charge_microusd: null }, 'saved state keeps no ledger attempts');
 });
 
 test('quota samples are scoped to the lead account, deduplicated, projected only with enough span and stale after reset', () => {

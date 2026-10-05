@@ -163,7 +163,7 @@
       "group": "coordination",
       "decision": "Model request, stream and session interception",
       "observe": "`prompt`, `session`, `agent`, `tool_call` and `host_operation` middleware observe in order; `model_response` reports every provider attempt and synthetic answer with usage, cache, cost basis and timing",
-      "alter": "`intercept('model_request')` changes the route among the thread's lead routes (another provider only with its own credential), the reasoning effort and ordinary prompt sections, or answers with a synthetic response that calls no provider; `intercept('response_stream')` rewrites, drops or adds text and tool-call chunks and may stop at an output boundary with an optional retry; `intercept('host_operation')` wraps every mod host call under the caller's grants; `host_operation` inputs carry the typed `namespace` and `origin`",
+      "alter": "`intercept('model_request')` changes the route among the thread's lead routes (another provider only with its own credential), the reasoning effort and ordinary prompt sections, or answers with a synthetic response that calls no provider; `intercept('response_stream')` rewrites or drops text and tool-call chunks, adds chunks and may stop only at an output boundary, with an optional retry; `intercept('host_operation')` wraps mod host calls made outside interceptor callbacks, except session and evidence reads, under the caller's grants; `host_operation` inputs carry the typed `namespace` and `origin`",
       "replace": null,
       "timing": "per request, per streamed chunk and per settled attempt",
       "ownership": "mod: the transformation or synthetic answer; host: protected sections, opaque reasoning, admission, settlement, boundaries, retry limit and provenance",

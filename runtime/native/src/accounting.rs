@@ -61,7 +61,7 @@ fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
     Ok(())
 }
 
-fn billing(rates: Option<&Rates>) -> &'static str {
+pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
     match rates {
         Some(rates) if rates.provider_billed => "provider_billed",
         Some(rates) if !rates.included_subscription => "explicit_paid_api_grant",
@@ -119,6 +119,7 @@ fn mark_route(request: &mut Request, name: &str) -> Result<(), TransportError> {
 fn inject_credential(
     request: &mut Request,
     credential: Option<&str>,
+    url: &str,
 ) -> Result<(), TransportError> {
     let Some(profile) = credential else {
         return Ok(());
@@ -126,7 +127,7 @@ fn inject_credential(
     let root = CREDENTIAL_ROOT
         .get()
         .ok_or_else(|| denied("credential store unavailable"))?;
-    let origin = codex_omd::credentials::url_origin(&request.url)
+    let origin = codex_omd::credentials::url_origin(url)
         .ok_or_else(|| denied("request URL has no origin"))?;
     let secret = codex_omd::credentials::CredentialProfiles::open(root)
         .and_then(|profiles| profiles.secret(profile, &origin))
@@ -301,6 +302,12 @@ impl Accounts {
     pub fn collect(&self, thread: &str) {
         if let Ok(mut state) = self.6.lock() {
             state.responses.insert(thread.to_owned(), Vec::new());
+        }
+    }
+
+    pub fn forget_retry(&self, thread: &str) {
+        if let Ok(mut state) = self.6.lock() {
+            state.retries.remove(thread);
         }
     }
 
@@ -577,6 +584,21 @@ impl Accounts {
             )?;
         }
         Ok(!applied.is_empty())
+    }
+
+    fn request_id(&self) -> String {
+        static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let process = PROCESS.get_or_init(|| {
+            format!(
+                "{}-{}",
+                std::process::id(),
+                chrono::Utc::now().timestamp_millis()
+            )
+        });
+        format!(
+            "req-{process}-{}",
+            self.2.fetch_add(1, Ordering::Relaxed) + 1
+        )
     }
 
     fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
@@ -920,7 +942,7 @@ impl ResponseObserver for Accounts {
                 return Ok(());
             };
             let mut value: Value = serde_json::from_slice(encoded.as_bytes()).map_err(denied)?;
-            let request_id = format!("req-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+            let request_id = self.request_id();
             if self.police(&mods, None, &thread, &request_id, 1, &mut value)? {
                 *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
             }
@@ -990,7 +1012,7 @@ impl ResponseObserver for Accounts {
                 }
             }
         }
-        let request_id = format!("req-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+        let request_id = self.request_id();
         request
             .headers
             .insert(REQUEST_HEADER, request_id.parse().map_err(denied)?);
@@ -1000,6 +1022,10 @@ impl ResponseObserver for Accounts {
             .ok()
             .and_then(|mut state| state.retries.remove(&thread))
             .unwrap_or(1);
+        request.headers.insert(
+            "x-omd-attempt",
+            attempt.to_string().parse().map_err(denied)?,
+        );
         if let Some(mods) = &mods {
             let intercepted =
                 self.intercept_request(mods, &account, &thread, &value, &request_id, attempt)?;
@@ -1021,6 +1047,9 @@ impl ResponseObserver for Accounts {
                     .insert(SYNTHETIC_HEADER, request_id.parse().map_err(denied)?);
                 return Ok(());
             }
+            if let Some((given, effective)) = intercepted.sections {
+                edited |= codex_omd::model_request::apply_sections(&mut value, &given, &effective);
+            }
             if let Some(route) = &intercepted.route {
                 switch_route(request, &mut value, &mut account, route)?;
                 account.route = Some(route.name.clone());
@@ -1031,14 +1060,7 @@ impl ResponseObserver for Accounts {
                 value["reasoning"]["effort"] = effort;
                 edited = true;
             }
-            if let Some((given, effective)) = intercepted.sections {
-                edited |= codex_omd::model_request::apply_sections(&mut value, &given, &effective);
-            }
         }
-        request.headers.insert(
-            "x-omd-attempt",
-            attempt.to_string().parse().map_err(denied)?,
-        );
         if let Some(rates) = account
             .rates
             .as_ref()
@@ -1149,15 +1171,10 @@ impl ResponseObserver for Accounts {
             })
             .flatten()
             .cloned();
-        let credential = match &switched {
-            Some(route) => route.credential.clone(),
-            None => account.credential.clone(),
-        };
-        inject_credential(request, credential.as_deref())?;
         let mut account = account;
-        account.credential = credential;
         let mut url = account.url.clone();
         if let Some(route) = switched {
+            account.credential = route.credential;
             account.model = route.model;
             account.rates = Some(route.rates);
             account.route = Some(route.name);
@@ -1166,6 +1183,10 @@ impl ResponseObserver for Accounts {
                 url = route.url;
             }
         }
+        if url.is_empty() {
+            url = request.url.clone();
+        }
+        inject_credential(request, account.credential.as_deref(), &url)?;
         let Some(rates) = account.rates.clone() else {
             let model = requested.unwrap_or_else(|| account.model.clone());
             return Ok(Some(Box::new(self.attempt(
@@ -1192,6 +1213,7 @@ impl ResponseObserver for Accounts {
                 return Err(denied("worker requires the native subscription request"));
             }
         }
+        request.url = url;
         // The provider bills these requests itself, so the host neither reserves exposure nor bounds the body; it admits, counts and records them.
         if rates.provider_billed {
             let model = requested.unwrap_or(model);
@@ -1234,9 +1256,6 @@ impl ResponseObserver for Accounts {
             || value.get("stream") != Some(&Value::Bool(true))
         {
             return Err(denied("unapproved model or nonstreaming request"));
-        }
-        if !url.is_empty() {
-            request.url = url;
         }
         if rates.included_subscription && rates.reservation_microusd != 0 {
             return Err(denied("invalid included-subscription billing declaration"));
@@ -1566,39 +1585,23 @@ impl Attempt {
         else {
             return self.observed(usage, if success { "completed" } else { "failed" });
         };
-        if !success {
-            self.fail("provider returned failed or incomplete response");
-        }
         if rates.provider_billed {
+            if !success {
+                let _ = self.account.task.fail(
+                    &admission,
+                    "provider returned failed or incomplete response",
+                );
+            }
             let microusd = usage
                 .as_ref()
                 .and_then(|usage| usage.get("cost_microusd"))
                 .and_then(Value::as_u64);
-            self.account
-                .task
-                .settle_reported(&admission, usage, microusd)
-                .map_err(denied)?;
-            if microusd.is_none()
-                && let Ok(mut state) = self.state.lock()
-            {
-                state.billed.insert(
-                    self.request_id.clone(),
-                    (
-                        self.thread.clone(),
-                        admission.request_id(),
-                        self.account.provider.clone(),
-                    ),
-                );
-                state.billed_order.push_back(self.request_id.clone());
-                while state.billed_order.len() > BILLED {
-                    if let Some(oldest) = state.billed_order.pop_front() {
-                        state.billed.remove(&oldest);
-                    }
-                }
-            }
+            self.provider_reported(&admission, usage, microusd)?;
             self.settled = true;
-            self.microusd = microusd;
-            return persist_cost_capture(&self.account);
+            return Ok(());
+        }
+        if !success {
+            self.fail("provider returned failed or incomplete response");
         }
         if let Some(usage) = usage {
             self.account
@@ -1664,15 +1667,57 @@ impl Attempt {
         Ok(())
     }
 
+    /// Records a provider-billed request's own cost, or leaves it awaiting `ledger.settle` under its request id.
+    fn provider_reported(
+        &mut self,
+        admission: &Admission,
+        usage: Option<Value>,
+        microusd: Option<u64>,
+    ) -> Result<(), TransportError> {
+        self.account
+            .task
+            .settle_reported(admission, usage, microusd)
+            .map_err(denied)?;
+        if microusd.is_none()
+            && let Ok(mut state) = self.state.lock()
+        {
+            state.billed.insert(
+                self.request_id.clone(),
+                (
+                    self.thread.clone(),
+                    admission.request_id(),
+                    self.account.provider.clone(),
+                ),
+            );
+            state.billed_order.push_back(self.request_id.clone());
+            while state.billed_order.len() > BILLED {
+                if let Some(oldest) = state.billed_order.pop_front() {
+                    state.billed.remove(&oldest);
+                }
+            }
+        }
+        self.microusd = microusd;
+        persist_cost_capture(&self.account)
+    }
+
     fn fail(&mut self, reason: &str) {
         if self.failed || self.settled {
             return;
         }
-        match &self.admission {
+        match self.admission.clone() {
             Some(admission) => {
-                let _ = self.account.task.fail(admission, reason);
-                let _ = self.persist_cost_capture();
+                let _ = self.account.task.fail(&admission, reason);
                 self.failed = true;
+                if self
+                    .account
+                    .rates
+                    .as_ref()
+                    .is_some_and(|rates| rates.provider_billed)
+                {
+                    let _ = self.provider_reported(&admission, None, None);
+                } else {
+                    let _ = self.persist_cost_capture();
+                }
             }
             None => {
                 let _ = self.observed(None, "failed");
@@ -1797,6 +1842,21 @@ impl Attempt {
     /// Runs the stream chunk chain; returns a stop control when a handler stopped the response.
     fn transform(&mut self, event: &mut Value) -> Result<Option<Value>, TransportError> {
         let index = event["output_index"].as_u64();
+        if index.is_none()
+            && (self.account.capture_tools || self.required && self.mods.is_some())
+            && matches!(
+                event["type"].as_str(),
+                Some(
+                    "response.output_text.delta"
+                        | "response.output_item.added"
+                        | "response.output_item.done"
+                        | "response.function_call_arguments.delta"
+                        | "response.custom_tool_call_input.delta"
+                )
+            )
+        {
+            return Err(denied("provider output event without output_index"));
+        }
         if self.account.capture_tools
             && let Some(index) = index
             && matches!(

@@ -147,6 +147,12 @@ fn tampered_and_expired_messages_are_not_delivered() {
     envelope["message"]["data"] = json!("forged");
     fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
     assert!(beta.receive(&TestSeal).unwrap().is_empty());
+    fs::write(&path, br#"{"message": {}}"#).unwrap();
+    assert!(beta.receive(&TestSeal).unwrap().is_empty());
+    assert!(
+        !path.exists(),
+        "an envelope without a tag is dropped, not retried"
+    );
 
     let mut expired = envelope["message"].clone();
     expired["data"] = json!("late");

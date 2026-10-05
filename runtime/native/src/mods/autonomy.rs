@@ -45,6 +45,8 @@ pub(super) struct Queue {
     pub(super) running: Option<String>,
     submitting: Option<(String, Value)>,
     continued: BTreeMap<(String, String), u32>,
+    dispatching: bool,
+    woken: bool,
 }
 
 impl Queue {
@@ -98,6 +100,8 @@ impl Queue {
             .map(|(index, _)| index)?;
         let entry = self.entries.remove(best);
         self.running = Some(entry.owner.clone());
+        self.dispatching = true;
+        self.woken = false;
         self.submitting = Some((
             message(&entry),
             json!({"kind": "mod", "package": entry.owner, "sha256": entry.source_sha256,
@@ -272,6 +276,7 @@ impl Queues {
         match started {
             Ok(Some(turn_id)) => {
                 let _ = self.with(&thread, |queue| {
+                    queue.dispatching = false;
                     *queue.started.entry(entry.owner.clone()).or_default() += 1;
                 });
                 notify(
@@ -282,12 +287,21 @@ impl Queues {
                 );
             }
             Ok(None) => {
-                let _ = self.with(&thread, restore);
+                // A turn that ended while this dispatch was starting found the entry gone and did not reschedule.
+                let missed = self.with(&thread, |queue| {
+                    restore(queue);
+                    queue.dispatching = false;
+                    std::mem::take(&mut queue.woken) && !queue.paused
+                });
+                if missed == Ok(true) {
+                    self.schedule(core, lead);
+                }
             }
             Err(error) => {
                 let _ = self.with(&thread, |queue| {
                     queue.running = None;
                     queue.submitting = None;
+                    queue.dispatching = false;
                 });
                 notify(
                     core,
@@ -356,11 +370,15 @@ impl Queues {
     pub(super) fn turn_ended(&self, core: &Arc<Core>, lead: &Lead, interrupted: bool) {
         let resume = self
             .with(&lead.thread.to_string(), |queue| {
-                queue.running = None;
                 queue.continued.clear();
                 if interrupted {
                     queue.paused = true;
                 }
+                if queue.dispatching {
+                    queue.woken = true;
+                    return false;
+                }
+                queue.running = None;
                 !queue.paused && !queue.entries.is_empty()
             })
             .unwrap_or(false);
@@ -369,12 +387,9 @@ impl Queues {
         }
     }
 
-    /// Adds a priced response to the spend of the mod whose queued turn is running.
-    pub(super) fn charge(&self, response: &Value) {
-        let (Some(thread), Some(microusd)) = (
-            response["scope"]["thread_id"].as_str(),
-            response["cost"]["microusd"].as_u64(),
-        ) else {
+    /// Adds a priced response of `thread`'s session, sub-agents included, to the spend of the mod whose queued turn is running.
+    pub(super) fn charge(&self, thread: &str, response: &Value) {
+        let Some(microusd) = response["cost"]["microusd"].as_u64() else {
             return;
         };
         if let Ok(mut threads) = self.threads.lock()

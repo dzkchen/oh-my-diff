@@ -1264,6 +1264,47 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
 }
 
 #[test]
+fn a_render_racing_a_state_write_is_drawn_again() {
+    let (temp, _, _) = fixture(
+        "export default api => { api.command('set', value => { api.state.set(value); return null; }); \
+         api.intercept('render', () => { const seen = String(api.state.get()); const end = Date.now() + 400; \
+           while (Date.now() < end) {} return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
+        &["commands", "store", "terminal"],
+    );
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let render = || {
+        codex_omd::render_shared(
+            &runtime,
+            json!({"component":"spinner","id":"main","surface":"inline","viewport":{"columns":80,"rows":24},
+                "lifecycle":"live","owner":null,"props":{}}),
+            || true,
+        )
+        .unwrap()
+        .result["tree"][0]["text"]
+            .clone()
+    };
+    std::thread::scope(|scope| {
+        let racing = scope.spawn(render);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let generation = runtime.lock().unwrap().generation();
+        codex_omd::invoke_shared(
+            &runtime,
+            "fixture",
+            generation,
+            "command",
+            "set",
+            json!("after"),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(racing.join().unwrap(), "null");
+    });
+    assert_eq!(render(), "after");
+}
+
+#[test]
 fn render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -2358,6 +2399,29 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
 }
 
 #[test]
+fn a_shadowed_request_policy_is_enforced_by_its_project_copy() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let source =
+        "export default api => api.intercept('model_send', {required: true}, (e, next) => next(e))";
+    let capabilities = ["middleware", "request_policy"];
+    let user = packaged(&root, "user-copy", "policy", source, &capabilities, &[]);
+    let project = packaged(
+        &root,
+        "project-copy",
+        "policy",
+        &format!("{source};\n"),
+        &capabilities,
+        &[],
+    );
+    trust_scoped(&store, &user, &capabilities, "user");
+    trust_scoped(&store, &project, &capabilities, "project");
+    let runtime = host(&temp);
+    assert_eq!(runtime.send_policy().unwrap().unavailable, None);
+}
+
+#[test]
 fn two_selections_of_one_id_in_the_same_scope_both_fail_closed() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -2753,8 +2817,8 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
 #[test]
 fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
     let (temp, _, _) = fixture(
-        "export default api => api.command('nap', () => api.time.sleep(300))",
-        &["commands", "events"],
+        "export default api => { api.command('nap', () => api.time.sleep(300)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
+        &["commands", "events", "composer"],
     );
     let runtime = std::sync::Mutex::new(host(&temp));
     let generation = runtime.lock().unwrap().generation();
@@ -2800,6 +2864,42 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
         held.to_string().contains("time_sleep_unavailable"),
         "{held}"
     );
+    codex_omd::compose_rows(
+        &runtime,
+        "command_list",
+        "commands",
+        "command",
+        vec![
+            json!({"command": "nap", "description": "nap", "owner": null, "hidden": false,
+            "args_hint": null, "immediate": true, "protected": false}),
+        ],
+    )
+    .unwrap();
+    codex_omd::continue_operation(
+        &runtime,
+        "composer_edit",
+        json!({"source": "user", "caller": "user", "revision": 1, "edit": {"kind": "fill", "text": "x"}}),
+        json!({"caller": "user"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |effective| Ok(json!({"edit": effective["edit"]})),
+    )
+    .unwrap();
+    let chains = runtime.lock().unwrap().status()["chains"].clone();
+    for surface in ["command_list", "composer_edit"] {
+        let entry = chains
+            .as_array()
+            .unwrap()
+            .iter()
+            .rfind(|entry| entry["surface"] == surface)
+            .unwrap();
+        assert!(
+            entry
+                .to_string()
+                .contains("time.sleep is not available during intercept"),
+            "{entry}"
+        );
+    }
 }
 
 #[test]
@@ -2883,6 +2983,57 @@ fn an_invalid_terminal_view_keeps_the_last_valid_one_and_names_the_field() {
         );
     }
     assert!(runtime.status()["mods"][0]["error"].is_null());
+}
+
+#[test]
+fn a_lost_site_claims_no_components_or_focus_keys_and_dialog_wraps_compose() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, patch) in [
+        (
+            "alpha",
+            "{sites: {sidebar: {mode: 'replace', components: [{type: 'text', id: 'mine', label: 'Mine', text: 'a'}]},
+                dialog: {mode: 'wrap', components: [{type: 'text', id: 'frame', label: 'Frame', text: 'f'}, {type: 'slot'}]}}}",
+        ),
+        (
+            "beta",
+            "{sites: {sidebar: {mode: 'replace', components: [{type: 'text', id: 'notes', label: 'Notes', text: 'b'}]},
+                dialog: {mode: 'replace', components: [{type: 'text', id: 'ask', label: 'Ask', text: 'q'}]}},
+                keybindings: {'Alt+t': {focus: 'notes'}}, status: ['beta']}",
+        ),
+        (
+            "gamma",
+            "{sites: {above_composer: {mode: 'wrap', components: [{type: 'slot'}, {type: 'text', id: 'notes', label: 'Notes', text: 'g'}]}}}",
+        ),
+    ] {
+        let source = format!("export default api => api.on('terminal', () => ({patch}))");
+        let path = package(&root, id, &source, &["terminal"]);
+        trust(&store, &path, &["terminal"]);
+    }
+    let terminal = host(&temp).terminal_view(json!({}), || true);
+    assert!(
+        terminal.diagnostics.is_empty(),
+        "{:?}",
+        terminal.diagnostics
+    );
+    assert_eq!(
+        terminal.component_owners.get("notes").map(String::as_str),
+        Some("gamma")
+    );
+    assert_eq!(terminal.view.status, ["beta"]);
+    assert!(!terminal.view.keybindings.contains_key("Alt+t"));
+    assert!(
+        terminal
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.field == "sites.sidebar" && conflict.rejected == "beta")
+    );
+    let dialog = serde_json::to_string(&terminal.view.sites["dialog"]).unwrap();
+    assert!(
+        dialog.contains("\"frame\"") && dialog.contains("\"ask\""),
+        "{dialog}"
+    );
 }
 
 #[test]
@@ -3348,6 +3499,43 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
 }
 
 #[test]
+fn spawn_interceptors_return_the_spawned_value() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "auditor",
+            "export default api => api.intercept('agent_spawn', async (e, next) => {
+                const r = await next(e);
+                return e.prompt === 'late' ? {deny: 'too late'} : {...r, output: r.output + '\\n[audited]'};
+            })",
+            &["agents"],
+        ),
+        (
+            "caller",
+            "export default api => api.command('spawn', prompt => api.host.call('agents.spawn', {prompt}))",
+            &["commands", "agents"],
+        ),
+    ]);
+    let mut runtime = runtime.into_inner().unwrap();
+    let spawned = json!({"handle": "agent:w1", "status": "running"});
+    for prompt in ["look", "late"] {
+        let generation = runtime.generation();
+        let result = runtime.invoke_scoped_with(
+            "caller",
+            generation,
+            "command",
+            "spawn",
+            json!(prompt),
+            || true,
+            |_, call| {
+                assert_eq!(call.operation, "agents.spawn");
+                Ok(spawned.clone())
+            },
+        );
+        assert_eq!(result.unwrap(), spawned, "{prompt}");
+    }
+}
+
+#[test]
 fn command_and_config_interceptors_compose_transform_and_keep_floors() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -3361,6 +3549,7 @@ fn command_and_config_interceptors_compose_transform_and_keep_floors() {
                     .map(c => c.command === 'deploy' ? {...c, description: 'Deploy now', args_hint: '<env>'} : c)}));
                 api.intercept('command', async (e, next) => {
                     if (e.args === 'prod') return {deny: 'prod is frozen'};
+                    if (e.args === 'late') { await next(e); return {deny: 'too late'}; }
                     const r = await next({...e, args: e.args.trim()});
                     return {result: {wrapped: r.result}};
                 });
@@ -3426,6 +3615,11 @@ fn command_and_config_interceptors_compose_transform_and_keep_floors() {
         run("prod").unwrap_err().to_string(),
         "command_denied: prod is frozen"
     );
+    assert_eq!(
+        run("late").unwrap()["result"],
+        "late",
+        "a refusal after the command ran keeps its result"
+    );
 
     let config_row = |key: &str, managed: bool| {
         json!({"key": key, "label": key, "value": "Dark", "source": "user", "version": "v1",
@@ -3479,7 +3673,7 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
         let path = root.join("guard");
         let _ = std::fs::create_dir(&path);
         let manifest = json!({"schema":1,"id":"guard","version":"1.0.0","api":CURRENT_API,"state_version":1,
-            "capabilities":["policy"],"policy":{"namespaces":["exec","store"]},"requires":["helper"]});
+            "capabilities":["policy"],"policy":{"namespaces":["exec","store","time"]},"requires":["helper"]});
         std::fs::write(
             path.join("mod.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -3490,21 +3684,23 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
     };
     let helper = package(&root, "helper", "export default () => {}", &[]);
     trust(&store, &helper, &[]);
-    write_guard(
-        "export default api => api.intercept('admission', {required: true}, (e, next) => {
-            if (e.package.id === 'blocked') return {deny: 'not on the list'};
-            if (e.package.id === 'limited') return {withhold: ['exec']};
-            if (e.package.id === 'helper') throw new Error('dependencies are never judged');
-            return next(e);
-        })",
-    );
+    let strict = "export default api => {
+            api.intercept('admission', () => ({withhold: []}));
+            api.intercept('admission', {required: true}, (e, next) => {
+                if (e.package.id === 'blocked') return {deny: 'not on the list'};
+                if (e.package.id === 'limited') return {withhold: ['exec', 'time']};
+                if (e.package.id === 'helper') throw new Error('dependencies are never judged');
+                return next(e);
+            });
+        }";
+    write_guard(strict);
     let limited = package(
         &root,
         "limited",
-        "export default api => { api.command('run', () => api.host.call('exec.run', {program: 'true'})); api.command('read', () => api.host.call('store.get', {key: 'k'})); }",
-        &["commands", "exec", "store"],
+        "export default api => { api.command('run', () => api.host.call('exec.run', {program: 'true'})); api.command('read', () => api.host.call('store.get', {key: 'k'})); api.command('nap', () => api.time.sleep(1)); }",
+        &["commands", "exec", "store", "events"],
     );
-    trust(&store, &limited, &["commands", "exec", "store"]);
+    trust(&store, &limited, &["commands", "exec", "store", "events"]);
     let blocked = service_package(
         &root,
         "blocked",
@@ -3574,6 +3770,12 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
             .contains("capability_withheld: exec")
     );
     assert_eq!(invoke(&mut runtime, "read").unwrap(), json!("ran"));
+    assert!(
+        invoke(&mut runtime, "nap")
+            .unwrap_err()
+            .to_string()
+            .contains("capability_withheld: time")
+    );
 
     write_guard(
         "export default api => api.intercept('admission', {required: true}, (e, next) => e.package.id === 'limited' ? {withhold: ['http']} : next(e))",
@@ -3603,6 +3805,16 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
     assert!(
         runtime.grants("limited").is_some() && runtime.grants("blocked").is_some(),
         "an expired policy grant no longer judges packages"
+    );
+    write_guard(strict);
+    runtime.reload().unwrap();
+    assert!(invoke(&mut runtime, "run").is_err());
+    contended(|| store.revoke_authority(&guard));
+    runtime.reload().unwrap();
+    assert_eq!(
+        invoke(&mut runtime, "run").unwrap(),
+        json!("ran"),
+        "withholding ends with the policy"
     );
 }
 

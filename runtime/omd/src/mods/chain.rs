@@ -50,9 +50,56 @@ struct Link {
 
 pub(super) enum Core<'c> {
     Call(&'c mut dyn FnMut(Value) -> Result<Value>),
-    Host { caller: String, generation: u64 },
-    Spawn { caller: String, arguments: Value },
-    Peer { caller: String, arguments: Value },
+    Host {
+        caller: String,
+        generation: u64,
+    },
+    Spawn {
+        caller: String,
+        arguments: Value,
+        spawned: Option<Value>,
+    },
+    Peer {
+        caller: String,
+        arguments: Value,
+    },
+}
+
+impl Core<'_> {
+    fn run(
+        &mut self,
+        access: &mut Access<'_>,
+        host: &mut HostFn<'_>,
+        input: &Value,
+        active: &dyn Fn() -> bool,
+        scope: &InvocationScope,
+    ) -> Result<Value> {
+        match self {
+            Core::Call(run) => run(input.clone()),
+            Core::Host { caller, generation } => {
+                effective_call(access, host, caller, *generation, input, active, scope)
+            }
+            Core::Spawn {
+                caller,
+                arguments,
+                spawned,
+            } => {
+                let value = spawn_call(access, host, caller, arguments, input)?;
+                let result = json!({"agent_id": value["handle"], "output": value.to_string(), "success": true});
+                *spawned = Some(value);
+                Ok(result)
+            }
+            Core::Peer { caller, arguments } => {
+                let mut arguments = arguments.clone();
+                arguments["data"] = input["data"].clone();
+                let call = ModHostCall {
+                    operation: "peers.send".into(),
+                    arguments,
+                };
+                forward(access, host, caller, call).map(|receipt| json!({"receipt": receipt}))
+            }
+        }
+    }
 }
 
 type HostFn<'h> = dyn FnMut(&str, ModHostCall) -> Result<Value> + 'h;
@@ -453,6 +500,8 @@ fn validate_result(
     result: &Value,
     last: Option<&Value>,
     input: &Value,
+    executed: bool,
+    required_beneath: bool,
 ) -> Result<()> {
     if last == Some(result) {
         return Ok(());
@@ -463,7 +512,14 @@ fn validate_result(
             .is_some_and(|text| !text.is_empty() && text.len() <= limit)
     };
     let object = result.as_object();
-    let deny = object.is_some_and(|object| object.len() == 1) && text("deny", 512);
+    // A refusal after the native executor ran would misreport an effect that already happened.
+    let deny = object.is_some_and(|object| object.len() == 1)
+        && text("deny", 512)
+        && !(executed
+            && matches!(
+                surface,
+                "command" | "config_set" | "peer_send" | "agent_spawn"
+            ));
     let valid = match surface {
         "tool" => {
             deny || object.is_some_and(|object| {
@@ -527,7 +583,7 @@ fn validate_result(
                         }
                         None => true,
                     },
-                    None => true,
+                    None => deny || !required_beneath,
                 }
         }
         "render" => render::valid_result(result),
@@ -731,24 +787,7 @@ impl Chain {
         let started = Instant::now();
         let Some(link) = self.links.get(k).cloned() else {
             self.effective = input.clone();
-            let result = match core {
-                Core::Call(run) => run(input.clone()),
-                Core::Host { caller, generation } => {
-                    effective_call(access, host, caller, *generation, &input, active, scope)
-                }
-                Core::Spawn { caller, arguments } => {
-                    spawn_call(access, host, caller, arguments, &input)
-                }
-                Core::Peer { caller, arguments } => {
-                    let mut arguments = arguments.clone();
-                    arguments["data"] = input["data"].clone();
-                    let call = ModHostCall {
-                        operation: "peers.send".into(),
-                        arguments,
-                    };
-                    forward(access, host, caller, call).map(|receipt| json!({"receipt": receipt}))
-                }
-            };
+            let result = core.run(access, host, &input, active, scope);
             self.executed |= result.is_ok();
             let (outcome, error) = match &result {
                 Ok(_) => ("returned", None),
@@ -822,14 +861,22 @@ impl Chain {
             return self.link(access, host, core, active, scope, k + 1, input);
         }
         let last = |attempts: &Attempts| attempts.last.clone().and_then(std::result::Result::ok);
-        let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str| {
+        let required_beneath = self.links[k + 1..].iter().any(|link| link.required);
+        let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str, executed: bool| {
             reply.and_then(|reply| {
                 let result = reply.get("result").cloned().unwrap_or(Value::Null);
-                validate_result(surface, &result, last(attempts).as_ref(), &input)?;
+                validate_result(
+                    surface,
+                    &result,
+                    last(attempts).as_ref(),
+                    &input,
+                    executed,
+                    required_beneath,
+                )?;
                 Ok(result)
             })
         };
-        let error = match settled(reply, &attempts, &self.surface) {
+        let error = match settled(reply, &attempts, &self.surface, self.executed) {
             Ok(result) => {
                 let outcome = match &attempts.last {
                     Some(Ok(last)) if *last == result => "passed",
@@ -893,7 +940,7 @@ impl Chain {
                 payload,
                 &mut attempts,
             );
-            if let Ok(result) = settled(reply, &attempts, &self.surface) {
+            if let Ok(result) = settled(reply, &attempts, &self.surface, self.executed) {
                 if !matches!(attempts.last, Some(Ok(_))) {
                     self.answered_by.get_or_insert_with(|| link.id.clone());
                 }
@@ -1096,8 +1143,7 @@ fn spawn_call(
         operation: "agents.spawn".into(),
         arguments,
     };
-    let value = forward(access, host, caller, call)?;
-    Ok(json!({"agent_id": value["handle"], "output": value.to_string(), "success": true}))
+    forward(access, host, caller, call)
 }
 
 fn forward(
@@ -1143,13 +1189,15 @@ pub(super) fn dispatch(
             "agent_id": null, "definition": field("definition"), "prompt": field("prompt"),
             "model": field("route"), "effort": null, "cwd": null, "tools": field("tools")});
         let origin = json!({"caller": caller, "thread_id": bound_thread()});
+        let mut core = Core::Spawn {
+            caller: caller.to_owned(),
+            arguments: call.arguments,
+            spawned: None,
+        };
         let chain = intercept(
             access,
             host,
-            &mut Core::Spawn {
-                caller: caller.to_owned(),
-                arguments: call.arguments,
-            },
+            &mut core,
             "agent_spawn",
             required,
             input,
@@ -1160,8 +1208,13 @@ pub(super) fn dispatch(
         if let Some(reason) = chain.result["deny"].as_str() {
             return Err(failure(format!("agent_spawn_denied: {reason}")));
         }
-        return serde_json::from_str(chain.result["output"].as_str().unwrap_or_default())
-            .map_err(|_| failure("agent_spawn_result_unavailable"));
+        return match core {
+            Core::Spawn {
+                spawned: Some(value),
+                ..
+            } if value["handle"] == chain.result["agent_id"] => Ok(value),
+            _ => Err(failure("agent_spawn_result_unavailable")),
+        };
     }
     if call.operation == "peers.send"
         && call.arguments.is_object()
@@ -1245,24 +1298,7 @@ pub(super) fn intercept(
         .iter()
         .all(|link| !link.matcher.is_null() && !may_match(&link.matcher, &input))
     {
-        let result = match core {
-            Core::Call(run) => run(input.clone()),
-            Core::Host { caller, generation } => {
-                effective_call(access, host, caller, *generation, &input, active, scope)
-            }
-            Core::Spawn { caller, arguments } => {
-                spawn_call(access, host, caller, arguments, &input)
-            }
-            Core::Peer { caller, arguments } => {
-                let mut arguments = arguments.clone();
-                arguments["data"] = input["data"].clone();
-                let call = ModHostCall {
-                    operation: "peers.send".into(),
-                    arguments,
-                };
-                forward(access, host, caller, call).map(|receipt| json!({"receipt": receipt}))
-            }
-        }?;
+        let result = core.run(access, host, &input, active, scope)?;
         return Ok(ModChain {
             result,
             input,
@@ -1310,6 +1346,9 @@ pub(super) fn intercept(
 impl ModHost {
     /// Refuses or restricts packages through `admission` interceptors; policy mods and their dependencies are not judged.
     pub(super) fn admit(&mut self) {
+        for loaded in self.loaded.values_mut() {
+            loaded.withheld.clear();
+        }
         let Some(required) = self.intercepts("admission") else {
             return;
         };
@@ -1345,11 +1384,18 @@ impl ModHost {
             .filter_map(|id| self.loaded.get(id)?.package.policy.as_ref())
             .flat_map(|policy| policy.namespaces.clone())
             .collect::<Vec<_>>();
-        let policy = exempt
-            .iter()
-            .filter_map(|id| Some(format!("{id}={}", self.loaded.get(id)?.selection.sha256)))
-            .collect::<Vec<_>>()
-            .join(",");
+        let policy = crate::mods::digest(
+            &serde_json::to_vec(
+                &exempt
+                    .iter()
+                    .filter_map(|id| {
+                        let selection = &self.loaded.get(id)?.selection;
+                        Some(json!([id, selection.sha256, selection.settings]))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_default(),
+        );
         let candidates = self
             .order
             .iter()
@@ -1395,10 +1441,12 @@ impl ModHost {
                     match chain {
                         Ok(chain) => {
                             let decision = admission(&chain.result, &scope);
-                            if self.admissions.len() >= 256 {
-                                self.admissions.clear();
+                            if chain.trace.iter().all(|entry| entry["reason"].is_null()) {
+                                if self.admissions.len() >= 256 {
+                                    self.admissions.clear();
+                                }
+                                self.admissions.insert(key, decision.clone());
                             }
-                            self.admissions.insert(key, decision.clone());
                             decision
                         }
                         Err(error) => Err(format!("admission_policy_unavailable: {error}")),
@@ -1472,10 +1520,17 @@ impl ModHost {
             return None;
         }
         let unavailable = self.policies.iter().find_map(|path| {
+            let shadowed = |rejection: &ModRejection| {
+                (&rejection.path == path
+                    && rejection.reason.starts_with("shadowed_by_project_scope"))
+                .then(|| self.loaded.get(rejection.id.as_deref()?))
+                .flatten()
+            };
             let Some(loaded) = self
                 .loaded
                 .values()
                 .find(|loaded| &loaded.selection.path == path)
+                .or_else(|| self.rejected.iter().find_map(shadowed))
             else {
                 let rejection = self
                     .rejected
@@ -1673,6 +1728,7 @@ pub fn continue_operation(
             )?
             .result
         }
+        None if !active() => return Err(failure("callback_cancelled")),
         None => core(input)?,
     };
     match result.get("deny").and_then(Value::as_str) {

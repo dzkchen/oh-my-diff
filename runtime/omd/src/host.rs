@@ -81,6 +81,9 @@ pub trait Authority {
     fn readable(&self, path: &Path) -> bool;
     fn writable(&self, path: &Path) -> bool;
     fn command(&self, argv: Vec<String>, access: &ExecAccess<'_>) -> Result<Command, String>;
+    fn protected(&self) -> &[PathBuf] {
+        &[]
+    }
 }
 
 pub struct Caller<'a> {
@@ -136,7 +139,6 @@ fn credential_paths() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Denies mod commands reading or writing protected paths, Codex home and credential locations.
 /// Serves one session host call for a thread: `(thread, caller, call, active)`.
 pub type SessionDispatcher = Arc<
     dyn Fn(&str, &str, crate::ModHostCall, &dyn Fn() -> bool) -> std::io::Result<Value>
@@ -169,6 +171,7 @@ pub fn session_call(
     dispatcher(thread, caller, call, active)
 }
 
+/// Denies mod commands reading or writing protected paths, Codex home and credential locations.
 pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
     for root in protected.iter().cloned().chain(credential_paths()) {
         for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
@@ -671,6 +674,7 @@ impl Host<'_> {
         let overlaps = |other: &Path| path.starts_with(other) || other.starts_with(&path);
         if credential_paths()
             .into_iter()
+            .chain(self.authority.protected().iter().cloned())
             .chain([
                 self.data_root.to_path_buf(),
                 self.repository().to_path_buf(),

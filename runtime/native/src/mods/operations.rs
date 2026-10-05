@@ -80,7 +80,7 @@ pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {
     });
     json!({"name": route.name, "model": route.model, "provider": route.provider,
         "reasoning": route.reasoning_effort, "roles": route.roles,
-        "billing": if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
+        "billing": accounting::billing(Some(&route.rates)),
         "tools": route.tools, "available": available, "credential": route.credential})
 }
 

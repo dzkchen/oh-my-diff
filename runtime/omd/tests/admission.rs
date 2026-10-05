@@ -346,6 +346,24 @@ fn explicit_resume_preserves_allowance_and_uncertain_requests() {
 }
 
 #[test]
+fn provider_billed_costs_stay_outside_exposure_after_resume() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
+    let task = Task::create(limits(), evidence.clone()).unwrap();
+    task.authorize_route("cursor", "auto").unwrap();
+    for cost in [Some(90), None] {
+        let request = task.admit("lead", "cursor", "auto", 0).unwrap();
+        task.dispatch(&request, || Ok(())).unwrap();
+        task.settle_reported(&request, None, cost).unwrap();
+    }
+    task.settle_provider(2, 80, "fixture").unwrap();
+    assert_eq!(task.remaining().unwrap().2, 100);
+    drop(task);
+    let resumed = Task::open(limits(), evidence, Some("user requested resume")).unwrap();
+    assert_eq!(resumed.remaining().unwrap().2, 100);
+}
+
+#[test]
 fn discarded_worker_result_replays_without_claiming_consumption() {
     let dir = tempfile::tempdir().unwrap();
     let evidence = dir.path().join("task");

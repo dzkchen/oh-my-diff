@@ -299,10 +299,16 @@ export default function activate(api: ModAPI) {
     const segments = preset.map(key => values[key]).filter((value): value is [string, string] => value !== null);
     const shade = (index: number) => blend(colors.background, colors.foreground, index % 2 ? 0.14 : 0.24);
     // A line holds at most 12 spans, so separators share their segment's span.
+    let room = 256;
     const spans: TerminalSpan[] = segments.slice(0, 12).map(([text, fg], index): TerminalSpan => {
       if (glyphs === 'ascii') return { text: `${index ? ' | ' : ''}${text}`, fg: fg as ThemeColor };
       const bg = shade(index);
       return { text: ` ${text} ${glyphs === 'nerd' && index < segments.length - 1 ? '\uE0B1' : ''}`, fg: readable(fg, [bg]) as ThemeColor, bg: bg as ThemeColor };
+    }).filter(span => {
+      const length = [...span.text].length;
+      if (length > room) return false;
+      room -= length;
+      return true;
     });
     return spans.length ? { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'line', id: 'omd_theme_statusline', label: 'Status line', spans }] } } } : {};
   }

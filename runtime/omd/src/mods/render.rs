@@ -100,8 +100,7 @@ impl ModHost {
     }
 }
 
-/// Runs the `render` chain for one native component instance; a cached tree stands while the
-/// state keys its hooks read are unchanged.
+/// Runs the `render` chain for one component instance; a cached tree stands while the state keys its hooks read hold.
 pub fn render_shared(
     runtime: &Mutex<ModHost>,
     input: Value,
@@ -131,11 +130,22 @@ pub fn render_shared(
     if let Some(chain) = cached {
         return Ok(chain);
     }
-    let (generation, hooked) = {
+    let (generation, hooked, everyone, before) = {
         let runtime = runtime
             .lock()
             .map_err(|_| failure("mod_runtime_poisoned"))?;
-        (runtime.generation, runtime.may_intercept("render", &input))
+        let everyone = runtime
+            .loaded
+            .keys()
+            .map(|id| (id.clone(), BTreeSet::from(["*".to_owned()])))
+            .collect::<BTreeMap<_, _>>();
+        let before = runtime.render_deps(&everyone, true);
+        (
+            runtime.generation,
+            runtime.may_intercept("render", &input),
+            everyone,
+            before,
+        )
     };
     let chain = intercept_shared(
         runtime,
@@ -162,12 +172,13 @@ pub fn render_shared(
     if busy {
         return Err(failure("mod_runtime_busy"));
     }
-    // A failed hook is retried on the next draw instead of being cached.
+    // A failed hook, or state written while hooks ran, is drawn again instead of being cached.
     let settled = chain.trace.iter().all(|entry| entry["reason"].is_null());
     let mut runtime = runtime
         .lock()
         .map_err(|_| failure("mod_runtime_poisoned"))?;
-    if settled && runtime.generation == generation {
+    if settled && runtime.generation == generation && runtime.render_deps(&everyone, true) == before
+    {
         if runtime.rendered.len() >= CACHE_LIMIT {
             runtime.rendered.clear();
         }

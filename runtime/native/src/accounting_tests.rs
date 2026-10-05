@@ -326,7 +326,7 @@ fn fast_route() -> RequestRoute {
 
 #[test]
 fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
-    let (root, accounts, _task, mut request, body) = setup();
+    let (root, accounts, task, mut request, body) = setup();
     let store = root.path().join("store");
     std::fs::create_dir(&store).unwrap();
     let store = store.canonicalize().unwrap();
@@ -374,6 +374,42 @@ fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
             .unwrap()
             .is_sensitive()
     );
+
+    task.authorize_route("fixture", "fixture-fast").unwrap();
+    let routed = EncodedJsonBody::encode(
+        &json!({"model": "fixture-fast", "reasoning":{"effort":"xhigh"}, "stream": true, "max_output_tokens": 128}),
+    )
+    .unwrap();
+    request.headers.insert("thread-id", "main".parse().unwrap());
+    for (session, target, allowed) in [
+        (
+            "http://localhost/responses",
+            "https://api.openai.com/v1/responses",
+            true,
+        ),
+        (
+            "https://api.openai.com/v1/responses",
+            "http://localhost/responses",
+            false,
+        ),
+    ] {
+        let mut lead = account(&task, root.path(), "lead");
+        lead.url = String::new();
+        let mut remote = fast_route();
+        remote.credential = Some(profile.id.clone());
+        remote.url = target.into();
+        lead.lead_routes = vec![remote];
+        accounts.0.lock().unwrap().insert("main".into(), lead);
+        request
+            .headers
+            .insert("x-omd-route", "fast".parse().unwrap());
+        request.url = session.into();
+        let sent = accounts.before_send(&mut request, Some(&routed));
+        assert_eq!(sent.is_ok(), allowed, "{session} -> {target}");
+        if allowed {
+            assert_eq!(request.url, target);
+        }
+    }
 }
 
 #[test]
@@ -431,7 +467,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
         api.intercept('model_request', (e, next) => {
             const last = e.sections.at(-1)?.text;
             if (last === 'cache me') return {response: {output: [{type: 'message', text: 'cached answer'}, {type: 'tool_call', tool: 'exec_command', arguments: {cmd: 'ls'}}]}};
-            if (last === 'elsewhere') return next({...e, route: 'other'});
+            if (last === 'elsewhere') return next({...e, route: 'other', sections: [...e.sections, {id: 'mod:note', text: 'routed'}]});
             return next({...e, effort: 'low', sections: [...e.sections.filter(s => s.id !== 'apps.instructions'), {id: 'mod:note', text: 'hint'}]});
         });
         api.intercept('response_stream', (e, next) => {
@@ -467,7 +503,10 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
             "internal_chat_message_metadata_passthrough":{"content_item_kinds":
                 ["permissions.instructions","apps.instructions","hooks.additional_context"]}})];
         if last == "elsewhere" {
-            input.push(json!({"type":"reasoning","summary":[],"encrypted_content":"opaque"}));
+            input.insert(
+                0,
+                json!({"type":"reasoning","summary":[],"encrypted_content":"opaque"}),
+            );
         }
         EncodedJsonBody::encode(
             &json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true,
@@ -587,6 +626,13 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
         "foreign reasoning left out"
     );
     assert!(
+        switched["input"][0]["content"][3]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("routed"),
+        "{switched}"
+    );
+    assert!(
         request
             .headers
             .contains_key(codex_api::request_observer::STRIP_ITEM_METADATA)
@@ -619,6 +665,11 @@ fn completion_workers_cap_output_capture_tool_calls_and_collect_their_responses(
         attempt.observe(&mut event, true).unwrap();
         assert!(event.is_null(), "a captured call never reaches the engine");
     }
+    let mut unindexed = json!({"type":"response.output_item.done","item":{"type":"function_call","id":"g","call_id":"d","name":"exec_command","arguments":"{}"}});
+    assert!(
+        attempt.observe(&mut unindexed, true).is_err(),
+        "a call without an output index cannot be captured"
+    );
     let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":4},"output_tokens":5}}});
     attempt.observe(&mut completed, true).unwrap();
     drop(attempt);
@@ -1031,6 +1082,39 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
         request.headers["x-omd-attempt"], "2",
         "the retry is a new, numbered attempt"
     );
+    let mut attempt = accounts
+        .before_send(&mut request, retried.as_ref())
+        .unwrap()
+        .unwrap();
+    assert!(attempt.observe(&mut done.clone(), true).is_err());
+    drop(attempt);
+    accounts.forget_retry("child");
+    let mut next = retried.clone();
+    accounts.prepare(&mut request, &mut next).unwrap();
+    assert_eq!(
+        request.headers["x-omd-attempt"], "1",
+        "a retry core declined does not number the next turn's request"
+    );
+}
+
+#[test]
+fn cancelled_provider_billed_requests_still_await_settlement() {
+    let (_root, accounts, task, mut request, body) = setup();
+    accounts.0.lock().unwrap().get_mut("child").unwrap().rates = Some(Rates {
+        reservation_microusd: 0,
+        provider_billed: true,
+        ..rates()
+    });
+    request
+        .headers
+        .insert("x-omd-request-id", "req-cancelled".parse().unwrap());
+    drop(accounts.before_send(&mut request, Some(&body)).unwrap());
+    accounts
+        .settle_provider("req-cancelled", 300, "fixture", |_| true)
+        .unwrap();
+    let record = task.attempts().unwrap().remove(0);
+    assert_eq!(record.status, "failed");
+    assert_eq!(record.settled_microusd, Some(300));
 }
 
 #[test]
