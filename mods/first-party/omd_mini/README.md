@@ -14,7 +14,7 @@ omd mini resume <thread>          # any codex arguments pass through
 In a mini session the mod sets:
 
 - a `render` hook on `command_output`: a successful agent command collapses to one `• Ran COMMAND · N output lines` row; failed commands and user shell commands stay in full.
-- a short prompt placeholder;
+- a short prompt placeholder (a `composer_hint` render hook, so it also holds after `/fork`);
 - one status segment on Codex's own status line, which already shows the model and reasoning: the last turn's time (or `working`), context use and the settled paid cost, or the primary usage-limit window when nothing was paid (at most 40 characters).
 
 It also sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), so other mods' sidebar, header and named sites stay out of the inline viewport; their dialogs, message templates, status segments and commands still apply, and mod diagnostics stay visible. Sessions not started by `omd mini` read the two variables once at start and resume, then do nothing.

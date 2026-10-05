@@ -12,7 +12,8 @@ start and resume.
 
 The sidebar is the composed status sidebar: `omd_git`, `omd_lsp_view` and
 `omd_mcp` add their Changes, Language servers and MCP servers panels below the
-Session panel. Every panel folds: Tab reaches a panel title and Enter or a click
+Session panel, and the opt-in `omd_usage` adds Usage (cache, quota, spend,
+paid allowance bar) and Workers (plan progress, sub-agents, running tools). Every panel folds: Tab reaches a panel title and Enter or a click
 folds or unfolds it. The host hides the sidebar below 80 columns.
 
 | Key | Action |

@@ -161,7 +161,7 @@ test('powerline presets show session, Git, context and OMD state; below adds one
   state = notify(state, 'thread/tokenUsage/updated', { tokenUsage: { total: { inputTokens: 12300, outputTokens: 4500 }, last: { totalTokens: 184000 }, modelContextWindow: 200000 } });
   const view = settings => run('terminal', '', { event: 'idle', ledger, identity }, { state, settings }).value;
   const spans = view({ statusline: 'nerd' }).sites.above_composer.components[1].spans;
-  assert.equal(spans.map(span => span.text).join(''), ['  gpt-6.1-sol ', ' think:high ', '  …/work/project ', '  main ↑2 ↓1 +1 *2 ?1 ', '  ↑12k ↓4.5k ', '  $1.25 ', '  92%/200k ', '  thread-1 ', '  5 mods '].join('') + '');
+  assert.deepEqual(spans.map(span => span.text), ['  gpt-6.1-sol ', ' think:high ', '  …/work/project ', '  main ↑2 ↓1 +1 *2 ?1 ', '  ↑12k ↓4.5k ', '  $1.25 ', '  92%/200k ', '  thread-1 ', '  5 mods '].map((text, index, all) => index < all.length - 1 ? `${text}\uE0B1` : text));
   assert.ok(spans.filter(span => span.text.startsWith(' ')).every(span => span.bg));
   const ascii = view({ statusline: 'ascii' }).sites.above_composer.components[1].spans;
   assert.equal(ascii.map(span => span.text).join(''), 'gpt-6.1-sol | think:high | …/work/project | git:main ^2 v1 +1 *2 ?1 | in:12k out:4.5k | $1.25 | ctx:92%/200k');
@@ -188,7 +188,7 @@ test('powerline presets show session, Git, context and OMD state; below adds one
   let output = drive(state);
   assert.deepEqual([output.value.display, composer.text, stash, output.state.live.stashed], ['Draft stashed; Alt+z restores it', '', { active: 'draft one', history: ['draft one'] }, true]);
   state = output.state;
-  assert.match(view({ statusline: 'compact' }).sites.above_composer.components[1].spans.at(-2).text, /stash/);
+  assert.match(view({ statusline: 'compact' }).sites.above_composer.components[1].spans.at(-1).text, /stash/);
   output = drive(output.state);
   assert.deepEqual([output.value.display, composer.text, stash.active, output.state.live.stashed], ['Stash restored', 'draft one', null, false]);
   assert.equal(drive(output.state, 'list').value.display, '1. draft one');

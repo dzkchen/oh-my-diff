@@ -24,9 +24,9 @@ test('router adapts Responses requests to each protocol through the credential g
       { choices: [{ delta: { reasoning: 'think' } }] }, { choices: [{ delta: { content: 'Hel' } }] }, { choices: [{ delta: { content: 'lo' } }] },
       { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'exec_command', arguments: '{"cmd":' } }] } }] },
       { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"ls"}' } }] } }] },
-      { choices: [], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, prompt_tokens_details: { cached_tokens: 2 } } }, '[DONE]']));
+      { model: 'vendor/model-a', choices: [], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, cost: 0.0012, prompt_tokens_details: { cached_tokens: 2, cache_write_tokens: 3 } } }, '[DONE]']));
     else if (path === '/anthropic') response.end(sse([
-      { type: 'message_start', message: { usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 1 } } },
+      { type: 'message_start', message: { model: 'claude-served-1', usage: { input_tokens: 10, cache_read_input_tokens: 3, cache_creation_input_tokens: 2, cache_creation: { ephemeral_5m_input_tokens: 2, ephemeral_1h_input_tokens: 0 }, output_tokens: 1 } } },
       { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
@@ -89,7 +89,10 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.deepEqual(done.map(item => item.type), ['reasoning', 'message', 'function_call']);
     assert.equal(done[1].content[0].text, 'Hello');
     assert.deepEqual(done[2], { type: 'function_call', id: 'c1', call_id: 'c1', name: 'exec_command', arguments: '{"cmd":"ls"}' });
-    assert.deepEqual(chat.events.at(-1).response.usage, { input_tokens: 12, input_tokens_details: { cached_tokens: 2 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 16 });
+    const { omd_native_usage: raw, ...normalized } = chat.events.at(-1).response.usage;
+    assert.deepEqual(normalized, { input_tokens: 12, input_tokens_details: { cached_tokens: 2, cache_write_tokens: 3 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 16, omd_reported_cost: { usd: 0.0012, basis: 'provider_billed' } });
+    assert.equal(raw.cost, 0.0012);
+    assert.equal(chat.events.at(-1).response.model, 'vendor/model-a');
 
     const anthropic = await ask('d/up');
     assert.equal(seen['/anthropic'].headers['x-omd-credential-header'], 'x-api-key');
@@ -99,7 +102,10 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.deepEqual(seen['/anthropic'].body.thinking, { type: 'enabled', budget_tokens: 3072 });
     const calls = anthropic.events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
     assert.deepEqual(calls.at(-1), { type: 'custom_tool_call', id: 't1', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' });
-    assert.equal(anthropic.events.at(-1).response.usage.input_tokens, 13);
+    assert.equal(anthropic.events.at(-1).response.usage.input_tokens, 15);
+    assert.deepEqual(anthropic.events.at(-1).response.usage.input_tokens_details, { cached_tokens: 3, cache_write_tokens: 2 });
+    assert.equal(anthropic.events.at(-1).response.usage.omd_cache_ttl_seconds, 300);
+    assert.equal(anthropic.events.at(-1).response.model, 'claude-served-1');
     assert.equal(anthropic.events.at(-1).response.usage.output_tokens, 5);
     const thought = calls.find(item => item.type === 'reasoning');
     assert.match(thought.encrypted_content, /^omd-thinking:d:/);

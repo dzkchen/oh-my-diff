@@ -32,6 +32,7 @@ function session(env) {
       if (operation === 'store.get') value = store[key] ?? null;
       if (operation === 'store.put') { store[key] = { value: args.value, revision: (store[key]?.revision ?? 0) + 1, provenance: { thread_id: thread } }; value = { revision: store[key].revision }; }
       if (operation === 'store.delete') { value = { deleted: key in store }; delete store[key]; }
+      if (operation === 'continuation.next') value = { result: { tree: [{ type: 'native' }] }, trace: [] };
       receipts.push({ call: output.host_call, value });
     }
   };
@@ -51,10 +52,12 @@ test('outside an omd mini launch the mod stays inert and points to the launcher'
 });
 
 test('a mini session shows compact tools, a simple prompt and one bounded status line', () => {
-  const { invoke } = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`);
+  const { invoke, calls } = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`);
   invoke('start', {});
-  assert.deepEqual(invoke('terminal', { event: 'start', ledger: ledger() }),
-    { inline_sites: 'hidden', placeholder: 'Ask anything · /omd_mini:switch opens the full UI', status: [] });
+  assert.deepEqual(invoke('terminal', { event: 'start', ledger: ledger() }), { inline_sites: 'hidden', status: [] });
+  const hint = { component: 'composer_hint', id: 'placeholder', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'live', owner: null, props: { slot: 'placeholder', placeholder: 'Ask Oh My Diff to do anything', input_enabled: true } };
+  invoke('intercept', { surface: 'render', input: hint, original: hint, origin: { caller: 'engine' } }, '0');
+  assert.equal(calls.findLast(call => call.operation === 'continuation.next').args.input.props.placeholder, 'Ask anything · /omd_mini:switch opens the full UI');
   invoke('turn_start', { turn_id: 't1' }, '', 1790000000000);
   assert.deepEqual(invoke('terminal', { event: 'turn_start', ledger: ledger() }).status, ['working']);
   invoke('turn_end', { turn_id: 't1', outcome: 'completed' }, '', 1790000065000);

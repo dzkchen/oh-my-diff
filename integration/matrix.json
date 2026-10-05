@@ -1182,6 +1182,7 @@
         "omd_task_tools",
         "omd_theme",
         "omd_typed_tasks",
+        "omd_usage",
         "omd_workflow",
         "omd_workspace",
         "omd_worktree"
@@ -1217,7 +1218,7 @@
       "source": "mods/first-party/omd_checks"
     },
     "omd_claude_cli": {
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "source": "mods/first-party/omd_claude_cli"
     },
     "omd_continue": {
@@ -1277,8 +1278,12 @@
       "source": "mods/first-party/omd_mcp"
     },
     "omd_mini": {
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "source": "mods/first-party/omd_mini"
+    },
+    "omd_usage": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_usage"
     },
     "omd_model_picker": {
       "version": "0.3.0-preview.2",
@@ -1289,7 +1294,7 @@
       "source": "mods/first-party/omd_mods"
     },
     "omd_muse": {
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_muse"
     },
     "omd_notes": {
@@ -1313,7 +1318,7 @@
       "source": "mods/first-party/omd_preview"
     },
     "omd_profiles": {
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_profiles"
     },
     "omd_programmable_context": {
@@ -1353,7 +1358,7 @@
       "source": "mods/first-party/omd_task_tools"
     },
     "omd_theme": {
-      "version": "0.4.0-candidate.2",
+      "version": "0.4.0-candidate.3",
       "source": "mods/first-party/omd_theme"
     },
     "omd_typed_tasks": {

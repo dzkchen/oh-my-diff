@@ -332,7 +332,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     if (served !== entry.window) throw new Error(`claude_context_window_changed:${served}:rerun_claude_setup`);
     const admission = { upstream_requests: relay.used, blocked_requests: relay.denied,
       request_id: relay.requestId };
-    return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true);
+    return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true, results[0].total_cost_usd);
   } finally {
     signal.removeEventListener('abort', cancel);
     cancel();

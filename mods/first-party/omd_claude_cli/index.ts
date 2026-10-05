@@ -166,7 +166,7 @@ export function translateRequest(request: Row, model: string | undefined): Row {
 }
 
 export function responseEvents(assistant: Row, admission: Row, model: string,
-                               reverse: Record<string, Tool>, streamed = false): Row[] {
+                               reverse: Record<string, Tool>, streamed = false, listCostUsd?: number): Row[] {
   const usage = assistant.usage;
   if (!plain(usage) || !Number.isInteger(usage.input_tokens) || !Number.isInteger(usage.output_tokens)) {
     throw new Error('native_usage_missing');
@@ -208,12 +208,16 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
     events.push({ type: 'response.output_item.added', item });
     events.push({ type: 'response.output_item.done', item });
   }
-  events.push({ type: 'response.completed', response: { id, model,
+  const creation = usage.cache_creation;
+  const ttl = creation?.ephemeral_5m_input_tokens > 0 ? 300 : creation?.ephemeral_1h_input_tokens > 0 ? 3600 : null;
+  events.push({ type: 'response.completed', response: { id, model: typeof assistant.model === 'string' ? assistant.model : model,
     usage: { input_tokens: inputTokens, input_tokens_details: { cached_tokens: cacheRead,
              cache_write_tokens: cacheWrite }, output_tokens: usage.output_tokens,
              output_tokens_details: { reasoning_tokens: usage.output_tokens_details?.reasoning_tokens ?? 0 },
              total_tokens: inputTokens + usage.output_tokens, omd_native_usage: usage,
-             omd_native_admission: admission, omd_subscription_charge: 'unknown' } } });
+             omd_native_admission: admission, omd_subscription_charge: 'unknown',
+             ...ttl ? { omd_cache_ttl_seconds: ttl } : {},
+             ...Number.isFinite(listCostUsd) ? { omd_reported_cost: { usd: listCostUsd, basis: 'client_list_estimate' } } : {} } } });
   return events;
 }
 

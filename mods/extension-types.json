@@ -579,6 +579,12 @@
       "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, compact tool summaries, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_usage",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the Usage and Workers sidebar panels, the usage dialog and the summary the theme draws; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_lsp_view",
       "extension_type": "mod",
       "role": "candidate",

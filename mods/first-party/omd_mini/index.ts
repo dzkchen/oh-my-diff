@@ -74,10 +74,14 @@ export default function activate(api: ModAPI) {
     const spend = typeof paid === 'number' && paid > 0 ? `$${(paid / 1e6).toFixed(2)}`
       : state.limit ? `${state.limit.minutes ? `${Math.round(state.limit.minutes / 60)}h` : 'limit'} ${state.limit.used}%` : null;
     const line = [state.busy ? 'working' : state.took === null ? null : duration(state.took), percent === null ? null : `ctx ${percent}%`, spend].filter(Boolean).join(' · ');
-    return { inline_sites: 'hidden', placeholder: 'Ask anything · /omd_mini:switch opens the full UI', status: line ? [fit(line, 40)] : [] };
+    return { inline_sites: 'hidden', status: line ? [fit(line, 40)] : [] };
   });
 
   const mode = api.atom<Json>('mode', null);
+  api.intercept('render', { match: { component: 'composer_hint' } }, (event, next) => {
+    const { props } = event as RenderEvent<'composer_hint'>;
+    return mode.get() === 'mini' && props.slot === 'placeholder' ? next({ ...event, props: { ...props, placeholder: 'Ask anything · /omd_mini:switch opens the full UI' } } as RenderEvent<'composer_hint'>) : next(event);
+  });
   api.intercept('render', { match: { component: 'command_output', lifecycle: 'final' } }, (event, next) => {
     const { props } = event as RenderEvent<'command_output'>;
     if (mode.get() !== 'mini' || props.exit_code !== 0 || props.user_shell) return next(event);

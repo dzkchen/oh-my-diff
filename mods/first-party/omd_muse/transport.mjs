@@ -141,7 +141,7 @@ function usage(value) {
   const cached = number('cachedTokens') + number('cacheReadTokens');
   const input = number('inputTokens') + cached + number('cacheWriteTokens');
   const output = number('outputTokens');
-  return { input_tokens: input, input_tokens_details: { cached_tokens: cached }, output_tokens: output,
+  return { input_tokens: input, input_tokens_details: { cached_tokens: cached, ...Number.isFinite(value?.cacheWriteTokens) ? { cache_write_tokens: value.cacheWriteTokens } : {} }, output_tokens: output,
     output_tokens_details: { reasoning_tokens: number('reasoningTokens') }, total_tokens: input + output,
     omd_native_usage: value ?? null };
 }

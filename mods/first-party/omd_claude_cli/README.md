@@ -21,7 +21,7 @@ What crosses the route:
 
 Set `ask_claude: true` to give other leads an `ask_claude` tool. It runs Claude as an OMD child agent on the same route: read-only by default with read and search tools only, or `mode: "write"` in an isolated worktree that is integrated only within your own write permissions. `isolated: true` starts without the conversation; otherwise the frozen parent history is shared. The host refuses delegated requests that declare hosted web search, so write mode needs `web_search = "disabled"` in the session. Claude leads do not see the tool.
 
-Subscription usage is account-metered; the route reports no charge. Disable the mod, or rerun setup after upgrading the CLI.
+Subscription usage is account-metered; the route reports no charge. Usage carries the served model, cache reads and writes, the cache TTL and the CLI's own list-price figure (`total_cost_usd`) as a list-equivalent estimate (`omd_reported_cost`), not a bill. Disable the mod, or rerun setup after upgrading the CLI.
 
 ## Credits
 

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_theme",
-  "version": "0.4.0-candidate.2",
+  "version": "0.4.0-candidate.3",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "/theme: color themes, backgrounds, glyphs, the startup greeting, a powerline status line and a prompt stash",
@@ -30,6 +30,7 @@
     "NO_COLOR"
   ],
   "subscriptions": {
+    "channels": ["omd_theme/statusline", "omd_usage/hud"],
     "app": [
       "thread/settings/updated",
       "thread/tokenUsage/updated"

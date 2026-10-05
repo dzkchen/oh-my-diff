@@ -10,7 +10,7 @@
   "packages": [
     {
       "id": "omd_claude_cli",
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "extension_type": "mod",
       "capability": "Opt-in official Claude CLI subscription provider with the CLI model catalog and ask_claude delegation",
       "source": "mods/first-party/omd_claude_cli",
@@ -29,7 +29,7 @@
     },
     {
       "id": "omd_mini",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.3",
       "extension_type": "mod",
       "capability": "Opt-in mini interface launched by `omd mini`: scrollback-first conversation over the same Codex session with compact tool summaries, a simple prompt, one status line and switching to the full UI through the launcher",
       "source": "mods/first-party/omd_mini",
@@ -46,8 +46,26 @@
       "review": "extensions/REVIEWS.md"
     },
     {
-      "id": "omd_muse",
+      "id": "omd_usage",
       "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Provider usage HUD: per-request ledger with context, cache, cost, quota windows, workers and an allowance bar",
+      "source": "mods/first-party/omd_usage",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_muse",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "capability": "Opt-in Muse provider and read-only research subagent over muse serve",
       "source": "mods/first-party/omd_muse",
@@ -101,7 +119,7 @@
     },
     {
       "id": "omd_workspace",
-      "version": "0.2.0-preview.4",
+      "version": "0.2.0-preview.5",
       "extension_type": "mod",
       "capability": "Live terminal task and worker workspace",
       "source": "mods/first-party/omd_workspace",
@@ -155,7 +173,7 @@
     },
     {
       "id": "omd_model_picker",
-      "version": "0.3.0-preview.1",
+      "version": "0.3.0-preview.2",
       "extension_type": "mod",
       "capability": "Compact OMD+ /model and reasoning picker presentation",
       "source": "mods/first-party/omd_model_picker",
@@ -407,7 +425,7 @@
     },
     {
       "id": "omd_layout",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "capability": "Opt-in workspace layout: project-grouped session list with status shared across terminals, unread, worktree, context and listening ports, plus find, quick open, jump and command palettes over panes, Git and worktrees",
       "source": "mods/first-party/omd_layout",
@@ -617,7 +635,7 @@
     },
     {
       "id": "omd_profiles",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
       "tested_versions": [
@@ -635,7 +653,7 @@
     },
     {
       "id": "omd_theme",
-      "version": "0.4.0-candidate.2",
+      "version": "0.4.0-candidate.3",
       "extension_type": "mod",
       "capability": "/theme: color themes, backgrounds, glyphs, the startup greeting, a powerline status line and a prompt stash",
       "source": "mods/first-party/omd_theme",

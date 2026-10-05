@@ -135,7 +135,7 @@ export function anthropicRequest(body, profile) {
 // Emits the Responses stream events Codex consumes from either provider's deltas.
 export class Emitter {
   constructor(send, reverse, id) {
-    Object.assign(this, { send, reverse, id, text: null, reasoning: null, calls: new Map(), usage: null, thinking: [], sealed: null, done: false });
+    Object.assign(this, { send, reverse, id, text: null, reasoning: null, calls: new Map(), usage: null, model: null, thinking: [], sealed: null, done: false });
     send({ type: 'response.created', response: { id } });
   }
   delta(kind, value) {
@@ -169,7 +169,7 @@ export class Emitter {
       this.send({ type: 'response.output_item.added', item });
       this.send({ type: 'response.output_item.done', item });
     }
-    this.send({ type: 'response.completed', response: { id: this.id, usage } });
+    this.send({ type: 'response.completed', response: { id: this.id, ...this.model ? { model: this.model } : {}, usage } });
   }
 }
 
@@ -194,21 +194,30 @@ export function chatEvents(emitter) {
     emitter.delta('reasoning', choice.reasoning_content ?? choice.reasoning);
     emitter.delta('text', choice.content);
     for (const call of choice.tool_calls ?? []) emitter.call(call.index ?? 0, { id: call.id, name: call.function?.name, args: call.function?.arguments });
+    if (typeof event.model === 'string') emitter.model = event.model;
     if (event.usage) {
-      const cached = event.usage.prompt_tokens_details?.cached_tokens ?? 0;
-      emitter.usage = { input_tokens: event.usage.prompt_tokens ?? 0, input_tokens_details: { cached_tokens: cached },
+      const details = event.usage.prompt_tokens_details ?? {};
+      emitter.usage = { input_tokens: event.usage.prompt_tokens ?? 0,
+        input_tokens_details: { cached_tokens: details.cached_tokens ?? 0, ...Number.isFinite(details.cache_write_tokens) ? { cache_write_tokens: details.cache_write_tokens } : {} },
         output_tokens: event.usage.completion_tokens ?? 0, output_tokens_details: { reasoning_tokens: event.usage.completion_tokens_details?.reasoning_tokens ?? 0 },
-        total_tokens: event.usage.total_tokens ?? (event.usage.prompt_tokens ?? 0) + (event.usage.completion_tokens ?? 0) };
+        total_tokens: event.usage.total_tokens ?? (event.usage.prompt_tokens ?? 0) + (event.usage.completion_tokens ?? 0), omd_native_usage: event.usage,
+        ...Number.isFinite(event.usage.cost) ? { omd_reported_cost: { usd: event.usage.cost, basis: 'provider_billed' } } : {} };
     }
   };
 }
 
+// Anthropic cache entries live 5 minutes (or 1 hour when requested) from their last use; the shortest written TTL bounds the prefix.
+export const cacheTtl = creation => creation?.ephemeral_5m_input_tokens > 0 ? 300 : creation?.ephemeral_1h_input_tokens > 0 ? 3600 : null;
+
 export function anthropicEvents(emitter) {
   const usage = { input: 0, cached: 0, written: 0, output: 0 };
+  let native = {};
   const blocks = {};
   return event => {
     if (event.type === 'message_start') {
       const start = event.message?.usage ?? {};
+      native = start;
+      if (typeof event.message?.model === 'string') emitter.model = event.message.model;
       Object.assign(usage, { input: start.input_tokens ?? 0, cached: start.cache_read_input_tokens ?? 0, written: start.cache_creation_input_tokens ?? 0, output: start.output_tokens ?? 0 });
     }
     if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') emitter.call(event.index, { id: event.content_block.id, name: event.content_block.name });
@@ -225,11 +234,15 @@ export function anthropicEvents(emitter) {
       if (event.delta?.type === 'signature_delta' && blocks[event.index]) blocks[event.index].signature += event.delta.signature;
       if (event.delta?.type === 'input_json_delta') emitter.call(event.index, { args: event.delta.partial_json });
     }
-    if (event.type === 'message_delta') usage.output = event.usage?.output_tokens ?? usage.output;
+    if (event.type === 'message_delta') {
+      usage.output = event.usage?.output_tokens ?? usage.output;
+      native = { ...native, ...event.usage };
+    }
     if (event.type === 'error') throw Object.assign(new Error(event.error?.message ?? 'anthropic_stream_error'), { code: event.error?.type });
     const input = usage.input + usage.cached + usage.written;
-    emitter.usage = { input_tokens: input, input_tokens_details: { cached_tokens: usage.cached }, output_tokens: usage.output,
-      output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + usage.output };
+    const ttl = cacheTtl(native.cache_creation);
+    emitter.usage = { input_tokens: input, input_tokens_details: { cached_tokens: usage.cached, cache_write_tokens: usage.written }, output_tokens: usage.output,
+      output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + usage.output, omd_native_usage: native, ...ttl ? { omd_cache_ttl_seconds: ttl } : {} };
   };
 }
 

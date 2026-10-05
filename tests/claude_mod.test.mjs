@@ -28,15 +28,18 @@ test('Claude mod translates host requests and replays host tool results', () => 
     { type: 'tool_result', tool_use_id: 'call_1', content: '/repo', is_error: false },
   ]);
   assert.equal(next.frames.at(-2).message.content[0].name, 'mcp__omd__exec_command');
-  const response = responseEvents({ id: 'msg_1', usage: { input_tokens: 10, output_tokens: 5,
-    cache_read_input_tokens: 4, cache_creation_input_tokens: 2 },
+  const response = responseEvents({ id: 'msg_1', model: 'claude-opus-5-5-20261001', usage: { input_tokens: 10, output_tokens: 5,
+    cache_read_input_tokens: 4, cache_creation_input_tokens: 2, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 2 } },
   content: [{ type: 'text', text: 'Working.' }, { type: 'tool_use', id: 'call_2',
     name: 'mcp__omd__apply_patch', input: { input: '*** Begin Patch' } }] },
-  { upstream_requests: 1 }, model, first.reverse);
+  { upstream_requests: 1 }, model, first.reverse, false, 0.042);
   assert.equal(response.find(event => event.type === 'response.output_item.done' &&
     event.item.type === 'custom_tool_call').item.input, '*** Begin Patch');
   assert.equal(response.at(-1).response.usage.input_tokens, 16);
   assert.equal(response.at(-1).response.usage.omd_subscription_charge, 'unknown');
+  assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
+  assert.equal(response.at(-1).response.usage.omd_cache_ttl_seconds, 3600);
+  assert.deepEqual(response.at(-1).response.usage.omd_reported_cost, { usd: 0.042, basis: 'client_list_estimate' });
 });
 
 test('Claude mod folds mid-conversation developer messages into user frames', () => {

@@ -10,7 +10,8 @@ type Settings = {
   statusline: string; statusline_position: 'above' | 'below';
 };
 type Asset = { resource: ResourceRef; label: string; ascii: string };
-type Usage = { model?: string; effort?: string | null; provider?: string; input?: number; output?: number; context?: number; window?: number | null; seq: number };
+type Hud = { cache: { ratio: number; expires: number | null } | null; spend: { usd: number | null; kind: string; uncertain: boolean; list: number | null }; quota: { name: string; used: number; resets: number | null; observed: number } | null; budget: 'warn' | 'over' | null };
+type Usage = { model?: string; effort?: string | null; provider?: string; input?: number; output?: number; context?: number; window?: number | null; hud?: Hud; seq: number };
 type Git = { branch: string; ahead: number; behind: number; staged: number; unstaged: number; untracked: number };
 type Live = { threads: Record<string, Usage>; seq: number; model: string | null; effort: string | null; git: Git | null; nerd: boolean | null; plain: boolean; stashed: boolean };
 type State = { saved: Settings | null; preview: Settings | null; asset: Asset | null; preview_asset: Asset | null; imports: Record<string, Palette>; open: boolean; page: string; notice: string; revision: number; live: Live };
@@ -22,17 +23,17 @@ const DEFAULTS: Settings = {
 };
 const LIVE: Live = { threads: {}, seq: 0, model: null, effort: null, git: null, nerd: null, plain: false, stashed: false };
 const PRESETS: Record<string, string[]> = {
-  default: ['model', 'reasoning', 'path', 'git', 'context', 'cost', 'omd', 'stash'],
+  default: ['model', 'reasoning', 'path', 'git', 'context', 'cost', 'quota', 'omd', 'stash'],
   minimal: ['path', 'git', 'context'],
   compact: ['model', 'git', 'cost', 'context', 'stash'],
-  full: ['model', 'reasoning', 'path', 'git', 'tokens', 'cost', 'context', 'session', 'omd', 'stash'],
-  nerd: ['model', 'reasoning', 'path', 'git', 'tokens', 'cost', 'context', 'session', 'omd', 'stash'],
-  ascii: ['model', 'reasoning', 'path', 'git', 'tokens', 'cost', 'context', 'stash'],
+  full: ['model', 'reasoning', 'path', 'git', 'tokens', 'cache', 'cost', 'context', 'quota', 'session', 'omd', 'stash'],
+  nerd: ['model', 'reasoning', 'path', 'git', 'tokens', 'cache', 'cost', 'context', 'quota', 'session', 'omd', 'stash'],
+  ascii: ['model', 'reasoning', 'path', 'git', 'tokens', 'cache', 'cost', 'context', 'quota', 'stash'],
 };
 const ICONS: Record<'nerd' | 'unicode' | 'ascii', Record<string, string>> = {
-  nerd: { model: '\uEC19 ', path: '\uF115 ', git: '\uF126 ', tokens: '\uE26B ', cost: '\uF155 ', context: '\uF1C0 ', session: '\uF550 ', omd: '\uF1B3 ', stash: '\uF0C7 ', ahead: '↑', behind: '↓' },
-  unicode: { model: '', path: '', git: '⎇ ', tokens: '⊛ ', cost: '', context: '◫ ', session: '#', omd: '◆ ', stash: '≡ ', ahead: '↑', behind: '↓' },
-  ascii: { model: '', path: '', git: 'git:', tokens: '', cost: '', context: 'ctx:', session: 'id:', omd: 'omd:', stash: '', ahead: '^', behind: 'v' },
+  nerd: { model: '\uEC19 ', path: '\uF115 ', git: '\uF126 ', tokens: '\uE26B ', cost: '\uF155 ', context: '\uF1C0 ', session: '\uF550 ', omd: '\uF1B3 ', stash: '\uF0C7 ', cache: '\uF0E7 ', quota: '\uF017 ', resets: '↻', ahead: '↑', behind: '↓' },
+  unicode: { model: '', path: '', git: '⎇ ', tokens: '⊛ ', cost: '', context: '◫ ', session: '#', omd: '◆ ', stash: '≡ ', cache: '↺ ', quota: '', resets: '↻', ahead: '↑', behind: '↓' },
+  ascii: { model: '', path: '', git: 'git:', tokens: '', cost: '', context: 'ctx:', session: 'id:', omd: 'omd:', stash: '', cache: 'cache:', quota: '', resets: 'r', ahead: '^', behind: 'v' },
 };
 const NERD_TERMINALS = /iterm|wezterm|kitty|ghostty|alacritty/i;
 const STASH_HISTORY = 12;
@@ -215,7 +216,15 @@ export default function activate(api: ModAPI) {
   api.on('resume', () => refresh('session'));
   api.on('turn_end', () => refresh('turn'));
   api.on('timer', () => refresh('turn'));
-  api.on('channel', () => refresh('session'));
+  api.on('channel', ({ channel, data }) => {
+    if (channel !== 'omd_usage/hud') return refresh('session');
+    const hud = data as (Hud & { thread?: string | null }) | null;
+    if (!hud?.thread || !PRESETS[current(readState()).statusline]) return;
+    live(state => {
+      const usage = state.threads[hud.thread!] ??= { seq: 0 }; usage.seq = ++state.seq;
+      usage.hud = { cache: hud.cache ?? null, spend: hud.spend, quota: hud.quota ?? null, budget: hud.budget ?? null };
+    });
+  });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update = params as { threadId?: string; threadSettings?: { model?: string; effort?: string | null; modelProvider?: string }; tokenUsage?: { total?: { inputTokens?: number; outputTokens?: number }; last?: { totalTokens?: number }; modelContextWindow?: number | null } };
     const thread = thread_id ?? update.threadId;
@@ -259,6 +268,13 @@ export default function activate(api: ModAPI) {
     const model = usage?.model ?? data.model; const effort = usage?.model ? usage.effort : data.effort;
     const percent = usage?.context && usage.window ? Math.round(usage.context / usage.window * 100) : null;
     const spend = (ledger?.cost as { settled_task_charge_microusd?: number } | null)?.settled_task_charge_microusd;
+    const hud = usage?.hud; const now = Date.now();
+    const money = (value: number) => `$${value.toFixed(2)}`;
+    const priced = !hud ? '' : hud.spend.usd ? `${hud.spend.kind === 'estimate' ? '~' : ''}${money(hud.spend.usd)}${hud.spend.kind === 'mixed' ? '~' : ''}`
+      : hud.spend.kind === 'included' ? `incl${hud.spend.list ? ` ~${money(hud.spend.list)}` : ''}` : hud.spend.uncertain ? '$' : '';
+    const charged = priced ? `${priced}${hud!.spend.uncertain ? '?' : ''}` : typeof spend === 'number' ? money(spend / 1e6) : null;
+    const quota = hud?.quota; const passed = quota?.resets != null && now > quota.resets;
+    const left = (ms: number) => { const minutes = Math.max(0, Math.round(ms / 60000)); return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m`; };
     const parts = (ledger?.cwd ?? '').split('/').filter(Boolean); const git = data.git;
     const omd = `${identity?.mods.active ?? 0} mods${usage?.provider && usage.provider !== 'openai' ? ` · ${usage.provider}` : ''}`;
     const values: Record<string, [string, string] | null> = {
@@ -267,23 +283,25 @@ export default function activate(api: ModAPI) {
       path: parts.length ? [`${icon.path}${['full', 'nerd', 'ascii'].includes(config.statusline) && parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : parts.at(-1)}`, colors.foreground] : null,
       git: git?.branch ? [`${icon.git}${git.branch}${git.ahead ? ` ${icon.ahead}${git.ahead}` : ''}${git.behind ? ` ${icon.behind}${git.behind}` : ''}${git.staged ? ` +${git.staged}` : ''}${git.unstaged ? ` *${git.unstaged}` : ''}${git.untracked ? ` ?${git.untracked}` : ''}`, tone(git.staged + git.unstaged + git.untracked ? 'attention' : 'success')] : null,
       tokens: usage?.input !== undefined ? [`${icon.tokens}${glyphs === 'ascii' ? 'in:' : '↑'}${tokens(usage.input)} ${glyphs === 'ascii' ? 'out:' : '↓'}${tokens(usage.output ?? 0)}`, tone('muted')] : null,
-      cost: typeof spend === 'number' ? [`${icon.cost}$${(spend / 1e6).toFixed(2)}`, tone(spend ? 'attention' : 'muted')] : null,
+      cost: charged ? [`${icon.cost}${charged}`, tone(hud?.budget === 'over' ? 'failure' : hud?.budget === 'warn' || hud?.spend.usd || spend ? 'attention' : 'muted')] : null,
+      cache: hud?.cache ? [`${icon.cache}${Math.round(hud.cache.ratio * 100)}%${hud.cache.expires === null ? '' : hud.cache.expires > now ? ` ~${left(hud.cache.expires - now)}` : ' exp'}`, tone('muted')] : null,
+      quota: quota ? [`${icon.quota}${quota.name} ${passed ? '?' : `${quota.used}%${quota.resets ? ` ${icon.resets}${left(quota.resets - now)}` : ''}${now - quota.observed > 1_800_000 ? '?' : ''}`}`, tone(passed ? 'attention' : quota.used >= 90 ? 'failure' : quota.used >= 70 ? 'attention' : 'muted')] : null,
       context: percent !== null ? [`${icon.context}${percent}%/${tokens(usage?.window ?? 0)}`, tone(percent >= 90 ? 'failure' : percent >= 70 ? 'attention' : 'success')] : null,
       session: ledger ? [`${icon.session}${ledger.thread_id.slice(0, 8)}`, tone('muted')] : null,
       omd: [`${icon.omd}${omd}`, tone('accent')],
       stash: data.stashed ? [`${icon.stash}stash`, tone('attention')] : null,
     };
     if (config.statusline_position === 'below') {
-      const text = [omd, typeof spend === 'number' && spend ? `$${(spend / 1e6).toFixed(2)}` : '', percent !== null && percent >= 70 ? `ctx ${percent}%${percent >= 90 ? '!' : ''}` : '', data.stashed ? 'stash' : ''].filter(Boolean).join(' · ');
+      const text = [omd, hud ? charged ?? '' : typeof spend === 'number' && spend ? money(spend / 1e6) : '', percent !== null && percent >= 70 ? `ctx ${percent}%${percent >= 90 ? '!' : ''}` : '', data.stashed ? 'stash' : ''].filter(Boolean).join(' · ');
       return { status: [visible(text, 40)] };
     }
     const segments = preset.map(key => values[key]).filter((value): value is [string, string] => value !== null);
     const shade = (index: number) => blend(colors.background, colors.foreground, index % 2 ? 0.14 : 0.24);
-    const spans: TerminalSpan[] = segments.flatMap(([text, fg], index): TerminalSpan[] => {
-      if (glyphs === 'ascii') return [...(index ? [{ text: ' | ', tone: 'muted' as const }] : []), { text, fg: fg as ThemeColor }];
-      const bg = shade(index); const segment: TerminalSpan = { text: ` ${text} `, fg: readable(fg, [bg]) as ThemeColor, bg: bg as ThemeColor };
-      if (glyphs === 'unicode') return [segment];
-      return [segment, { text: '\uE0B0', fg: bg as ThemeColor, ...(index < segments.length - 1 ? { bg: shade(index + 1) as ThemeColor } : {}) }];
+    // A line holds at most 12 spans, so separators share their segment's span.
+    const spans: TerminalSpan[] = segments.slice(0, 12).map(([text, fg], index): TerminalSpan => {
+      if (glyphs === 'ascii') return { text: `${index ? ' | ' : ''}${text}`, fg: fg as ThemeColor };
+      const bg = shade(index);
+      return { text: ` ${text} ${glyphs === 'nerd' && index < segments.length - 1 ? '\uE0B1' : ''}`, fg: readable(fg, [bg]) as ThemeColor, bg: bg as ThemeColor };
     });
     return spans.length ? { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'line', id: 'omd_theme_statusline', label: 'Status line', spans }] } } } : {};
   }

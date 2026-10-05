@@ -19,7 +19,7 @@ let sessions = 0;
 const finish = (sessionId, turnId, text) => {
   send({ method: 'item/delta', params: { sessionId, field: 'summary.0', delta: 'Looking.' } });
   send({ method: 'item/delta', params: { sessionId, field: 'text', delta: text } });
-  send({ method: 'turn/completed', params: { sessionId, turnId, terminal: 'completed', usage: { inputTokens: 10, cachedTokens: 4, outputTokens: 3 } } });
+  send({ method: 'turn/completed', params: { sessionId, turnId, terminal: 'completed', usage: { inputTokens: 10, cachedTokens: 4, cacheWriteTokens: 2, outputTokens: 3 } } });
 };
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method, params } = JSON.parse(line);
@@ -93,8 +93,8 @@ test('Muse lead relays approvals through the OMD tool, streams usage and reuses 
   const second = await call(history, { tools: relay });
   assert.equal(text(second), 'decided:yes');
   assert.equal(second.find(event => event.type === 'response.reasoning_summary_text.delta').delta, 'Looking.');
-  assert.deepEqual(second.at(-1).response.usage.input_tokens_details, { cached_tokens: 4 });
-  assert.equal(second.at(-1).response.usage.input_tokens, 14);
+  assert.deepEqual(second.at(-1).response.usage.input_tokens_details, { cached_tokens: 4, cache_write_tokens: 2 });
+  assert.equal(second.at(-1).response.usage.input_tokens, 16);
   assert.equal(text(await call([...history, assistant('decided:yes'), user('next')], { tools: relay })), 'Answer.');
   const log = await calls();
   assert.equal(log.filter(row => row.method === 'session/start').length, 1);

@@ -29,13 +29,13 @@ The **status** page (or `/omd_theme:set statusline PRESET`) turns on a powerline
 
 | Preset | Segments |
 | --- | --- |
-| `default` | model, reasoning, folder, Git, context, spend, OMD, stash |
+| `default` | model, reasoning, folder, Git, context, spend, quota, OMD, stash |
 | `minimal` | folder, Git, context |
 | `compact` | model, Git, spend, context, stash |
-| `full` / `nerd` | model, reasoning, path, Git, tokens, spend, context, session, OMD, stash |
-| `ascii` | model, reasoning, path, Git, tokens, spend, context, stash |
+| `full` / `nerd` | model, reasoning, path, Git, tokens, cache, spend, context, quota, session, OMD, stash |
+| `ascii` | model, reasoning, path, Git, tokens, cache, spend, context, quota, stash |
 
-Segments without data are left out. Git shows the branch, ahead/behind and staged (`+`), unstaged (`*`) and untracked (`?`) counts, refreshed when the status line is turned on, at session start, after each turn and every 10 s. Context shows the share of the model's window used by the last request, in the success color below 70%, attention from 70% and failure from 90%. Model, reasoning, provider and tokens come from the session's own `thread/settings/updated` and `thread/tokenUsage/updated` notifications (sub-agent threads never replace them), with `config/read` before the first turn. Spend is the OMD ledger's settled paid charge; OMD shows the active mod count and a non-OpenAI route provider.
+Segments without data are left out. Git shows the branch, ahead/behind and staged (`+`), unstaged (`*`) and untracked (`?`) counts, refreshed when the status line is turned on, at session start, after each turn and every 10 s. Context shows the share of the model's window used by the last request, in the success color below 70%, attention from 70% and failure from 90%. Model, reasoning, provider and tokens come from the session's own `thread/settings/updated` and `thread/tokenUsage/updated` notifications (sub-agent threads never replace them), with `config/read` before the first turn. Spend is the OMD ledger's settled paid charge; OMD shows the active mod count and a non-OpenAI route provider. With `omd_usage` enabled, spend, cache and quota come from its per-request ledger (`omd_usage/hud`): spend marks configured-rate estimates `~`, mixed billed and estimated spend with a trailing `~` and unknown or unsettled requests with `?`, and shows `incl` for included subscription use; cache shows the last lead request's hit share and, when the provider reports a TTL, the projected time left (`exp` once passed); quota shows the most used window with its reset countdown, `?` when the reading is over 30 minutes old and `5h ?` once its reset passed without a new reading. The soft budget turns spend to attention at 80% and failure at 100%.
 
 `nerd` uses Nerd Font icons and powerline arrows. Other presets use them when the terminal looks like Ghostty, Kitty, WezTerm, Alacritty or iTerm2 (the same heuristic as the source package) and plain colored blocks otherwise; `ascii` and `NO_COLOR` use ASCII text with `|` separators. The line is one row: a narrow terminal cuts it at the right edge, so presets put the most important segments first.
 

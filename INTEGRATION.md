@@ -36,13 +36,13 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | Profile | Selector | Installed mod sources | Fresh-install default selection | Inactive plugin sources |
 | --- | --- | --- | --- | --- |
 | OMD Core | `platform` | omd_logo, omd_mods | omd_logo, omd_mods | none |
-| OMD+ | `full` | omd_advisor, omd_checks, omd_claude_cli, omd_continue, omd_coordination, omd_editor, omd_frecency, omd_git, omd_graph_navigator, omd_guideline_governance, omd_herdr, omd_inspector, omd_layout, omd_logo, omd_lsp_sync, omd_lsp_view, omd_mcp, omd_mini, omd_model_picker, omd_mods, omd_muse, omd_notes, omd_panes, omd_plan_panel, omd_plan_removal, omd_preview, omd_profiles, omd_programmable_context, omd_project_pi_prompts, omd_reactive_rules, omd_recovery, omd_repository_analysis, omd_research, omd_shared_checkout, omd_source_knowledge, omd_task_tools, omd_theme, omd_typed_tasks, omd_workflow, omd_workspace, omd_worktree | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_workspace | omd-anchored-edit, omd-application-bridges, omd-artifact-reading, omd-browser, omd-curated-memory, omd-debugger, omd-guidance-hooks, omd-procedures, omd-review-policy, omd-session-review |
+| OMD+ | `full` | omd_advisor, omd_checks, omd_claude_cli, omd_continue, omd_coordination, omd_editor, omd_frecency, omd_git, omd_graph_navigator, omd_guideline_governance, omd_herdr, omd_inspector, omd_layout, omd_logo, omd_lsp_sync, omd_lsp_view, omd_mcp, omd_mini, omd_model_picker, omd_mods, omd_muse, omd_notes, omd_panes, omd_plan_panel, omd_plan_removal, omd_preview, omd_profiles, omd_programmable_context, omd_project_pi_prompts, omd_reactive_rules, omd_recovery, omd_repository_analysis, omd_research, omd_shared_checkout, omd_source_knowledge, omd_task_tools, omd_theme, omd_typed_tasks, omd_usage, omd_workflow, omd_workspace, omd_worktree | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_workspace | omd-anchored-edit, omd-application-bridges, omd-artifact-reading, omd-browser, omd-curated-memory, omd-debugger, omd-guidance-hooks, omd-procedures, omd-review-policy, omd-session-review |
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
 | `omd_advisor` | 0.3.0-preview.1 | `mods/first-party/omd_advisor` |
 | `omd_checks` | 0.1.0-preview.1 | `mods/first-party/omd_checks` |
-| `omd_claude_cli` | 0.2.0-preview.2 | `mods/first-party/omd_claude_cli` |
+| `omd_claude_cli` | 0.2.0-preview.3 | `mods/first-party/omd_claude_cli` |
 | `omd_continue` | 0.1.0-preview.1 | `mods/first-party/omd_continue` |
 | `omd_coordination` | 0.2.0-preview.1 | `mods/first-party/omd_coordination` |
 | `omd_editor` | 0.1.0-preview.1 | `mods/first-party/omd_editor` |
@@ -57,16 +57,17 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_lsp_sync` | 0.5.0-preview.1 | `mods/first-party/omd_lsp_sync` |
 | `omd_lsp_view` | 0.2.0-preview.1 | `mods/first-party/omd_lsp_view` |
 | `omd_mcp` | 0.1.0-preview.1 | `mods/first-party/omd_mcp` |
-| `omd_mini` | 0.1.0-preview.2 | `mods/first-party/omd_mini` |
+| `omd_mini` | 0.1.0-preview.3 | `mods/first-party/omd_mini` |
+| `omd_usage` | 0.1.0-preview.1 | `mods/first-party/omd_usage` |
 | `omd_model_picker` | 0.3.0-preview.2 | `mods/first-party/omd_model_picker` |
 | `omd_mods` | 0.1.0-preview.1 | `mods/first-party/omd_mods` |
-| `omd_muse` | 0.1.0-preview.1 | `mods/first-party/omd_muse` |
+| `omd_muse` | 0.1.0-preview.2 | `mods/first-party/omd_muse` |
 | `omd_notes` | 0.1.0-preview.1 | `mods/first-party/omd_notes` |
 | `omd_panes` | 0.1.0-preview.3 | `mods/first-party/omd_panes` |
 | `omd_plan_panel` | 0.1.0-preview.1 | `mods/first-party/omd_plan_panel` |
 | `omd_plan_removal` | 0.1.0-preview.1 | `mods/first-party/omd_plan_removal` |
 | `omd_preview` | 0.1.0-preview.3 | `mods/first-party/omd_preview` |
-| `omd_profiles` | 0.1.0-preview.1 | `mods/first-party/omd_profiles` |
+| `omd_profiles` | 0.1.0-preview.2 | `mods/first-party/omd_profiles` |
 | `omd_programmable_context` | 0.1.0-preview.1 | `mods/first-party/omd_programmable_context` |
 | `omd_project_pi_prompts` | 0.1.0-preview.2 | `mods/first-party/omd_project_pi_prompts` |
 | `omd_reactive_rules` | 0.1.0-preview.1 | `mods/first-party/omd_reactive_rules` |
@@ -76,7 +77,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_shared_checkout` | 0.1.0-preview.1 | `mods/first-party/omd_shared_checkout` |
 | `omd_source_knowledge` | 0.1.0-preview.3 | `mods/first-party/omd_source_knowledge` |
 | `omd_task_tools` | 0.2.0-preview.1 | `mods/first-party/omd_task_tools` |
-| `omd_theme` | 0.4.0-candidate.2 | `mods/first-party/omd_theme` |
+| `omd_theme` | 0.4.0-candidate.3 | `mods/first-party/omd_theme` |
 | `omd_typed_tasks` | 0.2.0-preview.1 | `mods/first-party/omd_typed_tasks` |
 | `omd_workflow` | 0.2.0-preview.2 | `mods/first-party/omd_workflow` |
 | `omd_workspace` | 0.2.0-preview.5 | `mods/first-party/omd_workspace` |
