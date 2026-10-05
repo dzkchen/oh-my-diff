@@ -29,7 +29,7 @@ Accounting:
 
 `/cursor` (doctor) shows the SDK version, account, key expiry, discovered models and posture.
 
-Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login and delayed charges. Pinned Codex 0.159.1 accepts the catalog and executes a relayed `exec_command` call (`OMD_TEST_CODEX`). An offline OMD-mode session ran the full path: broker-held enrollment, provider registration, a relayed tool call, provider-reported ledger entries and a `ledger.settle` charge. Not verified: a real Cursor account. Subscription support stays unclaimed until an authorized account-backed run.
+Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login and delayed charges. Pinned Codex 0.160.1 accepts the catalog and executes a relayed `exec_command` call (`OMD_TEST_CODEX`). An offline OMD-mode session ran the full path: broker-held enrollment, provider registration, a relayed tool call, provider-reported ledger entries and a `ledger.settle` charge. Not verified: a real Cursor account. Subscription support stays unclaimed until an authorized account-backed run.
 
 Cost:
 
