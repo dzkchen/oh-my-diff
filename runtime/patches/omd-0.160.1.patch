@@ -113117,7 +113117,7 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..5a23c38c7
+index 000000000..25f558728
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
 @@ -0,0 +1,1801 @@
@@ -114773,22 +114773,22 @@ index 000000000..5a23c38c7
 +                })
 +                .collect::<Vec<_>>()
 +        };
-+        app.mod_notice(&mut tui, &notice("call_unseen"))
++        app.mod_notice(&mut tui, &notice("fallback_unseen"))
 +            .expect("notice");
 +        let shown = history();
 +        assert!(
 +            shown.len() == 1
 +                && shown[0].contains("lint failed")
-+                && shown[0].contains("checks · tool call_unseen"),
++                && shown[0].contains("checks · tool fallback_unseen"),
 +            "{shown:?}"
 +        );
 +        crate::mod_render::tool_notice_lines(&crate::mod_render::RenderTarget::new(
 +            "tool_call",
-+            "call_seen",
++            "fallback_seen",
 +            false,
 +            json!({}),
 +        ));
-+        app.mod_notice(&mut tui, &notice("call_seen"))
++        app.mod_notice(&mut tui, &notice("fallback_seen"))
 +            .expect("notice");
 +        assert_eq!(
 +            history(),
