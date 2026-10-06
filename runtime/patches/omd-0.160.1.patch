@@ -15638,7 +15638,7 @@ index bac11e7a2..1dbabffe2 100644
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 50b4e80e7..7b0876784 100644
+index 50b4e80e7..41c4762ba 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -651,6 +651,11 @@ impl OverlayInput {
@@ -15653,7 +15653,15 @@ index 50b4e80e7..7b0876784 100644
  pub struct Tui {
      pub(crate) link_hover: link_pointer::LinkHover,
      frame_requester: FrameRequester,
-@@ -1001,6 +1006,22 @@ impl Tui {
+@@ -763,6 +768,7 @@ impl Tui {
+             let _ = self.set_owned_screen(/*owned*/ false);
+         }
+         self.alt_screen_enabled = enabled;
++        codex_omd::client_surface::set_screen(if enabled { "fullscreen" } else { "inline" });
+     }
+
+     /// Defer a fresh fullscreen launch until its first synchronized frame is ready.
+@@ -1001,6 +1007,22 @@ impl Tui {
 
      /// Emit a desktop notification now if the terminal is unfocused.
      /// Returns true if a notification was posted.
@@ -26983,7 +26991,7 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..7f9d3cb36
+index 000000000..1ced52fae
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2334 @@
@@ -27453,7 +27461,7 @@ index 000000000..7f9d3cb36
 +    active: impl Fn() -> bool,
 +) {
 +    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
-+        "presentation": views.current_presentation()});
++        "presentation": codex_omd::client_surface::presented(views.current_presentation())});
 +    let rendered_ms = codex_omd::ModViewSnapshot::clock();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
 +    let status = runtime.status();
@@ -50498,10 +50506,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..3ab9044c1
+index 000000000..421a65505
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,455 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -50583,6 +50591,25 @@ index 000000000..3ab9044c1
 +    surface: Option<(u64, Arc<dyn ClientSurface>)>,
 +    wake: Option<(u64, Wake)>,
 +    next: u64,
++}
++
++static SCREEN: Mutex<Option<&'static str>> = Mutex::new(None);
++
++/// Records whether the terminal client draws on the alternate screen (`fullscreen`) or `inline`.
++pub fn set_screen(screen: &'static str) {
++    *SCREEN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(screen);
++}
++
++pub fn presented(mut presentation: Value) -> Value {
++    let screen = *SCREEN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let (Some(fields), Some(screen)) = (presentation.as_object_mut(), screen) {
++        fields.insert("surface".into(), screen.into());
++    }
++    presentation
 +}
 +
 +static HUB: Mutex<Hub> = Mutex::new(Hub {
@@ -50940,10 +50967,10 @@ index 000000000..3ab9044c1
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..b72ea9486
+index 000000000..0ed689c5f
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,246 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51179,6 +51206,16 @@ index 000000000..b72ea9486
 +        "authority keys are not rows"
 +    );
 +    assert!(!serde_json::to_string(&rows).unwrap().contains("s1"));
++}
++
++#[test]
++fn presentation_reports_the_terminal_screen_mode() {
++    set_screen("inline");
++    assert_eq!(
++        presented(json!({"thread_id": null, "phase": "fresh"})),
++        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
++    );
++    assert_eq!(presented(Value::Null), Value::Null);
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
@@ -92372,10 +92409,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..3ac480a03
+index 000000000..0c57ab2df
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1230 @@
+@@ -0,0 +1,1231 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -92565,7 +92602,8 @@ index 000000000..3ac480a03
 +            "event": "startup", "ledger": null,
 +            "identity": runtime.identity(crate::version::CODEX_CLI_VERSION,
 +                std::env::var(crate::omd::INSTALL_PROFILE_ENV).ok().as_deref(), "omd"),
-+            "presentation": {"thread_id": null, "phase": phase},
++            "presentation": codex_omd::client_surface::presented(
++                serde_json::json!({"thread_id": null, "phase": phase})),
 +        });
 +        let terminal = runtime.terminal_view(input.clone(), || true);
 +        Some(ModViewSnapshot {

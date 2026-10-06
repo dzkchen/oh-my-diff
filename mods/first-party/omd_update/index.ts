@@ -9,9 +9,9 @@ type Info = {
 type Saved = {
   info: Info | null; open: boolean; notice: string | null; banner: string[]; overrides: Record<string, string>;
   snoozed: { version: string; until: number } | null; skipped: string | null; shown: { version: string; at: number } | null;
-  seen: number; requests: number;
+  seen: number; requests: number; mark: { shown: { version: string; at: number } | null; seen: number } | null;
 };
-const EMPTY: Saved = { info: null, open: false, notice: null, banner: [], overrides: {}, snoozed: null, skipped: null, shown: null, seen: 0, requests: 0 };
+const EMPTY: Saved = { info: null, open: false, notice: null, banner: [], overrides: {}, snoozed: null, skipped: null, shown: null, seen: 0, requests: 0, mark: null };
 const DAY = 86_400_000;
 const VARIABLE = 'OH_MY_DIFF_UPDATE=';
 const CHOICES: Record<string, string[]> = { checks: ['on', 'off'], auto: ['off', 'on'], channel: ['stable', 'beta'], cadence: ['daily', 'weekly'] };
@@ -49,8 +49,8 @@ export default function activate(api: ModAPI) {
     if (due) banner.push(info?.pending?.version === available.version
       ? `Oh My Diff ${visible(available.version, 40)} is downloaded and installs the next time OMD starts with no other session open.`
       : `Oh My Diff ${visible(available.version, 40)}${available.prerelease ? ' (beta)' : ''} is out; you have ${visible(info?.installed, 40)}. Run omd update in a shell, or /update for the notes.`);
-    save({ info, banner, overrides, notice: null, open: false, shown: due ? { version: available.version, at: now } : state.shown,
-      seen: Math.max(state.seen, info?.last?.at ?? 0, info?.failed?.at ?? 0) });
+    save({ info, banner, overrides, notice: null, open: false, mark: { shown: due ? { version: available.version, at: now } : state.shown,
+      seen: Math.max(state.seen, info?.last?.at ?? 0, info?.failed?.at ?? 0) } });
     const request = info?.request_done ? api.host.tryCall('store.get', { key: 'request', scope: 'user' }) : null;
     if (request?.ok && request.value && (request.value.value as { id?: string } | null)?.id === info?.request_done) {
       api.host.tryCall('store.delete', { key: 'request', expected_revision: request.value.revision, scope: 'user' });
@@ -141,7 +141,9 @@ export default function activate(api: ModAPI) {
 
   api.on('terminal', (input): TerminalPatch | null => {
     const state = saved();
-    const intro = state.banner.length > 0 && input.presentation?.phase === 'fresh';
+    const presentation = input.presentation;
+    const intro = state.banner.length > 0 && presentation?.phase === 'fresh' && presentation.surface !== 'inline';
+    if (intro && state.mark && presentation?.surface === 'fullscreen') save({ ...state.mark, mark: null });
     if (!intro && !state.open) return null;
     return { sites: {
       ...(intro ? { welcome: { mode: 'wrap', components: [{ type: 'slot' }, ...state.banner.map((value, index) => line(`welcome_${index}`, 'Update', value, index === state.banner.length - 1 ? 'accent' : 'muted', 2, 56))] } } : {}),

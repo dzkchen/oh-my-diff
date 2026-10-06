@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "fda60bab25d9e6a60aaceffd79f1792ea32f80ba1a89a17fe302862246237c6f"
+    "sha256": "0e5f19ff4555c4e121e0439d9fa69464751c4a648a997d8f1bc7db896a220509"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -513,7 +513,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "fcdd0647c926cc25bc6735993ee4e9c33bc7aed0dee0c42b0a931debc39676d4"
+      "after": "83612c1ea41be24f39cd5924696e032f5a258b59f949bce786bca59a9b8a97c4"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -701,11 +701,11 @@
     },
     "codex-rs/omd/src/client_surface.rs": {
       "before": null,
-      "after": "6f6408f80cdde117c9eb7e4a8f034ca00aaee2f37b1cc81c257ec8ffabfa598c"
+      "after": "87024191a702ba9eea598ee0ce995ac339505c7b8d4be34871e5b53e54560078"
     },
     "codex-rs/omd/src/client_surface_tests.rs": {
       "before": null,
-      "after": "3a2dc753a882a71fb8bac9c7fc4e2f14b1052d9a67a2fcf5ef8a8d80385507be"
+      "after": "dfb39c13d7f6b5c64bbe6c9aa4d57dae236c6338378daae5a9a66a95f6ac7c2b"
     },
     "codex-rs/omd/src/consents.rs": {
       "before": null,
@@ -1805,7 +1805,7 @@
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
-      "after": "38555248f4179b72038bd4e0bf90ed15665acb79eddf95fc87a2c619a479d0f3"
+      "after": "f19de1d9e3b25c5b27ba57048dd386ab68ecd0878f3054a35a36ec93d9bf45d0"
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
@@ -2037,7 +2037,7 @@
     },
     "codex-rs/tui/src/tui.rs": {
       "before": "02f52eb34718102087da2cb44b9fde37188a70b885410b5142f5479e43eb8e82",
-      "after": "708325945fc9fd5e6719ceee9c95994fded46fedbe922900f5fca29bf22a3ce5"
+      "after": "5f7beae11d0259d970d21bd4e79e348a7ee9f64ebda6f9278233303874469563"
     },
     "codex-rs/tui/src/tui_startup_tests.rs": {
       "before": "8c0e04aff9bc52d930152cc12e66988ba7e2d4c64e7a1cb61e01de7821a22917",

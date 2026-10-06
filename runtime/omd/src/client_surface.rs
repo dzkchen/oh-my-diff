@@ -81,6 +81,25 @@ struct Hub {
     next: u64,
 }
 
+static SCREEN: Mutex<Option<&'static str>> = Mutex::new(None);
+
+/// Records whether the terminal client draws on the alternate screen (`fullscreen`) or `inline`.
+pub fn set_screen(screen: &'static str) {
+    *SCREEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(screen);
+}
+
+pub fn presented(mut presentation: Value) -> Value {
+    let screen = *SCREEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let (Some(fields), Some(screen)) = (presentation.as_object_mut(), screen) {
+        fields.insert("surface".into(), screen.into());
+    }
+    presentation
+}
+
 static HUB: Mutex<Hub> = Mutex::new(Hub {
     surface: None,
     wake: None,

@@ -42,6 +42,7 @@ class UpdateSelection(unittest.TestCase):
         self.settings = {}
         self.write_settings()
         (self.current / "prefix").mkdir(parents=True)
+        (self.root / "current").symlink_to(self.current)
         (self.current / "receipt.json").write_text(json.dumps({"schema": 1, "generation": self.current.name, "profile": "platform",
                                                                "releases_url": "https://example.test/releases"}))
         (self.current / "prefix/install.json").write_text(json.dumps({"version": "0.1.0", "store": str(store), "packages": {},
@@ -83,8 +84,8 @@ class UpdateSelection(unittest.TestCase):
 
     def test_channel_pin_compatibility_and_failures(self):
         self.published = [release("0.3.0-beta.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.161.0"),
-                          release("0.2.0"), release("0.1.0"), {"tag_name": "nightly", "assets": []},
-                          {**release("0.4.0"), "draft": True}]
+                          release("0.2.0"), release("0.1.0"), release("0.1.5"),
+                          {"tag_name": "nightly", "assets": []}, {**release("0.4.0"), "draft": True}]
         stable = self.check()
         self.assertEqual(stable["available"]["version"], "0.2.0")
         self.assertEqual(stable["blocked"]["version"], "0.2.1")
@@ -95,7 +96,9 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.check(pin="0.9.9")["error"], "pinned version 0.9.9 is not published")
         self.settings = {}
         self.published[2]["manifest"]["sha256"] = "b" * 64
-        self.assertIn("digest disagrees", self.check()["error"])
+        skipped = self.check()
+        self.assertIn("digest disagrees", skipped["error"])
+        self.assertEqual(skipped["available"]["version"], "0.1.5")
         self.published[2]["manifest"]["sha256"] = "a" * 64
         self.check()
         self.published = OSError("network is unreachable")
@@ -118,6 +121,13 @@ class UpdateSelection(unittest.TestCase):
         self.module.tick(args, self.root, self.current)
         self.assertEqual(staged, ["0.2.0"])
         self.assertEqual(json.loads((self.root / "update/ready.json").read_text()), {"version": "0.2.0"})
+        replaced = self.root / "releases" / ("1" * 32)
+        replaced.mkdir()
+        self.module.atomic_symlink(self.root / "current", replaced)
+        before = self.module.state(self.root)
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(self.module.state(self.root), before)
+        self.module.atomic_symlink(self.root / "current", self.current)
         self.module.save(self.root, failed={"version": "0.2.0", "error": "SHA-256 mismatch", "at": 1})
         self.module.tick(args, self.root, self.current)
         self.module.save(self.root, failed=None, held={"version": "0.2.0"})
@@ -126,6 +136,23 @@ class UpdateSelection(unittest.TestCase):
         self.module.settled(self.root, "0.2.0", held=None)
         self.assertEqual({key: self.module.state(self.root)[key] for key in ("installed", "available", "held")},
                          {"installed": "0.2.0", "available": None, "held": None})
+
+    def test_node_falls_back_to_mise_when_the_recorded_node_is_too_old(self):
+        module = installer()
+        tools = self.root / "tools"
+        tools.mkdir()
+        for name, body in (("old-node", "echo v24.18.0"), ("node", "echo v24.20.1"), ("mise", f"echo {tools / 'node'}")):
+            (tools / name).write_text(f"#!/bin/sh\n{body}\n")
+            (tools / name).chmod(0o755)
+        args = types.SimpleNamespace(node=None)
+        environment = os.environ.copy()
+        os.environ["PATH"] = f"{tools}{os.pathsep}{environment['PATH']}"
+        try:
+            self.assertEqual(module.node_binary(args, "24.20.0", tools / "old-node"), tools / "node")
+            with self.assertRaisesRegex(ValueError, "Node 24.21"):
+                module.node_binary(args, "24.21.0", tools / "old-node")
+        finally:
+            os.environ["PATH"] = environment["PATH"]
 
     def test_session_markers_count_only_live_codex_processes(self):
         sessions = self.root / "sessions"

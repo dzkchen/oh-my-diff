@@ -1,5 +1,7 @@
 #!/bin/sh
-[ -n "$OMD_PYTHON" ] || for candidate in python3.14 python3.13 python3.12 python3 /opt/homebrew/bin/python3 "$(command -v mise >/dev/null 2>&1 && mise which python3 2>/dev/null)"; do
+preferred=$OMD_PYTHON
+OMD_PYTHON=
+for candidate in "$preferred" python3.14 python3.13 python3.12 python3 /opt/homebrew/bin/python3 "$(command -v mise >/dev/null 2>&1 && mise which python3 2>/dev/null)"; do
   if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1 \
     && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null; then
     OMD_PYTHON=$candidate
@@ -43,6 +45,7 @@ UPSTREAM_MINOR = "0.160"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
+DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
 
 
@@ -70,14 +73,20 @@ def broker_deployed():
     return BROKER_DAEMON.is_file() and BROKER_DAEMON.stat().st_uid == 0
 
 
+def package(generation, upstream, bin_dir, *arguments):
+    return run([sys.executable, "-m", "scripts.lean_profiles", "--prefix", generation / "prefix",
+                "--bin-dir", generation / "bin", *arguments],
+               cwd=generation / "prefix/management", env=environment(upstream, bin_dir))
+
+
 def repin(active, other, upstream, bin_dir):
     if not broker_deployed():
         return None
-    command = [active / "bin/omd-package", "broker", "pin"]
+    command = ["broker", "pin"]
     if other:
         command += ["--also", other / "prefix"]
     try:
-        run(command, env=environment(upstream, bin_dir))
+        package(active, upstream, bin_dir, *command)
     except ValueError as error:
         return f"failed: {error}; run omd-package broker pin"
     return "pinned the active and previous installations"
@@ -120,40 +129,56 @@ def environment(upstream, bin_dir):
 
 # An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a
 # recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
+def first_passing(candidates, accept):
+    errors = []
+    for candidate in candidates:
+        try:
+            return accept(candidate())
+        except (OSError, ValueError) as error:
+            errors.append(error)
+    raise errors[0]
+
+
 def upstream_binary(args, current, minor=None):
-    recorded = Path(receipt(current)["upstream"]["path"]) if current else None
-    if args.upstream:
-        path = args.upstream.expanduser().resolve()
-    elif recorded and recorded.is_file():
-        path = recorded
-    else:
-        filtered = environment(Path("/nonexistent/codex"), args.bin_dir)["PATH"]
-        found = shutil.which("codex", path=filtered)
-        if not found:
+    def accept(path):
+        if path.name != "codex" or not path.is_file() or not os.access(path, os.X_OK):
+            fail("--upstream must name an executable called codex")
+        if path == args.bin_dir / "codex":
+            fail(f"{path} is replaced by the OMD launcher; move the upstream codex out of {args.bin_dir} and pass its new path with --upstream")
+        version = run([path, "--version"]).strip()
+        if minor and not re.fullmatch(rf"codex-cli {re.escape(minor)}\.\d+", version):
+            fail(f"upstream Codex {minor}.x is required; found {version}")
+        return {"path": str(path), "version": version}
+
+    def found():
+        located = shutil.which("codex", path=environment(Path("/nonexistent/codex"), args.bin_dir)["PATH"])
+        if not located:
             fail(f"An upstream Codex {minor or UPSTREAM_MINOR}.x executable is required; pass --upstream /path/to/codex")
-        path = Path(found).resolve()
-    if path.name != "codex" or not path.is_file() or not os.access(path, os.X_OK):
-        fail("--upstream must name an executable called codex")
-    if path == args.bin_dir / "codex":
-        fail(f"{path} is replaced by the OMD launcher; move the upstream codex out of {args.bin_dir} and pass its new path with --upstream")
-    version = run([path, "--version"]).strip()
-    if minor and not re.fullmatch(rf"codex-cli {re.escape(minor)}\.\d+", version):
-        fail(f"upstream Codex {minor}.x is required; found {version}")
-    return {"path": str(path), "sha256": digest(path), "version": version}
+        return Path(located).resolve()
+
+    if args.upstream:
+        return first_passing([lambda: args.upstream.expanduser().resolve()], accept)
+    recorded = Path(receipt(current)["upstream"]["path"]) if current else None
+    return first_passing(([lambda: recorded] if recorded and recorded.is_file() else []) + [found], accept)
 
 
 def node_binary(args, required="24.18.0", recorded=None):
     major, minor = required.split(".")[:2]
-    if args.node or recorded:
-        path = Path(args.node or recorded).expanduser().resolve()
-    else:
+
+    def accept(path):
+        found = re.fullmatch(rf"v{major}\.(\d+)\.\d+", run([path, "--version"]).strip())
+        if not found or int(found[1]) < int(minor):
+            fail(f"Node {major}.{minor} or a later {major}.x is required; pass --node with a matching executable")
+        return path
+
+    def discovered():
         if not shutil.which("mise"):
             fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
-        path = Path(run(["mise", "which", "node"]).strip()).resolve()
-    found = re.fullmatch(rf"v{major}\.(\d+)\.\d+", run([path, "--version"]).strip())
-    if not found or int(found[1]) < int(minor):
-        fail(f"Node {major}.{minor} or a later {major}.x is required; pass --node with a matching executable")
-    return path
+        return Path(run(["mise", "which", "node"]).strip()).resolve()
+
+    if args.node:
+        return first_passing([lambda: Path(args.node).expanduser().resolve()], accept)
+    return first_passing(([lambda: Path(recorded).expanduser().resolve()] if recorded else []) + [discovered], accept)
 
 
 def profile_choice(args):
@@ -269,8 +294,7 @@ def restore_displaced(bin_dir):
 
 def status(generation, upstream, bin_dir):
     details = receipt(generation)
-    output = run([generation / "bin/omd-package", "status", "--json"], env=environment(upstream, bin_dir))
-    result = json.loads(output)
+    result = json.loads(package(generation, upstream, bin_dir, "status", "--json"))
     if result["profile"] != details["profile"]:
         fail("installed profile differs from its receipt")
     return result
@@ -335,15 +359,15 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             run(command, cwd=payload, env=environment(Path(upstream["path"]), args.bin_dir))
             installed = json.loads((generation / "prefix/install.json").read_text())
             record = {"schema": 1, "generation": generation.name, "profile": profile, "version": installed["version"],
-                      "asset_url": url, "asset_sha256": expected, "upstream": upstream, "bin_dir": str(args.bin_dir),
+                      "asset_url": url, "asset_sha256": expected, "bin_dir": str(args.bin_dir),
+                      "upstream": upstream | {"sha256": digest(Path(upstream["path"]))},
                       "releases_url": args.releases_url or previous.get("releases_url") or RELEASES_URL,
                       "previous": current.name if current else None}
             (generation / "receipt.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
             status(generation, Path(upstream["path"]), args.bin_dir)
         except BaseException:
             discard(generation, Path(upstream["path"]), args.bin_dir)
-            restore_store(current, Path(upstream["path"]), args.bin_dir)
-            (root / "update/journal.json").unlink(missing_ok=True)
+            abandon(root, current, Path(upstream["path"]), args.bin_dir)
             raise
         if current:
             atomic_symlink(root / "previous", current)
@@ -355,8 +379,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 atomic_symlink(root / "current", current)
             else:
                 (root / "current").unlink()
-            restore_store(current, Path(upstream["path"]), args.bin_dir)
-            (root / "update/journal.json").unlink(missing_ok=True)
+            abandon(root, current, Path(upstream["path"]), args.bin_dir)
             raise
         (root / "update/journal.json").unlink(missing_ok=True)
         kept = {generation, current} - {None}
@@ -385,7 +408,15 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
 
 def restore_store(generation, upstream, bin_dir):
     if generation:
-        run([generation / "bin/omd-package", "reconcile"], env=environment(upstream, bin_dir))
+        package(generation, upstream, bin_dir, "reconcile")
+
+
+def abandon(root, generation, upstream, bin_dir):
+    try:
+        restore_store(generation, upstream, bin_dir)
+    except (OSError, ValueError):
+        return
+    (root / "update/journal.json").unlink(missing_ok=True)
 
 
 def recover(args, root, current):
@@ -404,7 +435,7 @@ def recover(args, root, current):
 
 
 def remove_generation(generation, upstream, bin_dir):
-    run([generation / "bin/omd-package", "uninstall", "--keep-broker"], env=environment(upstream, bin_dir))
+    package(generation, upstream, bin_dir, "uninstall", "--keep-broker")
     (generation / "receipt.json").unlink()
     (generation / "bin").rmdir()
     generation.rmdir()
@@ -413,8 +444,7 @@ def remove_generation(generation, upstream, bin_dir):
 def discard(generation, upstream, bin_dir):
     if (generation / "bin/omd-package").is_file():
         try:
-            run([generation / "bin/omd-package", "uninstall", "--keep-broker"],
-                env=environment(upstream, bin_dir))
+            package(generation, upstream, bin_dir, "uninstall", "--keep-broker")
         except (OSError, ValueError):
             pass
     (generation / "receipt.json").unlink(missing_ok=True)
@@ -447,8 +477,7 @@ def rollback(args, root, bin_dir, current):
     except BaseException:
         atomic_symlink(root / "previous", previous)
         atomic_symlink(root / "current", current)
-        restore_store(current, upstream, bin_dir)
-        (root / "update/journal.json").unlink()
+        abandon(root, current, upstream, bin_dir)
         raise
     (root / "update/journal.json").unlink()
     settled(root, receipt(previous)["version"], held={"version": receipt(current)["version"]})
@@ -475,7 +504,7 @@ def uninstall(args, root, bin_dir, current):
             (bin_dir / name).unlink()
     restore_displaced(bin_dir)
     try:
-        run([current / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
+        package(current, upstream, bin_dir, "uninstall")
     except BaseException:
         set_links(root, bin_dir)
         raise
@@ -631,7 +660,7 @@ def user_mods(record, store, mod_api):
                   and read_json(Path(item["path"]) / "mod.json", {}).get("api") != mod_api)
 
 
-def check(args, root, current):
+def probe(args, root, current):
     details, record, store = installation(root, current)
     settings = policy(store)
     result = {"available": None, "blocked": None, "error": None}
@@ -644,7 +673,11 @@ def check(args, root, current):
                       [item for item in listed if (settings["channel"] == "beta" or not item["prerelease"])
                        and version_key(item["version"]) > version_key(record["version"])])
         for item in candidates[:5]:
-            manifest = release_manifest(item)
+            try:
+                manifest = release_manifest(item)
+            except ValueError as error:
+                result["error"] = result["error"] or text(str(error), 300)
+                continue
             if reasons := blockers(args, current, manifest, record):
                 result["blocked"] = result["blocked"] or {"version": item["version"], "reasons": reasons}
                 continue
@@ -652,41 +685,60 @@ def check(args, root, current):
                 "manifest": manifest, "user_mods": user_mods(record, store, manifest["mod_api"])}
             break
     except (OSError, ValueError) as error:
-        settled(root, record["version"])
-        result = {"available": state(root).get("available"), "blocked": state(root).get("blocked"), "error": text(str(error), 300)}
-    save(root, schema=1, installed=record["version"], checked_at=int(time.time()), command="omd update", **result)
+        return {"error": text(str(error), 300)}
+    return result
+
+
+def recorded_check(root, version, result):
+    if "available" not in result:
+        saved = state(root)
+        result = result | {"available": newer(saved.get("available"), version), "blocked": saved.get("blocked")}
+    save(root, schema=1, installed=version, checked_at=int(time.time()), command="omd update", **result)
     return state(root)
 
 
+def check(args, root, current):
+    return recorded_check(root, installation(root, current)[1]["version"], probe(args, root, current))
+
+
+def newer(known, version):
+    return known if known and (version_key(known.get("version")) or ()) > version_key(version) else None
+
+
 def settled(root, version, **changes):
-    known = state(root).get("available") or {}
-    newer = (version_key(known.get("version")) or ()) > version_key(version)
-    save(root, schema=1, command="omd update", installed=version, available=known if newer else None, pending=None, **changes)
+    save(root, schema=1, command="omd update", installed=version, available=newer(state(root).get("available"), version),
+         pending=None, **changes)
 
 
-def staging(root, blocking=True):
-    lock = (update_dir(root) / ".stage.lock").open("a+")
+def flocked(path, waiting=None):
+    lock = path.open("a+")
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        lock.close()
-        return None
+        if not waiting:
+            lock.close()
+            return None
+        print(waiting, file=sys.stderr)
+        fcntl.flock(lock, fcntl.LOCK_EX)
     return lock
+
+
+def staged(root, manifest):
+    archive = update_dir(root) / "staged" / f"{manifest['sha256']}.tar.xz"
+    return archive if archive.is_file() and digest(archive) == manifest["sha256"] else None
 
 
 def stage(root, available):
     manifest = available["manifest"]
+    if archive := staged(root, manifest):
+        return archive
     folder = update_dir(root) / "staged"
     folder.mkdir(exist_ok=True)
+    partial = folder / f"{manifest['sha256']}.part"
+    partial.unlink(missing_ok=True)
+    download(manifest["url"], manifest["sha256"], partial)
     archive = folder / f"{manifest['sha256']}.tar.xz"
-    for old in folder.iterdir():
-        if old != archive:
-            old.unlink()
-    if not archive.is_file() or digest(archive) != manifest["sha256"]:
-        archive.unlink(missing_ok=True)
-        partial = folder / f"{manifest['sha256']}.part"
-        download(manifest["url"], manifest["sha256"], partial)
-        os.replace(partial, archive)
+    os.replace(partial, archive)
     return archive
 
 
@@ -699,8 +751,9 @@ def apply(args, root, current, available):
     details, record, _ = installation(root, current)
     manifest = available["manifest"]
     try:
-        with staging(root):
-            archive = stage(root, available)
+        if not (archive := staged(root, manifest)):
+            with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
+                archive = stage(root, available)
         upstream = upstream_binary(args, current, minor_of(manifest))
         node = node_binary(args, manifest["node"], record["author"]["node"])
         result = transaction(args, root, current, archive, manifest["url"], manifest["sha256"], details["profile"], upstream, node)
@@ -711,6 +764,9 @@ def apply(args, root, current, available):
         save(root, pending=None, failed={"version": available["version"], "error": text(str(error), 300), "at": int(time.time())})
         raise
     archive.unlink(missing_ok=True)
+    if lock := flocked(update_dir(root) / ".stage.lock"):
+        with lock:
+            shutil.rmtree(update_dir(root) / "staged", ignore_errors=True)
     (root / "update/ready.json").unlink(missing_ok=True)
     save(root, installed=result["version"], available=None, pending=None, failed=None,
          last={"from": record["version"], "to": result["version"], "at": int(time.time())})
@@ -731,7 +787,7 @@ def confirmed(args, available):
 
 
 def deferred(root, available):
-    with staging(root):
+    with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
         stage(root, available)
     pend(root, available)
     return {"staged": available["version"], "applies": "the next time OMD starts while no other OMD session is open"}
@@ -771,28 +827,39 @@ def manual(args, root, current):
         return deferred(root, available)
 
 
+def committed(root, current, action):
+    lock = flocked(root / ".install.lock")
+    if not lock:
+        return None
+    with lock:
+        return action() if pointer(root, "current") == current and not (root / "update/journal.json").exists() else None
+
+
 def tick(args, root, current):
-    lock = staging(root, blocking=False)
+    lock = flocked(update_dir(root) / ".stage.lock")
     if not lock:
         return
     with lock:
         sessions(root, None)
-        _, _, store = installation(root, current)
+        _, record, store = installation(root, current)
         settings = policy(store)
-        stamp(root / "update/next", time.time() + CADENCES.get(settings["cadence"], CADENCES["daily"]))
-        if settings["checks"] != "on":
-            return
-        result = check(args, root, current)
-        available = result["available"]
+        result = probe(args, root, current) if settings["checks"] == "on" else None
+
+        def checked():
+            stamp(root / "update/next", time.time() + CADENCES.get(settings["cadence"], CADENCES["daily"]))
+            return recorded_check(root, record["version"], result) if result else None
+        saved = committed(root, current, checked)
+        available = (saved or {}).get("available")
         if (settings["auto"] != "on" or not available or available["user_mods"]
-                or available["version"] in ((result.get("failed") or {}).get("version"), (result.get("held") or {}).get("version"))):
+                or available["version"] in ((saved.get("failed") or {}).get("version"), (saved.get("held") or {}).get("version"))):
             return
         try:
             stage(root, available)
         except (OSError, ValueError) as error:
-            save(root, failed={"version": available["version"], "error": text(str(error), 300), "at": int(time.time())})
+            committed(root, current, lambda: save(root, failed={"version": available["version"], "error": text(str(error), 300),
+                                                                "at": int(time.time())}))
             return
-        pend(root, available)
+        committed(root, current, lambda: pend(root, available))
 
 
 def mod_request(record, store):
@@ -812,12 +879,17 @@ def launch(args, root, current):
     available = saved.get("available") or {}
     ready = read_json(root / "update/ready.json", {}).get("version")
     request = mod_request(record, store)
+    requested = None
     if request and request["id"] != saved.get("request_done"):
         save(root, request_done=request["id"])
-        ready = ready or request.get("version")
-    if not ready or available.get("version") != ready:
+        requested = request.get("version")
+    if not available.get("version") or available["version"] not in (ready, requested):
         (root / "update/ready.json").unlink(missing_ok=True)
+        if requested:
+            print(f"Oh My Diff {requested} was not installed because it is no longer the newest release for your settings; "
+                  "open /update or run omd update.", file=sys.stderr)
         return
+    ready = available["version"]
     if sessions(root, args.session):
         pend(root, available)
         print(f"Oh My Diff {ready} is ready and installs when OMD starts while no other session is open.", file=sys.stderr)
@@ -876,12 +948,7 @@ def main():
     if args.command == "tick":
         return tick(args, root, active)
     root.mkdir(parents=True, exist_ok=True)
-    with (root / ".install.lock").open("a+") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print("Waiting for another Oh My Diff install or update to finish…", file=sys.stderr)
-            fcntl.flock(lock, fcntl.LOCK_EX)
+    with flocked(root / ".install.lock", "Waiting for another Oh My Diff install or update to finish…"):
         current = pointer(root, "current")
         recover(args, root, current)
         if args.command == "launch":

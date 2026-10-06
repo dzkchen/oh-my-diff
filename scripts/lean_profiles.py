@@ -647,7 +647,10 @@ def install(args):
         support.atomic_text(control_launcher,
                             f"#!/bin/sh\nexport PYTHONDONTWRITEBYTECODE=1 OMD_PACKAGE_CWD=\"$PWD\"\n"
                             f"cd {shlex.quote(str(management_root))} || exit 1\n"
-                            f"exec {shlex.quote(sys.executable)} -m scripts.lean_profiles "
+                            f"for python in {shlex.quote(sys.executable)} python3.14 python3.13 python3.12 python3; do\n"
+                            "  command -v \"$python\" >/dev/null 2>&1 && \"$python\" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null && break\n"
+                            "done\n"
+                            f"exec \"$python\" -m scripts.lean_profiles "
                             f"--prefix {shlex.quote(str(prefix))} --bin-dir {shlex.quote(str(bin_dir))} \"$@\"\n",
                             0o755)
         made_launchers.append(control_launcher)

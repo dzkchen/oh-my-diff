@@ -24,23 +24,28 @@ const release = { version: '0.2.0', prerelease: false, notes: 'Faster startup.\n
   user_mods: ['my_mod'], manifest: { mod_api: '0.3.0' } };
 const environment = info => ({ exit_code: 0, stdout: `PATH=/usr/bin\nOH_MY_DIFF_UPDATE=${JSON.stringify(info)}\nTERM=dumb\n` });
 
-function session(info, state, calls = [], time = 1_000_000) {
+function session(info, state, calls = [], time = 1_000_000, event = 'start') {
   const host = call => {
     calls.push(call);
     if (call.operation === 'exec.run') return environment(info);
     if (call.operation === 'store.get') return { value: { id: '0.2.0#1', version: '0.2.0' }, revision: 3 };
     return { deleted: true };
   };
-  return run({ event: 'start', payload: null, state, virtual_time_ms: time }, host).state;
+  return run({ event, payload: null, state, virtual_time_ms: time }, host).state;
 }
-const welcome = state => run({ event: 'terminal', state, payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'fresh' } } }, () => { throw new Error('no host'); })
-  .value?.sites?.welcome?.components.slice(1).map(component => component.text) ?? [];
+const show = (state, surface = 'fullscreen') => {
+  const output = run({ event: 'terminal', state, payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'fresh', surface } } }, () => { throw new Error('no host'); });
+  return [output.value?.sites?.welcome?.components.slice(1).map(component => component.text) ?? [], output.state ?? state];
+};
+const welcome = state => show(state)[0];
 
 test('a fresh session announces a newer release once a day until it is snoozed or skipped', () => {
   const info = { installed: '0.1.0', checked_at: 900, available: release, error: null };
   let state = session(info, null);
-  assert.deepEqual(welcome(state), ['Oh My Diff 0.2.0 is out; you have 0.1.0. Run omd update\nin a shell, or /update for the notes.']);
   assert.equal(run({ event: 'terminal', state, payload: { event: 'idle', ledger: null, presentation: { thread_id: 't', phase: 'resumed' } } }).value, null);
+  let texts;
+  [texts, state] = show(state);
+  assert.deepEqual(texts, ['Oh My Diff 0.2.0 is out; you have 0.1.0. Run omd update\nin a shell, or /update for the notes.']);
   state = session(info, state, [], 1_000_000 + DAY / 2);
   assert.deepEqual(welcome(state), []);
   state = session(info, state, [], 1_000_000 + DAY + 1);
@@ -61,9 +66,13 @@ test('a fresh session announces a newer release once a day until it is snoozed o
 test('update results are announced once and a handled request is cleared', () => {
   const calls = [];
   const info = { installed: '0.2.0', checked_at: 950, available: null, last: { from: '0.1.0', to: '0.2.0', at: 960 }, request_done: '0.2.0#1' };
-  let state = session(info, null, calls);
-  assert.deepEqual(welcome(state), ['Oh My Diff was updated from 0.1.0 to 0.2.0.']);
+  let state = session(info, null, calls, 1_000_000, 'resume');
   assert.deepEqual(calls.find(call => call.operation === 'store.delete').arguments, { key: 'request', expected_revision: 3, scope: 'user' });
+  let texts;
+  [texts, state] = show(session(info, state), 'inline');
+  assert.deepEqual(texts, []);
+  [texts, state] = show(session(info, state));
+  assert.deepEqual(texts, ['Oh My Diff was updated from 0.1.0 to 0.2.0.']);
   state = session(info, state);
   assert.deepEqual(welcome(state), []);
   state = session({ ...info, failed: { version: '0.3.0', error: 'SHA-256 mismatch', at: 970 } }, state);
