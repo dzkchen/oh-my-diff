@@ -12,7 +12,7 @@ const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', 
 const surface = { events: { start: 'lifecycle', resume: 'lifecycle', history: 'history' }, replacements: ['history'], middleware: [], state: 'store', contracts: 'contracts' };
 const sha = text => createHash('sha256').update(text).digest('hex');
 
-function session(settings = {}, prompt = 'accepted') {
+function session(settings = {}, prompt = 'accepted', beforePut = () => {}) {
   const stores = { thread: {}, repository: {}, user: {} };
   const agents = {};
   let state = null;
@@ -22,6 +22,8 @@ function session(settings = {}, prompt = 'accepted') {
       case 'task.status': return { ledger: { thread_id: 'thread-1', cwd: '/repo', cost: null }, limits: {}, worker_limits: {} };
       case 'store.get': return store[args.key] ?? null;
       case 'store.put': {
+        beforePut(args);
+        if (Buffer.byteLength(JSON.stringify(args.value)) > 65536) throw new Error('store_value_limit');
         if ((store[args.key]?.revision ?? null) !== args.expected_revision) throw new Error('store_revision_conflict');
         store[args.key] = { value: args.value, revision: (store[args.key]?.revision ?? 0) + 1 };
         return { revision: store[args.key].revision };
@@ -82,6 +84,24 @@ test('context variables carry provenance, survive through thread storage and app
   assert.doesNotMatch(s.history().insert[0].text, /summary/);
   s.run('resume', { thread_id: 'thread-1', last_turn: null, restarted: true });
   assert.match(s.history().insert[0].text, /- summary: 11 characters/);
+});
+
+test('kept variables preserve complete provenance when publication fails and verify restored content', () => {
+  let fail = false;
+  const s = session({}, 'accepted', args => { if (fail && args.key === 'vars') throw new Error('cancelled'); });
+  s.tool('keep', { name: 'summary', value: 'old', sources: ['old-source'] });
+  fail = true;
+  assert.match(s.tool('keep', { name: 'summary', value: 'new', sources: ['new-source'] }).error, /cancelled/);
+  assert.deepEqual(s.tool('vars', { name: 'summary' }), { value: 'old', sha256: sha('old'), chars: 3, sources: ['old-source'] });
+  fail = false;
+  assert.match(s.tool('keep', { name: 'large', value: '雪'.repeat(32768) }).error, /keep_limit/);
+  s.stores.thread.vars.value.summary.chars = 1;
+  assert.match(s.tool('vars', { name: 'summary' }).error, /provenance/);
+  s.stores.thread.vars.value.summary.chars = 3;
+  const record = Object.entries(s.stores.thread).find(([key, record]) => key.startsWith('var.') && record.value.value === 'old');
+  assert.ok(record);
+  record[1].value.value = 'tampered';
+  assert.match(s.tool('vars', { name: 'summary' }).error, /provenance/);
 });
 
 test('child agents, completions and integration stay host-owned', () => {

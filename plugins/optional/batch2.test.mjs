@@ -206,6 +206,9 @@ function advisorHost(overrides = {}, source = evidence) {
   return { calls, host(call) {
     calls.push(call);
     if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
+    if (call.operation === 'routes.list') return [];
+    if (call.operation === 'task.status') return { ledger: { thread_id: 'thread-1' } };
+    if (call.operation === 'app.request') return { thread: { model: 'lead-model' } };
     if (call.operation === 'evidence.read') return { reference, text: JSON.stringify(source), cursor: null, bytes: 200 };
     if (['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)) return { snapshot: { reference: 'snapshot:fixture', sha256: source.workspace_sha256 }, candidate_sha256: source.workspace_sha256 };
     if (call.operation === 'contract.status') return { status: 'active', active: { gates: { complete: [{ receipt: 'advisor_review', producer: 'separate_agent', blocking_findings: 'reject' }] } } };
@@ -222,7 +225,7 @@ function review(options = advisorOptions, output = undefined, source = evidence)
   const request = advisorHost({}, source);
   const requested = invoke('advisor', completed, request.host, options);
   assert.equal(requested.state.status, 'reviewing');
-  assert.deepEqual(request.calls.map(call => call.operation), ['evidence.read', ...(options.settings.mode === 'blocking' ? ['contract.status'] : []), 'workspace.snapshot', 'agents.spawn']);
+  assert.deepEqual(request.calls.map(call => call.operation), [...(options.settings.skip_same_model === false ? [] : ['routes.list', 'task.status', 'app.request']), 'evidence.read', ...(options.settings.mode === 'blocking' ? ['contract.status'] : []), 'workspace.snapshot', 'agents.spawn']);
   const submit = advisorHost();
   const result = invoke('advisor', ended(output), submit.host, { ...options, event: 'agent_end', state: requested.state });
   return { ...result, calls: submit.calls, requested };
@@ -257,7 +260,7 @@ test('advisor rejects invented citations, honors denial, and reports incomplete 
   assert.deepEqual(invalid.calls.map(call => call.operation), ['agents.cancel']);
   const denied = advisorHost({ 'agents.spawn': () => { throw new Error('allowance_exhausted'); } });
   assert.equal(invoke('advisor', completed, denied.host, advisorOptions).state.status, 'denied');
-  assert.equal(denied.calls.length, 3);
+  assert.equal(denied.calls.length, 6);
   const requested = invoke('advisor', completed, advisorHost().host, advisorOptions).state;
   const failed = invoke('advisor', ended(undefined, { status: 'failed', error: 'native_agent_deadline', text: undefined }), call => { assert.equal(call.operation, 'agents.cancel'); return { cancelled: true }; }, { ...advisorOptions, event: 'agent_end', state: requested });
   assert.equal(failed.state.status, 'incomplete');
@@ -350,6 +353,14 @@ test('advisor completion trigger reviews only completed turns that changed files
   assert.deepEqual(unchanged.calls.map(call => call.operation), ['turns.activity']);
   const changed = advisorHost({ 'turns.activity': () => ({ turns: [{ files: [{ path: 'a.ts' }] }], recording: true }), 'routes.list': () => [], 'task.status': () => ({ ledger: { thread_id: 'thread-1' } }), 'app.request': () => ({ thread: { model: 'lead-model' } }) });
   assert.equal(invoke('advisor', completed, changed.host, options).state.status, 'reviewing');
+});
+
+test('advisor every-turn reviews honor same-model exclusion and explicit opt-out', () => {
+  for (const skip of [undefined, false]) {
+    const request = advisorHost({ 'routes.list': () => [{ name: 'advisor', model: 'lead-model' }], 'task.status': () => ({ ledger: { thread_id: 'thread-1' } }), 'app.request': () => ({ thread: { model: 'lead-model' } }) });
+    invoke('advisor', completed, request.host, { ...advisorOptions, settings: { every_turn: true, route: 'advisor', ...(skip === false ? { skip_same_model: false } : {}) } });
+    assert.equal(request.calls.some(call => call.operation === 'agents.spawn'), skip === false);
+  }
 });
 
 const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.5', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: {} };
@@ -447,7 +458,8 @@ function memoryHost(initial = memoryData) {
       fixture.value = structuredClone(call.arguments.value);
       return { revision: ++fixture.revision };
     }
-    if (call.operation === 'workspace.read') return { files: { 'README.md': { text: fixture.file, sha256: digest(fixture.file) } } };
+    if (call.operation === 'workspace.stat') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, { kind: 'file', size: Buffer.byteLength(fixture.file) }])) };
+    if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, { text: fixture.file, sha256: digest(fixture.file) }])) };
     if (call.operation === 'evidence.read') {
       if (!fixture.evidenceAvailable || call.arguments.reference.sha256 !== memoryRef.sha256) throw new Error('evidence_unavailable');
       return { reference: memoryRef, text: 'evidence', cursor: null, bytes: 8 };
@@ -455,6 +467,40 @@ function memoryHost(initial = memoryData) {
     throw new Error(`unexpected operation ${call.operation}`);
   } };
 }
+
+test('memory full capacity fits the native host call and receipt budgets', () => {
+  const data = structuredClone(memoryData);
+  data.facts = Array.from({ length: 16 }, (_, i) => ({ ...data.facts[0], id: `fact${i}`, source: { ...data.facts[0].source, path: `file${i}.md` } }));
+  data.evidence = Array.from({ length: 16 }, (_, i) => ({ ...data.evidence[0], id: `evidence${i}` }));
+  for (const name of ['inspect', 'recall', 'curate', 'context']) {
+    const h = memoryHost(data);
+    let bytes = 0;
+    let calls = 0;
+    const result = invoke('memory', name === 'context' ? { thread_id: 'full' } : {}, call => {
+      assert.ok(++calls <= 32, 'host_call_limit');
+      const result = h.host(call);
+      bytes += Buffer.byteLength(JSON.stringify(result));
+      assert.ok(bytes <= 131072, 'host_result_limit');
+      return result;
+    }, { ...memoryOptions, name, ...(name === 'context' ? { event: 'context', settings: { live_recall: 'reuse', recall_ids: ['fact0'] } } : {}) });
+    assert.ok(calls <= 32, `${name}: ${calls}`);
+    if (name === 'context') assert.match(result.value.text, /fact0/);
+  }
+  const h = memoryHost(data);
+  h.fixture.file = `${memoryText}\n${'\u0000'.repeat(4000)}`;
+  for (const fact of h.fixture.value.facts) fact.source.sha256 = digest(h.fixture.file);
+  h.fixture.value.lessons = Array.from({ length: 32 }, (_, i) => ({ id: `proposal${i}`, text: 'x'.repeat(1200), evidence_ids: ['evidence0'], state: 'candidate' }));
+  let receipts = 0;
+  const inspected = invoke('memory', {}, call => {
+    const result = h.host(call);
+    receipts += Buffer.byteLength(JSON.stringify(result));
+    assert.ok(receipts <= 131072, 'host_receipt_limit');
+    return result;
+  }, { ...memoryOptions, name: 'inspect' });
+  assert.ok(receipts <= 131072);
+  assert.ok(inspected.value.facts.some(fact => fact.status === 'fresh'));
+  assert.ok(inspected.value.facts.some(fact => fact.status === 'stale'));
+});
 
 test('memory recall rechecks source and evidence and excludes proposals and contradictions', () => {
   assert.deepEqual(invoke('memory', { mode: 'cold' }, () => assert.fail('cold host read'), memoryOptions).value.records, []);
@@ -467,7 +513,7 @@ test('memory recall rechecks source and evidence and excludes proposals and cont
   assert.deepEqual(result.contradictions_excluded, ['lesson1', 'opposed']);
   host.fixture.evidenceAvailable = false;
   assert.deepEqual(invoke('memory', {}, host.host, memoryOptions).value.records, []);
-  assert.ok(host.calls.every(call => ['store.get', 'workspace.read', 'evidence.read'].includes(call.operation)));
+  assert.ok(host.calls.every(call => ['store.get', 'workspace.stat', 'workspace.read', 'evidence.read'].includes(call.operation)));
 });
 
 test('memory retains exact source and evidence, proposes under CAS and blocks secrets', () => {

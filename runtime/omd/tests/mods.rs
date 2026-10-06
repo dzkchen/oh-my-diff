@@ -2405,6 +2405,61 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
 }
 
 #[test]
+fn thread_state_separates_selected_package_scopes_and_forks_both() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let source = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
+    let user = packaged(&root, "user", "shared", source, &["commands", "store"], &[]);
+    let project = packaged(
+        &root,
+        "project",
+        "shared",
+        source,
+        &["commands", "store"],
+        &[],
+    );
+    for path in [&user, &project] {
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+        manifest["state_scope"] = json!("thread");
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    trust_scoped(&store, &user, &["commands", "store"], "user");
+    let mut runtime = host(&temp);
+    let count = |runtime: &mut ModHost, thread: &str| {
+        runtime
+            .invoke(
+                "shared",
+                runtime.generation(),
+                "command",
+                "count",
+                json!({"thread_id":thread}),
+            )
+            .unwrap()
+    };
+    assert_eq!(count(&mut runtime, "t1"), json!(1));
+    trust_scoped(&store, &project, &["commands", "store"], "project");
+    runtime.reload().unwrap();
+    assert_eq!(count(&mut runtime, "t1"), json!(1));
+    let store_root = root.join("store");
+    assert!(codex_omd::data_store::fork_thread_data(&store_root, "t1", "t2").unwrap());
+    assert_eq!(count(&mut runtime, "t2"), json!(2));
+    assert_eq!(
+        std::fs::read_dir(store_root.join("data/threads/t2/.state"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn a_shadowed_request_policy_is_enforced_by_its_project_copy() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

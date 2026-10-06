@@ -1,32 +1,32 @@
 {
   "artifacts": {
     "codex": {
-      "bytes": 687907552,
-      "sha256": "88914e99a8ebf579de3c4d9a2d69b967323fe4b89d2c7287163312811cc01105"
+      "bytes": 688438192,
+      "sha256": "21d519879b3147fe4a3df1b2c39f95e19545f545856f8f52d9af192e61257c2d"
     },
     "codex-code-mode-host": {
       "bytes": 146926280,
       "sha256": "9620a9cb8f64a4d4252751d82b945bef64a0740eb0bb58d68d878b0e2da00555"
     },
     "mod-api.tgz": {
-      "bytes": 102947,
-      "sha256": "d048cf5831bc456e2abe38a7a3822e68423a50dea613ac1f5f0ee3a235b580a3"
+      "bytes": 103391,
+      "sha256": "756535779636e457c1a7bd4c633472b3b3add30ac14b6f85278276b02bedb826"
     },
     "omd": {
-      "bytes": 11263968,
-      "sha256": "b1310a106cb02498e2d3c7a3a614d5f49cb20dab681b4208125e078b399379fd"
+      "bytes": 11275408,
+      "sha256": "333499bbfa92789401a541f386056c7a495e40148cd111d1989ad0c59c18eb90"
     },
     "omd-broker": {
-      "bytes": 2691328,
-      "sha256": "ce085eb1bb50d820415c3189294a3f906f93f11d5cfc4623097111cf1639a213"
+      "bytes": 2701872,
+      "sha256": "0b6f0e339288df993a1d76c4b97315c989c658e0ea25d6060d3da45529303bc9"
     },
     "omd-contract": {
-      "bytes": 9143280,
-      "sha256": "70e443a7e402975ffb94a18e541597a238c571d9a8bef89571734b165e5b223a"
+      "bytes": 9170416,
+      "sha256": "683a4b41ca955360b24d0c9625c75d2e4cc6d402cdf3174c7f470f0591bba137"
     },
     "omd-mod": {
-      "bytes": 14040400,
-      "sha256": "c58d5c28bc8e96d32330f204050bcc5ca129b08a7566e33c79dcfc4b52119554"
+      "bytes": 14068816,
+      "sha256": "ddda559602b32bd82c92ec59836c80982ced0ecdd0732863f053e96bfd5c242b"
     }
   },
   "mod_api": "0.2.0-experimental.5",
@@ -120,7 +120,7 @@
     }
   },
   "qualification": "development package candidate; supported collection and default pending",
-  "runtime_patch_sha256": "6e7fc22f992fef13cd284140673c56eb9ca72da3c1fbe60259731e8014cc5a73",
+  "runtime_patch_sha256": "a0a0d2172d6a4bb0361f6ffbfede08a0f7234e9492beff69da21e8d479695d00",
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "source_sha256": {
@@ -128,16 +128,16 @@
     "extensions/index.json": "75dc387c2c18e4e49f44b978d7c0bf8e1a3b907a19d2a9684fc9c56c0e199a20",
     "mods/EXTENSION_TYPES.md": "09248c5a0e5335504534859e3c599854061fea8a7c9235b75c3b285780ad2421",
     "mods/README.md": "4e59c42bfd9130095769cc6e33bf575b65b7b573231aa24d83e1a84d2bface27",
-    "mods/REFERENCE.md": "3db309781861c22d839a3ab3360b7e114db5a3599175c174f204b4e2a3d76cc8",
+    "mods/REFERENCE.md": "5c94a64cf2edc32307dacc2b751807c513c68fe0d31e0cfed2478888d4bed998",
     "mods/api.d.ts": "7cd3c77d386983c09c60db7c4bb8a4a2534220c431a94f821bf16b1de459a0f5",
-    "mods/author/cli.mjs": "fa1aaa461d4ae98ac3d22cfccef985ac12aac9a60736581c452b8dbdc34cb3b4",
+    "mods/author/cli.mjs": "7f8d718b0a82b30d5808055321e7ebc7025fa1d3afafb22eba582b86af412a24",
     "mods/compatibility.json": "9650a5ecfac5861690b34320c74c07cc511f56b493f174fa533d515df15d555f",
     "mods/examples/coordination/index.ts": "18cb4f680f2a88106adf5fdad7372ce109ff993a2bbe1071ce00fe8241aff8fd",
     "mods/examples/coordination/mod.json": "8be717ef9b86e8fae3c1a22e9c0d7518cd0d2ecc0199dab99b2ccda2a93127e5",
     "mods/examples/kernel/index.ts": "52e86d7b257362ce0114118b3ce85ee6e1928eac43c193ef8bbb095c546dbdbc",
     "mods/examples/kernel/mod.json": "78bf2c384b5cf0402c703ba5b915829152adf8f8002e5ebd95c7e1c7e254fad4",
-    "mods/examples/reactive_dashboard/index.ts": "8bdb0ef84bd0d44f0a0329757e166e0449c76cc4d2835dd35dddab792b780934",
-    "mods/examples/reactive_dashboard/mod.json": "caed7e1f5464f3ae67abefc7d5b6ebab90ac38b4465095c031c3122ef6348ffc",
+    "mods/examples/reactive_dashboard/index.ts": "0a886d1bf26c64de564b14a30829ac38d4ba9d4a20071201c8846aab84d8608b",
+    "mods/examples/reactive_dashboard/mod.json": "b0bc45c2cb71383f89728988e6045444e18e4b197c8609e097dc51a085c0e56c",
     "mods/examples/recovery/index.ts": "2ef7aa6bdace6b02b97781c0ec58de25b8d6bacf1779604fe92544ea9f143f17",
     "mods/examples/recovery/mod.json": "4bae5ebfd6bbd629fe20ba28686d51a6e1d44ba63c5654bd3b1f26b3a0600d84",
     "mods/examples/release_check/.omd/active-host.d.ts": "688ed5ce1951165af51ffbda0ad0f578a1473498c06ccae289130fabeac022a3",
@@ -168,7 +168,7 @@
     "mods/examples/workspace/mod.json": "80f9e84335117a7b40d0eec65e8ff19aaedf08d1ad3448b21a0d37495259e496",
     "mods/examples/workspace/mod.test.json": "ec53fd7bb191621b388ba5b8e27dc0038aa44476b518d81462006d74b2cd6cfa",
     "mods/extension-types.json": "bd262b8d01cdaeedc70b583942903459e69ea5b39266c4da5d3165dde65b3c04",
-    "mods/first-party/omd_advisor/index.ts": "0736674907e05cc7bba22b079f35a38a6eb662014556202304c8531b860b1d2e",
+    "mods/first-party/omd_advisor/index.ts": "70914432294196866369301e1c6d926f9fd9e623a7686be75daeee0d210b6177",
     "mods/first-party/omd_advisor/mod.json": "5e1fc100139f8193501c59fa7d7a87d3274e29c162d29251ceeab058c0bc976b",
     "mods/first-party/omd_checks/index.ts": "1ba722ddd9bbc8a6d94e98851b723682de249070e22730d6e61cfe6ccaa600f8",
     "mods/first-party/omd_checks/mod.json": "340a3654b64c067cef3447e709aafe11aadd718752754f42e1d144be7966efc4",
@@ -234,7 +234,7 @@
     "mods/first-party/omd_profiles/mod.json": "f8d4b57cbac78ff640025db460c7a74911117a8dc4f11769aefd8789bfc64dae",
     "mods/first-party/omd_profiles/router.mjs": "eda577d32bdf80b59779e3264823cf949a8f4127b9bb5289e9710139acd1a1c8",
     "mods/first-party/omd_profiles/setup.mjs": "1e3cc9c6a9464c09dcb890b6fda99476b34c3625ce6e6522670155ea78eb38b8",
-    "mods/first-party/omd_programmable_context/index.ts": "15a85d861630a218e68843f519142eacdb069b419ad50aef5f34c09e9fc67ed0",
+    "mods/first-party/omd_programmable_context/index.ts": "7df0d133f3e172599c6efc4c5a675b66d843a70c02c13bf4fbced74eab41e629",
     "mods/first-party/omd_programmable_context/mod.json": "cbe6cba145a7817d339521d378cb9b1b83a548ff041d71549278aa0c85e263d8",
     "mods/first-party/omd_project_pi_prompts/index.ts": "d8edbdb690427e3161c486e741a7e049e92dec03f915c38a399d6f452b3a5b30",
     "mods/first-party/omd_project_pi_prompts/mod.json": "3311a64866dc3fb0451034985984ad6c95657d163b0f37e180ccf7f2a49e8fcc",
@@ -248,7 +248,7 @@
     "mods/first-party/omd_repository_analysis/mod.json": "2ea503980ad74b63d40d8ca66713e11de75c8e8cd4f95412403e1310676e1c0b",
     "mods/first-party/omd_research/index.ts": "534c45ca33cb5cd6a8d4dc290ad15b134551f4d45c52aa0d2b90a57a1323eb23",
     "mods/first-party/omd_research/mod.json": "e332a5a57dbb1ba054518f271e4b15f968a2a68354b2b0bc35f120c1f88d9b6f",
-    "mods/first-party/omd_shared_checkout/index.ts": "43cd9b7174b6c20e5c242e14043ed4e00d34c4c4c89481662fadeed7e8e8a02b",
+    "mods/first-party/omd_shared_checkout/index.ts": "7656648d875d7af273490fb042231d9b1e6352087034c08cfd8ce0cd7b44bdd4",
     "mods/first-party/omd_shared_checkout/mod.json": "61814b8fff360bfdbfc345024afcf731120d3e16b9ce6a5360fed0cd61d3e9ed",
     "mods/first-party/omd_source_knowledge/index.ts": "94234af3ab84b53c9e2167c09e9d54048866b7ea23e22899d71bbcfa6478795f",
     "mods/first-party/omd_source_knowledge/mod.json": "77b31735eb8f483a7864777085da74f452fc1e3585307e91115eb715a7bd356f",
@@ -260,7 +260,7 @@
     "mods/first-party/omd_typed_tasks/mod.json": "20dd0f8869f14bfaa3b86860984949acf174cc48d7751d774a8952ba5a61f4b4",
     "mods/first-party/omd_usage/index.ts": "f8a4acd10f0247a1d1b93c526a6ce982b33791cbb6e2159e353d5b15b4a43fdb",
     "mods/first-party/omd_usage/mod.json": "5658d21c8645ac6a3f0b8cdbf6f74ca75731c5da5876daaa78485da4ca116855",
-    "mods/first-party/omd_worktree/index.ts": "c630b25e0db533bd86e825883af91e5d1d1bbbeb4b42922af9dcb2fa377eb7d1",
+    "mods/first-party/omd_worktree/index.ts": "3f7857d640e8bce39218f306b8fcfee97274638e3c14000fd655912373a927cd",
     "mods/first-party/omd_worktree/mod.json": "7ebc5e29cdb394a8f3fe831c94c47311f06bff7b2ebafe8c5fb8c66f239d6afa",
     "mods/package.json": "18e77fda8a51202afd32b56cb0a4dd498784a091475f44116eeac9677e729a5d",
     "plugins/optional/plugins/omd-anchored-edit/.codex-plugin/omd.json": "7dfd938bb11b7d492eb6e4961e7ffe1c5340589c870fbf29aa45842511fd84c7",
@@ -283,10 +283,10 @@
     "plugins/optional/plugins/omd-browser/skills/omd-browser/SKILL.md": "15db7d97bf1120770725f02d0511df1ed37eca9e6558fafc5efb81b0d5d346c8",
     "plugins/optional/plugins/omd-curated-memory/.codex-plugin/omd.json": "6645aa176e6b249a14c6c25e23ecf6dae041c46668c074734d42b08d6cf39f1b",
     "plugins/optional/plugins/omd-curated-memory/.codex-plugin/plugin.json": "306f3ab6b67efdeb56c1cf82d1c946fb59306a51019b20f3f5a17c6dd9ea10b4",
-    "plugins/optional/plugins/omd-curated-memory/README.md": "1ef4c00a3a8b9965a2a5ef3639394643994af45f5f7f656d77a9b06bc3741a95",
+    "plugins/optional/plugins/omd-curated-memory/README.md": "6f69ab782408457ab77e34304d9e2e362dea61bed320e20c2da52c677802d35a",
     "plugins/optional/plugins/omd-curated-memory/hooks/curate.py": "8ab895f8278aea546eaedf9aa9a6d1bf152d9b1a6c71273766a71e33f36f21ff",
     "plugins/optional/plugins/omd-curated-memory/hooks/hooks.json": "a719538db461197a154dc2589222abcce126283d266c14b92d4cac8d0ee73265",
-    "plugins/optional/plugins/omd-curated-memory/mod/index.ts": "de8c67af3d061522a4b4a2144e25fa89dfedf806f00878a81a95d2cd348d6508",
+    "plugins/optional/plugins/omd-curated-memory/mod/index.ts": "cf7c23dbd08261eaae1bb8193fc12062716e46660fe2a62c4538fa84ecb6b542",
     "plugins/optional/plugins/omd-curated-memory/mod/mod.json": "37daa415ec5a82f7547c99e64c0f6fabd0c81ddc5639ff84f7ea66a76dedf0a1",
     "plugins/optional/plugins/omd-curated-memory/skills/omd-curated-memory/SKILL.md": "bd526ee5d28050e56067f16daceed28f570f34ae938e6dd3d9a8d226fc65770c",
     "plugins/optional/plugins/omd-curated-memory/tsconfig.json": "921e1c62c4469bcfea370d6a993d2dacc88a0bfcdaa6394fb1408692b1a6d26a",
@@ -310,19 +310,19 @@
     "plugins/optional/plugins/omd-session-review/mod/mod.json": "2c07bf7d29cf98dc677d26d96003c5a551e7ab012839896d77ef2960f54352b2",
     "plugins/optional/plugins/omd-session-review/skills/omd-session-review/SKILL.md": "ae01cb977fffb151e5967ac5235bbec8bd5c7c0dd6072fdfcc9e333a1eeedc62",
     "plugins/optional/plugins/omd-session-review/tsconfig.json": "921e1c62c4469bcfea370d6a993d2dacc88a0bfcdaa6394fb1408692b1a6d26a",
-    "runtime/full-mods.lock.json": "056556d4c2c899e2d6d4b07135289a62f89488d792ec4dc2869a2de9f9528ee2",
+    "runtime/full-mods.lock.json": "63b2105b84e6f23f55f52f8992eb9f80852a67674bb04e5ea9a059e953adc7d0",
     "runtime/hardened-entitlements.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
-    "runtime/patches/manifest.json": "76a6211f8f31c63dd0b0882fa3a3f9cf662f473af6002bbf66ffb5d9b93c3fe3",
-    "runtime/plugin-v1.lock.json": "405fb55ec1b89498c406935a7a3052eb928c736fb2a1bdd9d5da8db89ecdfd06",
+    "runtime/patches/manifest.json": "c3637f577e0f7fea21a42ac268271561f4c8d3d9732fb8bf6e3275f46be04534",
+    "runtime/plugin-v1.lock.json": "671c4b8b62c520ab386722166e6541a2261e2865a43b27df870f692e1e9b4a50",
     "runtime/preview-v1.lock.json": "d29f3bccc9e0bc940ba94dc3bfd682fbd438f59aac969270fab030f306a17031",
     "scripts/authority_broker.py": "7178e9b86feafaf0665e154af71ae603a09d11c001c576f8708d66c19df01e11",
     "scripts/full_mods_lock.py": "e5162c83e396ede58dad014352bb93fa23b78184fa0b5f0d85d41dc512a78b1e",
     "scripts/install_support.py": "df8eee827d1a1cf54d9e860b61c586bda82314d52527523de9fd9af0b2eb4032",
-    "scripts/lean_package.py": "e7aabe15075eca59241e2732c5f6d1d34bf8d10d2a4a1ff43d35cbc16d7fc1db",
+    "scripts/lean_package.py": "b2c2ae892162ff358f50b16b4dcfc5a144d4896f53c965d61e5b472dfa6a0e70",
     "scripts/lean_profiles.py": "58027d0d77296e5139ad0ba629c5e585dd13fda5037abddef037d38d69c44363",
     "scripts/lean_release_lock.py": "e1f3be7641a6ed6890c4aa89550b5bb1d2027e324030d0b6e7710ffb1834b476",
     "scripts/preview_lock.py": "a4bd67597366322d58e58739781be7e2a24020fd1e311a4ad42f03a5b49240fc",
-    "upstream.lock.json": "8342e2f522807d23e2251b87d64f4eca41cadd76f2434a7cc4370bb210c74f90"
+    "upstream.lock.json": "26f8ed2e53da2b3ffbf938d84b9aecb8c9b0093ed4ee6117a1e879177f0f5408"
   },
   "target": "aarch64-apple-darwin",
   "upstream_commit": "d27764b82f7118f674371e6d6e76271d9d606edb",

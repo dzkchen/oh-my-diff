@@ -205,7 +205,10 @@ export default function activate(api: ModAPI) {
     const status = ['status', '--porcelain=v1', '-z', '--untracked-files=no'];
     const destination = git(status);
     if (!destination.ok || destination.out) return { display: destination.ok ? 'The destination checkout has uncommitted changes; commit or stash them yourself first' : destination.err };
-    const excluded = setups().shared.map(item => `:(exclude)${item.path}`);
+    const excluded = setups().shared.map(item => `:(exclude,literal)${item.path}`);
+    const stagedSetup = ['-C', tree.path, 'diff', '--cached', '--name-only', '-z', '--', ...setups().shared.map(item => `:(literal)${item.path}`)];
+    const staged = excluded.length ? git(stagedSetup) : null;
+    if (staged && (!staged.ok || staged.truncated || staged.out)) return { display: 'Shared setup files are staged; unstage them before integrating' };
     const pending = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...excluded];
     const source = git(pending);
     if (!source.ok) return { display: source.err };
@@ -235,7 +238,7 @@ export default function activate(api: ModAPI) {
       summary: fit(`${dirty ? `Uncommitted changes in the task worktree (${dirty} paths${added.length ? `, ${added.length} new` : ''}) are committed as "${message}" first.\n` : ''}${log.out}${stat.out}`, 4_000, true),
       diff: diff.truncated || shown !== full ? `${fit(shown, 39_900, true)}\n… diff truncated; review the full change in the worktree` : shown,
       guards: [guardOf(head, git(head)), guardOf(tip, tipped), guardOf(status, destination)],
-      commit: local ? { message, paths: excluded, guards: [guardOf(pending, source), guardOf(content, local), guardOf(fresh, listed!), ...(hashed ? [guardOf(hashes, hashed)] : []), guardOf(tip, tipped)] } : null };
+      commit: local ? { message, paths: excluded, guards: [guardOf(pending, source), guardOf(content, local), guardOf(fresh, listed!), ...(staged ? [guardOf(stagedSetup, staged)] : []), ...(hashed ? [guardOf(hashes, hashed)] : []), guardOf(tip, tipped)] } : null };
     state.open = true;
     save(state);
     return null;
@@ -248,8 +251,12 @@ export default function activate(api: ModAPI) {
     if (!preview) return { display: 'Open an integration preview first' };
     state.preview = null;
     if (preview.commit) {
+      const shared = setups().shared.map(item => `:(literal)${item.path}`);
+      const stagedSetup = ['-C', preview.path, 'diff', '--cached', '--name-only', '-z', '--', ...shared];
+      const staged = shared.length ? git(stagedSetup) : null;
+      if (staged && (!staged.ok || staged.truncated || staged.out)) return { display: 'Shared setup files are staged; unstage them before integrating' };
       const added = git(['-C', preview.path, 'add', '-A', '--', '.', ...preview.commit.paths], { write: true, guards: preview.commit.guards });
-      const committed = added.ok ? git(['-C', preview.path, 'commit', '--quiet', '-m', preview.commit.message], { write: true, timeout: 120_000 }) : added;
+      const committed = added.ok ? git(['-C', preview.path, 'commit', '--quiet', '-m', preview.commit.message], { write: true, timeout: 120_000, guards: staged ? [guardOf(stagedSetup, staged)] : [] }) : added;
       if (!committed.ok) {
         state.notice = /exec_guard/.test(committed.err) ? 'The task worktree changed since the preview; integrate again to review the current state' : `Committing the task worktree failed: ${committed.err.split('\n').slice(0, 4).join(' ')}`;
         save(refresh(state));
@@ -277,6 +284,20 @@ export default function activate(api: ModAPI) {
     return null;
   }, { description: 'Close the worktree dialog' });
 
+  const sessionCheck = (path: string): string | null => {
+    let cursor: string | undefined;
+    for (let page = 0; page < 4; page++) {
+      const listed = api.host.tryCall('app.request', { method: 'thread/list', params: { cwd: path, limit: 100, ...(cursor ? { cursor } : {}) } });
+      if (!listed.ok) return 'Session inventory is unavailable; the worktree is kept';
+      const result = listed.value as { data?: { status?: { type?: string } }[]; nextCursor?: string | null };
+      if (!Array.isArray(result.data) || result.data.some(thread => !['notLoaded', 'idle', 'systemError', 'active'].includes(thread.status?.type ?? ''))) return 'Session inventory is incomplete; the worktree is kept';
+      if (result.data.some(thread => thread.status?.type === 'active')) return `A session is working in ${path}; wait for it to finish`;
+      if (result.nextCursor === null) return null;
+      if (typeof result.nextCursor !== 'string' || !result.nextCursor || result.nextCursor === cursor) break;
+      cursor = result.nextCursor;
+    }
+    return 'Session inventory is incomplete; the worktree is kept';
+  };
   const remove = (value: Json, branch: boolean): CommandResult => guard(() => {
     const state = refresh(load());
     const tree = find(state, words(value));
@@ -284,15 +305,16 @@ export default function activate(api: ModAPI) {
     if (tree.current) return { display: 'Switch to another checkout before removing this one' };
     if (tree.locked) return { display: `${tree.path} is locked (${tree.locked}); unlock it with git worktree unlock first` };
     if (tree.prunable) return { display: `${tree.path} was already deleted outside OMD; /omd_worktree:prune removes its record` };
-    const listed = api.host.tryCall('app.request', { method: 'thread/list', params: { cwd: tree.path, limit: 20 } });
-    const busy = listed.ok && ((listed.value as { data?: { status?: { type?: string } }[] }).data ?? []).some(thread => thread.status?.type === 'active');
-    if (busy) return { display: `A session is working in ${tree.path}; wait for it to finish` };
-    const listing = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...setups().shared.map(item => `:(exclude)${item.path}`)];
+    const busy = sessionCheck(tree.path);
+    if (busy) return { display: busy };
+    const listing = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...setups().shared.map(item => `:(exclude,literal)${item.path}`)];
     const status = git(listing);
     if (!status.ok || status.out) return { display: status.ok ? `${tree.path} has uncommitted or untracked changes; they are kept` : status.err };
     const merged = tree.branch ? git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, `${state.trees[0].head}`]).ok : false;
     const preview = [`Remove the checkout ${tree.path}.`, tree.branch ? `Branch ${tree.branch} is ${merged ? 'merged into the main checkout' : 'NOT merged'} and is kept unless you confirm its deletion next.` : '', 'Session history is kept.'].join('\n');
     if (!confirm(branch ? 'Delete task worktree' : 'Archive task worktree', preview)) return null;
+    const changed = sessionCheck(tree.path);
+    if (changed) return { display: changed };
     // The status excludes shared setup links and copies, so force removes just those.
     const removed = git(['worktree', 'remove', '--force', tree.path], { write: true, timeout: 60_000, guards: [guardOf(listing, status)] });
     if (!removed.ok) return { display: denied(removed.err, rootFor(state.trees[0].path)) };

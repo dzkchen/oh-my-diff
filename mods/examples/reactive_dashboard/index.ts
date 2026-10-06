@@ -23,7 +23,7 @@ export default function activate(api: ModAPI) {
     return { display: 'Streaming status once a second for ten ticks.' };
   });
   api.on('channel', ({ channel }) => {
-    if (channel === 'stream') api.host.call('events.schedule', { key: 'tick', delay_ms: 1000 });
+    if (channel === 'reactive_dashboard/stream') api.host.call('events.schedule', { key: 'tick', delay_ms: 1000 });
   });
   api.on('timer', ({ key }) => {
     if (key !== 'tick') return;

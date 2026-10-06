@@ -31,6 +31,16 @@ impl ClientSurface for Password {
 
 struct Silent;
 
+#[derive(Default)]
+struct Queued(Mutex<Vec<SurfaceCall>>);
+
+impl ClientSurface for Queued {
+    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
+        self.0.lock().unwrap().push(call);
+        Ok(())
+    }
+}
+
 impl ClientSurface for Silent {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         std::mem::forget(call.reply);
@@ -50,7 +60,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             event,
             None,
             None,
-            &active
+            Arc::new(active)
         )
         .unwrap_err()
         .starts_with("client_surface_unavailable")
@@ -64,7 +74,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         event,
         Some("t"),
         Some("Allow m to list threads?".into()),
-        &active,
+        Arc::new(active),
     )
     .unwrap();
     assert_eq!(value["operation"], "app.request");
@@ -80,7 +90,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             event,
             None,
             None,
-            &active
+            Arc::new(active)
         )
         .unwrap_err(),
         "host_operation_user_only: packages.apply"
@@ -93,7 +103,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             InvocationContext::User,
             None,
             None,
-            &active
+            Arc::new(active)
         )
         .unwrap_err()
         .starts_with("unsupported_host_operation")
@@ -133,6 +143,44 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     );
     drop(replaced);
     assert!(hub().surface.is_none());
+
+    let queue = Arc::new(Queued::default());
+    let _queued = register(queue.clone());
+    let receiver = submit(
+        "m",
+        "composer.write",
+        json!({"revision":0}),
+        event,
+        Some("a"),
+        None,
+    )
+    .unwrap();
+    let queued = queue.0.lock().unwrap().pop().unwrap();
+    assert!((queued.validity.0)());
+    drop(receiver);
+    assert!(
+        !(queued.validity.0)(),
+        "dropping the waiter revokes queued effects"
+    );
+    let authority = Arc::new(AtomicBool::new(true));
+    let check = authority.clone();
+    let receiver = submit_bound(
+        "m",
+        "composer.write",
+        json!({"revision":0}),
+        event,
+        Some("a"),
+        Some("confirm".into()),
+        Arc::new(move || check.load(Ordering::Acquire)),
+    )
+    .unwrap();
+    let held = queue.0.lock().unwrap().pop().unwrap();
+    authority.store(false, Ordering::Release);
+    assert!(
+        !(held.validity.0)(),
+        "revocation is checked before the waiter polls"
+    );
+    drop(receiver);
 
     let woken = Arc::new(AtomicUsize::new(0));
     let counter = woken.clone();

@@ -2845,7 +2845,7 @@ impl ModHost {
                         .join("threads")
                         .join(thread)
                         .join(".state"),
-                    name,
+                    ModStore::state_name(&package.id, scope),
                 ),
                 None => store::StateLocation::Unavailable("state_thread_unavailable"),
             },

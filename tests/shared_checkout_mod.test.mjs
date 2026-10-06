@@ -141,6 +141,9 @@ test('shared checkout keeps sessions read-only until they reserve paths and paus
     /^docs\/old\.md is reserved by lexer tweak \(019b0000\); docs\/old\.md is outside this session's assignment \(src\/parser\)\. Approve only after coordinating/);
   assert.equal(approve(A, 'exec', `sh -c 'sed -i.bak s/a/b/ src/parser/x.ts >/dev/null'`), null);
   assert.equal(approve(A, 'exec', `sed -i -e 's/a b/c/' -e s/x/y/ src/parser/x.ts`), null);
+  for (const script of ['cd docs && printf x > src/parser/x.ts', "sh -c 'cd docs; touch src/parser/x.ts'", '(pushd docs); rm src/parser/x.ts', 'env -C docs touch src/parser/x.ts', 'sudo -D docs touch src/parser/x.ts']) {
+    assert.match(approve(A, 'exec', script).ask, /directory.*uncertain/);
+  }
   assert.match(approve(A, 'exec', `sudo -u root nice -n 5 rm docs/old.md`).ask, /^docs\/old\.md is reserved by lexer tweak/);
 
   assert.match(approve(A, 'exec', 'git add src/parser && git commit -m parser', { id: 'commit' }).ask, /^git add affects the whole checkout while lexer tweak \(019b0000\) also write here/);

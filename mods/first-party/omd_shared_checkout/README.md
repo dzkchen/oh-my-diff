@@ -32,6 +32,8 @@ commands are checked the same way for the files they recognizably write:
 redirections (`>`, `>>`) and the operands of `rm`, `rmdir`, `unlink`, `shred`,
 `touch`, `mkdir`, `truncate`, `tee`, `mv`, the target of `cp`, `ln` and
 `install`, and the files of `sed -i`, including inside `sh -c` scripts.
+Scripts that change directory and write files ask for approval because their
+destinations cannot be established from the initial working directory.
 Reserving paths another writer holds asks first; declining suggests a worktree
 or a handoff. `/share worktree` starts upstream `/worktree`; with
 [`omd_worktree`](../omd_worktree/README.md) enabled, `/omd_worktree:task TASK`

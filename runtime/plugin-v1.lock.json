@@ -70,7 +70,7 @@
     "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "fbbcd37ce926c7b37c15b4486aea4c53f2a73888138506fa8cc94b32ea7c3a18",
     "plugins/omd-artifact-reading/tsconfig.json": "6bcf4da7be953f3d578863baeab06aefde1fbbbed2d1991fcde567d679637037",
     "plugins/omd-code-execution/.codex-plugin/plugin.json": "f22c589d2750663096d75be96c63c666c4303542258eb0d79b8b5f6adce924e0",
-    "plugins/omd-code-execution/kernels/bun.mjs": "3b3c90bccbf8ffa1339f4661dfb365aeb9bac105499da49d9d4c5b031e58a434",
+    "plugins/omd-code-execution/kernels/bun.mjs": "0e983d0c42e282e1145d7a421fdf8e331e9bb5ce21f6c153c839954520be5071",
     "plugins/omd-code-execution/kernels/python.py": "38d7563a12663419d880f22973e7141663131630c0e2c3c02cfaae550fe2068b",
     "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "03f8411e5f55e94773fd4985dc07bfc7abf065ed7267a5d8ae024195df59aae5",
     "plugins/omd-guidance-hooks/.codex-plugin/plugin.json": "a303772e639a7968daf4de505371a46eb4c46c2dd948049a59af76502a2bac32",

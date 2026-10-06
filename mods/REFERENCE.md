@@ -385,7 +385,8 @@ every recorded call was read-only; otherwise it fails with the transient
 Its location follows the manifest's `state_scope` (`state_scopes_v1`).
 `"store"` (the default) keeps one state of at most 64 KiB in the mod store,
 shared by every OMD process that uses that store. `"thread"` keeps one state per
-session thread with the thread's data: it forks with the thread and is removed
+session thread and selection scope, so a project copy cannot inherit a same-ID
+user copy's state. It forks with the thread and is removed
 when the thread is deleted. Routing and compaction decisions made while a
 thread is set up see that thread's state (a fork's copy is made first), and
 registration reads the state of the thread whose callback reloaded the mods
@@ -1243,7 +1244,10 @@ loopback URL with a per-sidecar secret path that closes when the sidecar stops.
 A request to `$OMD_CREDENTIAL_GATEWAY/PROFILE/PATH` is sent over HTTPS to
 `PATH` on that profile's origin with `Authorization: Bearer` (or `x-api-key`
 when the request sets `x-omd-credential-header: x-api-key`) and the response
-streams back; redirects aren't followed. `omd-mod credentials STORE` lists
+streams back; redirects aren't followed. Stopping the sidecar cancels its
+in-flight gateway requests. The gateway admits at most 16 requests at once,
+with a 10-second connection timeout, 30-second inactivity timeout and
+five-minute total deadline. `omd-mod credentials STORE` lists
 profiles without secrets. `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN`
 reads a value from stdin and stores it as a secret owned by `MOD_ID` for `ORIGIN`, the same
 profile `credentials.request {kind: 'secret'}` creates, replacing the value of that mod's
@@ -1570,7 +1574,11 @@ detach?}` applies only to that revision and fails with `stale_revision`
 otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:
 'splice', start, end, text}` (byte offsets on character boundaries), `cursor`
 and `selection: {start, end}` place the cursor or select, `attach` adds image
-resources and `detach` removes attachments by placeholder. A write never
+resources and `detach` removes attachments by placeholder. The complete edit,
+positions and detach list are validated before the draft changes; rejected
+writes leave its content and attachments intact. Queued client calls remain
+bound to their admitted thread, source generation and active authority,
+including after confirmation. A write never
 submits. Images a mod attached leave the draft when that mod is unloaded,
 reloaded or disabled.
 

@@ -1,5 +1,6 @@
 use crate::app_routes::InvocationContext;
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -55,8 +56,36 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
 
 pub type Reply = SyncSender<Result<Value, String>>;
 
+#[derive(Clone)]
+pub struct Validity(pub Arc<dyn Fn() -> bool + Send + Sync>);
+
+impl std::fmt::Debug for Validity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Validity(..)")
+    }
+}
+
+pub struct PendingReply {
+    receiver: Receiver<Result<Value, String>>,
+    live: Arc<AtomicBool>,
+}
+
+impl Drop for PendingReply {
+    fn drop(&mut self) {
+        self.live.store(false, Ordering::Release);
+    }
+}
+
+impl std::ops::Deref for PendingReply {
+    type Target = Receiver<Result<Value, String>>;
+    fn deref(&self) -> &Self::Target {
+        &self.receiver
+    }
+}
+
 #[derive(Debug)]
 pub struct SurfaceCall {
+    pub validity: Validity,
     pub caller: String,
     pub operation: String,
     pub arguments: Value,
@@ -153,7 +182,28 @@ pub fn submit(
     context: InvocationContext,
     thread: Option<&str>,
     confirm: Option<String>,
-) -> Result<Receiver<Result<Value, String>>, String> {
+) -> Result<PendingReply, String> {
+    submit_bound(
+        caller,
+        operation,
+        arguments,
+        context,
+        thread,
+        confirm,
+        Arc::new(|| true),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn submit_bound(
+    caller: &str,
+    operation: &str,
+    arguments: Value,
+    context: InvocationContext,
+    thread: Option<&str>,
+    confirm: Option<String>,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<PendingReply, String> {
     if !SURFACE_OPERATIONS.contains(&operation) {
         return Err(format!("unsupported_host_operation: {operation}"));
     }
@@ -166,7 +216,10 @@ pub fn submit(
         .map(|(_, surface)| surface.clone())
         .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
     let (reply, receiver) = sync_channel(1);
+    let live = Arc::new(AtomicBool::new(true));
+    let queued = live.clone();
     surface.submit(SurfaceCall {
+        validity: Validity(Arc::new(move || queued.load(Ordering::Acquire) && active())),
         caller: caller.to_owned(),
         operation: operation.to_owned(),
         arguments,
@@ -175,11 +228,11 @@ pub fn submit(
         confirm,
         reply,
     })?;
-    Ok(receiver)
+    Ok(PendingReply { receiver, live })
 }
 
 pub fn wait(
-    receiver: Receiver<Result<Value, String>>,
+    receiver: PendingReply,
     active: &dyn Fn() -> bool,
     deadline: Option<Instant>,
 ) -> Result<Value, String> {
@@ -217,7 +270,7 @@ pub fn app_request(
     repository: &std::path::Path,
     routes: &[(String, String)],
     arguments: Value,
-    active: &dyn Fn() -> bool,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
     let method = arguments["method"]
         .as_str()
@@ -420,13 +473,21 @@ pub fn call(
     context: InvocationContext,
     thread: Option<&str>,
     confirm: Option<String>,
-    active: &dyn Fn() -> bool,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     wait(
-        submit(caller, operation, arguments, context, thread, confirm)?,
-        active,
+        submit_bound(
+            caller,
+            operation,
+            arguments,
+            context,
+            thread,
+            confirm,
+            active.clone(),
+        )?,
+        active.as_ref(),
         deadline,
     )
 }

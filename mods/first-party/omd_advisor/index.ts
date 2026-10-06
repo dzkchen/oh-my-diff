@@ -169,10 +169,11 @@ export default function activate(api: ModAPI) {
       if (event.outcome !== 'completed' || !event.evidence) return;
       if (!everyTurn) {
         const activity = api.host.tryCall('turns.activity', { turn_id: event.turn_id });
-        if (!activity.ok || !activity.value.turns[0]?.files.length || sameModel()) return;
+        if (!activity.ok || !activity.value.turns[0]?.files.length) return;
       }
       const previous = prior();
       if (previous?.reference.sha256 === event.evidence.sha256) return;
+      if (sameModel()) return;
       if (previous?.status === 'reviewing' && previous.handle) api.host.tryCall('agents.cancel', { handle: previous.handle });
       const receipt: Receipt = { reference: event.evidence, turn: event.turn_id, thread: '', candidate: '', handle: '', brief: '', findings: [], status: 'unreviewed', reason: '', ledger: null, present: true };
       const loaded = read(event.evidence);

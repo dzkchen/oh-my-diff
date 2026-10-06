@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index c14cdb126..83e831f60 100644
+index c14cdb126..1a805f749 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2113,6 +2113,7 @@ dependencies = [
@@ -26,7 +26,7 @@ index c14cdb126..83e831f60 100644
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4155,6 +4158,58 @@ dependencies = [
+@@ -4155,6 +4158,60 @@ dependencies = [
   "wiremock",
  ]
 
@@ -52,6 +52,7 @@ index c14cdb126..83e831f60 100644
 +name = "codex-omd-extension"
 +version = "0.160.1"
 +dependencies = [
++ "axum",
 + "base64 0.22.1",
 + "chrono",
 + "codex-api",
@@ -72,6 +73,7 @@ index c14cdb126..83e831f60 100644
 + "codex-utils-absolute-path",
 + "codex-utils-path-uri",
 + "codex-utils-pty",
++ "futures",
 + "http 1.4.0",
 + "reqwest 0.12.28",
 + "serde",
@@ -85,7 +87,7 @@ index c14cdb126..83e831f60 100644
  [[package]]
  name = "codex-otel"
  version = "0.160.1"
-@@ -4774,6 +4829,8 @@ dependencies = [
+@@ -4774,6 +4831,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -94,7 +96,7 @@ index c14cdb126..83e831f60 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4795,6 +4852,7 @@ dependencies = [
+@@ -4795,6 +4854,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -4049,10 +4051,23 @@ index 79a95b2ac..c15c317c8 100644
          cancellation_token,
          Arc::default(),
 diff --git a/codex-rs/core/src/tools/context.rs b/codex-rs/core/src/tools/context.rs
-index 1b02ab7ab..6c00f3cb9 100644
+index 1b02ab7ab..f3da8a825 100644
 --- a/codex-rs/core/src/tools/context.rs
 +++ b/codex-rs/core/src/tools/context.rs
-@@ -63,6 +63,7 @@ pub enum ToolCallSource {
+@@ -50,6 +50,12 @@ pub type SharedTurnDiffTracker = Arc<Mutex<TurnDiffTracker>>;
+ pub(crate) struct ToolCallState {
+     pub(crate) terminal_outcome_reached: AtomicBool,
+     pub(crate) delivered_assistant_message: OnceLock<String>,
++    pub(crate) execution_gate: OnceLock<ExecutionGate>,
++}
++
++pub(crate) struct ExecutionGate {
++    pub(crate) lock: Arc<tokio::sync::RwLock<()>>,
++    pub(crate) started: Option<Arc<OnceLock<std::time::Instant>>>,
+ }
+
+ #[derive(Clone, Debug, Eq, PartialEq)]
+@@ -63,6 +69,7 @@ pub enum ToolCallSource {
          /// debugging the JS/runtime bridge, but it is not the Codex tool call id
          /// because the runtime id only needs to be unique within one cell.
          runtime_tool_call_id: String,
@@ -5393,10 +5408,18 @@ index 3473cd50d..71dba7c93 100644
              ExecApprovalRequirement::NeedsApproval { reason, .. } => {
                  let action = tool
 diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
-index 0a7afc54c..f7e40a587 100644
+index 0a7afc54c..d2c66b19f 100644
 --- a/codex-rs/core/src/tools/parallel.rs
 +++ b/codex-rs/core/src/tools/parallel.rs
-@@ -64,6 +64,16 @@ impl ToolCallRuntime {
+@@ -5,7 +5,6 @@ use std::time::Instant;
+
+ use tokio::sync::RwLock;
+ use tokio::task::JoinError;
+-use tokio_util::either::Either;
+ use tokio_util::sync::CancellationToken;
+ use tokio_util::task::AbortOnDropHandle;
+ use tracing::Instrument;
+@@ -64,6 +63,16 @@ impl ToolCallRuntime {
          }
      }
 
@@ -5413,7 +5436,61 @@ index 0a7afc54c..f7e40a587 100644
      pub(crate) fn create_diff_consumer(
          &self,
          tool_name: &codex_tools::ToolName,
-@@ -511,6 +521,7 @@ mod tests {
+@@ -137,8 +146,6 @@ impl ToolCallRuntime {
+             .executed_tool_calls
+             .record_tool_call(&call, &source, &step_context);
+         let router = &step_context.tool_router;
+-        let supports_parallel = router.tool_supports_parallel(&call);
+-        let tool_runtime = router.tool_runtime(&call.tool_name);
+         let router = Arc::clone(router);
+         let session = Arc::clone(&self.session);
+         let turn = Arc::clone(&step_context.turn);
+@@ -167,6 +174,12 @@ impl ToolCallRuntime {
+         let execution_started_at = tool_call_timing_guard
+             .as_ref()
+             .map(|timing| Arc::clone(&timing.execution_started_at));
++        let _ = call_state
++            .execution_gate
++            .set(crate::tools::context::ExecutionGate {
++                lock,
++                started: execution_started_at,
++            });
+         let abort_session = Arc::clone(&session);
+         let abort_source = source.clone();
+         let abort_turn = Arc::clone(&turn);
+@@ -196,23 +209,6 @@ impl ToolCallRuntime {
+         let mut dispatch_handle = AbortOnDropHandle::new(tokio::spawn(
+             async move {
+                 let _message_admission = message_admission?;
+-                if let Some(tool_runtime) = tool_runtime
+-                    && let Some(readiness) = tool_runtime.wait_until_ready(&session)
+-                {
+-                    readiness.await;
+-                }
+-
+-                let guard = if supports_parallel {
+-                    Either::Left(lock.read().await)
+-                } else {
+-                    Either::Right(lock.write().await)
+-                };
+-                // Admission through the parallel-execution gate marks the end
+-                // of dispatch waiting and the start of handler execution.
+-                if let Some(execution_started_at) = execution_started_at {
+-                    let _ = execution_started_at.set(Instant::now());
+-                }
+-
+                 let result = router
+                     .dispatch_tool_call_with_state(
+                         session,
+@@ -225,7 +221,6 @@ impl ToolCallRuntime {
+                     )
+                     .instrument(dispatch_span.clone())
+                     .await;
+-                drop(guard);
+                 // The sampling loop collects results in order only after its stream ends.
+                 // Record readiness here, before either caller encodes or collects the result.
+                 // A fatal error still propagates to the caller instead of producing a tool
+@@ -511,6 +506,7 @@ mod tests {
                  &ToolCallSource::CodeMode {
                      cell_id: "cell-1".to_string(),
                      runtime_tool_call_id: "runtime-call-1".to_string(),
@@ -5421,11 +5498,151 @@ index 0a7afc54c..f7e40a587 100644
                  },
                  codex_extension_api::empty_extension_registry(),
              );
+@@ -667,6 +663,131 @@ mod tests {
+         tool_name: codex_tools::ToolName,
+     }
+
++    struct RewriteToSerial;
++
++    impl codex_extension_api::ToolLifecycleContributor for RewriteToSerial {
++        fn intercept_tool<'a>(
++            &'a self,
++            _: codex_extension_api::ToolStartInput<'a>,
++        ) -> codex_extension_api::ExtensionFuture<
++            'a,
++            Result<codex_extension_api::ToolInterception, String>,
++        > {
++            Box::pin(async {
++                Ok(codex_extension_api::ToolInterception::Continue(Some((
++                    codex_tools::ToolName::plain("replacement"),
++                    ToolPayload::Function {
++                        arguments: "{}".into(),
++                    },
++                ))))
++            })
++        }
++    }
++
++    struct GatedHandler {
++        parallel: bool,
++        gate: Arc<RwLock<()>>,
++        executions: Arc<std::sync::atomic::AtomicUsize>,
++    }
++
++    impl ToolExecutor<ToolInvocation> for GatedHandler {
++        fn supports_parallel_tool_calls(&self) -> bool {
++            self.parallel
++        }
++        fn tool_name(&self) -> codex_tools::ToolName {
++            codex_tools::ToolName::plain(if self.parallel {
++                "original"
++            } else {
++                "replacement"
++            })
++        }
++        fn spec(&self) -> codex_tools::ToolSpec {
++            ImmediateHandler {
++                tool_name: self.tool_name(),
++            }
++            .spec()
++        }
++        fn handle<'a>(&'a self, _: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
++        where
++            ToolInvocation: 'a,
++        {
++            Box::pin(async move {
++                assert!(!self.parallel);
++                assert!(
++                    self.gate.try_read().is_err(),
++                    "effective serial tool must hold the exclusive gate"
++                );
++                self.executions.fetch_add(1, Ordering::SeqCst);
++                tokio::task::yield_now().await;
++                Ok(
++                    Box::new(FunctionToolOutput::from_text("ok".into(), Some(true)))
++                        as Box<dyn crate::tools::context::ToolOutput>,
++                )
++            })
++        }
++    }
++
++    impl CoreToolRuntime for GatedHandler {}
++
++    #[tokio::test]
++    async fn rewritten_tools_acquire_the_effective_execution_gate() {
++        let (mut session, turn) = crate::session::tests::make_session_and_context().await;
++        let mut builder =
++            codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++        builder.tool_lifecycle_contributor(Arc::new(RewriteToSerial));
++        session.services.extensions = Arc::new(builder.build());
++        let gate = Arc::new(RwLock::new(()));
++        let executions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
++        let handlers = [true, false].map(|parallel| {
++            Arc::new(GatedHandler {
++                parallel,
++                gate: gate.clone(),
++                executions: executions.clone(),
++            }) as Arc<dyn CoreToolRuntime>
++        });
++        let router = Arc::new(ToolRouter::from_parts(
++            ToolRegistry::from_tools(handlers),
++            Vec::new(),
++            ToolMode::Direct,
++            BTreeMap::new(),
++            None,
++            &[],
++        ));
++        let step = StepContext::for_test(Arc::new(turn)).with_tool_router_for_test(router);
++        let runtime = ToolCallRuntime::new(
++            Arc::new(session),
++            step.clone(),
++            Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
++        )
++        .sharing(gate);
++        let call = |id: &str| ToolCall {
++            tool_name: codex_tools::ToolName::plain("original"),
++            call_id: id.into(),
++            payload: ToolPayload::Function {
++                arguments: "{}".into(),
++            },
++            encrypted_function_args: None,
++        };
++        let (one, two) = tokio::join!(
++            runtime.clone().handle_tool_call_with_source(
++                step.clone(),
++                call("one"),
++                ToolCallSource::Direct,
++                CancellationToken::new(),
++                Arc::new(ToolCallState::default())
++            ),
++            runtime.handle_tool_call_with_source(
++                step,
++                call("two"),
++                ToolCallSource::Direct,
++                CancellationToken::new(),
++                Arc::new(ToolCallState::default())
++            )
++        );
++        assert!(one.is_ok() && two.is_ok(), "rewritten calls failed");
++        assert_eq!(executions.load(Ordering::SeqCst), 2);
++    }
++
+     impl ToolExecutor<ToolInvocation> for ImmediateHandler {
+         fn tool_name(&self) -> codex_tools::ToolName {
+             self.tool_name.clone()
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index 7d88650f5..ab7496fd8 100644
+index 7d88650f5..1f4bfcf94 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
-@@ -44,12 +44,33 @@ use futures::future::BoxFuture;
+@@ -13,7 +13,6 @@ use crate::memory_usage::shell_script_for_invocation;
+ use crate::session::session::Session;
+ use crate::session::turn_context::TurnContext;
+ use crate::tools::context::FunctionToolOutput;
+-use crate::tools::context::ToolCallSource;
+ use crate::tools::context::ToolCallState;
+ use crate::tools::context::ToolInvocation;
+ use crate::tools::context::ToolOutput;
+@@ -44,12 +43,33 @@ use futures::future::BoxFuture;
  use indexmap::IndexMap;
  use indexmap::map::Entry;
  use serde_json::Value;
@@ -5459,7 +5676,7 @@ index 7d88650f5..ab7496fd8 100644
  /// Typed runtime contract for locally executed tools.
  ///
  /// Implementers provide the shared `ToolExecutor` behavior plus optional
-@@ -83,6 +104,15 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
+@@ -83,6 +103,15 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
          None
      }
 
@@ -5475,7 +5692,7 @@ index 7d88650f5..ab7496fd8 100644
      fn matches_kind(&self, payload: &ToolPayload) -> bool {
          matches!(
              payload,
-@@ -529,7 +559,6 @@ impl ToolRegistry {
+@@ -529,7 +558,6 @@ impl ToolRegistry {
          mut invocation: ToolInvocation,
          call_state: Option<Arc<ToolCallState>>,
      ) -> Result<AnyToolResult, FunctionCallError> {
@@ -5483,7 +5700,7 @@ index 7d88650f5..ab7496fd8 100644
          let call_id_owned = invocation.call_id.clone();
          let otel = invocation
              .step_context
-@@ -548,6 +577,40 @@ impl ToolRegistry {
+@@ -548,6 +576,40 @@ impl ToolRegistry {
              }
          }
 
@@ -5524,7 +5741,36 @@ index 7d88650f5..ab7496fd8 100644
          let dispatch_trace = ToolDispatchTrace::start(&invocation);
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
-@@ -621,6 +684,7 @@ impl ToolRegistry {
+@@ -571,6 +633,28 @@ impl ToolRegistry {
+                 return Err(err);
+             }
+         };
++        let _execution_guard = if let Some(gate) = call_state
++            .as_ref()
++            .and_then(|state| state.execution_gate.get())
++        {
++            if let Some(readiness) = tool.wait_until_ready(&invocation.session) {
++                readiness.await;
++            }
++            let guard = if self
++                .supports_parallel_tool_calls(&tool_name)
++                .unwrap_or(false)
++            {
++                tokio_util::either::Either::Left(gate.lock.read().await)
++            } else {
++                tokio_util::either::Either::Right(gate.lock.write().await)
++            };
++            if let Some(started) = &gate.started {
++                let _ = started.set(std::time::Instant::now());
++            }
++            Some(guard)
++        } else {
++            None
++        };
+         let telemetry_tags = tool.telemetry_tags(&invocation);
+         let mut tool_result_tags = Vec::with_capacity(2 + telemetry_tags.len() + 1);
+         let mut extra_trace_fields = Vec::new();
+@@ -621,6 +705,7 @@ impl ToolRegistry {
                          &invocation,
                          call_state.as_deref(),
                          ToolCallOutcome::Blocked,
@@ -5532,7 +5778,7 @@ index 7d88650f5..ab7496fd8 100644
                      )
                      .await;
                      return Err(err);
-@@ -643,6 +707,7 @@ impl ToolRegistry {
+@@ -643,6 +728,7 @@ impl ToolRegistry {
                              ToolCallOutcome::Failed {
                                  handler_executed: false,
                              },
@@ -5540,7 +5786,7 @@ index 7d88650f5..ab7496fd8 100644
                          )
                          .await;
                          return Err(err);
-@@ -747,13 +812,19 @@ impl ToolRegistry {
+@@ -747,13 +833,19 @@ impl ToolRegistry {
                  handler_executed: true,
              },
          };
@@ -5563,7 +5809,7 @@ index 7d88650f5..ab7496fd8 100644
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -771,6 +842,31 @@ impl ToolRegistry {
+@@ -771,6 +863,31 @@ impl ToolRegistry {
                          });
                      }
                  }
@@ -5595,7 +5841,7 @@ index 7d88650f5..ab7496fd8 100644
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -781,6 +877,13 @@ impl ToolRegistry {
+@@ -781,6 +898,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -5609,7 +5855,7 @@ index 7d88650f5..ab7496fd8 100644
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -792,12 +895,13 @@ async fn notify_tool_finish_if_unclaimed(
+@@ -792,12 +916,13 @@ async fn notify_tool_finish_if_unclaimed(
      invocation: &ToolInvocation,
      call_state: Option<&ToolCallState>,
      outcome: ToolCallOutcome,
@@ -16157,10 +16403,10 @@ index 000000000..11ab73d37
 +}
 diff --git a/codex-rs/core/src/compact_intercept.rs b/codex-rs/core/src/compact_intercept.rs
 new file mode 100644
-index 000000000..7922835a6
+index 000000000..42fe5defe
 --- /dev/null
 +++ b/codex-rs/core/src/compact_intercept.rs
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,373 @@
 +use std::sync::Arc;
 +
 +use crate::compact::CompactedHistoryMetadata;
@@ -16227,7 +16473,9 @@ index 000000000..7922835a6
 +}
 +
 +/// A contributor skipped compaction in this turn; later automatic occurrences stay held.
-+struct SkippedThisTurn;
++struct SkippedThisTurn {
++    by: String,
++}
 +
 +pub(crate) enum Plan {
 +    Native(Native),
@@ -16249,6 +16497,75 @@ index 000000000..7922835a6
 +        .collect()
 +}
 +
++#[cfg(test)]
++mod lifecycle_tests {
++    use super::*;
++    use codex_extension_api::{
++        CompactionInterceptInput, CompactionLifecycleInput, ExtensionFuture,
++        TurnLifecycleContributor,
++    };
++
++    struct Skip(std::sync::Mutex<Vec<&'static str>>);
++    impl TurnLifecycleContributor for Skip {
++        fn plan_compaction<'a>(
++            &'a self,
++            _: CompactionInterceptInput<'a>,
++        ) -> ExtensionFuture<'a, CompactionPlan> {
++            Box::pin(async {
++                CompactionPlan::Skip {
++                    by: "fixture".into(),
++                    reason: "hold".into(),
++                }
++            })
++        }
++        fn on_compaction_start<'a>(
++            &'a self,
++            _: CompactionLifecycleInput<'a>,
++        ) -> ExtensionFuture<'a, ()> {
++            self.0.lock().unwrap().push("start");
++            Box::pin(async {})
++        }
++        fn on_compaction_end<'a>(
++            &'a self,
++            input: CompactionLifecycleInput<'a>,
++        ) -> ExtensionFuture<'a, ()> {
++            assert_eq!(input.outcome, Some("skipped"));
++            assert_eq!(input.by, Some("fixture"));
++            self.0.lock().unwrap().push("end");
++            Box::pin(async {})
++        }
++    }
++
++    #[tokio::test]
++    async fn skipped_and_held_compactions_pair_each_started_occurrence() {
++        let (mut session, turn) = crate::session::tests::make_session_and_context().await;
++        let observer = Arc::new(Skip(std::sync::Mutex::new(Vec::new())));
++        let mut builder =
++            codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++        builder.turn_lifecycle_contributor(observer.clone());
++        session.services.extensions = Arc::new(builder.build());
++        let (session, turn) = (Arc::new(session), Arc::new(turn));
++        for _ in 0..2 {
++            crate::hook_runtime::run_pre_compact_hooks(&session, &turn, CompactionTrigger::Auto)
++                .await;
++            let occurrence = Occurrence::new(
++                CompactionTrigger::Auto,
++                CompactionReason::UserRequested,
++                CompactionPhase::PreTurn,
++                None,
++            );
++            assert!(matches!(
++                plan(&session, &turn, occurrence, None).await.unwrap(),
++                Plan::Held
++            ));
++        }
++        assert_eq!(
++            *observer.0.lock().unwrap(),
++            vec!["start", "end", "start", "end"]
++        );
++    }
++}
++
 +/// Asks contributors how to handle this occurrence; skips and deferrals at the hard limit fail.
 +pub(crate) async fn plan(
 +    sess: &Arc<Session>,
@@ -16268,11 +16585,15 @@ index 000000000..7922835a6
 +    let hard = context_window.is_some_and(|window| tokens >= window);
 +    if !hard
 +        && matches!(occurrence.trigger, CompactionTrigger::Auto)
-+        && turn_context
-+            .extension_data
-+            .get::<SkippedThisTurn>()
-+            .is_some()
++        && let Some(skipped) = turn_context.extension_data.get::<SkippedThisTurn>()
 +    {
++        crate::hook_runtime::notify_compaction_lifecycle(
++            sess,
++            turn_context,
++            occurrence.trigger,
++            Some(("skipped", Some(&skipped.by), false)),
++        )
++        .await;
 +        return Ok(Plan::Held);
 +    }
 +    let history = serialize(sess.clone_history().await.raw_items());
@@ -16320,7 +16641,9 @@ index 000000000..7922835a6
 +            CompactionPlan::Defer { by, reason } => ("deferred", by, reason),
 +        };
 +        if outcome == "skipped" {
-+            turn_context.extension_data.insert(SkippedThisTurn);
++            turn_context
++                .extension_data
++                .insert(SkippedThisTurn { by: by.clone() });
 +        }
 +        if hard {
 +            return Err(CodexErr::InvalidRequest(format!(
@@ -16335,15 +16658,13 @@ index 000000000..7922835a6
 +            }),
 +        )
 +        .await;
-+        for end in [None, Some((outcome, Some(by.as_str()), false))] {
-+            crate::hook_runtime::notify_compaction_lifecycle(
-+                sess,
-+                turn_context,
-+                occurrence.trigger,
-+                end,
-+            )
-+            .await;
-+        }
++        crate::hook_runtime::notify_compaction_lifecycle(
++            sess,
++            turn_context,
++            occurrence.trigger,
++            Some((outcome, Some(by.as_str()), false)),
++        )
++        .await;
 +        return Ok(Plan::Held);
 +    }
 +    Ok(Plan::Native(Native {
@@ -19280,10 +19601,10 @@ index 000000000..6c44c5e1a
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 000000000..e69aaed34
+index 000000000..d44ee38e7
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,39 @@
 +[package]
 +name = "codex-omd-extension"
 +version = "0.160.1"
@@ -19291,6 +19612,8 @@ index 000000000..e69aaed34
 +license = "Apache-2.0"
 +
 +[dependencies]
++axum = { workspace = true, features = ["http1", "tokio"] }
++futures = { workspace = true }
 +base64 = { workspace = true }
 +chrono = { workspace = true }
 +codex-api = { workspace = true }
@@ -23915,39 +24238,55 @@ index 000000000..cd27753e8
 +}
 diff --git a/codex-rs/ext/omd/src/credential_gateway.rs b/codex-rs/ext/omd/src/credential_gateway.rs
 new file mode 100644
-index 000000000..2aeafdf57
+index 000000000..907ec29e3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/credential_gateway.rs
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,307 @@
++use axum::body::Body;
++use axum::extract::State;
++use axum::http::Request;
++use axum::response::Response;
 +use codex_omd::credentials::CredentialProfiles;
-+use std::collections::BTreeMap;
-+use std::collections::BTreeSet;
-+use std::io;
-+use std::io::Read;
-+use std::io::Write;
++use std::collections::{BTreeMap, BTreeSet};
++use std::io::{self, Read};
 +use std::path::PathBuf;
-+use std::sync::Arc;
-+use std::sync::Mutex;
-+use std::sync::OnceLock;
++use std::sync::{Arc, Mutex, OnceLock};
++use std::time::Duration;
++use tokio::sync::{Semaphore, watch};
++use tokio::time::Instant;
 +
-+const BODY_BYTES: u64 = 16 * 1024 * 1024;
++const BODY_BYTES: usize = 16 * 1024 * 1024;
 +const HEADER: &str = "x-omd-credential-header";
++const CONCURRENCY: usize = 16;
++#[cfg(not(test))]
++const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
++#[cfg(test)]
++const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
++const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 +
-+type Routes = Arc<Mutex<BTreeMap<String, (PathBuf, BTreeSet<String>)>>>;
++#[derive(Clone)]
++struct Route {
++    store: PathBuf,
++    profiles: BTreeSet<String>,
++    cancelled: watch::Receiver<bool>,
++}
 +
++type Routes = Arc<Mutex<BTreeMap<String, Route>>>;
++type ServerState = (reqwest::Client, Routes, Arc<Semaphore>);
 +struct Gateway {
 +    port: u16,
 +    routes: Routes,
 +}
 +
-+/// Keeps a sidecar's gateway path open; dropping it revokes the path.
 +pub(crate) struct Registration {
 +    key: String,
 +    routes: Routes,
++    cancelled: watch::Sender<bool>,
 +}
 +
 +impl Drop for Registration {
 +    fn drop(&mut self) {
++        self.cancelled.send_replace(true);
 +        if let Ok(mut routes) = self.routes.lock() {
 +            routes.remove(&self.key);
 +        }
@@ -23959,29 +24298,44 @@ index 000000000..2aeafdf57
 +fn gateway() -> io::Result<&'static Gateway> {
 +    GATEWAY
 +        .get_or_init(|| {
-+            let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
-+            let port = server
-+                .server_addr()
-+                .to_ip()
-+                .ok_or("credential_gateway_unavailable")?
++            let listener =
++                std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
++            listener
++                .set_nonblocking(true)
++                .map_err(|error| error.to_string())?;
++            let port = listener
++                .local_addr()
++                .map_err(|error| error.to_string())?
 +                .port();
-+            // A blocking client must not be built on an async runtime thread.
-+            let client = std::thread::spawn(|| {
-+                reqwest::blocking::Client::builder()
-+                    .timeout(None::<std::time::Duration>)
-+                    .redirect(reqwest::redirect::Policy::none())
-+                    .build()
-+            })
-+            .join()
-+            .map_err(|_| "credential_gateway_unavailable")?
-+            .map_err(|e| e.to_string())?;
++            let runtime = tokio::runtime::Builder::new_multi_thread()
++                .worker_threads(2)
++                .enable_all()
++                .build()
++                .map_err(|error| error.to_string())?;
++            let client = reqwest::Client::builder()
++                .connect_timeout(Duration::from_secs(10))
++                .read_timeout(IDLE_TIMEOUT)
++                .timeout(REQUEST_TIMEOUT)
++                .pool_max_idle_per_host(0)
++                .redirect(reqwest::redirect::Policy::none())
++                .build()
++                .map_err(|error| error.to_string())?;
 +            let routes = Routes::default();
-+            let served = routes.clone();
++            let state = (
++                client,
++                routes.clone(),
++                Arc::new(Semaphore::new(CONCURRENCY)),
++            );
 +            std::thread::spawn(move || {
-+                for request in server.incoming_requests() {
-+                    let (client, routes) = (client.clone(), served.clone());
-+                    std::thread::spawn(move || forward(&client, &routes, request));
-+                }
++                runtime.block_on(async move {
++                    if let Ok(listener) = tokio::net::TcpListener::from_std(listener) {
++                        let _ = axum::serve(
++                            listener,
++                            axum::Router::new().fallback(forward).with_state(state),
++                        )
++                        .await;
++                    }
++                })
 +            });
 +            Ok(Gateway { port, routes })
 +        })
@@ -23989,7 +24343,6 @@ index 000000000..2aeafdf57
 +        .map_err(|error| io::Error::other(error.clone()))
 +}
 +
-+/// Opens `http://127.0.0.1:PORT/KEY`; `KEY/PROFILE/PATH` reaches `PATH` on that profile's enrolled origin.
 +pub(crate) fn register(
 +    store: PathBuf,
 +    profiles: BTreeSet<String>,
@@ -24001,181 +24354,196 @@ index 000000000..2aeafdf57
 +        .iter()
 +        .map(|byte| format!("{byte:02x}"))
 +        .collect::<String>();
++    let (cancelled, receiver) = watch::channel(false);
 +    gateway
 +        .routes
 +        .lock()
 +        .map_err(|_| io::Error::other("credential_gateway_poisoned"))?
-+        .insert(key.clone(), (store, profiles));
++        .insert(
++            key.clone(),
++            Route {
++                store,
++                profiles,
++                cancelled: receiver,
++            },
++        );
 +    Ok((
 +        format!("http://127.0.0.1:{}/{key}", gateway.port),
 +        Registration {
 +            key,
 +            routes: gateway.routes.clone(),
++            cancelled,
 +        },
 +    ))
 +}
 +
-+fn forward(client: &reqwest::blocking::Client, routes: &Routes, mut request: tiny_http::Request) {
-+    let response = upstream(client, routes, &mut request);
-+    let _ = match response {
-+        Ok(upstream) => {
-+            let status = upstream.status().as_u16();
-+            let headers = upstream
-+                .headers()
-+                .iter()
-+                .filter(|(name, _)| {
-+                    !matches!(
-+                        name.as_str(),
-+                        "content-length"
-+                            | "transfer-encoding"
-+                            | "connection"
-+                            | "trailer"
-+                            | "upgrade"
-+                    )
-+                })
-+                .filter_map(|(name, value)| {
-+                    tiny_http::Header::from_bytes(name.as_str(), value.as_bytes()).ok()
-+                })
-+                .collect();
-+            let length = upstream.content_length().map(|length| length as usize);
-+            if length.is_none()
-+                && request.method() != &tiny_http::Method::Head
-+                && !matches!(status, 204 | 304)
-+            {
-+                stream(request, status, headers, upstream)
-+            } else {
-+                request.respond(tiny_http::Response::new(
-+                    tiny_http::StatusCode(status),
-+                    headers,
-+                    upstream,
-+                    length,
-+                    None,
-+                ))
++async fn bounded<T, E: std::fmt::Display>(
++    cancelled: &mut watch::Receiver<bool>,
++    deadline: Instant,
++    future: impl std::future::Future<Output = Result<T, E>>,
++) -> Result<T, (u16, String)> {
++    if *cancelled.borrow() {
++        return Err((403, "credential_gateway_revoked".into()));
++    }
++    tokio::select! {
++        biased;
++        _ = cancelled.changed() => Err((403, "credential_gateway_revoked".into())),
++        result = tokio::time::timeout_at(deadline.min(Instant::now() + IDLE_TIMEOUT), future) => {
++            result.map_err(|_| (504, "credential_gateway_deadline".into()))?
++                .map_err(|error| (502, format!("credential_gateway_upstream: {error}")))
++        }
++    }
++}
++
++async fn forward(
++    State((client, routes, capacity)): State<ServerState>,
++    request: Request<Body>,
++) -> Response {
++    let result = async {
++        let permit = capacity
++            .try_acquire_owned()
++            .map_err(|_| (503, "credential_gateway_busy".to_owned()))?;
++        let deadline = Instant::now() + REQUEST_TIMEOUT;
++        let (parts, body) = request.into_parts();
++        let mut path = parts
++            .uri
++            .path_and_query()
++            .map(|value| value.as_str())
++            .unwrap_or("/")
++            .trim_start_matches('/')
++            .splitn(3, '/');
++        let (key, profile, rest) = (
++            path.next().unwrap_or_default(),
++            path.next().unwrap_or_default(),
++            path.next().unwrap_or_default(),
++        );
++        let mut route = routes
++            .lock()
++            .map_err(|_| (403, "credential_gateway_poisoned".to_owned()))?
++            .get(key)
++            .filter(|route| route.profiles.contains(profile))
++            .cloned()
++            .ok_or((403, "credential_not_host_approved".to_owned()))?;
++        let denied = |error: io::Error| (403, error.to_string());
++        let profiles = CredentialProfiles::open(&route.store).map_err(denied)?;
++        let origin = profiles
++            .profile(profile)
++            .map_err(denied)?
++            .destination()
++            .map(str::to_owned)
++            .ok_or((403, "credential_origin_missing".to_owned()))?;
++        let secret = profiles.secret(profile, &origin).map_err(denied)?;
++        let mut headers = reqwest::header::HeaderMap::new();
++        for (name, value) in &parts.headers {
++            if !matches!(
++                name.as_str(),
++                HEADER
++                    | "host"
++                    | "authorization"
++                    | "x-api-key"
++                    | "chatgpt-account-id"
++                    | "cookie"
++                    | "connection"
++                    | "content-length"
++                    | "transfer-encoding"
++                    | "proxy-authorization"
++                    | "upgrade"
++                    | "trailer"
++            ) {
++                headers.append(name, value.clone());
 +            }
 +        }
-+        Err((status, error)) => {
-+            request.respond(tiny_http::Response::from_string(error).with_status_code(status))
++        let (name, value) = match parts.headers.get(HEADER).map(|value| value.to_str()) {
++            None | Some(Ok("authorization")) => (
++                reqwest::header::AUTHORIZATION,
++                format!("Bearer {}", secret.token),
++            ),
++            Some(Ok("x-api-key")) => (
++                reqwest::header::HeaderName::from_static("x-api-key"),
++                secret.token,
++            ),
++            _ => return Err((400, format!("{HEADER} must be authorization or x-api-key"))),
++        };
++        let mut value = reqwest::header::HeaderValue::from_str(&value)
++            .map_err(|_| (403, "credential token is not a valid header".to_owned()))?;
++        value.set_sensitive(true);
++        headers.insert(name, value);
++        if let Some(account) = secret.account_id
++            && let Ok(account) = reqwest::header::HeaderValue::from_str(&account)
++        {
++            headers.insert("chatgpt-account-id", account);
 +        }
-+    };
-+}
-+
-+/// tiny_http's chunked encoder holds 8 KiB before writing, so streamed replies are framed and flushed here.
-+fn stream(
-+    request: tiny_http::Request,
-+    status: u16,
-+    headers: Vec<tiny_http::Header>,
-+    mut body: impl Read,
-+) -> io::Result<()> {
-+    let mut writer = request.into_writer();
-+    let reason = tiny_http::StatusCode(status).default_reason_phrase();
-+    write!(writer, "HTTP/1.1 {status} {reason}\r\n")?;
-+    for header in headers {
-+        write!(writer, "{}: {}\r\n", header.field, header.value)?;
-+    }
-+    writer.write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
-+    let mut buffer = [0; 8192];
-+    loop {
-+        let read = body.read(&mut buffer)?;
-+        write!(writer, "{read:x}\r\n")?;
-+        writer.write_all(&buffer[..read])?;
-+        writer.write_all(b"\r\n")?;
-+        writer.flush()?;
-+        if read == 0 {
-+            return Ok(());
++        let body = bounded(&mut route.cancelled, deadline, async {
++            Ok::<_, io::Error>(axum::body::to_bytes(body, BODY_BYTES).await)
++        })
++        .await?
++        .map_err(|error| (413, error.to_string()))?;
++        let upstream = bounded(
++            &mut route.cancelled,
++            deadline,
++            client
++                .request(parts.method, format!("{origin}/{rest}"))
++                .headers(headers)
++                .body(body)
++                .send(),
++        )
++        .await?;
++        let mut response = Response::builder().status(upstream.status());
++        for (name, value) in upstream.headers() {
++            if !matches!(
++                name.as_str(),
++                "transfer-encoding" | "connection" | "trailer" | "upgrade"
++            ) {
++                response = response.header(name, value);
++            }
 +        }
++        let (sender, receiver) = tokio::sync::mpsc::channel(1);
++        let cancelled = route.cancelled.clone();
++        tokio::spawn(async move {
++            let _permit = permit;
++            let mut upstream = upstream;
++            let mut cancelled = route.cancelled;
++            loop {
++                match bounded(&mut cancelled, deadline, upstream.chunk()).await {
++                    Ok(Some(chunk)) => {
++                        if bounded(&mut cancelled, deadline, sender.send(Ok(chunk)))
++                            .await
++                            .is_err()
++                        {
++                            break;
++                        }
++                    }
++                    Ok(None) => break,
++                    Err((_, error)) => {
++                        let _ = sender.try_send(Err(io::Error::other(error)));
++                        break;
++                    }
++                }
++            }
++        });
++        let stream = futures::stream::try_unfold(
++            (receiver, cancelled),
++            move |(mut receiver, mut cancelled)| async move {
++                let chunk = bounded(&mut cancelled, deadline, async {
++                    Ok::<_, io::Error>(receiver.recv().await)
++                })
++                .await
++                .map_err(|(_, error)| io::Error::other(error))?
++                .transpose()?;
++                Ok::<_, io::Error>(chunk.map(|chunk| (chunk, (receiver, cancelled))))
++            },
++        );
++        response
++            .body(Body::from_stream(stream))
++            .map_err(|error| (502, error.to_string()))
 +    }
-+}
-+
-+fn upstream(
-+    client: &reqwest::blocking::Client,
-+    routes: &Routes,
-+    request: &mut tiny_http::Request,
-+) -> Result<reqwest::blocking::Response, (u16, String)> {
-+    let denied = |error: &str| (403, error.to_owned());
-+    let mut parts = request.url().trim_start_matches('/').splitn(3, '/');
-+    let (key, profile, rest) = (
-+        parts.next().unwrap_or_default(),
-+        parts.next().unwrap_or_default().to_owned(),
-+        parts.next().unwrap_or_default().to_owned(),
-+    );
-+    let store = routes
-+        .lock()
-+        .map_err(|_| denied("credential_gateway_poisoned"))?
-+        .get(key)
-+        .filter(|(_, profiles)| profiles.contains(&profile))
-+        .map(|(store, _)| store.clone())
-+        .ok_or_else(|| denied("credential_not_host_approved"))?;
-+    let profiles = CredentialProfiles::open(&store).map_err(|e| denied(&e.to_string()))?;
-+    let origin = profiles
-+        .profile(&profile)
-+        .map_err(|e| denied(&e.to_string()))?
-+        .destination()
-+        .map(str::to_owned)
-+        .ok_or_else(|| denied("credential_origin_missing"))?;
-+    let secret = profiles
-+        .secret(&profile, &origin)
-+        .map_err(|e| denied(&e.to_string()))?;
-+    let mut headers = reqwest::header::HeaderMap::new();
-+    let mut style = None;
-+    for header in request.headers() {
-+        let name = header.field.as_str().as_str().to_ascii_lowercase();
-+        if name == HEADER {
-+            style = Some(header.value.as_str().to_owned());
-+        } else if !matches!(
-+            name.as_str(),
-+            "host"
-+                | "authorization"
-+                | "x-api-key"
-+                | "chatgpt-account-id"
-+                | "cookie"
-+                | "connection"
-+                | "content-length"
-+                | "transfer-encoding"
-+                | "proxy-authorization"
-+        ) && let (Ok(name), Ok(value)) = (
-+            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-+            reqwest::header::HeaderValue::from_bytes(header.value.as_bytes()),
-+        ) {
-+            headers.append(name, value);
-+        }
-+    }
-+    let (name, value) = match style.as_deref() {
-+        None | Some("authorization") => (
-+            reqwest::header::AUTHORIZATION,
-+            format!("Bearer {}", secret.token),
-+        ),
-+        Some("x-api-key") => (
-+            reqwest::header::HeaderName::from_static("x-api-key"),
-+            secret.token,
-+        ),
-+        Some(_) => return Err((400, format!("{HEADER} must be authorization or x-api-key"))),
-+    };
-+    let mut value = reqwest::header::HeaderValue::from_str(&value)
-+        .map_err(|_| denied("credential token is not a valid header"))?;
-+    value.set_sensitive(true);
-+    headers.insert(name, value);
-+    if let Some(account) = secret.account_id
-+        && let Ok(account) = reqwest::header::HeaderValue::from_str(&account)
-+    {
-+        headers.insert("chatgpt-account-id", account);
-+    }
-+    let mut body = Vec::new();
-+    request
-+        .as_reader()
-+        .take(BODY_BYTES + 1)
-+        .read_to_end(&mut body)
-+        .map_err(|e| (400, e.to_string()))?;
-+    if body.len() as u64 > BODY_BYTES {
-+        return Err((413, "credential_gateway_body_limit".to_owned()));
-+    }
-+    let method = reqwest::Method::from_bytes(request.method().as_str().as_bytes())
-+        .map_err(|_| (405, "method_unsupported".to_owned()))?;
-+    client
-+        .request(method, format!("{origin}/{rest}"))
-+        .headers(headers)
-+        .body(body)
-+        .send()
-+        .map_err(|e| (502, format!("credential_gateway_upstream: {e}")))
++    .await;
++    result.unwrap_or_else(|(status, error)| {
++        Response::builder()
++            .status(status)
++            .body(Body::from(error))
++            .expect("valid gateway error")
++    })
 +}
 +
 +#[cfg(test)]
@@ -24183,11 +24551,15 @@ index 000000000..2aeafdf57
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/credential_gateway_tests.rs b/codex-rs/ext/omd/src/credential_gateway_tests.rs
 new file mode 100644
-index 000000000..cf0256e64
+index 000000000..9101ee5da
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/credential_gateway_tests.rs
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,207 @@
 +use super::*;
++use std::io::{BufRead, Write};
++use std::time::Duration;
++
++static TEST_GATEWAY: Mutex<()> = Mutex::new(());
 +
 +fn get(url: &str) -> (u16, String) {
 +    let response = reqwest::blocking::get(url).unwrap();
@@ -24196,6 +24568,7 @@ index 000000000..cf0256e64
 +
 +#[test]
 +fn only_registered_sidecars_reach_approved_profiles_until_revoked() {
++    let _lock = TEST_GATEWAY.lock().unwrap();
 +    let temp = tempfile::tempdir().unwrap();
 +    let store = temp.path().canonicalize().unwrap();
 +    let profiles = CredentialProfiles::local(&store).unwrap();
@@ -24224,35 +24597,61 @@ index 000000000..cf0256e64
 +    );
 +}
 +
-+struct Paced(Vec<&'static [u8]>, std::sync::mpsc::Receiver<()>);
-+
-+impl Read for Paced {
-+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-+        if self.0.len() == 1 {
-+            let _ = self.1.recv();
++fn read_request(socket: &mut std::net::TcpStream) {
++    let mut reader = std::io::BufReader::new(socket);
++    let mut headers = String::new();
++    loop {
++        let mut line = String::new();
++        reader.read_line(&mut line).unwrap();
++        if line == "\r\n" {
++            break;
 +        }
-+        let Some(piece) = self.0.pop() else {
-+            return Ok(0);
-+        };
-+        buffer[..piece.len()].copy_from_slice(piece);
-+        Ok(piece.len())
++        headers.push_str(&line);
 +    }
++    assert!(
++        headers
++            .to_lowercase()
++            .contains("authorization: bearer fixture")
++    );
++}
++
++fn enrolled(root: &std::path::Path, address: std::net::SocketAddr) -> (String, Registration) {
++    let root = root.canonicalize().unwrap();
++    let profiles = CredentialProfiles::local(&root).unwrap();
++    let profile = profiles
++        .create_secret("fixture", &format!("http://{address}"), "owner")
++        .unwrap();
++    profiles.store_secret(&profile.id, "fixture").unwrap();
++    std::fs::write(
++        root.join("credentials").join(&profile.id).join("auth.json"),
++        r#"{"OPENAI_API_KEY":"fixture"}"#,
++    )
++    .unwrap();
++    let (base, registration) = register(root, BTreeSet::from([profile.id.clone()])).unwrap();
++    (format!("{base}/{}/stream", profile.id), registration)
 +}
 +
 +#[test]
 +fn streamed_replies_reach_the_client_before_the_body_ends() {
-+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-+    let port = server.server_addr().to_ip().unwrap().port();
++    let _lock = TEST_GATEWAY.lock().unwrap();
++    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    let root = tempfile::tempdir().unwrap();
++    let (url, _registration) = enrolled(root.path(), server.local_addr().unwrap());
 +    let (more, wait) = std::sync::mpsc::channel();
 +    std::thread::spawn(move || {
-+        let body = Paced(vec![&b"data: 2\n\n"[..], &b"data: 1\n\n"[..]], wait);
-+        stream(server.recv().unwrap(), 200, Vec::new(), body).unwrap();
++        let (mut socket, _) = server.accept().unwrap();
++        read_request(&mut socket);
++        socket
++            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\ndata: 1\n\n\r\n")
++            .unwrap();
++        wait.recv_timeout(Duration::from_secs(5)).unwrap();
++        socket.write_all(b"9\r\ndata: 2\n\n\r\n0\r\n\r\n").unwrap();
 +    });
 +    let mut response = reqwest::blocking::Client::builder()
 +        .timeout(std::time::Duration::from_secs(5))
 +        .build()
 +        .unwrap()
-+        .get(format!("http://127.0.0.1:{port}/"))
++        .get(url)
 +        .send()
 +        .unwrap();
 +    let mut first = [0; 9];
@@ -24262,6 +24661,106 @@ index 000000000..cf0256e64
 +    let mut rest = String::new();
 +    response.read_to_string(&mut rest).unwrap();
 +    assert_eq!(rest, "data: 2\n\n");
++}
++
++#[test]
++fn revocation_closes_inflight_headers_and_streams() {
++    let _lock = TEST_GATEWAY.lock().unwrap();
++    for prefix in [
++        "",
++        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n",
++        "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nx",
++    ] {
++        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++        let root = tempfile::tempdir().unwrap();
++        let (url, registration) = enrolled(root.path(), server.local_addr().unwrap());
++        let (started, ready) = std::sync::mpsc::channel();
++        let upstream = std::thread::spawn(move || {
++            let (mut socket, _) = server.accept().unwrap();
++            read_request(&mut socket);
++            socket.write_all(prefix.as_bytes()).unwrap();
++            started.send(()).unwrap();
++            socket
++                .set_read_timeout(Some(Duration::from_secs(1)))
++                .unwrap();
++            let result = socket.read(&mut [0u8; 1]);
++            assert!(
++                matches!(result, Ok(0))
++                    || result.is_err_and(|error| matches!(
++                        error.kind(),
++                        io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
++                    )),
++                "authenticated connection survived revocation"
++            );
++        });
++        let downstream = std::thread::spawn(move || {
++            reqwest::blocking::Client::builder()
++                .timeout(Duration::from_secs(3))
++                .build()
++                .unwrap()
++                .get(url)
++                .send()
++                .and_then(|response| response.text())
++        });
++        ready.recv_timeout(Duration::from_secs(3)).unwrap();
++        drop(registration);
++        upstream.join().unwrap();
++        let _ = downstream.join().unwrap();
++    }
++}
++
++#[test]
++fn stalled_requests_release_capacity_at_the_deadline() {
++    let _lock = TEST_GATEWAY.lock().unwrap();
++    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    let root = tempfile::tempdir().unwrap();
++    let (url, _registration) = enrolled(root.path(), server.local_addr().unwrap());
++    let (started, ready) = std::sync::mpsc::channel();
++    let upstream = std::thread::spawn(move || {
++        let mut sockets = Vec::new();
++        for _ in 0..16 {
++            let (mut socket, _) = server.accept().unwrap();
++            read_request(&mut socket);
++            sockets.push(socket);
++        }
++        started.send(()).unwrap();
++        for mut socket in sockets {
++            socket
++                .set_read_timeout(Some(Duration::from_secs(4)))
++                .unwrap();
++            let result = socket.read(&mut [0u8; 1]);
++            assert!(
++                matches!(result, Ok(0))
++                    || result.is_err_and(|error| error.kind() == io::ErrorKind::ConnectionReset)
++            );
++        }
++    });
++    let clients: Vec<_> = (0..16)
++        .map(|_| {
++            let url = url.clone();
++            std::thread::spawn(move || {
++                reqwest::blocking::Client::builder()
++                    .timeout(Duration::from_secs(5))
++                    .build()
++                    .unwrap()
++                    .get(url)
++                    .send()
++                    .unwrap()
++                    .status()
++            })
++        })
++        .collect();
++    ready.recv_timeout(Duration::from_secs(4)).unwrap();
++    assert_eq!(get(&url).0, 503);
++    for client in clients {
++        assert!(client.join().unwrap().is_server_error());
++    }
++    upstream.join().unwrap();
++    assert_eq!(
++        get(&url).0,
++        502,
++        "capacity is reusable after all timed-out sockets close"
++    );
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
@@ -33565,10 +34064,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..2117d7f83
+index 000000000..4502c3bd0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,638 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -34058,7 +34557,7 @@ index 000000000..2117d7f83
 +        }
 +        "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
 +        "settings.write" => Err("host_operation_user_only: settings.write".into()),
-+        _ => surface(lead, caller, request, cancelled).await,
++        _ => surface(core, lead, caller, request, cancelled).await,
 +    }
 +}
 +
@@ -34125,6 +34624,7 @@ index 000000000..2117d7f83
 +}
 +
 +async fn surface(
++    core: &Core,
 +    lead: &Lead,
 +    caller: &Caller<'_>,
 +    request: ModHostCall,
@@ -34156,8 +34656,27 @@ index 000000000..2117d7f83
 +    let repository = lead.host.repository.clone();
 +    let arguments = request.arguments;
 +    let cancelled = cancelled.clone();
++    let runtime = core.runtime.clone();
++    let generation = caller.generation;
++    let source = caller.source.to_owned();
 +    tokio::task::spawn_blocking(move || {
-+        let active = || !cancelled.load(Ordering::Acquire);
++        let owner = id.clone();
++        let admitted_capabilities = capabilities.clone();
++        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
++            if cancelled.load(Ordering::Acquire) {
++                return false;
++            }
++            let mut runtime = runtime
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            if runtime.reload().is_err() {
++                return false;
++            }
++            runtime.generation() == generation
++                && runtime.grants(&owner).is_some_and(|grants| {
++                    grants.source_sha256 == source && grants.capabilities == admitted_capabilities
++                })
++        });
 +        if operation == "app.request" {
 +            return codex_omd::client_surface::app_request(
 +                &id,
@@ -34167,7 +34686,7 @@ index 000000000..2117d7f83
 +                &repository,
 +                &routes,
 +                arguments,
-+                &active,
++                active,
 +            );
 +        }
 +        codex_omd::client_surface::call(
@@ -34177,7 +34696,7 @@ index 000000000..2117d7f83
 +            context,
 +            Some(&thread),
 +            None,
-+            &active,
++            active,
 +        )
 +    })
 +    .await
@@ -43313,10 +43832,10 @@ index 000000000..718e22cef
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 000000000..62606d0b3
+index 000000000..3c57323c4
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,22 @@
 +[package]
 +name = "codex-omd"
 +version = "0.1.0"
@@ -43332,15 +43851,13 @@ index 000000000..62606d0b3
 +rustix = { version = "=1.1.4", features = ["fs", "process", "termios"] }
 +ignore = "=0.4.25"
 +toml = "=0.9.11"
++tempfile = "=3.27.0"
 +
 +[target.'cfg(target_os = "macos")'.dependencies]
 +core-foundation = "=0.10.1"
 +libc = "=0.2.186"
 +security-framework = "=3.5.1"
 +security-framework-sys = "=2.15.0"
-+
-+[dev-dependencies]
-+tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
 new file mode 100644
 index 000000000..82e68d714
@@ -50526,12 +51043,13 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..3ab9044c1
+index 000000000..31ada3db9
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,497 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
++use std::sync::atomic::{AtomicBool, Ordering};
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 +use std::sync::{Arc, Mutex};
 +use std::time::{Duration, Instant};
@@ -50587,8 +51105,36 @@ index 000000000..3ab9044c1
 +
 +pub type Reply = SyncSender<Result<Value, String>>;
 +
++#[derive(Clone)]
++pub struct Validity(pub Arc<dyn Fn() -> bool + Send + Sync>);
++
++impl std::fmt::Debug for Validity {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        formatter.write_str("Validity(..)")
++    }
++}
++
++pub struct PendingReply {
++    receiver: Receiver<Result<Value, String>>,
++    live: Arc<AtomicBool>,
++}
++
++impl Drop for PendingReply {
++    fn drop(&mut self) {
++        self.live.store(false, Ordering::Release);
++    }
++}
++
++impl std::ops::Deref for PendingReply {
++    type Target = Receiver<Result<Value, String>>;
++    fn deref(&self) -> &Self::Target {
++        &self.receiver
++    }
++}
++
 +#[derive(Debug)]
 +pub struct SurfaceCall {
++    pub validity: Validity,
 +    pub caller: String,
 +    pub operation: String,
 +    pub arguments: Value,
@@ -50685,7 +51231,28 @@ index 000000000..3ab9044c1
 +    context: InvocationContext,
 +    thread: Option<&str>,
 +    confirm: Option<String>,
-+) -> Result<Receiver<Result<Value, String>>, String> {
++) -> Result<PendingReply, String> {
++    submit_bound(
++        caller,
++        operation,
++        arguments,
++        context,
++        thread,
++        confirm,
++        Arc::new(|| true),
++    )
++}
++
++#[allow(clippy::too_many_arguments)]
++fn submit_bound(
++    caller: &str,
++    operation: &str,
++    arguments: Value,
++    context: InvocationContext,
++    thread: Option<&str>,
++    confirm: Option<String>,
++    active: Arc<dyn Fn() -> bool + Send + Sync>,
++) -> Result<PendingReply, String> {
 +    if !SURFACE_OPERATIONS.contains(&operation) {
 +        return Err(format!("unsupported_host_operation: {operation}"));
 +    }
@@ -50698,7 +51265,10 @@ index 000000000..3ab9044c1
 +        .map(|(_, surface)| surface.clone())
 +        .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
 +    let (reply, receiver) = sync_channel(1);
++    let live = Arc::new(AtomicBool::new(true));
++    let queued = live.clone();
 +    surface.submit(SurfaceCall {
++        validity: Validity(Arc::new(move || queued.load(Ordering::Acquire) && active())),
 +        caller: caller.to_owned(),
 +        operation: operation.to_owned(),
 +        arguments,
@@ -50707,11 +51277,11 @@ index 000000000..3ab9044c1
 +        confirm,
 +        reply,
 +    })?;
-+    Ok(receiver)
++    Ok(PendingReply { receiver, live })
 +}
 +
 +pub fn wait(
-+    receiver: Receiver<Result<Value, String>>,
++    receiver: PendingReply,
 +    active: &dyn Fn() -> bool,
 +    deadline: Option<Instant>,
 +) -> Result<Value, String> {
@@ -50749,7 +51319,7 @@ index 000000000..3ab9044c1
 +    repository: &std::path::Path,
 +    routes: &[(String, String)],
 +    arguments: Value,
-+    active: &dyn Fn() -> bool,
++    active: Arc<dyn Fn() -> bool + Send + Sync>,
 +) -> Result<Value, String> {
 +    let method = arguments["method"]
 +        .as_str()
@@ -50952,13 +51522,21 @@ index 000000000..3ab9044c1
 +    context: InvocationContext,
 +    thread: Option<&str>,
 +    confirm: Option<String>,
-+    active: &dyn Fn() -> bool,
++    active: Arc<dyn Fn() -> bool + Send + Sync>,
 +) -> Result<Value, String> {
 +    let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
 +        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
 +    wait(
-+        submit(caller, operation, arguments, context, thread, confirm)?,
-+        active,
++        submit_bound(
++            caller,
++            operation,
++            arguments,
++            context,
++            thread,
++            confirm,
++            active.clone(),
++        )?,
++        active.as_ref(),
 +        deadline,
 +    )
 +}
@@ -50968,10 +51546,10 @@ index 000000000..3ab9044c1
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..b72ea9486
+index 000000000..a839576c9
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,284 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51005,6 +51583,16 @@ index 000000000..b72ea9486
 +
 +struct Silent;
 +
++#[derive(Default)]
++struct Queued(Mutex<Vec<SurfaceCall>>);
++
++impl ClientSurface for Queued {
++    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
++        self.0.lock().unwrap().push(call);
++        Ok(())
++    }
++}
++
 +impl ClientSurface for Silent {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
 +        std::mem::forget(call.reply);
@@ -51024,7 +51612,7 @@ index 000000000..b72ea9486
 +            event,
 +            None,
 +            None,
-+            &active
++            Arc::new(active)
 +        )
 +        .unwrap_err()
 +        .starts_with("client_surface_unavailable")
@@ -51038,7 +51626,7 @@ index 000000000..b72ea9486
 +        event,
 +        Some("t"),
 +        Some("Allow m to list threads?".into()),
-+        &active,
++        Arc::new(active),
 +    )
 +    .unwrap();
 +    assert_eq!(value["operation"], "app.request");
@@ -51054,7 +51642,7 @@ index 000000000..b72ea9486
 +            event,
 +            None,
 +            None,
-+            &active
++            Arc::new(active)
 +        )
 +        .unwrap_err(),
 +        "host_operation_user_only: packages.apply"
@@ -51067,7 +51655,7 @@ index 000000000..b72ea9486
 +            InvocationContext::User,
 +            None,
 +            None,
-+            &active
++            Arc::new(active)
 +        )
 +        .unwrap_err()
 +        .starts_with("unsupported_host_operation")
@@ -51107,6 +51695,44 @@ index 000000000..b72ea9486
 +    );
 +    drop(replaced);
 +    assert!(hub().surface.is_none());
++
++    let queue = Arc::new(Queued::default());
++    let _queued = register(queue.clone());
++    let receiver = submit(
++        "m",
++        "composer.write",
++        json!({"revision":0}),
++        event,
++        Some("a"),
++        None,
++    )
++    .unwrap();
++    let queued = queue.0.lock().unwrap().pop().unwrap();
++    assert!((queued.validity.0)());
++    drop(receiver);
++    assert!(
++        !(queued.validity.0)(),
++        "dropping the waiter revokes queued effects"
++    );
++    let authority = Arc::new(AtomicBool::new(true));
++    let check = authority.clone();
++    let receiver = submit_bound(
++        "m",
++        "composer.write",
++        json!({"revision":0}),
++        event,
++        Some("a"),
++        Some("confirm".into()),
++        Arc::new(move || check.load(Ordering::Acquire)),
++    )
++    .unwrap();
++    let held = queue.0.lock().unwrap().pop().unwrap();
++    authority.store(false, Ordering::Release);
++    assert!(
++        !(held.validity.0)(),
++        "revocation is checked before the waiter polls"
++    );
++    drop(receiver);
 +
 +    let woken = Arc::new(AtomicUsize::new(0));
 +    let counter = woken.clone();
@@ -51210,10 +51836,10 @@ index 000000000..b72ea9486
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 000000000..2c55bfc01
+index 000000000..ae02ea56f
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,176 @@
 +//! Single-use user consents for prompts a mod captured, kept per thread outside mod state.
 +
 +use crate::resource_data::ResourceRef;
@@ -51222,8 +51848,6 @@ index 000000000..2c55bfc01
 +use serde::Serialize;
 +use std::fs;
 +use std::io;
-+use std::io::Read;
-+use std::io::Seek;
 +use std::io::Write;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
@@ -51264,26 +51888,35 @@ index 000000000..2c55bfc01
 +    }
 +    let directory = root.join("consents");
 +    fs::create_dir_all(&directory)?;
-+    let mut file = fs::OpenOptions::new()
++    let file = fs::OpenOptions::new()
 +        .read(true)
 +        .write(true)
 +        .create(true)
 +        .truncate(false)
 +        .mode(0o600)
-+        .open(directory.join(format!("{thread}.json")))?;
++        .open(directory.join(format!("{thread}.lock")))?;
 +    file.lock()?;
-+    let mut text = String::new();
-+    file.read_to_string(&mut text)?;
-+    let mut consents: Vec<Consent> = if text.is_empty() {
-+        Vec::new()
-+    } else {
-+        serde_json::from_str(&text)?
-+    };
++    let path = directory.join(format!("{thread}.json"));
++    let mut consents = read(&path)?;
++    let before = consents.clone();
 +    let result = change(&mut consents)?;
-+    file.set_len(0)?;
-+    file.rewind()?;
-+    file.write_all(&serde_json::to_vec(&consents)?)?;
++    if consents != before {
++        let bytes = serde_json::to_vec(&consents)?;
++        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
++        temporary.write_all(&bytes)?;
++        temporary.as_file().sync_all()?;
++        temporary.persist(path).map_err(|error| error.error)?;
++        fs::File::open(directory)?.sync_all()?;
++    }
 +    Ok(result)
++}
++
++fn read(path: &Path) -> io::Result<Vec<Consent>> {
++    match fs::read(path) {
++        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
++        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
++        Err(error) => Err(error),
++    }
 +}
 +
 +pub fn grant(root: &Path, thread: &str, owner: &str, sha256: &str, id: &str) -> io::Result<()> {
@@ -51363,12 +51996,12 @@ index 000000000..2c55bfc01
 +}
 +
 +pub fn status(root: &Path, thread: &str, owner: &str, id: &str) -> io::Result<Option<Consent>> {
-+    with(root, thread, |consents| {
-+        Ok(consents
-+            .iter()
-+            .find(|consent| consent.id == id && consent.owner == owner)
-+            .cloned())
-+    })
++    if !token(thread) {
++        return Err(io::Error::other("consent_thread_invalid"));
++    }
++    Ok(read(&root.join("consents").join(format!("{thread}.json")))?
++        .into_iter()
++        .find(|consent| consent.id == id && consent.owner == owner))
 +}
 +
 +/// Keeps only the consents `keep` accepts and returns how many were dropped.
@@ -51385,11 +52018,86 @@ index 000000000..2c55bfc01
 +mod tests;
 diff --git a/codex-rs/omd/src/consents_tests.rs b/codex-rs/omd/src/consents_tests.rs
 new file mode 100644
-index 000000000..feea05a03
+index 000000000..5e9263384
 --- /dev/null
 +++ b/codex-rs/omd/src/consents_tests.rs
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,118 @@
 +use super::*;
++
++#[test]
++fn status_does_not_create_or_rewrite_consent_documents() {
++    let root = tempfile::tempdir().unwrap();
++    assert!(
++        status(root.path(), "empty", "owner", "id")
++            .unwrap()
++            .is_none()
++    );
++    assert!(!root.path().join("consents/empty.json").exists());
++    grant(root.path(), "t1", "owner", "digest", "id").unwrap();
++    let path = root.path().join("consents/t1.json");
++    let original = format!("{}\n", fs::read_to_string(&path).unwrap());
++    fs::write(&path, &original).unwrap();
++    assert!(status(root.path(), "t1", "owner", "id").unwrap().is_some());
++    assert_eq!(fs::read_to_string(&path).unwrap(), original);
++}
++
++#[test]
++fn failed_replacement_preserves_the_previous_consent_document() {
++    use std::os::unix::fs::PermissionsExt;
++    let root = tempfile::tempdir().unwrap();
++    grant(root.path(), "thread", "owner", "digest", "id").unwrap();
++    let directory = root.path().join("consents");
++    let path = directory.join("thread.json");
++    let original = fs::read(&path).unwrap();
++    let result = with(root.path(), "thread", |consents| {
++        consents.clear();
++        fs::set_permissions(&directory, fs::Permissions::from_mode(0o500))
++    });
++    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
++    assert!(result.is_err());
++    assert_eq!(fs::read(path).unwrap(), original);
++    assert!(
++        status(root.path(), "thread", "owner", "id")
++            .unwrap()
++            .is_some()
++    );
++}
++
++#[test]
++fn concurrent_status_reads_observe_complete_atomic_documents() {
++    let root = tempfile::tempdir().unwrap();
++    std::thread::scope(|scope| {
++        let writers: Vec<_> = (0..2)
++            .map(|writer| {
++                let root = root.path();
++                scope.spawn(move || {
++                    for number in 0..20 {
++                        grant(
++                            root,
++                            "thread",
++                            &format!("owner{writer}"),
++                            "digest",
++                            &format!("{writer}-{number}"),
++                        )
++                        .unwrap();
++                    }
++                })
++            })
++            .collect();
++        while writers.iter().any(|writer| !writer.is_finished()) {
++            status(root.path(), "thread", "owner0", "0-0").unwrap();
++        }
++        for writer in writers {
++            writer.join().unwrap();
++        }
++    });
++    assert_eq!(
++        read(&root.path().join("consents/thread.json"))
++            .unwrap()
++            .len(),
++        40
++    );
++}
 +
 +#[test]
 +fn consents_are_single_use_content_bound_and_reconciled_by_client_id() {
@@ -57586,7 +58294,7 @@ index 000000000..fe2e0fb34
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..749a6b5db
+index 000000000..937a4cdbe
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,4795 @@
@@ -60437,7 +61145,7 @@ index 000000000..749a6b5db
 +                        .join("threads")
 +                        .join(thread)
 +                        .join(".state"),
-+                    name,
++                    ModStore::state_name(&package.id, scope),
 +                ),
 +                None => store::StateLocation::Unavailable("state_thread_unavailable"),
 +            },
@@ -65186,10 +65894,10 @@ index 000000000..4973a2bbb
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..2d6cbd611
+index 000000000..f01f143c6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,1225 @@
+@@ -0,0 +1,1226 @@
 +use super::*;
 +use serde_json::Map;
 +use std::process::Command;
@@ -66069,8 +66777,9 @@ index 000000000..2d6cbd611
 +                    std::fs::write(staging.join("mod.json"), &manifest)?;
 +                    let package: ModPackage = serde_json::from_slice(&manifest)?;
 +                    package.validate()?;
-+                    for path in
-+                        std::iter::once(&package.entrypoint).chain(package.lifecycle.values())
++                    for path in std::iter::once(&package.entrypoint)
++                        .chain(package.lifecycle.values())
++                        .chain(package.assets.iter())
 +                    {
 +                        let bytes = git_bytes(
 +                            &repository_path,
@@ -78971,10 +79680,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..baa823cd6
+index 000000000..e796585a3
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4238 @@
+@@ -0,0 +1,4293 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -81382,6 +82091,61 @@ index 000000000..baa823cd6
 +}
 +
 +#[test]
++fn thread_state_separates_selected_package_scopes_and_forks_both() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let source = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
++    let user = packaged(&root, "user", "shared", source, &["commands", "store"], &[]);
++    let project = packaged(
++        &root,
++        "project",
++        "shared",
++        source,
++        &["commands", "store"],
++        &[],
++    );
++    for path in [&user, &project] {
++        let mut manifest: Value =
++            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++        manifest["state_scope"] = json!("thread");
++        std::fs::write(
++            path.join("mod.json"),
++            serde_json::to_vec(&manifest).unwrap(),
++        )
++        .unwrap();
++    }
++    trust_scoped(&store, &user, &["commands", "store"], "user");
++    let mut runtime = host(&temp);
++    let count = |runtime: &mut ModHost, thread: &str| {
++        runtime
++            .invoke(
++                "shared",
++                runtime.generation(),
++                "command",
++                "count",
++                json!({"thread_id":thread}),
++            )
++            .unwrap()
++    };
++    assert_eq!(count(&mut runtime, "t1"), json!(1));
++    trust_scoped(&store, &project, &["commands", "store"], "project");
++    runtime.reload().unwrap();
++    assert_eq!(count(&mut runtime, "t1"), json!(1));
++    let store_root = root.join("store");
++    assert!(codex_omd::data_store::fork_thread_data(&store_root, "t1", "t2").unwrap());
++    assert_eq!(count(&mut runtime, "t2"), json!(2));
++    assert_eq!(
++        std::fs::read_dir(store_root.join("data/threads/t2/.state"))
++            .unwrap()
++            .filter_map(Result::ok)
++            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
++            .count(),
++        2
++    );
++}
++
++#[test]
 +fn a_shadowed_request_policy_is_enforced_by_its_project_copy() {
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
@@ -83215,10 +83979,10 @@ index 000000000..baa823cd6
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..0d0753f71
+index 000000000..2f893bd28
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,731 @@
+@@ -0,0 +1,764 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -83739,6 +84503,27 @@ index 000000000..0d0753f71
 +    let manifest_path = repository.join("repo_mod/mod.json");
 +    let mut manifest: serde_json::Value =
 +        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["assets"] = json!(["assets/helper.json"]);
++    manifest["entrypoint"] = json!("src/main.ts");
++    manifest["lifecycle"] = json!({"install":"scripts/install.ts"});
++    std::fs::create_dir_all(repository.join("repo_mod/assets")).unwrap();
++    std::fs::create_dir_all(repository.join("repo_mod/src")).unwrap();
++    std::fs::create_dir_all(repository.join("repo_mod/scripts")).unwrap();
++    std::fs::write(
++        repository.join("repo_mod/scripts/install.ts"),
++        "export default () => {};\n",
++    )
++    .unwrap();
++    std::fs::write(
++        repository.join("repo_mod/assets/helper.json"),
++        b"{\"value\":1}",
++    )
++    .unwrap();
++    std::fs::rename(
++        repository.join("repo_mod/main.ts"),
++        repository.join("repo_mod/src/main.ts"),
++    )
++    .unwrap();
 +    manifest["provenance"] = json!({"maintainer":"Fixture Author","source":repository.canonicalize().unwrap().display().to_string()});
 +    std::fs::write(
 +        &manifest_path,
@@ -83755,7 +84540,7 @@ index 000000000..0d0753f71
 +    git(&repository, &["commit", "-m", "fixture"]);
 +    let revision = git_output(&repository, &["rev-parse", "HEAD"]);
 +
-+    let store = store(&temp);
++    let store = store_with_node(&temp);
 +    let source = ModPackageSource::Repository {
 +        repository: repository.canonicalize().unwrap().display().to_string(),
 +        revision: revision.clone(),
@@ -83769,7 +84554,13 @@ index 000000000..0d0753f71
 +        activate: false,
 +        offline: false,
 +        trust: ModPackageTrust {
-+            packages: BTreeMap::from([("repo_mod".into(), ModPackageGrant::default())]),
++            packages: BTreeMap::from([(
++                "repo_mod".into(),
++                ModPackageGrant {
++                    lifecycle: vec!["install".into()],
++                    ..ModPackageGrant::default()
++                },
++            )]),
 +        },
 +        settings: BTreeMap::new(),
 +    };
@@ -83791,7 +84582,13 @@ index 000000000..0d0753f71
 +        activate: false,
 +        offline: true,
 +        trust: ModPackageTrust {
-+            packages: BTreeMap::from([("repo_mod".into(), ModPackageGrant::default())]),
++            packages: BTreeMap::from([(
++                "repo_mod".into(),
++                ModPackageGrant {
++                    lifecycle: vec!["install".into()],
++                    ..ModPackageGrant::default()
++                },
++            )]),
 +        },
 +        settings: BTreeMap::new(),
 +    };
@@ -86007,10 +86804,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..972bf05ee
+index 000000000..4f6908ff7
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1536 @@
+@@ -0,0 +1,1599 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -86880,6 +87677,10 @@ index 000000000..972bf05ee
 +        app_server: &mut AppServerSession,
 +        call: SurfaceCall,
 +    ) {
++        if !(call.validity.0)() {
++            let _ = call.reply.send(Err("client_context_changed".into()));
++            return;
++        }
 +        match confirmation(&call) {
 +            Ok(Some((title, prompt, held))) => {
 +                self.confirm_mod_surface_call(call, title, prompt, held)
@@ -87033,6 +87834,7 @@ index 000000000..972bf05ee
 +            })
 +            .collect::<Vec<_>>();
 +        if other {
++            let validity = call.validity.clone();
 +            let (answer, caller, context, thread, question) = (
 +                answer.clone(),
 +                call.caller.clone(),
@@ -87054,6 +87856,7 @@ index 000000000..972bf05ee
 +                        });
 +                    });
 +                    tx.send(AppEvent::ModSurfaceCall(Box::new(SurfaceCall {
++                        validity: validity.clone(),
 +                        caller: caller.clone(),
 +                        operation: "terminal.prompt".into(),
 +                        arguments: json!({"kind": "text", "title": "Other", "message": question}),
@@ -87085,6 +87888,10 @@ index 000000000..972bf05ee
 +        call: SurfaceCall,
 +        held: Option<Confirmed>,
 +    ) {
++        if !(call.validity.0)() {
++            let _ = call.reply.send(Err("client_context_changed".into()));
++            return;
++        }
 +        let result = match call.operation.as_str() {
 +            "app.request" => {
 +                let method = call.arguments["method"]
@@ -87105,6 +87912,10 @@ index 000000000..972bf05ee
 +                        let handle = app_server.request_handle();
 +                        let reply = call.reply;
 +                        tokio::spawn(async move {
++                            if !(call.validity.0)() {
++                                let _ = reply.send(Err("client_context_changed".into()));
++                                return;
++                            }
 +                            let result = handle
 +                                .request_typed::<Value>(request)
 +                                .await
@@ -87200,7 +88011,12 @@ index 000000000..972bf05ee
 +            "packages.apply" => {
 +                let reply = call.reply;
 +                tokio::task::spawn_blocking(move || {
-+                    let _ = reply.send(apply_package(held));
++                    let result = if (call.validity.0)() {
++                        apply_package(held)
++                    } else {
++                        Err("client_context_changed".into())
++                    };
++                    let _ = reply.send(result);
 +                });
 +                return;
 +            }
@@ -87250,7 +88066,9 @@ index 000000000..972bf05ee
 +                            .await
 +                            .map_err(|error| error.to_string())?;
 +                        tokio::task::spawn_blocking(move || {
++                            if !(call.validity.0)() { return Err("client_context_changed".into()); }
 +                            config_call(&call, &read, |key, value, version| {
++                                if !(call.validity.0)() { return Err("client_context_changed".into()); }
 +                                let request = serde_json::from_value::<codex_app_server_protocol::ClientRequest>(json!({
 +                                    "method": "config/value/write", "id": write_id,
 +                                    "params": {"keyPath": key, "value": value, "mergeStrategy": "replace", "expectedVersion": version}}))
@@ -87475,11 +88293,53 @@ index 000000000..972bf05ee
 +mod tests {
 +    use super::*;
 +
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn revoked_queued_and_confirmed_calls_leave_the_composer_unchanged() -> color_eyre::Result<()>
++    {
++        use std::sync::atomic::{AtomicBool, Ordering};
++        let mut app = crate::app::test_support::make_test_app().await;
++        let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
++        let mut tui = crate::tui::test_support::make_test_tui()?;
++        for confirmed in [false, true] {
++            let before = app.chat_widget.mod_composer_read();
++            let active = std::sync::Arc::new(AtomicBool::new(true));
++            let check = active.clone();
++            let (reply, answer) = std::sync::mpsc::sync_channel(1);
++            let call = SurfaceCall {
++                validity: codex_omd::client_surface::Validity(std::sync::Arc::new(move || {
++                    check.load(Ordering::Acquire)
++                })),
++                caller: "fixture".into(),
++                operation: "composer.write".into(),
++                arguments: json!({"revision": before["revision"], "edit": {"kind":"fill", "text":"foreign draft"}}),
++                context: codex_omd::app_routes::InvocationContext::User,
++                thread: None,
++                confirm: None,
++                reply,
++            };
++            if confirmed {
++                let id = crate::mod_surface::hold(call);
++                active.store(false, Ordering::Release);
++                app.handle_mod_surface_confirmed(&mut tui, &mut server, id, true)
++                    .await;
++            } else {
++                active.store(false, Ordering::Release);
++                app.handle_mod_surface_call(&mut tui, &mut server, call)
++                    .await;
++            }
++            assert_eq!(answer.try_recv()?, Err("client_context_changed".into()));
++            assert_eq!(app.chat_widget.mod_composer_read(), before);
++        }
++        Ok(())
++    }
++
 +    #[test]
 +    fn config_set_confirms_every_key_but_the_callers_own_settings() {
 +        let prompt = |key: &str| {
 +            let (reply, _) = std::sync::mpsc::sync_channel(1);
 +            confirmation(&SurfaceCall {
++                validity: codex_omd::client_surface::Validity(std::sync::Arc::new(|| true)),
 +                caller: "curator".into(),
 +                operation: "config.set".into(),
 +                arguments: json!({"key": key, "value": true}),
@@ -87609,10 +88469,10 @@ index 000000000..66ed2ea5a
 +  Oh My Diff · mod status unavailable · GPT-5.6-Sol default · /tmp/project
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 000000000..ffbf66ee0
+index 000000000..2904df6d3
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,383 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -87763,6 +88623,7 @@ index 000000000..ffbf66ee0
 +
 +    /// Applies one compare-and-write edit from `owner` and returns the new revision.
 +    #[allow(clippy::too_many_arguments)]
++    #[cfg(test)]
 +    pub(crate) fn mod_edit(
 +        &mut self,
 +        owner: &str,
@@ -87770,6 +88631,18 @@ index 000000000..ffbf66ee0
 +        edit: &Value,
 +        cursor: Option<usize>,
 +        selection: Option<std::ops::Range<usize>>,
++    ) -> Result<u64, String> {
++        self.mod_edit_detach(owner, revision, edit, cursor, selection, &[])
++    }
++
++    pub(crate) fn mod_edit_detach(
++        &mut self,
++        owner: &str,
++        revision: u64,
++        edit: &Value,
++        cursor: Option<usize>,
++        selection: Option<std::ops::Range<usize>>,
++        detach: &[&str],
 +    ) -> Result<u64, String> {
 +        if revision != self.mod_draft_sync() {
 +            return Err("stale_revision".into());
@@ -87793,23 +88666,41 @@ index 000000000..ffbf66ee0
 +            },
 +            _ => return Err("composer_edit_invalid".into()),
 +        };
++        let mut prospective = crate::bottom_pane::textarea::TextArea::new();
++        prospective.set_text_with_elements(&current, &self.draft.textarea.text_elements());
++        prospective.replace_range(range.clone(), text);
++        let fits =
++            |at: usize| at <= prospective.text().len() && prospective.text().is_char_boundary(at);
++        if let Some(selection) = &selection
++            && (selection.start > selection.end || !fits(selection.start) || !fits(selection.end))
++        {
++            return Err("composer_selection_invalid".into());
++        }
++        if cursor.is_some_and(|at| !fits(at)) {
++            return Err("composer_cursor_invalid".into());
++        }
++        let mut placeholders = prospective.text_element_snapshots();
++        for placeholder in detach {
++            let Some(index) = placeholders
++                .iter()
++                .position(|element| element.text == *placeholder)
++            else {
++                return Err(format!("composer_attachment_missing: {placeholder}"));
++            };
++            placeholders.remove(index);
++        }
 +        let elements_before = self.draft.textarea.element_payloads();
 +        self.draft.textarea.replace_range(range.clone(), text);
 +        self.reconcile_deleted_elements(elements_before);
-+        let length = self.draft.textarea.text().len();
-+        let fits = |at: usize| at <= length && self.draft.textarea.text().is_char_boundary(at);
 +        match (selection, cursor) {
-+            (Some(selection), _)
-+                if selection.start <= selection.end
-+                    && fits(selection.start)
-+                    && fits(selection.end) =>
-+            {
++            (Some(selection), _) => {
 +                self.draft.textarea.set_selection(selection);
 +            }
-+            (Some(_), _) => return Err("composer_selection_invalid".into()),
-+            (None, Some(at)) if fits(at) => self.draft.textarea.set_cursor(at),
-+            (None, Some(_)) => return Err("composer_cursor_invalid".into()),
++            (None, Some(at)) => self.draft.textarea.set_cursor(at),
 +            (None, None) => self.draft.textarea.set_cursor(range.start + text.len()),
++        }
++        for placeholder in detach {
++            self.mod_detach(placeholder);
 +        }
 +        self.sync_bash_mode_from_text();
 +        self.sync_popups();
@@ -87967,10 +88858,10 @@ index 000000000..ffbf66ee0
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs
 new file mode 100644
-index 000000000..8a5a732e1
+index 000000000..88f3af92c
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,230 @@
 +use super::*;
 +use crate::bottom_pane::chat_composer::tests::new_test_composer;
 +use crate::render::renderable::Renderable;
@@ -88028,6 +88919,80 @@ index 000000000..8a5a732e1
 +        Some(&(None, "fmt".to_owned()))
 +    );
 +    assert!(composer.recovery_snapshot().text.ends_with("there!"));
++}
++
++#[test]
++fn invalid_positions_leave_draft_and_events_unchanged() {
++    let (mut composer, _rx) = new_test_composer();
++    composer.insert_str("original");
++    let revision = composer.mod_draft_sync();
++    statuses(&mut composer);
++    for (cursor, selection) in [(Some(999), None), (None, Some(0..999)), (Some(1), None)] {
++        assert!(
++            composer
++                .mod_edit(
++                    "formatter",
++                    revision,
++                    &json!({"kind":"fill","text":"雪"}),
++                    cursor,
++                    selection
++                )
++                .is_err()
++        );
++        assert_eq!(composer.current_text(), "original");
++        assert_eq!(composer.mod_revision(), revision);
++        assert!(statuses(&mut composer).is_empty());
++    }
++}
++
++#[test]
++fn invalid_detach_keeps_all_text_elements_and_owned_attachments() {
++    let (mut composer, _rx) = new_test_composer();
++    let path = PathBuf::from("/tmp/preview.png");
++    composer.attach_image(path.clone());
++    composer.mod_draft_owned(path.clone(), "preview", "sha");
++    let revision = composer.mod_draft_sync();
++    let original = composer.current_text();
++    let placeholder = composer.local_images()[0].placeholder.clone();
++    statuses(&mut composer);
++    for detach in [
++        vec![placeholder.as_str(), "missing"],
++        vec![placeholder.as_str(), placeholder.as_str()],
++    ] {
++        assert!(
++            composer
++                .mod_edit_detach(
++                    "preview",
++                    revision,
++                    &json!({"kind":"append","text":"new"}),
++                    None,
++                    None,
++                    &detach
++                )
++                .is_err()
++        );
++        assert_eq!(composer.current_text(), original);
++        assert_eq!(composer.local_images().len(), 1);
++        assert_eq!(
++            composer.mod_draft_owner(&path),
++            Some(("preview".into(), "sha".into()))
++        );
++        assert_eq!(composer.mod_revision(), revision);
++        assert!(statuses(&mut composer).is_empty());
++    }
++    assert!(
++        composer
++            .mod_edit_detach(
++                "preview",
++                revision,
++                &json!({"kind":"fill","text":"new"}),
++                None,
++                None,
++                &[&placeholder]
++            )
++            .is_err()
++    );
++    assert_eq!(composer.current_text(), original);
 +}
 +
 +#[test]
@@ -88387,10 +89352,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..ec839cc69
+index 000000000..bc33bc3ef
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,600 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -88593,36 +89558,27 @@ index 000000000..ec839cc69
 +            .get("cursor")
 +            .map(|at| index(at).ok_or("composer_cursor_invalid"))
 +            .transpose()?;
-+        let mut current = revision;
-+        if let Some(edit) = object.get("edit") {
++        let edit = if let Some(edit) = object.get("edit") {
 +            if edit["text"].as_str().is_none_or(|text| text.len() > 65_536) {
 +                return Err("composer_edit_invalid".into());
 +            }
-+            let edit = crate::mod_runtime::composer_edit("mod", caller, revision, edit.clone())?;
-+            let composer = self.bottom_pane.composer_mut();
-+            if revision != composer.mod_draft_sync() {
-+                return Err("stale_revision".into());
-+            }
-+            current = composer.mod_edit(caller, revision, &edit, cursor, selection)?;
-+        } else if cursor.is_some() || selection.is_some() {
-+            let empty = serde_json::json!({"kind": "insert", "text": ""});
-+            current = self
-+                .bottom_pane
-+                .composer_mut()
-+                .mod_edit(caller, revision, &empty, cursor, selection)?;
-+        }
-+        let composer = self.bottom_pane.composer_mut();
-+        for placeholder in object
-+            .get("detach")
-+            .and_then(serde_json::Value::as_array)
-+            .into_iter()
-+            .flatten()
-+            .filter_map(serde_json::Value::as_str)
-+        {
-+            if !composer.mod_detach(placeholder) {
-+                return Err(format!("composer_attachment_missing: {placeholder}"));
-+            }
-+        }
++            crate::mod_runtime::composer_edit("mod", caller, revision, edit.clone())?
++        } else {
++            serde_json::json!({"kind": "insert", "text": ""})
++        };
++        let detach = match object.get("detach") {
++            None => Vec::new(),
++            Some(value) => value
++                .as_array()
++                .ok_or("composer_detach_invalid")?
++                .iter()
++                .map(|value| value.as_str().ok_or("composer_detach_invalid"))
++                .collect::<Result<Vec<_>, _>>()?,
++        };
++        let current = self
++            .bottom_pane
++            .composer_mut()
++            .mod_edit_detach(caller, revision, &edit, cursor, selection, &detach)?;
 +        for path in attachments {
 +            self.bottom_pane
 +                .composer_mut()
@@ -88864,6 +89820,10 @@ index 000000000..ec839cc69
 +        let token = self.mod_invocation(crate::mod_runtime::join);
 +        let tx = self.app_event_tx.clone();
 +        std::thread::spawn(move || {
++            if !(call.validity.0)() {
++                let _ = call.reply.send(Err("client_context_changed".into()));
++                return;
++            }
 +            DEPTH.fetch_add(1, Ordering::AcqRel);
 +            let dispatch = tx.clone();
 +            let result = crate::mod_runtime::run_command(
@@ -88874,7 +89834,7 @@ index 000000000..ec839cc69
 +                running,
 +                &call.caller,
 +                &token,
-+                |args| match builtin {
++                |args| match builtin.filter(|_| (call.validity.0)()) {
 +                    Some(command) => {
 +                        dispatch.send(AppEvent::OmdDispatchCommand(Box::new(InterceptedCommand {
 +                            command,
@@ -90047,10 +91007,10 @@ index 000000000..bc5548f51
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..ebc8fe804
+index 000000000..5e7a51c8b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,409 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -90176,15 +91136,18 @@ index 000000000..ebc8fe804
 +    if std::env::var_os("NO_COLOR").is_some() || width < 4 {
 +        return vec![Line::from(format!("{prefix}[image: {alt}]")).dim()];
 +    }
-+    let key = format!("{}:{width}:{height}", reference.sha256);
++    let Some(bytes) = load_blob(reference, owners) else {
++        return vec![Line::from(format!("{prefix}[image unavailable: {alt}]")).dim()];
++    };
++    let key = format!("{}:{width}:{height}:{prefix}", reference.sha256);
 +    let mut images = IMAGES
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    if let Some(rows) = images.get(&key) {
 +        return rows.clone();
 +    }
-+    let decoded = load_blob(reference, owners)
-+        .and_then(|bytes| image::load_from_memory(&bytes).ok())
++    let decoded = image::load_from_memory(&bytes)
++        .ok()
 +        .filter(|image| image.width() <= 8192 && image.height() <= 8192);
 +    let Some(decoded) = decoded else {
 +        return vec![Line::from(format!("{prefix}[image unavailable: {alt}]")).dim()];
@@ -90237,11 +91200,15 @@ index 000000000..ebc8fe804
 +    keys: bool,
 +    prefix: &str,
 +) -> Vec<Line<'static>> {
++    let resolved = match &content {
++        Content::Source(reference) => resolve(reference, owners),
++        _ => Ok(Vec::new()),
++    };
 +    let key = match &content {
 +        Content::Spans(lines) => {
 +            format!("spans:{}", serde_json::to_string(lines).unwrap_or_default())
 +        }
-+        Content::Source(reference) => format!("source:{}", reference.sha256),
++        Content::Source(reference) => format!("source:{}:{resolved:?}", reference.sha256),
 +        Content::Diff(unified) => format!("diff:{unified}"),
 +    };
 +    let mut documents = documents();
@@ -90264,7 +91231,7 @@ index 000000000..ebc8fe804
 +                    .map(|index| anchors.get(index).cloned())
 +                    .collect::<Vec<_>>(),
 +            ),
-+            Content::Source(reference) => match resolve(reference, owners) {
++            Content::Source(_) => match resolved {
 +                Ok(lines) => {
 +                    let count = lines.len();
 +                    (
@@ -90455,10 +91422,10 @@ index 000000000..ebc8fe804
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..813116c92
+index 000000000..dc983c033
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,172 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -90484,6 +91451,54 @@ index 000000000..813116c92
 +            }]
 +        })
 +        .collect()
++}
++
++#[test]
++#[serial_test::serial]
++fn cached_resource_content_is_not_visible_without_current_authority() {
++    let reference = codex_omd::resource_data::ResourceRef {
++        reference: "unavailable".into(),
++        sha256: "a".repeat(64),
++    };
++    let key = format!("{}:8:4", reference.sha256);
++    IMAGES
++        .lock()
++        .unwrap()
++        .insert(key, vec![Line::from("private image")]);
++    IMAGES.lock().unwrap().insert(
++        format!("{}:8:4:", reference.sha256),
++        vec![Line::from("private image")],
++    );
++    let images = text(&image_rows(&reference, "image", 8, 4, &[], ""));
++    assert!(!images.iter().any(|line| line.contains("private image")));
++    documents().insert(
++        "revoked".into(),
++        Document {
++            key: format!("source:{}", reference.sha256),
++            lines: Arc::new(vec!["private document".into()]),
++            spans: Arc::new(vec![vec![Span::raw("private document")]]),
++            anchors: Arc::new(vec![None]),
++            ..Default::default()
++        },
++    );
++    let rendered = text(&rows(
++        "revoked",
++        Content::Source(&reference),
++        &[],
++        None,
++        None,
++        Some(4),
++        &[],
++        false,
++        false,
++        "",
++    ));
++    assert!(
++        !rendered
++            .iter()
++            .any(|line| line.contains("private document"))
++    );
++    assert!(rendered.iter().any(|line| line.contains("unavailable")));
 +}
 +
 +#[test]
@@ -92407,10 +93422,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..3ac480a03
+index 000000000..e4dd5f5b3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1230 @@
+@@ -0,0 +1,1236 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -92546,7 +93561,7 @@ index 000000000..3ac480a03
 +}
 +
 +/// True until the session context (thread, repository or permissions) changes.
-+fn context_unchanged() -> impl Fn() -> bool {
++pub(crate) fn context_unchanged() -> impl Fn() -> bool + Send + Sync + 'static {
 +    let epoch = ACTIVE_CONTEXT
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -92917,7 +93932,7 @@ index 000000000..3ac480a03
 +pub(crate) struct CallScope<'a> {
 +    pub(crate) context: codex_omd::app_routes::InvocationContext,
 +    pub(crate) thread: Option<&'a str>,
-+    pub(crate) active: &'a dyn Fn() -> bool,
++    pub(crate) active: Arc<dyn Fn() -> bool + Send + Sync>,
 +}
 +
 +#[cfg(test)]
@@ -92931,7 +93946,7 @@ index 000000000..3ac480a03
 +    let scope = CallScope {
 +        context: codex_omd::app_routes::InvocationContext::User,
 +        thread: None,
-+        active: &|| true,
++        active: Arc::new(|| true),
 +    };
 +    command_host_guarded(paths, policy, grants, caller, call, &scope)
 +}
@@ -92965,7 +93980,7 @@ index 000000000..3ac480a03
 +    codex_omd::host::Host {
 +        authority: &authority,
 +        data_root: &data_root,
-+        active: scope.active,
++        active: scope.active.as_ref(),
 +        record_changes: true,
 +    }
 +    .call(
@@ -93015,7 +94030,7 @@ index 000000000..3ac480a03
 +    Some(snapshot)
 +}
 +
-+fn shared_host(store: std::path::PathBuf) -> Result<Arc<Mutex<ModHost>>, String> {
++pub(crate) fn shared_host(store: std::path::PathBuf) -> Result<Arc<Mutex<ModHost>>, String> {
 +    let mut host = HOST
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -93147,7 +94162,7 @@ index 000000000..3ac480a03
 +    let scope = CallScope {
 +        context: codex_omd::app_routes::InvocationContext::Event,
 +        thread: thread.as_deref(),
-+        active: &active,
++        active: Arc::new(context_unchanged()),
 +    };
 +    let result = codex_omd::invoke_shared(
 +        &runtime,
@@ -93314,7 +94329,7 @@ index 000000000..3ac480a03
 +    let scope = CallScope {
 +        context: codex_omd::app_routes::InvocationContext::Event,
 +        thread: thread.as_deref(),
-+        active: &|| true,
++        active: Arc::new(|| true),
 +    };
 +    let input = serde_json::json!({"key": key, "value": value, "original": row["value"],
 +        "source": row["source"], "scope": row["scope"]});
@@ -93434,7 +94449,10 @@ index 000000000..3ac480a03
 +    let scope = CallScope {
 +        context: codex_omd::app_routes::InvocationContext::User,
 +        thread: thread.as_deref(),
-+        active: &active,
++        active: {
++            let invocation = invocation.clone();
++            Arc::new(move || current(&invocation))
++        },
 +    };
 +    let value = codex_omd::invoke_shared(
 +        &runtime,
@@ -93588,7 +94606,10 @@ index 000000000..3ac480a03
 +        let scope = CallScope {
 +            context: codex_omd::app_routes::InvocationContext::User,
 +            thread: thread.as_deref(),
-+            active: &active,
++            active: {
++                let invocation = invocation.clone();
++                Arc::new(move || current(&invocation))
++            },
 +        };
 +        codex_omd::continue_operation(
 +            &runtime,
@@ -93916,10 +94937,10 @@ index 000000000..7c28c120a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..877772f3e
+index 000000000..206284f65
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,730 @@
+@@ -0,0 +1,766 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -93942,7 +94963,17 @@ index 000000000..877772f3e
 +struct TuiSurface(AppEventSender);
 +
 +impl ClientSurface for TuiSurface {
-+    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
++    fn submit(&self, mut call: SurfaceCall) -> Result<(), String> {
++        let admitted = call.validity.clone();
++        let current = crate::mod_runtime::context_unchanged();
++        let thread = call.thread.clone();
++        let host = call.caller == codex_omd::broker::HOST_CALLER;
++        call.validity = codex_omd::client_surface::Validity(std::sync::Arc::new(move || {
++            (admitted.0)() && current() && (host || thread == current_thread())
++        }));
++        if !(call.validity.0)() {
++            return Err("client_context_changed".into());
++        }
 +        self.0.send(AppEvent::ModSurfaceCall(Box::new(call)));
 +        Ok(())
 +    }
@@ -94564,8 +95595,34 @@ index 000000000..877772f3e
 +    let context = scope.context;
 +    if codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation) {
 +        let thread = scope.thread.map(str::to_owned).or_else(current_thread);
++        let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
++        let runtime =
++            crate::mod_runtime::shared_host(store(paths)?).map_err(std::io::Error::other)?;
++        let generation = runtime
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .generation();
++        let source = grants.source_sha256.clone();
++        let capabilities = grants.capabilities.clone();
++        let id = caller.to_owned();
++        let continued = scope.active.clone();
++        let active: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
++            std::sync::Arc::new(move || {
++                if !continued() {
++                    return false;
++                }
++                let mut runtime = runtime
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner);
++                if runtime.reload().is_err() {
++                    return false;
++                }
++                runtime.generation() == generation
++                    && runtime.grants(&id).is_some_and(|grants| {
++                        grants.source_sha256 == source && grants.capabilities == capabilities
++                    })
++            });
 +        if operation == "app.request" {
-+            let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
 +            return codex_omd::client_surface::app_request(
 +                caller,
 +                &grants.capabilities,
@@ -94574,7 +95631,7 @@ index 000000000..877772f3e
 +                &paths.repository,
 +                &configured_routes(paths),
 +                call.arguments,
-+                scope.active,
++                active,
 +            )
 +            .map_err(std::io::Error::other);
 +        }
@@ -94585,7 +95642,7 @@ index 000000000..877772f3e
 +            context,
 +            thread.as_deref(),
 +            None,
-+            scope.active,
++            active,
 +        )
 +        .map_err(std::io::Error::other);
 +    }
@@ -94597,7 +95654,7 @@ index 000000000..877772f3e
 +                .map(str::to_owned)
 +                .or_else(current_thread)
 +                .ok_or_else(|| other("model_call_requires_a_session_thread"))?;
-+            codex_omd::host::session_call(&thread, caller, call, scope.active)
++            codex_omd::host::session_call(&thread, caller, call, scope.active.as_ref())
 +        }
 +        "turns.activity" => {
 +            let thread = scope
@@ -94652,10 +95709,10 @@ index 000000000..877772f3e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..d1f0b5e66
+index 000000000..86b76cbd8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,342 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -94688,7 +95745,7 @@ index 000000000..d1f0b5e66
 +    crate::mod_runtime::CallScope {
 +        context,
 +        thread: None,
-+        active: &active,
++        active: std::sync::Arc::new(active),
 +    }
 +}
 +
@@ -94712,10 +95769,33 @@ index 000000000..d1f0b5e66
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn user_commands_authorize_app_requests_before_the_app_loop() {
 +    let dir = tempfile::tempdir().unwrap();
 +    let root = dir.path().canonicalize().unwrap();
-+    let paths = paths(&root);
++    let mut paths = paths(&root);
++    let package = root.join("package");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"m","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["sessions"]})).unwrap()).unwrap();
++    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
++    let store = codex_omd::ModStore::create(
++        root.join("store"),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("test node")),
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    let source = inspected["sha256"].as_str().unwrap();
++    store
++        .trust(package.clone(), source, vec!["sessions".into()], "user")
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    paths.store = Some(root.join("store"));
++    let _environment = crate::omd::tests::omd_environment(paths.store.as_deref().unwrap());
++    let grants = |capabilities: &[&str]| {
++        let mut value = grants(capabilities).unwrap();
++        value.source_sha256 = source.to_owned();
++        Some(value)
++    };
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
 +    let _registration = codex_omd::client_surface::register(Arc::new(Echo));
 +    with(|state| state.thread = Some("thread-1".into()));
@@ -94822,6 +95902,73 @@ index 000000000..d1f0b5e66
 +        routes
 +            .as_array()
 +            .is_some_and(|routes| routes.iter().any(|route| route["method"] == "thread/list"))
++    );
++
++    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
++    let surface = TuiSurface(AppEventSender::new(sender));
++    let (reply, _answer) = std::sync::mpsc::sync_channel(1);
++    surface
++        .submit(SurfaceCall {
++            validity: codex_omd::client_surface::Validity(Arc::new(|| true)),
++            caller: "m".into(),
++            operation: "composer.write".into(),
++            arguments: json!({"revision":0}),
++            context: user,
++            thread: Some("thread-1".into()),
++            confirm: Some("held".into()),
++            reply,
++        })
++        .unwrap();
++    let AppEvent::ModSurfaceCall(queued) = receiver.try_recv().unwrap() else {
++        panic!("queued call");
++    };
++    assert!((queued.validity.0)());
++    with(|state| state.thread = Some("thread-2".into()));
++    assert!(
++        !(queued.validity.0)(),
++        "held composer calls cannot cross threads"
++    );
++    with(|state| state.thread = None);
++
++    struct ChangedSource(PathBuf, PathBuf);
++    impl ClientSurface for ChangedSource {
++        fn submit(&self, call: SurfaceCall) -> Result<(), String> {
++            assert!((call.validity.0)());
++            std::fs::write(&self.0, "export default () => { const changed = true; };").unwrap();
++            let package = self.0.parent().unwrap();
++            let inspected = codex_omd::ModStore::inspect_package(package).unwrap();
++            codex_omd::ModStore::open(self.1.clone())
++                .unwrap()
++                .trust(
++                    package.to_owned(),
++                    inspected["sha256"].as_str().unwrap(),
++                    vec!["sessions".into()],
++                    "user",
++                )
++                .unwrap();
++            assert!(
++                !(call.validity.0)(),
++                "queued authority does not survive source replacement"
++            );
++            Err("source_replaced".into())
++        }
++    }
++    let _changed = codex_omd::client_surface::register(Arc::new(ChangedSource(
++        package.join("index.ts"),
++        paths.store.clone().unwrap(),
++    )));
++    assert_eq!(
++        host_call(
++            &paths,
++            &policy,
++            grants(&["sessions"]),
++            "m",
++            request("thread/list", json!({})),
++            &scope(user)
++        )
++        .unwrap_err()
++        .to_string(),
++        "source_replaced"
 +    );
 +}
 +
@@ -98924,7 +100071,7 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..82db36ccd
+index 000000000..93d981956
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
 @@ -0,0 +1,646 @@
@@ -99337,12 +100484,12 @@ index 000000000..82db36ccd
 +}
 +
 +#[cfg(test)]
-+mod tests {
++pub(crate) mod tests {
 +    use super::*;
 +    use serial_test::serial;
 +    use tempfile::TempDir;
 +
-+    struct EnvGuard {
++    pub(crate) struct EnvGuard {
 +        name: &'static str,
 +        original: Option<std::ffi::OsString>,
 +    }
@@ -99394,7 +100541,7 @@ index 000000000..82db36ccd
 +        store
 +    }
 +
-+    fn omd_environment(store: &Path) -> (EnvGuard, EnvGuard) {
++    pub(crate) fn omd_environment(store: &Path) -> (EnvGuard, EnvGuard) {
 +        crate::mod_runtime::synchronize_context(crate::mod_runtime::ModContext {
 +            thread_id: None,
 +            repository: store.to_path_buf(),

@@ -877,8 +877,9 @@ impl ModStore {
                     std::fs::write(staging.join("mod.json"), &manifest)?;
                     let package: ModPackage = serde_json::from_slice(&manifest)?;
                     package.validate()?;
-                    for path in
-                        std::iter::once(&package.entrypoint).chain(package.lifecycle.values())
+                    for path in std::iter::once(&package.entrypoint)
+                        .chain(package.lifecycle.values())
+                        .chain(package.assets.iter())
                     {
                         let bytes = git_bytes(
                             &repository_path,

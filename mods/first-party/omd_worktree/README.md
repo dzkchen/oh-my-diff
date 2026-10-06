@@ -34,7 +34,7 @@ A failed setup step is reported and the worktree is kept.
 uncommitted tracked changes. It shows the task branch's commits, changed files
 and diff, plus any uncommitted work in the task worktree, including the full
 content of up to eight new files (more must be committed there first; shared
-setup paths are never committed). That work is committed there under the task
+setup paths are never committed; already staged setup paths must be unstaged first). That work is committed there under the task
 name when you choose **Commit and merge**, only if the worktree, its new files
 and the branch tip still match the preview; the merge then runs only after
 rechecking this checkout's HEAD and clean status and that the branch moved by
@@ -49,6 +49,7 @@ paths alone don't count as dirty and are removed with the checkout),
 keeps session history, keeps unmerged branches and deletes a merged branch only
 after its own confirmation. The mod never stashes, resets or deletes
 another session's work, and commits it only through **Commit and merge**.
+Removal requires a complete session inventory before and after confirmation. Failed requests, malformed pages or inventories exceeding four pages of 100 sessions keep the checkout.
 
 **Permissions.** Codex protects `.git`, and checkouts live outside the
 repository, so creation, integration and removal need a permission profile that

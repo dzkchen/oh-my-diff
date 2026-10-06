@@ -518,6 +518,27 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     let manifest_path = repository.join("repo_mod/mod.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["assets"] = json!(["assets/helper.json"]);
+    manifest["entrypoint"] = json!("src/main.ts");
+    manifest["lifecycle"] = json!({"install":"scripts/install.ts"});
+    std::fs::create_dir_all(repository.join("repo_mod/assets")).unwrap();
+    std::fs::create_dir_all(repository.join("repo_mod/src")).unwrap();
+    std::fs::create_dir_all(repository.join("repo_mod/scripts")).unwrap();
+    std::fs::write(
+        repository.join("repo_mod/scripts/install.ts"),
+        "export default () => {};\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repository.join("repo_mod/assets/helper.json"),
+        b"{\"value\":1}",
+    )
+    .unwrap();
+    std::fs::rename(
+        repository.join("repo_mod/main.ts"),
+        repository.join("repo_mod/src/main.ts"),
+    )
+    .unwrap();
     manifest["provenance"] = json!({"maintainer":"Fixture Author","source":repository.canonicalize().unwrap().display().to_string()});
     std::fs::write(
         &manifest_path,
@@ -534,7 +555,7 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     git(&repository, &["commit", "-m", "fixture"]);
     let revision = git_output(&repository, &["rev-parse", "HEAD"]);
 
-    let store = store(&temp);
+    let store = store_with_node(&temp);
     let source = ModPackageSource::Repository {
         repository: repository.canonicalize().unwrap().display().to_string(),
         revision: revision.clone(),
@@ -548,7 +569,13 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
         activate: false,
         offline: false,
         trust: ModPackageTrust {
-            packages: BTreeMap::from([("repo_mod".into(), ModPackageGrant::default())]),
+            packages: BTreeMap::from([(
+                "repo_mod".into(),
+                ModPackageGrant {
+                    lifecycle: vec!["install".into()],
+                    ..ModPackageGrant::default()
+                },
+            )]),
         },
         settings: BTreeMap::new(),
     };
@@ -570,7 +597,13 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
         activate: false,
         offline: true,
         trust: ModPackageTrust {
-            packages: BTreeMap::from([("repo_mod".into(), ModPackageGrant::default())]),
+            packages: BTreeMap::from([(
+                "repo_mod".into(),
+                ModPackageGrant {
+                    lifecycle: vec!["install".into()],
+                    ..ModPackageGrant::default()
+                },
+            )]),
         },
         settings: BTreeMap::new(),
     };

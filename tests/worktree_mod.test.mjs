@@ -15,7 +15,7 @@ const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1
 const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
-function fixture(settings = {}) {
+function fixture(settings = {}, inventory = () => ({ data: [], nextCursor: null })) {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'omd-worktree-')));
   const repository = join(parent, 'repo');
   const git = (...argv) => execFileSync('git', argv, { cwd: repository, encoding: 'utf8' });
@@ -52,7 +52,7 @@ function fixture(settings = {}) {
       }
       case 'app.request':
         if (args.method === 'thread/start') return { thread: { id: `thread-${args.params.cwd.split('/').at(-1)}` } };
-        if (args.method === 'thread/list') return { data: [] };
+        if (args.method === 'thread/list') return inventory(args.params);
         return {};
       default: return { shown: true };
     }
@@ -157,4 +157,39 @@ test('worktree cleanup keeps dirty and unmerged work, and failed integrations re
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
+});
+
+test('worktree removal requires complete session inventory before and after confirmation', () => {
+  for (const mode of ['failed', 'later-active', 'incomplete', 'became-active']) {
+    let calls = 0;
+    const f = fixture({}, params => {
+      calls++;
+      if (mode === 'failed') throw new Error('unavailable');
+      if (mode === 'incomplete') return { data: [], nextCursor: `page-${calls}` };
+      if (mode === 'later-active' && !params.cursor) return { data: [], nextCursor: 'later' };
+      return { data: mode === 'became-active' && calls === 1 ? [] : [{ status: { type: 'active' } }], nextCursor: null };
+    });
+    try {
+      f.command('task', 'inventory --branch task/inventory');
+      const path = `${f.repository}.worktrees/task-inventory`;
+      assert.match(f.command('park', 'task/inventory').display, /session|inventory/i);
+      assert.ok(existsSync(path), mode);
+      assert.equal(f.calls.some(call => call.arguments?.argv?.includes('--force')), false);
+    } finally { rmSync(f.parent, { recursive: true, force: true }); }
+  }
+});
+
+test('integration refuses staged shared setup files and preserves their index entries', () => {
+  const f = fixture({ shared: [{ path: 'node_modules', mode: 'symlink' }] });
+  try {
+    f.command('task', 'staged --branch task/staged');
+    const path = `${f.repository}.worktrees/task-staged`;
+    execFileSync('git', ['-C', path, 'add', '-f', 'node_modules']);
+    writeFileSync(join(path, 'a.txt'), 'changed\n');
+    const staged = () => execFileSync('git', ['-C', path, 'diff', '--cached', '--raw'], { encoding: 'utf8' });
+    const before = staged();
+    assert.match(f.command('integrate', 'task/staged').display, /shared setup.*staged/i);
+    assert.equal(staged(), before);
+    assert.equal(execFileSync('git', ['-C', path, 'show', 'HEAD:a.txt'], { encoding: 'utf8' }), 'one\n');
+  } finally { rmSync(f.parent, { recursive: true, force: true }); }
 });
