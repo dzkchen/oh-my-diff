@@ -408,3 +408,32 @@ fn send_results_keep_inner_edits_and_stay_inside_editable_text() {
             .contains("no longer JSON")
     );
 }
+
+#[test]
+fn queued_sections_reach_the_next_request_once_and_its_retries() {
+    let thread = "thread-queued-sections";
+    assert!(!apply_queued_sections(&mut request(), thread, false));
+    queue_section(thread, "checks", "build failed").unwrap();
+    let mut first = request();
+    assert!(apply_queued_sections(&mut first, thread, false));
+    let text = first.to_string();
+    assert!(
+        text.contains("Mod-provided context") && text.contains("build failed"),
+        "{text}"
+    );
+    let mut retry = request();
+    assert!(apply_queued_sections(&mut retry, thread, true));
+    assert_eq!(retry, first);
+    assert!(!apply_queued_sections(&mut request(), thread, false));
+    for _ in 0..INSERTED_SECTIONS {
+        queue_section(thread, "checks", "note").unwrap();
+    }
+    assert_eq!(
+        queue_section(thread, "checks", "one too many"),
+        Err("model_context_queue_full".to_owned())
+    );
+    assert_eq!(
+        queue_section("other-thread", "checks", " "),
+        Err("model_context_invalid".to_owned())
+    );
+}

@@ -1061,6 +1061,7 @@ impl ResponseObserver for Accounts {
                 edited = true;
             }
         }
+        edited |= codex_omd::model_request::apply_queued_sections(&mut value, &thread, attempt > 1);
         if let Some(rates) = account
             .rates
             .as_ref()

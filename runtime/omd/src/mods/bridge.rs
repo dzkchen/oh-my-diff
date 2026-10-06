@@ -63,7 +63,9 @@ impl ModHostCall {
             | "terminal.image_sample"
             | "terminal.open"
             | "terminal.prompt"
-            | "terminal.pane" => Ok("terminal"),
+            | "terminal.pane"
+            | "terminal.panes"
+            | "terminal.notice" => Ok("terminal"),
             "terminal.pty" => Ok("pty"),
             "model.complete" | "model.fork" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),

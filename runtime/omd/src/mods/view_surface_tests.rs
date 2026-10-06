@@ -227,3 +227,49 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
     assert_eq!(sidebar["mode"], "replace");
     assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
 }
+
+#[test]
+fn links_multiselects_and_control_hotkeys_are_validated() {
+    let site = |component: Value| json!({"sites": {"sidebar": {"components": [component]}}});
+    let line = |link: &str| {
+        site(
+            json!({"type": "line", "id": "l", "label": "L", "spans": [{"text": "x", "link": link}]}),
+        )
+    };
+    let choice = |value: Value| {
+        site(
+            json!({"type": "multiselect", "id": "m", "label": "M", "value": value,
+        "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}], "action": {"command": "pick"}}),
+        )
+    };
+    let button = |hotkey: &str| {
+        site(
+            json!({"type": "button", "id": "b", "label": "B", "text": "Go",
+        "action": {"command": "go"}, "hotkey": hotkey, "autofocus": true}),
+        )
+    };
+    for valid in [
+        line("https://example.com/a?b#c"),
+        line("HTTP://host"),
+        choice(json!(["b", "a"])),
+        choice(json!([])),
+        button("Alt+g"),
+    ] {
+        assert!(view(valid.clone()).is_ok(), "{valid}");
+    }
+    for invalid in [
+        line("javascript:alert(1)"),
+        line("https:///path"),
+        line("https://a b"),
+        line(&format!("https://h/{}", "x".repeat(2048))),
+        site(
+            json!({"type": "document", "id": "d", "label": "D", "lines": [[{"text": "x", "link": "https://h"}]]}),
+        ),
+        choice(json!(["c"])),
+        choice(json!(["a", "a"])),
+        button("Ctrl+c"),
+        button("g"),
+    ] {
+        assert!(view(invalid.clone()).is_err(), "{invalid}");
+    }
+}

@@ -197,6 +197,7 @@ pub use mods::intercept_shared;
 pub use mods::invalid_render_tree;
 pub use mods::invoke_shared;
 pub use mods::mod_command_reference;
+pub use mods::mod_component_id;
 pub use mods::mod_counts;
 pub use mods::mod_key_name;
 pub use mods::namespace_matches;

@@ -106,6 +106,7 @@
         "terminal_inline_sites_v1",
         "render_hooks_v1",
         "ui_composition_v1",
+        "ui_controls_v1",
         "reactive_state_v1",
         "session_ports_v1",
         "structured_access_v1",
@@ -170,6 +171,8 @@
         "terminal.open",
         "terminal.prompt",
         "terminal.pane",
+        "terminal.panes",
+        "terminal.notice",
         "terminal.pty"
       ]
     },

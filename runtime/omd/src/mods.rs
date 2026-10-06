@@ -54,6 +54,7 @@ pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
 pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
+pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::valid_glyphs;
 mod outcome;
@@ -308,6 +309,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_inline_sites_v1",
     "render_hooks_v1",
     "ui_composition_v1",
+    "ui_controls_v1",
     "reactive_state_v1",
     "session_ports_v1",
     "structured_access_v1",
@@ -407,6 +409,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.open",
     "terminal.prompt",
     "terminal.pane",
+    "terminal.panes",
+    "terminal.notice",
     "terminal.pty",
     "model.complete",
     "model.fork",
@@ -613,6 +617,7 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("compaction", "compaction"),
     ("elicitation", "approvals"),
     ("composer_edit", "composer"),
+    ("component_change", "terminal"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "prompt",
@@ -2490,6 +2495,7 @@ fn hostless(event: &str, payload: &Value) -> bool {
                         | "agent_offers"
                         | "admission"
                         | "composer_edit"
+                        | "component_change"
                 )
             )
 }
@@ -4686,6 +4692,7 @@ impl ModHost {
             "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
             "intercept.input": {"thread_id":"observe_only","text":"replaceable","revision":"observe_only","attachments":"observe_only","elements":"observe_only"},
             "intercept.composer_edit": {"source":"observe_only","caller":"observe_only","revision":"observe_only","edit":"replaceable"},
+            "intercept.component_change": {"kind":"observe_only","id":"observe_only","from":"observe_only","to":"replaceable","origin":"observe_only"},
             "intercept.model_request": {"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable","model":"observe_only","provider":"observe_only","effort":"replaceable","sections":"replaceable","tools":"observe_only"},
             "intercept.response_stream": {"request_id":"observe_only","scope":"observe_only","synthetic":"observe_only","kind":"observe_only","index":"observe_only","item_id":"observe_only","protected":"observe_only","call_id":"observe_only","format":"observe_only","text":"replaceable","tool":"replaceable","arguments":"replaceable","status":"observe_only","usage":"observe_only"},            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},

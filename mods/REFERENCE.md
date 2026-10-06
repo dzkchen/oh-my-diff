@@ -47,7 +47,7 @@ native work.
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`; the `component_change` interceptor |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
@@ -1436,7 +1436,7 @@ terminal control keys and Shift+Tab; a binding that collides with a native key
 is ignored with a warning. `component_event`, `view` and `focus` report
 interaction; `component_event` also reports, to the component's owner only and
 with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
-select's new `value` on every edit, `scroll` with a pane's `offset`, `pointer`
+select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
 and dialogs (`ui_composition_v1`). Operations:
 
@@ -1466,6 +1466,22 @@ and dialogs (`ui_composition_v1`). Operations:
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
   focuses, scrolls (`offset`) or reveals one of the caller's own panes,
   dialogs or controls; another mod's component is `terminal_pane_not_owned`.
+- `terminal.panes {}` (`ui_controls_v1`) returns the caller's own panes as
+  `{panes: [{id, visible, collapsed, focused, scroll}]}`; a pane is `visible`
+  while its header row was on screen in the last frame.
+- `terminal.notice {text, kind?, placement?, ...}` (`ui_controls_v1`) shows a
+  notice of at most 512 bytes attributed to the mod. `kind` is `info`
+  (default), `warning` or `error`. `placement: 'toast'` (default) draws it below
+  the composer notes and `'status'` in the status row (first 40 characters),
+  each for `ttl_ms` (1,000 to 60,000, default 5,000); at most 4 per mod, and a
+  new notice with the same `id` replaces the old one. `{id, placement, clear:
+  true}` removes it early and returns `{cleared}`. `placement: 'transcript'`
+  appends a log notice to the transcript that never reaches the model unless
+  `audience: 'model'`, which also adds the text as mod-provided context to the
+  thread's next model request (an OMD stream retry of that request carries it again; at most 8 queued per
+  thread, `model_context_queue_full`). `tool_call_id` draws a transcript
+  notice beneath that tool call's cell in the owned transcript, or as a notice
+  naming the call in inline mode.
 - `terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}`
   starts an interactive shell from a user command after confirmation, in the
   session sandbox without network (macOS) with a scratch `HOME`. `start` may
@@ -1589,7 +1605,7 @@ reason?}` to the suggestion's owner.
 it reaches the draft: `{source: 'mod' | 'paste' | 'history' | 'completion',
 caller, revision, edit}`; handlers may change only `edit.text` or answer
 `{deny}`, which leaves the draft unchanged and tells the user. They run while
-the terminal applies the edit, so they get no host operations. The `input`
+the terminal applies the edit, so they get no host operations. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
 interceptors also receive the submitted draft's `revision`, `attachments`
 (`{kind, source}`) and placeholder `elements` (`{kind: 'paste' | 'mention' |
 'skill' | 'image', start?, end?, name?, source}`). After skills and mentions are
@@ -1647,7 +1663,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   wait holds no runtime lock and does not count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
-  `config_list`, `tool_specs`, `agent_offers`, `admission` and `composer_edit` callbacks run
+  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit` and `component_change` callbacks run
   without host operations and get `host_operation_unavailable`. `api.time.wait(check, {interval_ms,
   timeout_ms})` polls `check` between sleeps within the 32 host calls.
   `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
@@ -1824,8 +1840,11 @@ any it refuses.
   from every mod has at most 64, and a key bound by two mods rejects the later
   mod's patch. A view holds at most 64 components nested at most 6 deep;
   component ids use `a-z`, `0-9` and `_`, up to 48 bytes, and are unique across
-  the composed view. A `select` has at most 16 options and a `list` at most 200
-  rows; row values, labels and spans are at most 256 bytes; `text`, `code` and
+  the composed view. A `select` or `multiselect` has at most 16 options and a `list` at most 200
+  rows; a span `link` is an http(s) URL of at most 2,048 bytes on `line` and
+  `list` spans (documents refuse it), drawn as an OSC 8 hyperlink, and
+  `markdown` links become hyperlinks too; a control `hotkey` uses the
+  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code` and
   `markdown` at most 4,096 bytes; `diff` and `document` at most 49,152 bytes. A
   view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
   `wrap` site contains exactly one `slot`. Text fields refuse control characters
@@ -1837,7 +1856,13 @@ any it refuses.
   a click outside releases focus and hides the dialog until a mod command runs,
   and Esc reaches the focused component's owner as `component_event {kind:
   'input', events: [{key: 'Esc'}]}`. Space on a focused `list` row activates it
-  like Enter. An `input` or `select` is controlled: the user's edits stay
+  like Enter. On a focused `multiselect`, Space toggles the current option and
+  Enter runs its action with the checked values as a JSON array argument. A
+  `hotkey` on a button, input, select, multiselect or list focuses it (a button
+  runs its action) unless a text input has focus; it obeys the keybinding
+  collision rules, is checked before view `keybindings`, and when two controls
+  share one the first wins. `autofocus` focuses the control when it first
+  appears and nothing has focus, reported as a `focus` event with origin `mod`. An `input`, `select` or `multiselect` is controlled: the user's edits stay
   while the view repeats a value, an echo of one of the user's own recent
   values is ignored, and a new `value` from the mod resets the field.
 - Callback contexts: `terminal` renders and `render` hooks get no host
@@ -1886,6 +1911,29 @@ The `omd-mod` binary is part of the OMD engine. Set `OMD_MOD_BIN` only when a
 development build is not already on `PATH`; set `OMD_MOD_NODE` to the supported
 Node 24.x executable, 24.18 or later. pnpm is the package manager. The repository also
 publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
+
+### JSX/TSX
+
+Writing terminal components as JSX is optional and author-side only. When a
+project has `index.tsx`, `omd-mod-author` (check, test, run, debug, package, and
+each watch reload) compiles it with the project's own TypeScript into a
+self-contained `index.ts`, inlining the small JSX factory so the host still sees
+one module with no value imports. The project needs `typescript` installed
+(`pnpm add -D typescript@5.9.3`); without it the command fails with
+`jsx_requires_typescript`. Edit `index.tsx` and treat `index.ts` as generated
+output. The scaffolded `tsconfig.json` sets `jsx: "react-jsx"` and
+`jsxImportSource: "@oh-my-diff/mod-api"`; `check` type-checks `index.tsx` itself.
+
+Each `TerminalComponent` kind is an intrinsic element (`<box>`, `<line>`,
+`<text>`, ...) with the component's fields as props. Children of `box`, `pane`
+and `dialog` become `children`; string and number children of `text`, `button`,
+`markdown` and `code` become `text`; string and span children of `line` become
+`spans`. Function components returning a component work. The factory is pure
+object construction with no Node or DOM authority and grants no capability.
+Unsupported elements and props fail at compile time through the types, and a
+dynamic unknown tag fails with `jsx_unsupported_element` (children on a kind
+that takes none fail with `jsx_children_unsupported`). Fragments are not
+supported.
 
 ## Package commands
 

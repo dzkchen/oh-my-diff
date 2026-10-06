@@ -15213,7 +15213,7 @@ index 9d61157c4..1d511f153 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 37b5c788a..58c402c82 100644
+index 37b5c788a..4f23d9bde 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -230,6 +230,8 @@ mod link_hover;
@@ -15314,7 +15314,7 @@ index 37b5c788a..58c402c82 100644
 +        if let Some(placeholder) = crate::mod_ui::sync_placeholder() {
 +            self.chat_widget.apply_mod_placeholder(placeholder);
 +        }
-+        if before != crate::mod_ui::status_segments() {
++        if crate::mod_ui::notices_changed() || before != crate::mod_ui::status_segments() {
 +            self.chat_widget.refresh_status_line();
 +        }
 +    }
@@ -21657,10 +21657,10 @@ index f80f311c7..8fdac26ff 100644
          visible_lines(self.display_hyperlink_lines(width))
      }
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index bbb05987b..f1a2a812b 100644
+index bbb05987b..4c263cbbb 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
-@@ -196,6 +196,20 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+@@ -196,6 +196,24 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
  /// intact by adaptive wrapping). Concrete types only need to override
  /// heights when they apply additional layout logic beyond what
  /// `Paragraph::line_count` captures.
@@ -21671,9 +21671,13 @@ index bbb05987b..f1a2a812b 100644
 +    draw: impl FnOnce(&C, u16) -> Vec<HyperlinkLine>,
 +) -> Vec<HyperlinkLine> {
 +    match cell.render_target() {
-+        Some(target) => crate::mod_render::hyperlink_lines(&target, width, |props, width| {
-+            cell.render_native(props, draw(cell, width))
-+        }),
++        Some(target) => {
++            let mut lines = crate::mod_render::hyperlink_lines(&target, width, |props, width| {
++                cell.render_native(props, draw(cell, width))
++            });
++            lines.extend(crate::mod_render::tool_notice_lines(&target));
++            lines
++        }
 +        None => draw(cell, width),
 +    }
 +}
@@ -21681,7 +21685,7 @@ index bbb05987b..f1a2a812b 100644
  pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
      /// Retain reasoning inside an activity group, or return it for normal insertion.
      /// Call positions stay fixed as in-flight calls complete; other history cells decline it.
-@@ -229,6 +243,20 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -229,6 +247,20 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          plain_hyperlink_lines(self.display_lines(width))
      }
 
@@ -21702,7 +21706,7 @@ index bbb05987b..f1a2a812b 100644
      /// Compact presentation for the owned transcript, which can reveal details in place.
      #[allow(dead_code, reason = "Used by later layers of the TUI refresh stack.")]
      fn compact_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-@@ -263,7 +291,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -263,7 +295,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
      fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {
          match mode {
@@ -21713,7 +21717,7 @@ index bbb05987b..f1a2a812b 100644
              HistoryRenderMode::Raw => self.live_raw_lines(),
          }
      }
-@@ -274,7 +304,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -274,7 +308,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          mode: HistoryRenderMode,
      ) -> Vec<HyperlinkLine> {
          match mode {
@@ -21724,7 +21728,7 @@ index bbb05987b..f1a2a812b 100644
              HistoryRenderMode::Raw => plain_hyperlink_lines(self.live_raw_lines()),
          }
      }
-@@ -345,7 +377,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -345,7 +381,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
  impl Renderable for Box<dyn HistoryCell> {
      fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -21735,10 +21739,10 @@ index bbb05987b..f1a2a812b 100644
          let y = if area.height == 0 {
              0
 diff --git a/codex-rs/tui/src/history_cell/notices.rs b/codex-rs/tui/src/history_cell/notices.rs
-index c5fa22417..7ce08739a 100644
+index c5fa22417..ebf2928fd 100644
 --- a/codex-rs/tui/src/history_cell/notices.rs
 +++ b/codex-rs/tui/src/history_cell/notices.rs
-@@ -314,22 +314,77 @@ impl HistoryCell for DeprecationNoticeCell {
+@@ -314,22 +314,95 @@ impl HistoryCell for DeprecationNoticeCell {
          lines
      }
  }
@@ -21772,6 +21776,30 @@ index c5fa22417..7ce08739a 100644
 -    // in terminals like Ghostty.
 -    let lines: Vec<Line<'static>> = vec![vec![format!("■ {message}").red()].into()];
 -    PlainHistoryCell { lines }
++pub(crate) fn new_mod_notice(kind: &str, message: String, owner: &str) -> NoticeHistoryCell {
++    NoticeHistoryCell {
++        kind: notice_kind(kind),
++        message,
++        hint: Some(format!("({owner})")),
++    }
++}
++
++pub(crate) fn notice_kind(kind: &str) -> &'static str {
++    match kind {
++        "warning" => "warning",
++        "error" => "error",
++        _ => "info",
++    }
++}
++
++pub(crate) fn notice_spans(kind: &str, message: &str) -> Vec<Span<'static>> {
++    match kind {
++        "error" => vec![format!("■ {message}").red()],
++        "warning" => vec!["⚠ ".yellow(), message.to_owned().yellow()],
++        _ => vec!["• ".dim(), message.to_owned().into()],
++    }
++}
++
 +#[derive(Debug)]
 +pub(crate) struct NoticeHistoryCell {
 +    kind: &'static str,
@@ -21781,13 +21809,7 @@ index c5fa22417..7ce08739a 100644
 +
 +impl NoticeHistoryCell {
 +    fn notice_lines(&self, message: &str) -> Vec<Line<'static>> {
-+        if self.kind == "error" {
-+            // Use a hair space (U+200A) to create a subtle, near-invisible separation
-+            // before the text. VS16 is intentionally omitted to keep spacing tighter
-+            // in terminals like Ghostty.
-+            return vec![vec![format!("■ {message}").red()].into()];
-+        }
-+        let mut line = vec!["• ".dim(), message.to_owned().into()];
++        let mut line = notice_spans(self.kind, message);
 +        if let Some(hint) = &self.hint {
 +            line.push(" ".into());
 +            line.push(hint.clone().dark_gray());
@@ -27696,10 +27718,10 @@ index 000000000..e69aaed34
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..80e386c1c
+index 000000000..36df7ef8d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2170 @@
+@@ -0,0 +1,2171 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -28763,6 +28785,7 @@ index 000000000..80e386c1c
 +                edited = true;
 +            }
 +        }
++        edited |= codex_omd::model_request::apply_queued_sections(&mut value, &thread, attempt > 1);
 +        if let Some(rates) = account
 +            .rates
 +            .as_ref()
@@ -29872,10 +29895,10 @@ index 000000000..80e386c1c
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..1d41a28aa
+index 000000000..30c6356a8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1206 @@
+@@ -0,0 +1,1222 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -31081,6 +31104,22 @@ index 000000000..1d41a28aa
 +            .collect::<Vec<_>>(),
 +        vec![(true, Some(500)), (true, Some(700))]
 +    );
++}
++
++#[test]
++fn queued_mod_notices_join_only_the_threads_next_request() {
++    let (_root, accounts, _task, _request, _body) = setup();
++    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
++        "max_output_tokens": 128, "input": [{"type": "message", "role": "user",
++        "content": [{"type": "input_text", "text": "hi"}]}]});
++    codex_omd::model_request::queue_section("child", "checks", "lint failed").unwrap();
++    let first = prepared(&accounts, "child", &body).unwrap().to_string();
++    assert!(
++        first.contains("Mod-provided context") && first.contains("lint failed"),
++        "{first}"
++    );
++    let next = prepared(&accounts, "child", &body).unwrap().to_string();
++    assert!(!next.contains("lint failed"), "{next}");
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
@@ -58970,10 +59009,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..b44b3436e
+index 000000000..4a31c5291
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,443 @@
+@@ -0,0 +1,445 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -59006,6 +59045,8 @@ index 000000000..b44b3436e
 +    "terminal.open",
 +    "terminal.prompt",
 +    "terminal.pane",
++    "terminal.panes",
++    "terminal.notice",
 +    "terminal.pty",
 +];
 +
@@ -64184,10 +64225,10 @@ index 000000000..9baa69a16
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..7f19a1445
+index 000000000..324748118
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,212 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -64387,6 +64428,7 @@ index 000000000..7f19a1445
 +pub use mods::invalid_render_tree;
 +pub use mods::invoke_shared;
 +pub use mods::mod_command_reference;
++pub use mods::mod_component_id;
 +pub use mods::mod_counts;
 +pub use mods::mod_key_name;
 +pub use mods::namespace_matches;
@@ -64582,10 +64624,10 @@ index 000000000..44647048b
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..59f6d67a9
+index 000000000..040a56222
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1033 @@
+@@ -0,0 +1,1076 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -65616,15 +65658,58 @@ index 000000000..59f6d67a9
 +    Ok(())
 +}
 +
++type QueuedSections = BTreeMap<String, (Vec<Value>, Vec<Value>)>;
++
++static QUEUED: std::sync::Mutex<QueuedSections> = std::sync::Mutex::new(BTreeMap::new());
++
++/// Queues mod text for the thread's next model request as an inserted section.
++pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String> {
++    let mut queued = QUEUED
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let (pending, _) = queued.entry(thread.to_owned()).or_default();
++    if pending.len() >= INSERTED_SECTIONS {
++        return Err("model_context_queue_full".into());
++    }
++    let id = format!("mod:{owner}:notice:{}", pending.len() + 1);
++    if id.len() > 64 || text.trim().is_empty() || text.len() > INSERTED_TEXT_BYTES {
++        return Err("model_context_invalid".into());
++    }
++    pending.push(json!({"id": id, "text": text}));
++    Ok(())
++}
++
++/// Adds the thread's queued sections to an outgoing request; a retry carries the batch its first attempt took.
++pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> bool {
++    let batch = {
++        let mut queued = QUEUED
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let Some((pending, sent)) = queued.get_mut(thread) else {
++            return false;
++        };
++        if !retry {
++            *sent = std::mem::take(pending);
++        }
++        sent.clone()
++    };
++    if batch.is_empty() {
++        return false;
++    }
++    let given = sections(request);
++    let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
++    apply_sections(request, &given, &effective)
++}
++
 +#[cfg(test)]
 +#[path = "model_request_tests.rs"]
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..fe2e0fb34
+index 000000000..6be4db790
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,410 @@
+@@ -0,0 +1,439 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -66035,12 +66120,41 @@ index 000000000..fe2e0fb34
 +            .contains("no longer JSON")
 +    );
 +}
++
++#[test]
++fn queued_sections_reach_the_next_request_once_and_its_retries() {
++    let thread = "thread-queued-sections";
++    assert!(!apply_queued_sections(&mut request(), thread, false));
++    queue_section(thread, "checks", "build failed").unwrap();
++    let mut first = request();
++    assert!(apply_queued_sections(&mut first, thread, false));
++    let text = first.to_string();
++    assert!(
++        text.contains("Mod-provided context") && text.contains("build failed"),
++        "{text}"
++    );
++    let mut retry = request();
++    assert!(apply_queued_sections(&mut retry, thread, true));
++    assert_eq!(retry, first);
++    assert!(!apply_queued_sections(&mut request(), thread, false));
++    for _ in 0..INSERTED_SECTIONS {
++        queue_section(thread, "checks", "note").unwrap();
++    }
++    assert_eq!(
++        queue_section(thread, "checks", "one too many"),
++        Err("model_context_queue_full".to_owned())
++    );
++    assert_eq!(
++        queue_section("other-thread", "checks", " "),
++        Err("model_context_invalid".to_owned())
++    );
++}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..cdc8ba95c
+index 000000000..52dd83045
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4800 @@
+@@ -0,0 +1,4807 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -66097,6 +66211,7 @@ index 000000000..cdc8ba95c
 +pub use view::component_ids_of;
 +pub use view::invalid_render_tree;
 +pub use view::mod_command_reference;
++pub use view::mod_component_id;
 +pub use view::mod_key_name;
 +pub use view::valid_glyphs;
 +mod outcome;
@@ -66351,6 +66466,7 @@ index 000000000..cdc8ba95c
 +    "terminal_inline_sites_v1",
 +    "render_hooks_v1",
 +    "ui_composition_v1",
++    "ui_controls_v1",
 +    "reactive_state_v1",
 +    "session_ports_v1",
 +    "structured_access_v1",
@@ -66450,6 +66566,8 @@ index 000000000..cdc8ba95c
 +    "terminal.open",
 +    "terminal.prompt",
 +    "terminal.pane",
++    "terminal.panes",
++    "terminal.notice",
 +    "terminal.pty",
 +    "model.complete",
 +    "model.fork",
@@ -66656,6 +66774,7 @@ index 000000000..cdc8ba95c
 +    ("compaction", "compaction"),
 +    ("elicitation", "approvals"),
 +    ("composer_edit", "composer"),
++    ("component_change", "terminal"),
 +];
 +pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
 +    "prompt",
@@ -68533,6 +68652,7 @@ index 000000000..cdc8ba95c
 +                        | "agent_offers"
 +                        | "admission"
 +                        | "composer_edit"
++                        | "component_change"
 +                )
 +            )
 +}
@@ -70729,6 +70849,7 @@ index 000000000..cdc8ba95c
 +            "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
 +            "intercept.input": {"thread_id":"observe_only","text":"replaceable","revision":"observe_only","attachments":"observe_only","elements":"observe_only"},
 +            "intercept.composer_edit": {"source":"observe_only","caller":"observe_only","revision":"observe_only","edit":"replaceable"},
++            "intercept.component_change": {"kind":"observe_only","id":"observe_only","from":"observe_only","to":"replaceable","origin":"observe_only"},
 +            "intercept.model_request": {"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable","model":"observe_only","provider":"observe_only","effort":"replaceable","sections":"replaceable","tools":"observe_only"},
 +            "intercept.response_stream": {"request_id":"observe_only","scope":"observe_only","synthetic":"observe_only","kind":"observe_only","index":"observe_only","item_id":"observe_only","protected":"observe_only","call_id":"observe_only","format":"observe_only","text":"replaceable","tool":"replaceable","arguments":"replaceable","status":"observe_only","usage":"observe_only"},            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
 +            "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
@@ -70843,10 +70964,10 @@ index 000000000..cdc8ba95c
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..b98622986
+index 000000000..4be77011f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,629 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -71316,6 +71437,7 @@ index 000000000..b98622986
 +            | ModComponent::Button { id, .. }
 +            | ModComponent::Input { id, .. }
 +            | ModComponent::Select { id, .. }
++            | ModComponent::Multiselect { id, .. }
 +            | ModComponent::Markdown { id, .. }
 +            | ModComponent::Code { id, .. }
 +            | ModComponent::List { id, .. }
@@ -71369,6 +71491,38 @@ index 000000000..b98622986
 +                return Err(failure("offline_terminal_select_value_not_mounted"));
 +            }
 +            command(action, Some(selected))
++        }
++        ModComponent::Multiselect {
++            action,
++            value: current,
++            options,
++            ..
++        } => {
++            let selected = match value {
++                Some(value) => serde_json::from_str::<Vec<String>>(value)
++                    .map_err(|_| failure("offline_terminal_multiselect_value_invalid"))?,
++                None => current.clone(),
++            };
++            if selected
++                .iter()
++                .collect::<std::collections::BTreeSet<_>>()
++                .len()
++                != selected.len()
++                || !selected
++                    .iter()
++                    .all(|value| options.iter().any(|option| option.value == *value))
++            {
++                return Err(failure("offline_terminal_select_value_not_mounted"));
++            }
++            let ordered = options
++                .iter()
++                .filter(|option| selected.contains(&option.value))
++                .map(|option| &option.value)
++                .collect::<Vec<_>>();
++            command(
++                action,
++                Some(&serde_json::to_string(&ordered).map_err(failure)?),
++            )
 +        }
 +        ModComponent::List {
 +            action,
@@ -71445,10 +71599,10 @@ index 000000000..b98622986
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..c143f6d81
+index 000000000..7b03768c9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,340 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -71514,7 +71668,9 @@ index 000000000..c143f6d81
 +            | "terminal.image_sample"
 +            | "terminal.open"
 +            | "terminal.prompt"
-+            | "terminal.pane" => Ok("terminal"),
++            | "terminal.pane"
++            | "terminal.panes"
++            | "terminal.notice" => Ok("terminal"),
 +            "terminal.pty" => Ok("pty"),
 +            "model.complete" | "model.fork" => Ok("agents"),
 +            "tools.define" | "tools.undefine" => Ok("tools"),
@@ -71789,10 +71945,10 @@ index 000000000..c143f6d81
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..f6fceb21b
+index 000000000..91c3ee63b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1762 @@
+@@ -0,0 +1,1792 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -72061,6 +72217,7 @@ index 000000000..f6fceb21b
 +        "peer_send" | "peer_receive" => &["data"],
 +        "compaction" => &["summary_prompt"],
 +        "composer_edit" => &["edit"],
++        "component_change" => &["to"],
 +        _ => &[],
 +    };
 +    let (Some(original), Some(object)) = (before.as_object(), input.as_object()) else {
@@ -72115,6 +72272,7 @@ index 000000000..f6fceb21b
 +        "agent_spawn" => spawn_request(input, before),
 +        "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
 +        "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
++        "component_change" => component_change(&input["kind"], &input["to"]),
 +        "compaction" => {
 +            input["summary_prompt"] == before["summary_prompt"]
 +                || before["summary_prompt"].is_string()
@@ -72128,6 +72286,21 @@ index 000000000..f6fceb21b
 +        Ok(())
 +    } else {
 +        Err(failure(format!("invalid_continuation_input: {surface}")))
++    }
++}
++
++fn component_change(kind: &Value, to: &Value) -> bool {
++    match kind.as_str() {
++        Some("focus") => {
++            to.is_null()
++                || to
++                    .as_str()
++                    .is_some_and(|id| super::view::mod_component_id(id))
++        }
++        Some("scroll") => to
++            .as_u64()
++            .is_some_and(|offset| offset <= u64::from(u16::MAX)),
++        _ => false,
 +    }
 +}
 +
@@ -72404,6 +72577,16 @@ index 000000000..f6fceb21b
 +            deny || object.is_some_and(|object| object.len() == 1)
 +                && composer_edit(&result["edit"], &input["edit"])
 +        }
++        "component_change" => {
++            let key = if input["kind"] == "focus" {
++                "focus"
++            } else {
++                "scroll"
++            };
++            deny || object.is_some_and(|object| object.len() == 1)
++                && result.get(key).is_some()
++                && component_change(&input["kind"], &result[key])
++        }
 +        "elicitation" => {
 +            object.is_some_and(|object| object.len() == 1)
 +                && (result["accept"].is_object()
@@ -72604,7 +72787,10 @@ index 000000000..f6fceb21b
 +            );
 +            return result;
 +        };
-+        if !link.matcher.is_null() && !may_match(&link.matcher, &input) {
++        if !link.matcher.is_null() && !may_match(&link.matcher, &input)
++            || self.surface == "component_change"
++                && self.origin["owner"].as_str() != Some(link.id.as_str())
++        {
 +            return self.link(access, host, core, active, scope, k + 1, input);
 +        }
 +        let mut attempts = Attempts::default();
@@ -77422,10 +77608,10 @@ index 000000000..4cf6e15c3
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..2b3092b81
+index 000000000..8b4ecd744
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,1864 @@
+@@ -0,0 +1,1946 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -77854,6 +78040,10 @@ index 000000000..2b3092b81
 +        label: String,
 +        text: String,
 +        action: ModComponentAction,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        hotkey: Option<String>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        autofocus: bool,
 +    },
 +    Input {
 +        id: String,
@@ -77863,6 +78053,10 @@ index 000000000..2b3092b81
 +        #[serde(default)]
 +        placeholder: String,
 +        action: ModCommandAction,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        hotkey: Option<String>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        autofocus: bool,
 +    },
 +    Select {
 +        id: String,
@@ -77870,6 +78064,22 @@ index 000000000..2b3092b81
 +        value: String,
 +        options: Vec<ModSelectOption>,
 +        action: ModCommandAction,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        hotkey: Option<String>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        autofocus: bool,
++    },
++    Multiselect {
++        id: String,
++        label: String,
++        #[serde(default)]
++        value: Vec<String>,
++        options: Vec<ModSelectOption>,
++        action: ModCommandAction,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        hotkey: Option<String>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        autofocus: bool,
 +    },
 +    Markdown {
 +        id: String,
@@ -77913,6 +78123,10 @@ index 000000000..2b3092b81
 +        #[serde(default)]
 +        height: Option<u16>,
 +        action: ModCommandAction,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        hotkey: Option<String>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        autofocus: bool,
 +    },
 +    Document {
 +        id: String,
@@ -78026,6 +78240,8 @@ index 000000000..2b3092b81
 +    pub fg: Option<ModColor>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub bg: Option<ModColor>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub link: Option<String>,
 +}
 +
 +impl ModComponent {
@@ -78337,7 +78553,28 @@ index 000000000..2b3092b81
 +            .any(|c| c.is_control() && c != '\n' && c != '\t')
 +}
 +
-+fn component_id(value: &str) -> bool {
++pub fn mod_link(link: &str) -> bool {
++    visible(link, 2048)
++        && !link.contains(char::is_whitespace)
++        && ["https://", "http://"].iter().any(|scheme| {
++            link.get(..scheme.len())
++                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
++                && link[scheme.len()..]
++                    .split(['/', '?', '#'])
++                    .next()
++                    .is_some_and(|host| !host.is_empty())
++        })
++}
++
++fn valid_span(span: &ModSpan, limit: usize) -> bool {
++    visible(&span.text, limit) && span.link.as_deref().is_none_or(mod_link)
++}
++
++fn valid_control(hotkey: &Option<String>) -> bool {
++    hotkey.as_deref().is_none_or(mod_key_name)
++}
++
++pub fn mod_component_id(value: &str) -> bool {
 +    !value.is_empty()
 +        && value.len() <= 48
 +        && value
@@ -78451,7 +78688,7 @@ index 000000000..2b3092b81
 +            return false;
 +        }
 +        let identified = |id: &str, label: &str, ids: &mut BTreeSet<String>| {
-+            component_id(id)
++            mod_component_id(id)
 +                && !label.is_empty()
 +                && visible(label, 128)
 +                && ids.insert(id.to_owned())
@@ -78488,7 +78725,7 @@ index 000000000..2b3092b81
 +                identified(id, label, ids)
 +                    && !spans.is_empty()
 +                    && spans.len() <= 12
-+                    && spans.iter().all(|span| visible(&span.text, 1024))
++                    && spans.iter().all(|span| valid_span(span, 1024))
 +                    && spans
 +                        .iter()
 +                        .map(|span| span.text.chars().count())
@@ -78529,11 +78766,14 @@ index 000000000..2b3092b81
 +                label,
 +                text,
 +                action,
++                hotkey,
++                ..
 +            } => {
 +                identified(id, label, ids)
 +                    && !text.is_empty()
 +                    && visible(text, 256)
 +                    && action.valid()
++                    && valid_control(hotkey)
 +            }
 +            Self::Input {
 +                id,
@@ -78541,27 +78781,47 @@ index 000000000..2b3092b81
 +                value,
 +                placeholder,
 +                action,
++                hotkey,
++                ..
 +            } => {
 +                identified(id, label, ids)
 +                    && multiline(value, 1024)
 +                    && visible(placeholder, 256)
 +                    && action.valid()
++                    && valid_control(hotkey)
 +            }
 +            Self::Select {
 +                id,
 +                label,
-+                value,
 +                options,
 +                action,
++                hotkey,
++                ..
++            }
++            | Self::Multiselect {
++                id,
++                label,
++                options,
++                action,
++                hotkey,
++                ..
 +            } => {
 +                let values = options
 +                    .iter()
 +                    .map(|option| option.value.as_str())
 +                    .collect::<BTreeSet<_>>();
++                let chosen = match self {
++                    Self::Select { value, .. } => values.contains(value.as_str()),
++                    Self::Multiselect { value, .. } => {
++                        value.iter().all(|value| values.contains(value.as_str()))
++                            && value.iter().collect::<BTreeSet<_>>().len() == value.len()
++                    }
++                    _ => false,
++                };
 +                identified(id, label, ids)
 +                    && (1..=16).contains(&options.len())
 +                    && values.len() == options.len()
-+                    && options.iter().any(|option| option.value == *value)
++                    && chosen
 +                    && options.iter().all(|option| {
 +                        !option.value.is_empty()
 +                            && visible(&option.value, 128)
@@ -78569,6 +78829,7 @@ index 000000000..2b3092b81
 +                            && visible(&option.label, 128)
 +                    })
 +                    && action.valid()
++                    && valid_control(hotkey)
 +            }
 +            Self::List {
 +                id,
@@ -78577,6 +78838,8 @@ index 000000000..2b3092b81
 +                selected,
 +                height,
 +                action,
++                hotkey,
++                ..
 +            } => {
 +                let values = rows
 +                    .iter()
@@ -78595,7 +78858,7 @@ index 000000000..2b3092b81
 +                            && !row.label.is_empty()
 +                            && visible(&row.label, 256)
 +                            && row.spans.len() <= 12
-+                            && row.spans.iter().all(|span| visible(&span.text, 256))
++                            && row.spans.iter().all(|span| valid_span(span, 256))
 +                            && row
 +                                .spans
 +                                .iter()
@@ -78604,6 +78867,7 @@ index 000000000..2b3092b81
 +                                <= 256
 +                    })
 +                    && action.valid()
++                    && valid_control(hotkey)
 +            }
 +            Self::Document {
 +                id,
@@ -78621,7 +78885,10 @@ index 000000000..2b3092b81
 +                    && (source.is_none() || lines.is_empty())
 +                    && lines.len() <= 2000
 +                    && lines.iter().all(|spans| {
-+                        spans.len() <= 12 && spans.iter().all(|span| visible(&span.text, 1024))
++                        spans.len() <= 12
++                            && spans
++                                .iter()
++                                .all(|span| visible(&span.text, 1024) && span.link.is_none())
 +                    })
 +                    && lines
 +                        .iter()
@@ -78752,7 +79019,7 @@ index 000000000..2b3092b81
 +        ModKeyAction::Command { command, args } => {
 +            mod_command_reference(command) && multiline(args, 4096)
 +        }
-+        ModKeyAction::Focus { focus } => component_id(focus),
++        ModKeyAction::Focus { focus } => mod_component_id(focus),
 +        ModKeyAction::Copy { copy, label } => {
 +            !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
 +        }
@@ -78817,6 +79084,7 @@ index 000000000..2b3092b81
 +        | ModComponent::Button { id, .. }
 +        | ModComponent::Input { id, .. }
 +        | ModComponent::Select { id, .. }
++        | ModComponent::Multiselect { id, .. }
 +        | ModComponent::Markdown { id, .. }
 +        | ModComponent::Code { id, .. }
 +        | ModComponent::List { id, .. }
@@ -79292,10 +79560,10 @@ index 000000000..2b3092b81
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..2731f193a
+index 000000000..e8db67eec
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,275 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -79524,6 +79792,52 @@ index 000000000..2731f193a
 +    let sidebar = serde_json::to_value(&target.sites["sidebar"]).unwrap();
 +    assert_eq!(sidebar["mode"], "replace");
 +    assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
++}
++
++#[test]
++fn links_multiselects_and_control_hotkeys_are_validated() {
++    let site = |component: Value| json!({"sites": {"sidebar": {"components": [component]}}});
++    let line = |link: &str| {
++        site(
++            json!({"type": "line", "id": "l", "label": "L", "spans": [{"text": "x", "link": link}]}),
++        )
++    };
++    let choice = |value: Value| {
++        site(
++            json!({"type": "multiselect", "id": "m", "label": "M", "value": value,
++        "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}], "action": {"command": "pick"}}),
++        )
++    };
++    let button = |hotkey: &str| {
++        site(
++            json!({"type": "button", "id": "b", "label": "B", "text": "Go",
++        "action": {"command": "go"}, "hotkey": hotkey, "autofocus": true}),
++        )
++    };
++    for valid in [
++        line("https://example.com/a?b#c"),
++        line("HTTP://host"),
++        choice(json!(["b", "a"])),
++        choice(json!([])),
++        button("Alt+g"),
++    ] {
++        assert!(view(valid.clone()).is_ok(), "{valid}");
++    }
++    for invalid in [
++        line("javascript:alert(1)"),
++        line("https:///path"),
++        line("https://a b"),
++        line(&format!("https://h/{}", "x".repeat(2048))),
++        site(
++            json!({"type": "document", "id": "d", "label": "D", "lines": [[{"text": "x", "link": "https://h"}]]}),
++        ),
++        choice(json!(["c"])),
++        choice(json!(["a", "a"])),
++        button("Ctrl+c"),
++        button("g"),
++    ] {
++        assert!(view(invalid.clone()).is_err(), "{invalid}");
++    }
 +}
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
 new file mode 100644
@@ -87444,10 +87758,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..5de1acbf6
+index 000000000..52f04cb70
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4234 @@
+@@ -0,0 +1,4336 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -91681,6 +91995,108 @@ index 000000000..5de1acbf6
 +    );
 +    assert!(profiles.owned_secret(id, "another_mod").is_err());
 +    assert!(profiles.visible("").unwrap().is_empty());
++}
++
++#[test]
++fn component_change_interceptors_answer_only_for_the_components_owner() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    for (id, source) in [
++        (
++            "wizard",
++            "export default api => api.intercept('component_change', (e, next) => {
++                if (e.kind === 'scroll') return {scroll: Math.min(e.to, 5)};
++                if (e.from === 'name' && e.to === 'other') return {deny: 'finish the name'};
++                if (e.to === 'skip') return {focus: 'name'};
++                if (e.to === 'bad') return {focus: 'Not An Id'};
++                return next(e);
++            })",
++        ),
++        (
++            "intruder",
++            "export default api => api.intercept('component_change', () => ({deny: 'mine'}))",
++        ),
++    ] {
++        let path = package(&root, id, source, &["terminal"]);
++        trust(&store, &path, &["terminal"]);
++    }
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let change = |owner: &str, input: Value| {
++        codex_omd::continue_operation(
++            &runtime,
++            "component_change",
++            input,
++            json!({"owner": owner}),
++            || true,
++            |_, _| Err(std::io::Error::other("unexpected host call")),
++            |effective| {
++                Ok(match effective["kind"].as_str() {
++                    Some("focus") => json!({"focus": effective["to"]}),
++                    _ => json!({"scroll": effective["to"]}),
++                })
++            },
++        )
++    };
++    let focus = |to: &str| json!({"kind": "focus", "id": "name", "from": "name", "to": to, "origin": "user"});
++    let denied = change("wizard", focus("other")).unwrap_err();
++    assert!(
++        denied
++            .to_string()
++            .contains("component_change_denied: finish the name"),
++        "{denied}"
++    );
++    assert_eq!(
++        change("wizard", focus("skip")).unwrap(),
++        json!({"focus": "name"})
++    );
++    assert_eq!(
++        change("wizard", focus("next")).unwrap(),
++        json!({"focus": "next"})
++    );
++    assert_eq!(
++        change(
++            "wizard",
++            json!({"kind": "scroll", "id": "log", "from": 0, "to": 9, "origin": "user"})
++        )
++        .unwrap(),
++        json!({"scroll": 5})
++    );
++    assert_ne!(
++        change("wizard", focus("bad")).ok(),
++        Some(json!({"focus": "Not An Id"}))
++    );
++    assert_eq!(
++        change("nobody", focus("other")).unwrap(),
++        json!({"focus": "other"})
++    );
++}
++
++#[test]
++fn offline_multiselect_interactions_send_checked_values_in_option_order() {
++    let (temp, _, _) = fixture(
++        "export default api => { api.command('pick', input => input); api.on('terminal', () => ({sites: {dialog: {components: [{type: 'multiselect', id: 'files', label: 'Files', value: ['a'], action: {command: 'fixture:pick'}, options: [{value: 'a', label: 'A'}, {value: 'b', label: 'B'}]}]}}})); }",
++        &["commands", "terminal"],
++    );
++    let interact = |value: Option<&str>| {
++        let mut step = json!({"type": "terminal_interact", "mod": "fixture", "component": "files",
++            "payload": {"event": "draw", "checkpoint": null}});
++        if let Some(value) = value {
++            step["value"] = value.into();
++        }
++        host(&temp).offline_test(json!({"schema": 1, "steps": [step]}))
++    };
++    let checked = interact(None).unwrap();
++    assert_eq!(checked["steps"][0]["value"]["action"]["args"], r#"["a"]"#);
++    let ordered = interact(Some(r#"["b","a"]"#)).unwrap();
++    assert_eq!(
++        ordered["steps"][0]["value"]["action"]["args"],
++        r#"["a","b"]"#
++    );
++    assert_eq!(ordered["steps"][0]["value"]["result"], r#"["a","b"]"#);
++    for invalid in [r#"["a","a"]"#, r#"["c"]"#, "a"] {
++        assert!(interact(Some(invalid)).is_err(), "{invalid}");
++    }
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
@@ -96310,10 +96726,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..44e6580df
+index 000000000..aaaeb6ceb
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1536 @@
+@@ -0,0 +1,1743 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -97464,6 +97880,8 @@ index 000000000..44e6580df
 +                tui.frame_requester().schedule_frame();
 +                crate::mod_ui::pane(&call.caller, &call.arguments)
 +            }
++            "terminal.panes" => Ok(crate::mod_ui::panes(&call.caller)),
++            "terminal.notice" => self.mod_notice(tui, &call),
 +            "terminal.prompt" => {
 +                let title = match (
 +                    prompt_text(&call.arguments["title"], 120),
@@ -97668,6 +98086,63 @@ index 000000000..44e6580df
 +        tui.frame_requester().schedule_frame();
 +    }
 +
++    fn mod_notice(&mut self, tui: &mut tui::Tui, call: &SurfaceCall) -> Result<Value, String> {
++        match notice_request(&call.arguments)? {
++            NoticeRequest::Clear { id } => {
++                let cleared = crate::mod_ui::clear_notice(&call.caller, id);
++                tui.frame_requester().schedule_frame();
++                Ok(json!({"cleared": cleared}))
++            }
++            NoticeRequest::Transient {
++                id,
++                kind,
++                placement,
++                text,
++                ttl,
++            } => {
++                crate::mod_ui::notice(&call.caller, id, kind, placement, text, ttl);
++                tui.frame_requester().schedule_frame();
++                tui.frame_requester().schedule_frame_in(ttl);
++                Ok(json!({"shown": true}))
++            }
++            NoticeRequest::Transcript {
++                kind,
++                text,
++                model,
++                call_id,
++            } => {
++                if model {
++                    let thread = call
++                        .thread
++                        .as_deref()
++                        .ok_or("terminal_notice_thread_unavailable")?;
++                    codex_omd::model_request::queue_section(thread, &call.caller, text)?;
++                }
++                match call_id {
++                    Some(call_id) if tui.is_owned_screen() => {
++                        crate::mod_render::tool_notice(call_id, kind, text, &call.caller);
++                    }
++                    Some(call_id) => {
++                        self.chat_widget
++                            .add_to_history(crate::history_cell::new_mod_notice(
++                                kind,
++                                text.to_owned(),
++                                &format!("{} · tool {call_id}", call.caller),
++                            ))
++                    }
++                    None => self
++                        .chat_widget
++                        .add_to_history(crate::history_cell::new_mod_notice(
++                            kind,
++                            text.to_owned(),
++                            &call.caller,
++                        )),
++                }
++                Ok(json!({"shown": true, "model": model}))
++            }
++        }
++    }
++
 +    fn mod_notify(&mut self, tui: &mut tui::Tui, arguments: &Value) -> Value {
 +        let title = arguments["title"].as_str().unwrap_or_default();
 +        let body = arguments["body"].as_str().unwrap_or_default();
@@ -97680,6 +98155,103 @@ index 000000000..44e6580df
 +        match tui.notify_titled(title, body) {
 +            Ok(method) => json!({"delivered": true, "method": method}),
 +            Err(reason) => json!({"delivered": false, "method": "none", "reason": reason}),
++        }
++    }
++}
++
++#[derive(Debug, PartialEq)]
++enum NoticeRequest<'a> {
++    Clear {
++        id: &'a str,
++    },
++    Transient {
++        id: Option<&'a str>,
++        kind: &'static str,
++        placement: crate::mod_ui::NoticePlacement,
++        text: &'a str,
++        ttl: std::time::Duration,
++    },
++    Transcript {
++        kind: &'static str,
++        text: &'a str,
++        model: bool,
++        call_id: Option<&'a str>,
++    },
++}
++
++fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
++    let invalid = || "terminal_notice_invalid".to_owned();
++    let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
++        Value::Null => Ok(values[0]),
++        value => values
++            .iter()
++            .find(|known| value == **known)
++            .copied()
++            .ok_or_else(invalid),
++    };
++    let kind = one_of("kind", &["info", "warning", "error"])?;
++    let placement = match one_of("placement", &["toast", "status", "transcript"])? {
++        "toast" => Some(crate::mod_ui::NoticePlacement::Toast),
++        "status" => Some(crate::mod_ui::NoticePlacement::Status),
++        _ => None,
++    };
++    let model = one_of("audience", &["user", "model"])? == "model";
++    let id = match &arguments["id"] {
++        Value::Null => None,
++        Value::String(id) if codex_omd::mod_component_id(id) => Some(id.as_str()),
++        _ => return Err(invalid()),
++    };
++    if arguments["clear"] == true {
++        return match (id, placement) {
++            (Some(id), Some(_)) => Ok(NoticeRequest::Clear { id }),
++            _ => Err(invalid()),
++        };
++    }
++    let text = arguments["text"]
++        .as_str()
++        .filter(|text| {
++            !text.trim().is_empty() && text.len() <= 512 && !text.chars().any(char::is_control)
++        })
++        .ok_or_else(invalid)?;
++    match placement {
++        Some(placement) => {
++            let ttl = match &arguments["ttl_ms"] {
++                Value::Null => 5_000,
++                value => value
++                    .as_u64()
++                    .filter(|ttl| (1_000..=60_000).contains(ttl))
++                    .ok_or_else(invalid)?,
++            };
++            if model || !arguments["tool_call_id"].is_null() {
++                return Err(invalid());
++            }
++            Ok(NoticeRequest::Transient {
++                id,
++                kind,
++                placement,
++                text,
++                ttl: std::time::Duration::from_millis(ttl),
++            })
++        }
++        None if !arguments["ttl_ms"].is_null() || id.is_some() => Err(invalid()),
++        None => {
++            let call_id = match &arguments["tool_call_id"] {
++                Value::Null => None,
++                Value::String(call_id)
++                    if !call_id.is_empty()
++                        && call_id.len() <= 128
++                        && !call_id.chars().any(char::is_control) =>
++                {
++                    Some(call_id.as_str())
++                }
++                _ => return Err(invalid()),
++            };
++            Ok(NoticeRequest::Transcript {
++                kind,
++                text,
++                model,
++                call_id,
++            })
 +        }
 +    }
 +}
@@ -97847,6 +98419,57 @@ index 000000000..44e6580df
 +            json!({"columns":1}),
 +        ] {
 +            assert!(image_sample_dimensions(&value).is_err(), "{value}");
++        }
++    }
++
++    #[test]
++    fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
++        assert_eq!(
++            notice_request(&json!({"text": "saved"})),
++            Ok(NoticeRequest::Transient {
++                id: None,
++                kind: "info",
++                placement: crate::mod_ui::NoticePlacement::Toast,
++                text: "saved",
++                ttl: std::time::Duration::from_secs(5),
++            })
++        );
++        assert_eq!(
++            notice_request(
++                &json!({"text": "slow", "kind": "warning", "placement": "transcript",
++                "audience": "model", "tool_call_id": "call_1"})
++            ),
++            Ok(NoticeRequest::Transcript {
++                kind: "warning",
++                text: "slow",
++                model: true,
++                call_id: Some("call_1"),
++            })
++        );
++        assert_eq!(
++            notice_request(&json!({"id": "run", "placement": "status", "clear": true})),
++            Ok(NoticeRequest::Clear { id: "run" })
++        );
++        for arguments in [
++            json!({}),
++            json!({"text": " "}),
++            json!({"text": "x".repeat(513)}),
++            json!({"text": "a\u{1b}b"}),
++            json!({"text": "x", "kind": "fatal"}),
++            json!({"text": "x", "ttl_ms": 999}),
++            json!({"text": "x", "ttl_ms": 60_001}),
++            json!({"text": "x", "audience": "model"}),
++            json!({"text": "x", "tool_call_id": "call_1"}),
++            json!({"text": "x", "placement": "transcript", "ttl_ms": 2000}),
++            json!({"text": "x", "placement": "transcript", "id": "run"}),
++            json!({"id": "run", "placement": "transcript", "clear": true}),
++            json!({"id": "Bad Id", "clear": true}),
++        ] {
++            assert_eq!(
++                notice_request(&arguments),
++                Err("terminal_notice_invalid".to_owned()),
++                "{arguments}"
++            );
 +        }
 +    }
 +}
@@ -102071,10 +102694,10 @@ index 000000000..b43029f5b
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..fae61484c
+index 000000000..eca9edd2e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,593 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -102191,6 +102814,61 @@ index 000000000..fae61484c
 +static ROWS: AtomicU16 = AtomicU16::new(0);
 +static EPOCH: AtomicU64 = AtomicU64::new(0);
 +static FRAMES: Mutex<Option<crate::tui::FrameRequester>> = Mutex::new(None);
++static TOOL_NOTICES: Mutex<VecDeque<ToolNotice>> = Mutex::new(VecDeque::new());
++
++struct ToolNotice {
++    call_id: String,
++    kind: &'static str,
++    text: String,
++    owner: String,
++}
++
++/// Attaches a mod notice beneath the transcript cell of one tool call.
++pub(crate) fn tool_notice(call_id: &str, kind: &str, text: &str, owner: &str) {
++    let mut notices = TOOL_NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if notices.len() >= 256 {
++        notices.pop_front();
++    }
++    notices.push_back(ToolNotice {
++        call_id: call_id.to_owned(),
++        kind: crate::history_cell::notice_kind(kind),
++        text: text.to_owned(),
++        owner: owner.to_owned(),
++    });
++    EPOCH.fetch_add(1, Ordering::Relaxed);
++    schedule_frame(Duration::ZERO);
++}
++
++pub(crate) fn tool_notice_lines(target: &RenderTarget) -> Vec<HyperlinkLine> {
++    let notices = TOOL_NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if notices.is_empty() {
++        return Vec::new();
++    }
++    let calls = target.props["calls"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .filter_map(|call| call["call_id"].as_str())
++        .chain([target.id.as_str()])
++        .collect::<Vec<_>>();
++    notices
++        .iter()
++        .filter(|notice| calls.contains(&notice.call_id.as_str()))
++        .map(|notice| {
++            let mut spans = vec!["  ↳ ".dim()];
++            spans.extend(crate::history_cell::notice_spans(notice.kind, &notice.text));
++            spans.push(format!(" ({})", notice.owner).dark_gray());
++            HyperlinkLine {
++                line: Line::from(spans),
++                ..HyperlinkLine::default()
++            }
++        })
++        .collect()
++}
 +
 +thread_local! {
 +    static WAITING: Cell<bool> = const { Cell::new(false) };
@@ -102710,10 +103388,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..3ac480a03
+index 000000000..f3d06c845
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1230 @@
+@@ -0,0 +1,1267 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -103585,6 +104263,43 @@ index 000000000..3ac480a03
 +    match result["deny"].as_str() {
 +        Some(reason) => Err(format!("composer_edit_denied: {reason}")),
 +        None => Ok(result["edit"].clone()),
++    }
++}
++
++/// Asks the owner's `component_change` interceptors about a focus or scroll change; only a denial is an error.
++pub(crate) fn component_change(owner: &str, change: Value) -> Result<Value, String> {
++    let key = if change["kind"] == "focus" {
++        "focus"
++    } else {
++        "scroll"
++    };
++    let unchanged = serde_json::json!({ key: change["to"] });
++    let Some(store) = crate::omd::mod_paths().and_then(|paths| paths.store) else {
++        return Ok(unchanged);
++    };
++    let Ok(runtime) = shared_host(store) else {
++        return Ok(unchanged);
++    };
++    let thread = crate::mod_surface::current_thread();
++    match codex_omd::continue_operation(
++        &runtime,
++        "component_change",
++        change,
++        serde_json::json!({"owner": owner, "thread_id": thread}),
++        || true,
++        |_, call| {
++            Err(std::io::Error::other(format!(
++                "host_operation_unavailable: component_change interceptors run while the terminal moves focus or scroll ({})",
++                call.operation
++            )))
++        },
++        |effective| Ok(serde_json::json!({ key: effective["to"] })),
++    ) {
++        Ok(answer) => Ok(answer),
++        Err(error) if error.to_string().starts_with("component_change_denied") => {
++            Err(error.to_string())
++        }
++        Err(_) => Ok(unchanged),
 +    }
 +}
 +
@@ -105213,10 +105928,11 @@ index 000000000..d1f0b5e66
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..1a6b55834
+index 000000000..fcc5db61e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2701 @@
+@@ -0,0 +1,3217 @@
++use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -105241,6 +105957,7 @@ index 000000000..1a6b55834
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
 +use ratatui::buffer::Buffer;
++use ratatui::buffer::CellWidth;
 +use ratatui::layout::Rect;
 +use ratatui::style::Color;
 +use ratatui::style::Modifier;
@@ -105257,6 +105974,7 @@ index 000000000..1a6b55834
 +use std::collections::BTreeSet;
 +use std::sync::Mutex;
 +use std::sync::RwLock;
++use unicode_width::UnicodeWidthStr;
 +
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +pub(crate) enum ThemeSlot {
@@ -105289,6 +106007,11 @@ index 000000000..1a6b55834
 +        options: Vec<(String, String)>,
 +    },
 +    ListRow {
++        action: ModCommandAction,
++        options: Vec<(String, String)>,
++        index: usize,
++    },
++    Multiselect {
 +        action: ModCommandAction,
 +        options: Vec<(String, String)>,
 +        index: usize,
@@ -105326,13 +106049,68 @@ index 000000000..1a6b55834
 +    dialog_area: Option<Rect>,
 +    seeds: BTreeMap<String, String>,
 +    echoes: BTreeMap<String, std::collections::VecDeque<String>>,
++    checked: BTreeMap<String, BTreeSet<String>>,
++    hotkeys: Vec<(String, String)>,
++    autofocus: Vec<String>,
 +}
 +
 +struct ComponentRow {
 +    id: Option<String>,
 +    label: Option<String>,
++    links: Vec<TerminalHyperlink>,
 +    line: Line<'static>,
 +    target: Option<ComponentTarget>,
++}
++
++fn span_line(
++    prefix: String,
++    spans: &[codex_omd::ModSpan],
++) -> (Line<'static>, Vec<TerminalHyperlink>) {
++    let mut column = prefix.width();
++    let mut links = Vec::new();
++    let mut line = vec![ratatui::text::Span::raw(prefix)];
++    for span in spans {
++        let width = span.text.width();
++        if let Some(link) = &span.link {
++            links.push(TerminalHyperlink::web(column..column + width, link.clone()));
++        }
++        column += width;
++        line.push(ratatui::text::Span::styled(
++            span.text.clone(),
++            span_style(span),
++        ));
++    }
++    (Line::from(line), links)
++}
++
++fn mark_links(buffer: &mut Buffer, area: Rect, rows: &[ComponentRow]) {
++    for (row, links) in rows
++        .iter()
++        .map(|row| &row.links)
++        .enumerate()
++        .take(usize::from(area.height))
++    {
++        for link in links {
++            let Some(destination) = link.terminal_destination() else {
++                continue;
++            };
++            for column in link
++                .columns
++                .clone()
++                .take_while(|column| *column < usize::from(area.width))
++            {
++                let cell = &mut buffer[(area.x + column as u16, area.y + row as u16)];
++                if cell.diff_option == ratatui::buffer::CellDiffOption::Skip {
++                    continue;
++                }
++                let width = std::num::NonZeroU16::new(cell.cell_width())
++                    .unwrap_or(std::num::NonZeroU16::MIN);
++                let symbol = format!("\x1b]8;;{destination}\x07{}\x1b]8;;\x07", cell.symbol());
++                cell.set_symbol(&symbol)
++                    .set_diff_option(ratatui::buffer::CellDiffOption::ForcedWidth(width));
++            }
++        }
++    }
 +}
 +
 +pub(crate) enum ModInput {
@@ -105368,6 +106146,9 @@ index 000000000..1a6b55834
 +    dialog_area: None,
 +    seeds: BTreeMap::new(),
 +    echoes: BTreeMap::new(),
++    checked: BTreeMap::new(),
++    hotkeys: Vec::new(),
++    autofocus: Vec::new(),
 +});
 +static APPLIED_SYNTAX: Mutex<Option<String>> = Mutex::new(None);
 +static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -105558,17 +106339,28 @@ index 000000000..1a6b55834
 +                collect_component(child, interaction);
 +            }
 +        }
-+        ModComponent::Input { id, value, .. } => {
-+            interaction.ids.insert(id.clone());
++        ModComponent::Input {
++            id,
++            value,
++            hotkey,
++            autofocus,
++            ..
++        } => {
++            control(interaction, id, hotkey, *autofocus);
 +            if controlled(interaction, id, value) {
 +                interaction.input_values.insert(id.clone(), value.clone());
 +                interaction.input_cursor.remove(id);
 +            }
 +        }
 +        ModComponent::Select {
-+            id, value, options, ..
++            id,
++            value,
++            options,
++            hotkey,
++            autofocus,
++            ..
 +        } => {
-+            interaction.ids.insert(id.clone());
++            control(interaction, id, hotkey, *autofocus);
 +            let selected = options
 +                .iter()
 +                .position(|option| option.value == *value)
@@ -105577,10 +106369,35 @@ index 000000000..1a6b55834
 +                interaction.selected.insert(id.clone(), selected);
 +            }
 +        }
-+        ModComponent::List {
-+            id, rows, selected, ..
++        ModComponent::Multiselect {
++            id,
++            value,
++            hotkey,
++            autofocus,
++            ..
 +        } => {
-+            interaction.ids.insert(id.clone());
++            control(interaction, id, hotkey, *autofocus);
++            if controlled(interaction, id, &checked_value(value.iter())) {
++                interaction
++                    .checked
++                    .insert(id.clone(), value.iter().cloned().collect());
++            }
++        }
++        ModComponent::Button {
++            id,
++            hotkey,
++            autofocus,
++            ..
++        } => control(interaction, id, hotkey, *autofocus),
++        ModComponent::List {
++            id,
++            rows,
++            selected,
++            hotkey,
++            autofocus,
++            ..
++        } => {
++            control(interaction, id, hotkey, *autofocus);
 +            let selected = selected
 +                .as_ref()
 +                .and_then(|value| rows.iter().position(|row| row.value == *value))
@@ -105589,7 +106406,6 @@ index 000000000..1a6b55834
 +        }
 +        ModComponent::Text { id, .. }
 +        | ModComponent::Line { id, .. }
-+        | ModComponent::Button { id, .. }
 +        | ModComponent::Markdown { id, .. }
 +        | ModComponent::Code { id, .. }
 +        | ModComponent::Document { id, .. }
@@ -105600,6 +106416,23 @@ index 000000000..1a6b55834
 +        }
 +        ModComponent::Slot | ModComponent::Native { .. } => {}
 +    }
++}
++
++fn control(interaction: &mut Interaction, id: &str, hotkey: &Option<String>, autofocus: bool) {
++    interaction.ids.insert(id.to_owned());
++    if let Some(key) = hotkey
++        && !interaction.hotkeys.iter().any(|(bound, _)| bound == key)
++    {
++        interaction.hotkeys.push((key.clone(), id.to_owned()));
++    }
++    if autofocus {
++        interaction.autofocus.push(id.to_owned());
++    }
++}
++
++fn checked_value<'a>(values: impl Iterator<Item = &'a String>) -> String {
++    let values = values.collect::<BTreeSet<_>>();
++    serde_json::to_string(&values).unwrap_or_default()
 +}
 +
 +/// A view value changed by the mod, rather than echoing the user's own edit, resets the field.
@@ -105616,7 +106449,9 @@ index 000000000..1a6b55834
 +    let mut interaction = INTERACTION
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    interaction.ids.clear();
++    let previous = std::mem::take(&mut interaction.ids);
++    interaction.hotkeys.clear();
++    interaction.autofocus.clear();
 +    for site in view.sites.values() {
 +        for component in &site.components {
 +            collect_component(component, &mut interaction);
@@ -105626,6 +106461,7 @@ index 000000000..1a6b55834
 +    interaction.input_values.retain(|id, _| ids.contains(id));
 +    interaction.input_cursor.retain(|id, _| ids.contains(id));
 +    interaction.selected.retain(|id, _| ids.contains(id));
++    interaction.checked.retain(|id, _| ids.contains(id));
 +    interaction.collapsed.retain(|id, _| ids.contains(id));
 +    interaction.scroll.retain(|id, _| ids.contains(id));
 +    interaction.seeds.retain(|id, _| ids.contains(id));
@@ -105637,6 +106473,18 @@ index 000000000..1a6b55834
 +        .is_some_and(|id| !ids.contains(id))
 +    {
 +        interaction.focused = None;
++    }
++    if interaction.focused.is_none()
++        && let Some(id) = interaction
++            .autofocus
++            .iter()
++            .find(|id| !previous.contains(*id))
++            .cloned()
++    {
++        let before = observe(&interaction);
++        interaction.focused = Some(id);
++        let after = observe(&interaction);
++        report(&before, &after, &mut interaction, "mod");
 +    }
 +}
 +
@@ -105792,7 +106640,13 @@ index 000000000..1a6b55834
 +}
 +
 +pub(crate) fn status_segments() -> Vec<String> {
-+    with_cache(|cache| cache.snapshot.view.status.clone()).unwrap_or_default()
++    let mut segments = with_cache(|cache| cache.snapshot.view.status.clone()).unwrap_or_default();
++    segments.extend(
++        live_notices(NoticePlacement::Status)
++            .into_iter()
++            .map(|notice| notice.text.chars().take(40).collect()),
++    );
++    segments
 +}
 +
 +pub(crate) fn session_title_suffix() -> Option<String> {
@@ -105932,6 +106786,9 @@ index 000000000..1a6b55834
 +            ModComponent::Button { .. }
 +            | ModComponent::Input { .. }
 +            | ModComponent::Select { .. } => 1,
++            ModComponent::Multiselect { options, .. } => {
++                u16::try_from(options.len() + 1).unwrap_or(u16::MAX)
++            }
 +            ModComponent::List { rows, height, .. } => {
 +                u16::try_from(rows.len().clamp(1, usize::from(height.unwrap_or(8))))
 +                    .unwrap_or(u16::MAX)
@@ -106161,6 +107018,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: None,
 +                        label: None,
++                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{title}")).bold(),
 +                        target: None,
 +                    });
@@ -106177,31 +107035,32 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: (index == 0).then(|| id.clone()),
 +                        label: (index == 0).then(|| label.clone()),
++                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{text}")).patch_style(tone_style(*tone)),
 +                        target: None,
 +                    });
 +                }
 +            }
-+            ModComponent::Line { id, label, spans } => rows.push(ComponentRow {
-+                id: Some(id.clone()),
-+                label: Some(label.clone()),
-+                line: Line::from(
-+                    std::iter::once(ratatui::text::Span::raw(prefix.clone()))
-+                        .chain(spans.iter().map(|span| {
-+                            ratatui::text::Span::styled(span.text.clone(), span_style(span))
-+                        }))
-+                        .collect::<Vec<_>>(),
-+                ),
-+                target: None,
-+            }),
++            ModComponent::Line { id, label, spans } => {
++                let (line, links) = span_line(prefix.clone(), spans);
++                rows.push(ComponentRow {
++                    id: Some(id.clone()),
++                    label: Some(label.clone()),
++                    links,
++                    line,
++                    target: None,
++                });
++            }
 +            ModComponent::Button {
 +                id,
 +                label,
 +                text,
 +                action,
++                ..
 +            } => rows.push(ComponentRow {
 +                id: Some(id.clone()),
 +                label: Some(label.clone()),
++                links: Vec::new(),
 +                line: Line::from(format!("{prefix}[ {text} ]")),
 +                target: Some(ComponentTarget::Button(action.clone())),
 +            }),
@@ -106211,6 +107070,7 @@ index 000000000..1a6b55834
 +                value,
 +                placeholder,
 +                action,
++                ..
 +            } => {
 +                let current = interaction
 +                    .input_values
@@ -106231,6 +107091,7 @@ index 000000000..1a6b55834
 +                rows.push(ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
++                    links: Vec::new(),
 +                    line: Line::from(format!("{prefix}{label}: {shown}")),
 +                    target: Some(ComponentTarget::Input(action.clone())),
 +                });
@@ -106241,6 +107102,7 @@ index 000000000..1a6b55834
 +                value,
 +                options,
 +                action,
++                ..
 +            } => {
 +                let fallback = options
 +                    .iter()
@@ -106255,6 +107117,7 @@ index 000000000..1a6b55834
 +                rows.push(ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
++                    links: Vec::new(),
 +                    line: Line::from(format!("{prefix}{label}: ‹ {shown} ›")),
 +                    target: Some(ComponentTarget::Select {
 +                        action: action.clone(),
@@ -106265,21 +107128,73 @@ index 000000000..1a6b55834
 +                    }),
 +                });
 +            }
++            ModComponent::Multiselect {
++                id,
++                label,
++                value,
++                options,
++                action,
++                ..
++            } => {
++                let checked = interaction
++                    .checked
++                    .entry(id.clone())
++                    .or_insert_with(|| value.iter().cloned().collect())
++                    .clone();
++                let current = interaction.selected.entry(id.clone()).or_insert(0);
++                *current = (*current).min(options.len().saturating_sub(1));
++                let (current, focused) = (*current, interaction.focused.as_ref() == Some(id));
++                let values = options
++                    .iter()
++                    .map(|option| (option.value.clone(), option.label.clone()))
++                    .collect::<Vec<_>>();
++                rows.push(ComponentRow {
++                    id: None,
++                    label: None,
++                    links: Vec::new(),
++                    line: Line::from(format!("{prefix}{label}:")),
++                    target: None,
++                });
++                for (index, option) in options.iter().enumerate() {
++                    let mark = if checked.contains(&option.value) {
++                        "[x]"
++                    } else {
++                        "[ ]"
++                    };
++                    let line = Line::from(format!("{prefix}  {mark} {}", option.label));
++                    rows.push(ComponentRow {
++                        id: Some(id.clone()),
++                        label: Some(label.clone()),
++                        links: Vec::new(),
++                        line: if focused && index == current {
++                            line.bold()
++                        } else {
++                            line
++                        },
++                        target: Some(ComponentTarget::Multiselect {
++                            action: action.clone(),
++                            options: values.clone(),
++                            index,
++                        }),
++                    });
++                }
++            }
 +            ModComponent::Markdown { id, label, text } => {
-+                let mut rendered = Vec::new();
-+                crate::markdown::append_markdown(
++                let rendered = crate::markdown::render_markdown_agent_with_list_spacing(
 +                    text,
 +                    Some(usize::from(
 +                        width.saturating_sub(u16::try_from(indent).unwrap_or(0)),
 +                    )),
 +                    None,
-+                    &mut rendered,
++                    None,
++                    crate::markdown_render::ListSpacing::AfterMultiline,
 +                );
 +                for (index, line) in rendered.into_iter().enumerate() {
 +                    rows.push(ComponentRow {
 +                        id: (index == 0).then(|| id.clone()),
 +                        label: (index == 0).then(|| label.clone()),
-+                        line,
++                        links: line.hyperlinks,
++                        line: line.line,
 +                        target: None,
 +                    });
 +                }
@@ -106294,6 +107209,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{language}")).dim(),
 +                        target: None,
 +                    });
@@ -106302,6 +107218,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: None,
 +                        label: None,
++                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{line}")).cyan(),
 +                        target: None,
 +                    });
@@ -106337,6 +107254,7 @@ index 000000000..1a6b55834
 +                rows.push(ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
++                    links: Vec::new(),
 +                    line: Line::from(format!(
 +                        "{prefix}{marker} {}",
 +                        title.as_deref().unwrap_or(label)
@@ -106358,6 +107276,7 @@ index 000000000..1a6b55834
 +                rows.push(ComponentRow {
 +                    id: None,
 +                    label: None,
++                    links: Vec::new(),
 +                    line: Line::from(format!("{prefix}{title}")).bold(),
 +                    target: None,
 +                });
@@ -106370,11 +107289,13 @@ index 000000000..1a6b55834
 +                selected,
 +                height,
 +                action,
++                ..
 +            } => {
 +                if items.is_empty() {
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{label}: (empty)")).dim(),
 +                        target: None,
 +                    });
@@ -106403,18 +107324,15 @@ index 000000000..1a6b55834
 +                for (index, item) in items.iter().enumerate().skip(start).take(window) {
 +                    let chosen = index == current;
 +                    let lead = format!("{prefix}{}", if chosen { marker } else { "  " });
-+                    let mut spans = vec![ratatui::text::Span::raw(lead)];
-+                    if item.spans.is_empty() {
-+                        spans.push(ratatui::text::Span::raw(item.label.clone()));
++                    let (line, links) = if item.spans.is_empty() {
++                        (Line::from(format!("{lead}{}", item.label)), Vec::new())
 +                    } else {
-+                        spans.extend(item.spans.iter().map(|span| {
-+                            ratatui::text::Span::styled(span.text.clone(), span_style(span))
-+                        }));
-+                    }
-+                    let line = Line::from(spans);
++                        span_line(lead, &item.spans)
++                    };
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links,
 +                        line: if chosen { line.bold() } else { line },
 +                        target: Some(ComponentTarget::ListRow {
 +                            action: action.clone(),
@@ -106460,6 +107378,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links: Vec::new(),
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                    });
@@ -106490,6 +107409,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links: Vec::new(),
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                    });
@@ -106511,6 +107431,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links: Vec::new(),
 +                        line,
 +                        target: Some(ComponentTarget::Terminal(session.clone())),
 +                    });
@@ -106534,6 +107455,7 @@ index 000000000..1a6b55834
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
++                        links: Vec::new(),
 +                        line,
 +                        target: None,
 +                    });
@@ -106572,6 +107494,7 @@ index 000000000..1a6b55834
 +                    ComponentRow {
 +                        id: None,
 +                        label: None,
++                        links: Vec::new(),
 +                        line: Line::from(""),
 +                        target: None,
 +                    },
@@ -106596,6 +107519,7 @@ index 000000000..1a6b55834
 +        Some(block) => paragraph.block(block).render(area, buffer),
 +        None => paragraph.render(area, buffer),
 +    }
++    mark_links(buffer, inner, &rows[scroll.min(rows.len())..]);
 +    register_component_targets(inner, rows, scroll, interaction);
 +}
 +
@@ -106666,6 +107590,7 @@ index 000000000..1a6b55834
 +    Paragraph::new(rows.iter().map(|row| row.line.clone()).collect::<Vec<_>>())
 +        .style(panel_style(&snapshot.view))
 +        .render(stage, buffer);
++    mark_links(buffer, stage, &rows);
 +    register_component_targets(stage, rows, 0, &mut interaction);
 +}
 +
@@ -107174,22 +108099,134 @@ index 000000000..1a6b55834
 +pub(crate) fn footer_lines(width: u16) -> Vec<Line<'static>> {
 +    let snapshot = snapshot();
 +    let style = panel_style(&snapshot.view);
-+    if let Some(site) = site(&snapshot.view, "above_composer") {
++    let mut lines = if let Some(site) = site(&snapshot.view, "above_composer") {
 +        let mut interaction = INTERACTION
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        return component_rows(&site.components, width, &mut interaction, 0)
++        component_rows(&site.components, width, &mut interaction, 0)
 +            .into_iter()
 +            .map(|row| row.line.patch_style(style))
-+            .collect();
-+    }
-+    let Some(footer) = &snapshot.view.footer else {
-+        return Vec::new();
++            .collect()
++    } else if let Some(footer) = &snapshot.view.footer {
++        panel_lines(footer)
++            .into_iter()
++            .map(|line| line.patch_style(style))
++            .collect()
++    } else {
++        Vec::new()
 +    };
-+    panel_lines(footer)
-+        .into_iter()
-+        .map(|line| line.patch_style(style))
++    lines.extend(
++        live_notices(NoticePlacement::Toast)
++            .into_iter()
++            .map(|notice| {
++                let mut spans = crate::history_cell::notice_spans(notice.kind, &notice.text);
++                spans.push(format!(" ({})", notice.owner).dark_gray());
++                Line::from(spans)
++            }),
++    );
++    lines
++}
++
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub(crate) enum NoticePlacement {
++    Toast,
++    Status,
++}
++
++#[derive(Clone)]
++pub(crate) struct Notice {
++    owner: String,
++    id: Option<String>,
++    kind: &'static str,
++    placement: NoticePlacement,
++    text: String,
++    expires: std::time::Instant,
++}
++
++static NOTICES: Mutex<(Vec<Notice>, u64)> = Mutex::new((Vec::new(), 0));
++static SEEN_NOTICES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// Shows a toast or status notice until its lifetime ends; the same owner and id replace it.
++pub(crate) fn notice(
++    owner: &str,
++    id: Option<&str>,
++    kind: &str,
++    placement: NoticePlacement,
++    text: &str,
++    ttl: std::time::Duration,
++) {
++    let mut notices = NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    notices
++        .0
++        .retain(|notice| id.is_none() || notice.owner != owner || notice.id.as_deref() != id);
++    if notices
++        .0
++        .iter()
++        .filter(|notice| notice.owner == owner)
++        .count()
++        >= 4
++    {
++        let oldest = notices.0.iter().position(|notice| notice.owner == owner);
++        if let Some(oldest) = oldest {
++            notices.0.remove(oldest);
++        }
++    }
++    notices.0.push(Notice {
++        owner: owner.to_owned(),
++        id: id.map(str::to_owned),
++        kind: crate::history_cell::notice_kind(kind),
++        placement,
++        text: text.to_owned(),
++        expires: std::time::Instant::now() + ttl,
++    });
++    notices.1 += 1;
++}
++
++pub(crate) fn clear_notice(owner: &str, id: &str) -> bool {
++    let mut notices = NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let count = notices.0.len();
++    notices
++        .0
++        .retain(|notice| notice.owner != owner || notice.id.as_deref() != Some(id));
++    let cleared = notices.0.len() != count;
++    if cleared {
++        notices.1 += 1;
++    }
++    cleared
++}
++
++fn live_notices(placement: NoticePlacement) -> Vec<Notice> {
++    let mut notices = NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let now = std::time::Instant::now();
++    let count = notices.0.len();
++    notices.0.retain(|notice| notice.expires > now);
++    if notices.0.len() != count {
++        notices.1 += 1;
++    }
++    notices
++        .0
++        .iter()
++        .filter(|notice| notice.placement == placement)
++        .rev()
++        .take(3)
++        .cloned()
 +        .collect()
++}
++
++/// True once after notices were added, cleared or expired.
++pub(crate) fn notices_changed() -> bool {
++    live_notices(NoticePlacement::Status);
++    let revision = NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .1;
++    SEEN_NOTICES.swap(revision, std::sync::atomic::Ordering::Relaxed) != revision
 +}
 +
 +pub(crate) fn key_name(key: KeyEvent) -> Option<String> {
@@ -107285,6 +108322,21 @@ index 000000000..1a6b55834
 +            Some(ModInput::Interaction(
 +                label.to_owned(),
 +                command_action(action, value),
++            ))
++        }
++        ComponentTarget::Multiselect {
++            action, options, ..
++        } => {
++            let checked = interaction.checked.get(id);
++            let values = options
++                .iter()
++                .filter(|(value, _)| checked.is_some_and(|checked| checked.contains(value)))
++                .map(|(value, _)| value)
++                .collect::<Vec<_>>();
++            let values = serde_json::to_string(&values).unwrap_or_default();
++            Some(ModInput::Interaction(
++                label.to_owned(),
++                command_action(action, Some(&values)),
 +            ))
 +        }
 +        ComponentTarget::Terminal(_) => Some(ModInput::Consumed),
@@ -107452,6 +108504,12 @@ index 000000000..1a6b55834
 +                interaction.focused = interaction.order.get(index).cloned();
 +                return Some(ModInput::Consumed);
 +            }
++            (KeyCode::Char(' '), KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Multiselect { .. }) =>
++            {
++                toggle(&mut interaction, &focused, &target);
++                return Some(ModInput::Consumed);
++            }
 +            (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char(' '), KeyModifiers::NONE)
 +                if key.code == KeyCode::Enter
 +                    || matches!(target, ComponentTarget::ListRow { .. }) =>
@@ -107466,7 +108524,8 @@ index 000000000..1a6b55834
 +            }
 +            (KeyCode::Left | KeyCode::Up, KeyModifiers::NONE) => match target {
 +                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. } => {
++                | ComponentTarget::ListRow { ref options, .. }
++                | ComponentTarget::Multiselect { ref options, .. } => {
 +                    let selected = interaction.selected.entry(focused).or_default();
 +                    *selected = selected
 +                        .checked_sub(1)
@@ -107482,7 +108541,8 @@ index 000000000..1a6b55834
 +            },
 +            (KeyCode::Right | KeyCode::Down, KeyModifiers::NONE) => match target {
 +                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. } => {
++                | ComponentTarget::ListRow { ref options, .. }
++                | ComponentTarget::Multiselect { ref options, .. } => {
 +                    let selected = interaction.selected.entry(focused).or_default();
 +                    if !options.is_empty() {
 +                        *selected = (*selected + 1) % options.len();
@@ -107499,9 +108559,43 @@ index 000000000..1a6b55834
 +            _ => {}
 +        }
 +    }
++    let editing = interaction.focused.as_ref().is_some_and(|focused| {
++        matches!(
++            interaction.targets.get(focused),
++            Some(ComponentTarget::Input(_))
++        )
++    });
++    if !editing
++        && let Some(name) = key_name(key).filter(|name| codex_omd::mod_key_name(name))
++        && let Some((id, target)) = interaction
++            .hotkeys
++            .iter()
++            .find(|(bound, _)| *bound == name)
++            .and_then(|(_, id)| Some((id.clone(), interaction.targets.get(id)?.clone())))
++    {
++        let action = match target {
++            ComponentTarget::Button(action) => component_action(&action),
++            _ => ModKeyAction::Focus { focus: id },
++        };
++        return Some(ModInput::Binding(name, action));
++    }
 +    with_cache(|cache| action_for(&cache.snapshot.view, key))
 +        .flatten()
 +        .map(|(name, action)| ModInput::Binding(name, action))
++}
++
++fn toggle(interaction: &mut Interaction, id: &str, target: &ComponentTarget) {
++    let ComponentTarget::Multiselect { options, .. } = target else {
++        return;
++    };
++    let index = interaction.selected.get(id).copied().unwrap_or_default();
++    let Some((value, _)) = options.get(index) else {
++        return;
++    };
++    let checked = interaction.checked.entry(id.to_owned()).or_default();
++    if !checked.remove(value) {
++        checked.insert(value.clone());
++    }
 +}
 +
 +/// True while a mod component has focus or a mod dialog is on screen.
@@ -107682,6 +108776,11 @@ index 000000000..1a6b55834
 +        }
 +        MouseEventKind::Up(MouseButton::Left) => {
 +            interaction.focused = Some(hit.id.clone());
++            if let ComponentTarget::Multiselect { index, .. } = hit.target {
++                interaction.selected.insert(hit.id.clone(), index);
++                toggle(&mut interaction, &hit.id, &hit.target);
++                return Some(ModPointer::Consumed);
++            }
 +            if let ComponentTarget::ListRow { index, .. } = hit.target {
 +                interaction.selected.insert(hit.id.clone(), index);
 +            }
@@ -107697,7 +108796,8 @@ index 000000000..1a6b55834
 +        MouseEventKind::ScrollUp => {
 +            match hit.target {
 +                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. } => {
++                | ComponentTarget::ListRow { ref options, .. }
++                | ComponentTarget::Multiselect { ref options, .. } => {
 +                    let selected = interaction.selected.entry(hit.id).or_default();
 +                    *selected = selected
 +                        .checked_sub(1)
@@ -107714,7 +108814,8 @@ index 000000000..1a6b55834
 +        MouseEventKind::ScrollDown => {
 +            match hit.target {
 +                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. } => {
++                | ComponentTarget::ListRow { ref options, .. }
++                | ComponentTarget::Multiselect { ref options, .. } => {
 +                    let selected = interaction.selected.entry(hit.id).or_default();
 +                    if !options.is_empty() {
 +                        *selected = (*selected + 1) % options.len();
@@ -107744,6 +108845,7 @@ index 000000000..1a6b55834
 +    scroll: BTreeMap<String, u16>,
 +    collapsed: BTreeMap<String, bool>,
 +    dismissed: Option<String>,
++    checked: BTreeMap<String, BTreeSet<String>>,
 +}
 +
 +fn observe(interaction: &Interaction) -> Observed {
@@ -107754,6 +108856,7 @@ index 000000000..1a6b55834
 +        scroll: interaction.scroll.clone(),
 +        collapsed: interaction.collapsed.clone(),
 +        dismissed: interaction.dismissed.clone(),
++        checked: interaction.checked.clone(),
 +    }
 +}
 +
@@ -107766,12 +108869,95 @@ index 000000000..1a6b55834
 +    };
 +    let before = observe(&lock());
 +    let result = run();
++    let after = observe(&lock());
++    if before != after && crate::mod_runtime::intercepts("component_change") {
++        intercept_changes(&before, &after, crate::mod_runtime::component_change);
++    }
 +    let mut interaction = lock();
 +    let after = observe(&interaction);
 +    if before != after {
 +        report(&before, &after, &mut interaction, "user");
 +    }
 +    result
++}
++
++/// Lets the owner of a component veto or adjust a user focus or scroll change before it is reported.
++fn intercept_changes(
++    before: &Observed,
++    after: &Observed,
++    change: impl Fn(&str, serde_json::Value) -> Result<serde_json::Value, String>,
++) {
++    let owner = |id: &str| component_owner(id);
++    let ask = |owner: &str,
++               kind: &str,
++               id: &str,
++               from: serde_json::Value,
++               to: serde_json::Value| {
++        change(
++            owner,
++            serde_json::json!({"kind": kind, "id": id, "from": from, "to": to, "origin": "user"}),
++        )
++    };
++    if before.focused != after.focused {
++        let (from, to) = (before.focused.clone(), after.focused.clone());
++        let mut target = to.clone();
++        for id in [&from, &to].into_iter().flatten() {
++            let Some(owner) = owner(id) else {
++                continue;
++            };
++            match ask(
++                &owner,
++                "focus",
++                id,
++                from.clone().into(),
++                target.clone().into(),
++            ) {
++                Ok(answer) if answer["focus"] != serde_json::json!(target) => {
++                    let redirect = answer["focus"].as_str().map(str::to_owned);
++                    if redirect.as_deref().is_none_or(|redirect| {
++                        component_owner(redirect).as_deref() == Some(owner.as_str())
++                    }) {
++                        target = redirect;
++                    }
++                }
++                Ok(_) => {}
++                Err(_) => {
++                    target = from.clone();
++                    break;
++                }
++            }
++        }
++        if target != to {
++            let mut interaction = INTERACTION
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            interaction.focused = target.filter(|id| interaction.ids.contains(id));
++        }
++    }
++    for (id, offset) in &after.scroll {
++        let previous = before.scroll.get(id).copied();
++        if previous == Some(*offset) {
++            continue;
++        }
++        let Some(owner) = owner(id) else {
++            continue;
++        };
++        let applied = match ask(&owner, "scroll", id, previous.into(), (*offset).into()) {
++            Ok(answer) => answer["scroll"]
++                .as_u64()
++                .and_then(|offset| u16::try_from(offset).ok()),
++            Err(_) => previous,
++        };
++        if applied != Some(*offset) {
++            let mut interaction = INTERACTION
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            match applied {
++                Some(applied) => interaction.scroll.insert(id.clone(), applied),
++                None => interaction.scroll.remove(id),
++            };
++        }
++    }
 +}
 +
 +fn report(before: &Observed, after: &Observed, interaction: &mut Interaction, origin: &str) {
@@ -107813,15 +108999,38 @@ index 000000000..1a6b55834
 +            changed.push((id.clone(), value));
 +        }
 +    }
-+    for (id, value) in changed {
-+        let echoes = interaction.echoes.entry(id.clone()).or_default();
-+        echoes.push_back(value.clone());
++    let echo = |interaction: &mut Interaction, id: &str, value: String| {
++        let echoes = interaction.echoes.entry(id.to_owned()).or_default();
++        echoes.push_back(value);
 +        if echoes.len() > 16 {
 +            echoes.pop_front();
 +        }
++    };
++    for (id, value) in changed {
++        echo(interaction, &id, value.clone());
 +        send(
 +            &id,
 +            serde_json::json!({"kind": "change", "value": value, "origin": origin}),
++        );
++    }
++    for (id, checked) in &after.checked {
++        if before.checked.get(id) == Some(checked) {
++            continue;
++        }
++        let Some(ComponentTarget::Multiselect { options, .. }) =
++            interaction.targets.get(id).cloned()
++        else {
++            continue;
++        };
++        let values = options
++            .iter()
++            .filter(|(value, _)| checked.contains(value))
++            .map(|(value, _)| value.clone())
++            .collect::<Vec<_>>();
++        echo(interaction, id, checked_value(checked.iter()));
++        send(
++            id,
++            serde_json::json!({"kind": "change", "values": values, "origin": origin}),
 +        );
 +    }
 +    for (id, offset) in &after.scroll {
@@ -107859,6 +109068,28 @@ index 000000000..1a6b55834
 +            send(&dialog, serde_json::json!({"kind": kind, "origin": origin}));
 +        }
 +    }
++}
++
++/// `terminal.panes`: the caller's own panes; a pane is visible while its header row is on screen.
++pub(crate) fn panes(caller: &str) -> serde_json::Value {
++    let interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let panes = interaction
++        .collapsed
++        .iter()
++        .filter(|(id, _)| interaction.component_owners.get(*id).map(String::as_str) == Some(caller))
++        .map(|(id, collapsed)| {
++            serde_json::json!({
++                "id": id,
++                "visible": interaction.hitboxes.iter().any(|hitbox| hitbox.id == *id),
++                "collapsed": collapsed,
++                "focused": interaction.focused.as_ref() == Some(id),
++                "scroll": interaction.scroll.get(id).copied().unwrap_or_default(),
++            })
++        })
++        .collect::<Vec<_>>();
++    serde_json::json!({ "panes": panes })
 +}
 +
 +/// `terminal.pane`: a mod opens, closes, focuses, scrolls or reveals its own pane, dialog or
@@ -107920,10 +109151,10 @@ index 000000000..1a6b55834
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..fab5d7948
+index 000000000..3c50ccec3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1150 @@
+@@ -0,0 +1,1454 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -109072,6 +110303,310 @@ index 000000000..fab5d7948
 +        input(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
 +        Some(ModInput::Interaction(..))
 +    ));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values() {
++    let view = |value: serde_json::Value| {
++        snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++            {"type":"multiselect","id":"files","label":"Files","value":value,"action":{"command":"fixture:pick"},
++             "options":[{"value":"a","label":"Alpha"},{"value":"b","label":"Beta"},{"value":"c","label":"Gamma"}]}
++        ]}},"sidebar_width":30}))
++    };
++    let area = Rect::new(0, 0, 80, 24);
++    let draw = |snapshot: &ModViewSnapshot| {
++        sync_interaction(&snapshot.view);
++        let mut buffer = Buffer::empty(area);
++        render(area, area, &mut buffer, snapshot);
++        buffer
++    };
++    let checked = || {
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .checked["files"]
++            .iter()
++            .cloned()
++            .collect::<Vec<_>>()
++    };
++    let press = |code| input(KeyEvent::new(code, KeyModifiers::NONE));
++    let buffer = draw(&view(serde_json::json!(["a"])));
++    assert!(rows(&buffer, area).contains("[x] Alpha"));
++    assert!(focus("files"));
++    press(KeyCode::Down);
++    assert!(matches!(
++        press(KeyCode::Char(' ')),
++        Some(ModInput::Consumed)
++    ));
++    assert_eq!(checked(), ["a", "b"]);
++    assert!(
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .echoes["files"]
++            .contains(&r#"["a","b"]"#.to_owned())
++    );
++    match press(KeyCode::Enter) {
++        Some(ModInput::Interaction(_, ModKeyAction::Command { command, args })) => {
++            assert_eq!(
++                (command.as_str(), args.as_str()),
++                ("fixture:pick", r#"["a","b"]"#)
++            );
++        }
++        _ => panic!("enter runs the multiselect action"),
++    }
++    draw(&view(serde_json::json!(["b", "a"])));
++    assert_eq!(checked(), ["a", "b"]);
++    draw(&view(serde_json::json!(["c"])));
++    assert_eq!(checked(), ["c"]);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls() {
++    let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"input","id":"query","label":"Query","autofocus":true,"action":{"command":"fixture:search"}},
++        {"type":"button","id":"go","label":"Go","text":"Go","hotkey":"Alt+g","action":{"command":"fixture:go"}},
++        {"type":"select","id":"mode","label":"Mode","value":"a","hotkey":"Alt+m","action":{"command":"fixture:mode"},
++         "options":[{"value":"a","label":"A"}]}
++    ]}},"sidebar_width":30}));
++    let area = Rect::new(0, 0, 80, 24);
++    preview(ModViewSnapshot::default());
++    sync_interaction(&ModView::default());
++    sync_interaction(&snapshot.view);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    let focused = || {
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused
++            .clone()
++    };
++    let alt = |character| input(KeyEvent::new(KeyCode::Char(character), KeyModifiers::ALT));
++    assert_eq!(focused().as_deref(), Some("query"));
++    assert!(alt('g').is_none());
++    input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
++    match alt('g') {
++        Some(ModInput::Binding(name, ModKeyAction::Command { command, .. })) => {
++            assert_eq!((name.as_str(), command.as_str()), ("Alt+g", "fixture:go"));
++        }
++        _ => panic!("a button hotkey runs its action"),
++    }
++    assert!(matches!(
++        alt('m'),
++        Some(ModInput::Binding(_, ModKeyAction::Focus { focus })) if focus == "mode"
++    ));
++    sync_interaction(&snapshot.view);
++    assert_eq!(focused(), None);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn span_and_markdown_links_mark_only_their_own_cells_with_osc8() {
++    let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"line","id":"ref","label":"Ref","spans":[{"text":"see "},{"text":"docs","link":"https://example.com/docs"}]},
++        {"type":"markdown","id":"notes","label":"Notes","text":"[site](https://example.org/)"}
++    ]}},"sidebar_width":30}));
++    let area = Rect::new(0, 0, 80, 24);
++    sync_interaction(&snapshot.view);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    let linked = |destination: &str| {
++        area.positions()
++            .filter(|position| {
++                buffer[*position]
++                    .symbol()
++                    .starts_with(&format!("\x1b]8;;{destination}\x07"))
++            })
++            .count()
++    };
++    assert_eq!(linked("https://example.com/docs"), 4);
++    assert!(linked("https://example.org/") > 0);
++    assert!(
++        ModView::parse(serde_json::json!({"sites":{"sidebar":{"components":[
++            {"type":"line","id":"bad","label":"Bad","spans":[{"text":"x","link":"javascript:alert(1)"}]}]}}}))
++        .is_err()
++    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn panes_list_only_the_callers_panes_with_their_visibility() {
++    let mut snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"pane","id":"results","label":"Results","collapsed":true,"children":[]},
++        {"type":"pane","id":"other","label":"Other","children":[]}
++    ]}},"sidebar_width":30}));
++    snapshot.component_owners = [("results", "search"), ("other", "intruder")]
++        .into_iter()
++        .map(|(id, owner)| (id.to_owned(), owner.to_owned()))
++        .collect();
++    let area = Rect::new(0, 0, 80, 24);
++    sync_interaction(&snapshot.view);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    assert_eq!(
++        panes("search"),
++        serde_json::json!({"panes": [{"id": "results", "visible": true, "collapsed": true,
++            "focused": false, "scroll": 0}]})
++    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn notices_replace_by_id_expire_clear_and_reach_the_status_row() {
++    let long = std::time::Duration::from_secs(60);
++    let texts = |placement| {
++        live_notices(placement)
++            .into_iter()
++            .map(|notice| notice.text)
++            .collect::<Vec<_>>()
++    };
++    notice(
++        "checks",
++        Some("run"),
++        "info",
++        NoticePlacement::Toast,
++        "one",
++        long,
++    );
++    notice(
++        "checks",
++        Some("run"),
++        "warning",
++        NoticePlacement::Toast,
++        "two",
++        long,
++    );
++    notice(
++        "checks",
++        None,
++        "info",
++        NoticePlacement::Toast,
++        "gone",
++        std::time::Duration::ZERO,
++    );
++    assert_eq!(texts(NoticePlacement::Toast), ["two"]);
++    assert!(
++        footer_lines(80)
++            .iter()
++            .any(|line| line.to_string().contains("two (checks)"))
++    );
++    assert!(!clear_notice("other", "run"));
++    assert!(clear_notice("checks", "run"));
++    assert!(texts(NoticePlacement::Toast).is_empty());
++    notice(
++        "checks",
++        None,
++        "info",
++        NoticePlacement::Status,
++        &"s".repeat(50),
++        long,
++    );
++    assert!(notices_changed());
++    assert!(!notices_changed());
++    assert_eq!(status_segments(), ["s".repeat(40)]);
++    for index in 0..5 {
++        notice(
++            "checks",
++            None,
++            "info",
++            NoticePlacement::Toast,
++            &index.to_string(),
++            long,
++        );
++    }
++    assert_eq!(texts(NoticePlacement::Toast), ["4", "3", "2"]);
++    NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .0
++        .clear();
++}
++
++#[test]
++fn tool_notices_attach_to_their_call_and_tool_groups() {
++    crate::mod_render::tool_notice("call_4ej_notice", "warning", "slow test", "checks");
++    let lines = |target: crate::mod_render::RenderTarget| {
++        crate::mod_render::tool_notice_lines(&target)
++            .into_iter()
++            .map(|line| line.line.to_string())
++            .collect::<Vec<_>>()
++    };
++    let target =
++        |id: &str, props| crate::mod_render::RenderTarget::new("tool_call", id, false, props);
++    assert_eq!(
++        lines(target("call_4ej_notice", serde_json::json!({}))),
++        ["  ↳ ⚠ slow test (checks)"]
++    );
++    assert!(lines(target("call_other", serde_json::json!({}))).is_empty());
++    assert_eq!(
++        lines(target(
++            "group",
++            serde_json::json!({"calls": [{"call_id": "call_4ej_notice"}]})
++        ))
++        .len(),
++        1
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn owner_answers_deny_redirect_within_their_own_components_and_clamp_scroll() {
++    let mut snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"input","id":"name","label":"Name","action":{"command":"wizard:name"}},
++        {"type":"input","id":"other","label":"Other","action":{"command":"wizard:other"}},
++        {"type":"input","id":"next","label":"Next","action":{"command":"wizard:next"}},
++        {"type":"input","id":"skip","label":"Skip","action":{"command":"wizard:skip"}},
++        {"type":"input","id":"foreign","label":"Foreign","action":{"command":"intruder:x"}},
++        {"type":"pane","id":"log","label":"Log","children":[]}
++    ]}},"sidebar_width":30}));
++    snapshot.component_owners = ["name", "other", "next", "skip", "log"]
++        .into_iter()
++        .map(|id| (id.to_owned(), "wizard".to_owned()))
++        .chain([("foreign".to_owned(), "intruder".to_owned())])
++        .collect();
++    let area = Rect::new(0, 0, 80, 24);
++    sync_interaction(&snapshot.view);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    let state = |focused: &str, scroll: u16| {
++        let mut interaction = INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        interaction.focused = Some(focused.to_owned());
++        interaction.scroll.insert("log".to_owned(), scroll);
++        observe(&interaction)
++    };
++    let ask = |owner: &str, change: serde_json::Value| {
++        assert_eq!(owner, "wizard");
++        match (change["kind"].as_str().unwrap(), change["to"].clone()) {
++            ("focus", to) if to == "other" => Err("component_change_denied: finish".to_owned()),
++            ("focus", to) if to == "skip" => Ok(serde_json::json!({"focus": "name"})),
++            ("focus", to) if to == "next" => Ok(serde_json::json!({"focus": "foreign"})),
++            ("focus", to) => Ok(serde_json::json!({"focus": to})),
++            (_, to) => Ok(serde_json::json!({"scroll": to.as_u64().unwrap().min(5)})),
++        }
++    };
++    let moved = |to: &str, scroll: u16| {
++        let before = state("name", 0);
++        let after = state(to, scroll);
++        intercept_changes(&before, &after, ask);
++        let interaction = INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        (
++            interaction.focused.clone().unwrap_or_default(),
++            interaction.scroll["log"],
++        )
++    };
++    assert_eq!(moved("other", 0), ("name".to_owned(), 0));
++    assert_eq!(moved("skip", 0), ("name".to_owned(), 0));
++    assert_eq!(moved("next", 0), ("next".to_owned(), 0));
++    assert_eq!(moved("next", 9), ("next".to_owned(), 5));
 +    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

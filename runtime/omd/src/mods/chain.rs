@@ -266,6 +266,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "peer_send" | "peer_receive" => &["data"],
         "compaction" => &["summary_prompt"],
         "composer_edit" => &["edit"],
+        "component_change" => &["to"],
         _ => &[],
     };
     let (Some(original), Some(object)) = (before.as_object(), input.as_object()) else {
@@ -320,6 +321,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_spawn" => spawn_request(input, before),
         "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
         "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
+        "component_change" => component_change(&input["kind"], &input["to"]),
         "compaction" => {
             input["summary_prompt"] == before["summary_prompt"]
                 || before["summary_prompt"].is_string()
@@ -333,6 +335,21 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         Ok(())
     } else {
         Err(failure(format!("invalid_continuation_input: {surface}")))
+    }
+}
+
+fn component_change(kind: &Value, to: &Value) -> bool {
+    match kind.as_str() {
+        Some("focus") => {
+            to.is_null()
+                || to
+                    .as_str()
+                    .is_some_and(|id| super::view::mod_component_id(id))
+        }
+        Some("scroll") => to
+            .as_u64()
+            .is_some_and(|offset| offset <= u64::from(u16::MAX)),
+        _ => false,
     }
 }
 
@@ -609,6 +626,16 @@ fn validate_result(
             deny || object.is_some_and(|object| object.len() == 1)
                 && composer_edit(&result["edit"], &input["edit"])
         }
+        "component_change" => {
+            let key = if input["kind"] == "focus" {
+                "focus"
+            } else {
+                "scroll"
+            };
+            deny || object.is_some_and(|object| object.len() == 1)
+                && result.get(key).is_some()
+                && component_change(&input["kind"], &result[key])
+        }
         "elicitation" => {
             object.is_some_and(|object| object.len() == 1)
                 && (result["accept"].is_object()
@@ -809,7 +836,10 @@ impl Chain {
             );
             return result;
         };
-        if !link.matcher.is_null() && !may_match(&link.matcher, &input) {
+        if !link.matcher.is_null() && !may_match(&link.matcher, &input)
+            || self.surface == "component_change"
+                && self.origin["owner"].as_str() != Some(link.id.as_str())
+        {
             return self.link(access, host, core, active, scope, k + 1, input);
         }
         let mut attempts = Attempts::default();

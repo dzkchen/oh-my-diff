@@ -1204,3 +1204,19 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
         vec![(true, Some(500)), (true, Some(700))]
     );
 }
+
+#[test]
+fn queued_mod_notices_join_only_the_threads_next_request() {
+    let (_root, accounts, _task, _request, _body) = setup();
+    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
+        "max_output_tokens": 128, "input": [{"type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "hi"}]}]});
+    codex_omd::model_request::queue_section("child", "checks", "lint failed").unwrap();
+    let first = prepared(&accounts, "child", &body).unwrap().to_string();
+    assert!(
+        first.contains("Mod-provided context") && first.contains("lint failed"),
+        "{first}"
+    );
+    let next = prepared(&accounts, "child", &body).unwrap().to_string();
+    assert!(!next.contains("lint failed"), "{next}");
+}

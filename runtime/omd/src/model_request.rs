@@ -1028,6 +1028,49 @@ pub fn apply_send_edits(
     Ok(())
 }
 
+type QueuedSections = BTreeMap<String, (Vec<Value>, Vec<Value>)>;
+
+static QUEUED: std::sync::Mutex<QueuedSections> = std::sync::Mutex::new(BTreeMap::new());
+
+/// Queues mod text for the thread's next model request as an inserted section.
+pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String> {
+    let mut queued = QUEUED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (pending, _) = queued.entry(thread.to_owned()).or_default();
+    if pending.len() >= INSERTED_SECTIONS {
+        return Err("model_context_queue_full".into());
+    }
+    let id = format!("mod:{owner}:notice:{}", pending.len() + 1);
+    if id.len() > 64 || text.trim().is_empty() || text.len() > INSERTED_TEXT_BYTES {
+        return Err("model_context_invalid".into());
+    }
+    pending.push(json!({"id": id, "text": text}));
+    Ok(())
+}
+
+/// Adds the thread's queued sections to an outgoing request; a retry carries the batch its first attempt took.
+pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> bool {
+    let batch = {
+        let mut queued = QUEUED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some((pending, sent)) = queued.get_mut(thread) else {
+            return false;
+        };
+        if !retry {
+            *sent = std::mem::take(pending);
+        }
+        sent.clone()
+    };
+    if batch.is_empty() {
+        return false;
+    }
+    let given = sections(request);
+    let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
+    apply_sections(request, &given, &effective)
+}
+
 #[cfg(test)]
 #[path = "model_request_tests.rs"]
 mod tests;

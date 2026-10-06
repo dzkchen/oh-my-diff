@@ -116,17 +116,19 @@ export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
-export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
+export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor; link?: string };
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
+export type TerminalControl = { hotkey?: KeyName; autofocus?: boolean };
 export type TerminalComponent =
   | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number }
   | { type: 'line'; id: string; label: string; spans: TerminalSpan[] }
   | { type: 'text'; id: string; label: string; text: string; tone?: TerminalTone }
-  | { type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction }
-  | { type: 'input'; id: string; label: string; value?: string; placeholder?: string; action: TerminalCommandAction }
-  | { type: 'select'; id: string; label: string; value: string; options: TerminalSelectOption[]; action: TerminalCommandAction }
-  | { type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction }
+  | ({ type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction } & TerminalControl)
+  | ({ type: 'input'; id: string; label: string; value?: string; placeholder?: string; action: TerminalCommandAction } & TerminalControl)
+  | ({ type: 'select'; id: string; label: string; value: string; options: TerminalSelectOption[]; action: TerminalCommandAction } & TerminalControl)
+  | ({ type: 'multiselect'; id: string; label: string; value?: string[]; options: TerminalSelectOption[]; action: TerminalCommandAction } & TerminalControl)
+  | ({ type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction } & TerminalControl)
   | { type: 'markdown'; id: string; label: string; text: string }
   | { type: 'code'; id: string; label: string; text: string; language?: string }
   | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] }
@@ -185,7 +187,7 @@ export interface RenderProps {
   command_output: RenderExecCall & { kind: 'exec' };
   spinner: { header: string; elapsed_seconds: number; details: string | null; message: string | null; interrupt_hint: boolean };
   turn_duration: { seconds: number | null; completed_at_ms: number | null };
-  notice: { kind: 'info' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
+  notice: { kind: 'info' | 'warning' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
   session_mode: { mode: 'plan'; label: string; cycle_hint: boolean };
   composer_hint: { slot: 'placeholder'; placeholder: string; input_enabled: boolean }
     | { slot: 'footer'; mode: 'history_search' | 'quit_reminder' | 'shortcut_overlay' | 'esc_hint' | 'composer_empty' | 'composer_draft'; text: string; task_running: boolean };
@@ -366,6 +368,9 @@ export interface HostOperations {
     | { kind: 'choice'; title: string; message: string; options: { value: string; label: string }[]; multiple?: boolean; other?: boolean };
     result: { status: 'accepted'; value?: string; values?: string[]; other?: boolean } | Declined };
   'terminal.pane': { arguments: { action: 'open' | 'close' | 'focus' | 'reveal'; id: string } | { action: 'scroll'; id: string; offset: number }; result: { applied: true } };
+  'terminal.panes': { arguments: Record<string, never>; result: { panes: { id: string; visible: boolean; collapsed: boolean; focused: boolean; scroll: number }[] } };
+  'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
+    result: { shown: true; model?: boolean } | { cleared: boolean } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
   'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
@@ -412,7 +417,7 @@ export interface Events {
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
   component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'open' | 'close';
-    origin?: 'user' | 'mod'; value?: string; offset?: number;
+    origin?: 'user' | 'mod'; value?: string; values?: string[]; offset?: number;
     pointer?: { column: number; row: number; action: 'down' | 'up' | 'scroll_up' | 'scroll_down'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
@@ -459,6 +464,8 @@ export interface InterceptSurfaces {
   peer_receive: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json }; result: { data: Json }; answer: { deny: string } };
   turn_stop: { input: { thread_id: string; turn_id: string; outcome: 'completed' | 'error'; error: string | null; message: string | null; continued: number; limit: number; provenance: { kind: 'mod'; package: string } | null }; result: { stop: true }; answer: { continue: string } };
   composer_edit: { input: { source: 'mod' | 'paste' | 'history' | 'completion'; caller: string; revision: number; edit: ComposerEdit }; result: { edit: ComposerEdit }; answer: { deny: string } };
+  component_change: { input: { kind: 'focus'; id: string; from: string | null; to: string | null; origin: 'user' } | { kind: 'scroll'; id: string; from: number | null; to: number; origin: 'user' };
+    result: { focus: string | null } | { scroll: number }; answer: { deny: string } };
   elicitation: { input: { thread_id: string; turn_id: string; server: string; request_id: string; mode: 'form' | 'openai/form' | 'openaiForm'; message: string; schema: Json };
     result: { action: 'ask' }; answer: { accept: Record<string, Json> } | { decline: string } | { cancel: string } };
   compaction: { input: CompactionOccurrence; result: CompactionResult; answer: { skip: string } | { defer: string } | { summary: string } | { history: CompactionHistory } };

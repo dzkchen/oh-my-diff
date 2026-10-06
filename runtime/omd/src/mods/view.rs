@@ -426,6 +426,10 @@ pub enum ModComponent {
         label: String,
         text: String,
         action: ModComponentAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Input {
         id: String,
@@ -435,6 +439,10 @@ pub enum ModComponent {
         #[serde(default)]
         placeholder: String,
         action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Select {
         id: String,
@@ -442,6 +450,22 @@ pub enum ModComponent {
         value: String,
         options: Vec<ModSelectOption>,
         action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
+    },
+    Multiselect {
+        id: String,
+        label: String,
+        #[serde(default)]
+        value: Vec<String>,
+        options: Vec<ModSelectOption>,
+        action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Markdown {
         id: String,
@@ -485,6 +509,10 @@ pub enum ModComponent {
         #[serde(default)]
         height: Option<u16>,
         action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Document {
         id: String,
@@ -598,6 +626,8 @@ pub struct ModSpan {
     pub fg: Option<ModColor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bg: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 impl ModComponent {
@@ -909,7 +939,28 @@ fn multiline(text: &str, limit: usize) -> bool {
             .any(|c| c.is_control() && c != '\n' && c != '\t')
 }
 
-fn component_id(value: &str) -> bool {
+pub fn mod_link(link: &str) -> bool {
+    visible(link, 2048)
+        && !link.contains(char::is_whitespace)
+        && ["https://", "http://"].iter().any(|scheme| {
+            link.get(..scheme.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+                && link[scheme.len()..]
+                    .split(['/', '?', '#'])
+                    .next()
+                    .is_some_and(|host| !host.is_empty())
+        })
+}
+
+fn valid_span(span: &ModSpan, limit: usize) -> bool {
+    visible(&span.text, limit) && span.link.as_deref().is_none_or(mod_link)
+}
+
+fn valid_control(hotkey: &Option<String>) -> bool {
+    hotkey.as_deref().is_none_or(mod_key_name)
+}
+
+pub fn mod_component_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 48
         && value
@@ -1023,7 +1074,7 @@ impl ModComponent {
             return false;
         }
         let identified = |id: &str, label: &str, ids: &mut BTreeSet<String>| {
-            component_id(id)
+            mod_component_id(id)
                 && !label.is_empty()
                 && visible(label, 128)
                 && ids.insert(id.to_owned())
@@ -1060,7 +1111,7 @@ impl ModComponent {
                 identified(id, label, ids)
                     && !spans.is_empty()
                     && spans.len() <= 12
-                    && spans.iter().all(|span| visible(&span.text, 1024))
+                    && spans.iter().all(|span| valid_span(span, 1024))
                     && spans
                         .iter()
                         .map(|span| span.text.chars().count())
@@ -1101,11 +1152,14 @@ impl ModComponent {
                 label,
                 text,
                 action,
+                hotkey,
+                ..
             } => {
                 identified(id, label, ids)
                     && !text.is_empty()
                     && visible(text, 256)
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::Input {
                 id,
@@ -1113,27 +1167,47 @@ impl ModComponent {
                 value,
                 placeholder,
                 action,
+                hotkey,
+                ..
             } => {
                 identified(id, label, ids)
                     && multiline(value, 1024)
                     && visible(placeholder, 256)
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::Select {
                 id,
                 label,
-                value,
                 options,
                 action,
+                hotkey,
+                ..
+            }
+            | Self::Multiselect {
+                id,
+                label,
+                options,
+                action,
+                hotkey,
+                ..
             } => {
                 let values = options
                     .iter()
                     .map(|option| option.value.as_str())
                     .collect::<BTreeSet<_>>();
+                let chosen = match self {
+                    Self::Select { value, .. } => values.contains(value.as_str()),
+                    Self::Multiselect { value, .. } => {
+                        value.iter().all(|value| values.contains(value.as_str()))
+                            && value.iter().collect::<BTreeSet<_>>().len() == value.len()
+                    }
+                    _ => false,
+                };
                 identified(id, label, ids)
                     && (1..=16).contains(&options.len())
                     && values.len() == options.len()
-                    && options.iter().any(|option| option.value == *value)
+                    && chosen
                     && options.iter().all(|option| {
                         !option.value.is_empty()
                             && visible(&option.value, 128)
@@ -1141,6 +1215,7 @@ impl ModComponent {
                             && visible(&option.label, 128)
                     })
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::List {
                 id,
@@ -1149,6 +1224,8 @@ impl ModComponent {
                 selected,
                 height,
                 action,
+                hotkey,
+                ..
             } => {
                 let values = rows
                     .iter()
@@ -1167,7 +1244,7 @@ impl ModComponent {
                             && !row.label.is_empty()
                             && visible(&row.label, 256)
                             && row.spans.len() <= 12
-                            && row.spans.iter().all(|span| visible(&span.text, 256))
+                            && row.spans.iter().all(|span| valid_span(span, 256))
                             && row
                                 .spans
                                 .iter()
@@ -1176,6 +1253,7 @@ impl ModComponent {
                                 <= 256
                     })
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::Document {
                 id,
@@ -1193,7 +1271,10 @@ impl ModComponent {
                     && (source.is_none() || lines.is_empty())
                     && lines.len() <= 2000
                     && lines.iter().all(|spans| {
-                        spans.len() <= 12 && spans.iter().all(|span| visible(&span.text, 1024))
+                        spans.len() <= 12
+                            && spans
+                                .iter()
+                                .all(|span| visible(&span.text, 1024) && span.link.is_none())
                     })
                     && lines
                         .iter()
@@ -1324,7 +1405,7 @@ fn valid_action(action: &ModKeyAction) -> bool {
         ModKeyAction::Command { command, args } => {
             mod_command_reference(command) && multiline(args, 4096)
         }
-        ModKeyAction::Focus { focus } => component_id(focus),
+        ModKeyAction::Focus { focus } => mod_component_id(focus),
         ModKeyAction::Copy { copy, label } => {
             !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
         }
@@ -1389,6 +1470,7 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
         | ModComponent::Button { id, .. }
         | ModComponent::Input { id, .. }
         | ModComponent::Select { id, .. }
+        | ModComponent::Multiselect { id, .. }
         | ModComponent::Markdown { id, .. }
         | ModComponent::Code { id, .. }
         | ModComponent::List { id, .. }

@@ -30,6 +30,8 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "terminal.open",
     "terminal.prompt",
     "terminal.pane",
+    "terminal.panes",
+    "terminal.notice",
     "terminal.pty",
 ];
 

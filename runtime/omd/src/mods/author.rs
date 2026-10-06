@@ -467,6 +467,7 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Button { id, .. }
             | ModComponent::Input { id, .. }
             | ModComponent::Select { id, .. }
+            | ModComponent::Multiselect { id, .. }
             | ModComponent::Markdown { id, .. }
             | ModComponent::Code { id, .. }
             | ModComponent::List { id, .. }
@@ -520,6 +521,38 @@ fn terminal_component_action(view: &ModView, id: &str, value: Option<&str>) -> R
                 return Err(failure("offline_terminal_select_value_not_mounted"));
             }
             command(action, Some(selected))
+        }
+        ModComponent::Multiselect {
+            action,
+            value: current,
+            options,
+            ..
+        } => {
+            let selected = match value {
+                Some(value) => serde_json::from_str::<Vec<String>>(value)
+                    .map_err(|_| failure("offline_terminal_multiselect_value_invalid"))?,
+                None => current.clone(),
+            };
+            if selected
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != selected.len()
+                || !selected
+                    .iter()
+                    .all(|value| options.iter().any(|option| option.value == *value))
+            {
+                return Err(failure("offline_terminal_select_value_not_mounted"));
+            }
+            let ordered = options
+                .iter()
+                .filter(|option| selected.contains(&option.value))
+                .map(|option| &option.value)
+                .collect::<Vec<_>>();
+            command(
+                action,
+                Some(&serde_json::to_string(&ordered).map_err(failure)?),
+            )
         }
         ModComponent::List {
             action,
