@@ -62,11 +62,11 @@
         "index.ts": "8cc5b39ba7d5d6adc087131e23cb34775b155d66b39233c64cba7b80ffff1056",
         "mod.json": "7040ef3ca910367688fac91531e903ce7e3b335d816637f3741d7f1a82eee227",
         "models.json": "21710d46d563a0d0e25fdbfd05f1cbdbf788ab235ca65bdd65a7b31f19f09cc8",
-        "setup.mjs": "3def61abd5614c78b7ebd5afa183f9a390d347eaf457e7950bf00a1d32a76ae9",
+        "setup.mjs": "fb70f124a6bbfeb2bd601e21110dc4c49370743a26766b861900d18c61c7147d",
         "transport.mjs": "52c3cad7e2f7a08ff7d3d2c86fc531e292d9f566dd5cf3469602934c318e196c"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "d4ab8fab52d29a6df908bba89d83986cc98b066e5cd37f740c5472ad9071c44a",
+      "package_sha256": "22cab6281ba94a68e9069925d82e235c80168fdbb3a1ab975140e7b65477a461",
       "source": "mods/first-party/omd_claude_cli",
       "version": "0.2.0-preview.3"
     },
@@ -104,11 +104,11 @@
         "index.ts": "cd5589d6874522b91a8aa22805b0f776303e5ba5deb2a467c96a86d41706b946",
         "mod.json": "7a79ee76759840371050e302910b1fa315c21ce17472edecbb364e7df5b547e0",
         "models.json": "623b6512353588d10a000dc6ccbd8d5ee647227678fa29c1c5cfa8ec3fc825fb",
-        "setup.mjs": "f1634b2b1752b12ba8a5196ca5f4e52d3678371d9a2443563ae4163a944b10c4",
+        "setup.mjs": "7676f87d272ff2db75366ab22f522922253d802a7a74e1e91d064c39e2d8edda",
         "transport.mjs": "7eb26513a92f56f4f84eaaa3d6bc56062b17354f530e914dc04f31a7fea5dd46"
       },
       "id": "omd_cursor",
-      "package_sha256": "55be7182fd0cd0554c463513b352ea39c87c2cf08f1c52b0b60e05c0a08f62cf",
+      "package_sha256": "208f6cbbb6063d5ac818b14b1836147b0e5977273514650427c12b485ddd80f2",
       "source": "mods/first-party/omd_cursor",
       "version": "0.1.0-preview.1"
     },
@@ -441,11 +441,11 @@
         "index.ts": "8f030ce4ff53ffd56fe42c840bb0b57c67f3c83327dca566e4f84ea1bd08053c",
         "mod.json": "cdbfc316d1be0ce9eb5ad3c132b5d5f277e7d605acd03e1f8b9fad52e3806131",
         "models.json": "25e51859c4740c2208887517939a66e8e20843622c59a1378ddaec816a9a9d30",
-        "setup.mjs": "87cff78a35b2bf80a1d2ddf4e3e847d2f6bd02129eea3e18cd813c9c2cacad53",
+        "setup.mjs": "0e9ccd3eee8207f3db4f994302e98a8bc0bc5bfd12c9755fa65e0b468d6ac98b",
         "transport.mjs": "2185edc37f885f94f01ec95c336cd396b049b17bf6bf0a8162858b4fb6105111"
       },
       "id": "omd_muse",
-      "package_sha256": "b656c9b926ef37976da3427fe100724c41109a36a6e14d534583014c97aea7f0",
+      "package_sha256": "6803be93b9619005f947a678fbc2acdde80f7cdd66f53fe2793980150c4739b2",
       "source": "mods/first-party/omd_muse",
       "version": "0.1.0-preview.2"
     },
@@ -574,10 +574,10 @@
         "index.ts": "5cb6895accf3e63502b9aaa12e5d7fc511c3c385385407f4e98dae0ad874070c",
         "mod.json": "690afa9350dd1fbaa1e520bc0c3f40fb90c7659b75ae79643386f49ac44570c4",
         "router.mjs": "eda577d32bdf80b59779e3264823cf949a8f4127b9bb5289e9710139acd1a1c8",
-        "setup.mjs": "1e3cc9c6a9464c09dcb890b6fda99476b34c3625ce6e6522670155ea78eb38b8"
+        "setup.mjs": "a5b650ce0568401142c7abf3c84b86b6f5e5f77a762a51e67a0838242c9993f4"
       },
       "id": "omd_profiles",
-      "package_sha256": "faa66890d4fdb9817b6aaa8cce868e5da85c932a0f4b282d6ba47ede54f9b0a2",
+      "package_sha256": "4dcddc66236ab233b7a2ce7bc0d4b6d7500bacc31db960544ecf752a5d92b608",
       "source": "mods/first-party/omd_profiles",
       "version": "0.1.0-preview.2"
     },
@@ -807,6 +807,25 @@
       "package_sha256": "9aadd319594be5588ff29ca8bad0b5a123983256249c7b1966e68249c9a45547",
       "source": "mods/first-party/omd_typed_tasks",
       "version": "0.2.0-preview.1"
+    },
+    "omd_update": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "exec",
+        "lifecycle",
+        "store",
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "ae8a9a88b056b9c6cb8eb1f6ba8e067310ec70f0f99ec709a898bea9b4c44cc4",
+        "mod.json": "0ff019505c47c40be5bad92f4dc98534c3dcfd40a9dc03357e3ec52ff17aa043"
+      },
+      "id": "omd_update",
+      "package_sha256": "8dbf61ea7152f2115abe66d1215e155d53ef6664f1f34559b5490532e453001e",
+      "source": "mods/first-party/omd_update",
+      "version": "0.1.0-preview.1"
     },
     "omd_usage": {
       "api": "0.2.0-experimental.5",

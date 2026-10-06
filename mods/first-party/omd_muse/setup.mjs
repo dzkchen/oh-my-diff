@@ -65,7 +65,7 @@ async function setup(recordPath, musePath) {
   await privateDirectory(data);
   const { fingerprint, models } = await discover(muse, { PATH: process.env.PATH, HOME: home, XDG_DATA_HOME: data,
     TMPDIR: data, MUSE_EXPERIMENTAL_SDK_ENABLED: '1' });
-  const directory = join(record.prefix, 'muse');
+  const directory = join(record.store, 'routes', 'muse');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const routePath = join(directory, 'route.json');
   const catalogPath = join(directory, 'models.json');

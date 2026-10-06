@@ -30,15 +30,15 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
-DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace")
+DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace")
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
-PLATFORM_PACKAGES = ("omd_logo", "omd_mods")
+PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 ROUTES = {"claude": "omd_claude_cli", "cursor": "omd_cursor", "muse": "omd_muse", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
-                    "runtime/preview-v1.lock.json", "upstream.lock.json", "LEAN_PROFILES.md")
+                    "runtime/preview-v1.lock.json", "upstream.lock.json", "LEAN_PROFILES.md", "install.sh")
 
 
 def invoke(*arguments):
@@ -57,6 +57,39 @@ def package_sources(preview):
 
 def profile_packages(profile):
     return PACKAGES if profile == "full" else PLATFORM_PACKAGES
+
+
+def sync_sources(manager, store, origin, packages):
+    selections = {item.get("path"): item for item in invoke(manager, "selection-status", store)["selections"]}
+    changed = []
+    for identifier, package in packages.items():
+        target = store / "sources" / identifier
+        files = {path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()}
+        if files == set(package["files"]) and all(support.digest(target / name) == digest
+                                                  for name, digest in package["files"].items()):
+            continue
+        staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
+        for leftover in (staged, retired):
+            shutil.rmtree(leftover, ignore_errors=True)
+        shutil.copytree(origin / identifier, staged)
+        if target.is_dir():
+            target.rename(retired)
+        staged.rename(target)
+        shutil.rmtree(retired, ignore_errors=True)
+        invoke(manager, "trust-all", store, json.dumps([{"path": str(target), "sha256": package["sha256"],
+                                                         "capabilities": package["capabilities"]}]))
+        if selections.get(str(target), {}).get("selected"):
+            invoke(manager, "enable", store, target)
+        changed.append(identifier)
+    if changed:
+        invoke(manager, "reload", store)
+    return changed
+
+
+def reconcile(prefix, bin_dir):
+    record = load(prefix)
+    _, manager = check(record, bin_dir)
+    return {"restored": sync_sources(manager, Path(record["store"]), prefix / "sources", record["packages"])}
 
 
 def paths(prefix, bin_dir, store):
@@ -166,7 +199,21 @@ def selected_text(record):
     binary = record["binary"]["installed_path"]
     store = record["store"]
     selection = record["activation"]["selection"]
-    lines = ["#!/bin/sh", "unset OMD_INSTALL_PROFILE OMD_CONTROLLED_MANIFEST OMD_MOD_STORE"]
+    lines = ["#!/bin/sh"]
+    update = record.get("update")
+    if update:
+        root, installer = shlex.quote(update["root"]), f"OMD_PYTHON={shlex.quote(update['python'])} sh {shlex.quote(update['installer'])}"
+        request = shlex.quote(str(Path(store) / "data/user/omd_update/store.json"))
+        # The marker precedes the journal check and an update journals before reading markers, so each sees the other.
+        lines += [f"mkdir -p {root}/sessions && : > {root}/sessions/$$",
+                  f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/ready.json ] || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
+                  f"  {installer} launch --root {root} --session $$",
+                  f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
+                  "fi",
+                  "unset OH_MY_DIFF_UPDATED",
+                  f"[ {root}/update/next -nt {root}/sessions/$$ ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
+                  f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/state.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/state.json; export OH_MY_DIFF_UPDATE"]
+    lines.append("unset OMD_INSTALL_PROFILE OMD_CONTROLLED_MANIFEST OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
     if selection == "direct":
         lines.append("export OMD_MODE=upstream_direct")
@@ -271,7 +318,7 @@ def status(prefix, bin_dir):
                          and record["activation"]["selection"] != "direct",
                          "loaded_by_profile": identifier in active and record["activation"]["selection"] != "direct",
                          "error": active.get(identifier, {}).get("error")})
-    return {"product": PRODUCT, "profile": record["profile"],
+    return {"product": PRODUCT, "version": record["version"], "profile": record["profile"],
             "profile_label": PROFILE_LABELS[record["profile"]],
             "activation": record["activation"]["selection"],
             "host_mode": "upstream_direct" if record["activation"]["selection"] == "direct" else "omd",
@@ -475,15 +522,7 @@ def install(args):
     if not fallback:
         raise ValueError("no upstream Codex fallback resolves on PATH")
     fallback_id = identity(fallback)
-    if args.attach_store:
-        for identifier in profile_packages(args.profile):
-            target = store / "sources" / identifier
-            package = packages[identifier]
-            if target.is_dir() and any(
-                not (target / name).is_file() or support.digest(target / name) != package["files"][name]
-                for name in package["files"]
-            ):
-                raise ValueError(f"existing store has a different first-party candidate package: {identifier}")
+    previous = load(support.resolved(args.previous)) if args.previous else None
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
     made_store = False
@@ -542,32 +581,32 @@ def install(args):
         trusted, enabled = [], []
         for identifier in profile_packages(args.profile):
             package = packages[identifier]
+            for name in package["files"]:
+                (prefix / "sources" / identifier / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / package["source"] / name, prefix / "sources" / identifier / name)
+            installed[identifier] = {"version": package["version"], "sha256": package["package_sha256"],
+                                     "files": package["files"], "capabilities": package["capabilities"]}
             target = sources / identifier
-            added = not target.is_dir()
-            if added:
-                target.mkdir()
-                for name in package["files"]:
-                    (target / name).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(ROOT / package["source"] / name, target / name)
-            inspected = invoke(installed_manager, "inspect", target)
-            if inspected["sha256"] != package["package_sha256"]:
-                raise ValueError(f"package digest mismatch: {identifier}")
-            if added:
-                trusted.append({"path": str(target), "sha256": inspected["sha256"],
+            if not target.is_dir():
+                shutil.copytree(prefix / "sources" / identifier, target)
+                trusted.append({"path": str(target), "sha256": package["package_sha256"],
                                 "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
-            installed[identifier] = {"version": package["version"], "sha256": inspected["sha256"]}
         if trusted:
             invoke(installed_manager, "trust-all", store, json.dumps(trusted))
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
+        sync_sources(installed_manager, store, prefix / "sources", installed)
+        for identifier in installed:
+            if invoke(installed_manager, "inspect", sources / identifier)["sha256"] != installed[identifier]["sha256"]:
+                raise ValueError(f"package digest mismatch: {identifier}")
         home, sqlite = support.state_roots()
         record = {"schema": SCHEMA, "product": PRODUCT,
                   "installed_at": datetime.now(timezone.utc).isoformat(),
                   "prefix": str(prefix), "bin_dir": str(bin_dir), "store": str(store),
                   "profile": args.profile, "profile_label": PROFILE_LABELS[args.profile],
-                  "mod_api": host["api"], "packages": installed,
+                  "version": candidate["version"], "mod_api": host["api"], "packages": installed,
                   "plugin_bundle": plugin_bundle,
                   "binary": {**binary, "installed_path": str(artifacts / "codex"),
                              "sha256": support.digest(artifacts / "codex")},
@@ -587,6 +626,13 @@ def install(args):
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
                                    "policy": "inherited unchanged; never removed by uninstall"},
                   "activation": {"selection": args.profile}}
+        if prefix.name == "prefix" and prefix.parent.parent.name == "releases":
+            record["update"] = {"root": str(prefix.parents[2]), "installer": str(management_root / "install.sh"),
+                                "python": sys.executable}
+        if previous and previous["profile"] == args.profile:
+            record["activation"]["selection"] = previous["activation"]["selection"]
+            if previous.get("providers"):
+                record["providers"] = previous["providers"]
         launcher = bin_dir / "codex"
         support.atomic_text(launcher, selected_text(record), 0o755)
         made_launchers.append(launcher)
@@ -610,8 +656,11 @@ def install(args):
             tool_launcher = bin_dir / name
             launcher_text = f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
             if name == "omd":
+                update = record.get("update")
+                routed = (f"if [ \"$1\" = update ]; then shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
+                          f"{shlex.quote(update['installer'])} update --root {shlex.quote(update['root'])} \"$@\"; fi\n") if update else ""
                 launcher_text = (f"#!/bin/sh\nif [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control_launcher))} mini -- \"$@\"; fi\n"
-                                 f"export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
+                                 f"{routed}export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
             support.atomic_text(tool_launcher, launcher_text, 0o755)
             made_launchers.append(tool_launcher)
             details["launcher_sha256"] = support.digest(tool_launcher)
@@ -697,6 +746,8 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
+    managed.update(prefix / "sources" / identifier / name
+                   for identifier, package in record["packages"].items() for name in package["files"])
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -742,6 +793,8 @@ def main():
     install_parser.add_argument("--node", type=Path, required=True)
     install_parser.add_argument("--store", type=Path, required=True)
     install_parser.add_argument("--attach-store", action="store_true")
+    install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
+    commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
     status_parser = commands.add_parser("status", help="show the installed profile and its mods")
     status_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
     activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
@@ -784,6 +837,8 @@ def main():
         if not args.json:
             print(status_summary(result))
             return
+    elif args.command == "reconcile":
+        result = reconcile(prefix, bin_dir)
     elif args.command == "activate":
         result = activate(prefix, bin_dir, args.selection)
     elif args.command == "mod":

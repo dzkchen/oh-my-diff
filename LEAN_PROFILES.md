@@ -21,8 +21,8 @@ SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node 24.18 or a
 later 24.x (`mise which node`); any upstream Codex `0.160.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
-SDK/CLI, a local package-control command, the `omd_logo` presentation mod and the `omd_mods`
-control screen. It does not change
+SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
+control screen and the `omd_update` update notices. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
 The historical `0.155.1` candidate and private build remain frozen. Verify the
 current host and SDK artifacts with
@@ -72,11 +72,11 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 ```
 
 `--profile platform` creates a store holding only the `omd_logo` presentation
-mod and the `omd_mods` control screen, both enabled, and launches patched Codex
+mod, the `omd_mods` control screen and the `omd_update` notices, all enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs thirty-nine first-party candidate mods. A fresh OMD+ store enables
-`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods` and `omd_model_picker`; Codex's
+`--profile full` installs forty-five first-party candidate mods. A fresh OMD+ store enables
+`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
@@ -84,7 +84,10 @@ knowledge, task tools, theme, reactive rules, programmable context, `/continue`,
 require their own explicit host policy and allowance; installation does not
 activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
-selections and adds newly bundled first-party packages disabled. Ten curated plugin source packages are available in
+selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
+re-enabled when they were on), and adds newly bundled first-party packages disabled. Each installation keeps a copy of
+its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
+`--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Ten curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. The upstream `codex-code-mode-host`, built from the same pinned tree,
 is installed beside `codex`, because current models run shell commands through
@@ -218,7 +221,7 @@ authoring and recovery details are in [mods/README.md](mods/README.md). A mod's 
 repair or disable, not evidence that its behavior ran successfully.
 
 An existing compatible store can be attached with `--attach-store` during a
-new installation. OMD+ attach checks the exact pinned package source digests
+new installation. Attaching replaces changed first-party package sources with the new installation's
 and preserves each existing enabled or disabled choice. Use a separate prefix
 and launcher directory for a side-by-side candidate upgrade. Removal deletes
 only the managed launcher and installation prefix:
@@ -227,7 +230,43 @@ only the managed launcher and installation prefix:
 /path/to/omd-bin/omd-package uninstall
 ```
 
-The mod store and Codex state remain. To protect credentials, grants and evidence from same-user processes on macOS, deploy the OS-separated authority broker:
+The mod store and Codex state remain.
+
+## Updates
+
+Installations made with `install.sh` update themselves through the same verified transaction. Each release on
+GitHub (`dzkchen/oh-my-diff`, tag `vVERSION`) carries the archive and the `omd-release.json` manifest that
+`lean_package pack` writes beside it: version, target, upstream Codex tag, mod API, Node and archive SHA-256. A
+release is compatible when its target matches, its Codex minor matches your upstream `codex` and your Node satisfies
+it; the newest compatible release on your channel is offered, and a newer incompatible one is reported with its
+requirement. No release is published yet (Batch 5c), so checks report that none is available.
+
+```sh
+omd update                      # install the newest compatible release (or the pinned one)
+omd update status               # installed and available versions, policy, open sessions, last result
+omd update check                # check now, ignoring the cadence
+omd update enable | disable     # automatic updates (off by default)
+omd update checks on|off        # background checks (on by default)
+omd update channel stable|beta  # beta also offers GitHub pre-releases
+omd update cadence daily|weekly
+omd update pin VERSION|none     # hold an exact version
+omd update rollback             # return to the previous installation
+```
+
+The launcher starts a detached check at most once per cadence and never waits for it; the result is cached in
+`ROOT/update/state.json` and shown by the `omd_update` mod (`/update`, and once a day in a fresh session's welcome
+area until you snooze or skip the release). Policy is `omd_update`'s settings, also editable in `/mods`;
+`omd update` writes it to every profile store. An update installs only when no other OMD session is open, because the
+store's first-party sources and trust change: with sessions open, `omd update` downloads and verifies the release
+and it installs the next time OMD starts with no other session open; **Update now** in `/update` does the same.
+Automatic updates download in the background and install at launch the same way, and a release that failed once is
+not retried automatically. A failed update rolls back and keeps the current version; an update interrupted at any
+point is repaired by the next launch or installer command. Updates keep the profile, activation choice, route setups,
+settings, credentials, Codex state and user-installed mods; they never update user-installed mods, and when enabled
+user mods do not support a release's mod API, automatic updates skip it and `omd update` asks first (`--yes` skips
+the question).
+
+To protect credentials, grants and evidence from same-user processes on macOS, deploy the OS-separated authority broker:
 
 ```sh
 /path/to/omd-bin/omd-package broker install   # sudo; then one dialog to protect the current grants
@@ -246,8 +285,8 @@ fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,
 `omd-package` or `omd-mod-author` already in the launcher directory and not
 managed by the installer is moved to `NAME.before-omd` and restored on
-uninstall. Rolling back restores the previous generation's binaries and
-launchers but keeps the current mod store; Phase 11 makes no promise that an
+uninstall. Rolling back restores the previous generation's binaries, launchers
+and first-party mod sources but keeps the rest of the mod store; Phase 11 makes no promise that an
 older generation reads newer store data.
 If you explicitly added the
 staged plugin marketplace to Codex, remove its plugins and run

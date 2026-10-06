@@ -16,6 +16,8 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
+VERSION = "0.1.0-alpha.1"
+TARGET = "aarch64-apple-darwin"
 BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
 HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
 ENTITLEMENTS = ROOT / "runtime/hardened-entitlements.plist"
@@ -28,7 +30,7 @@ SOURCES = (
     "runtime/preview-v1.lock.json", "runtime/plugin-v1.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
-    "LEAN_PROFILES.md",
+    "LEAN_PROFILES.md", "install.sh",
     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
 ) + full_mods_lock.sources() + support.optional_plugin_sources()
 
@@ -145,9 +147,10 @@ def build(artifact_dir, package_mode=False):
     return {
         "schema": 1,
         "product": "oh-my-diff-lean-package-candidate-v1",
+        "version": VERSION,
         "upstream_tag": upstream["tag"],
         "upstream_commit": upstream["commit"],
-        "target": "aarch64-apple-darwin",
+        "target": TARGET,
         "rust_toolchain": upstream["rust_toolchain"],
         "normalized_cargo_lock_sha256": upstream["normalized_cargo_lock_sha256"],
         "runtime_patch_sha256": patch["patch"]["sha256"],
@@ -157,10 +160,10 @@ def build(artifact_dir, package_mode=False):
         "artifacts": artifacts,
         "platform_tools": ["omd", "omd-contract"],
         "profiles": {
-            "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods"], "first_party_default_active": ["omd_logo", "omd_mods"],
+            "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods", "omd_update"], "first_party_default_active": ["omd_logo", "omd_mods", "omd_update"],
                          "plugin_sources": []},
             "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace"],
+                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace"],
                      "plugin_sources": sorted((*selected, *support.SELECTED_OPTIONAL_PLUGINS))},
         },
         "qualification": "development package candidate; supported collection and default pending",

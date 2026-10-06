@@ -70,7 +70,7 @@ async function setup(recordPath, optionText) {
   if (record.profile !== 'full' || !record.packages?.omd_profiles) throw new Error('omd_plus_profiles_mod_required');
   const mod = await realpath(join(record.store, 'sources', 'omd_profiles'));
   if (mod !== source) throw new Error('setup_must_run_from_installed_mod');
-  const directory = join(record.prefix, 'profiles');
+  const directory = join(record.store, 'routes', 'profiles');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const routePath = join(directory, 'route.json');
   const catalogPath = join(directory, 'models.json');

@@ -102,7 +102,7 @@ async function setup(recordPath, claudePath) {
   const claude = await findCli(claudePath);
   checkCli(claude);
   const models = await discover(claude);
-  const directory = join(record.prefix, 'claude');
+  const directory = join(record.store, 'routes', 'claude');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const routePath = join(directory, 'route.json');
   const catalogPath = join(directory, 'models.json');
