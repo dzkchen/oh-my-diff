@@ -543,6 +543,12 @@
       "why_mod": "Owns the /mods screen, its actions and the first-run card over public package controls and terminal sites; native code keeps trust, confirmation, package authority and /omd recovery; enabled by default in both profiles."
     },
     {
+      "path": "mods/first-party/omd_update",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the update notice, the /update dialog, snooze and skip state and the update policy settings (checks, channel, cadence, pin, automatic updates); the installer reads those settings and does the network check and installation; active in OMD Core and OMD+."
+    },
+    {
       "path": "mods/first-party/omd_cursor",
       "extension_type": "mod",
       "role": "candidate",

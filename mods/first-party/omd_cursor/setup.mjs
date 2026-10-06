@@ -109,7 +109,7 @@ async function setup(recordPath, sdkPath) {
   if (record.profile !== 'full' || !record.packages?.omd_cursor) throw new Error('omd_plus_cursor_mod_required');
   const mod = await realpath(join(record.store, 'sources', 'omd_cursor'));
   if (mod !== source) throw new Error('setup_must_run_from_installed_mod');
-  const directory = join(record.prefix, 'cursor');
+  const directory = join(record.store, 'routes', 'cursor');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const entry = await realpath(sdkPath || await install(directory));
   let codeRoot = sdkPath ? dirname(entry) : await realpath(join(directory, 'sdk'));

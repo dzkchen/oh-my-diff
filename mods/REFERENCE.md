@@ -1345,7 +1345,10 @@ host never calls a mod while drawing.
 
 ### Startup presentation (`terminal_welcome_v1`)
 
-The terminal event's read-only `presentation` is `{thread_id, phase}`. A new
+The terminal event's read-only `presentation` is `{thread_id, phase, surface?}`.
+`surface` is `fullscreen` when the terminal client draws on the alternate screen
+and `inline` otherwise (inline sessions never draw the `welcome` site); it is
+absent until the client has chosen its screen mode. A new
 thread is `fresh`, an accepted native turn start makes it `started`, and a
 resumed or forked thread is `resumed`, from existing host markers before the
 first ready publication. Before the first editable frame, a repeatable

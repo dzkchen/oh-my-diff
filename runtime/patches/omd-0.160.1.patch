@@ -12335,7 +12335,7 @@ index 00c2c2adf..bd951abb1 100644
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 7fafd6dd4..238a2a7e2 100644
+index 7fafd6dd4..237e43373 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -308,6 +308,7 @@ mod interaction;
@@ -12386,21 +12386,19 @@ index 7fafd6dd4..238a2a7e2 100644
          self.update_due_hook_visibility();
          self.schedule_hook_timer_if_needed();
          self.bottom_pane.pre_draw_tick();
-@@ -1291,6 +1299,13 @@ impl ChatWidget {
+@@ -1291,6 +1299,11 @@ impl ChatWidget {
          from_replay: bool,
          turn_id: &str,
      ) {
-+        if let (Some(client_id), Some(thread), Some(root)) = (
-+            client_id,
-+            self.thread_id,
-+            crate::omd::store_root(),
-+        ) {
++        if let (Some(client_id), Some(thread), Some(root)) =
++            (client_id, self.thread_id, crate::omd::store_root())
++        {
 +            let _ = codex_omd::consents::delivered(&root, &thread.to_string(), client_id, turn_id);
 +        }
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
-@@ -2022,7 +2037,13 @@ impl ChatWidget {
+@@ -2022,7 +2035,13 @@ impl ChatWidget {
 
      #[cfg(test)]
      pub(crate) fn status_line_text(&self) -> Option<String> {
@@ -16980,7 +16978,7 @@ index bac11e7a2..1dbabffe2 100644
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 50b4e80e7..7b0876784 100644
+index 50b4e80e7..41c4762ba 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -651,6 +651,11 @@ impl OverlayInput {
@@ -16995,7 +16993,15 @@ index 50b4e80e7..7b0876784 100644
  pub struct Tui {
      pub(crate) link_hover: link_pointer::LinkHover,
      frame_requester: FrameRequester,
-@@ -1001,6 +1006,22 @@ impl Tui {
+@@ -763,6 +768,7 @@ impl Tui {
+             let _ = self.set_owned_screen(/*owned*/ false);
+         }
+         self.alt_screen_enabled = enabled;
++        codex_omd::client_surface::set_screen(if enabled { "fullscreen" } else { "inline" });
+     }
+
+     /// Defer a fresh fullscreen launch until its first synchronized frame is ready.
+@@ -1001,6 +1007,22 @@ impl Tui {
 
      /// Emit a desktop notification now if the terminal is unfocused.
      /// Returns true if a notification was posted.
@@ -28923,7 +28929,7 @@ index 000000000..4c888de7d
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..883e7f6ad
+index 000000000..dd03fd035
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2339 @@
@@ -29394,7 +29400,7 @@ index 000000000..883e7f6ad
 +    active: impl Fn() -> bool,
 +) {
 +    let mut input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
-+        "presentation": views.current_presentation()});
++        "presentation": codex_omd::client_surface::presented(views.current_presentation())});
 +    let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
 +    let rendered_ms = codex_omd::ModViewSnapshot::clock();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
@@ -52983,10 +52989,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..ad7015f88
+index 000000000..8bcef1147
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,648 @@
+@@ -0,0 +1,667 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -53217,6 +53223,25 @@ index 000000000..ad7015f88
 +    surface: Option<(u64, Arc<dyn ClientSurface>)>,
 +    wake: Option<(u64, Wake)>,
 +    next: u64,
++}
++
++static SCREEN: Mutex<Option<&'static str>> = Mutex::new(None);
++
++/// Records whether the terminal client draws on the alternate screen (`fullscreen`) or `inline`.
++pub fn set_screen(screen: &'static str) {
++    *SCREEN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(screen);
++}
++
++pub fn presented(mut presentation: Value) -> Value {
++    let screen = *SCREEN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let (Some(fields), Some(screen)) = (presentation.as_object_mut(), screen) {
++        fields.insert("surface".into(), screen.into());
++    }
++    presentation
 +}
 +
 +static HUB: Mutex<Hub> = Mutex::new(Hub {
@@ -53637,10 +53662,10 @@ index 000000000..ad7015f88
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..8b6298abf
+index 000000000..f3b83e2d8
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,359 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -53989,6 +54014,16 @@ index 000000000..8b6298abf
 +        "authority keys are not rows"
 +    );
 +    assert!(!serde_json::to_string(&rows).unwrap().contains("s1"));
++}
++
++#[test]
++fn presentation_reports_the_terminal_screen_mode() {
++    set_screen("inline");
++    assert_eq!(
++        presented(json!({"thread_id": null, "phase": "fresh"})),
++        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
++    );
++    assert_eq!(presented(Value::Null), Value::Null);
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
@@ -96462,10 +96497,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..f2eafeeec
+index 000000000..a99b5a296
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1287 @@
+@@ -0,0 +1,1288 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -96672,7 +96707,8 @@ index 000000000..f2eafeeec
 +            "event": "startup", "ledger": null,
 +            "identity": runtime.identity(crate::version::CODEX_CLI_VERSION,
 +                std::env::var(crate::omd::INSTALL_PROFILE_ENV).ok().as_deref(), "omd"),
-+            "presentation": {"thread_id": null, "phase": phase},
++            "presentation": codex_omd::client_surface::presented(
++                serde_json::json!({"thread_id": null, "phase": phase})),
 +        });
 +        let pty_scope = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
 +        let terminal = runtime.terminal_view(input.clone(), || true);

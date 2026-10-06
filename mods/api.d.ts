@@ -153,7 +153,7 @@ export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; fore
 export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[] };
 export type TerminalWelcome = { show_while_composing?: boolean };
 /** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
-export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed' };
+export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed'; surface?: 'inline' | 'fullscreen' };
 export interface TerminalTheme {
   accent?: ThemeColor; user_message_background?: ThemeColor; syntax?: string; success?: ThemeColor; attention?: ThemeColor; failure?: ThemeColor;
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';

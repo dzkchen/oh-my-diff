@@ -514,6 +514,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_update",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Update notices and /update controls: installed vs available OMD release, notes, copyable omd update, snooze/skip, update checks, channel, cadence, pin and opt-in automatic updates applied at launch",
+      "source": "mods/first-party/omd_update",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, store_v1, terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.160.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd-guidance-hooks",
       "version": "0.1.0",
       "extension_type": "plugin",

@@ -347,3 +347,13 @@ fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
     );
     assert!(!serde_json::to_string(&rows).unwrap().contains("s1"));
 }
+
+#[test]
+fn presentation_reports_the_terminal_screen_mode() {
+    set_screen("inline");
+    assert_eq!(
+        presented(json!({"thread_id": null, "phase": "fresh"})),
+        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
+    );
+    assert_eq!(presented(Value::Null), Value::Null);
+}

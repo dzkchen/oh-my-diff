@@ -1142,11 +1142,13 @@
       "label": "OMD Core",
       "first_party_installed": [
         "omd_logo",
-        "omd_mods"
+        "omd_mods",
+        "omd_update"
       ],
       "first_party_default_active": [
         "omd_logo",
-        "omd_mods"
+        "omd_mods",
+        "omd_update"
       ],
       "plugin_sources": []
     },
@@ -1193,6 +1195,7 @@
         "omd_task_tools",
         "omd_theme",
         "omd_typed_tasks",
+        "omd_update",
         "omd_usage",
         "omd_workflow",
         "omd_workspace",
@@ -1203,6 +1206,7 @@
         "omd_logo",
         "omd_model_picker",
         "omd_mods",
+        "omd_update",
         "omd_workspace"
       ],
       "plugin_sources": [
@@ -1379,6 +1383,10 @@
     "omd_typed_tasks": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_typed_tasks"
+    },
+    "omd_update": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_update"
     },
     "omd_usage": {
       "version": "0.1.0-preview.1",

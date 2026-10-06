@@ -101,7 +101,7 @@ def run(archive, upstream, output):
             first = command("status", *fixed)
             assert first["profile"]["profile"] == "platform"
             assert first["profile"]["installed_tools"] == ["omd", "omd-contract", "omd-mod"]
-            assert [item["id"] for item in first["profile"]["packages"] if item["installed"]] == ["omd_logo", "omd_mods"]
+            assert [item["id"] for item in first["profile"]["packages"] if item["installed"]] == ["omd_logo", "omd_mods", "omd_update"]
             assert (bin_dir / "codex").is_symlink()
             version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
             assert subprocess.check_output([bin_dir / "codex", "--version"], env=env, text=True).strip() == f"codex-cli {version}"
@@ -117,7 +117,7 @@ def run(archive, upstream, output):
             assert full["installed"] == "full"
             full_status = command("status", *fixed)["profile"]
             assert full_status["profile"] == "full"
-            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace"}
+            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace"}
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
             assert len(full_status["plugin_bundle"]["plugins"]) == 10
             registered = json.loads(subprocess.check_output([bin_dir / "omd-package", "plugins"], env=env, text=True))
