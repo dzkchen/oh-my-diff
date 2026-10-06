@@ -187,9 +187,12 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
         "hunter2"
     );
     assert!(profiles.owned_secret(&secret.id, "other").is_err());
-    assert!(
+    assert_eq!(
         profiles
             .secret(&secret.id, "https://example.com:8443")
-            .is_err()
+            .unwrap()
+            .token,
+        "hunter2"
     );
+    assert!(profiles.secret(&secret.id, "https://example.com").is_err());
 }

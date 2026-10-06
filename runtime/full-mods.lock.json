@@ -165,18 +165,21 @@
         "fs.write",
         "store",
         "lifecycle",
-        "terminal"
+        "terminal",
+        "events",
+        "credentials",
+        "http"
       ],
       "extension_type": "mod",
       "files": {
         "fingerprint.mjs": "ce25b9b6dfa18ab7a9eb06c39161ba522ef2772edec0599effaf4b0e128d5006",
-        "index.ts": "38e8bca7fdafc1ba1e8c1ef7b2d70edfa0733e348217a1f41f79fefc1f171d52",
-        "mod.json": "c3190d710149a06a61d0f2a8fe8a25dc9cad7e4775d6ce1dc3053d991b1c5061"
+        "index.ts": "0ee3ba9aae35e6dcb254f9f6cd953c70f61f956151a666718ae7360f938ba50c",
+        "mod.json": "9e2525f2784917c498508215617f286b8f27702c1170f826a8b7852fd08f30af"
       },
       "id": "omd_git",
-      "package_sha256": "5a39999300d7ba5832b31695a03cd0623ebb178c8494528b48e53509ce853993",
+      "package_sha256": "c42e55a3e0b6c271b7717c02adef8d76e3256ab23d0c57e7098c85e395da9e43",
       "source": "mods/first-party/omd_git",
-      "version": "0.2.0-preview.3"
+      "version": "0.2.0-preview.4"
     },
     "omd_graph_navigator": {
       "api": "0.2.0-experimental.5",

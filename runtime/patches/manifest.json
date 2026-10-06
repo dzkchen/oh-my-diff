@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "1d63285811e9035bc6fbdd8a91ad58fbf7be36c72179ae626cdc8a31dc9174df"
+    "sha256": "d8e7637c4e7c34c678d8a4a55ed8716805e3860faabe74f772920ed743a65aa6"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -537,7 +537,7 @@
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
-      "after": "fdd2449f99a47da4740dabd6a1d9d70de7836ca773c285cb7d22f6e8caa027c4"
+      "after": "6427827410a8e563a15d38cfb88cfddfa6a6dae254a8330aef9bbf56c03ed874"
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
@@ -589,7 +589,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "c7004aa3765b52cd775fffba74fd2ad003730e60c0c0dbe8ee8eaa8eca2ae6f3"
+      "after": "c6c088b4d9f1cec786f0527fa1238e165b2238e1b42fbb4b75ddc712b591ecbe"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -749,11 +749,11 @@
     },
     "codex-rs/omd/src/credentials.rs": {
       "before": null,
-      "after": "73f71e7b14b8c96031a3941291ce489a9a929f954c89d580c84ce15febb03e22"
+      "after": "f950009efec1cceca715bf42afc9fea3ad970f05c59ad086951b10c95f894e65"
     },
     "codex-rs/omd/src/credentials_tests.rs": {
       "before": null,
-      "after": "c8100692b1128ccc9df4a28502a5a1534225f9fdce6fa21d3fa90738927e610e"
+      "after": "bd4c9b5813d976b3de12905b819ca950f9e6212e66fbccfafb9e4600e5abec86"
     },
     "codex-rs/omd/src/data_store.rs": {
       "before": null,

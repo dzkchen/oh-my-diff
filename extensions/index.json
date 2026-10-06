@@ -227,9 +227,9 @@
     },
     {
       "id": "omd_git",
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "extension_type": "mod",
-      "capability": "Opt-in left Git sidebar with commit graph, changed files and confirmed actions",
+      "capability": "Opt-in left Git sidebar with commit graph, changed files, confirmed actions and read-only GitHub pull request and CI status",
       "source": "mods/first-party/omd_git",
       "license": "MIT",
       "maintainer": "Oh My Diff",

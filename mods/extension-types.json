@@ -228,7 +228,7 @@
       "path": "mods/first-party/omd_git",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations."
+      "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations, and read-only GitHub pull request and CI status polled on timers through origin-bound HTTP with a package-owned token."
     },
     {
       "path": "mods/examples/workspace",

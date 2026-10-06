@@ -31410,10 +31410,10 @@ index 000000000..dd03fd035
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
-index 000000000..eef4f9215
+index 000000000..7c2e6913a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/access.rs
-@@ -0,0 +1,709 @@
+@@ -0,0 +1,729 @@
 +use super::operations::Caller;
 +use super::*;
 +use base64::Engine;
@@ -31637,14 +31637,26 @@ index 000000000..eef4f9215
 +            }
 +        }
 +        if let Some(profile) = &request.credential {
-+            if !access.credentials.contains(profile) {
++            let listed = access.credentials.contains(profile);
++            if !listed && !access.credentials.iter().any(|id| id == "owned") {
 +                return Err(format!("credential_not_granted: {profile}"));
 +            }
 +            let store = core.host.root.clone();
-+            let (profile, target) = (profile.clone(), origin.clone());
++            let (profile, target, owner) = (profile.clone(), origin.clone(), caller.id.to_owned());
 +            let secret = tokio::task::spawn_blocking(move || {
 +                let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
-+                if profiles.profile(&profile)?.destination() != Some(target.as_str()) {
++                let entry = profiles.profile(&profile)?;
++                if entry.kind == "secret" && entry.owner.as_deref() != Some(owner.as_str()) {
++                    return Err(std::io::Error::other(format!(
++                        "credential_secret_not_owned: {profile}"
++                    )));
++                }
++                if !listed && entry.kind != "secret" {
++                    return Err(std::io::Error::other(format!(
++                        "credential_not_granted: {profile}"
++                    )));
++                }
++                if entry.destination() != Some(target.as_str()) {
 +                    return Ok(None);
 +                }
 +                profiles.secret(&profile, &target).map(Some)
@@ -32003,12 +32015,20 @@ index 000000000..eef4f9215
 +        };
 +        if let (Some(profile), Some(url)) = (&declared.credential, &declared.url) {
 +            let store = core.host.root.clone();
-+            let (profile, origin) = (
++            let (profile, origin, owner) = (
 +                profile.clone(),
 +                codex_omd::url_origin(url).ok_or("http_url_invalid")?,
++                caller.id.to_owned(),
 +            );
 +            let secret = tokio::task::spawn_blocking(move || {
-+                codex_omd::credentials::CredentialProfiles::open(&store)?.secret(&profile, &origin)
++                let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
++                let entry = profiles.profile(&profile)?;
++                if entry.kind == "secret" && entry.owner.as_deref() != Some(owner.as_str()) {
++                    return Err(std::io::Error::other(format!(
++                        "credential_secret_not_owned: {profile}"
++                    )));
++                }
++                profiles.secret(&profile, &origin)
 +            })
 +            .await
 +            .map_err(|error| error.to_string())?
@@ -38066,10 +38086,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..28c4f0465
+index 000000000..da1d2e96b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2830 @@
+@@ -0,0 +1,2860 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -39840,7 +39860,7 @@ index 000000000..28c4f0465
 +    let Some(fixture) = fixture(&[Package {
 +        id: "fetcher",
 +        capabilities: &["http"],
-+        manifest: json!({"http_access": {"origins": [origin], "credentials": ["p1"]}}),
++        manifest: json!({"http_access": {"origins": [origin], "credentials": ["p1", "owned"]}}),
 +        source: "export default function () {}\n",
 +    }]) else {
 +        return;
@@ -39928,13 +39948,43 @@ index 000000000..28c4f0465
 +    .await
 +    .unwrap_err();
 +    assert_eq!(error, format!("credential_origin_mismatch: {}", up.id));
-+    let error = run(call(
-+        "http.request",
-+        json!({"url": format!("{origin}/final"), "credential": "other"}),
-+    ))
-+    .await
-+    .unwrap_err();
-+    assert_eq!(error, "credential_not_granted: other");
++    let down = profiles
++        .create(
++            "down",
++            "provider",
++            Some("down"),
++            Some("https://down.example"),
++        )
++        .unwrap();
++    let borrowed = profiles
++        .create_secret("borrowed", "https://own.example", "vault")
++        .unwrap();
++    let own = profiles
++        .create_secret("own", "https://own.example", "fetcher")
++        .unwrap();
++    for (credential, expected) in [
++        (
++            down.id.clone(),
++            format!("credential_not_granted: {}", down.id),
++        ),
++        (
++            borrowed.id.clone(),
++            format!("credential_secret_not_owned: {}", borrowed.id),
++        ),
++        (
++            own.id.clone(),
++            format!("credential_origin_mismatch: {}", own.id),
++        ),
++        ("other".into(), "credential_profile_unknown: other".into()),
++    ] {
++        let error = run(call(
++            "http.request",
++            json!({"url": format!("{origin}/final"), "credential": credential}),
++        ))
++        .await
++        .unwrap_err();
++        assert_eq!(error, expected);
++    }
 +    let error = run(call(
 +        "http.request",
 +        json!({"url": format!("{origin}/slow"), "timeout_ms": 100}),
@@ -55309,10 +55359,10 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..df8573ed1
+index 000000000..5acfda018
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,556 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
@@ -55802,6 +55852,18 @@ index 000000000..df8573ed1
 +        if profile.destination() != Some(origin) {
 +            return Err(failure(format!("credential_origin_mismatch: {id}")));
 +        }
++        if profile.kind == "secret" {
++            let path = self.home(id)?.join("secret");
++            let metadata = fs::symlink_metadata(&path)
++                .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;
++            if !metadata.is_file() || metadata.len() > SECRET_BYTES as u64 {
++                return Err(failure("credential_store_invalid"));
++            }
++            return Ok(CredentialSecret {
++                token: fs::read_to_string(path)?,
++                account_id: None,
++            });
++        }
 +        let path = self.home(id)?.join("auth.json");
 +        let metadata = fs::symlink_metadata(&path)
 +            .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;
@@ -55859,10 +55921,10 @@ index 000000000..df8573ed1
 +mod tests;
 diff --git a/codex-rs/omd/src/credentials_tests.rs b/codex-rs/omd/src/credentials_tests.rs
 new file mode 100644
-index 000000000..ff33d185f
+index 000000000..c9a3263b3
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials_tests.rs
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,198 @@
 +use super::*;
 +
 +fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
@@ -56052,11 +56114,14 @@ index 000000000..ff33d185f
 +        "hunter2"
 +    );
 +    assert!(profiles.owned_secret(&secret.id, "other").is_err());
-+    assert!(
++    assert_eq!(
 +        profiles
 +            .secret(&secret.id, "https://example.com:8443")
-+            .is_err()
++            .unwrap()
++            .token,
++        "hunter2"
 +    );
++    assert!(profiles.secret(&secret.id, "https://example.com").is_err());
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644

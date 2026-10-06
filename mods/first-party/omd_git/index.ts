@@ -1,13 +1,25 @@
-import type { ExecGuard, Fingerprint, ModAPI, ResourceRef, TerminalComponent, TerminalPatch, TerminalRenderSite, TerminalTone } from '../../api.d.ts';
+import type { ExecGuard, Fingerprint, Json, ModAPI, ResourceRef, TerminalComponent, TerminalPatch, TerminalRenderSite, TerminalTone } from '../../api.d.ts';
 
 type Entry = { path: string; original: string | null; index: string; worktree: string; conflicted: boolean };
 type Commit = { oid: string; parents: string[]; subject: string };
 type Head = { branch: string | null; oid: string | null; upstream: string | null; ahead: number; behind: number };
 type Preview = { kind: 'discard' | 'commit' | 'switch'; tracked: boolean; target: string; from: string | null; destination: string | null; restoreHash?: string; status: string; lines: string[]; guards: ExecGuard[]; paths: string[]; expected: Record<string, Fingerprint> | null };
-type Saved = { error: string | null; head: Head | null; entries: Entry[]; total: number; rows: string[]; more: boolean; branches: string[]; selected: string | null; branch: string | null; message: string; preview: Preview | null; notice: string | null; status: string; guards: ExecGuard[]; backup: { path: string; reference: ResourceRef; expected: Fingerprint } | null };
+type Checks = { total: number; pass: number; fail: number; pending: number; req: number[]; failing: string[] };
+type Run = { id: number; name: string; attempt: number; state: string; verified: boolean };
+type Pr = { title: string; state: string; draft: boolean; merge: string; review: string; updated: string; head: string; ref: string; base: string };
+type Page = { cursor: string | null; head: string; loaded: number; checks: Checks; runs: Record<string, string[]> };
+type Watch = { key: string; added: number; owner: string; repo: string; number: number; branch: string | null; pr: Pr | null; checks: Checks | null; runs: Run[]; more: number; page: Page | null; incomplete: string | null; error: string | null; fail: number; next: number; at: number | null; final: boolean };
+type Github = { watches: Watch[]; until: number; token: string | null; view: string | null };
+type Saved = { error: string | null; head: Head | null; entries: Entry[]; total: number; rows: string[]; more: boolean; branches: string[]; selected: string | null; branch: string | null; message: string; preview: Preview | null; notice: string | null; status: string; guards: ExecGuard[]; backup: { path: string; reference: ResourceRef; expected: Fingerprint } | null; github: Github };
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
-const EMPTY: Saved = { error: 'Git status not loaded', head: null, entries: [], total: 0, rows: [], more: false, branches: [], selected: null, branch: null, message: '', preview: null, notice: null, status: '', guards: [], backup: null };
+const EMPTY: Saved = { error: 'Git status not loaded', head: null, entries: [], total: 0, rows: [], more: false, branches: [], selected: null, branch: null, message: '', preview: null, notice: null, status: '', guards: [], backup: null, github: { watches: [], until: 0, token: null, view: null } };
+const GH = 'https://api.github.com';
+const WATCH_LIMIT = 5;
+const RUN_LIMIT = 20;
+const BYTE_BUDGET = 58_000;
+const PR_QUERY = 'query($o:String!,$r:String!,$n:Int!,$c:String){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft mergeStateStatus reviewDecision updatedAt headRefName headRefOid baseRefName commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:50,after:$c){totalCount pageInfo{hasNextPage endCursor}nodes{__typename ...on CheckRun{databaseId name status conclusion isRequired(pullRequestNumber:$n) checkSuite{workflowRun{databaseId workflow{name}}}}...on StatusContext{context state isRequired(pullRequestNumber:$n)}}}}}}}}}}';
+const BRANCH_QUERY = 'query($o:String!,$r:String!,$b:String!){repository(owner:$o,name:$r){nameWithOwner pullRequests(headRefName:$b,states:OPEN,first:5){nodes{number headRepository{nameWithOwner}}}parent{nameWithOwner pullRequests(headRefName:$b,states:OPEN,first:5){nodes{number headRepository{nameWithOwner}}}}}}';
 const ENTRY_LIMIT = 1_000;
 const STATUS_LIMIT = 65_536;
 const DIALOG_TEXT_LIMIT = 4_096;
@@ -145,7 +157,7 @@ export default function activate(api: ModAPI) {
   const refresh = (previous: Saved = saved()): Saved => {
     const result = status();
     if (!result.ok) {
-      const next = { ...EMPTY, error: result.error, message: previous.message, backup: previous.backup };
+      const next = { ...EMPTY, error: result.error, message: previous.message, backup: previous.backup, github: previous.github };
       save(next);
       return next;
     }
@@ -213,9 +225,190 @@ export default function activate(api: ModAPI) {
     return components;
   };
   const dialog = (preview: Preview): TerminalRenderSite => ({ mode: 'replace', components: [{ type: 'dialog', id: 'omd_git_dialog', label: 'Git preview', title: trim(preview.kind === 'switch' ? `Switch to ${preview.target}?` : preview.kind === 'commit' ? 'Commit staged files?' : `Discard ${preview.target}?`, 128), children: [{ type: 'pane', id: 'omd_git_preview_pane', label: 'Scrollable exact preview', title: 'Preview · up/down to inspect all paths', collapsed: false, scroll: 0, children: [line('omd_git_preview', 'Preview', preview.lines.join('\n'))] }, ...(preview.kind === 'discard' || preview.kind === 'commit' || preview.kind === 'switch' && preview.expected ? [button('omd_git_confirm', 'Confirm guarded Git action', 'Confirm', 'confirm')] : [line('omd_git_read_only', 'Git write status', WRITE_UNAVAILABLE, 'attention')]), ...(preview.kind === 'commit' ? [button('omd_git_staged_diff', 'Show staged diff', 'Staged diff', 'show', 'staged')] : []), button('omd_git_cancel', 'Close preview', 'Close', 'dismiss')] }] });
+  type Failure = { ok: false; kind: 'token' | 'rate' | 'denied' | 'retry'; error: string; until?: number };
+  type Answer = { ok: true; json: any; at: number } | Failure;
+  const RANK = ['pass', 'pending', 'fail'];
+  const ICON: Record<string, string> = ascii ? { passing: '+', failing: 'x', pending: '~', merged: 'M', closed: '-' } : { passing: '✓', failing: '✗', pending: '◌', merged: '⊕', closed: '⊘' };
+  const TONE: Record<string, TerminalTone> = { passing: 'success', failing: 'failure', pending: 'attention', merged: 'accent' };
+  const HEADERS = { accept: 'application/vnd.github+json', 'user-agent': 'omd_git', 'x-github-api-version': '2022-11-28' };
+  const schedule = (key: string, ms: number) => api.host.tryCall('events.schedule', { key, delay_ms: Math.min(86_400_000, Math.max(1_000, Math.round(ms))) });
+  const publish = (data: object) => api.host.tryCall('events.publish', { channel: 'github', data: data as Json });
+  const bucket = (w: Watch) => {
+    if (w.pr?.state === 'MERGED' || w.pr?.state === 'CLOSED') return w.pr.state.toLowerCase();
+    const c = w.checks;
+    if (!c) return 'unknown';
+    const [pass, fail, pending] = c.req[0] + c.req[1] + c.req[2] ? c.req : [c.pass, c.fail, c.pending];
+    const value = fail ? 'failing' : pending ? 'pending' : pass ? 'passing' : 'no checks';
+    return value === 'passing' && w.incomplete ? 'partial' : value;
+  };
+  const active = (w: Watch) => !!w.checks?.pending || w.runs.some(run => run.state === 'pending') || w.pr?.merge === 'UNKNOWN';
+  const stale = (w: Watch, gh: Github) => !w.final && (gh.token !== 'ready' || !!w.error || !w.at || Date.now() - w.at > (active(w) ? 120_000 : 900_000));
+  const summary = (w: Watch, gh: Github) => {
+    const c = w.checks;
+    const required = c ? c.req[0] + c.req[1] + c.req[2] : 0;
+    return `${w.key} ${bucket(w)}${c ? ` ${c.pass}/${c.total}${required ? ` req ${c.req[0]}/${required}` : ''}` : ''}${w.pr?.draft ? ' draft' : ''}${w.pr?.merge === 'BLOCKED' ? ' blocked' : ''}${w.pr && w.pr.review !== 'NONE' ? ` ${w.pr.review.toLowerCase().replace(/_/g, ' ')}` : ''}${stale(w, gh) ? ` stale${w.at ? ` ${Math.max(0, Math.round((Date.now() - w.at) / 60_000))}m` : ''}` : ''}${w.incomplete ? ' incomplete' : ''}`;
+  };
+  let used = 0;
+  const github = (token: string, path: string, body?: object): Answer => {
+    const result = api.host.tryCall('http.request', { url: `${GH}${path}`, credential: token, timeout_ms: 20_000, max_bytes: 65_536, ...(body ? { method: 'POST', body: JSON.stringify(body), headers: { ...HEADERS, 'content-type': 'application/json' } } : { headers: HEADERS }) });
+    if (!result.ok) return { ok: false, kind: /^(credential_|grant_expired|capability_denied|http_origin_denied)/.test(result.error) ? 'token' : 'retry', error: visible(result.error, 160) };
+    const response = result.value;
+    used += Math.ceil(response.bytes * 1.3) + 4_096;
+    const header = response.headers;
+    const at = Date.parse(header.date ?? '') || Date.now();
+    const wait = Number(header['retry-after'] ?? 0) * 1000 || (header['x-ratelimit-remaining'] === '0' ? Number(header['x-ratelimit-reset']) * 1000 - at : 0);
+    const until = Date.now() + Math.min(Math.max(wait || 0, 60_000), 3_600_000);
+    if (response.status === 401) return { ok: false, kind: 'token', error: 'GitHub rejected the token' };
+    if ((response.status === 403 || response.status === 429) && wait > 0) return { ok: false, kind: 'rate', error: 'GitHub rate limit', until };
+    if (response.status === 403 || response.status === 404) return { ok: false, kind: 'denied', error: `GitHub ${response.status}: not found or not readable with this token` };
+    if (response.status !== 200 || response.truncated || typeof response.body !== 'string') return { ok: false, kind: 'retry', error: response.truncated ? 'GitHub response exceeded the read limit' : `GitHub ${response.status}` };
+    let json: any;
+    try { json = JSON.parse(response.body); } catch { return { ok: false, kind: 'retry', error: 'GitHub response unreadable' }; }
+    const problem = json?.errors?.[0];
+    if (problem) return { ok: false, kind: problem.type === 'RATE_LIMITED' ? 'rate' : problem.type === 'NOT_FOUND' || problem.type === 'FORBIDDEN' ? 'denied' : 'retry', error: visible(String(problem.message ?? 'GitHub query failed'), 160), until };
+    return { ok: true, json, at };
+  };
+  const fresh = (): Page => ({ cursor: null, head: '', loaded: 0, checks: { total: 0, pass: 0, fail: 0, pending: 0, req: [0, 0, 0], failing: [] }, runs: {} });
+  const absorb = (page: Page, nodes: any[]) => {
+    for (const node of nodes) {
+      const state = node.__typename === 'StatusContext' ? node.state === 'SUCCESS' ? 'pass' : node.state === 'PENDING' || node.state === 'EXPECTED' ? 'pending' : 'fail' : node.status !== 'COMPLETED' ? 'pending' : ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(node.conclusion) ? 'pass' : 'fail';
+      const c = page.checks;
+      c.total += 1;
+      c[state as 'pass' | 'fail' | 'pending'] += 1;
+      if (node.isRequired) c.req[['pass', 'fail', 'pending'].indexOf(state)] += 1;
+      if (state === 'fail' && c.failing.length < 8) c.failing.push(`${node.isRequired ? 'required ' : ''}${visible(String(node.name ?? node.context), 80)}${node.databaseId ? ` (check ${node.databaseId})` : ''}`);
+      const run = node.checkSuite?.workflowRun;
+      const prior = run?.databaseId ? page.runs[run.databaseId] : undefined;
+      if (run?.databaseId && (prior || Object.keys(page.runs).length < 100)) page.runs[run.databaseId] = [visible(String(run.workflow?.name ?? 'workflow'), 80), prior && RANK.indexOf(prior[1]) > RANK.indexOf(state) ? prior[1] : state];
+    }
+  };
+  const load = (token: string, w: Watch): Failure | null => {
+    if (!w.number) {
+      const found = github(token, '/graphql', { query: BRANCH_QUERY, variables: { o: w.owner, r: w.repo, b: w.branch } });
+      if (!found.ok) return found;
+      const own = `${w.owner}/${w.repo}`.toLowerCase();
+      const repository = found.json.data?.repository;
+      const match = [repository?.parent, repository].flatMap(base => (base?.pullRequests?.nodes ?? []).filter((pr: any) => String(pr.headRepository?.nameWithOwner).toLowerCase() === own).map((pr: any) => [String(base.nameWithOwner), Number(pr.number)] as const))[0];
+      if (!match) return { ok: false, kind: 'denied', error: `no open pull request from ${own}:${w.branch}` };
+      [w.owner, w.repo] = match[0].split('/');
+      w.number = match[1];
+      w.key = `${w.owner}/${w.repo}#${w.number}`;
+    }
+    const page = w.page ?? fresh();
+    let done = !w.page && !!w.checks && w.runs.some(run => !run.verified);
+    for (let pages = done ? 4 : 0; pages < 4 && used < BYTE_BUDGET; pages += 1) {
+      const answer = github(token, '/graphql', { query: PR_QUERY, variables: { o: w.owner, r: w.repo, n: w.number, c: page.cursor } });
+      if (!answer.ok) return answer;
+      const node = answer.json.data?.repository?.pullRequest;
+      if (!node) return { ok: false, kind: 'denied', error: 'pull request not found' };
+      const commit = node.commits?.nodes?.[0]?.commit;
+      if (commit && commit.oid !== node.headRefOid || page.head && page.head !== node.headRefOid) { Object.assign(page, fresh()); continue; }
+      page.head = node.headRefOid;
+      w.pr = { title: visible(String(node.title), 200), state: String(node.state), draft: !!node.isDraft, merge: String(node.mergeStateStatus ?? 'UNKNOWN'), review: String(node.reviewDecision ?? 'NONE'), updated: String(node.updatedAt), head: String(node.headRefOid), ref: visible(String(node.headRefName), 128), base: visible(String(node.baseRefName), 128) };
+      w.at = answer.at;
+      const contexts = commit?.statusCheckRollup?.contexts;
+      absorb(page, contexts?.nodes ?? []);
+      page.loaded = Number(contexts?.totalCount ?? page.checks.total);
+      page.cursor = contexts?.pageInfo?.hasNextPage ? String(contexts.pageInfo.endCursor) : null;
+      if (page.cursor) continue;
+      const prior = new Map(w.runs.map(run => [run.id, run]));
+      const ids = Object.keys(page.runs).sort((left, right) => RANK.indexOf(page.runs[right][1]) - RANK.indexOf(page.runs[left][1]));
+      w.runs = ids.slice(0, RUN_LIMIT).map(id => {
+        const [name, state] = page.runs[id];
+        const old = prior.get(Number(id));
+        return old?.verified && old.state === state && state !== 'pending' ? old : { id: Number(id), name, attempt: old?.attempt ?? 0, state, verified: false };
+      });
+      w.more = Math.max(0, ids.length - RUN_LIMIT);
+      w.checks = page.checks;
+      done = true;
+      break;
+    }
+    w.page = done ? null : page;
+    for (const run of w.page ? [] : w.runs.filter(item => !item.verified)) {
+      if (used >= BYTE_BUDGET) break;
+      const answer = github(token, `/repos/${w.owner}/${w.repo}/actions/runs/${run.id}?exclude_pull_requests=true`);
+      if (!answer.ok && answer.kind !== 'denied') return answer;
+      if (!answer.ok) { w.runs = w.runs.map(item => item.verified ? item : { ...item, verified: true, attempt: 0 }); w.incomplete = 'workflow runs not readable with this token'; return null; }
+      if (answer.json.head_sha !== w.pr?.head) { w.runs = w.runs.filter(item => item.id !== run.id); continue; }
+      Object.assign(run, { name: visible(String(answer.json.name), 80), attempt: Number(answer.json.run_attempt) || 1, state: answer.json.status !== 'completed' ? 'pending' : ['success', 'neutral', 'skipped'].includes(answer.json.conclusion) ? 'pass' : 'fail', verified: true });
+    }
+    const unverified = w.runs.filter(run => !run.verified).length;
+    w.incomplete = w.page ? `checks ${w.page.checks.total}/${w.page.loaded} loaded` : unverified ? `${unverified} of ${w.runs.length} runs not yet fetched` : null;
+    return null;
+  };
+  const tick = (turn: boolean) => {
+    const gh = saved().github;
+    const now = Date.now();
+    const open = gh.watches.filter(w => !w.final);
+    if (!open.length) return;
+    if (gh.until > now) { schedule('github', gh.until - now); return; }
+    const profiles = api.host.tryCall('credentials.list', null);
+    const token = profiles.ok ? profiles.value.find(profile => profile.kind === 'secret' && profile.origin === GH && profile.status === 'ready')?.id : undefined;
+    if (!token) { publish({ token: 'missing' }); return; }
+    used = 0;
+    let until = 0;
+    let access = 'ready';
+    const updates: (Watch & { from: string })[] = [];
+    for (const original of [...open].sort((left, right) => left.next - right.next)) {
+      if (used >= BYTE_BUDGET || until || access !== 'ready') break;
+      if (original.next > now && !(turn && now - (original.at ?? 0) >= 30_000)) continue;
+      const w: Watch = JSON.parse(JSON.stringify(original));
+      const failed = load(token, w);
+      if (failed) {
+        if (failed.kind === 'token') access = 'invalid';
+        if (failed.kind === 'rate') until = failed.until ?? now + 60_000;
+        w.fail = failed.kind === 'retry' ? w.fail + 1 : w.fail;
+        w.error = failed.error;
+        w.next = failed.kind === 'denied' ? now + 900_000 : failed.kind === 'retry' ? now + Math.min(30_000 * 2 ** w.fail, 900_000) : until || now + 60_000;
+      } else {
+        w.error = null;
+        w.fail = 0;
+        w.final = !!w.pr && w.pr.state !== 'OPEN';
+        w.next = w.page || w.runs.some(run => !run.verified) ? now + 1_000 : now + (active(w) ? 30_000 : 300_000);
+      }
+      updates.push({ ...w, from: original.key });
+    }
+    publish({ watches: updates, until, token: access });
+    if (access !== 'ready') return;
+    const next = new Map(open.map(w => [w.key, w.next]));
+    for (const update of updates) next.set(update.from, update.final ? Infinity : update.next);
+    const soonest = until || Math.min(...next.values());
+    if (soonest !== Infinity) schedule('github', soonest - now);
+  };
+  const announce = (before: Watch, after: Watch) => {
+    if (api.settings.notices !== true || !before.pr || !after.pr) return;
+    const was = bucket(before);
+    const now = bucket(after);
+    const review = before.pr.review !== after.pr.review && after.pr.review !== 'NONE';
+    if (!review && (was === now || now === 'pending' || now === 'unknown')) return;
+    api.host.tryCall('terminal.notify', { title: trim(after.key, 120), body: trim(`${now}${review ? `, review ${after.pr.review.toLowerCase().replace(/_/g, ' ')}` : ''}: ${after.pr.title}`, 200) });
+  };
+  const details = (w: Watch, gh: Github) => {
+    const c = w.checks;
+    const pr = w.pr;
+    const lines = [
+      pr ? pr.title : `branch ${w.branch ?? '?'}, not loaded yet`,
+      ...(pr ? [`${pr.state.toLowerCase()}${pr.draft ? ' draft' : ''} · merge ${pr.merge.toLowerCase()} · review ${pr.review.toLowerCase().replace(/_/g, ' ')}`, `head ${pr.head.slice(0, 12)} ${pr.ref} ${glyph.arrow} ${pr.base}`] : []),
+      ...(c ? [`checks ${c.total}: ${c.pass} pass, ${c.fail} fail, ${c.pending} pending`, `required ${c.req[0]} pass, ${c.req[1]} fail, ${c.req[2]} pending`, ...c.failing.map(name => `  ${ICON.failing} ${name}`)] : []),
+      ...w.runs.map(run => `  ${ICON[run.state === 'pass' ? 'passing' : run.state === 'fail' ? 'failing' : 'pending']} ${run.name} run ${run.id}${run.attempt ? ` attempt ${run.attempt}` : ''}${run.verified ? '' : ' (not yet fetched)'}`),
+      ...(w.more ? [`  ${glyph.more} ${w.more} more runs, counted in checks`] : []),
+      `source ${w.at ? new Date(w.at).toISOString() : 'never fetched'}${pr ? ` · PR updated ${pr.updated}` : ''}${stale(w, gh) ? ' · stale' : ''}`,
+      ...(w.incomplete ? [`incomplete: ${w.incomplete}`] : []),
+      ...(w.error ? [`error: ${w.error}`] : []),
+      ...(gh.token === 'missing' ? ['no GitHub token: /omd_git:github token adds one'] : gh.token === 'invalid' ? ['GitHub token rejected or revoked: /omd_git:github token'] : []),
+    ].map(text => trim(text, 200));
+    let size = 0;
+    return lines.filter(text => (size += bytes(text) + 1) <= DIALOG_TEXT_LIMIT).join('\n');
+  };
+  const pulls = (gh: Github): TerminalComponent[] => gh.watches.length ? [{ type: 'pane', id: 'omd_git_github', label: 'GitHub pull requests', title: `GitHub  ${gh.watches.length}`, children: [
+    { type: 'list', id: 'omd_git_prs', label: 'Watched pull requests', height: gh.watches.length, rows: gh.watches.map(w => ({ value: w.key, label: trim(summary(w, gh), 200), spans: [{ text: `${ICON[bucket(w)] ?? '?'} `, tone: TONE[bucket(w)] ?? 'muted' }, { text: trim(summary(w, gh), width - 6), tone: stale(w, gh) ? 'muted' : 'normal' }] })), action: { command: 'omd_git:inspect' } },
+    ...(gh.token === 'missing' || gh.token === 'invalid' ? [line('omd_git_token', 'GitHub token', trim(gh.token === 'missing' ? 'no token: /omd_git:github token' : 'token rejected: /omd_git:github token'), 'attention')] : []),
+  ] }] : [];
+  const inspector = (w: Watch, gh: Github): TerminalRenderSite => ({ mode: 'replace', components: [{ type: 'dialog', id: 'omd_git_pr', label: 'Pull request details', title: trim(w.key, 128), children: [{ type: 'pane', id: 'omd_git_pr_pane', label: 'Pull request status', title: 'Status', collapsed: false, scroll: 0, children: [line('omd_git_pr_details', 'Details', details(w, gh))] }, button('omd_git_unwatch', `Stop watching ${w.key}`, 'Unwatch', 'github', `unwatch ${w.key}`), button('omd_git_pr_close', 'Close details', 'Close', 'dismiss')] }] });
   const view = (): TerminalPatch => {
     const state = saved();
-    return { sidebar_side: api.settings.side === 'right' ? 'right' : 'left', sidebar_width: width, sites: { sidebar: { mode: 'wrap', components: [{ type: 'slot' }, ...sidebar(state)] }, ...(state.preview ? { dialog: dialog(state.preview) } : {}) }, status: state.error ? [] : [trim(`git: ${state.head?.branch ?? 'detached'}${state.total ? ` ${ascii ? '*' : '✱'}${state.total}` : ''}`, 40)], keybindings: { 'Alt+g': { command: 'omd_git:refresh' } } };
+    const inspected = state.github.watches.find(w => w.key === state.github.view);
+    return { sidebar_side: api.settings.side === 'right' ? 'right' : 'left', sidebar_width: width, sites: { sidebar: { mode: 'wrap', components: [{ type: 'slot' }, ...sidebar(state), ...pulls(state.github)] }, ...(state.preview ? { dialog: dialog(state.preview) } : inspected ? { dialog: inspector(inspected, state.github) } : {}) }, status: state.error ? [] : [trim(`git: ${state.head?.branch ?? 'detached'}${state.total ? ` ${ascii ? '*' : '✱'}${state.total}` : ''}`, 40)], keybindings: { 'Alt+g': { command: 'omd_git:refresh' } } };
   };
   api.command('refresh', () => { const state = refresh({ ...saved(), notice: null }); return { display: state.error ? `Git: ${state.error}` : `Git: ${headline(state.head)}, ${state.total} changed` }; }, { description: 'Refresh the Git sidebar' });
   api.command('changes', () => { const state = refresh(); return { display: state.error ? `Git: ${state.error}` : [trim(headline(state.head), 200), ...state.entries.map(entry => trim(describe(entry), 200)), ...(state.more ? [`${glyph.more} ${state.total - state.entries.length} more`] : [])].join('\n') }; }, { description: 'Show the current branch and changed files' });
@@ -459,7 +652,97 @@ export default function activate(api: ModAPI) {
     save({ ...next, notice });
     return { display: notice };
   }, { description: 'Restore the last discarded file if its expected content is unchanged' });
-  api.command('dismiss', () => { save({ ...saved(), preview: null }); return null; }, { description: 'Close the Git preview' });
-  for (const event of ['start', 'resume', 'turn_start', 'turn_end', 'idle'] as const) api.on(event, () => { refresh(); });
+  api.command('dismiss', () => { const state = saved(); save({ ...state, preview: null, github: { ...state.github, view: null } }); return null; }, { description: 'Close the Git preview or pull request details' });
+  const remote = (name: string): Result<string[]> => {
+    const url = run(['remote', 'get-url', name], 1024);
+    if (!url.ok) return url;
+    const match = /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url.value.trim());
+    return match ? { ok: true, value: [match[1], match[2]] } : { ok: false, error: `remote ${name} is not a github.com repository` };
+  };
+  const target = (value: string): Result<Pick<Watch, 'owner' | 'repo' | 'number' | 'branch'>> => {
+    const direct = /^(?:https:\/\/github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:#|\/pull\/)(\d+)\/?$/.exec(value);
+    if (direct) return { ok: true, value: { owner: direct[1], repo: direct[2], number: Number(direct[3]), branch: null } };
+    const number = /^#?(\d+)$/.exec(value);
+    if (number) {
+      const upstream = remote('upstream');
+      const repo = upstream.ok ? upstream : remote('origin');
+      return repo.ok ? { ok: true, value: { owner: repo.value[0], repo: repo.value[1], number: Number(number[1]), branch: null } } : repo;
+    }
+    if (value) return { ok: false, error: 'usage: /omd_git:github watch [OWNER/REPO#N | PR URL | #N]' };
+    const branch = run(['symbolic-ref', '--short', '-q', 'HEAD'], 1024);
+    if (!branch.ok || !branch.value.trim()) return { ok: false, error: 'check out a branch to watch its pull request' };
+    const local = branch.value.trim();
+    const pushed = run(['config', '--get', `branch.${local}.remote`], 1024);
+    const merge = run(['config', '--get', `branch.${local}.merge`], 1024);
+    const repo = remote(pushed.ok ? pushed.value.trim() : 'origin');
+    return repo.ok ? { ok: true, value: { owner: repo.value[0], repo: repo.value[1], number: 0, branch: merge.ok ? merge.value.trim().replace(/^refs\/heads\//, '') : local } } : repo;
+  };
+  const watch = (value: string) => {
+    const parsed = target(value);
+    if (!parsed.ok) return { display: parsed.error };
+    const state = saved();
+    const key = parsed.value.number ? `${parsed.value.owner}/${parsed.value.repo}#${parsed.value.number}` : `${parsed.value.owner}/${parsed.value.repo}:${parsed.value.branch}`;
+    if (state.github.watches.some(w => w.key.toLowerCase() === key.toLowerCase())) return { display: `already watching ${key}` };
+    if (state.github.watches.length >= WATCH_LIMIT) return { display: `at most ${WATCH_LIMIT} pull requests can be watched; unwatch one first` };
+    save({ ...state, github: { ...state.github, watches: [...state.github.watches, { ...parsed.value, key, added: Date.now(), pr: null, checks: null, runs: [], more: 0, page: null, incomplete: null, error: null, fail: 0, next: 0, at: null, final: false }] } });
+    publish({ poll: true });
+    return { display: `watching ${key}${state.github.token === 'missing' ? '; add a token with /omd_git:github token' : ''}` };
+  };
+  const unwatch = (value: string) => {
+    const state = saved();
+    const key = value || state.github.view || state.github.watches[0]?.key;
+    const watches = state.github.watches.filter(w => w.key !== key);
+    if (watches.length === state.github.watches.length) return { display: 'not watching that pull request' };
+    save({ ...state, github: { ...state.github, watches, view: null } });
+    return { display: `stopped watching ${key}` };
+  };
+  api.command('inspect', value => {
+    const state = saved();
+    const key = String(value ?? '').trim();
+    if (!key) return { display: state.github.watches.map(w => trim(summary(w, state.github), 200)).join('\n') || 'no watched pull requests; /omd_git:github watch adds one' };
+    if (!state.github.watches.some(w => w.key === key)) return { display: 'not watching that pull request' };
+    save({ ...state, github: { ...state.github, view: key } });
+    return null;
+  }, { description: 'Show pull request and CI details, or list watched pull requests' });
+  const token = (value: string) => {
+    const profiles = api.host.tryCall('credentials.list', null);
+    if (!profiles.ok) return { display: profiles.error };
+    const profile = profiles.value.find(item => item.kind === 'secret' && item.origin === GH);
+    if (profile && value === 'remove') {
+      const removed = api.host.tryCall('credentials.request', { action: 'remove', profile: profile.id });
+      return { display: !removed.ok ? removed.error : removed.value.status === 'completed' ? 'GitHub token removed; watches pause until a token is added' : 'kept the GitHub token' };
+    }
+    if (profile) return { display: `GitHub token ${profile.id} is ${profile.status === 'ready' ? 'enrolled' : 'empty'}; /omd_git:github token remove deletes it` };
+    if (value) return { display: 'no GitHub token is enrolled' };
+    const enrolled = api.host.tryCall('credentials.request', { action: 'enroll', kind: 'secret', label: 'GitHub (omd_git)', origin: GH });
+    if (!enrolled.ok || enrolled.value.status !== 'completed') return { display: enrolled.ok ? 'GitHub token not added' : enrolled.error };
+    publish({ poll: true });
+    return { display: 'GitHub token added. Use a fine-grained token with read-only Metadata, Pull requests, Checks, Actions and Commit statuses access.' };
+  };
+  api.command('github', value => {
+    const [action, ...rest] = String(value ?? '').trim().split(/\s+/);
+    const argument = rest.join(' ');
+    return action === 'watch' ? watch(argument) : action === 'unwatch' ? unwatch(argument) : action === 'token' ? token(argument) : { display: 'usage: /omd_git:github watch [OWNER/REPO#N | PR URL | #N] | unwatch [KEY] | token [remove]' };
+  }, { description: 'Watch or unwatch a GitHub pull request read-only, or add or remove the GitHub token' });
+  api.on('channel', ({ channel, data }) => {
+    if (channel !== 'omd_git/github') return;
+    const message = (data ?? {}) as { poll?: boolean; watches?: (Watch & { from: string })[]; until?: number; token?: string };
+    if (message.poll) { schedule('github', 1_000); return; }
+    const state = saved();
+    const watches = [...state.github.watches];
+    for (const { from, ...update } of message.watches ?? []) {
+      const index = watches.findIndex(w => w.key === from && w.added === update.added);
+      if (index < 0) continue;
+      if (update.key !== from && watches.some(w => w.key.toLowerCase() === update.key.toLowerCase())) { watches.splice(index, 1); continue; }
+      announce(watches[index], update);
+      watches[index] = update;
+    }
+    save({ ...state, github: { ...state.github, watches, until: message.until || state.github.until, token: message.token ?? state.github.token, view: watches.some(w => w.key === state.github.view) ? state.github.view : null } });
+  });
+  api.on('timer', ({ key }) => { if (key === 'github' || key === 'github_turn') tick(key === 'github_turn'); });
+  for (const event of ['start', 'resume', 'turn_start', 'turn_end', 'idle'] as const) api.on(event, () => {
+    refresh();
+    if ((event === 'start' || event === 'resume' || event === 'turn_end') && saved().github.watches.some(w => !w.final)) schedule(event === 'turn_end' ? 'github_turn' : 'github', event === 'turn_end' ? 10_000 : 1_000);
+  });
   api.on('terminal', () => view());
 }

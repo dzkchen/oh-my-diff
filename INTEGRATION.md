@@ -48,7 +48,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_cursor` | 0.1.0-preview.1 | `mods/first-party/omd_cursor` |
 | `omd_editor` | 0.1.0-preview.1 | `mods/first-party/omd_editor` |
 | `omd_frecency` | 0.1.0-preview.2 | `mods/first-party/omd_frecency` |
-| `omd_git` | 0.2.0-preview.3 | `mods/first-party/omd_git` |
+| `omd_git` | 0.2.0-preview.4 | `mods/first-party/omd_git` |
 | `omd_graph_navigator` | 0.2.0-preview.2 | `mods/first-party/omd_graph_navigator` |
 | `omd_guideline_governance` | 0.1.0-preview.1 | `mods/first-party/omd_guideline_governance` |
 | `omd_herdr` | 0.1.0-preview.1 | `mods/first-party/omd_herdr` |
