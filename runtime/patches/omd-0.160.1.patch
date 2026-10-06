@@ -15613,8 +15613,31 @@ index a3bb780b3..0e5ee229c 100644
          | ServerNotification::WindowsWorldWritableWarning(_)
          | ServerNotification::WindowsSandboxSetupCompleted(_)
          | ServerNotification::AccountLoginCompleted(_)
+diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
+index b0fa49b4b..f01d40915 100644
+--- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
++++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
+@@ -413,6 +413,18 @@ pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> Threa
+     }
+ }
+
++/// `None` means the thread was busy and is still running.
++pub(super) async fn wait_for_thread_shutdown_if_idle(
++    thread: &Arc<CodexThread>,
++) -> Option<ThreadShutdownResult> {
++    match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_if_idle()).await {
++        Ok(Ok(false)) => None,
++        Ok(Ok(true)) => Some(ThreadShutdownResult::Complete),
++        Ok(Err(_)) => Some(ThreadShutdownResult::SubmitFailed),
++        Err(_) => Some(ThreadShutdownResult::TimedOut),
++    }
++}
++
+ pub(super) async fn unload_thread_without_subscribers(
+     thread_manager: Arc<ThreadManager>,
+     outgoing: Arc<OutgoingMessageSender>,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 289cb6395..f8d17ff1c 100644
+index 289cb6395..8605dc5fd 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -19,6 +19,10 @@ use codex_app_server_protocol::ThreadItemsListCursor;
@@ -15668,12 +15691,14 @@ index 289cb6395..f8d17ff1c 100644
      pub(crate) async fn thread_archive(
          &self,
          request_id: ConnectionRequestId,
-@@ -2158,6 +2195,173 @@ impl ThreadRequestProcessor {
+@@ -2158,6 +2195,174 @@ impl ThreadRequestProcessor {
                  "thread/revert only supports paginated threads",
              ));
          }
 +        let runtime_snapshot = self
-+            .unload_for_history_replacement(request_id, thread_id, &thread, "reverted")
++            .unload_for_history_replacement(
++                request_id, thread_id, &thread, "reverted", /*only_if_idle*/ false,
++            )
 +            .await?;
 +        let revert_result = self
 +            .thread_store
@@ -15760,7 +15785,13 @@ index 289cb6395..f8d17ff1c 100644
 +        // Checked again right before the unload, since validating takes time.
 +        self.ensure_rewrite_idle(thread_id).await?;
 +        let runtime_snapshot = self
-+            .unload_for_history_replacement(request_id, thread_id, &thread, "rewritten")
++            .unload_for_history_replacement(
++                request_id,
++                thread_id,
++                &thread,
++                "rewritten",
++                /*only_if_idle*/ true,
++            )
 +            .await?;
 +        let rewrite_result = self
 +            .thread_store
@@ -15776,8 +15807,7 @@ index 289cb6395..f8d17ff1c 100644
 +            })
 +            .await
 +            .map_err(|err| thread_store_mutation_error("rewrite", err));
-+        // A committed rewrite is reported even when the runtime reload fails; the client can resume the thread.
-+        if let Err(err) = self
++        let reload_error = self
 +            .reload_paginated_thread(
 +                request_id,
 +                thread_id,
@@ -15786,14 +15816,9 @@ index 289cb6395..f8d17ff1c 100644
 +                app_server_client_version,
 +            )
 +            .await
-+        {
-+            warn!(
-+                "failed to reload thread {thread_id} after a rewrite: {}",
-+                err.message
-+            );
-+        }
++            .err();
 +        Ok((
-+            thread_rewrite_response(rewrite_result?),
++            rewrite_outcome(thread_id, rewrite_result, reload_error)?,
 +            thread_id.to_string(),
 +        ))
 +    }
@@ -15805,9 +15830,7 @@ index 289cb6395..f8d17ff1c 100644
 +                .await,
 +            ThreadStatus::Active { .. }
 +        ) {
-+            return Err(invalid_request(format!(
-+                "history_rewrite_busy: thread {thread_id} has a turn in progress"
-+            )));
++            return Err(rewrite_busy_error(thread_id));
 +        }
 +        Ok(())
 +    }
@@ -15838,11 +15861,12 @@ index 289cb6395..f8d17ff1c 100644
 +        thread_id: ThreadId,
 +        thread: &Arc<CodexThread>,
 +        outcome: &str,
++        only_if_idle: bool,
 +    ) -> Result<ThreadRevertRuntimeSnapshot, JSONRPCErrorError> {
          let runtime_snapshot = ThreadRevertRuntimeSnapshot {
              config: thread.config().await.as_ref().clone(),
              settings: thread.restorable_thread_settings().await,
-@@ -2177,24 +2381,24 @@ impl ThreadRequestProcessor {
+@@ -2177,24 +2382,33 @@ impl ThreadRequestProcessor {
              EnsureConversationListenerResult::ConnectionClosed
          ) {
              return Err(internal_error(format!(
@@ -15854,7 +15878,16 @@ index 289cb6395..f8d17ff1c 100644
          let shutdown_drain_rx = thread_state.lock().await.register_shutdown_drain_waiter();
 
 -        match wait_for_thread_shutdown(&thread).await {
-+        match wait_for_thread_shutdown(thread).await {
++        let shutdown = if only_if_idle {
++            let Some(shutdown) = wait_for_thread_shutdown_if_idle(thread).await else {
++                thread_state.lock().await.take_shutdown_drain_waiter();
++                return Err(rewrite_busy_error(thread_id));
++            };
++            shutdown
++        } else {
++            wait_for_thread_shutdown(thread).await
++        };
++        match shutdown {
              ThreadShutdownResult::Complete => {}
              ThreadShutdownResult::SubmitFailed => {
                  thread_state.lock().await.take_shutdown_drain_waiter();
@@ -15871,7 +15904,7 @@ index 289cb6395..f8d17ff1c 100644
                  )));
              }
          }
-@@ -2223,35 +2427,15 @@ impl ThreadRequestProcessor {
+@@ -2223,35 +2437,15 @@ impl ThreadRequestProcessor {
              .is_none()
          {
              return Err(internal_error(format!(
@@ -15910,7 +15943,7 @@ index 289cb6395..f8d17ff1c 100644
      }
 
      async fn reload_paginated_thread(
-@@ -3600,6 +3784,12 @@ impl ThreadRequestProcessor {
+@@ -3600,6 +3794,12 @@ impl ThreadRequestProcessor {
          }
      }
 
@@ -15923,7 +15956,7 @@ index 289cb6395..f8d17ff1c 100644
      pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
          self.thread_watch_manager.subscribe_running_turn_count()
      }
-@@ -4290,13 +4480,24 @@ impl ThreadRequestProcessor {
+@@ -4290,13 +4490,24 @@ impl ThreadRequestProcessor {
          } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
              && let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await
          {
@@ -15950,7 +15983,7 @@ index 289cb6395..f8d17ff1c 100644
              Some((existing_thread_id, existing_thread, source_thread))
          } else {
              let source_thread = self
-@@ -4308,7 +4509,9 @@ impl ThreadRequestProcessor {
+@@ -4308,7 +4519,9 @@ impl ThreadRequestProcessor {
                  .await?;
              let existing_thread_id = source_thread.thread_id;
              match self.thread_manager.get_thread(existing_thread_id).await {
@@ -15961,7 +15994,7 @@ index 289cb6395..f8d17ff1c 100644
                  Err(_) => {
                      return Ok(RunningThreadResumeResult::NotRunning(Some(Box::new(
                          source_thread,
-@@ -4318,12 +4521,13 @@ impl ThreadRequestProcessor {
+@@ -4318,12 +4531,13 @@ impl ThreadRequestProcessor {
          };
 
          if let Some((existing_thread_id, existing_thread, mut source_thread)) = running_thread {
@@ -15979,7 +16012,7 @@ index 289cb6395..f8d17ff1c 100644
              if let (Some(requested_path), Some(active_path)) = (params.path.as_ref(), active_path)
                  && !path_utils::paths_match_after_normalization(requested_path, active_path)
              {
-@@ -4394,18 +4598,20 @@ impl ThreadRequestProcessor {
+@@ -4394,18 +4608,20 @@ impl ThreadRequestProcessor {
                  )
                  .await;
              }
@@ -16008,7 +16041,7 @@ index 289cb6395..f8d17ff1c 100644
              }
              if paginated_resume && (include_turns || params.initial_turns_page.is_some()) {
                  self.thread_store
-@@ -4415,8 +4621,8 @@ impl ThreadRequestProcessor {
+@@ -4415,8 +4631,8 @@ impl ThreadRequestProcessor {
              }
              let history_items = if needs_history {
                  source_thread
@@ -16019,7 +16052,7 @@ index 289cb6395..f8d17ff1c 100644
                      .map(|history| history.items)
                      .ok_or_else(|| {
                          internal_error(format!(
-@@ -4444,11 +4650,18 @@ impl ThreadRequestProcessor {
+@@ -4444,11 +4660,18 @@ impl ThreadRequestProcessor {
              )
              .await?;
 
@@ -16043,7 +16076,7 @@ index 289cb6395..f8d17ff1c 100644
              thread_summary.session_id = existing_thread.startup_metadata().session_id.to_string();
              thread_summary.thread_source = config_snapshot.thread_source.clone().map(Into::into);
              apply_live_thread_settings(&mut thread_summary, &config_snapshot);
-@@ -4670,6 +4883,10 @@ impl ThreadRequestProcessor {
+@@ -4670,6 +4893,10 @@ impl ThreadRequestProcessor {
                  "session {thread_id} is archived. Run `codex unarchive {thread_id}` to unarchive it first."
              )));
          }
@@ -16054,7 +16087,7 @@ index 289cb6395..f8d17ff1c 100644
 
          Ok(stored_thread)
      }
-@@ -6031,6 +6248,44 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
+@@ -6031,6 +6258,65 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
      }
  }
 
@@ -16080,6 +16113,27 @@ index 289cb6395..f8d17ff1c 100644
 +    }
 +}
 +
++// A committed rewrite is reported even when the runtime reload fails; the client can resume the thread.
++fn rewrite_outcome(
++    thread_id: ThreadId,
++    rewrite: Result<codex_thread_store::ThreadRewrite, JSONRPCErrorError>,
++    reload_error: Option<JSONRPCErrorError>,
++) -> Result<ThreadRewriteResponse, JSONRPCErrorError> {
++    if let Some(err) = reload_error {
++        warn!(
++            "failed to reload thread {thread_id} after a rewrite: {}",
++            err.message
++        );
++    }
++    rewrite.map(thread_rewrite_response)
++}
++
++fn rewrite_busy_error(thread_id: ThreadId) -> JSONRPCErrorError {
++    invalid_request(format!(
++        "history_rewrite_busy: thread {thread_id} has a turn in progress"
++    ))
++}
++
 +struct BrokerHistoryWitness;
 +
 +impl codex_thread_store::HistoryWitness for BrokerHistoryWitness {
@@ -16099,6 +16153,50 @@ index 289cb6395..f8d17ff1c 100644
  fn thread_store_mutation_error(operation: &str, err: ThreadStoreError) -> JSONRPCErrorError {
      match err {
          ThreadStoreError::InvalidRequest { message } | ThreadStoreError::Conflict { message } => {
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor_tests.rs b/codex-rs/app-server/src/request_processors/thread_processor_tests.rs
+index 237c58e03..0429c771e 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor_tests.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor_tests.rs
+@@ -1444,4 +1444,39 @@ mod thread_processor_behavior_tests {
+         );
+         Ok(())
+     }
++
++    fn committed_rewrite() -> codex_thread_store::ThreadRewrite {
++        codex_thread_store::ThreadRewrite {
++            revision: "rev-2".to_string(),
++            previous_revision: Some("rev-1".to_string()),
++            rows: Vec::new(),
++        }
++    }
++
++    #[test]
++    fn rewrite_outcome_reports_a_committed_rewrite_when_the_reload_fails() {
++        let response = rewrite_outcome(
++            ThreadId::new(),
++            Ok(committed_rewrite()),
++            Some(internal_error("reload failed")),
++        )
++        .expect("a committed rewrite is reported");
++
++        assert_eq!(response.revision, "rev-2");
++        assert_eq!(response.previous_revision.as_deref(), Some("rev-1"));
++    }
++
++    #[test]
++    fn rewrite_outcome_returns_the_rewrite_error_even_when_the_reload_succeeded_or_failed() {
++        for reload_error in [None, Some(internal_error("reload failed"))] {
++            let err = rewrite_outcome(
++                ThreadId::new(),
++                Err(invalid_request("history_rewrite_conflict")),
++                reload_error,
++            )
++            .expect_err("a failed rewrite is reported");
++
++            assert_eq!(err.message, "history_rewrite_conflict");
++        }
++    }
+ }
 diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
 index 8cfbc0098..08f60defb 100644
 --- a/codex-rs/app-server/src/thread_state.rs
@@ -17583,6 +17681,23 @@ index f5ac49533..e7c99033c 100644
              let interceptors = crate::model_request::prepare(
                  &self.client.request_contributors,
                  &self.client.state.thread_id.to_string(),
+diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
+index 316af05c0..ba9a7a60d 100644
+--- a/codex-rs/core/src/codex_thread.rs
++++ b/codex-rs/core/src/codex_thread.rs
+@@ -277,6 +277,12 @@ impl CodexThread {
+         self.io.shutdown_and_wait().await
+     }
+
++    /// Shuts the thread down and waits for it only if no turn is active and no mailbox input is
++    /// pending. Returns whether it shut down; on `false` the thread keeps running untouched.
++    pub async fn shutdown_if_idle(&self) -> CodexResult<bool> {
++        self.io.shutdown_if_idle_and_wait().await
++    }
++
+     /// Wait until the underlying session loop has terminated.
+     pub async fn wait_until_terminated(&self) {
+         self.io.session_loop_termination.clone().await;
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
 index a937b39db..c5e2e1ac6 100644
 --- a/codex-rs/core/src/compact.rs
@@ -18680,7 +18795,7 @@ index 7f466edb3..0fc091a12 100644
 
  pub(crate) async fn request_mcp_tool_user_approval(
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 94c47023e..34b475a4d 100644
+index 94c47023e..458f938ff 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -308,7 +308,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
@@ -18692,6 +18807,19 @@ index 94c47023e..34b475a4d 100644
          warn!("failed to shutdown code mode session: {err}");
      }
      sess.stop_mcp_prewarm_worker().await;
+@@ -627,6 +627,12 @@ pub(super) async fn submission_loop(
+                     false
+                 }
+                 Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
++                Op::ShutdownIfIdle { reply } => {
++                    let has_active_turn = sess.active_turn.lock().await.is_some();
++                    let idle =
++                        !has_active_turn && !sess.input_queue.has_pending_mailbox_items().await;
++                    reply.send(idle).is_ok() && idle && shutdown(&sess, sub.id.clone()).await
++                }
+                 Op::Review { review_request } => {
+                     review(&sess, &config, sub.id.clone(), review_request).await;
+                     false
 diff --git a/codex-rs/core/src/session/mcp.rs b/codex-rs/core/src/session/mcp.rs
 index 765fe5eda..e77e36031 100644
 --- a/codex-rs/core/src/session/mcp.rs
@@ -18803,10 +18931,33 @@ index 765fe5eda..e77e36031 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index e08a0fa5a..058fd8026 100644
+index e08a0fa5a..1a013a044 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -1436,6 +1436,100 @@ impl Session {
+@@ -1055,6 +1055,22 @@ impl SessionIo {
+         Ok(())
+     }
+
++    pub(crate) async fn shutdown_if_idle_and_wait(&self) -> CodexResult<bool> {
++        let session_loop_termination = self.session_loop_termination.clone();
++        let (reply, idle) = oneshot::channel();
++        match self.submit(Op::ShutdownIfIdle { reply }).await {
++            Ok(_) => {}
++            Err(err) if matches!(err.details(), CodexErrorDetails::InternalAgentDied) => {}
++            Err(err) => return Err(err),
++        }
++        // A closed reply means the loop ended before answering, so it is already shut down.
++        if idle.await == Ok(false) {
++            return Ok(false);
++        }
++        session_loop_termination.await;
++        Ok(true)
++    }
++
+     pub(crate) async fn next_event(&self) -> CodexResult<Event> {
+         let event = self
+             .rx_event
+@@ -1436,6 +1452,100 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -18907,7 +19058,7 @@ index e08a0fa5a..058fd8026 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -3841,6 +3935,7 @@ impl Session {
+@@ -3841,6 +3951,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -18915,7 +19066,7 @@ index e08a0fa5a..058fd8026 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3848,6 +3943,27 @@ impl Session {
+@@ -3848,6 +3959,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -18943,7 +19094,7 @@ index e08a0fa5a..058fd8026 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4274,6 +4390,10 @@ impl Session {
+@@ -4274,6 +4406,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -18954,7 +19105,7 @@ index e08a0fa5a..058fd8026 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4283,6 +4403,7 @@ impl Session {
+@@ -4283,6 +4419,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -18962,7 +19113,7 @@ index e08a0fa5a..058fd8026 100644
                  })
                  .await
              {
-@@ -4371,6 +4492,10 @@ impl Session {
+@@ -4371,6 +4508,10 @@ impl Session {
                  }
              }
          }
@@ -18973,7 +19124,7 @@ index e08a0fa5a..058fd8026 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4380,6 +4505,7 @@ impl Session {
+@@ -4380,6 +4521,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -22946,6 +23097,74 @@ index 50f965cd5..f6e68f9f4 100644
  mod live_cli;
  #[path = "managed_threads_tests.rs"]
  mod managed_threads;
+diff --git a/codex-rs/core/tests/suite/pending_input.rs b/codex-rs/core/tests/suite/pending_input.rs
+index 0df8b4a20..8fb1782e6 100644
+--- a/codex-rs/core/tests/suite/pending_input.rs
++++ b/codex-rs/core/tests/suite/pending_input.rs
+@@ -2018,6 +2018,63 @@ async fn interrupt_if_no_pending_input_checks_turn_and_queue(
+     Ok(())
+ }
+
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn shutdown_if_idle_refuses_an_active_turn_and_shuts_down_once_idle() -> anyhow::Result<()> {
++    let (release_response, response_gate) = oneshot::channel();
++    let (server, _completions) = start_streaming_sse_server(vec![vec![
++        chunk(ev_response_created("resp-1")),
++        chunk(ev_reasoning_item_added("reason-1", &["thinking"])),
++        gated_chunk(
++            response_gate,
++            vec![
++                ev_reasoning_item("reason-1", &["thinking"], &[]),
++                ev_completed("resp-1"),
++            ],
++        ),
++    ]])
++    .await;
++    let codex = build_codex(&server).await;
++    submit_user_input(&codex, "first prompt").await;
++    wait_for_reasoning_item_started(&codex).await;
++
++    assert!(!codex.shutdown_if_idle().await?);
++
++    release_response.send(()).expect("release model response");
++    wait_for_event(&codex, |event| {
++        assert!(!matches!(
++            event,
++            EventMsg::TurnAborted(_) | EventMsg::ShutdownComplete
++        ));
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    // The terminal event is delivered just before the active turn is cleared.
++    while !tokio::time::timeout(
++        std::time::Duration::from_secs(/*secs*/ 10),
++        codex.shutdown_if_idle(),
++    )
++    .await??
++    {
++        tokio::task::yield_now().await;
++    }
++    wait_for_event(&codex, |event| matches!(event, EventMsg::ShutdownComplete)).await;
++    server.shutdown().await;
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn shutdown_if_idle_refuses_pending_mailbox_input() -> anyhow::Result<()> {
++    let (server, _completions) = start_streaming_sse_server(Vec::new()).await;
++    let codex = build_codex(&server).await;
++    submit_queue_only_agent_mail(&codex, "queued mail").await;
++
++    assert!(!codex.shutdown_if_idle().await?);
++
++    codex.shutdown_and_wait().await?;
++    server.shutdown().await;
++    Ok(())
++}
++
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum CompactionFailurePoint {
+     PreTurn,
 diff --git a/codex-rs/exec-server/README.md b/codex-rs/exec-server/README.md
 index f32972604..3e6b1faf7 100644
 --- a/codex-rs/exec-server/README.md
@@ -24422,6 +24641,28 @@ index 1efba0f41..25447baab 100644
  #[tokio::test(start_paused = true)]
  async fn codex_err_debug_preserves_legacy_shape() {
      let actual = [
+diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
+index abc4e9084..e51e3b71c 100644
+--- a/codex-rs/protocol/src/protocol.rs
++++ b/codex-rs/protocol/src/protocol.rs
+@@ -752,6 +752,9 @@ pub enum Op {
+     /// Request to shut down codex instance.
+     Shutdown,
+
++    /// Shut down only if no turn is active and no mailbox input is pending; the reply says whether it did.
++    ShutdownIfIdle { reply: oneshot::Sender<bool> },
++
+     /// Execute a user-initiated one-off shell command (triggered by "!cmd").
+     ///
+     /// The command string is executed using the user's default shell and may
+@@ -960,6 +963,7 @@ impl Op {
+             Self::Review { .. } => "review",
+             Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
+             Self::Shutdown => "shutdown",
++            Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
+             Self::RunUserShellCommand { .. } => "run_user_shell_command",
+         }
+     }
 diff --git a/codex-rs/rollout/src/lib.rs b/codex-rs/rollout/src/lib.rs
 index 6bcbf57fd..9e46bfb31 100644
 --- a/codex-rs/rollout/src/lib.rs

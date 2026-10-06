@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "ae3565831b1c094c5fc519aa35807fd7fadc85cc0c59b88dda3f820cbc6374b4"
+    "sha256": "985b2e9e05789bb7c9981d876b52aa434291b6297bde0683939d714d2f74f099"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -215,9 +215,17 @@
       "before": null,
       "after": "ecfb02b7b459cef94d8157f8a916ea846d2d7147727c5bbc63959ca1727c443e"
     },
+    "codex-rs/app-server/src/request_processors/thread_lifecycle.rs": {
+      "before": "204a9b470a4ee86fbc7cdbc6737291a8dea678c562220153df4ccd57f4545ea4",
+      "after": "55823ca4c37e661b504821fe0f91636cee34d3c5ac3fc8bd2568ba5faf34c775"
+    },
     "codex-rs/app-server/src/request_processors/thread_processor.rs": {
       "before": "786c0549e5c1b57421e03472f3b8c3519090849fb8401163f3da5cc2c55b66be",
-      "after": "4f5375c70c8c7f05c979373ed4c129d8e14503c5cc4aead6451545d761b77e48"
+      "after": "7008b7644dfdc017fd2b748cac4b587b7f429f7de9501d44c644bd911fddbddb"
+    },
+    "codex-rs/app-server/src/request_processors/thread_processor_tests.rs": {
+      "before": "4bb0d95c8d7b8c6b941ae111a4b67aabe4b340edd09a3779d11dc2a94dbf519b",
+      "after": "c3c337ebe1898f03b4f5173c660ffa7611ae096ed68c210895e147ab42bbc5e1"
     },
     "codex-rs/app-server/src/thread_state.rs": {
       "before": "a3f9d252d61c9a78c50db119c87796cec92a734971762c1ba013791af2556e33",
@@ -339,6 +347,10 @@
       "before": "605ced35cd853fcc4e23f6edd724c96f96f74c736a45e6ea95bf5300f3ab814c",
       "after": "39edd3a7a8a58a63ee1b6e957dc997274cab3f13cc1ca126b28a1130f61d97f4"
     },
+    "codex-rs/core/src/codex_thread.rs": {
+      "before": "1d3c5b62bd86aba13362d73aadb2221bbb5362619f690c311ac69d4b31e29aa0",
+      "after": "8aafab6c85094586800a9ab3418058d5acb7111cb97b5bba430517ddecd32642"
+    },
     "codex-rs/core/src/compact.rs": {
       "before": "715756709185c29499c328617a7907a7fc8ede9e89fe55b4dbddfe9c15e22080",
       "after": "deffcc0298f350c88ba793cd628a2d8d6e4fc6ba592b885fb7f0c1ad7705cc77"
@@ -397,7 +409,7 @@
     },
     "codex-rs/core/src/session/handlers.rs": {
       "before": "bb14e953f223cbfeb518fd3c241e5c3b0aa8cded6df271d5dc33d321bcb62b54",
-      "after": "a87a8eb7b724ff35de5da84cb926c8e315a8bdad4ce26e03cb982e47048b7692"
+      "after": "9db1833fb83aad3770485ee566fd1e88d0d7babe076e956fc6fd0bdd808e361e"
     },
     "codex-rs/core/src/session/mcp.rs": {
       "before": "672284362e5693709ee4787d0e04efa5cdd78ae3dcebe1743d4dddd82530220a",
@@ -405,7 +417,7 @@
     },
     "codex-rs/core/src/session/mod.rs": {
       "before": "d05728bce8f6f3163d20ec4286bf964d7dfda27a39d4669b755e7a2e51849ecf",
-      "after": "9cf9507caefc532d7cbdca43d5a206b6677e6d04682efca6bd2e4576ba46d681"
+      "after": "08cb5393a2d038f49d9f584f67b2292bab852b9c6e103849b0591dd3224f0818"
     },
     "codex-rs/core/src/session/session.rs": {
       "before": "2da4c0288596269fbb6df6d9a04a389e8ce0184be77ee2bcce765521e63702a5",
@@ -626,6 +638,10 @@
     "codex-rs/core/tests/suite/mod.rs": {
       "before": "5fd188460930f931c48e03c0e6d18d5e540923559f2cf23b677010b8f03e103b",
       "after": "0286328225006161e8a9029be3207f2a58a825f0990ab5526fdd5c3b7f906a01"
+    },
+    "codex-rs/core/tests/suite/pending_input.rs": {
+      "before": "b3260a2f70ae5e1cdac3b4330a66a064bc686c6fe7f4b981f2aea10813a21d5a",
+      "after": "b4a96df3ca386479d7bb271f11bfda55b7fc73f8a1cf0a7c97c2b55397a71ab0"
     },
     "codex-rs/exec-server/README.md": {
       "before": "2ffd3eeba52c376c1e4fd146a81999306fe5152d7d72852917441b728b2ee592",
@@ -1238,6 +1254,10 @@
     "codex-rs/protocol/src/error_tests.rs": {
       "before": "47181e33346c0c3c343c6bf8d30fc962746301e9c646a2e46e6339e48f1b9097",
       "after": "a0ace4f84a1955b220c5c61b1f04c32d531761f9d54aba7ed3cb8317ad809256"
+    },
+    "codex-rs/protocol/src/protocol.rs": {
+      "before": "d3d3d384da91b2824c10091de4331a2bc26ec5474887ed0aef1e3f3c4ae110f4",
+      "after": "c8dd1ad82867c194944860470715e4dd882a10a7036469097bfc9d28835a7a2e"
     },
     "codex-rs/rollout/src/lib.rs": {
       "before": "f4f9dbb751a467de8232e7d07cb4dd0fbd5440f0bc24e28dd6b86ce364351be8",
