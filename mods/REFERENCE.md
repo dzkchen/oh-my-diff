@@ -1612,7 +1612,7 @@ runtime or readable view in this host), `command_unavailable` and
 
 | Request | Params | Result |
 | --- | --- | --- |
-| `omd/client/attach` | `{name, renderer: {kind: 'terminal'\|'gui'\|'text', formats: ('svg'\|'png'\|'jpeg'\|'cells'\|'text')[], pointer: 'pixel'\|'cell'\|'half_cell'\|'none', reducedMotion, cellPx?}, operations}` | `{clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}`, then `omd/view/updated`; attaching again on the connection replaces its entry |
+| `omd/client/attach` | `{name, renderer: {kind: 'terminal'\|'gui'\|'text', formats: ('svg'\|'png'\|'jpeg'\|'cells'\|'text')[], pointer: 'pixel'\|'cell'\|'half_cell'\|'none', reducedMotion, cellPx?}, operations}` | `{clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}`, then `omd/view/updated`; the result's `roster` already lists the new client, and `omd/roster/updated` reports later changes; attaching again on the connection replaces its entry |
 | `omd/client/update` | `{renderer?, viewport?: {width, height, unit}, focus?}` | `{}`; `focus` sets the entry's `focused`; every client gets `omd/roster/updated` and mods render again |
 | `omd/client/detach` | `{}` | `{}` |
 | `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
@@ -1620,7 +1620,7 @@ runtime or readable view in this host), `command_unavailable` and
 | `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
 | `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}` |
 | `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
-| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state and result |
+| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, managed, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; an apply reloads the mods at once and pushes the new view. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
 The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
 full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
@@ -1650,7 +1650,8 @@ snapshot, until the host publishes its first view); `revision` grows within
 an `epoch`, and a new `epoch` means the host restarted and invalidates
 everything the client holds. Reconnecting is `initialize`, attach
 (a full snapshot, never deltas), then `thread/resume` per thread, which
-replays pending approvals. Approvals stay upstream server requests broadcast to
+replays pending approvals; `thread/resume` also joins a loaded thread before
+its first turn. Approvals stay upstream server requests broadcast to
 subscribed connections (first answer wins, `serverRequest/resolved` tells the
 rest); `turn/interrupt` cancels a turn; `thread/rewritten` invalidates a
 thread's cached history.
@@ -1703,8 +1704,12 @@ A mod owns its client adapter: it declares `os` with `os_access.programs`
 `channel` hop from a command) with `process.start {sandbox: 'none'}`, or
 starts it sandboxed with `network: 'loopback'` (`network`) for a loopback
 `ws://` listener. It passes the listen URL and the token, or a token file
-path, through `environment` or ndjson stdin; the host stops the process with
-the mod. The UI process connects with the SDK in
+path, through `environment` (names listed in `exec_environment`; a name
+containing `TOKEN`, `KEY` or `SECRET` needs `--allow-secret-env`) or ndjson
+stdin; the host stops the process with the mod. Its stdout is the framed
+message channel, so a UI process logs to stderr or a file: output that
+breaks the framing stops the process (an `exit` `process_event` follows). The UI
+process connects with the SDK in
 `@oh-my-diff/mod-api/client`: `connect({url, token?, command?, name, renderer,
 operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?,
 onNotification?, onReconnect?, onClose?})` is dependency-free ESM for browsers
@@ -1715,7 +1720,29 @@ and Node 22+ over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
 method; after a disconnect it reconnects with backoff, re-initializes,
 re-attaches, replays the last update, resumes the threads it resumed through
 `request('thread/resume', …)` and reports `onReconnect({epoch,
-previousEpoch})`. `mods/examples/external_client` is a complete adapter.
+previousEpoch})`. `unsupported(component, renderer, drawable)` returns null
+or an `unsupported_element: <type> '<id>': <reason>; drawing its fallback
+"<text>"` error for a component the renderer cannot draw (a type outside
+`drawable`, a `raster` without `cells`, an `image` without an image format),
+with `fallback` set to its alt text, text or label. `mods/examples/external_client`
+(a text renderer) and `mods/examples/approval_desk` (a GUI-shaped renderer
+that answers approvals) are complete adapters for unrelated mods.
+
+The same contract backs an independently packaged desktop app or editor
+webview; Oh My Diff ships neither. A desktop app spawns `codex app-server
+--listen unix://PATH` (or connects to a user's `codex --listen` session) from
+its main process and runs the SDK there. A VS Code extension's host starts or
+finds the listener, writes a base64url capability token, and passes the URL
+and token to its webview, which loads the SDK as ESM and connects over
+`ws://127.0.0.1:PORT` with `--ws-auth capability-token` and
+`--ws-allowed-origin` set to the webview origin. Either renderer draws
+`snapshot.view.sites` by component type, calls `unsupported()` for the rest,
+reads images with `omd/resource/read`, sends `omd/action` and `omd/client/event`,
+answers approval server requests through `onServerRequest`, and re-renders
+from the full snapshot after `onReconnect`. `scripts/client_acceptance.py
+--binaries DIR` drives both example adapters against headless and co-attached
+hosts with a scripted local provider and is the conformance check for a new
+client.
 
 ### Commands and configuration (`command_config_middleware_v1`)
 
@@ -2338,7 +2365,10 @@ expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
 to the same declared capability and host permission checks.
 
-`process.start` frames stdio as `content-length` (default) or `ndjson`;
+`process.start` frames stdio as `content-length` (default) or `ndjson`, and
+stops a process whose stdout breaks the framing (a line that is not JSON
+under `ndjson`; a blank line or 8 KiB without a valid header under
+`content-length`); stderr is discarded;
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch

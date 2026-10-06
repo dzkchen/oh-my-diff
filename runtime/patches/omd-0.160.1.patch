@@ -15614,7 +15614,7 @@ index a3bb780b3..0e5ee229c 100644
          | ServerNotification::WindowsSandboxSetupCompleted(_)
          | ServerNotification::AccountLoginCompleted(_)
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 289cb6395..2aa6962a6 100644
+index 289cb6395..4d2079e65 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -19,6 +19,10 @@ use codex_app_server_protocol::ThreadItemsListCursor;
@@ -15879,7 +15879,127 @@ index 289cb6395..2aa6962a6 100644
      pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
          self.thread_watch_manager.subscribe_running_turn_count()
      }
-@@ -4670,6 +4816,10 @@ impl ThreadRequestProcessor {
+@@ -4290,13 +4436,24 @@ impl ThreadRequestProcessor {
+         } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
+             && let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await
+         {
+-            let source_thread = self
++            // A loaded thread has no rollout until its first turn; resume subscribes to it anyway.
++            let source_thread = match self
+                 .read_stored_thread_for_resume(
+                     &params.thread_id,
+                     /*path*/ None,
+                     /*include_history*/ false,
+                 )
+-                .await?;
++                .await
++            {
++                Ok(source_thread) => Some(source_thread),
++                Err(error)
++                    if error.message
++                        == format!("no rollout found for thread id {existing_thread_id}") =>
++                {
++                    None
++                }
++                Err(error) => return Err(error),
++            };
+             Some((existing_thread_id, existing_thread, source_thread))
+         } else {
+             let source_thread = self
+@@ -4308,7 +4465,9 @@ impl ThreadRequestProcessor {
+                 .await?;
+             let existing_thread_id = source_thread.thread_id;
+             match self.thread_manager.get_thread(existing_thread_id).await {
+-                Ok(existing_thread) => Some((existing_thread_id, existing_thread, source_thread)),
++                Ok(existing_thread) => {
++                    Some((existing_thread_id, existing_thread, Some(source_thread)))
++                }
+                 Err(_) => {
+                     return Ok(RunningThreadResumeResult::NotRunning(Some(Box::new(
+                         source_thread,
+@@ -4318,12 +4477,13 @@ impl ThreadRequestProcessor {
+         };
+
+         if let Some((existing_thread_id, existing_thread, mut source_thread)) = running_thread {
+-            let paginated_resume =
+-                matches!(source_thread.history_mode, ThreadHistoryMode::Paginated);
++            let paginated_resume = source_thread.as_ref().is_some_and(|source_thread| {
++                matches!(source_thread.history_mode, ThreadHistoryMode::Paginated)
++            });
+             let existing_thread_rollout_path = existing_thread.rollout_path();
+-            let active_path = existing_thread_rollout_path
++            let active_path = existing_thread_rollout_path.as_ref().or(source_thread
+                 .as_ref()
+-                .or(source_thread.rollout_path.as_ref());
++                .and_then(|source_thread| source_thread.rollout_path.as_ref()));
+             if let (Some(requested_path), Some(active_path)) = (params.path.as_ref(), active_path)
+                 && !path_utils::paths_match_after_normalization(requested_path, active_path)
+             {
+@@ -4394,18 +4554,20 @@ impl ThreadRequestProcessor {
+                 )
+                 .await;
+             }
+-            let needs_history =
+-                !paginated_resume && (include_turns || params.initial_turns_page.is_some());
+-            if needs_history {
+-                let source_thread_id = source_thread.thread_id.to_string();
+-                let source_rollout_path = source_thread.rollout_path.clone();
+-                source_thread = self
+-                    .read_stored_thread_for_resume(
++            let needs_history = source_thread.is_some()
++                && !paginated_resume
++                && (include_turns || params.initial_turns_page.is_some());
++            if needs_history && let Some(stored) = source_thread.as_ref() {
++                let source_thread_id = stored.thread_id.to_string();
++                let source_rollout_path = stored.rollout_path.clone();
++                source_thread = Some(
++                    self.read_stored_thread_for_resume(
+                         &source_thread_id,
+                         source_rollout_path.as_ref(),
+                         /*include_history*/ true,
+                     )
+-                    .await?;
++                    .await?,
++                );
+             }
+             if paginated_resume && (include_turns || params.initial_turns_page.is_some()) {
+                 self.thread_store
+@@ -4415,8 +4577,8 @@ impl ThreadRequestProcessor {
+             }
+             let history_items = if needs_history {
+                 source_thread
+-                    .history
+-                    .take()
++                    .as_mut()
++                    .and_then(|source_thread| source_thread.history.take())
+                     .map(|history| history.items)
+                     .ok_or_else(|| {
+                         internal_error(format!(
+@@ -4444,11 +4606,18 @@ impl ThreadRequestProcessor {
+             )
+             .await?;
+
+-            let mut thread_summary = self.stored_thread_to_api_thread(
+-                source_thread,
+-                config_snapshot.model_provider_id.as_str(),
+-                /*include_turns*/ false,
+-            );
++            let mut thread_summary = match source_thread {
++                Some(source_thread) => self.stored_thread_to_api_thread(
++                    source_thread,
++                    config_snapshot.model_provider_id.as_str(),
++                    /*include_turns*/ false,
++                ),
++                None => build_thread_from_loaded_snapshot(
++                    existing_thread_id,
++                    &config_snapshot,
++                    &existing_thread,
++                ),
++            };
+             thread_summary.session_id = existing_thread.startup_metadata().session_id.to_string();
+             thread_summary.thread_source = config_snapshot.thread_source.clone().map(Into::into);
+             apply_live_thread_settings(&mut thread_summary, &config_snapshot);
+@@ -4670,6 +4839,10 @@ impl ThreadRequestProcessor {
                  "session {thread_id} is archived. Run `codex unarchive {thread_id}` to unarchive it first."
              )));
          }
@@ -15890,7 +16010,7 @@ index 289cb6395..2aa6962a6 100644
 
          Ok(stored_thread)
      }
-@@ -6031,6 +6181,44 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
+@@ -6031,6 +6204,44 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
      }
  }
 
@@ -16200,6 +16320,51 @@ index d24896903..cf98a1656 100644
  mod thread_sections;
  mod thread_settings_update;
  mod thread_shell_command;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_resume.rs b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+index 6f58231e3..e02d3cf11 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_resume.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+@@ -442,7 +442,7 @@ async fn wait_for_responses_request_count(
+ }
+
+ #[tokio::test]
+-async fn thread_resume_rejects_unmaterialized_thread() -> Result<()> {
++async fn thread_resume_joins_unmaterialized_loaded_thread() -> Result<()> {
+     let server = create_mock_responses_server_repeating_assistant("Done").await;
+     let codex_home = TempDir::new()?;
+     mock_responses_config(&server.uri()).write(codex_home.path())?;
+@@ -462,26 +462,17 @@ async fn thread_resume_rejects_unmaterialized_thread() -> Result<()> {
+     let ThreadStartResponse { thread, .. } =
+         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(start_id)).await??;
+
+-    // Resume should fail before the first user message materializes rollout storage.
+     let resume_id = mcp
+         .send_thread_resume_request(ThreadResumeParams {
+             thread_id: thread.id.clone(),
+             ..Default::default()
+         })
+         .await?;
+-    let resume_err: JSONRPCError = timeout(
+-        DEFAULT_READ_TIMEOUT,
+-        mcp.read_stream_until_error_message(RequestId::Integer(resume_id)),
+-    )
+-    .await??;
+-    assert!(
+-        resume_err
+-            .error
+-            .message
+-            .contains("no rollout found for thread id"),
+-        "unexpected resume error: {}",
+-        resume_err.error.message
+-    );
++    let ThreadResumeResponse {
++        thread: resumed, ..
++    } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
++    assert_eq!(resumed.id, thread.id);
++    assert!(resumed.turns.is_empty());
+
+     Ok(())
+ }
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
 index bdd7771b3..9dd30e553 100644
 --- a/codex-rs/cli/src/main.rs
@@ -43286,10 +43451,10 @@ index 000000000..30c6356a8
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..8e76a64fb
+index 000000000..b6f462a29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,681 @@
+@@ -0,0 +1,687 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -43753,6 +43918,12 @@ index 000000000..8e76a64fb
 +        "reload" => store.reload().map_err(failed)?,
 +        "reset" => drop(store.reset(target).map_err(failed)?),
 +        _ => return Err(format!("recovery_action_invalid: {action}")),
++    }
++    if let Ok(core) = core() {
++        if let Ok(mut runtime) = core.runtime.lock() {
++            runtime.turn_boundary();
++        }
++        republish(&core);
 +    }
 +    Ok(json!({"action": action, "target": target, "status": "applied"}))
 +}
@@ -47463,10 +47634,10 @@ index 000000000..446c5d653
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..467e238b6
+index 000000000..39734a2a6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,980 @@
+@@ -0,0 +1,1023 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -48011,11 +48182,17 @@ index 000000000..467e238b6
 +                    let (sender, receiver) = mpsc::sync_channel(128);
 +                    let notifier = self.notifier.get().cloned();
 +                    let (owner, session) = (id.to_owned(), input.session.clone());
++                    let group = child.id();
 +                    std::thread::spawn(move || {
 +                        let mut reader = BufReader::new(stdout);
 +                        loop {
 +                            let result = read_framed(&mut reader, framing);
 +                            let terminal = result.is_err();
++                            if let Err(error) = &result
++                                && error.kind() != io::ErrorKind::UnexpectedEof
++                            {
++                                let _ = kill_process_group(group);
++                            }
 +                            let bytes = match (&result, notify_output) {
 +                                (Ok(message), true) => {
 +                                    serde_json::to_vec(message).ok().map(|bytes| bytes.len())
@@ -48273,6 +48450,43 @@ index 000000000..467e238b6
 +                .unwrap()["stopped"],
 +            true
 +        );
++    }
++
++    #[test]
++    fn a_child_that_breaks_the_framed_channel_is_stopped() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let owner = ProcessOwner {
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++            protected: &[],
++            os_access: None,
++        };
++        let found = processes
++            .call(owner, "process.which", json!({"names":["sh"]}), || true)
++            .unwrap();
++        let sh = &found["found"][0];
++        processes
++            .call(
++                owner,
++                "process.start",
++                json!({"session":"plain","name":"sh","path":sh["path"],"sha256":sh["sha256"],
++                    "arguments":["-c","echo plain; sleep 30"],"framing":"ndjson"}),
++                || true,
++            )
++            .unwrap();
++        let deadline = Instant::now() + std::time::Duration::from_secs(5);
++        while processes
++            .call(owner, "process.status", json!({"session":"plain"}), || true)
++            .is_ok_and(|status| status["running"] == true)
++        {
++            assert!(Instant::now() < deadline, "the child kept running");
++            std::thread::sleep(std::time::Duration::from_millis(50));
++        }
 +    }
 +
 +    #[test]
@@ -121013,10 +121227,10 @@ index 000000000..d1f0b5e66
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..2cc68c58d
+index 000000000..023cb7816
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3598 @@
+@@ -0,0 +1,3603 @@
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
@@ -123021,6 +123235,11 @@ index 000000000..2cc68c58d
 +    overlays.sort_by_key(|(overlay, _)| overlay.z);
 +    for (index, (overlay, site)) in overlays.into_iter().enumerate() {
 +        let Some(area) = overlay_area(screen, overlay, &interaction.anchors) else {
++            if interaction.focused.as_ref().is_some_and(|focused| {
++                codex_omd::component_ids_of(&site.components).contains(focused)
++            }) {
++                interaction.focused = None;
++            }
 +            continue;
 +        };
 +        interaction.layer = u16::try_from(index + 1).unwrap_or(DIALOG_LAYER - 1);
@@ -124617,10 +124836,10 @@ index 000000000..2cc68c58d
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..bf46a06cf
+index 000000000..c93b4720b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1681 @@
+@@ -0,0 +1,1707 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -125866,6 +126085,32 @@ index 000000000..bf46a06cf
 +        Some(ModInput::Binding(_, ModKeyAction::Focus { focus })) if focus == "mode"
 +    ));
 +    sync_interaction(&snapshot.view);
++    assert_eq!(focused(), None);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn autofocus_in_an_overlay_without_a_drawn_anchor_is_released() {
++    let snapshot = snapshot(serde_json::json!({"sites":{
++        "sidebar":{"components":[{"type":"text","id":"body","label":"Body","text":"x"}]},
++        "fixture/tip":{"overlay":{"anchor":{"component":"gone"},"width":20,"height":3},"components":[
++            {"type":"input","id":"tip_query","label":"Query","autofocus":true,"action":{"command":"fixture:search"}}
++        ]}
++    },"sidebar_width":30}));
++    let area = Rect::new(0, 0, 80, 24);
++    preview(ModViewSnapshot::default());
++    sync_interaction(&ModView::default());
++    sync_interaction(&snapshot.view);
++    let focused = || {
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused
++            .clone()
++    };
++    assert_eq!(focused().as_deref(), Some("tip_query"));
++    render(area, area, &mut Buffer::empty(area), &snapshot);
 +    assert_eq!(focused(), None);
 +    preview(ModViewSnapshot::default());
 +}

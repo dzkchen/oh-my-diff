@@ -542,11 +542,17 @@ impl ManagedProcesses {
                     let (sender, receiver) = mpsc::sync_channel(128);
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
+                    let group = child.id();
                     std::thread::spawn(move || {
                         let mut reader = BufReader::new(stdout);
                         loop {
                             let result = read_framed(&mut reader, framing);
                             let terminal = result.is_err();
+                            if let Err(error) = &result
+                                && error.kind() != io::ErrorKind::UnexpectedEof
+                            {
+                                let _ = kill_process_group(group);
+                            }
                             let bytes = match (&result, notify_output) {
                                 (Ok(message), true) => {
                                     serde_json::to_vec(message).ok().map(|bytes| bytes.len())
@@ -804,6 +810,43 @@ mod tests {
                 .unwrap()["stopped"],
             true
         );
+    }
+
+    #[test]
+    fn a_child_that_breaks_the_framed_channel_is_stopped() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            os_access: None,
+        };
+        let found = processes
+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
+            .unwrap();
+        let sh = &found["found"][0];
+        processes
+            .call(
+                owner,
+                "process.start",
+                json!({"session":"plain","name":"sh","path":sh["path"],"sha256":sh["sha256"],
+                    "arguments":["-c","echo plain; sleep 30"],"framing":"ndjson"}),
+                || true,
+            )
+            .unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while processes
+            .call(owner, "process.status", json!({"session":"plain"}), || true)
+            .is_ok_and(|status| status["running"] == true)
+        {
+            assert!(Instant::now() < deadline, "the child kept running");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     #[test]

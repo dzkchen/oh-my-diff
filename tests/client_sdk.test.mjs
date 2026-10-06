@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connect, encodeFrame, frameReader } from '../mods/author/client.mjs';
+import { connect, encodeFrame, frameReader, unsupported } from '../mods/author/client.mjs';
 
 const renderer = { kind: 'text', formats: ['text'], pointer: 'none', reducedMotion: true };
 
@@ -155,4 +155,13 @@ test('unix client fails a handshake the peer closes and reads a token when actin
     session.close();
     host.server.close();
   }
+});
+
+test('unsupported names the element, the reason and its fallback', () => {
+  const gui = { kind: 'gui', formats: ['svg'], pointer: 'pixel', reducedMotion: false };
+  const raster = { type: 'raster', id: 'meter', alt: 'A meter', width: 8, height: 1 };
+  assert.equal(unsupported({ type: 'image', id: 'badge', alt: 'Badge' }, gui, ['image', 'raster']), null);
+  assert.equal(unsupported(raster, gui, ['raster']).message, "unsupported_element: raster 'meter': a raster needs the 'cells' format; drawing its fallback \"A meter\"");
+  const missing = unsupported({ type: 'input', id: 'note', label: 'Note' }, renderer, ['text']);
+  assert.deepEqual([missing.code, missing.component, missing.fallback], ['unsupported_element', 'note', 'Note']);
 });

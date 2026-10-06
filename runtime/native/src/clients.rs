@@ -462,6 +462,12 @@ pub fn recovery_apply(action: &str, target: &str) -> Result<Value, String> {
         "reset" => drop(store.reset(target).map_err(failed)?),
         _ => return Err(format!("recovery_action_invalid: {action}")),
     }
+    if let Ok(core) = core() {
+        if let Ok(mut runtime) = core.runtime.lock() {
+            runtime.turn_boundary();
+        }
+        republish(&core);
+    }
     Ok(json!({"action": action, "target": target, "status": "applied"}))
 }
 

@@ -252,7 +252,7 @@ test('external client example launches its renderer unsandboxed from a channel h
   const found = { call: which, value: { found: [node] } };
   const start = run('external_client', 'channel', channel, { settings, receipts: [found] }).host_call;
   assert.deepEqual(start, { operation: 'process.start', arguments: { session: 'ui', name: 'node', path: node.path, sha256: node.sha256, arguments: ['/tmp/client.mjs'],
-    sandbox: 'none', notify: ['exit'], environment: { EXTERNAL_CLIENT_URL: 'ws://127.0.0.1:4500', EXTERNAL_CLIENT_TOKEN_FILE: '/tmp/token' } } });
+    sandbox: 'none', notify: ['exit'], environment: { EXTERNAL_CLIENT_URL: 'ws://127.0.0.1:4500', EXTERNAL_CLIENT_AUTH_FILE: '/tmp/token' } } });
   const started = run('external_client', 'channel', channel, { settings, receipts: [found, { call: start, value: { session: 'ui', running: true } }] });
   const clicked = run('external_client', 'component_event', { component: 'external_badge', kind: 'pointer', client: 'client-1',
     pointer: { column: 1, row: 0, half: null, action: 'down', button: 'left' } }, { state: started.state });

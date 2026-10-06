@@ -134,6 +134,18 @@ function transport({ url, token, command }, onText, onClose) {
   throw new Error(`client_url_unsupported: ${url}`);
 }
 
+export function unsupported(component, renderer, drawable) {
+  const formats = renderer.formats ?? [];
+  const reason = !drawable.includes(component.type) ? 'this renderer does not draw it'
+    : component.type === 'raster' && !formats.includes('cells') ? "a raster needs the 'cells' format"
+      : component.type === 'image' && !formats.some(format => ['svg', 'png', 'jpeg'].includes(format)) ? "an image needs 'svg', 'png' or 'jpeg'"
+        : null;
+  if (!reason) return null;
+  const fallback = component.alt ?? component.text ?? component.label ?? component.type;
+  return Object.assign(new Error(`unsupported_element: ${component.type} '${component.id}': ${reason}; drawing its fallback "${fallback}"`),
+    { code: 'unsupported_element', component: component.id, fallback });
+}
+
 function rpcError(error) {
   return Object.assign(new Error(error.message), { code: error.code, data: error.data });
 }

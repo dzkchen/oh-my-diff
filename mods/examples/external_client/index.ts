@@ -52,7 +52,7 @@ export default function activate(api: ModAPI) {
     if (!node) return write({ ui: 'cannot find node' });
     const started = api.host.tryCall('process.start', {
       session: 'ui', name: 'node', path: node.path, sha256: node.sha256, arguments: [script], sandbox: 'none', notify: ['exit'],
-      environment: { EXTERNAL_CLIENT_URL: url, ...(tokenFile && { EXTERNAL_CLIENT_TOKEN_FILE: tokenFile }) },
+      environment: { EXTERNAL_CLIENT_URL: url, ...(tokenFile && { EXTERNAL_CLIENT_AUTH_FILE: tokenFile }) },
     });
     write({ ui: started.ok ? 'running' : started.error });
   });

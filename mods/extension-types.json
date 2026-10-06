@@ -411,6 +411,12 @@
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
     },
     {
+      "path": "mods/examples/approval_desk",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Keeps a filterable approval desk beside other sidebars, with a client adapter that answers approvals over the client protocol."
+    },
+    {
       "path": "mods/examples/render_hooks",
       "extension_type": "mod",
       "role": "author_example",

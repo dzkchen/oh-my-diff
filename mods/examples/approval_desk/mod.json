@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "approval_desk",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "description": "Lists approval requests and their decisions in a filterable desk that terminal users and attached external clients share.",
+  "capabilities": [
+    "terminal",
+    "commands",
+    "approvals",
+    "middleware",
+    "store"
+  ],
+  "compatibility": {
+    "required_features": [
+      "terminal_surface_v1",
+      "terminal_lists_v1",
+      "terminal_input_v1",
+      "ui_controls_v1",
+      "approval_v1"
+    ]
+  }
+}

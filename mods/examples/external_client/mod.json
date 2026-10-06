@@ -19,6 +19,7 @@
     "programs": ["node"],
     "network": true
   },
+  "exec_environment": ["EXTERNAL_CLIENT_URL", "EXTERNAL_CLIENT_AUTH_FILE"],
   "settings_schema": {
     "type": "object",
     "properties": {

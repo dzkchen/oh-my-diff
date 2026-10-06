@@ -48,6 +48,10 @@ export interface Session {
   close(): void;
 }
 
+export type UnsupportedElement = Error & { code: 'unsupported_element'; component: string; fallback: string };
+
 export function connect(options: ConnectOptions): Promise<Session>;
+/** Null when `drawable` lists the component's type and `renderer.formats` can show it, else an `unsupported_element` error naming the fallback text to draw. */
+export function unsupported(component: { type: string; id: string; alt?: string; text?: string; label?: string }, renderer: Renderer, drawable: string[]): UnsupportedElement | null;
 export function encodeFrame(opcode: number, payload: Uint8Array, masked: boolean): Uint8Array;
 export function frameReader(onMessage: (opcode: number, payload: Uint8Array) => void): (chunk: Uint8Array) => void;
