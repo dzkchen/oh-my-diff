@@ -1984,8 +1984,10 @@ an inserted call id must be new to the thread. A replaced or inserted message
 gets a matching display item; a replaced or inserted tool row keeps only its
 model items, so it leaves replay and export views. Images are referenced by
 `image_url` (a URL or data URL) or `file_id`. Host metadata in the items is
-dropped and ids are assigned by the host. A thread with a turn in progress
-fails with `history_rewrite_busy`, a stale `expectedRevision` with
+dropped and ids are assigned by the host. A thread with a turn in progress or
+pending agent mail fails with `history_rewrite_busy` (checked again atomically
+when the thread unloads, so a turn that starts meanwhile is never cut off and
+the thread stays loaded; retry once it is idle), a stale `expectedRevision` with
 `history_revision_conflict`; any refused edit leaves the transcript unchanged.
 
 A rewrite copies the whole edited transcript to a new rollout and switches the
