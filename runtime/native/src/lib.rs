@@ -129,6 +129,26 @@ fn acquire_workspace_operation(repository_identity: &str) -> Result<OperationGua
     })
 }
 
+pub fn anchor_history(stream: &std::path::Path, sha256: &str) -> std::io::Result<()> {
+    codex_omd::broker::anchor(stream, sha256)
+}
+
+pub fn verify_history_anchor(stream: &std::path::Path, sha256s: &[String]) -> std::io::Result<()> {
+    let head = sha256s
+        .iter()
+        .fold(String::new(), |head, sha256| codex_omd::broker::chain(&head, sha256));
+    match codex_omd::broker::anchored(stream)? {
+        Some(anchor) if anchor.count == 0 => match sha256s.last() {
+            Some(last) => codex_omd::broker::seed(stream, sha256s.len() as u64, &head, last),
+            None => Ok(()),
+        },
+        Some(anchor) if anchor.count != sha256s.len() as u64 || anchor.head != head => {
+            Err(std::io::Error::other("anchored chain differs"))
+        }
+        _ => Ok(()),
+    }
+}
+
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,

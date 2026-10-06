@@ -1074,6 +1074,20 @@
     "threadId"
    ]
   },
+  "thread/rewrite": {
+   "class": "history_write",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible",
+   "fields": [
+    "edits",
+    "expectedRevision",
+    "threadId",
+    "undo"
+   ]
+  },
   "thread/search": {
    "class": "sessions",
    "contexts": [
@@ -1397,6 +1411,7 @@
   "thread/realtime/transcript/delta",
   "thread/realtime/transcript/done",
   "thread/reverted",
+  "thread/rewritten",
   "thread/settings/updated",
   "thread/started",
   "thread/status/changed",

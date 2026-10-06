@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous';
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';

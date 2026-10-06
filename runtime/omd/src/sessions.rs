@@ -326,7 +326,21 @@ impl SessionIndex<'_> {
         }
         let policy =
             crate::session_policy::permitted(self.root, self.repository, self.database, &active)?;
-        let allowed = |id: &str| policy.as_ref().is_none_or(|ids| ids.contains(id));
+        let allowed = |id: &str| policy.as_ref().is_none_or(|ids| ids.contains_key(id));
+        let current = |id: &str, path: &Path| {
+            policy
+                .as_ref()
+                .and_then(|ids| ids.get(id))
+                .and_then(Option::as_ref)
+                .is_none_or(|current| {
+                    let name = |path: &Path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name| name.trim_end_matches(".zst").to_owned())
+                    };
+                    name(current).is_some_and(|current| Some(current) == name(path))
+                })
+        };
         let result = match operation {
             "sessions.list" => {
                 let input: ListRequest = serde_json::from_value(arguments)?;
@@ -366,6 +380,7 @@ impl SessionIndex<'_> {
                     match self.load(path, &active) {
                         Ok(Some(session))
                             if allowed(&session.summary.session_id)
+                                && current(&session.summary.session_id, path)
                                 && in_range(Some(&session.summary.timestamp), since, until) =>
                         {
                             if !ids.insert((
@@ -428,7 +443,10 @@ impl SessionIndex<'_> {
                     .ok_or_else(|| io::Error::other("session_unavailable"))?;
                 let session = self
                     .load(path, &active)?
-                    .filter(|session| session.summary.session_id == input.session_id)
+                    .filter(|session| {
+                        session.summary.session_id == input.session_id
+                            && current(&input.session_id, path)
+                    })
                     .ok_or_else(|| io::Error::other("session_unavailable"))?;
                 if input.revision != session.summary.revision {
                     return Err(io::Error::other("session_revision_changed"));

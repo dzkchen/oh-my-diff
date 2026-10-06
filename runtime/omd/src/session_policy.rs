@@ -1,7 +1,7 @@
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -10,7 +10,7 @@ pub(crate) fn permitted(
     repository: &Path,
     configured_database: Option<&Path>,
     active: &dyn Fn() -> bool,
-) -> io::Result<Option<BTreeSet<String>>> {
+) -> io::Result<Option<BTreeMap<String, Option<PathBuf>>>> {
     let database = configured_database.map(Path::to_path_buf).unwrap_or(
         root.parent()
             .ok_or_else(|| io::Error::other("session_home_missing"))?
@@ -50,7 +50,7 @@ pub(crate) fn permitted(
         .map(|byte| format!("{byte:02x}"))
         .collect();
     let query = format!(
-        "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; SELECT id,memory_mode FROM threads WHERE cwd=CAST(X'{hex}' AS TEXT) ORDER BY id LIMIT 4097;"
+        "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; SELECT id,memory_mode,rollout_path FROM threads WHERE cwd=CAST(X'{hex}' AS TEXT) ORDER BY id LIMIT 4097;"
     );
     let mut child = Command::new("/usr/bin/sqlite3")
         .args([
@@ -113,20 +113,20 @@ pub(crate) fn permitted(
         return Err(io::Error::other("session_policy_limit"));
     }
     if bytes.is_empty() {
-        return Ok(Some(BTreeSet::new()));
+        return Ok(Some(BTreeMap::new()));
     }
     let rows: Vec<Value> = serde_json::from_slice(&bytes)?;
     if rows.len() > 4096 {
         return Err(io::Error::other("session_policy_limit"));
     }
-    let mut allowed = BTreeSet::new();
+    let mut allowed = BTreeMap::new();
     for row in rows {
         let id = row["id"]
             .as_str()
             .filter(|id| crate::resource_data::token(id))
             .ok_or_else(|| io::Error::other("session_policy_identity_invalid"))?;
         if row["memory_mode"] == "enabled" {
-            allowed.insert(id.to_owned());
+            allowed.insert(id.to_owned(), row["rollout_path"].as_str().map(PathBuf::from));
         }
     }
     Ok(Some(allowed))

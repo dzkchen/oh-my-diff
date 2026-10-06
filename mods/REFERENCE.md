@@ -69,6 +69,7 @@ native work.
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
+| `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -78,7 +79,7 @@ the mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers` and `autonomous` are authority grants. The manifest
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous` and `history_write` are authority grants. The manifest
 declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
@@ -1689,6 +1690,46 @@ items are dropped as pairs; the last item (the current input) is kept; inserts
 are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
+
+### Durable transcript rewriting (`history_rewrite_v1`)
+
+A mod with the `history_write` authority grant changes the persisted transcript
+itself through `app.request thread/rewrite {threadId, expectedRevision?, edits?,
+undo?}`, on the current thread or a thread it started. Without
+`expectedRevision` the call only reads `{revision, rows}`; each row is
+`{id, turnId, kind, access}` where `kind` is `message.<role>`, the tool call type
+or a display item type and `access` is `edit`, `delete` (reasoning, web search,
+image generation and display-only items) or `frozen` (compaction, configuration
+and rows before the newest compaction checkpoint). A row pairs a display item
+with its model items: a message, or a tool call with its output.
+
+`edits` apply in order as one revision: `{op: "delete", id}`, `{op: "replace",
+id, items}`, `{op: "insert", before? | after?, items}` (neither appends after the
+last row) and `{op: "move", id, before? | after?}`. `items` is one Responses
+`message` (`user`, `assistant` or `developer`) or one tool call followed by its
+output with the same `call_id`. A replacement keeps the row's role or call id;
+an inserted call id must be new to the thread. A replaced or inserted message
+gets a matching display item; a replaced or inserted tool row keeps only its
+model items, so it leaves replay and export views. Images are referenced by
+`image_url` (a URL or data URL) or `file_id`. Host metadata in the items is
+dropped and ids are assigned by the host. A thread with a turn in progress
+fails with `history_rewrite_busy`, a stale `expectedRevision` with
+`history_revision_conflict`; any refused edit leaves the transcript unchanged.
+
+A rewrite copies the whole edited transcript to a new rollout and switches the
+thread to it, so resume, `thread/turns/list`, `thread/items/list`, search and
+export read the result; every client receives `thread/rewritten {threadId,
+revision}` and the terminal reloads the transcript. The replaced rollout is kept
+unchanged. Each inserted, replaced or moved model item carries
+`rewritten {revision, op, source?, by: "mod:<id>"}` metadata, loses the host's
+execution, delivery and tool-call inventory metadata and so never proves that a
+tool ran; receipts, usage and evidence records are not rewritten. `undo: true`
+restores the transcript the latest rewrite replaced and keeps rows added since;
+undoing an undo redoes it. The host keeps a per-thread revision log, anchored by
+the authority broker when it is deployed, and resume fails with
+`history_anchor_mismatch` or `history_original_mismatch` when the log or a kept
+original changed; an interrupted rewrite is rolled forward or discarded on the
+next access. Revoking the mod drops `history_write`.
 
 ### Compaction interception (`compaction_intercept_v1`)
 

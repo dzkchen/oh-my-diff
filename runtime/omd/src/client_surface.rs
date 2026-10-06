@@ -250,6 +250,13 @@ pub fn app_request(
         .confirm
         .then(|| confirmation(caller, &method, &arguments["params"]))
         .transpose()?;
+    let mut arguments = arguments;
+    if method == "thread/rewrite" {
+        arguments["params"]
+            .as_object_mut()
+            .ok_or("app_params_invalid: params must be an object")?
+            .insert("author".into(), Value::String(format!("mod:{caller}")));
+    }
     let mut value = call(
         caller,
         "app.request",

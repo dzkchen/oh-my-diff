@@ -63,6 +63,22 @@ fn strip_private(value: &mut Value) {
     }
 }
 
+fn review_records(
+    snapshot: &dyn codex_extension_api::ConversationHistorySnapshot,
+) -> impl Iterator<Item = Value> + '_ {
+    let rewritten = snapshot.rewritten_item_ids();
+    snapshot.review_items().map(move |item| {
+        let mut value = serde_json::to_value(item).unwrap_or(Value::Null);
+        if ["id", "call_id"]
+            .iter()
+            .any(|key| value[*key].as_str().is_some_and(|id| rewritten.contains(id)))
+        {
+            value["rewritten"] = Value::Bool(true);
+        }
+        value
+    })
+}
+
 fn frozen_history(
     items: impl Iterator<Item = Value>,
     revision: u64,
@@ -395,6 +411,34 @@ mod history_tests {
         );
         assert!(selected_history(items[..2].iter().cloned(), Some(&["one".into()])).is_err());
         assert!(selected_history(items.into_iter(), Some(&["missing".into()])).is_err());
+    }
+
+    #[test]
+    fn frozen_history_marks_rows_a_transcript_rewrite_changed() {
+        use codex_protocol::models::ResponseItem;
+        struct Rewritten(Vec<ResponseItem>);
+        impl codex_extension_api::ConversationHistorySnapshot for Rewritten {
+            fn history_version(&self) -> u64 {
+                1
+            }
+            fn user_message_revision(&self) -> u64 {
+                1
+            }
+            fn items(&self) -> Box<dyn Iterator<Item = &ResponseItem> + Send + '_> {
+                Box::new(self.0.iter())
+            }
+            fn rewritten_item_ids(&self) -> std::collections::HashSet<String> {
+                ["synthetic".to_string()].into()
+            }
+        }
+        let item = |call_id: &str| {
+            serde_json::from_value(json!({"type":"function_call_output","call_id":call_id,"output":"ok"}))
+                .unwrap()
+        };
+        let snapshot = Rewritten(vec![item("synthetic"), item("real")]);
+        let records: Vec<Value> = review_records(&snapshot).collect();
+        assert_eq!(records[0]["rewritten"], true);
+        assert!(records[1].get("rewritten").is_none());
     }
 }
 
@@ -1019,12 +1063,7 @@ impl Agents {
             .await
             .map_err(|e| e.to_string())?;
         let snapshot = thread.conversation_history_snapshot().await;
-        let records = selected_history(
-            snapshot
-                .review_items()
-                .map(|item| serde_json::to_value(item).unwrap_or(Value::Null)),
-            input.call_ids.as_deref(),
-        )?;
+        let records = selected_history(review_records(snapshot.as_ref()), input.call_ids.as_deref())?;
         let (frozen, provenance) =
             frozen_history(records.into_iter(), snapshot.review_history_version())?;
         let records: Value = serde_json::from_str(&frozen).map_err(|e| e.to_string())?;
@@ -2055,9 +2094,7 @@ impl Agents {
                 .map_err(|e| e.to_string())?;
             let snapshot = parent_thread.conversation_history_snapshot().await;
             Some(frozen_history(
-                snapshot
-                    .review_items()
-                    .map(|item| serde_json::to_value(item).unwrap_or(Value::Null)),
+                review_records(snapshot.as_ref()),
                 snapshot.review_history_version(),
             )?)
         } else {

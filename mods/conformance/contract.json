@@ -1619,6 +1619,33 @@
       "replace_note": null
     },
     {
+      "id": "context.durable_history_rewrite",
+      "group": "context_recovery",
+      "decision": "Granted durable rewriting of the persisted transcript",
+      "observe": "`app.request thread/rewrite` without `expectedRevision` reads the revision and rows; `thread/rewritten` reports each new revision",
+      "alter": "insert, append, replace, reorder and delete message and paired tool call/output rows as one revision, or undo the latest revision",
+      "replace": null,
+      "timing": "idle threads only; the thread is unloaded, rewritten and reloaded, and clients re-page turns and items",
+      "ownership": "user: the hash-bound, revocable `history_write` grant; mod: which rows; host: revision CAS, pairing, provenance, kept originals, revision log and its broker anchor",
+      "limits": "current thread and threads the mod started; paginated persisted threads; rows before the newest compaction and opaque items are frozen, reasoning is delete-only; replacements keep role or call id, inserted call ids are new; rewritten items drop execution, delivery and tool inventory metadata; at most 256 edits",
+      "native": "upstream `thread/revert` only truncates at a turn boundary",
+      "covers": {
+        "capabilities": [
+          "history_write"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:rewrite_replaces_deletes_inserts_and_moves_rows_durably",
+        "patch:rewrite_refuses_stale_unpaired_reused_and_role_changing_edits",
+        "patch:revision_log_recovers_interrupted_writes_and_detects_tampering",
+        "patch:thread_rewrite_is_durable_across_restart_search_export_and_undo"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "tool.structured_access",
       "group": "tool",
       "decision": "Structured HTTP, external files, environment metadata and MCP lifecycle",

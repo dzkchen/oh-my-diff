@@ -294,6 +294,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "model_complete_v2",
     "sdk_helpers_v1",
     "history_v1",
+    "history_rewrite_v1",
     "terminal_pty_v1",
     "dynamic_tools_v1",
     "timers_v1",
@@ -479,6 +480,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "request_policy",
     "peers",
     "autonomous",
+    "history_write",
 ];
 pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "os",
@@ -490,6 +492,7 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "policy",
     "peers",
     "autonomous",
+    "history_write",
 ];
 
 /// What a user accepts by granting the authority capabilities, shown before trust and in status.
@@ -522,6 +525,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     }
     if granted("autonomous") {
         exposure.push("autonomous: this mod may queue prompts that start turns while you are idle and continue a finished turn, within its autonomy limits; queued turns are labelled with the mod, keep your permissions and route, pause when you interrupt, and stop when you disable or revoke the mod.");
+    }
+    if granted("history_write") {
+        exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
     }
     exposure
 }

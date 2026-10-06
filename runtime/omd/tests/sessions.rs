@@ -245,7 +245,7 @@ fn later_metadata_and_state_database_opt_out_override_earlier_records() {
         ..index
     };
     let sql = format!(
-        "CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT); INSERT INTO threads VALUES('session-a','{}','disabled');",
+        "CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT,rollout_path TEXT); INSERT INTO threads VALUES('session-a','{}','disabled',NULL);",
         repo.to_str().unwrap().replace('\'', "''")
     );
     assert!(
@@ -419,12 +419,14 @@ fn continuation_segments_list_separately_while_copies_stay_ambiguous() {
 fn wal_state_database_without_sidecar_files_is_readable() {
     let (_temp, repo, sessions) = fixture();
     record(&sessions.join("a.jsonl"), &repo, "session-a", "enabled");
+    record(&sessions.join("a_replaced.jsonl"), &repo, "session-a", "enabled");
     let sqlite = sessions.parent().unwrap().join("wal-state");
     fs::create_dir(&sqlite).unwrap();
     let db = sqlite.join("state_5.sqlite");
     let sql = format!(
-        "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT); INSERT INTO threads VALUES('session-a','{}','enabled'); PRAGMA wal_checkpoint(TRUNCATE);",
-        repo.to_str().unwrap().replace('\'', "''")
+        "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT,rollout_path TEXT); INSERT INTO threads VALUES('session-a','{}','enabled','{}'); PRAGMA wal_checkpoint(TRUNCATE);",
+        repo.to_str().unwrap().replace('\'', "''"),
+        sessions.join("a.jsonl").to_str().unwrap().replace('\'', "''")
     );
     assert!(
         std::process::Command::new("/usr/bin/sqlite3")

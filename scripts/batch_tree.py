@@ -108,7 +108,8 @@ def cargo_env(batch):
            if key not in ("CODEX_SQLITE_HOME", "FORCE_COLOR", "COLORTERM", "NO_COLOR")}
     env.update({
         "CARGO_TARGET_DIR": str(batch / "target"),
-        "CARGO_INCREMENTAL": os.environ.get("CARGO_INCREMENTAL", "0"),
+        "CARGO_INCREMENTAL": os.environ.get("CARGO_INCREMENTAL", "1"),
+        "CARGO_PROFILE_DEV_DEBUG": os.environ.get("CARGO_PROFILE_DEV_DEBUG", "0"),
         "OMD_TEST_NODE": run("mise", "which", "node", cwd=ROOT).decode().strip(),
         "RUST_MIN_STACK": "16777216",
         "RUSTY_V8_ARCHIVE": str(V8 / "librusty_v8_ptrcomp_sandbox_release_aarch64-apple-darwin.a.gz"),

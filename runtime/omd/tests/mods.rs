@@ -4108,6 +4108,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         "fs.read",
         "fs.external",
         "mcp",
+        "history_write",
     ];
     let path = write(
         "delegate",
@@ -4149,7 +4150,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 5);
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 6);
     contended(|| store.revoke_authority(&path));
     runtime.reload().unwrap();
     let revoked = runtime.grants("delegate").unwrap();
@@ -4160,7 +4161,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         !revoked
             .capabilities
             .iter()
-            .any(|c| c == "os" || c == "approve")
+            .any(|c| c == "os" || c == "approve" || c == "history_write")
     );
     assert!(
         runtime

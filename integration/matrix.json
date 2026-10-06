@@ -92,6 +92,7 @@
         "model_complete_v2",
         "sdk_helpers_v1",
         "history_v1",
+        "history_rewrite_v1",
         "terminal_pty_v1",
         "dynamic_tools_v1",
         "timers_v1",

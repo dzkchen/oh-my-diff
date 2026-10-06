@@ -251,6 +251,9 @@
   "app_notification:thread/reverted": {
    "route": "app.notification"
   },
+  "app_notification:thread/rewritten": {
+   "route": "app.notification"
+  },
   "app_notification:thread/settings/updated": {
    "route": "app.notification"
   },
@@ -1671,6 +1674,22 @@
    "fields": [
     "beforeTurnId",
     "threadId"
+   ]
+  },
+  "app_request:thread/rewrite": {
+   "route": "app.request",
+   "class": "history_write",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible",
+   "note": "durable transcript row rewrite and undo",
+   "fields": [
+    "edits",
+    "expectedRevision",
+    "threadId",
+    "undo"
    ]
   },
   "app_request:thread/search": {
