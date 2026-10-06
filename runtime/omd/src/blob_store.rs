@@ -9,10 +9,131 @@ use std::path::PathBuf;
 
 pub const BLOB_BYTES: usize = 16 * 1024 * 1024;
 pub const IMAGE_BYTES: usize = 8 * 1024 * 1024;
+pub const SVG_BYTES: usize = 1024 * 1024;
 pub const BLOB_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 pub const BLOB_ENTRIES: usize = 4096;
 pub const ROTATING_RECORDS: usize = 256;
 const ROTATING_KEEP: usize = 192;
+
+fn svg(bytes: &[u8]) -> Result<(), &'static str> {
+    use quick_xml::events::Event;
+    use quick_xml::name::{Namespace, ResolveResult};
+    if bytes.len() > SVG_BYTES {
+        return Err("svg_too_large");
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "svg_not_utf8")?;
+    let external = |value: &str| {
+        let value = value.to_ascii_lowercase();
+        ["@import", "@font-face", "image-set(", "src(", "\\"]
+            .iter()
+            .any(|token| value.contains(token))
+            || value.split("url(").skip(1).any(|rest| {
+                !rest
+                    .trim_start()
+                    .trim_start_matches(['"', '\''])
+                    .starts_with('#')
+            })
+    };
+    let mut reader = quick_xml::NsReader::from_str(text);
+    let (mut root, mut style) = (false, None::<String>);
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map(|(namespace, event)| {
+                let svg = matches!(
+                    namespace,
+                    ResolveResult::Unbound
+                        | ResolveResult::Bound(Namespace(b"http://www.w3.org/2000/svg"))
+                );
+                (svg, event)
+            })
+            .map_err(|_| "svg_malformed")?;
+        let open = matches!(event, Event::Start(_));
+        match event {
+            Event::Eof if style.is_some() => return Err("svg_malformed"),
+            Event::Eof if root => return Ok(()),
+            Event::Eof => return Err("svg_root_missing"),
+            Event::DocType(_) => return Err("svg_doctype"),
+            Event::PI(_) => return Err("svg_processing_instruction"),
+            Event::Decl(_) if root => return Err("svg_processing_instruction"),
+            Event::Start(element) | Event::Empty(element) => {
+                let name =
+                    String::from_utf8_lossy(element.local_name().as_ref()).to_ascii_lowercase();
+                if !root && name != "svg" {
+                    return Err("svg_root_not_svg");
+                }
+                if style.is_some()
+                    || !namespace
+                    || matches!(
+                        name.as_str(),
+                        "script"
+                            | "foreignobject"
+                            | "iframe"
+                            | "object"
+                            | "embed"
+                            | "audio"
+                            | "video"
+                    )
+                {
+                    return Err("svg_element_forbidden");
+                }
+                root = true;
+                if open && name == "style" {
+                    style = Some(String::new());
+                }
+                for attribute in element.attributes() {
+                    let attribute = attribute.map_err(|_| "svg_malformed")?;
+                    let key = attribute.key.local_name().as_ref().to_ascii_lowercase();
+                    let value = attribute
+                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                        .map_err(|_| "svg_malformed")?;
+                    let animation = name.starts_with("animate") || name == "set";
+                    if key.starts_with(b"on")
+                        || animation
+                            && key == b"attributename"
+                            && value.to_ascii_lowercase().starts_with("on")
+                    {
+                        return Err("svg_event_handler");
+                    }
+                    if matches!(
+                        key.as_slice(),
+                        b"src" | b"srcset" | b"data" | b"action" | b"formaction" | b"ping"
+                    ) {
+                        return Err("svg_attribute_forbidden");
+                    }
+                    if key == b"href"
+                        && !["#", "data:image/png;base64,", "data:image/jpeg;base64,"]
+                            .iter()
+                            .any(|prefix| value.starts_with(prefix))
+                        || animation
+                            && key == b"attributename"
+                            && value.to_ascii_lowercase().ends_with("href")
+                    {
+                        return Err("svg_href_external");
+                    }
+                    if external(&value) {
+                        return Err("svg_url_external");
+                    }
+                }
+            }
+            Event::Text(text) => {
+                if let Some(css) = style.as_mut() {
+                    css.push_str(&text.decode().map_err(|_| "svg_malformed")?);
+                }
+            }
+            Event::CData(data) => {
+                if let Some(css) = style.as_mut() {
+                    css.push_str(&data.decode().map_err(|_| "svg_malformed")?);
+                }
+            }
+            Event::GeneralRef(_) if style.is_some() => return Err("svg_url_external"),
+            Event::End(_) if style.take().is_some_and(|css| external(&css)) => {
+                return Err("svg_url_external");
+            }
+            _ => {}
+        }
+    }
+}
 
 fn sha(value: &str) -> bool {
     value.len() == 64
@@ -208,7 +329,7 @@ impl ResourceStore<'_> {
                 Ok(json!({"media_type": input.media_type, "label": input.label, "content": text}))
             }
             (
-                media @ ("image/png" | "image/jpeg" | "application/octet-stream"),
+                media @ ("image/png" | "image/jpeg" | "image/svg+xml" | "application/octet-stream"),
                 None,
                 Some(encoded),
             ) => {
@@ -216,6 +337,12 @@ impl ResourceStore<'_> {
                 let signature = match media {
                     "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
                     "image/jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+                    "image/svg+xml" => {
+                        svg(&bytes).map_err(|reason| {
+                            io::Error::other(format!("evidence_record_invalid: {reason}"))
+                        })?;
+                        true
+                    }
                     _ => true,
                 };
                 if !signature || media.starts_with("image/") && bytes.len() > IMAGE_BYTES {

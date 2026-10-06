@@ -140,6 +140,7 @@ pub(crate) fn password() -> io::Result<Option<String>> {
         "terminal.prompt",
         json!({"kind": "text", "masked": true, "title": "macOS password", "message": PASSWORD_PROMPT}),
         crate::app_routes::InvocationContext::User,
+        false,
         None,
         None,
     ) {

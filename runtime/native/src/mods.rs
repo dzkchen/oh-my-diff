@@ -1,6 +1,8 @@
 mod access;
 mod agents;
 mod autonomy;
+#[path = "clients.rs"]
+pub mod clients;
 mod compaction;
 mod elicitation;
 mod evidence;
@@ -440,6 +442,7 @@ pub(super) fn install(
         elicitations: Mutex::new(BTreeMap::new()),
     });
     intercept::install_dispatcher(&extension.core);
+    clients::install(&extension.core);
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.thread_lifecycle_contributor(extension.clone());
@@ -465,7 +468,8 @@ fn publish(
 ) {
     let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
         "presentation": views.current_presentation(),
-        "client": codex_omd::client_surface::client()});
+        "client": codex_omd::client_surface::client(),
+        "clients": codex_omd::client_surface::clients()});
     let rendered_ms = codex_omd::ModViewSnapshot::clock();
     let mut terminal = runtime.terminal_view(input.clone(), active);
     let status = runtime.status();

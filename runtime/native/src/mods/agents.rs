@@ -69,10 +69,11 @@ fn review_records(
     let rewritten = snapshot.rewritten_item_ids();
     snapshot.review_items().map(move |item| {
         let mut value = serde_json::to_value(item).unwrap_or(Value::Null);
-        if ["id", "call_id"]
-            .iter()
-            .any(|key| value[*key].as_str().is_some_and(|id| rewritten.contains(id)))
-        {
+        if ["id", "call_id"].iter().any(|key| {
+            value[*key]
+                .as_str()
+                .is_some_and(|id| rewritten.contains(id))
+        }) {
             value["rewritten"] = Value::Bool(true);
         }
         value
@@ -432,8 +433,10 @@ mod history_tests {
             }
         }
         let item = |call_id: &str| {
-            serde_json::from_value(json!({"type":"function_call_output","call_id":call_id,"output":"ok"}))
-                .unwrap()
+            serde_json::from_value(
+                json!({"type":"function_call_output","call_id":call_id,"output":"ok"}),
+            )
+            .unwrap()
         };
         let snapshot = Rewritten(vec![item("synthetic"), item("real")]);
         let records: Vec<Value> = review_records(&snapshot).collect();
@@ -1063,7 +1066,8 @@ impl Agents {
             .await
             .map_err(|e| e.to_string())?;
         let snapshot = thread.conversation_history_snapshot().await;
-        let records = selected_history(review_records(snapshot.as_ref()), input.call_ids.as_deref())?;
+        let records =
+            selected_history(review_records(snapshot.as_ref()), input.call_ids.as_deref())?;
         let (frozen, provenance) =
             frozen_history(records.into_iter(), snapshot.review_history_version())?;
         let records: Value = serde_json::from_str(&frozen).map_err(|e| e.to_string())?;

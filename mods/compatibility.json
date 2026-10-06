@@ -113,7 +113,8 @@
       "composer_v2",
       "lifecycle_events_v1",
       "user_submissions_v1",
-      "terminal_raster_v1"
+      "terminal_raster_v1",
+      "svg_assets_v1"
     ]
   },
   "apis": [

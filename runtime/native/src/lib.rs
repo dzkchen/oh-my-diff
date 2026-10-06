@@ -10,6 +10,8 @@ mod mods;
 mod workspace_operations;
 mod workspace_watch;
 
+pub use mods::clients;
+
 use accounting::Account;
 use accounting::Accounts;
 use codex_core::StartThreadOptions;
@@ -134,9 +136,9 @@ pub fn anchor_history(stream: &std::path::Path, sha256: &str) -> std::io::Result
 }
 
 pub fn verify_history_anchor(stream: &std::path::Path, sha256s: &[String]) -> std::io::Result<()> {
-    let head = sha256s
-        .iter()
-        .fold(String::new(), |head, sha256| codex_omd::broker::chain(&head, sha256));
+    let head = sha256s.iter().fold(String::new(), |head, sha256| {
+        codex_omd::broker::chain(&head, sha256)
+    });
     match codex_omd::broker::anchored(stream)? {
         Some(anchor) if anchor.count == 0 => match sha256s.last() {
             Some(last) => codex_omd::broker::seed(stream, sha256s.len() as u64, &head, last),

@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "external_client",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "description": "Shows attached external clients and launches a text renderer that joins this session over the client protocol.",
+  "capabilities": [
+    "terminal",
+    "commands",
+    "lifecycle",
+    "events",
+    "store",
+    "exec",
+    "os"
+  ],
+  "os_access": {
+    "programs": ["node"],
+    "network": true
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "listen_url": {"type": "string", "default": ""},
+      "token_file": {"type": "string", "default": ""},
+      "client_path": {"type": "string", "default": ""}
+    }
+  },
+  "subscriptions": {
+    "channels": [
+      "external_client/launch"
+    ]
+  },
+  "compatibility": {
+    "required_features": [
+      "terminal_surface_v1",
+      "terminal_media_v1",
+      "terminal_raster_v1",
+      "svg_assets_v1",
+      "binary_evidence_v1",
+      "events_v1",
+      "timers_v1",
+      "unrestricted_process_v1"
+    ]
+  }
+}

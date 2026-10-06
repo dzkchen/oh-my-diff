@@ -101,9 +101,7 @@ fn capability_context_and_unrouted_methods_are_enforced() {
 
 #[test]
 fn transcript_rewrites_need_history_write_and_stay_on_reachable_threads() {
-    let edit = |thread: &str| {
-        json!({"threadId": thread, "expectedRevision": "r:1", "edits": [{"op": "delete", "id": "x"}]})
-    };
+    let edit = |thread: &str| json!({"threadId": thread, "expectedRevision": "r:1", "edits": [{"op": "delete", "id": "x"}]});
     assert_eq!(
         fixture(&["threads"]).code("thread/rewrite", edit("current"), User),
         "app_capability_missing"

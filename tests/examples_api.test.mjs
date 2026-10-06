@@ -10,7 +10,7 @@ const names = ['context', 'coordination', 'guard', 'interception', 'kernel', 're
   'service-consumer', 'service-provider', 'service_request', 'terminal', 'virtual_reader', 'workflow', 'workspace'];
 const surface = {
   events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
-    model_response: 'model', tool_result: 'lifecycle',
+    model_response: 'model', tool_result: 'lifecycle', start: 'lifecycle', process_event: 'exec',
     compaction: 'compaction', routing: 'model', terminal: 'terminal',
     workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals', component_event: 'terminal', timer: 'events', channel: 'events',
     composer: 'composer', prompt: 'middleware' },
@@ -241,6 +241,26 @@ test('reactive dashboard keeps a form, streamed status and derived summary on ke
     { name: '0', state: ticked.state, receipts: [{ call: first.host_call, value: { result: { tree: [{ type: 'native' }] }, trace: [] } }] }).value;
   assert.equal(drawn.result.tree[1].text, 'stream · 1 ticks');
   assert.deepEqual(drawn.reads, ['ticks']);
+});
+
+test('external client example launches its renderer unsandboxed from a channel hop and lists attached clients', () => {
+  assert.deepEqual(run('external_client', 'command', null, { name: 'launch' }).host_call, { operation: 'events.publish', arguments: { channel: 'launch', data: null } });
+  const settings = { listen_url: 'ws://127.0.0.1:4500', token_file: '/tmp/token', client_path: '/tmp/client.mjs' };
+  const channel = { publisher: 'external_client', channel: 'external_client/launch', data: null, correlation: null, sequence: 1, dropped: 0 };
+  const which = run('external_client', 'channel', channel, { settings }).host_call;
+  const node = { name: 'node', path: '/usr/local/bin/node', sha256: 'a'.repeat(64) };
+  const found = { call: which, value: { found: [node] } };
+  const start = run('external_client', 'channel', channel, { settings, receipts: [found] }).host_call;
+  assert.deepEqual(start, { operation: 'process.start', arguments: { session: 'ui', name: 'node', path: node.path, sha256: node.sha256, arguments: ['/tmp/client.mjs'],
+    sandbox: 'none', notify: ['exit'], environment: { EXTERNAL_CLIENT_URL: 'ws://127.0.0.1:4500', EXTERNAL_CLIENT_TOKEN_FILE: '/tmp/token' } } });
+  const started = run('external_client', 'channel', channel, { settings, receipts: [found, { call: start, value: { session: 'ui', running: true } }] });
+  const clicked = run('external_client', 'component_event', { component: 'external_badge', kind: 'pointer', client: 'client-1',
+    pointer: { column: 1, row: 0, half: null, action: 'down', button: 'left' } }, { state: started.state });
+  const clients = [{ id: 'client-1', name: 'Text renderer', renderer: { kind: 'text', formats: ['text'], pointer: 'none', reduced_motion: true },
+    viewport: null, focused: false, attached_ms: 1000 }];
+  const [list, status] = run('external_client', 'terminal', { event: 'idle', ledger: null, client: null, clients }, { state: clicked.state }).value.sites.sidebar.components;
+  assert.deepEqual(list.rows.map(row => row.value), ['client-1']);
+  assert.equal(status.text, '1 attached; UI running; picked none; badge clicked by client-1');
 });
 
 test('composer examples suggest a recent prompt and tidy pastes through the edit chain', () => {

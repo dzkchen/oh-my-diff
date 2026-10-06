@@ -405,6 +405,12 @@
       "why_mod": "Draws an animated raster with pointer hover, drag and an anchored overlay."
     },
     {
+      "path": "mods/examples/external_client",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
+    },
+    {
       "path": "mods/examples/render_hooks",
       "extension_type": "mod",
       "role": "author_example",

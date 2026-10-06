@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "settings": {
+    "external_client": {"listen_url": "ws://127.0.0.1:4500", "token_file": "/tmp/omd-client-token", "client_path": "/tmp/external_client/client.mjs"}
+  },
+  "host_operations": {
+    "evidence.write": [{"result": {"reference": "evidence/badge.svg", "sha256": "badge"}}],
+    "events.schedule": [{"result": {"key": "paint", "delay_ms": 1000}}],
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
+    "process.which": [{"result": {"found": [{"name": "node", "path": "/usr/local/bin/node", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}]}}],
+    "process.start": [{"result": {"session": "ui", "running": true}}]
+  },
+  "steps": [
+    {"type": "event", "event": "start", "payload": {}},
+    {"type": "invoke", "mod": "external_client", "event": "command", "name": "launch", "payload": null, "expect": {"display": "Launching the text client"}},
+    {"type": "event", "event": "channel", "payload": {"publisher": "external_client", "channel": "external_client/launch", "data": null, "correlation": null, "sequence": 1, "dropped": 0}},
+    {"type": "invoke", "mod": "external_client", "event": "command", "name": "pick", "payload": "client-1", "expect": {"display": "Picked client-1"}},
+    {"type": "event", "event": "component_event", "payload": {"component": "external_badge", "kind": "pointer", "client": "client-1", "pointer": {"column": 1, "row": 0, "half": null, "action": "down", "button": "left"}}},
+    {"type": "terminal_mount", "mod": "external_client",
+      "payload": {"event": "idle", "ledger": null, "client": null, "clients": [
+        {"id": "client-1", "name": "Text renderer", "renderer": {"kind": "text", "formats": ["text"], "pointer": "none", "reduced_motion": true}, "viewport": null, "focused": false, "attached_ms": 1000}]},
+      "expect": {"sites": {"sidebar": {"components": [
+        {"type": "list", "id": "external_clients", "label": "Attached clients", "height": 4, "action": {"command": "external_client:pick"},
+          "rows": [{"value": "client-1", "label": "Text renderer", "spans": [{"text": "Text renderer", "bold": true}, {"text": " text text", "tone": "muted"}]}]},
+        {"type": "text", "id": "external_status", "label": "Client status", "text": "1 attached; UI running; picked client-1; badge clicked by client-1"},
+        {"type": "raster", "id": "external_meter", "label": "Meter", "alt": "Eight-step color meter", "width": 8, "height": 1},
+        {"type": "image", "id": "external_badge", "label": "Badge", "image": {"reference": "evidence/badge.svg", "sha256": "badge"}, "alt": "Badge reading \"external\"", "height": 2, "pointer": true}]}}}}
+  ]
+}

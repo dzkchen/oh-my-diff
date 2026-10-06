@@ -126,7 +126,10 @@ pub(crate) fn permitted(
             .filter(|id| crate::resource_data::token(id))
             .ok_or_else(|| io::Error::other("session_policy_identity_invalid"))?;
         if row["memory_mode"] == "enabled" {
-            allowed.insert(id.to_owned(), row["rollout_path"].as_str().map(PathBuf::from));
+            allowed.insert(
+                id.to_owned(),
+                row["rollout_path"].as_str().map(PathBuf::from),
+            );
         }
     }
     Ok(Some(allowed))

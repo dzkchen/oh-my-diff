@@ -15,6 +15,10 @@
     },
     "./jsx-runtime": {
       "types": "./jsx-runtime.d.ts"
+    },
+    "./client": {
+      "types": "./client.d.ts",
+      "default": "./author/client.mjs"
     }
   },
   "bin": {
@@ -23,6 +27,7 @@
   "files": [
     "api.d.ts",
     "jsx-runtime.d.ts",
+    "client.d.ts",
     "author",
     "examples/coordination",
     "examples/kernel",

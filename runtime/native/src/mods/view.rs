@@ -14,6 +14,8 @@ struct State {
 
 pub(super) struct Views {
     state: Mutex<State>,
+    /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
+    pub(super) quiet: AtomicBool,
 }
 
 /// Keeps at most `limit` UTF-8 bytes, matching `ModViewSnapshot::read`.
@@ -75,6 +77,7 @@ impl Views {
                 },
                 ..State::default()
             }),
+            quiet: AtomicBool::new(false),
         }
     }
 
@@ -95,8 +98,17 @@ impl Views {
         input: Value,
         rendered_ms: u64,
     ) {
+        let quiet = self.quiet.load(Ordering::Acquire);
         self.update(owner, |state| {
-            state.snapshot.revision = state.snapshot.revision.saturating_add(1);
+            let snapshot = &state.snapshot;
+            if !quiet
+                || snapshot.view != terminal.view
+                || snapshot.conflicts != terminal.conflicts
+                || snapshot.contributors != terminal.contributors
+                || snapshot.component_owners != terminal.component_owners
+            {
+                state.snapshot.revision = state.snapshot.revision.saturating_add(1);
+            }
             state.snapshot.rendered_ms = rendered_ms;
             state.snapshot.view = terminal.view;
             state.snapshot.conflicts = terminal.conflicts;

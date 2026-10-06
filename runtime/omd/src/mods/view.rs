@@ -739,6 +739,20 @@ pub struct ModCommandAction {
     pub args: String,
 }
 
+impl ModCommandAction {
+    pub fn with_value(&self, value: Option<&str>) -> ModKeyAction {
+        let args = match value {
+            Some(value) if self.args.is_empty() => value.to_owned(),
+            Some(value) => format!("{} {value}", self.args),
+            None => self.args.clone(),
+        };
+        ModKeyAction::Command {
+            command: self.command.clone(),
+            args,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ModTone {

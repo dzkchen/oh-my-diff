@@ -38,8 +38,17 @@ impl ClientSurface for Silent {
     }
 }
 
+static HUB_TESTS: Mutex<()> = Mutex::new(());
+
+fn hub_test() -> std::sync::MutexGuard<'static, ()> {
+    HUB_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn surface_routes_enforces_user_context_cancels_and_unregisters() {
+    let _serial = hub_test();
     let active = || true;
     let event = InvocationContext::Event;
     assert!(
@@ -48,6 +57,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             "composer.read",
             Value::Null,
             event,
+            false,
             None,
             None,
             &active
@@ -57,11 +67,55 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     );
     let registration = register(Arc::new(Echo));
     assert!(hub().surface.is_some());
+    let mirrored = Arc::new(Mutex::new(Vec::new()));
+    let log = mirrored.clone();
+    let observer = register_observer(Arc::new(move |observed| {
+        if let Observed::Mirrored {
+            caller,
+            operation,
+            arguments,
+        } = observed
+        {
+            log.lock().unwrap().push((caller, operation, arguments));
+        }
+    }));
+    call(
+        "m",
+        "terminal.notice",
+        json!({"text": "hi"}),
+        event,
+        false,
+        None,
+        None,
+        &active,
+    )
+    .unwrap();
+    call(
+        "m",
+        "composer.read",
+        Value::Null,
+        event,
+        false,
+        None,
+        None,
+        &active,
+    )
+    .unwrap();
+    drop(observer);
+    assert_eq!(
+        *mirrored.lock().unwrap(),
+        vec![(
+            "m".to_owned(),
+            "terminal.notice".to_owned(),
+            json!({"text": "hi"})
+        )]
+    );
     let value = call(
         "m",
         "app.request",
         json!({"method": "thread/list"}),
         event,
+        false,
         Some("t"),
         Some("Allow m to list threads?".into()),
         &active,
@@ -78,6 +132,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             "packages.apply",
             Value::Null,
             event,
+            false,
             None,
             None,
             &active
@@ -91,6 +146,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             "exec.run",
             Value::Null,
             InvocationContext::User,
+            false,
             None,
             None,
             &active
@@ -109,6 +165,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         "terminal.notify",
         json!({"title": "t"}),
         event,
+        false,
         None,
         None,
     )
@@ -122,6 +179,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         "terminal.notify",
         json!({"title": "t"}),
         event,
+        false,
         None,
         None,
     )
@@ -143,6 +201,73 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     drop(wake_registration);
     wake();
     assert_eq!(woken.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
+    let _serial = hub_test();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let observer = register_observer(Arc::new(move |observed| {
+        let entry = match observed {
+            Observed::Roster => json!(
+                roster()
+                    .into_iter()
+                    .filter(|entry| entry["id"] == "roster-client")
+                    .map(|entry| entry["name"].clone())
+                    .collect::<Vec<_>>()
+            ),
+            Observed::Redraw => json!("redraw"),
+            Observed::Mirrored { .. } => return,
+        };
+        log.lock().unwrap().push(entry);
+    }));
+    let entry = |name: &str| ClientEntry {
+        id: "roster-client".into(),
+        name: name.into(),
+        renderer: json!({"kind": "gui"}),
+        viewport: Value::Null,
+        operations: vec!["terminal.notify".into()],
+        attached_ms: 7,
+        focused: false,
+    };
+    let first = attach(entry("first"));
+    let second = attach(entry("second"));
+    drop(first);
+    update(
+        "roster-client",
+        None,
+        Some(json!({"width": 800, "height": 600, "unit": "px"})),
+        Some(true),
+    );
+    assert_eq!(
+        clients()
+            .into_iter()
+            .find(|client| client["id"] == "roster-client"),
+        Some(
+            json!({"id": "roster-client", "name": "second", "renderer": {"kind": "gui"},
+            "viewport": {"width": 800, "height": 600, "unit": "px"}, "attached_ms": 7,
+            "focused": true})
+        )
+    );
+    assert!(
+        roster().iter().any(|entry| entry["id"] == "roster-client"
+            && entry["operations"] == json!(["terminal.notify"]))
+    );
+    redraw();
+    drop(second);
+    drop(observer);
+    drop(attach(entry("unobserved")));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            json!(["first"]),
+            json!(["second"]),
+            json!(["second"]),
+            json!("redraw"),
+            json!([])
+        ]
+    );
 }
 
 #[test]
@@ -233,4 +358,28 @@ fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
         "authority keys are not rows"
     );
     assert!(!serde_json::to_string(&rows).unwrap().contains("s1"));
+}
+
+#[test]
+fn remote_actions_cannot_cause_terminal_only_operations() {
+    for (operation, arguments) in [
+        ("config.set", Value::Null),
+        ("prompts.consent", Value::Null),
+        ("terminal.pty", json!({"action": "start"})),
+    ] {
+        assert_eq!(
+            submit(
+                "m",
+                operation,
+                arguments,
+                InvocationContext::User,
+                true,
+                None,
+                None
+            )
+            .unwrap_err(),
+            needs_terminal_error(operation)
+        );
+    }
+    assert!(!needs_terminal("terminal.pty", &json!({"action": "write"})));
 }

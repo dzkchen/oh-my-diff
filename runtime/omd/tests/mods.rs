@@ -4334,3 +4334,31 @@ fn offline_multiselect_interactions_send_checked_values_in_option_order() {
         assert!(interact(Some(invalid)).is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn omd_mod_reset_moves_only_resettable_store_files_aside() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap().join("store");
+    ModStore::create(root.clone(), node()).unwrap();
+    std::fs::write(root.join("host.json"), b"{broken").unwrap();
+    let reset = |name: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
+            .arg("reset")
+            .arg(&root)
+            .arg(name)
+            .output()
+            .unwrap()
+    };
+    let output = reset("host.json");
+    assert!(output.status.success());
+    let aside = root.join("host.json.corrupt");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"reset": "host.json", "aside": aside})
+    );
+    assert_eq!(std::fs::read(&aside).unwrap(), b"{broken");
+    assert!(!root.join("host.json").exists());
+    let refused = reset("grants.json");
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
+}

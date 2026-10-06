@@ -1024,8 +1024,10 @@ the effective config and in each layer.
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas
 coalesced, 256 events / 1 MiB per mod, oldest dropped with a count) and
-`app_server_request` phases. Only the in-process app-server (TUI and
-`codex exec`) is reachable; other clients get `client_surface_unavailable`.
+`app_server_request` phases. Only the session's own app-server (TUI,
+`codex exec` or a headless `codex app-server`, see
+[External clients](#external-clients-omd-client1)) is reachable; hosts without
+one return `client_surface_unavailable`.
 
 ### Approvals (`approval_v1`)
 
@@ -1407,7 +1409,9 @@ half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Each
 image component has its own image id; replacing or removing the component
 deletes it, and exit and suspend delete every image and the backdrop.
 Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side
-(`terminal_raster_v1`). Either way the image is aspect-fit into the
+(`terminal_raster_v1`). An SVG `image` (`svg_assets_v1`) draws
+`[image unavailable: alt]` in the terminal, which has no SVG rasterizer;
+external renderers receive the same resource and draw it natively. Either way the image is aspect-fit into the
 component's cells from its top-left cell (Kitty with `client.cell_px`, or
 8×16 when unknown; half-block cells count as 1×2 pixels), so a mod can map
 `pointer` cells, and `half` rows, on an `image` back to image pixels. Spans accept `fg` and `bg` theme
@@ -1558,6 +1562,160 @@ Operations:
 - `builtins.invoke {action}` runs a key action from user contexts;
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never
   `approval.*`) and routes a built-in command to a mod command.
+
+### External clients (`omd-client/1`)
+
+Other renderers (a desktop window, an editor webview, a text console) attach
+to a running session over the upstream app-server JSON-RPC and draw the same
+composed mod view. Oh My Diff ships no desktop or editor client of its own; a
+mod ships its adapter (see the end of this section).
+
+Transports and auth:
+
+- `unix://PATH`, or `unix://` for the default socket under `$CODEX_HOME`: a
+  WebSocket over a 0600, owner-checked Unix socket, no token. The default
+  choice for local clients.
+- `ws://IP:PORT` with `--ws-auth capability-token` (`--ws-token-file` or
+  `--ws-token-sha256`) or `--ws-auth signed-bearer-token`
+  (`--ws-shared-secret-file`, optional `--ws-issuer`/`--ws-audience`); a
+  non-loopback listener refuses to start without auth. Native clients send
+  `Authorization: Bearer <token>`; browsers offer the subprotocols
+  `codex-app-server` and `codex.bearer.<token>` instead and the server selects
+  `codex-app-server`; the server compares the raw token, so a capability
+  token used from a browser must be base64url or hex (subprotocol values
+  cannot carry `+`, `/` or `=`, and browsers may log them).
+  `--ws-allowed-origin ORIGIN` (repeatable, `scheme://host[:port]`, requires
+  `--ws-auth`) admits a browser or webview origin, compared exactly after
+  normalization, which drops a default port (`:80`, `:443`); any other
+  `Origin` is refused. The exec-server listener honors the
+  same allowed origins and subprotocol bearer.
+- `stdio`: the spawning process speaks newline-delimited JSON-RPC to
+  `codex app-server`.
+- `codex app-server --listen URL` runs a headless host. `codex --listen URL`
+  (same `--ws-*` flags, including `--ws-allowed-origin`) exposes the live
+  TUI's in-process app-server, so a client co-attaches to the terminal
+  session; it takes only `unix://PATH` or `ws://IP:PORT` with an explicit port
+  (bare `unix://` and port 0 are refused).
+
+A client sends `initialize {clientInfo, capabilities: {experimentalApi: true}}`
+and the `initialized` notification; `omd/*` methods are experimental and need
+that opt-in. Requests are not serialized by the host, so a client awaits the
+attach before any other `omd/*` call; before it every method fails with
+`client_not_attached`. Errors are JSON-RPC errors whose message starts with
+the code: besides those below, `mod_host_inactive`, `session_unavailable`,
+`host_operation_unavailable` and `view_unavailable` (no mods, thread, session
+runtime or readable view in this host), `command_unavailable` and
+`command_unavailable_during_turn` for the action's command,
+`render_slot_invalid` and `render_props_invalid`, `resource_not_in_view` and
+`resource_unavailable`, and `recovery_action_invalid`, `mod_not_found` and
+`mod_store_unavailable` from recovery.
+
+| Request | Params | Result |
+| --- | --- | --- |
+| `omd/client/attach` | `{name, renderer: {kind: 'terminal'\|'gui'\|'text', formats: ('svg'\|'png'\|'jpeg'\|'cells'\|'text')[], pointer: 'pixel'\|'cell'\|'half_cell'\|'none', reducedMotion, cellPx?}, operations}` | `{clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}`, then `omd/view/updated`; attaching again on the connection replaces its entry |
+| `omd/client/update` | `{renderer?, viewport?: {width, height, unit}, focus?}` | `{}`; `focus` sets the entry's `focused`; every client gets `omd/roster/updated` and mods render again |
+| `omd/client/detach` | `{}` | `{}` |
+| `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
+| `omd/client/event` | `{epoch, revision, component, event: {kind: 'change'\|'pointer'\|'focus'\|'scroll'\|'key', ...}}` | `{delivered}`; the owner (from `component_owners`) gets `component_event` with `client: clientId`; `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing field the kind requires or an event over 64 KiB |
+| `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
+| `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}` |
+| `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
+| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state and result |
+
+The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
+full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
+`activity`, `diagnostics`), `omd/roster/updated {roster}` and
+`omd/surface/mirrored {caller, operation, arguments}`, and the server request
+`omd/surface/call {caller, operation, arguments, confirm?}`, answered with the
+operation's result or an error whose message the mod receives.
+
+Actions: a client names a component and row, never a command. The host
+resolves the action from its own current view and runs it like Space/Enter in
+the TUI: `command` interceptors, then the command as a user action. Tokens are
+random, per connection and bound to the view's epoch and revision; a pushed
+revision or a use replaces the token, while progress and activity pushes keep
+it. A use spends the token even when the action then fails, so re-read the
+view after an error; the last 8 retired tokens keep `action_stale` and
+`action_replayed` accurate. Send one action at a time per connection and keep
+the newest token from the last view or action result. Roster-driven re-renders
+coalesce, and a view that did not change keeps its revision, so one client's
+viewport or focus update does not rotate the others' tokens.
+
+Ordering: state is per connection, and a disconnect removes the roster entry
+and at once fails that client's pending surface calls with
+`client_surface_closed` (an attach on a closing connection gets
+`client_surface_closed: the connection is closing`).
+`epoch` is an opaque decimal string (empty, with revision 0 and a null
+snapshot, until the host publishes its first view); `revision` grows within
+an `epoch`, and a new `epoch` means the host restarted and invalidates
+everything the client holds. Reconnecting is `initialize`, attach
+(a full snapshot, never deltas), then `thread/resume` per thread, which
+replays pending approvals. Approvals stay upstream server requests broadcast to
+subscribed connections (first answer wins, `serverRequest/resolved` tells the
+rest); `turn/interrupt` cancels a turn; `thread/rewritten` invalidates a
+thread's cached history.
+
+Capabilities and fallback: the wire roster lists `{id, name, renderer,
+viewport, focused, attachedMs}` (camelCase renderer). Mods see it as
+`clients: ClientEntry[]` beside `client` in the `terminal` input, in
+snake_case (`renderer.reduced_motion`, `renderer.cell_px`, `focused`,
+`attached_ms`); neither lists declared operations. `client` stays the local
+terminal's facts, or null headless. A view serves every attached renderer, so
+draw for the least capable or branch on `clients`. An SVG `image` shows its
+alt text in terminals (SVG rules in [Binary evidence and package
+controls](#binary-evidence-and-package-controls)); a client listing `svg`,
+`png` or `jpeg` reads the resource with `omd/resource/read` and draws it.
+`terminal.notify`, `terminal.notice` and `terminal.blit` are mirrored to
+attached clients in both modes, blits only to clients listing `cells`; others
+draw a raster's `alt`. Headless, the host answers those three itself: a blit
+is checked against `component_owners` (`terminal_blit_not_owned`,
+`terminal_blit_unknown`) and a `model`-audience notice is still queued for the
+model.
+
+Delegation: with no terminal attached, `features` includes `surface_call` and
+`delegable` lists the declared operations the host delegates. A mod's surface
+operation goes to the clients that declared it, and the first answer wins.
+User-only operations (`credentials.request`, `terminal.import_file`,
+`builtins.invoke`, `commands.invoke`, `config.set`, `packages.apply`,
+`contract.select`) and `prompts.consent` are never delegated, and whenever a
+client's action or event caused the call they, and a `terminal.pty` start,
+fail in both modes (`client_surface_operation_unavailable: <operation> needs
+the terminal (/omd) or omd-mod`), so clients never reach grant-writing or
+user-only operations: use the terminal's `/omd` or `omd-mod
+enable|disable|reload|reset`. Headless, a `terminal.pty` start from a
+non-user context is `host_operation_user_only`. An operation no attached client declared fails
+with `client_surface_operation_unavailable: no attached client serves
+<operation>`. `app.request` runs on the headless host itself; a confirmed
+method first goes as `omd/surface/call terminal.prompt {kind: 'confirm',
+title, message}` to the clients that declared `terminal.prompt` and runs only
+on `{status: 'accepted'}`, returning `{status: 'declined'}` otherwise or when
+none did. A call with `confirm` needs the user's consent in the client before
+it acts.
+
+Security: clients cannot mint grants or evidence. No `omd/*` method writes a
+grant, consent or evidence record; actions resolve against the host's view,
+events reach only a component's owner, and resources only those in the view.
+Mod engine callbacks keep running in the host runner without ambient Node,
+DOM or secrets; only the confined renderer process uses its own UI runtime.
+
+A mod owns its client adapter: it declares `os` with `os_access.programs`
+(for example `node`) and starts its UI process from a native callback (a
+`channel` hop from a command) with `process.start {sandbox: 'none'}`, or
+starts it sandboxed with `network: 'loopback'` (`network`) for a loopback
+`ws://` listener. It passes the listen URL and the token, or a token file
+path, through `environment` or ndjson stdin; the host stops the process with
+the mod. The UI process connects with the SDK in
+`@oh-my-diff/mod-api/client`: `connect({url, token?, command?, name, renderer,
+operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?,
+onNotification?, onReconnect?, onClose?})` is dependency-free ESM for browsers
+and Node 22+ over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
+`stdio` (Node; spawns `codex app-server`). The session's `attach`, `update`,
+`detach`, `read`, `event`, `action` (serialized), `render`, `resource`,
+`recovery` and `request(method, params)` cover every `omd/*` and app-server
+method; after a disconnect it reconnects with backoff, re-initializes,
+re-attaches, replays the last update, resumes the threads it resumed through
+`request('thread/resume', …)` and reports `onReconnect({epoch,
+previousEpoch})`. `mods/examples/external_client` is a complete adapter.
 
 ### Commands and configuration (`command_config_middleware_v1`)
 
@@ -1847,9 +2005,24 @@ failure after `next` keeps the host's result with a diagnostic.
 ### Binary evidence and package controls
 
 `evidence.write` accepts `{media_type: 'image/png' | 'image/jpeg' |
-'application/octet-stream', base64}` up to 8 MiB (`binary_evidence_v1`);
-image references can be attached through `composer.write` and image-capable
-app methods. `packages.list`, `packages.preview`, `packages.apply` and
+'image/svg+xml' | 'application/octet-stream', base64}` up to 8 MiB
+(`binary_evidence_v1`); PNG and JPEG references can be attached through
+`composer.write` and image-capable app methods. SVG (`svg_assets_v1`) is UTF-8
+XML of at most 1 MiB whose root element is `svg`, after an optional XML
+declaration and comments. Every element must be in the SVG namespace (an
+unprefixed element without a default namespace counts as SVG). It refuses a
+DOCTYPE, other processing instructions, `script`, `foreignObject`, `iframe`,
+`object`, `embed`, `audio` and `video` elements, `animate*`/`set` targeting
+`href` or an `on*` attribute, `on*`, `src`, `srcset`, `data`, `action`,
+`formaction` and `ping` attributes, `href`/`xlink:href` other than `#fragment` or a base64 PNG/JPEG `data:` URI,
+and in any attribute or `<style>` text (case-insensitive, after resolving
+references) a `url(` other than `url(#...)`, `image-set(` (including
+`-webkit-image-set(`), `src(`, `@import`, `@font-face` or a backslash escape,
+failing with `evidence_record_invalid:
+svg_<reason>`. `terminal.import_file` labels SVG text `image/svg+xml`, so it
+passes the same check. External renderers draw SVG natively; the terminal
+shows an `image` component's alt text, refuses SVG in `terminal.image_sample`
+and backdrops, and never attaches it to the composer. `packages.list`, `packages.preview`, `packages.apply` and
 `packages.reload` (`package_controls_v1`) install, update, remove, roll back,
 enable and disable packages from local directories, pinned Git revisions and
 curated index releases; `index` resolves dependencies. `packages.list` reports

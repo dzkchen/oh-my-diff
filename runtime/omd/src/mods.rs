@@ -328,6 +328,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "lifecycle_events_v1",
     "user_submissions_v1",
     "terminal_raster_v1",
+    "svg_assets_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
