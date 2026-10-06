@@ -4,7 +4,7 @@
   "version": "0.2.0-candidate.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/optional/omd_focus_flow" },
   "capabilities": ["terminal", "commands", "store"],
   "requires": ["omd_workspace"],

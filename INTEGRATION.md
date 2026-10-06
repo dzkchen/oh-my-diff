@@ -119,7 +119,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 
 | Component | Owner | Version | Status | Fixtures | Limitations | Removal or migration |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Bundled browser tooling** | OMD browser bundle (scripts/browser_bundle.py) | Playwright MCP with a pinned Chromium — versions: node 24.21.0, pnpm 11.14.0, @playwright/mcp 0.0.81, playwright 1.64.0-alpha-2026-09-14, chromium 154.0.8037.0 | supported | `python:test_launcher_selects_the_bundled_browser_and_keeps_its_sandbox` · `python:test_prebuilt_archive_installs_the_same_verified_tree` · `python:test_failed_post_swap_update_restores_the_verified_bundle` | Apple Silicon macOS only, injected into OMD alone, prompt-gated by default; browser and MCP network effects are outside the shell sandbox. | `scripts/browser_bundle.py` removes the managed tree atomically; Codex and OMD keep working without it. |
+| **Bundled browser tooling** | OMD browser bundle (scripts/browser_bundle.py) | Playwright MCP with a pinned Chromium — versions: node 24.21.0, pnpm 11.14.0, @playwright/mcp 0.0.83, playwright 1.64.0-alpha-1790635538000, chromium 155.0.8059.12 | supported | `python:test_launcher_selects_the_bundled_browser_and_keeps_its_sandbox` · `python:test_prebuilt_archive_installs_the_same_verified_tree` · `python:test_failed_post_swap_update_restores_the_verified_bundle` | Apple Silicon macOS only, injected into OMD alone, prompt-gated by default; browser and MCP network effects are outside the shell sandbox. | `scripts/browser_bundle.py` removes the managed tree atomically; Codex and OMD keep working without it. |
 
 ## Language server adapters
 

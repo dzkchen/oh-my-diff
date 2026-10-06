@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "MCP server status, tools and startup failures in the sidebar, reload, enable/disable and reviewed setup through upstream codex mcp commands",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_mcp"},
   "capabilities": ["threads", "inventory", "config", "packages", "config.write", "composer", "terminal", "commands", "store", "events"],
   "subscriptions": {"app": ["mcpServer/startupStatus/updated", "item/completed"], "channels": ["omd_mcp/update"]},

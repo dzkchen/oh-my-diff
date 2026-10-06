@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Pins the session's update_plan steps above the composer with status glyphs, a done/total header and a collapse key",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_panel"},
   "capabilities": ["terminal", "commands", "store", "threads"],
   "subscriptions": {"app": ["turn/plan/updated", "turn/started"]},

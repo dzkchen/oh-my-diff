@@ -75,12 +75,12 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod and the `omd_mods` control screen, both enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs thirty-nine first-party candidate mods. A fresh OMD+ store enables
+`--profile full` installs forty-four first-party candidate mods. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
-knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel, plan-mode removal, account and provider profiles, the workspace layout with its palettes and task worktrees, the built-in editor, shared-checkout coordination and the mini interface are installed but disabled. Advisor every-turn selection and the separate research preset
+knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel, plan-mode removal, account and provider profiles, the workspace layout with its palettes and task worktrees, the built-in editor, shared-checkout coordination, the mini interface, the experimental Cursor provider, Herdr pane status, MCP server status and setup, the prompt queue and the usage HUD are installed but disabled. Advisor every-turn selection and the separate research preset
 require their own explicit host policy and allowance; installation does not
 activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its

@@ -912,7 +912,8 @@ thread:
   isolated agent worktrees and worktrees the terminal creates or removes.
 - `elicitation_result {server, request_id, action, content, by}` (capability
   `approvals`) after an MCP elicitation is answered; password and write-only
-  fields are `[redacted]`.
+  fields are `[redacted]`, and `content` is the string `[redacted]` when the
+  host no longer holds the request's schema.
 
 `api.intercept('elicitation', …)` (capability `approvals`) sees MCP form
 elicitations before the user is asked: `{server, request_id, mode, message,

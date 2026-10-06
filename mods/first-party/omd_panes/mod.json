@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Recursive split panes with a Git-aware file tree, file viewer, shell, diff, mod-panel and browser panes",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_panes"},
   "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "fs.write", "pty", "network", "composer", "services"],
   "subscriptions": {"channels": ["omd_panes/*"]},

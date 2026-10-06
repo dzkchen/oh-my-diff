@@ -1037,9 +1037,9 @@ fn source_use(
             capabilities.insert("request_policy".to_owned());
         }
     }
-    if [".state.get(", ".state.set(", ".atom(", ".member("]
+    if [".state.get", ".state.set", ".atom", ".member"]
         .iter()
-        .any(|call| source.contains(call))
+        .any(|call| source.contains(&format!("{call}(")) || source.contains(&format!("{call}<")))
     {
         capabilities.insert("store".to_owned());
     }
@@ -1049,6 +1049,7 @@ fn source_use(
         (".session(", "inventory"),
         (".fs.", "fs.read"),
         (".classify(", "agents"),
+        (".classify<", "agents"),
         (".rateLimits(", "account"),
     ] {
         if source.contains(call) {

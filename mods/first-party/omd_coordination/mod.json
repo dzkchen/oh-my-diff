@@ -5,6 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Routes delegated work and selects each worker's context under the workflow contract",
+  "license": "MIT",
   "capabilities": [
     "agents",
     "commands",

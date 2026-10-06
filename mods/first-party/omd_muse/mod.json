@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Experimental: a low-cost Muse research subagent and optional lead over muse serve",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_muse"},
   "capabilities": ["commands", "lifecycle", "model", "exec", "tools", "agents", "terminal", "builtins", "config", "store"],
   "exec_environment": ["MUSE_EXPERIMENTAL_SDK_ENABLED", "XDG_DATA_HOME"],

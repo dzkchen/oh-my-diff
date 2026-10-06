@@ -6,6 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Session status and activity sidebar, state and shortcut header, review draft key and sidebar settings",
+  "license": "MIT",
   "capabilities": [
     "terminal",
     "commands",

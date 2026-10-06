@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Records guideline proposals and separate-task validations before any guideline is selected",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_guideline_governance" },
   "capabilities": ["tools", "commands", "store", "fs.read"],
   "environment": ["crypto"],

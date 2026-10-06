@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "A persistent per-thread queue of your prompts: edit, reorder, join and send them as you when the session is idle",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_prompt_queue"},
   "capabilities": ["commands", "composer", "store", "lifecycle", "terminal"],
   "compatibility": {"required_features": ["composer_v2", "user_submissions_v1"]}

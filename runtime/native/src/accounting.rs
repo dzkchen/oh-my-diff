@@ -272,7 +272,7 @@ const MIDDLEWARE_LOG_BYTES: u64 = 8 * 1024 * 1024;
 enum Hook<T> {
     Ran(T),
     Absent,
-    Skipped(&'static str),
+    Skipped,
 }
 
 impl Accounts {
@@ -543,7 +543,7 @@ impl Accounts {
                 }
                 for (segment, start, end, text) in
                     codex_omd::model_request::page_edits(&chain.result, &page, value)
-                        .map_err(|error| refuse(error))?
+                        .map_err(&refuse)?
                 {
                     found.entry(segment).or_default().push((start, end, text));
                 }
@@ -573,8 +573,7 @@ impl Accounts {
                         "sha256":crate::execution::hash(original.as_bytes())}));
                 }
             }
-            codex_omd::model_request::apply_send_edits(value, &edits)
-                .map_err(|error| refuse(error))?;
+            codex_omd::model_request::apply_send_edits(value, &edits).map_err(&refuse)?;
         }
         if let Some(account) = account {
             Self::record_middleware(
@@ -642,11 +641,10 @@ impl Accounts {
                     return Err(denied("mod runtime poisoned"));
                 }
                 Err(std::sync::TryLockError::WouldBlock) => {
-                    if holders.load(Ordering::Acquire) == 0 && !wait_for_callbacks {
-                        return Ok(Hook::Skipped("mod_callback_in_flight"));
-                    }
-                    if Instant::now() >= deadline {
-                        return Ok(Hook::Skipped("mod_runtime_busy"));
+                    if (holders.load(Ordering::Acquire) == 0 && !wait_for_callbacks)
+                        || Instant::now() >= deadline
+                    {
+                        return Ok(Hook::Skipped);
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }

@@ -173,7 +173,7 @@ struct Mods {
     /// Tool and outcome of each lead call until its batch settles or the next turn starts.
     settled: Mutex<BTreeMap<String, (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
-    elicitations: Mutex<BTreeMap<String, Vec<String>>>,
+    elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
 }
 
 /// A tool chain waiting at its native executor for the call's result.
@@ -437,7 +437,7 @@ pub(super) fn install(
         answered: Mutex::new(BTreeMap::new()),
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
-        elicitations: Mutex::new(BTreeMap::new()),
+        elicitations: Mutex::default(),
     });
     intercept::install_dispatcher(&extension.core);
     registry.config_contributor(extension.clone());

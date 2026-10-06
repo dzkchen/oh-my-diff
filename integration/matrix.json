@@ -427,9 +427,9 @@
       "versions": {
         "node": "24.21.0",
         "pnpm": "11.14.0",
-        "@playwright/mcp": "0.0.81",
-        "playwright": "1.64.0-alpha-2026-09-14",
-        "chromium": "154.0.8037.0"
+        "@playwright/mcp": "0.0.83",
+        "playwright": "1.64.0-alpha-1790635538000",
+        "chromium": "155.0.8059.12"
       },
       "status": "supported",
       "fixtures": [

@@ -217,12 +217,11 @@ fn final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed() {
     let sent = prepared(&accounts, "child", &body("token SECRET-1 é")).unwrap();
     let input = &sent["input"];
     assert_eq!(input[0]["content"][0]["text"], "sandbox SECRET-9");
-    assert_eq!(
+    assert!(
         input[0]["content"][1]["text"]
             .as_str()
             .unwrap()
-            .ends_with("late [secret]"),
-        true
+            .ends_with("late [secret]")
     );
     assert_eq!(input[1]["content"][0]["text"], "token [secret] é");
     assert_eq!(input[2]["arguments"], "{\"cmd\":\"echo [secret]\"}");

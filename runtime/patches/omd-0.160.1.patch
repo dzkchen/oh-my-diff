@@ -11102,7 +11102,7 @@ index 60bd8e7e7..55cbd3337 100644
                      style,
                  );
 diff --git a/codex-rs/tui/src/bottom_pane/textarea/mouse.rs b/codex-rs/tui/src/bottom_pane/textarea/mouse.rs
-index 00c2c2adf..a2d537064 100644
+index 00c2c2adf..bd951abb1 100644
 --- a/codex-rs/tui/src/bottom_pane/textarea/mouse.rs
 +++ b/codex-rs/tui/src/bottom_pane/textarea/mouse.rs
 @@ -57,6 +57,18 @@ impl TextArea {
@@ -11112,7 +11112,7 @@ index 00c2c2adf..a2d537064 100644
 +    /// Selects `range` as if dragged, leaving the cursor at its end.
 +    pub(crate) fn set_selection(&mut self, range: Range<usize>) {
 +        self.cursor_pos = range.end;
-+        self.mouse_selection = (!range.is_empty()).then(|| MouseSelection {
++        self.mouse_selection = (!range.is_empty()).then_some(MouseSelection {
 +            pending_copy: None,
 +            origin: range.start..range.start,
 +            unit: SelectionUnit::Character,
@@ -19323,10 +19323,10 @@ index 000000000..e69aaed34
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..80e386c1c
+index 000000000..b2e96e536
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2170 @@
+@@ -0,0 +1,2168 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -19601,7 +19601,7 @@ index 000000000..80e386c1c
 +enum Hook<T> {
 +    Ran(T),
 +    Absent,
-+    Skipped(&'static str),
++    Skipped,
 +}
 +
 +impl Accounts {
@@ -19872,7 +19872,7 @@ index 000000000..80e386c1c
 +                }
 +                for (segment, start, end, text) in
 +                    codex_omd::model_request::page_edits(&chain.result, &page, value)
-+                        .map_err(|error| refuse(error))?
++                        .map_err(&refuse)?
 +                {
 +                    found.entry(segment).or_default().push((start, end, text));
 +                }
@@ -19902,8 +19902,7 @@ index 000000000..80e386c1c
 +                        "sha256":crate::execution::hash(original.as_bytes())}));
 +                }
 +            }
-+            codex_omd::model_request::apply_send_edits(value, &edits)
-+                .map_err(|error| refuse(error))?;
++            codex_omd::model_request::apply_send_edits(value, &edits).map_err(&refuse)?;
 +        }
 +        if let Some(account) = account {
 +            Self::record_middleware(
@@ -19971,11 +19970,10 @@ index 000000000..80e386c1c
 +                    return Err(denied("mod runtime poisoned"));
 +                }
 +                Err(std::sync::TryLockError::WouldBlock) => {
-+                    if holders.load(Ordering::Acquire) == 0 && !wait_for_callbacks {
-+                        return Ok(Hook::Skipped("mod_callback_in_flight"));
-+                    }
-+                    if Instant::now() >= deadline {
-+                        return Ok(Hook::Skipped("mod_runtime_busy"));
++                    if (holders.load(Ordering::Acquire) == 0 && !wait_for_callbacks)
++                        || Instant::now() >= deadline
++                    {
++                        return Ok(Hook::Skipped);
 +                    }
 +                    std::thread::sleep(Duration::from_millis(2));
 +                }
@@ -21499,10 +21497,10 @@ index 000000000..80e386c1c
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..1d41a28aa
+index 000000000..c2c61e857
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1206 @@
+@@ -0,0 +1,1205 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -21722,12 +21720,11 @@ index 000000000..1d41a28aa
 +    let sent = prepared(&accounts, "child", &body("token SECRET-1 é")).unwrap();
 +    let input = &sent["input"];
 +    assert_eq!(input[0]["content"][0]["text"], "sandbox SECRET-9");
-+    assert_eq!(
++    assert!(
 +        input[0]["content"][1]["text"]
 +            .as_str()
 +            .unwrap()
-+            .ends_with("late [secret]"),
-+        true
++            .ends_with("late [secret]")
 +    );
 +    assert_eq!(input[1]["content"][0]["text"], "token [secret] é");
 +    assert_eq!(input[2]["arguments"], "{\"cmd\":\"echo [secret]\"}");
@@ -26983,7 +26980,7 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..7f9d3cb36
+index 000000000..f08d16c00
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2334 @@
@@ -27162,7 +27159,7 @@ index 000000000..7f9d3cb36
 +    /// Tool and outcome of each lead call until its batch settles or the next turn starts.
 +    settled: Mutex<BTreeMap<String, (String, String)>>,
 +    /// Secret fields of each pending elicitation, redacted from its result.
-+    elicitations: Mutex<BTreeMap<String, Vec<String>>>,
++    elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
 +}
 +
 +/// A tool chain waiting at its native executor for the call's result.
@@ -27426,7 +27423,7 @@ index 000000000..7f9d3cb36
 +        answered: Mutex::new(BTreeMap::new()),
 +        child_errors: Mutex::new(BTreeMap::new()),
 +        settled: Mutex::new(BTreeMap::new()),
-+        elicitations: Mutex::new(BTreeMap::new()),
++        elicitations: Mutex::default(),
 +    });
 +    intercept::install_dispatcher(&extension.core);
 +    registry.config_contributor(extension.clone());
@@ -33148,7 +33145,7 @@ index 000000000..67d413e98
 +}
 diff --git a/codex-rs/ext/omd/src/mods/elicitation.rs b/codex-rs/ext/omd/src/mods/elicitation.rs
 new file mode 100644
-index 000000000..0366a58dd
+index 000000000..c71b4b582
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/elicitation.rs
 @@ -0,0 +1,164 @@
@@ -33170,7 +33167,11 @@ index 000000000..0366a58dd
 +        .collect()
 +}
 +
-+pub(super) fn redact(content: Option<&Value>, secrets: &[String]) -> Value {
++/// Without the request's secret list the fields cannot be told apart, so the whole answer is withheld.
++pub(super) fn redact(content: Option<&Value>, secrets: Option<&[String]>) -> Value {
++    let Some(secrets) = secrets else {
++        return content.map_or(Value::Null, |_| json!("[redacted]"));
++    };
 +    let mut content = content.cloned().unwrap_or(Value::Null);
 +    if let Some(object) = content.as_object_mut() {
 +        for name in secrets {
@@ -33209,13 +33210,12 @@ index 000000000..0366a58dd
 +        let schema = &input.request["requested_schema"];
 +        let secrets = secret_fields(schema);
 +        if let Ok(mut pending) = self.elicitations.lock() {
++            let key = format!("{}\0{}", input.server, input.request_id);
++            pending.retain(|(pending, _)| *pending != key);
 +            if pending.len() >= 64 {
-+                pending.clear();
++                pending.pop_front();
 +            }
-+            pending.insert(
-+                format!("{}\0{}", input.server, input.request_id),
-+                secrets.clone(),
-+            );
++            pending.push_back((key, secrets.clone()));
 +        }
 +        let mode = input.request["mode"].as_str().unwrap_or_default();
 +        if !FORMS.contains(&mode) || !secrets.is_empty() {
@@ -33299,18 +33299,15 @@ index 000000000..0366a58dd
 +        else {
 +            return;
 +        };
-+        let secrets = self
-+            .elicitations
-+            .lock()
-+            .ok()
-+            .and_then(|mut pending| {
-+                pending.remove(&format!("{}\0{}", input.server, input.request_id))
-+            })
-+            .unwrap_or_default();
++        let key = format!("{}\0{}", input.server, input.request_id);
++        let secrets = self.elicitations.lock().ok().and_then(|mut pending| {
++            let at = pending.iter().position(|(pending, _)| *pending == key)?;
++            pending.remove(at).map(|(_, secrets)| secrets)
++        });
 +        self.event(
 +            "elicitation_result",
 +            json!({"server": input.server, "request_id": input.request_id, "action": input.action,
-+                "content": redact(input.content, &secrets), "by": input.by}),
++                "content": redact(input.content, secrets.as_deref()), "by": input.by}),
 +            Some(&*lead),
 +        )
 +        .await;
@@ -35945,10 +35942,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..0d587fbc5
+index 000000000..0c99ba2b6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2797 @@
+@@ -0,0 +1,2828 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -36079,7 +36076,7 @@ index 000000000..0d587fbc5
 +        answered: Mutex::new(BTreeMap::new()),
 +        child_errors: Mutex::new(BTreeMap::new()),
 +        settled: Mutex::new(BTreeMap::new()),
-+        elicitations: Mutex::new(BTreeMap::new()),
++        elicitations: Mutex::default(),
 +    }
 +}
 +
@@ -38677,6 +38674,31 @@ index 000000000..0d587fbc5
 +        thread_store,
 +    })
 +    .await;
++    let request = json!({"mode": "form", "message": "token?", "requested_schema":
++        {"type": "object", "properties": {"token": {"type": "string", "format": "password"}}}});
++    for id in (0..=64).rev() {
++        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
++            turn_id: "turn-2",
++            server: "bulk",
++            request_id: &format!("{id:02}"),
++            request: &request,
++            session_store,
++            thread_store,
++        })
++        .await;
++    }
++    for id in ["64", "00"] {
++        mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
++            server: "bulk",
++            request_id: id,
++            action: "accept",
++            content: Some(&json!({"token": "hunter2"})),
++            by: None,
++            session_store,
++            thread_store,
++        })
++        .await;
++    }
 +    let log = fixture
 +        .core
 +        .runtime
@@ -38694,6 +38716,12 @@ index 000000000..0d587fbc5
 +    assert_eq!(log[1]["reason"], "explicit");
 +    assert_eq!(log[2]["content"], json!({"token": "[redacted]"}));
 +    assert_eq!(log[2]["by"], Value::Null);
++    assert_eq!(
++        log[3]["content"],
++        json!("[redacted]"),
++        "the oldest pending schema is evicted and its answer withheld"
++    );
++    assert_eq!(log[4]["content"], json!({"token": "[redacted]"}));
 +
 +    let failed = mods
 +        .continue_turn(codex_extension_api::TurnContinueInput {
@@ -38741,10 +38769,10 @@ index 000000000..0d587fbc5
 +        .cloned()
 +        .unwrap();
 +    assert_eq!(
-+        log[3],
++        log[5],
 +        json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
 +    );
-+    assert_eq!(log[4]["roots"]["added"], json!(["/extra"]));
++    assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
@@ -57558,10 +57586,10 @@ index 000000000..fe2e0fb34
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..b2333c5a8
+index 000000000..749a6b5db
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4794 @@
+@@ -0,0 +1,4795 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -58601,9 +58629,9 @@ index 000000000..b2333c5a8
 +            capabilities.insert("request_policy".to_owned());
 +        }
 +    }
-+    if [".state.get(", ".state.set(", ".atom(", ".member("]
++    if [".state.get", ".state.set", ".atom", ".member"]
 +        .iter()
-+        .any(|call| source.contains(call))
++        .any(|call| source.contains(&format!("{call}(")) || source.contains(&format!("{call}<")))
 +    {
 +        capabilities.insert("store".to_owned());
 +    }
@@ -58613,6 +58641,7 @@ index 000000000..b2333c5a8
 +        (".session(", "inventory"),
 +        (".fs.", "fs.read"),
 +        (".classify(", "agents"),
++        (".classify<", "agents"),
 +        (".rateLimits(", "account"),
 +    ] {
 +        if source.contains(call) {
@@ -71826,10 +71855,10 @@ index 000000000..fe9749ea2
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 000000000..ca12d1281
+index 000000000..8c3e6dc9a
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
-@@ -0,0 +1,459 @@
+@@ -0,0 +1,460 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
@@ -72095,6 +72124,7 @@ index 000000000..ca12d1281
 +    }
 +
 +    /// Writes a sealed message into the recipient's inbox and returns its receipt.
++    #[allow(clippy::too_many_arguments)]
 +    pub fn send(
 +        &self,
 +        seal: &dyn Seal,
@@ -78941,10 +78971,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..2fbc6d254
+index 000000000..baa823cd6
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4233 @@
+@@ -0,0 +1,4238 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -80894,6 +80924,11 @@ index 000000000..2fbc6d254
 +    let (temp, _, _) = fixture(
 +        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',write:true}))",
 +        &["commands", "exec", "fs.write"],
++    );
++    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
++    let (temp, _, _) = fixture(
++        "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",
++        &["commands", "store"],
 +    );
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let policies = &status["field_policies"];
@@ -85972,7 +86007,7 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..44e6580df
+index 000000000..972bf05ee
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
 @@ -0,0 +1,1536 @@
@@ -86162,7 +86197,7 @@ index 000000000..44e6580df
 +            .and_then(|path| std::fs::read(path).ok());
 +        let media = match bytes.as_deref() {
 +            Some(bytes) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => Some("image/png"),
-+            Some(bytes) if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) => Some("image/jpeg"),
++            Some([0xFF, 0xD8, 0xFF, ..]) => Some("image/jpeg"),
 +            _ => None,
 +        };
 +        let (Some(bytes), Some(media)) = (bytes, media) else {
@@ -88352,7 +88387,7 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..4712ca304
+index 000000000..ec839cc69
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
 @@ -0,0 +1,605 @@
@@ -88568,7 +88603,7 @@ index 000000000..4712ca304
 +            if revision != composer.mod_draft_sync() {
 +                return Err("stale_revision".into());
 +            }
-+            current = composer.mod_edit(caller, revision, &edit, cursor, selection.clone())?;
++            current = composer.mod_edit(caller, revision, &edit, cursor, selection)?;
 +        } else if cursor.is_some() || selection.is_some() {
 +            let empty = serde_json::json!({"kind": "insert", "text": ""});
 +            current = self
@@ -98889,10 +98924,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..5d1a5cbe6
+index 000000000..82db36ccd
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,637 @@
+@@ -0,0 +1,646 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -99056,7 +99091,7 @@ index 000000000..5d1a5cbe6
 +        codex_omd::BuiltinSnapshot,
 +    );
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
-+    let root = store_root();
++    let root = mod_paths().and_then(|paths| paths.store);
 +    let mut cache = CACHE
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -99481,7 +99516,8 @@ index 000000000..5d1a5cbe6
 +        std::fs::write(
 +            store.join(codex_omd::BUILTINS_SNAPSHOT),
 +            serde_json::json!({"schema":1,"hidden_commands":{"plan":["fixture"]},
-+                "disabled_modes":{"plan":["fixture"]}})
++                "disabled_modes":{"plan":["fixture"]},
++                "replaced_commands":{"review":["fixture","review"]}})
 +            .to_string(),
 +        )
 +        .unwrap();
@@ -99493,6 +99529,14 @@ index 000000000..5d1a5cbe6
 +        assert!(!mode_disabled(
 +            codex_protocol::config_types::ModeKind::Default
 +        ));
++        assert!(command_replacement("review").is_some());
++        {
++            let _home = EnvGuard::set("HOME", store.to_str());
++            assert!(!command_hidden("plan"));
++            assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Plan));
++            assert!(command_replacement("review").is_none());
++        }
++        assert!(command_hidden("plan"));
 +        let _direct = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
 +        assert!(!command_hidden("plan"));
 +        assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Plan));

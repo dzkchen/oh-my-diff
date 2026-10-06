@@ -1,8 +1,8 @@
 # Managed browser bundle
 
 Oh My Diff pins one Apple Silicon browser stack in `browser.lock.json`: Node
-24.21.0, pnpm 11.14.0, `@playwright/mcp` 0.0.81, its exact Playwright dependency,
-and Chromium headless-shell revision 1244. The lock includes the official Node
+24.21.0, pnpm 11.14.0, `@playwright/mcp` 0.0.83, its exact Playwright dependency,
+and Chromium headless-shell revision 1247. The lock includes the official Node
 archive URL and hash; `pnpm-lock.yaml` freezes the complete JavaScript graph.
 
 The same managed Node runtime carries the optional application bridge host and

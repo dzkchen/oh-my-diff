@@ -1949,6 +1949,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         &["commands", "exec", "fs.write"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",
+        &["commands", "store"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
     assert_eq!(
         policies["intercept.response_stream"]["usage"],

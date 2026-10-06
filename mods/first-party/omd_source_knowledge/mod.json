@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Keeps source-backed facts and task evidence with exact file hashes for reuse in later tasks",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_source_knowledge" },
   "capabilities": ["tools", "commands", "fs.read", "store"],
   "environment": ["crypto"],

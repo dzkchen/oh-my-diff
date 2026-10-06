@@ -263,6 +263,7 @@ impl Peers {
     }
 
     /// Writes a sealed message into the recipient's inbox and returns its receipt.
+    #[allow(clippy::too_many_arguments)]
     pub fn send(
         &self,
         seal: &dyn Seal,

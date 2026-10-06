@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "A five-language source graph service used by the graph navigator and repository analyses",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_repository_analysis" },
   "capabilities": ["tools", "services", "fs.read", "store", "exec"],
   "assets": ["analysis_cli.mjs"],

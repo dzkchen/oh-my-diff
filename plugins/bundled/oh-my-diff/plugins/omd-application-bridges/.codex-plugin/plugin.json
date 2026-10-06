@@ -5,7 +5,7 @@
   "author": {
     "name": "Oh My Diff"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "keywords": [
     "application-bridge",
     "diagnostics",

@@ -14,7 +14,7 @@
       "extension_type": "mod",
       "capability": "Opt-in official Claude CLI subscription provider with the CLI model catalog and ask_claude delegation",
       "source": "mods/first-party/omd_claude_cli",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.285",
       "tested_versions": [
@@ -33,7 +33,7 @@
       "extension_type": "mod",
       "capability": "Opt-in Cursor subscription provider over the official Cursor SDK with OMD tools only",
       "source": "mods/first-party/omd_cursor",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; @cursor/sdk 1.0.35 installed at enrollment; a Cursor account",
       "tested_versions": [
@@ -51,7 +51,7 @@
       "extension_type": "mod",
       "capability": "Opt-in mini interface launched by `omd mini`: scrollback-first conversation over the same Codex session with compact tool summaries, a simple prompt, one status line and switching to the full UI through the launcher",
       "source": "mods/first-party/omd_mini",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, store_v1, store_thread_v1, state_scopes_v1, terminal_lists_v1, terminal_inline_sites_v1; Node 24.18.0",
       "tested_versions": [
@@ -69,7 +69,7 @@
       "extension_type": "mod",
       "capability": "Persistent per-thread queue of the user's prompts: capture, edit, reorder, join and send as the user when idle",
       "source": "mods/first-party/omd_prompt_queue",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; composer_v2, user_submissions_v1, store_thread_v1, state_scopes_v1; Node 24.18.0",
       "tested_versions": [
@@ -87,7 +87,7 @@
       "extension_type": "mod",
       "capability": "Provider usage HUD: per-request ledger with context, cache, cost, quota windows, workers and an allowance bar",
       "source": "mods/first-party/omd_usage",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
       "tested_versions": [
@@ -105,7 +105,7 @@
       "extension_type": "mod",
       "capability": "Opt-in Muse provider and read-only research subagent over muse serve",
       "source": "mods/first-party/omd_muse",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; Muse Code with an MSP host (muse serve)",
       "tested_versions": [
@@ -123,7 +123,7 @@
       "extension_type": "mod",
       "capability": "Live task routing, worker context, and delegation preparation",
       "source": "mods/first-party/omd_coordination",
-      "license": "undeclared",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
       "tested_versions": [
@@ -141,7 +141,7 @@
       "extension_type": "mod",
       "capability": "Failure-aware escalation and delegation dispatch",
       "source": "mods/first-party/omd_recovery",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
       "tested_versions": [
@@ -159,7 +159,7 @@
       "extension_type": "mod",
       "capability": "Live terminal task and worker workspace",
       "source": "mods/first-party/omd_workspace",
-      "license": "undeclared",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
@@ -177,7 +177,7 @@
       "extension_type": "mod",
       "capability": "Typed bounded subagent tasks with isolated edit and reviewed integration",
       "source": "mods/first-party/omd_typed_tasks",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
       "tested_versions": [
@@ -195,7 +195,7 @@
       "extension_type": "mod",
       "capability": "Oh My Diff terminal logo and launch status in both profiles",
       "source": "mods/first-party/omd_logo",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
       "tested_versions": [
@@ -213,7 +213,7 @@
       "extension_type": "mod",
       "capability": "Compact OMD+ /model and reasoning picker presentation",
       "source": "mods/first-party/omd_model_picker",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1; Node 24.18.0",
       "tested_versions": [
@@ -231,7 +231,7 @@
       "extension_type": "mod",
       "capability": "Opt-in left Git sidebar with commit graph, changed files and confirmed actions",
       "source": "mods/first-party/omd_git",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
@@ -249,7 +249,7 @@
       "extension_type": "mod",
       "capability": "Bounded explicit rules that stop a completed response item and retry with a reminder",
       "source": "mods/first-party/omd_reactive_rules",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; stream_control_v1; Node 24.18.0",
       "tested_versions": [
@@ -267,7 +267,7 @@
       "extension_type": "mod",
       "capability": "Python context, child-agent and continual-harness API over the code-execution kernel bridge",
       "source": "mods/first-party/omd_programmable_context",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; history_v1, store_thread_v1, routes_v1, model_complete_v1, terminal_prompt_v1; Node 24.18.0",
       "tested_versions": [
@@ -285,7 +285,7 @@
       "extension_type": "mod",
       "capability": "Removes /plan and plan mode through public built-in controls",
       "source": "mods/first-party/omd_plan_removal",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; Node 24.18.0",
       "tested_versions": [
@@ -303,7 +303,7 @@
       "extension_type": "mod",
       "capability": "User-typed /continue recovery turn with a turn-activity summary",
       "source": "mods/first-party/omd_continue",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_activity_v1; Node 24.18.0",
       "tested_versions": [
@@ -321,7 +321,7 @@
       "extension_type": "mod",
       "capability": "User-typed /preview of responses and Markdown, code or diff files as sanitized HTML in the browser or an inline dialog",
       "source": "mods/first-party/omd_preview",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
       "tested_versions": [
@@ -339,7 +339,7 @@
       "extension_type": "mod",
       "capability": "Opt-in recursive split panes with a Git-aware file tree, viewer, shell, diff, mod-panel and browser panes, persisted per session",
       "source": "mods/first-party/omd_panes",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
@@ -357,7 +357,7 @@
       "extension_type": "mod",
       "capability": "Opt-in Markdown notes vault with wiki links, backlinks, tags, tasks, search and confirmed agent writes",
       "source": "mods/first-party/omd_notes",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_arguments_v1, events_v1, exec_v1, timers_v1; Node 24.18.0",
       "tested_versions": [
@@ -375,7 +375,7 @@
       "extension_type": "mod",
       "capability": "Opt-in built-in editor: file buffers with multi-line syntax colors, Git gutter markers, find, undo/redo, explicit saves through fingerprinted transactions, reviewed conflict recovery and code intelligence on unsaved buffers",
       "source": "mods/first-party/omd_editor",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, store_thread_v1, events_v1, timers_v1, exec_v1, terminal_input_v1, terminal_style_v1, workspace_fs_v1; Node 24.18.0",
       "tested_versions": [
@@ -393,7 +393,7 @@
       "extension_type": "mod",
       "capability": "Opt-in shared-checkout coordination: read-only participants by default, explicit path reservations checked for patches and recognizable shell writes, handoffs, stale-registration recovery, serialized Git writes and worktree recommendations",
       "source": "mods/first-party/omd_shared_checkout",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, approval_v1, events_v1, store_thread_v1, timers_v1, builtins_v1; Node 24.18.0",
       "tested_versions": [
@@ -411,7 +411,7 @@
       "extension_type": "mod",
       "capability": "Opt-in code-intelligence view (hover, definition, references, symbols, diagnostics, code actions, formatting) over omd_lsp_sync's servers",
       "source": "mods/first-party/omd_lsp_view",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
@@ -429,7 +429,7 @@
       "extension_type": "mod",
       "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts and Git status",
       "source": "mods/first-party/omd_frecency",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
       "tested_versions": [
@@ -447,7 +447,7 @@
       "extension_type": "mod",
       "capability": "Opt-in pinned plan panel over Codex's update_plan tool with status glyphs, a done/total header, collapse key and completed-first overflow",
       "source": "mods/first-party/omd_plan_panel",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
@@ -465,7 +465,7 @@
       "extension_type": "mod",
       "capability": "Opt-in workspace layout: project-grouped session list with status shared across terminals, unread, worktree, context and listening ports, plus find, quick open, jump and command palettes over panes, Git and worktrees",
       "source": "mods/first-party/omd_layout",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, terminal_commands_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
@@ -483,7 +483,7 @@
       "extension_type": "mod",
       "capability": "Opt-in task worktrees: create from a base ref with derived branch names, opt-in shared/copied setup and a bound session, switch, import, reviewed integration and confirmed cleanup that keeps dirty and unmerged work",
       "source": "mods/first-party/omd_worktree",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, guarded_exec_v1, terminal_prompt_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
@@ -501,7 +501,7 @@
       "extension_type": "mod",
       "capability": "/mods control screen: installed, active, pending and failed mods with host-confirmed enable, trust, update, remove and reload, plus a one-time first-run card",
       "source": "mods/first-party/omd_mods",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; package_controls_v1; Node 24.18.0",
       "tested_versions": [
@@ -519,7 +519,7 @@
       "extension_type": "plugin",
       "capability": "Selected simplicity and communication skills with controlled lifecycle reactions",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks",
-      "license": "UNLICENSED",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.160.1 and OMD 0.1.0; selected hooks require OMD_MODE=omd and plugin-owned configuration",
       "tested_versions": [
@@ -554,7 +554,7 @@
       "extension_type": "plugin",
       "capability": "Selected review cadence and final review prompts; optional extension-owned completed-turn advisor guidance; changed-line simplify skill with an opt-in /simplify mod component",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
-      "license": "UNLICENSED",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; every-turn hook requires explicit controlled-manifest selection; new optional .9 component paths tested locally at Codex 0.157.0, with explicit trust and grants",
       "tested_versions": [
@@ -591,7 +591,7 @@
       "extension_type": "plugin",
       "capability": "Prompt-approved browser and application diagnostics through the managed bridge",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-application-bridges",
-      "license": "UNLICENSED",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires the matching bridge host and explicit application_bridge capability",
       "tested_versions": [
@@ -614,7 +614,7 @@
       "extension_type": "plugin",
       "capability": "Source-anchored URL, issue, PDF, and notebook reading; optional plugin-owned GitHub virtual reader through the ordinary read interface",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
-      "license": "UNLICENSED",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript; new optional .9 component paths tested locally at Codex 0.157.0, with explicit trust and grants",
       "tested_versions": [
@@ -636,7 +636,7 @@
     {
       "id": "omd_herdr",
       "version": "0.1.0-preview.1",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "tested_versions": [
         "Codex 0.160.1",
@@ -654,7 +654,7 @@
     {
       "id": "omd_mcp",
       "version": "0.1.0-preview.1",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "tested_versions": [
         "Codex 0.160.1",
@@ -672,7 +672,7 @@
     {
       "id": "omd_profiles",
       "version": "0.1.0-preview.2",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "tested_versions": [
         "Codex 0.160.1",
@@ -693,7 +693,7 @@
       "extension_type": "mod",
       "capability": "/theme: color themes, backgrounds, glyphs, the startup greeting, a powerline status line and a prompt stash",
       "source": "mods/first-party/omd_theme",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_render_sites_v1, store_v1, terminal_surface_paint_v1, terminal_backdrop_transform_v1, terminal_image_sample_v1, terminal_import_lifetime_v1; Node 24.18.0",
       "tested_versions": [
@@ -711,7 +711,7 @@
       "extension_type": "mod",
       "capability": "Exposes Python, TypeScript and Rust check tools only for the task steps that need them",
       "source": "mods/first-party/omd_task_tools",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; task_tool_exposure_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
       "tested_versions": [
@@ -729,7 +729,7 @@
       "extension_type": "mod",
       "capability": "Language servers report the diagnostics each edit introduces and answer definition, reference and rename requests",
       "source": "mods/first-party/omd_lsp_sync",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, workspace_fs_v1, framed_process_v1, store_v1, tool_feedback_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
@@ -747,7 +747,7 @@
       "extension_type": "mod",
       "capability": "An independent advisor reviews plans, stalls and claimed completion with typed, cited findings; Codex has no second-opinion reviewer",
       "source": "mods/first-party/omd_advisor",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_evidence_v1, turn_activity_v1, workspace_snapshots_v1, workspace_fingerprint_v1, contracts_v2, tool_feedback_v1; Node 24.18.0",
       "tested_versions": [
@@ -765,7 +765,7 @@
       "extension_type": "mod",
       "capability": "Lets the lead hand broad read-only source gathering to a cheaper configured research route",
       "source": "mods/first-party/omd_research",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; routes_v1, workspace_fs_v1; Node 24.18.0",
       "tested_versions": [
@@ -783,7 +783,7 @@
       "extension_type": "mod",
       "capability": "Selects source-bound check commands for changed Rust, TypeScript, JavaScript, Python and Java files without running them",
       "source": "mods/first-party/omd_checks",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, exec_v1; Node 24.18.0",
       "tested_versions": [
@@ -801,7 +801,7 @@
       "extension_type": "mod",
       "capability": "Searches the live source code and impact graph and inserts verified graph evidence into the prompt",
       "source": "mods/first-party/omd_graph_navigator",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; service_dispatch_v1, terminal_lists_v1, events_v1; Node 24.18.0",
       "tested_versions": [
@@ -819,7 +819,7 @@
       "extension_type": "mod",
       "capability": "Records guideline proposals and separate-task validations before any guideline is selected",
       "source": "mods/first-party/omd_guideline_governance",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; store_v1, workspace_fingerprint_v1; Node 24.18.0",
       "tested_versions": [
@@ -837,7 +837,7 @@
       "extension_type": "mod",
       "capability": "/inspect shows the session mode, install profile, active mods, workflow contract, limits and ledger",
       "source": "mods/first-party/omd_inspector",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, events_v1; Node 24.18.0",
       "tested_versions": [
@@ -855,7 +855,7 @@
       "extension_type": "mod",
       "capability": "A five-language source graph service used by the graph navigator and repository analyses",
       "source": "mods/first-party/omd_repository_analysis",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, store_v1, package_text_assets_v1, exec_output_artifacts_v1; Node 24.18.0",
       "tested_versions": [
@@ -873,7 +873,7 @@
       "extension_type": "mod",
       "capability": "Keeps source-backed facts and task evidence with exact file hashes for reuse in later tasks",
       "source": "mods/first-party/omd_source_knowledge",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, store_v1; Node 24.18.0",
       "tested_versions": [
@@ -891,7 +891,7 @@
       "extension_type": "mod",
       "capability": "Runs a repository's Pi .pi/prompts templates as slash commands with Pi argument rules",
       "source": "mods/first-party/omd_project_pi_prompts",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, package_text_assets_v1, exec_output_artifacts_v1; Node 24.18.0",
       "tested_versions": [
@@ -909,7 +909,7 @@
       "extension_type": "mod",
       "capability": "Workflow contracts: checkpoints, reviewed contributions, exact-candidate checks and completion gates",
       "source": "mods/first-party/omd_workflow",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
       "tested_versions": [
