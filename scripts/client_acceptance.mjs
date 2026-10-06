@@ -161,7 +161,7 @@ async function headless() {
   await desk.session.read();
   assert.deepEqual(await desk.session.event('desk_kinds', { kind: 'change', values: ['exec'] }), { delivered: true });
   await until('multiselect change applied', () => JSON.stringify(component(desk.view(), 'desk_kinds')?.value) === '["exec"]');
-  await rejects(desk.session.request('omd/client/event', { epoch: 'other', revision: 0, component: 'desk_kinds', event: { kind: 'change', values: [] } }), 'view_stale');
+  await rejects(desk.session.request('omd/client/event', { epoch: 'other', component: 'desk_kinds', event: { kind: 'change', values: [] } }), 'view_stale');
   await rejects(desk.session.event('no_such_component', { kind: 'change', value: 'x' }), 'view_stale');
   await rejects(desk.session.event('desk_kinds', { kind: 'teleport' }), 'component_event_invalid');
   say({ step: 'inputs', note: 'reviewed by desk', kinds: ['exec'] });

@@ -1550,7 +1550,7 @@ Operations:
   thread's next model request (an OMD stream retry of that request carries it again; at most 8 queued per
   thread, `model_context_queue_full`). `tool_call_id` draws a transcript
   notice beneath that tool call's cell in the owned transcript, or as a notice
-  naming the call in inline mode.
+  naming the call in inline mode or when no drawn cell holds the call.
 - `terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}`
   starts an interactive shell from a user command after confirmation, in the
   session sandbox without network (macOS) with a scratch `HOME`. `start` may
@@ -1967,7 +1967,8 @@ invalid edit or failing mod keeps the original request.
 A mod with the `history_write` authority grant changes the persisted transcript
 itself through `app.request thread/rewrite {threadId, expectedRevision?, edits?,
 undo?}`, on the current thread or a thread it started. Without
-`expectedRevision` the call only reads `{revision, rows}`; each row is
+`expectedRevision` the call only reads `{revision, rows}` (`edits` or `undo`
+without it fail with `history_rewrite_invalid`); each row is
 `{id, turnId, kind, access}` where `kind` is `message.<role>`, the tool call type
 or a display item type and `access` is `edit`, `delete` (reasoning, web search,
 image generation and display-only items) or `frozen` (compaction, configuration
@@ -1994,7 +1995,8 @@ revision}` and the terminal reloads the transcript. The replaced rollout is kept
 unchanged. Each inserted, replaced or moved model item carries
 `rewritten {revision, op, source?, by: "mod:<id>"}` metadata, loses the host's
 execution, delivery and tool-call inventory metadata and so never proves that a
-tool ran; receipts, usage and evidence records are not rewritten. `undo: true`
+tool ran; the approval reviewer's transcript labels rewritten messages and tool
+rows as not original. Receipts, usage and evidence records are not rewritten. `undo: true`
 restores the transcript the latest rewrite replaced and keeps rows added since;
 undoing an undo redoes it. The host keeps a per-thread revision log, anchored by
 the authority broker when it is deployed, and resume fails with
