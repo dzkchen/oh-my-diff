@@ -223,7 +223,9 @@ test('render hook examples draw a spinner, frame tool calls, annotate messages a
 });
 
 test('reactive dashboard keeps a form, streamed status and derived summary on keyed atoms', () => {
-  const changed = run('reactive_dashboard', 'component_event', { component: 'dashboard_query', kind: 'change', value: 'login', origin: 'user' });
+  const typing = run('reactive_dashboard', 'component_event', { component: 'dashboard_query', kind: 'change', value: 'log', origin: 'user' });
+  assert.equal(typing.state ?? null, null, 'edits do not write state until the input submits');
+  const changed = run('reactive_dashboard', 'command', ' login ', { name: 'search' });
   assert.deepEqual(changed.state, { query: 'login', counts: { searches: 1 } });
   const view = run('reactive_dashboard', 'terminal', { event: 'idle', ledger: null }, { state: changed.state }).value;
   assert.equal(view.sites.sidebar.components[0].value, 'login');

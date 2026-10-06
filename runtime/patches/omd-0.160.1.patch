@@ -19220,10 +19220,10 @@ index 000000000..e69aaed34
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..dbe916b3f
+index 000000000..79c4c12c7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2185 @@
+@@ -0,0 +1,2236 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -19262,7 +19262,48 @@ index 000000000..dbe916b3f
 +    pub provider_billed: bool,
 +}
 +
++/// Minimum spacing between `task-cost.json` snapshots written on the request path.
++const COST_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
++
++/// Per snapshot path: when it was last written and whether a later change is still unwritten.
++static COST_SNAPSHOTS: Mutex<BTreeMap<std::path::PathBuf, (Instant, bool)>> =
++    Mutex::new(BTreeMap::new());
++
++/// The append-only task journal is the durable record; this snapshot of it is rewritten in full,
++/// so request-path updates are coalesced to one write a second and flushed at turn end.
 +fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
++    let due = COST_SNAPSHOTS.lock().map_or(true, |mut snapshots| {
++        match snapshots.get_mut(&account.cost_capture) {
++            Some((written, dirty)) if written.elapsed() < COST_SNAPSHOT_INTERVAL => {
++                *dirty = true;
++                false
++            }
++            _ => {
++                snapshots.insert(account.cost_capture.clone(), (Instant::now(), false));
++                true
++            }
++        }
++    });
++    if due {
++        write_cost_capture(account, false)?;
++    }
++    Ok(())
++}
++
++/// Writes a snapshot a coalesced update left behind, durably, and forgets the path.
++fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
++    let dirty = COST_SNAPSHOTS
++        .lock()
++        .ok()
++        .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
++        .is_some_and(|(_, dirty)| dirty);
++    if dirty {
++        write_cost_capture(account, true)?;
++    }
++    Ok(())
++}
++
++fn write_cost_capture(account: &Account, durable: bool) -> Result<(), TransportError> {
 +    use std::io::Write;
 +
 +    let bytes =
@@ -19281,7 +19322,7 @@ index 000000000..dbe916b3f
 +        .open(&temporary)
 +        .map_err(denied)?;
 +    file.write_all(&bytes)
-+        .and_then(|_| file.sync_all())
++        .and_then(|_| if durable { file.sync_all() } else { Ok(()) })
 +        .map_err(denied)?;
 +    std::fs::rename(&temporary, &account.cost_capture).map_err(denied)?;
 +    Ok(())
@@ -19484,7 +19525,7 @@ index 000000000..dbe916b3f
 +            .map_err(|_| "request state poisoned")?
 +            .billed
 +            .remove(request_id);
-+        persist_cost_capture(&account).map_err(|error| error.to_string())?;
++        write_cost_capture(&account, true).map_err(|error| error.to_string())?;
 +        Ok(
 +            json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
 +        )
@@ -19534,6 +19575,14 @@ index 000000000..dbe916b3f
 +    pub fn forget_retry(&self, thread: &str) {
 +        if let Ok(mut state) = self.6.lock() {
 +            state.retries.remove(thread);
++        }
++        let account = self
++            .0
++            .lock()
++            .ok()
++            .and_then(|accounts| accounts.get(thread).cloned());
++        if let Some(account) = account {
++            let _ = flush_cost_capture(&account);
 +        }
 +    }
 +
@@ -19681,14 +19730,14 @@ index 000000000..dbe916b3f
 +            .map_or(Value::Null, Value::from);
 +        let context =
 +            json!([policy.fingerprint, provider, route, value["model"], scope]).to_string();
-+        let key = |segment: &Value| {
++        let key = |segment: &codex_omd::model_request::SendSegment<'_>| {
 +            crate::execution::hash(
 +                json!([
 +                    context,
-+                    segment["kind"],
-+                    segment["role"],
-+                    segment["editable"],
-+                    segment["sha256"]
++                    segment.kind,
++                    segment.role,
++                    segment.editable,
++                    segment.sha256
 +                ])
 +                .to_string()
 +                .as_bytes(),
@@ -19703,7 +19752,8 @@ index 000000000..dbe916b3f
 +        let (mut pages_run, mut scanned, mut cached) = (0, 0, 0);
 +        let mut applied = Vec::new();
 +        for round in 0..2 {
-+            let (segments, opaque) = codex_omd::model_request::send_segments(value);
++            // Cached segments are matched by digest; only the ones a policy still has to read are copied into JSON.
++            let (segments, opaque) = codex_omd::model_request::send_segment_refs(value);
 +            let mut edits = BTreeMap::<String, Edits>::new();
 +            let mut keys = Vec::new();
 +            let mut pending = Vec::new();
@@ -19712,9 +19762,9 @@ index 000000000..dbe916b3f
 +                    .6
 +                    .lock()
 +                    .map_err(|_| denied("request state poisoned"))?;
-+                for segment in segments {
-+                    let id = segment["id"].as_str().unwrap_or_default().to_owned();
-+                    let segment_key = key(&segment);
++                for segment in &segments {
++                    let id = segment.id.clone();
++                    let segment_key = key(segment);
 +                    match state.verdicts.get(&segment_key) {
 +                        Some(None) => cached += 1,
 +                        Some(Some(_)) if round > 0 => {
@@ -19726,11 +19776,12 @@ index 000000000..dbe916b3f
 +                        }
 +                        None => {
 +                            keys.push((id, segment_key));
-+                            pending.push(segment);
++                            pending.push(segment.to_json());
 +                        }
 +                    }
 +                }
 +            }
++            drop(segments);
 +            scanned += pending.len();
 +            let mut pages = codex_omd::model_request::send_pages(pending);
 +            if pages.len() > codex_omd::model_request::SEND_PAGES {
@@ -20212,7 +20263,7 @@ index 000000000..dbe916b3f
 +        }
 +        let mods = self.mods();
 +        if let Some(mods) = &mods
-+            && let Some(items) = value["input"].as_array().cloned()
++            && let Some(items) = value["input"].as_array()
 +            && let Hook::Ran(result) = Self::middleware(
 +                mods,
 +                &self.3,
@@ -20220,7 +20271,7 @@ index 000000000..dbe916b3f
 +                "history",
 +                |runtime| {
 +                    let payload = json!({"thread_id": thread, "agent_id": (account.owner != "lead").then_some(&account.owner),
-+                        "model": value["model"], "items": codex_omd::history::view(&items)});
++                        "model": value["model"], "items": codex_omd::history::view(items)});
 +                    runtime.history(payload, || account.task.check_active().is_ok())
 +                },
 +            )?
@@ -20231,7 +20282,7 @@ index 000000000..dbe916b3f
 +                    None => Ok(None),
 +                    Some((owner, edit)) => serde_json::from_value(edit)
 +                        .map_err(|error| format!("history_edit_invalid: {error}"))
-+                        .and_then(|edit| codex_omd::history::apply(&items, edit))
++                        .and_then(|edit| codex_omd::history::apply(items, edit))
 +                        .map(|history| Some((owner, history))),
 +                });
 +            match history {
@@ -20389,14 +20440,14 @@ index 000000000..dbe916b3f
 +                Some(owner),
 +            ))));
 +        }
++        // Only the model is needed here, so the rest of the body is skipped rather than built into a Value.
++        #[derive(serde::Deserialize)]
++        struct Requested {
++            model: Option<String>,
++        }
 +        let requested = body
-+            .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())
-+            .and_then(|value| {
-+                value
-+                    .get("model")
-+                    .and_then(Value::as_str)
-+                    .map(str::to_owned)
-+            });
++            .and_then(|body| serde_json::from_slice::<Requested>(body.as_bytes()).ok())
++            .and_then(|requested| requested.model);
 +        let marked = request
 +            .headers
 +            .remove(ROUTE_HEADER)
@@ -21411,10 +21462,10 @@ index 000000000..dbe916b3f
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..f515c3e84
+index 000000000..89d1b8650
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1217 @@
+@@ -0,0 +1,1241 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -22195,6 +22246,30 @@ index 000000000..f515c3e84
 +    assert_eq!(capture.settled_task_charge_microusd, 8);
 +    assert_eq!(capture.retained_exposure_upper_bound_microusd, 8);
 +    assert_eq!(capture.raw_usage_attempts, 1);
++}
++
++#[test]
++fn request_path_cost_snapshots_coalesce_and_flush_at_turn_end() {
++    let (root, accounts, _task, mut request, body) = setup();
++    let capture = || -> codex_omd::TaskCostCapture {
++        serde_json::from_slice(&std::fs::read(root.path().join("evidence/task-cost.json")).unwrap())
++            .unwrap()
++    };
++    for _ in 0..2 {
++        let mut attempt = accounts
++            .before_send(&mut request, Some(&body))
++            .unwrap()
++            .unwrap();
++        let mut event = json!({"type": "response.completed", "response": {"usage": {"input_tokens": 10, "output_tokens": 1}}});
++        attempt.observe(&mut event, true).unwrap();
++    }
++    assert_eq!(
++        capture().attempts.len(),
++        1,
++        "the second settlement within the interval is coalesced"
++    );
++    accounts.forget_retry("child");
++    assert_eq!(capture().attempts.len(), 2, "turn end flushes it");
 +}
 +
 +#[test]
@@ -51120,10 +51195,10 @@ index 000000000..b72ea9486
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 000000000..2c55bfc01
+index 000000000..168e386d8
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,173 @@
 +//! Single-use user consents for prompts a mod captured, kept per thread outside mod state.
 +
 +use crate::resource_data::ResourceRef;
@@ -51190,9 +51265,13 @@ index 000000000..2c55bfc01
 +        serde_json::from_str(&text)?
 +    };
 +    let result = change(&mut consents)?;
-+    file.set_len(0)?;
-+    file.rewind()?;
-+    file.write_all(&serde_json::to_vec(&consents)?)?;
++    // Status reads and no-op deliveries leave the file as it was.
++    let bytes = serde_json::to_vec(&consents)?;
++    if bytes != text.as_bytes() && !(text.is_empty() && consents.is_empty()) {
++        file.set_len(0)?;
++        file.rewind()?;
++        file.write_all(&bytes)?;
++    }
 +    Ok(result)
 +}
 +
@@ -51295,10 +51374,10 @@ index 000000000..2c55bfc01
 +mod tests;
 diff --git a/codex-rs/omd/src/consents_tests.rs b/codex-rs/omd/src/consents_tests.rs
 new file mode 100644
-index 000000000..feea05a03
+index 000000000..ba33b9a95
 --- /dev/null
 +++ b/codex-rs/omd/src/consents_tests.rs
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,59 @@
 +use super::*;
 +
 +#[test]
@@ -51341,6 +51420,22 @@ index 000000000..feea05a03
 +        1
 +    );
 +    assert!(grant(root, "../escape", "queue", &sha, "c3").is_err());
++}
++
++#[test]
++fn reads_and_unmatched_deliveries_leave_the_file_untouched() {
++    let root = tempfile::tempdir().unwrap();
++    let root = root.path();
++    grant(root, "t1", "queue", &digest("ship it", &[]), "c1").unwrap();
++    let path = root.join("consents").join("t1.json");
++    let modified = || fs::metadata(&path).unwrap().modified().unwrap();
++    let before = modified();
++    std::thread::sleep(std::time::Duration::from_millis(20));
++    status(root, "t1", "queue", "c1").unwrap();
++    delivered(root, "t1", "no-such-message", "turn-1").unwrap();
++    assert_eq!(modified(), before);
++    grant(root, "t1", "queue", &digest("again", &[]), "c2").unwrap();
++    assert_ne!(modified(), before, "a real change is still written");
 +}
 diff --git a/codex-rs/omd/src/contract_cli.rs b/codex-rs/omd/src/contract_cli.rs
 new file mode 100644
@@ -56041,10 +56136,10 @@ index 000000000..44647048b
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..59f6d67a9
+index 000000000..9c64a8baa
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1033 @@
+@@ -0,0 +1,1063 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -56797,8 +56892,32 @@ index 000000000..59f6d67a9
 +    }
 +}
 +
++/// One provider-bound text leaf, borrowing its text from the request.
++#[derive(Debug, PartialEq)]
++pub struct SendSegment<'a> {
++    pub id: String,
++    pub kind: String,
++    pub role: String,
++    pub editable: bool,
++    pub text: &'a str,
++    pub sha256: String,
++}
++
++impl SendSegment<'_> {
++    pub fn to_json(&self) -> Value {
++        json!({"id": self.id, "kind": self.kind, "role": self.role, "editable": self.editable,
++            "text": self.text, "bytes": self.text.len(), "sha256": self.sha256})
++    }
++}
++
 +/// Every provider-bound text leaf of a Responses request in request order, and the opaque values it carries.
 +pub fn send_segments(request: &Value) -> (Vec<Value>, Vec<Value>) {
++    let (segments, opaque) = send_segment_refs(request);
++    (segments.iter().map(SendSegment::to_json).collect(), opaque)
++}
++
++/// `send_segments` without copying text, so callers can build JSON only for the segments they forward.
++pub fn send_segment_refs(request: &Value) -> (Vec<SendSegment<'_>>, Vec<Value>) {
 +    let mut texts = Vec::new();
 +    let mut opaque = Vec::new();
 +    for field in SEND_FIELDS {
@@ -56811,8 +56930,14 @@ index 000000000..59f6d67a9
 +        .filter(|(_, text)| !text.is_empty())
 +        .map(|(id, text)| {
 +            let (kind, role, editable) = classify(request, &id);
-+            json!({"id": id, "kind": kind, "role": role, "editable": editable, "text": text,
-+                "bytes": text.len(), "sha256": crate::mods::digest(text.as_bytes())})
++            SendSegment {
++                sha256: crate::mods::digest(text.as_bytes()),
++                id,
++                kind,
++                role,
++                editable,
++                text,
++            }
 +        })
 +        .collect();
 +    let opaque = opaque
@@ -57080,10 +57205,10 @@ index 000000000..59f6d67a9
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..fe2e0fb34
+index 000000000..afa32f4fe
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,410 @@
+@@ -0,0 +1,428 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -57328,6 +57453,24 @@ index 000000000..fe2e0fb34
 +}
 +
 +#[test]
++fn send_segment_refs_borrow_the_text_and_render_the_published_shape() {
++    let request = final_request();
++    let (refs, _) = send_segment_refs(&request);
++    let (segments, _) = send_segments(&request);
++    assert_eq!(refs.len(), segments.len());
++    let text = request["instructions"].as_str().unwrap();
++    assert!(
++        std::ptr::eq(refs[0].text, text),
++        "the text is borrowed, not copied"
++    );
++    assert_eq!(
++        segments[0],
++        json!({"id": "/instructions", "kind": "instructions", "role": "system", "editable": true,
++            "text": text, "bytes": text.len(), "sha256": crate::mods::digest(text.as_bytes())})
++    );
++}
++
++#[test]
 +fn send_segments_cover_every_text_leaf_and_name_opaque_values() {
 +    let (segments, opaque) = send_segments(&final_request());
 +    let view = segments
@@ -57496,10 +57639,10 @@ index 000000000..fe2e0fb34
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..b368c2c0b
+index 000000000..0f31b5e59
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4800 @@
+@@ -0,0 +1,4815 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -59990,6 +60133,16 @@ index 000000000..b368c2c0b
 +            )
 +}
 +
++/// Interceptors the engine runs synchronously while a model request is built, sent or streamed; a sleep there would stall that request's worker.
++fn request_path(event: &str, payload: &Value) -> Option<&'static str> {
++    if event != "intercept" {
++        return None;
++    }
++    ["model_request", "model_send", "response_stream"]
++        .into_iter()
++        .find(|surface| payload["surface"] == *surface)
++}
++
 +/// `time.sleep` waits outside the runtime lock and wakes early when the callback is cancelled.
 +fn sleep(
 +    access: &mut Access<'_>,
@@ -60068,6 +60221,11 @@ index 000000000..b368c2c0b
 +                    if hostless(event, &payload) {
 +                        return Err(failure(format!(
 +                            "host_operation_unavailable: time.sleep is not available during {event}"
++                        )));
++                    }
++                    if let Some(surface) = request_path(event, &payload) {
++                        return Err(failure(format!(
++                            "time_sleep_unavailable: {surface} runs on the request path"
 +                        )));
 +                    }
 +                    return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
@@ -71770,17 +71928,16 @@ index 000000000..fe9749ea2
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 000000000..ca12d1281
+index 000000000..a1d655168
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
-@@ -0,0 +1,459 @@
+@@ -0,0 +1,464 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
-+use std::collections::BTreeSet;
 +use std::fs;
 +use std::io;
 +use std::path::Path;
@@ -71876,7 +72033,8 @@ index 000000000..ca12d1281
 +    session: String,
 +    repository: PathBuf,
 +    _lock: fs::File,
-+    seen: Mutex<BTreeSet<String>>,
++    /// Message ids already taken, until they expire; a replay after that is refused as expired.
++    seen: Mutex<BTreeMap<String, u64>>,
 +    sent: Mutex<BTreeMap<String, Sent>>,
 +}
 +
@@ -71971,7 +72129,7 @@ index 000000000..ca12d1281
 +            session: session.to_owned(),
 +            repository: repository.to_owned(),
 +            _lock: lock,
-+            seen: Mutex::new(BTreeSet::new()),
++            seen: Mutex::new(BTreeMap::new()),
 +            sent: Mutex::new(BTreeMap::new()),
 +        })
 +    }
@@ -72111,26 +72269,31 @@ index 000000000..ca12d1281
 +    /// Takes verified, unexpired, first-seen messages; expired ones get a receipt, replays are dropped.
 +    pub fn receive(&self, seal: &dyn Seal) -> io::Result<Vec<Inbound>> {
 +        let inbox = self.root.join("inbox").join(&self.session);
-+        let (messages, _) = drain(&inbox, |envelope| {
-+            let Some(message) = opened(seal, "message", envelope)? else {
-+                return Ok(None);
-+            };
-+            if message["to"]["session"] != self.session.as_str() {
-+                return Ok(None);
-+            }
-+            let id = message["id"].as_str().unwrap_or_default().to_owned();
-+            if !self.seen.lock().is_ok_and(|mut seen| seen.insert(id)) {
-+                return Ok(None);
-+            }
-+            if message["expires_at_ms"]
-+                .as_u64()
-+                .is_none_or(|at| at < now_ms())
-+            {
-+                self.receipt(seal, &message, "expired", None)?;
-+                return Ok(None);
-+            }
-+            Ok(Some(Inbound { message }))
-+        })?;
++        let now = now_ms();
++        if let Ok(mut seen) = self.seen.lock() {
++            seen.retain(|_, expires_at_ms| *expires_at_ms >= now);
++        }
++        let (messages, _) =
++            drain(&inbox, |envelope| {
++                let Some(message) = opened(seal, "message", envelope)? else {
++                    return Ok(None);
++                };
++                if message["to"]["session"] != self.session.as_str() {
++                    return Ok(None);
++                }
++                let id = message["id"].as_str().unwrap_or_default().to_owned();
++                let expires_at_ms = message["expires_at_ms"].as_u64();
++                if !self.seen.lock().is_ok_and(|mut seen| {
++                    seen.insert(id, expires_at_ms.unwrap_or_default()).is_none()
++                }) {
++                    return Ok(None);
++                }
++                if expires_at_ms.is_none_or(|at| at < now) {
++                    self.receipt(seal, &message, "expired", None)?;
++                    return Ok(None);
++                }
++                Ok(Some(Inbound { message }))
++            })?;
 +        Ok(messages)
 +    }
 +
@@ -72235,10 +72398,10 @@ index 000000000..ca12d1281
 +mod tests;
 diff --git a/codex-rs/omd/src/peers_tests.rs b/codex-rs/omd/src/peers_tests.rs
 new file mode 100644
-index 000000000..0063c7f69
+index 000000000..6019b2c77
 --- /dev/null
 +++ b/codex-rs/omd/src/peers_tests.rs
-@@ -0,0 +1,324 @@
+@@ -0,0 +1,365 @@
 +use super::*;
 +
 +struct TestSeal;
@@ -72406,6 +72569,47 @@ index 000000000..0063c7f69
 +    assert!(beta.receive(&TestSeal).unwrap().is_empty());
 +    let receipts = alpha.receipts(&TestSeal).unwrap();
 +    assert_eq!(receipts[0].1["status"], "expired");
++}
++
++#[test]
++fn seen_ids_are_forgotten_once_their_message_expires() {
++    let store = tempfile::tempdir().unwrap();
++    let alpha = Peers::open(store.path(), "alpha", Path::new("/repo")).unwrap();
++    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
++    let chat = endpoint("chat", "same");
++    beta.publish(std::slice::from_ref(&chat)).unwrap();
++    alpha
++        .send(&TestSeal, &chat, "beta", "chat", json!("hi"), None, 60_000)
++        .unwrap();
++    let path = inbox_file(store.path(), "beta");
++    let mut message =
++        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap()["message"].clone();
++    message["expires_at_ms"] = json!(now_ms() + 150);
++    let envelope = serde_json::to_vec(&sealed(&TestSeal, "message", message).unwrap()).unwrap();
++    fs::write(&path, &envelope).unwrap();
++    assert_eq!(beta.receive(&TestSeal).unwrap().len(), 1);
++    fs::write(&path, &envelope).unwrap();
++    assert!(
++        beta.receive(&TestSeal).unwrap().is_empty(),
++        "a replay is dropped"
++    );
++    assert_eq!(beta.seen.lock().unwrap().len(), 1);
++    std::thread::sleep(std::time::Duration::from_millis(250));
++    fs::write(&path, &envelope).unwrap();
++    assert!(
++        beta.receive(&TestSeal).unwrap().is_empty(),
++        "a replay after expiry is still refused"
++    );
++    assert!(
++        beta.seen.lock().unwrap().values().all(|at| *at < now_ms()),
++        "only the expired replay is recorded"
++    );
++    fs::remove_file(&path).ok();
++    beta.receive(&TestSeal).unwrap();
++    assert!(
++        beta.seen.lock().unwrap().is_empty(),
++        "expired ids are swept"
++    );
 +}
 +
 +#[test]
@@ -91685,10 +91889,10 @@ index 000000000..b43029f5b
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..fae61484c
+index 000000000..a07629afa
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,541 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -91853,10 +92057,13 @@ index 000000000..fae61484c
 +    if !changed {
 +        return;
 +    }
-+    forget();
 +    match crate::mod_runtime::render_hooked() {
-+        Some(hooked) => HOOKED.store(hooked, Ordering::Relaxed),
-+        // A busy runtime leaves the flag as it was and asks again on the next refresh.
++        Some(hooked) => {
++            forget();
++            HOOKED.store(hooked, Ordering::Relaxed);
++        }
++        // A busy runtime leaves the flag and finished renders as they were and asks again on the next frame;
++        // forgetting them now would only queue renders that need the same busy runtime.
 +        None => engine(|engine| engine.revision = None),
 +    }
 +}
@@ -92324,10 +92531,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..7074da6b0
+index 000000000..20b976035
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1222 @@
+@@ -0,0 +1,1238 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -92567,7 +92774,7 @@ index 000000000..7074da6b0
 +        .store
 +        .and_then(|store| {
 +            let runtime = shared_host(store).ok()?;
-+            let mut runtime = lock_within(&runtime)?;
++            let mut runtime = lock_within(&runtime, LOCK_WAIT)?;
 +            reload(&mut runtime);
 +            Some(runtime.status())
 +        })
@@ -92984,9 +93191,15 @@ index 000000000..7074da6b0
 +    result
 +}
 +
-+/// Waits briefly for a busy lock instead of silently giving up on the first contention.
-+fn lock_within<T>(mutex: &Mutex<T>) -> Option<std::sync::MutexGuard<'_, T>> {
-+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
++/// How long a caller off the draw path waits for a busy lock before giving up.
++const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
++
++/// Waits up to `wait` for a busy lock instead of silently giving up on the first contention.
++fn lock_within<T>(
++    mutex: &Mutex<T>,
++    wait: std::time::Duration,
++) -> Option<std::sync::MutexGuard<'_, T>> {
++    let deadline = std::time::Instant::now() + wait;
 +    loop {
 +        match mutex.try_lock() {
 +            Ok(guard) => return Some(guard),
@@ -93002,13 +93215,20 @@ index 000000000..7074da6b0
 +fn try_with_host<T>(
 +    run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>,
 +) -> Option<T> {
++    try_with_host_within(LOCK_WAIT, run)
++}
++
++fn try_with_host_within<T>(
++    wait: std::time::Duration,
++    run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>,
++) -> Option<T> {
 +    let paths = crate::omd::mod_paths()?;
-+    let opened = lock_within(&HOST)?.clone();
++    let opened = lock_within(&HOST, wait)?.clone();
 +    let runtime = match opened {
 +        Some(runtime) => runtime,
 +        None => shared_host(paths.store.clone()?).ok()?,
 +    };
-+    let mut runtime = lock_within(&runtime)?;
++    let mut runtime = lock_within(&runtime, wait)?;
 +    reload(&mut runtime);
 +    let result = run(&mut runtime, &paths);
 +    record_status(&runtime, &paths);
@@ -93298,7 +93518,7 @@ index 000000000..7074da6b0
 +/// `None` while the runtime is busy or the context moves on, so the render is asked again.
 +pub(crate) fn render(input: Value) -> Option<Option<codex_omd::ModChain>> {
 +    let _thread = codex_omd::StateThread::enter(crate::mod_surface::current_thread());
-+    let Some(runtime) = lock_within(&HOST)?.clone() else {
++    let Some(runtime) = lock_within(&HOST, LOCK_WAIT)?.clone() else {
 +        return Some(None);
 +    };
 +    match codex_omd::render_shared(&runtime, input, context_unchanged()) {
@@ -93313,8 +93533,11 @@ index 000000000..7074da6b0
 +    }
 +}
 +
++/// Asked from the draw loop, so it never waits: a busy runtime answers `None` and the next frame asks again.
 +pub(crate) fn render_hooked() -> Option<bool> {
-+    try_with_host(|runtime, _| Some(runtime.intercepts("render").is_some()))
++    try_with_host_within(std::time::Duration::ZERO, |runtime, _| {
++        Some(runtime.intercepts("render").is_some())
++    })
 +}
 +
 +pub(crate) fn run(

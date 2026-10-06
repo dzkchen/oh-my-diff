@@ -64,9 +64,13 @@ fn with<T>(
         serde_json::from_str(&text)?
     };
     let result = change(&mut consents)?;
-    file.set_len(0)?;
-    file.rewind()?;
-    file.write_all(&serde_json::to_vec(&consents)?)?;
+    // Status reads and no-op deliveries leave the file as it was.
+    let bytes = serde_json::to_vec(&consents)?;
+    if bytes != text.as_bytes() && !(text.is_empty() && consents.is_empty()) {
+        file.set_len(0)?;
+        file.rewind()?;
+        file.write_all(&bytes)?;
+    }
     Ok(result)
 }
 

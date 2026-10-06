@@ -101,14 +101,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "cd5589d6874522b91a8aa22805b0f776303e5ba5deb2a467c96a86d41706b946",
+        "index.ts": "904814edc357a13e07e321835e2480424a8457e7dcb2b5499b12dbee212ad769",
         "mod.json": "7a79ee76759840371050e302910b1fa315c21ce17472edecbb364e7df5b547e0",
         "models.json": "623b6512353588d10a000dc6ccbd8d5ee647227678fa29c1c5cfa8ec3fc825fb",
         "setup.mjs": "f1634b2b1752b12ba8a5196ca5f4e52d3678371d9a2443563ae4163a944b10c4",
         "transport.mjs": "9ae78d3101ad0ec0ba6672e6202b21591b423f2309d7df729e16186335e7a0e9"
       },
       "id": "omd_cursor",
-      "package_sha256": "8b2af2cfd79fd6c19be03202681b1cd036ff31c203bd6eae325a7ee4a8506e5f",
+      "package_sha256": "81af42fbef9bce11835cc3b59572d920e7c9986ff9cbb289548a60f8ebd1efad",
       "source": "mods/first-party/omd_cursor",
       "version": "0.1.0-preview.1"
     },

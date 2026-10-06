@@ -36,7 +36,48 @@ pub struct Rates {
     pub provider_billed: bool,
 }
 
+/// Minimum spacing between `task-cost.json` snapshots written on the request path.
+const COST_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Per snapshot path: when it was last written and whether a later change is still unwritten.
+static COST_SNAPSHOTS: Mutex<BTreeMap<std::path::PathBuf, (Instant, bool)>> =
+    Mutex::new(BTreeMap::new());
+
+/// The append-only task journal is the durable record; this snapshot of it is rewritten in full,
+/// so request-path updates are coalesced to one write a second and flushed at turn end.
 fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
+    let due = COST_SNAPSHOTS.lock().map_or(true, |mut snapshots| {
+        match snapshots.get_mut(&account.cost_capture) {
+            Some((written, dirty)) if written.elapsed() < COST_SNAPSHOT_INTERVAL => {
+                *dirty = true;
+                false
+            }
+            _ => {
+                snapshots.insert(account.cost_capture.clone(), (Instant::now(), false));
+                true
+            }
+        }
+    });
+    if due {
+        write_cost_capture(account, false)?;
+    }
+    Ok(())
+}
+
+/// Writes a snapshot a coalesced update left behind, durably, and forgets the path.
+fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
+    let dirty = COST_SNAPSHOTS
+        .lock()
+        .ok()
+        .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
+        .is_some_and(|(_, dirty)| dirty);
+    if dirty {
+        write_cost_capture(account, true)?;
+    }
+    Ok(())
+}
+
+fn write_cost_capture(account: &Account, durable: bool) -> Result<(), TransportError> {
     use std::io::Write;
 
     let bytes =
@@ -55,7 +96,7 @@ fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
         .open(&temporary)
         .map_err(denied)?;
     file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
+        .and_then(|_| if durable { file.sync_all() } else { Ok(()) })
         .map_err(denied)?;
     std::fs::rename(&temporary, &account.cost_capture).map_err(denied)?;
     Ok(())
@@ -258,7 +299,7 @@ impl Accounts {
             .map_err(|_| "request state poisoned")?
             .billed
             .remove(request_id);
-        persist_cost_capture(&account).map_err(|error| error.to_string())?;
+        write_cost_capture(&account, true).map_err(|error| error.to_string())?;
         Ok(
             json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
         )
@@ -308,6 +349,14 @@ impl Accounts {
     pub fn forget_retry(&self, thread: &str) {
         if let Ok(mut state) = self.6.lock() {
             state.retries.remove(thread);
+        }
+        let account = self
+            .0
+            .lock()
+            .ok()
+            .and_then(|accounts| accounts.get(thread).cloned());
+        if let Some(account) = account {
+            let _ = flush_cost_capture(&account);
         }
     }
 
@@ -455,14 +504,14 @@ impl Accounts {
             .map_or(Value::Null, Value::from);
         let context =
             json!([policy.fingerprint, provider, route, value["model"], scope]).to_string();
-        let key = |segment: &Value| {
+        let key = |segment: &codex_omd::model_request::SendSegment<'_>| {
             crate::execution::hash(
                 json!([
                     context,
-                    segment["kind"],
-                    segment["role"],
-                    segment["editable"],
-                    segment["sha256"]
+                    segment.kind,
+                    segment.role,
+                    segment.editable,
+                    segment.sha256
                 ])
                 .to_string()
                 .as_bytes(),
@@ -477,7 +526,8 @@ impl Accounts {
         let (mut pages_run, mut scanned, mut cached) = (0, 0, 0);
         let mut applied = Vec::new();
         for round in 0..2 {
-            let (segments, opaque) = codex_omd::model_request::send_segments(value);
+            // Cached segments are matched by digest; only the ones a policy still has to read are copied into JSON.
+            let (segments, opaque) = codex_omd::model_request::send_segment_refs(value);
             let mut edits = BTreeMap::<String, Edits>::new();
             let mut keys = Vec::new();
             let mut pending = Vec::new();
@@ -486,9 +536,9 @@ impl Accounts {
                     .6
                     .lock()
                     .map_err(|_| denied("request state poisoned"))?;
-                for segment in segments {
-                    let id = segment["id"].as_str().unwrap_or_default().to_owned();
-                    let segment_key = key(&segment);
+                for segment in &segments {
+                    let id = segment.id.clone();
+                    let segment_key = key(segment);
                     match state.verdicts.get(&segment_key) {
                         Some(None) => cached += 1,
                         Some(Some(_)) if round > 0 => {
@@ -500,11 +550,12 @@ impl Accounts {
                         }
                         None => {
                             keys.push((id, segment_key));
-                            pending.push(segment);
+                            pending.push(segment.to_json());
                         }
                     }
                 }
             }
+            drop(segments);
             scanned += pending.len();
             let mut pages = codex_omd::model_request::send_pages(pending);
             if pages.len() > codex_omd::model_request::SEND_PAGES {
@@ -986,7 +1037,7 @@ impl ResponseObserver for Accounts {
         }
         let mods = self.mods();
         if let Some(mods) = &mods
-            && let Some(items) = value["input"].as_array().cloned()
+            && let Some(items) = value["input"].as_array()
             && let Hook::Ran(result) = Self::middleware(
                 mods,
                 &self.3,
@@ -994,7 +1045,7 @@ impl ResponseObserver for Accounts {
                 "history",
                 |runtime| {
                     let payload = json!({"thread_id": thread, "agent_id": (account.owner != "lead").then_some(&account.owner),
-                        "model": value["model"], "items": codex_omd::history::view(&items)});
+                        "model": value["model"], "items": codex_omd::history::view(items)});
                     runtime.history(payload, || account.task.check_active().is_ok())
                 },
             )?
@@ -1005,7 +1056,7 @@ impl ResponseObserver for Accounts {
                     None => Ok(None),
                     Some((owner, edit)) => serde_json::from_value(edit)
                         .map_err(|error| format!("history_edit_invalid: {error}"))
-                        .and_then(|edit| codex_omd::history::apply(&items, edit))
+                        .and_then(|edit| codex_omd::history::apply(items, edit))
                         .map(|history| Some((owner, history))),
                 });
             match history {
@@ -1163,14 +1214,14 @@ impl ResponseObserver for Accounts {
                 Some(owner),
             ))));
         }
+        // Only the model is needed here, so the rest of the body is skipped rather than built into a Value.
+        #[derive(serde::Deserialize)]
+        struct Requested {
+            model: Option<String>,
+        }
         let requested = body
-            .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())
-            .and_then(|value| {
-                value
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            });
+            .and_then(|body| serde_json::from_slice::<Requested>(body.as_bytes()).ok())
+            .and_then(|requested| requested.model);
         let marked = request
             .headers
             .remove(ROUTE_HEADER)

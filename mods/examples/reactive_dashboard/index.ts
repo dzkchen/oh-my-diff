@@ -7,9 +7,7 @@ export default function activate(api: ModAPI) {
   const summary = api.derive(() => `${query.get() || 'no filter'} · ${searches.get()} searches · ${ticks.get()} ticks`);
   api.subscribe(query, () => searches.update(count => count + 1));
 
-  api.on('component_event', event => {
-    if (event.component === 'dashboard_query' && event.kind === 'change' && typeof event.value === 'string') query.set(event.value);
-  });
+  // The input submits through `search`; following every keystroke would re-run each terminal mod per edit.
   api.command('search', text => {
     query.set(typeof text === 'string' ? text.trim() : '');
     return null;

@@ -781,6 +781,30 @@ fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
 }
 
 #[test]
+fn request_path_cost_snapshots_coalesce_and_flush_at_turn_end() {
+    let (root, accounts, _task, mut request, body) = setup();
+    let capture = || -> codex_omd::TaskCostCapture {
+        serde_json::from_slice(&std::fs::read(root.path().join("evidence/task-cost.json")).unwrap())
+            .unwrap()
+    };
+    for _ in 0..2 {
+        let mut attempt = accounts
+            .before_send(&mut request, Some(&body))
+            .unwrap()
+            .unwrap();
+        let mut event = json!({"type": "response.completed", "response": {"usage": {"input_tokens": 10, "output_tokens": 1}}});
+        attempt.observe(&mut event, true).unwrap();
+    }
+    assert_eq!(
+        capture().attempts.len(),
+        1,
+        "the second settlement within the interval is coalesced"
+    );
+    accounts.forget_retry("child");
+    assert_eq!(capture().attempts.len(), 2, "turn end flushes it");
+}
+
+#[test]
 fn dropping_or_unpriced_usage_keeps_the_full_reservation() {
     let (_root, accounts, task, mut request, body) = setup();
     drop(accounts.before_send(&mut request, Some(&body)).unwrap());
