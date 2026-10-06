@@ -112,7 +112,8 @@
       "compaction_intercept_v1",
       "composer_v2",
       "lifecycle_events_v1",
-      "user_submissions_v1"
+      "user_submissions_v1",
+      "terminal_raster_v1"
     ]
   },
   "apis": [

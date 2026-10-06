@@ -15213,7 +15213,7 @@ index 9d61157c4..1d511f153 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 37b5c788a..4f23d9bde 100644
+index 37b5c788a..c0151ebb1 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -230,6 +230,8 @@ mod link_hover;
@@ -15285,7 +15285,7 @@ index 37b5c788a..4f23d9bde 100644
                      if self.backtrack.primed && !pasted.is_empty() {
                          if self.backtrack.overlay_preview_active {
                              self.cancel_transcript_browsing(tui);
-@@ -1153,7 +1178,74 @@ impl App {
+@@ -1153,7 +1178,84 @@ impl App {
          Ok(())
      }
 
@@ -15356,11 +15356,21 @@ index 37b5c788a..4f23d9bde 100644
 +            screen_size.width,
 +            screen_size.height,
 +        );
++        crate::mod_client::update(
++            self.local_settings.tui.animations,
++            screen_size.width,
++            screen_size.height,
++            crate::omd::mouse_enabled()
++                && tui.is_alt_screen_active()
++                && codex_terminal_detection::terminal_info()
++                    .multiplexer
++                    .is_none(),
++        );
 +        self.sync_mod_ui();
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1183,20 +1275,30 @@ impl App {
+@@ -1183,23 +1285,34 @@ impl App {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
@@ -15396,6 +15406,10 @@ index 37b5c788a..4f23d9bde 100644
                      frame.set_cursor_position((x, y));
                  }
              })?;
++            crate::mod_client::flush();
+             Ok(rendered_area)
+         })
+     }
 diff --git a/codex-rs/tui/src/app/agents_overview_new.rs b/codex-rs/tui/src/app/agents_overview_new.rs
 index d422598d5..0d761fea5 100644
 --- a/codex-rs/tui/src/app/agents_overview_new.rs
@@ -15973,7 +15987,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 23d40daaa..889b7fb21 100644
+index 23d40daaa..d9932172c 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -79,8 +79,22 @@ impl App {
@@ -16168,7 +16182,7 @@ index 23d40daaa..889b7fb21 100644
              rendered_cursor = bottom.cursor_pos(bottom_area);
              if let Some(position) = rendered_cursor {
                  frame.set_cursor_style(bottom.cursor_style(bottom_area));
-@@ -265,6 +271,12 @@ impl App {
+@@ -265,6 +271,13 @@ impl App {
          {
              self.turn_tips.acknowledge(*surface);
          }
@@ -16178,6 +16192,7 @@ index 23d40daaa..889b7fb21 100644
 +            self.local_settings.tui.animations,
 +            tui.is_owned_screen(),
 +        );
++        crate::mod_client::flush();
          if footer_height_changed {
              tui.frame_requester().schedule_frame();
          }
@@ -17181,6 +17196,18 @@ index 915b91463..74a1d9c86 100644
 -  GPT-5.6-Sol default · /tmp/project
 +  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
    esc latest                                           ⚠ 1 warning · f2 to view
+diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
+index 37add4bcf..5dba587cb 100644
+--- a/codex-rs/tui/src/app/startup.rs
++++ b/codex-rs/tui/src/app/startup.rs
+@@ -1335,6 +1335,7 @@ See the Codex keymap documentation for supported actions and examples."
+         if let Err(err) = app_server.shutdown().await {
+             tracing::warn!(error = %err, "failed to shut down embedded app server");
+         }
++        crate::mod_client::teardown();
+         let clear_pet_result = tui.clear_ambient_pet_image();
+         let clear_result = tui.terminal.clear();
+         // Keep the alternate screen active until the outer guard restores both keyboard stacks.
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
 index 9c1af274f..94bc9e314 100644
 --- a/codex-rs/tui/src/app/tests.rs
@@ -18966,7 +18993,7 @@ index 00c2c2adf..a2d537064 100644
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 7fafd6dd4..238a2a7e2 100644
+index 7fafd6dd4..237e43373 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -308,6 +308,7 @@ mod interaction;
@@ -19017,21 +19044,19 @@ index 7fafd6dd4..238a2a7e2 100644
          self.update_due_hook_visibility();
          self.schedule_hook_timer_if_needed();
          self.bottom_pane.pre_draw_tick();
-@@ -1291,6 +1299,13 @@ impl ChatWidget {
+@@ -1291,6 +1299,11 @@ impl ChatWidget {
          from_replay: bool,
          turn_id: &str,
      ) {
-+        if let (Some(client_id), Some(thread), Some(root)) = (
-+            client_id,
-+            self.thread_id,
-+            crate::omd::store_root(),
-+        ) {
++        if let (Some(client_id), Some(thread), Some(root)) =
++            (client_id, self.thread_id, crate::omd::store_root())
++        {
 +            let _ = codex_omd::consents::delivered(&root, &thread.to_string(), client_id, turn_id);
 +        }
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
-@@ -2022,7 +2037,13 @@ impl ChatWidget {
+@@ -2022,7 +2035,13 @@ impl ChatWidget {
 
      #[cfg(test)]
      pub(crate) fn status_line_text(&self) -> Option<String> {
@@ -22202,7 +22227,7 @@ index 2ff06d229..6d411fed5 100644
      let mut modifiers = KeyModifiers::NONE;
      let mut key_name = None;
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 2697cbabd..25d6b73c2 100644
+index 2697cbabd..f727c73a7 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -161,6 +161,7 @@ pub use insert_history::insert_history_lines;
@@ -22213,16 +22238,18 @@ index 2697cbabd..25d6b73c2 100644
  mod keymap_setup;
  mod line_truncation;
  pub(crate) mod live_wrap;
-@@ -173,6 +174,16 @@ mod markdown_render;
+@@ -173,6 +174,18 @@ mod markdown_render;
  mod markdown_stream;
  mod markdown_text_merge;
  mod mention_codec;
 +mod mod_backdrop;
 +mod mod_backdrop_sync;
++mod mod_client;
 +mod mod_components;
 +mod mod_document;
 +mod mod_layout;
 +mod mod_pty;
++mod mod_raster;
 +mod mod_render;
 +mod mod_runtime;
 +mod mod_surface;
@@ -22230,7 +22257,7 @@ index 2697cbabd..25d6b73c2 100644
  mod model_catalog;
  mod model_migration;
  mod motion;
-@@ -181,6 +192,7 @@ mod named_session_lookup;
+@@ -181,6 +194,7 @@ mod named_session_lookup;
  mod notifications;
  #[cfg(any(not(debug_assertions), test))]
  mod npm_registry;
@@ -23513,10 +23540,18 @@ index bac11e7a2..1dbabffe2 100644
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 50b4e80e7..7b0876784 100644
+index 50b4e80e7..11c570d44 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
-@@ -651,6 +651,11 @@ impl OverlayInput {
+@@ -120,6 +120,7 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused:
+
+ impl Drop for Tui {
+     fn drop(&mut self) {
++        crate::mod_client::teardown();
+         if let Err(err) = self.clear_ambient_pet_image() {
+             tracing::debug!(error = %err, "failed to clear ambient pet image on TUI drop");
+         }
+@@ -651,6 +652,11 @@ impl OverlayInput {
      }
  }
 
@@ -23528,7 +23563,7 @@ index 50b4e80e7..7b0876784 100644
  pub struct Tui {
      pub(crate) link_hover: link_pointer::LinkHover,
      frame_requester: FrameRequester,
-@@ -1001,6 +1006,22 @@ impl Tui {
+@@ -1001,6 +1007,22 @@ impl Tui {
 
      /// Emit a desktop notification now if the terminal is unfocused.
      /// Returns true if a notification was posted.
@@ -23551,6 +23586,55 @@ index 50b4e80e7..7b0876784 100644
      pub fn notify(&mut self, message: impl AsRef<str>) -> bool {
          let terminal_focused = self.is_terminal_focused();
          if !should_emit_notification(self.notification_condition, terminal_focused) {
+diff --git a/codex-rs/tui/src/tui/alternate_screen.rs b/codex-rs/tui/src/tui/alternate_screen.rs
+index 2313da69d..01232d273 100644
+--- a/codex-rs/tui/src/tui/alternate_screen.rs
++++ b/codex-rs/tui/src/tui/alternate_screen.rs
+@@ -113,6 +113,9 @@ impl AlternateScreen {
+                 // Some Windows terminals send legacy mouse reports as key records. Request SGR
+                 // reports so ConPTY can translate them into mouse records instead.
+                 writer.write_all(b"\x1b[?1006h")?;
++                if crate::mod_client::enable_pixel_pointer() {
++                    writer.write_all(b"\x1b[?1016h")?;
++                }
+                 writer.flush()
+             })
+         } else {
+@@ -131,6 +134,9 @@ impl AlternateScreen {
+             .link_pointer
+             .restore(writer, codex_terminal_detection::terminal_info().name);
+         if self.mouse_active.load(Ordering::Relaxed) {
++            if crate::mod_client::disable_pixel_pointer() {
++                let _ = writer.write_all(b"\x1b[?1016l");
++            }
+             let result = execute!(writer, DisableMouseCapture);
+             #[cfg(windows)]
+             let result = {
+diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
+index 35afa4bfb..cdef1777b 100644
+--- a/codex-rs/tui/src/tui/event_stream.rs
++++ b/codex-rs/tui/src/tui/event_stream.rs
+@@ -301,7 +301,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+                 self.terminal_focused.store(false, Ordering::Relaxed);
+                 Some(TuiEvent::FocusLost)
+             }
+-            Event::Mouse(mouse) => Some(TuiEvent::Mouse(mouse)),
++            Event::Mouse(mouse) => crate::mod_client::to_cells(mouse).map(TuiEvent::Mouse),
+         }
+     }
+ }
+diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
+index 58a05b414..892b954f4 100644
+--- a/codex-rs/tui/src/tui/job_control.rs
++++ b/codex-rs/tui/src/tui/job_control.rs
+@@ -202,6 +202,7 @@ impl PreparedResumeAction {
+
+ /// Deliver SIGTSTP after restoring terminal state, then re-applies terminal modes once resumed.
+ fn suspend_process() -> Result<()> {
++    crate::mod_client::teardown();
+     super::restore()?;
+     super::terminal_stderr::pause()?;
+     unsafe {
 diff --git a/codex-rs/tui/src/tui_startup_tests.rs b/codex-rs/tui/src/tui_startup_tests.rs
 index b0e27aa64..44faa5ce9 100644
 --- a/codex-rs/tui/src/tui_startup_tests.rs
@@ -35415,10 +35499,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..7f9d3cb36
+index 000000000..fd605ee0b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2334 @@
+@@ -0,0 +1,2335 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -35885,7 +35969,8 @@ index 000000000..7f9d3cb36
 +    active: impl Fn() -> bool,
 +) {
 +    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
-+        "presentation": views.current_presentation()});
++        "presentation": views.current_presentation(),
++        "client": codex_omd::client_surface::client()});
 +    let rendered_ms = codex_omd::ModViewSnapshot::clock();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
 +    let status = runtime.status();
@@ -59009,10 +59094,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..4a31c5291
+index 000000000..0f22a932c
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,445 @@
+@@ -0,0 +1,455 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -59047,6 +59132,7 @@ index 000000000..4a31c5291
 +    "terminal.pane",
 +    "terminal.panes",
 +    "terminal.notice",
++    "terminal.blit",
 +    "terminal.pty",
 +];
 +
@@ -59087,6 +59173,10 @@ index 000000000..4a31c5291
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String>;
 +
 +    fn redraw(&self) {}
++
++    fn client(&self) -> Value {
++        Value::Null
++    }
 +}
 +
 +pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -59161,6 +59251,11 @@ index 000000000..4a31c5291
 +    if let Some(surface) = surface {
 +        surface.redraw();
 +    }
++}
++
++pub fn client() -> Value {
++    let surface = hub().surface.as_ref().map(|(_, surface)| surface.clone());
++    surface.map_or(Value::Null, |surface| surface.client())
 +}
 +
 +pub fn submit(
@@ -64225,10 +64320,10 @@ index 000000000..9baa69a16
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..324748118
+index 000000000..4693fb703
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,216 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -64345,6 +64440,7 @@ index 000000000..324748118
 +pub use mods::ModActivity;
 +pub use mods::ModAgent;
 +pub use mods::ModAgentDefinition;
++pub use mods::ModAnchor;
 +pub use mods::ModApprovalScope;
 +pub use mods::ModAsciiBackdrop;
 +pub use mods::ModAutonomy;
@@ -64379,6 +64475,8 @@ index 000000000..324748118
 +pub use mods::ModListRow;
 +pub use mods::ModMcpServer;
 +pub use mods::ModOsAccess;
++pub use mods::ModOverlay;
++pub use mods::ModOverlayClip;
 +pub use mods::ModPackage;
 +pub use mods::ModPackageGrant;
 +pub use mods::ModPackageLock;
@@ -64390,6 +64488,7 @@ index 000000000..324748118
 +pub use mods::ModPolicyScope;
 +pub use mods::ModRange;
 +pub use mods::ModRenderSite;
++pub use mods::ModScreenAnchor;
 +pub use mods::ModSelectOption;
 +pub use mods::ModSelection;
 +pub use mods::ModSidebarSide;
@@ -66151,10 +66250,10 @@ index 000000000..6be4db790
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..52dd83045
+index 000000000..4f5f6fa4c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4807 @@
+@@ -0,0 +1,4813 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -66172,6 +66271,7 @@ index 000000000..52dd83045
 +mod view;
 +pub use view::MOD_KEY_LIMIT;
 +pub use view::ModActivity;
++pub use view::ModAnchor;
 +pub use view::ModAsciiBackdrop;
 +pub use view::ModBackdrop;
 +pub use view::ModBackdropOffset;
@@ -66190,9 +66290,12 @@ index 000000000..52dd83045
 +pub use view::ModLayoutSplit;
 +pub use view::ModLayoutTabs;
 +pub use view::ModListRow;
++pub use view::ModOverlay;
++pub use view::ModOverlayClip;
 +pub use view::ModPanel;
 +pub use view::ModRange;
 +pub use view::ModRenderSite;
++pub use view::ModScreenAnchor;
 +pub use view::ModSelectOption;
 +pub use view::ModSidebarSide;
 +pub use view::ModSiteMode;
@@ -66480,6 +66583,7 @@ index 000000000..52dd83045
 +    "composer_v2",
 +    "lifecycle_events_v1",
 +    "user_submissions_v1",
++    "terminal_raster_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -66568,6 +66672,7 @@ index 000000000..52dd83045
 +    "terminal.pane",
 +    "terminal.panes",
 +    "terminal.notice",
++    "terminal.blit",
 +    "terminal.pty",
 +    "model.complete",
 +    "model.fork",
@@ -70964,10 +71069,10 @@ index 000000000..52dd83045
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..4be77011f
+index 000000000..35e9f492b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,629 @@
+@@ -0,0 +1,630 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -71444,7 +71549,8 @@ index 000000000..4be77011f
 +            | ModComponent::Document { id, .. }
 +            | ModComponent::Diff { id, .. }
 +            | ModComponent::Terminal { id, .. }
-+            | ModComponent::Image { id, .. } => (Some(id.as_str()), &[][..]),
++            | ModComponent::Image { id, .. }
++            | ModComponent::Raster { id, .. } => (Some(id.as_str()), &[][..]),
 +            ModComponent::Slot | ModComponent::Native { .. } => (None, &[][..]),
 +        };
 +        if component_id == Some(id) {
@@ -71599,10 +71705,10 @@ index 000000000..4be77011f
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..7b03768c9
+index 000000000..1483ed3f4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,341 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -71670,7 +71776,8 @@ index 000000000..7b03768c9
 +            | "terminal.prompt"
 +            | "terminal.pane"
 +            | "terminal.panes"
-+            | "terminal.notice" => Ok("terminal"),
++            | "terminal.notice"
++            | "terminal.blit" => Ok("terminal"),
 +            "terminal.pty" => Ok("pty"),
 +            "model.complete" | "model.fork" => Ok("agents"),
 +            "tools.define" | "tools.undefine" => Ok("tools"),
@@ -77608,10 +77715,10 @@ index 000000000..4cf6e15c3
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..8b4ecd744
+index 000000000..14d76d519
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,1946 @@
+@@ -0,0 +1,2045 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -77834,7 +77941,7 @@ index 000000000..8b4ecd744
 +    }
 +}
 +
-+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 +#[serde(deny_unknown_fields)]
 +pub struct ModBackdropOffset {
 +    pub x: i16,
@@ -78006,6 +78113,64 @@ index 000000000..8b4ecd744
 +    pub mode: ModSiteMode,
 +    #[serde(default)]
 +    pub components: Vec<ModComponent>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub overlay: Option<ModOverlay>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModScreenAnchor {
++    TopLeft,
++    TopRight,
++    BottomLeft,
++    BottomRight,
++    Center,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(untagged)]
++pub enum ModAnchor {
++    Screen(ModScreenAnchor),
++    Component { component: String },
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModOverlayClip {
++    #[default]
++    Screen,
++    Anchor,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ModOverlay {
++    pub anchor: ModAnchor,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub offset: Option<ModBackdropOffset>,
++    pub width: u16,
++    pub height: u16,
++    #[serde(default)]
++    pub z: u8,
++    #[serde(default)]
++    pub clip: ModOverlayClip,
++    #[serde(default)]
++    pub border: bool,
++}
++
++impl ModOverlay {
++    fn valid(&self) -> bool {
++        (1..=200).contains(&self.width)
++            && (1..=60).contains(&self.height)
++            && self.z <= 9
++            && self.offset.as_ref().is_none_or(|offset| {
++                offset.x.unsigned_abs() <= 500 && offset.y.unsigned_abs() <= 200
++            })
++            && match &self.anchor {
++                ModAnchor::Screen(_) => self.clip == ModOverlayClip::Screen,
++                ModAnchor::Component { component } => mod_component_id(component),
++            }
++    }
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -78022,6 +78187,8 @@ index 000000000..8b4ecd744
 +        min_width: Option<u16>,
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        max_width: Option<u16>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        pointer: bool,
 +    },
 +    Line {
 +        id: String,
@@ -78162,6 +78329,17 @@ index 000000000..8b4ecd744
 +        alt: String,
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        height: Option<u16>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        pointer: bool,
++    },
++    Raster {
++        id: String,
++        label: String,
++        alt: String,
++        width: u16,
++        height: u16,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        pointer: bool,
 +    },
 +    Diff {
 +        id: String,
@@ -78709,6 +78887,7 @@ index 000000000..8b4ecd744
 +                children: nested,
 +                min_width,
 +                max_width,
++                ..
 +            } => {
 +                let bound =
 +                    |width: &Option<u16>| width.is_none_or(|width| (1..=500).contains(&width));
@@ -78940,6 +79119,19 @@ index 000000000..8b4ecd744
 +                    && visible(alt, 256)
 +                    && height.is_none_or(|height| (1..=40).contains(&height))
 +            }
++            Self::Raster {
++                id,
++                label,
++                alt,
++                width,
++                height,
++                ..
++            } => {
++                identified(id, label, ids)
++                    && visible(alt, 256)
++                    && (1..=200).contains(width)
++                    && (1..=40).contains(height)
++            }
 +            Self::Slot | Self::Native { .. } => {
 +                *slots += 1;
 +                *slots <= 1
@@ -79049,6 +79241,13 @@ index 000000000..8b4ecd744
 +        if !valid_site(name) {
 +            return Some(format!("sites.{name}"));
 +        }
++        if site
++            .overlay
++            .as_ref()
++            .is_some_and(|overlay| !name.contains('/') || !overlay.valid())
++        {
++            return Some(format!("sites.{name}.overlay"));
++        }
 +        site.invalid(&mut ids)
 +            .map(|field| format!("sites.{name}.{field}"))
 +    })
@@ -79091,7 +79290,8 @@ index 000000000..8b4ecd744
 +        | ModComponent::Document { id, .. }
 +        | ModComponent::Diff { id, .. }
 +        | ModComponent::Terminal { id, .. }
-+        | ModComponent::Image { id, .. } => {
++        | ModComponent::Image { id, .. }
++        | ModComponent::Raster { id, .. } => {
 +            ids.insert(id.clone());
 +        }
 +        ModComponent::Slot | ModComponent::Native { .. } => {}
@@ -79126,6 +79326,7 @@ index 000000000..8b4ecd744
 +                children,
 +                min_width,
 +                max_width,
++                pointer,
 +            } => vec![ModComponent::Box {
 +                id,
 +                label,
@@ -79133,6 +79334,7 @@ index 000000000..8b4ecd744
 +                children: replace_slot(children, current),
 +                min_width,
 +                max_width,
++                pointer,
 +            }],
 +            ModComponent::Pane {
 +                id,
@@ -79365,16 +79567,20 @@ index 000000000..8b4ecd744
 +            let current = candidate.sites.remove(&name).unwrap_or(ModRenderSite {
 +                mode: ModSiteMode::Wrap,
 +                components: vec![ModComponent::Slot],
++                overlay: None,
 +            });
++            let overlay = site.overlay.clone().or(current.overlay);
 +            let composed = match (site.mode, current.mode) {
-+                (ModSiteMode::Replace, ModSiteMode::Replace) => site,
++                (ModSiteMode::Replace, ModSiteMode::Replace) => ModRenderSite { overlay, ..site },
 +                (ModSiteMode::Replace, ModSiteMode::Wrap) => ModRenderSite {
 +                    mode: ModSiteMode::Replace,
 +                    components: replace_slot(current.components, &site.components),
++                    overlay,
 +                },
 +                (ModSiteMode::Wrap, mode) => ModRenderSite {
 +                    mode,
 +                    components: replace_slot(site.components, &current.components),
++                    overlay,
 +                },
 +            };
 +            candidate.sites.insert(name, composed);
@@ -79560,10 +79766,10 @@ index 000000000..8b4ecd744
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..e8db67eec
+index 000000000..4505bc6d9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,371 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -79838,6 +80044,102 @@ index 000000000..e8db67eec
 +    ] {
 +        assert!(view(invalid.clone()).is_err(), "{invalid}");
 +    }
++}
++
++#[test]
++fn rasters_and_overlays_are_bounded_and_overlays_survive_wraps() {
++    let raster = |extra: Value| {
++        let mut raster = json!({"type": "raster", "id": "chart", "label": "Chart", "alt": "Load",
++            "width": 40, "height": 8, "pointer": true});
++        raster
++            .as_object_mut()
++            .unwrap()
++            .extend(extra.as_object().unwrap().clone());
++        view(json!({"sites": {"sidebar": {"components": [raster]}}}))
++    };
++    assert!(raster(json!({})).is_ok());
++    for invalid in [
++        json!({"width": 0}),
++        json!({"width": 201}),
++        json!({"height": 41}),
++        json!({"alt": "a\u{001b}[2J"}),
++        json!({"cells": []}),
++    ] {
++        assert!(raster(invalid.clone()).is_err(), "{invalid}");
++    }
++    let overlay = |site: &str, overlay: Value| {
++        view(json!({"sites": {site: {"overlay": overlay,
++            "components": [{"type": "box", "id": "tip", "label": "Tip", "pointer": true}]}}}))
++    };
++    let tooltip = json!({"anchor": {"component": "chart"}, "offset": {"x": 1, "y": -1},
++        "width": 20, "height": 3, "z": 9, "clip": "anchor", "border": true});
++    assert!(overlay("charts/tip", tooltip.clone()).is_ok());
++    assert!(
++        overlay(
++            "charts/menu",
++            json!({"anchor": "bottom_right", "width": 20, "height": 3})
++        )
++        .is_ok()
++    );
++    for (site, invalid) in [
++        ("sidebar", tooltip.clone()),
++        (
++            "charts/tip",
++            json!({"anchor": "top_left", "width": 0, "height": 3}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": "top_left", "width": 10, "height": 3, "z": 10}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": "top_left", "width": 10, "height": 3, "clip": "anchor"}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": {"component": "Bad Id"}, "width": 10, "height": 3}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": "middle", "width": 10, "height": 3}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": "top_left", "offset": {"x": -32768, "y": 0}, "width": 10, "height": 3}),
++        ),
++    ] {
++        assert!(overlay(site, invalid.clone()).is_err(), "{site} {invalid}");
++    }
++
++    let mut target = ModView::default();
++    let mut claims = BTreeMap::new();
++    for (id, patch) in [
++        (
++            "charts",
++            json!({"sites": {"charts/tip": {"overlay": tooltip, "components": [{"type": "slot"}], "mode": "wrap"}}}),
++        ),
++        (
++            "notes",
++            json!({"sites": {"charts/tip": {"components": [{"type": "text", "id": "note", "label": "Note", "text": "peak"}]}}}),
++        ),
++    ] {
++        ModViewPatch::parse(patch)
++            .unwrap()
++            .apply(&mut target, &mut claims, id, "idle")
++            .unwrap();
++    }
++    target.close_wraps();
++    assert_eq!(
++        target.sites["charts/tip"]
++            .overlay
++            .as_ref()
++            .map(|overlay| overlay.z),
++        Some(9)
++    );
++    assert_eq!(
++        component_ids_of(&target.sites["charts/tip"].components),
++        BTreeSet::from(["note".to_owned()])
++    );
 +}
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
 new file mode 100644
@@ -96726,10 +97028,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..aaaeb6ceb
+index 000000000..66e6289d1
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1743 @@
+@@ -0,0 +1,1754 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -97882,6 +98184,17 @@ index 000000000..aaaeb6ceb
 +            }
 +            "terminal.panes" => Ok(crate::mod_ui::panes(&call.caller)),
 +            "terminal.notice" => self.mod_notice(tui, &call),
++            "terminal.blit" => {
++                tui.frame_requester().schedule_frame();
++                let key = call.arguments["key"].as_str().unwrap_or_default();
++                crate::mod_raster::blit(
++                    &call.caller,
++                    crate::mod_ui::component_owner(key),
++                    crate::mod_ui::raster_size(key),
++                    &call.arguments,
++                    std::time::Instant::now(),
++                )
++            }
 +            "terminal.prompt" => {
 +                let title = match (
 +                    prompt_text(&call.arguments["title"], 120),
@@ -100375,10 +100688,10 @@ index 000000000..bf8d3805c
 +}
 diff --git a/codex-rs/tui/src/mod_backdrop.rs b/codex-rs/tui/src/mod_backdrop.rs
 new file mode 100644
-index 000000000..4119b4ed6
+index 000000000..7ae97d43b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_backdrop.rs
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,434 @@
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
 +use codex_omd::ModAsciiBackdrop;
@@ -100549,19 +100862,28 @@ index 000000000..4119b4ed6
 +}
 +
 +pub(crate) fn kitty_place_below_text(png: &[u8], columns: u16, rows: u16, image_id: u32) -> String {
++    format!(
++        "\x1b7\x1b[1;1H{}\x1b8",
++        kitty_transmit(
++            png,
++            &format!("a=T,t=d,f=100,i={image_id},c={columns},r={rows},z=-1,C=1,q=2")
++        )
++    )
++}
++
++pub(crate) fn kitty_transmit(png: &[u8], header: &str) -> String {
 +    let payload = STANDARD.encode(png);
 +    let chunks: Vec<&[u8]> = payload.as_bytes().chunks(KITTY_CHUNK).collect();
-+    let mut command = String::from("\x1b7\x1b[1;1H");
++    let mut command = String::new();
 +    for (index, chunk) in chunks.iter().enumerate() {
 +        let more = u8::from(index + 1 < chunks.len());
 +        let chunk = std::str::from_utf8(chunk).unwrap_or_default();
 +        if index == 0 {
-+            command.push_str(&format!("\x1b_Ga=T,t=d,f=100,i={image_id},c={columns},r={rows},z=-1,C=1,q=2,m={more};{chunk}\x1b\\"));
++            command.push_str(&format!("\x1b_G{header},m={more};{chunk}\x1b\\"));
 +        } else {
 +            command.push_str(&format!("\x1b_Gm={more};{chunk}\x1b\\"));
 +        }
 +    }
-+    command.push_str("\x1b8");
 +    command
 +}
 +
@@ -100806,10 +101128,10 @@ index 000000000..4119b4ed6
 +}
 diff --git a/codex-rs/tui/src/mod_backdrop_sync.rs b/codex-rs/tui/src/mod_backdrop_sync.rs
 new file mode 100644
-index 000000000..bc5548f51
+index 000000000..15d84aafe
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_backdrop_sync.rs
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,165 @@
 +use crate::mod_backdrop::BackdropEnvironment;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModViewSnapshot;
@@ -100875,6 +101197,10 @@ index 000000000..bc5548f51
 +    let mut stdout = std::io::stdout();
 +    let _ = stdout.write_all(sequence.as_bytes());
 +    let _ = stdout.flush();
++}
++
++pub(crate) fn teardown() {
++    clear(&mut placed());
 +}
 +
 +fn clear(placed: &mut Placed) {
@@ -100971,12 +101297,438 @@ index 000000000..bc5548f51
 +        }
 +    }
 +}
+diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
+new file mode 100644
+index 000000000..5e3abdcb9
+--- /dev/null
++++ b/codex-rs/tui/src/mod_client.rs
+@@ -0,0 +1,319 @@
++use codex_terminal_detection::TerminalName;
++use crossterm::event::MouseEvent;
++use crossterm::event::MouseEventKind;
++use ratatui::style::Color;
++use ratatui::style::Style;
++use ratatui::text::Line;
++use ratatui::text::Span;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::io::Write;
++use std::sync::Mutex;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::AtomicU8;
++use std::sync::atomic::Ordering;
++
++const PLACEHOLDER: char = '\u{10EEEE}';
++const DIACRITICS: [char; 40] = [
++    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}', '\u{033F}',
++    '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}', '\u{0352}', '\u{0357}',
++    '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}', '\u{0367}', '\u{0368}', '\u{0369}',
++    '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}', '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}',
++    '\u{0485}', '\u{0486}', '\u{0487}', '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}',
++];
++const FIRST_IMAGE_ID: u32 = 0x4f_4d_01;
++pub(crate) const DEFAULT_CELL: (u16, u16) = (8, 16);
++const HALF_UNKNOWN: u8 = 2;
++
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub(crate) struct Facts {
++    pub(crate) placeholders: bool,
++    pub(crate) pixel_pointer: bool,
++    pub(crate) no_color: bool,
++    pub(crate) reduced_motion: bool,
++    pub(crate) pointer: bool,
++    pub(crate) cell: Option<(u16, u16)>,
++    size: (u16, u16),
++}
++
++impl Facts {
++    fn detect() -> Self {
++        let terminal = codex_terminal_detection::terminal_info();
++        let local = terminal.multiplexer.is_none()
++            && ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
++                .iter()
++                .all(|name| std::env::var_os(name).is_none());
++        let mut facts = Self {
++            placeholders: local
++                && matches!(terminal.name, TerminalName::Kitty | TerminalName::Ghostty),
++            pixel_pointer: terminal.multiplexer.is_none()
++                && matches!(
++                    terminal.name,
++                    TerminalName::Kitty | TerminalName::Ghostty | TerminalName::WezTerm
++                ),
++            no_color: std::env::var_os("NO_COLOR").is_some(),
++            pointer: crate::omd::mouse_enabled() && terminal.multiplexer.is_none(),
++            ..Self::default()
++        };
++        facts.measure();
++        facts
++    }
++
++    fn measure(&mut self) {
++        let Ok(size) = crossterm::terminal::window_size() else {
++            self.cell = None;
++            return;
++        };
++        self.size = (size.columns, size.rows);
++        self.cell = (size.columns > 0 && size.rows > 0 && size.width > 0 && size.height > 0)
++            .then(|| (size.width / size.columns, size.height / size.rows))
++            .filter(|(width, height)| *width > 0 && *height > 0);
++    }
++
++    pub(crate) fn graphics(&self) -> &'static str {
++        if self.no_color {
++            "text"
++        } else if self.placeholders {
++            "kitty"
++        } else {
++            "cells"
++        }
++    }
++
++    pub(crate) fn value(&self) -> Value {
++        json!({
++            "kind": "terminal",
++            "graphics": self.graphics(),
++            "pointer": if !self.pointer {
++                "none"
++            } else if PIXEL_MODE.load(Ordering::Relaxed) {
++                "half_cell"
++            } else {
++                "cell"
++            },
++            "reduced_motion": self.reduced_motion,
++            "cell_px": self.cell.map(|(width, height)| json!({"width": width, "height": height})),
++        })
++    }
++}
++
++static FACTS: Mutex<Option<Facts>> = Mutex::new(None);
++static PIXEL_MODE: AtomicBool = AtomicBool::new(false);
++static HALF: AtomicU8 = AtomicU8::new(HALF_UNKNOWN);
++fn with<T>(run: impl FnOnce(&mut Facts) -> T) -> T {
++    let mut facts = FACTS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    run(facts.get_or_insert_with(Facts::detect))
++}
++
++pub(crate) fn facts() -> Facts {
++    with(|facts| *facts)
++}
++
++pub(crate) fn value() -> Value {
++    facts().value()
++}
++
++/// Called before each draw; measures cell pixels again only when the grid size changes.
++pub(crate) fn update(animations: bool, columns: u16, rows: u16, pointer: bool) {
++    let changed = with(|facts| {
++        let before = facts.value();
++        facts.reduced_motion = !animations;
++        facts.pointer = pointer;
++        if facts.size != (columns, rows) {
++            facts.measure();
++            facts.size = (columns, rows);
++        }
++        facts.value() != before
++    });
++    if changed {
++        std::thread::spawn(crate::mod_runtime::rerender);
++    }
++}
++
++/// SGR-pixel reports are requested only where the terminal is known to honor them.
++pub(crate) fn enable_pixel_pointer() -> bool {
++    let enabled = with(|facts| facts.pixel_pointer && facts.cell.is_some());
++    PIXEL_MODE.store(enabled, Ordering::Relaxed);
++    enabled
++}
++
++pub(crate) fn disable_pixel_pointer() -> bool {
++    PIXEL_MODE.swap(false, Ordering::Relaxed)
++}
++
++/// Pixel reports become cell events; motion that stays in the same half cell is dropped.
++pub(crate) fn to_cells(mut event: MouseEvent) -> Option<MouseEvent> {
++    static LAST_MOTION: Mutex<Option<(u16, u16, u8)>> = Mutex::new(None);
++    let cell = PIXEL_MODE
++        .load(Ordering::Relaxed)
++        .then(|| with(|facts| facts.cell))
++        .flatten();
++    let Some((width, height)) = cell else {
++        HALF.store(HALF_UNKNOWN, Ordering::Relaxed);
++        return Some(event);
++    };
++    let half = u8::from(event.row % height >= height.div_ceil(2));
++    HALF.store(half, Ordering::Relaxed);
++    event.column /= width;
++    event.row /= height;
++    let position = Some((event.column, event.row, half));
++    let mut last = LAST_MOTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if matches!(event.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
++        if *last == position {
++            return None;
++        }
++        *last = position;
++    } else {
++        *last = None;
++    }
++    Some(event)
++}
++
++/// The half-cell row of the pointer event most recently converted by `to_cells`.
++pub(crate) fn last_half() -> Option<u8> {
++    let half = HALF.load(Ordering::Relaxed);
++    (half != HALF_UNKNOWN).then_some(half)
++}
++
++struct Images {
++    placed: BTreeMap<String, (String, u32, u16, u16)>,
++    next: u32,
++    pending: Vec<String>,
++}
++
++static IMAGES: Mutex<Images> = Mutex::new(Images {
++    placed: BTreeMap::new(),
++    next: FIRST_IMAGE_ID,
++    pending: Vec::new(),
++});
++
++fn images() -> std::sync::MutexGuard<'static, Images> {
++    IMAGES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++}
++
++fn remove(id: u32) -> String {
++    crate::mod_backdrop::kitty_remove(id)
++}
++
++/// One Kitty image per component: a new key replaces the component's previous image.
++pub(crate) fn kitty_image(
++    component: &str,
++    key: &str,
++    png: impl FnOnce() -> Option<(Vec<u8>, u16, u16)>,
++) -> Option<(u32, u16, u16)> {
++    let mut images = images();
++    if let Some((placed, id, columns, rows)) = images.placed.get(component)
++        && placed == key
++    {
++        return Some((*id, *columns, *rows));
++    }
++    let (png, columns, rows) = png()?;
++    let id = images.next;
++    images.next = if id >= 0xff_ff_ff {
++        FIRST_IMAGE_ID
++    } else {
++        id + 1
++    };
++    if let Some((_, previous, _, _)) = images
++        .placed
++        .insert(component.to_owned(), (key.to_owned(), id, columns, rows))
++    {
++        images.pending.push(remove(previous));
++    }
++    images.pending.push(crate::mod_backdrop::kitty_transmit(
++        &png,
++        &format!("a=T,U=1,t=d,f=100,i={id},c={columns},r={rows},q=2"),
++    ));
++    Some((id, columns, rows))
++}
++
++pub(crate) fn placeholder_rows(
++    id: u32,
++    columns: u16,
++    rows: u16,
++    prefix: &str,
++) -> Vec<Line<'static>> {
++    let [_, red, green, blue] = id.to_be_bytes();
++    #[allow(clippy::disallowed_methods)]
++    let style = Style::default().fg(Color::Rgb(red, green, blue));
++    DIACRITICS
++        .iter()
++        .take(usize::from(rows))
++        .map(|row| {
++            let mut cells = format!("{PLACEHOLDER}{row}{}", DIACRITICS[0]);
++            cells.extend(std::iter::repeat_n(
++                PLACEHOLDER,
++                usize::from(columns.saturating_sub(1)),
++            ));
++            Line::from(vec![
++                Span::raw(prefix.to_owned()),
++                Span::styled(cells, style),
++            ])
++        })
++        .collect()
++}
++
++pub(crate) fn max_placeholder_rows() -> u16 {
++    DIACRITICS.len() as u16
++}
++
++pub(crate) fn retain(components: &BTreeSet<String>) {
++    let mut images = images();
++    let gone = images
++        .placed
++        .keys()
++        .filter(|component| !components.contains(*component))
++        .cloned()
++        .collect::<Vec<_>>();
++    for component in gone {
++        if let Some((_, id, _, _)) = images.placed.remove(&component) {
++            images.pending.push(remove(id));
++        }
++    }
++}
++
++fn write(sequences: Vec<String>) {
++    if sequences.is_empty() {
++        return;
++    }
++    let mut stdout = std::io::stdout();
++    for sequence in sequences {
++        let _ = stdout.write_all(sequence.as_bytes());
++    }
++    let _ = stdout.flush();
++}
++
++/// Writes queued Kitty transmissions and deletions after a frame has been flushed.
++pub(crate) fn flush() {
++    let pending = std::mem::take(&mut images().pending);
++    write(pending);
++}
++
++/// Deletes every image this process placed; used on exit and suspend.
++pub(crate) fn teardown() {
++    crate::mod_backdrop_sync::teardown();
++    let mut images = images();
++    let mut sequences = std::mem::take(&mut images.pending)
++        .into_iter()
++        .filter(|sequence| sequence.starts_with("\x1b_Ga=d"))
++        .collect::<Vec<_>>();
++    sequences.extend(
++        std::mem::take(&mut images.placed)
++            .into_values()
++            .map(|(_, id, _, _)| remove(id)),
++    );
++    drop(images);
++    write(sequences);
++}
++
++#[cfg(test)]
++#[path = "mod_client_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
+new file mode 100644
+index 000000000..c8376fd54
+--- /dev/null
++++ b/codex-rs/tui/src/mod_client_tests.rs
+@@ -0,0 +1,95 @@
++use super::*;
++use crossterm::event::KeyModifiers;
++use crossterm::event::MouseEventKind;
++use pretty_assertions::assert_eq;
++use ratatui::buffer::Buffer;
++use ratatui::layout::Rect;
++use ratatui::widgets::Paragraph;
++use ratatui::widgets::Widget;
++
++#[test]
++#[serial_test::serial]
++#[allow(clippy::disallowed_methods)]
++fn placeholder_rows_encode_the_image_id_and_row_in_single_width_cells() {
++    let rows = placeholder_rows(0x4f_4d_07, 3, 2, " ");
++    let mut buffer = Buffer::empty(Rect::new(0, 0, 6, 2));
++    Paragraph::new(rows).render(buffer.area, &mut buffer);
++    assert_eq!(buffer[(1, 0)].symbol(), "\u{10EEEE}\u{0305}\u{0305}");
++    assert_eq!(buffer[(2, 0)].symbol(), "\u{10EEEE}");
++    assert_eq!(buffer[(3, 0)].symbol(), "\u{10EEEE}");
++    assert_eq!(buffer[(4, 0)].symbol(), " ", "three cells wide");
++    assert_eq!(buffer[(1, 1)].symbol(), "\u{10EEEE}\u{030D}\u{0305}");
++    assert_eq!(buffer[(1, 0)].fg, Color::Rgb(0x4f, 0x4d, 0x07));
++}
++
++#[test]
++#[serial_test::serial]
++fn kitty_images_transmit_once_replace_per_component_and_tear_down() {
++    let png = || Some((vec![1, 2, 3], 4, 2));
++    let (id, columns, rows) = kitty_image("thumb", "a", png).expect("placed");
++    assert_eq!((columns, rows), (4, 2));
++    assert_eq!(kitty_image("thumb", "a", || None), Some((id, 4, 2)));
++    let pending = std::mem::take(&mut images().pending);
++    assert_eq!(pending.len(), 1);
++    assert!(pending[0].starts_with(&format!("\x1b_Ga=T,U=1,t=d,f=100,i={id},c=4,r=2,q=2,m=0;")));
++    let (next, _, _) = kitty_image("thumb", "b", png).expect("replaced");
++    assert_ne!(next, id);
++    let pending = std::mem::take(&mut images().pending);
++    assert_eq!(pending[0], crate::mod_backdrop::kitty_remove(id));
++    retain(&BTreeSet::new());
++    assert_eq!(
++        std::mem::take(&mut images().pending),
++        vec![crate::mod_backdrop::kitty_remove(next)]
++    );
++    kitty_image("other", "c", png).expect("placed");
++    let removed = images().placed["other"].1;
++    teardown();
++    assert!(images().placed.is_empty() && images().pending.is_empty());
++    assert_eq!(
++        kitty_image("other", "c", png).map(|(id, _, _)| id == removed),
++        Some(false)
++    );
++    retain(&BTreeSet::new());
++    images().pending.clear();
++}
++
++#[test]
++#[serial_test::serial]
++fn pixel_reports_convert_to_cells_with_the_half_row() {
++    *FACTS.lock().unwrap() = Some(Facts {
++        pixel_pointer: true,
++        cell: Some((10, 20)),
++        ..Facts::default()
++    });
++    assert!(enable_pixel_pointer());
++    let event = |column, row| MouseEvent {
++        kind: MouseEventKind::Moved,
++        column,
++        row,
++        modifiers: KeyModifiers::NONE,
++    };
++    let converted = to_cells(event(35, 49)).expect("first motion");
++    assert_eq!(
++        (converted.column, converted.row, last_half()),
++        (3, 2, Some(0))
++    );
++    assert_eq!(to_cells(event(38, 41)), None, "same half cell");
++    let converted = to_cells(event(35, 51)).expect("next half row");
++    assert_eq!(
++        (converted.column, converted.row, last_half()),
++        (3, 2, Some(1))
++    );
++    let press = MouseEvent {
++        kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
++        ..event(35, 51)
++    };
++    assert!(to_cells(press).is_some(), "presses always pass");
++    assert!(to_cells(event(35, 51)).is_some());
++    assert!(disable_pixel_pointer());
++    assert_eq!(to_cells(event(35, 51)).map(|event| event.column), Some(35));
++    assert_eq!(last_half(), None);
++    let value = facts().value();
++    assert_eq!(value["pointer"], "none");
++    assert_eq!(value["cell_px"], json!({"width": 10, "height": 20}));
++    *FACTS.lock().unwrap() = None;
++}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..ebc8fe804
+index 000000000..b08ff1bd0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,472 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -101091,7 +101843,64 @@ index 000000000..ebc8fe804
 +
 +static IMAGES: Mutex<BTreeMap<String, Vec<Line<'static>>>> = Mutex::new(BTreeMap::new());
 +
++fn decode(
++    reference: &codex_omd::resource_data::ResourceRef,
++    owners: &[String],
++) -> Option<image::DynamicImage> {
++    load_blob(reference, owners).and_then(|bytes| crate::mod_backdrop::decode_image(&bytes).ok())
++}
++
++/// Fits the image into `width`×`height` cells of `cell` pixels, keeping its aspect ratio.
++pub(crate) fn fit(image: (u32, u32), width: u16, height: u16, cell: (u16, u16)) -> (u16, u16) {
++    let (cell_width, cell_height) = (f64::from(cell.0), f64::from(cell.1));
++    let scale = (f64::from(width) * cell_width / f64::from(image.0.max(1)))
++        .min(f64::from(height) * cell_height / f64::from(image.1.max(1)));
++    let cells = |pixels: u32, cell: f64, limit: u16| {
++        ((f64::from(pixels) * scale / cell).round() as u16).clamp(1, limit)
++    };
++    (
++        cells(image.0, cell_width, width),
++        cells(image.1, cell_height, height),
++    )
++}
++
++fn kitty_rows(
++    component: &str,
++    reference: &codex_omd::resource_data::ResourceRef,
++    width: u16,
++    height: u16,
++    cell: (u16, u16),
++    owners: &[String],
++    prefix: &str,
++) -> Option<Vec<Line<'static>>> {
++    let height = height.min(crate::mod_client::max_placeholder_rows());
++    let key = format!(
++        "{}:{width}:{height}:{}x{}",
++        reference.sha256, cell.0, cell.1
++    );
++    let (id, columns, rows) = crate::mod_client::kitty_image(component, &key, || {
++        let decoded = decode(reference, owners)?;
++        let (columns, rows) = fit((decoded.width(), decoded.height()), width, height, cell);
++        let pixels = |cells: u16, cell: u16| (u32::from(cells) * u32::from(cell)).min(2048);
++        let mut png = Vec::new();
++        decoded
++            .resize_exact(
++                pixels(columns, cell.0),
++                pixels(rows, cell.1),
++                image::imageops::FilterType::Triangle,
++            )
++            .to_rgba8()
++            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
++            .ok()?;
++        Some((png, columns, rows))
++    })?;
++    Some(crate::mod_client::placeholder_rows(
++        id, columns, rows, prefix,
++    ))
++}
++
 +pub(crate) fn image_rows(
++    component: &str,
 +    reference: &codex_omd::resource_data::ResourceRef,
 +    alt: &str,
 +    width: u16,
@@ -101099,8 +101908,22 @@ index 000000000..ebc8fe804
 +    owners: &[String],
 +    prefix: &str,
 +) -> Vec<Line<'static>> {
-+    if std::env::var_os("NO_COLOR").is_some() || width < 4 {
++    let client = crate::mod_client::facts();
++    if client.no_color || width < 4 {
 +        return vec![Line::from(format!("{prefix}[image: {alt}]")).dim()];
++    }
++    if client.placeholders
++        && let Some(rows) = kitty_rows(
++            component,
++            reference,
++            width,
++            height,
++            client.cell.unwrap_or(crate::mod_client::DEFAULT_CELL),
++            owners,
++            prefix,
++        )
++    {
++        return rows;
 +    }
 +    let key = format!("{}:{width}:{height}", reference.sha256);
 +    let mut images = IMAGES
@@ -101109,10 +101932,7 @@ index 000000000..ebc8fe804
 +    if let Some(rows) = images.get(&key) {
 +        return rows.clone();
 +    }
-+    let decoded = load_blob(reference, owners)
-+        .and_then(|bytes| image::load_from_memory(&bytes).ok())
-+        .filter(|image| image.width() <= 8192 && image.height() <= 8192);
-+    let Some(decoded) = decoded else {
++    let Some(decoded) = decode(reference, owners) else {
 +        return vec![Line::from(format!("{prefix}[image unavailable: {alt}]")).dim()];
 +    };
 +    let pixels = decoded
@@ -101374,6 +102194,8 @@ index 000000000..ebc8fe804
 +
 +pub(crate) fn retain(ids: &std::collections::BTreeSet<String>) {
 +    documents().retain(|id, _| ids.contains(id));
++    crate::mod_client::retain(ids);
++    crate::mod_raster::retain(ids);
 +}
 +
 +#[cfg(test)]
@@ -101381,10 +102203,10 @@ index 000000000..ebc8fe804
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..813116c92
+index 000000000..1af661dbe
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,132 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -101508,6 +102330,14 @@ index 000000000..813116c92
 +        Some(2)
 +    );
 +    assert_eq!(document.view.selection(), 0..2);
++}
++
++#[test]
++fn image_placement_keeps_aspect_within_the_component_cells() {
++    assert_eq!(fit((1600, 900), 40, 12, (8, 16)), (40, 11));
++    assert_eq!(fit((900, 1600), 40, 12, (8, 16)), (14, 12));
++    assert_eq!(fit((900, 1600), 40, 12, (10, 20)), (14, 12));
++    assert_eq!(fit((1, 4000), 40, 12, (8, 16)), (1, 12));
 +}
 diff --git a/codex-rs/tui/src/mod_document.rs b/codex-rs/tui/src/mod_document.rs
 new file mode 100644
@@ -102692,9 +103522,414 @@ index 000000000..b43029f5b
 +        assert!(call("m", &json!({"session": "t1", "action": "stop"})).is_ok());
 +    }
 +}
+diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
+new file mode 100644
+index 000000000..be74e8ed0
+--- /dev/null
++++ b/codex-rs/tui/src/mod_raster.rs
+@@ -0,0 +1,255 @@
++use codex_omd::ModColor;
++use ratatui::style::Style;
++use ratatui::style::Stylize;
++use ratatui::text::Line;
++use ratatui::text::Span;
++use serde::Deserialize;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::collections::VecDeque;
++use std::sync::Mutex;
++use std::time::Duration;
++use std::time::Instant;
++use unicode_segmentation::UnicodeSegmentation;
++use unicode_width::UnicodeWidthStr;
++
++pub(crate) const FRAME: Duration = Duration::from_millis(33);
++const QUEUE_UPDATES: usize = 32;
++const QUEUE_BYTES: usize = 256 * 1024;
++const RASTERS_PER_MOD: usize = 16;
++
++#[derive(Clone, Debug, Default, PartialEq)]
++struct Cell {
++    symbol: String,
++    fg: Option<ModColor>,
++    bg: Option<ModColor>,
++}
++
++#[derive(Deserialize)]
++#[serde(untagged)]
++enum BlitCell {
++    Glyph(String),
++    Styled(String, Option<ModColor>, Option<ModColor>),
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct BlitRect {
++    x: u16,
++    y: u16,
++    width: u16,
++    height: u16,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Blit {
++    key: String,
++    rect: BlitRect,
++    cells: Vec<BlitCell>,
++}
++
++struct Update {
++    rect: BlitRect,
++    cells: Vec<Cell>,
++    bytes: usize,
++}
++
++struct Raster {
++    owner: String,
++    width: u16,
++    height: u16,
++    cells: Vec<Cell>,
++    queue: VecDeque<Update>,
++    queued_bytes: usize,
++    applied: Option<Instant>,
++    frames: u64,
++}
++
++impl Raster {
++    fn new(owner: &str, width: u16, height: u16) -> Self {
++        Self {
++            owner: owner.to_owned(),
++            width,
++            height,
++            cells: vec![Cell::default(); usize::from(width) * usize::from(height)],
++            queue: VecDeque::new(),
++            queued_bytes: 0,
++            applied: None,
++            frames: 0,
++        }
++    }
++
++    fn apply(&mut self, update: Update) {
++        let mut cells = update.cells.into_iter();
++        for row in update.rect.y..update.rect.y + update.rect.height {
++            for column in update.rect.x..update.rect.x + update.rect.width {
++                if let Some(cell) = cells.next() {
++                    self.cells[usize::from(row) * usize::from(self.width) + usize::from(column)] =
++                        cell;
++                }
++            }
++        }
++        self.queued_bytes -= update.bytes;
++        self.frames += 1;
++    }
++
++    /// Applies at most one queued update per frame interval; returns the wait for the next one.
++    fn advance(&mut self, now: Instant) -> Option<Duration> {
++        let due = self.applied.map_or(Duration::ZERO, |applied| {
++            FRAME.saturating_sub(now - applied)
++        });
++        if !due.is_zero() {
++            return Some(due);
++        }
++        let update = self.queue.pop_front()?;
++        self.apply(update);
++        self.applied = Some(now);
++        (!self.queue.is_empty()).then_some(FRAME)
++    }
++}
++
++static RASTERS: Mutex<BTreeMap<String, Raster>> = Mutex::new(BTreeMap::new());
++
++fn rasters() -> std::sync::MutexGuard<'static, BTreeMap<String, Raster>> {
++    RASTERS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++}
++
++fn cell(cell: BlitCell) -> Option<Cell> {
++    let (symbol, fg, bg) = match cell {
++        BlitCell::Glyph(symbol) => (symbol, None, None),
++        BlitCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
++    };
++    (symbol.graphemes(true).count() == 1
++        && symbol.width() == 1
++        && symbol.len() <= 16
++        && !symbol.chars().any(char::is_control))
++    .then_some(Cell { symbol, fg, bg })
++}
++
++/// `terminal.blit`: queues a partial update of the caller's own raster under the frame budget.
++pub(crate) fn blit(
++    caller: &str,
++    owner: Option<String>,
++    size: Option<(u16, u16)>,
++    arguments: &Value,
++    now: Instant,
++) -> Result<Value, String> {
++    let bytes = arguments.to_string().len();
++    if bytes > QUEUE_BYTES {
++        return Err("terminal_blit_too_large".into());
++    }
++    let blit: Blit =
++        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
++    match owner.as_deref() {
++        Some(owner) if owner == caller => {}
++        Some(_) => return Err("terminal_blit_not_owned".into()),
++        None => return Err("terminal_blit_unknown".into()),
++    }
++    let (width, height) = size.ok_or("terminal_blit_unknown")?;
++    let rect = blit.rect;
++    if rect.width == 0
++        || rect.height == 0
++        || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
++        || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
++        || blit.cells.len() != usize::from(rect.width) * usize::from(rect.height)
++    {
++        return Err("terminal_blit_invalid".into());
++    }
++    let cells = blit
++        .cells
++        .into_iter()
++        .map(cell)
++        .collect::<Option<Vec<_>>>()
++        .ok_or("terminal_blit_invalid")?;
++    let mut rasters = rasters();
++    if !rasters.contains_key(&blit.key)
++        && rasters
++            .values()
++            .filter(|raster| raster.owner == caller)
++            .count()
++            >= RASTERS_PER_MOD
++    {
++        return Err("terminal_blit_limit".into());
++    }
++    let raster = rasters
++        .entry(blit.key)
++        .and_modify(|raster| {
++            if (raster.width, raster.height) != (width, height) || raster.owner != caller {
++                *raster = Raster::new(caller, width, height);
++            }
++        })
++        .or_insert_with(|| Raster::new(caller, width, height));
++    if raster.queue.len() >= QUEUE_UPDATES || raster.queued_bytes + bytes > QUEUE_BYTES {
++        let wait = raster.applied.map_or(FRAME, |applied| {
++            FRAME
++                .saturating_sub(now - applied)
++                .max(Duration::from_millis(1))
++        });
++        return Ok(json!({"status": "backpressure", "retry_after_ms": wait.as_millis() as u64}));
++    }
++    raster.queued_bytes += bytes;
++    raster.queue.push_back(Update { rect, cells, bytes });
++    Ok(json!({
++        "frame": raster.frames + raster.queue.len() as u64,
++        "queued": raster.queue.len(),
++        "frame_ms": FRAME.as_millis() as u64,
++    }))
++}
++
++pub(crate) fn rows(
++    id: &str,
++    alt: &str,
++    width: u16,
++    no_color: bool,
++    prefix: &str,
++    now: Instant,
++) -> (Vec<Line<'static>>, Option<Duration>) {
++    let mut rasters = rasters();
++    let Some(raster) = rasters.get_mut(id) else {
++        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], None);
++    };
++    let next = raster.advance(now);
++    if raster.frames == 0 {
++        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], next);
++    }
++    let visible = usize::from(width.min(raster.width));
++    let rows = raster
++        .cells
++        .chunks(usize::from(raster.width))
++        .map(|row| {
++            let mut spans = vec![Span::raw(prefix.to_owned())];
++            spans.extend(row.iter().take(visible).map(|cell| {
++                let mut style = Style::default();
++                if !no_color {
++                    if let Some(fg) = cell.fg {
++                        style = style.fg(crate::mod_ui::color(fg));
++                    }
++                    if let Some(bg) = cell.bg {
++                        style = style.bg(crate::mod_ui::color(bg));
++                    }
++                }
++                let symbol = if cell.symbol.is_empty() {
++                    " "
++                } else {
++                    &cell.symbol
++                };
++                Span::styled(symbol.to_owned(), style)
++            }));
++            Line::from(spans)
++        })
++        .collect();
++    (rows, next)
++}
++
++pub(crate) fn retain(ids: &BTreeSet<String>) {
++    rasters().retain(|id, _| ids.contains(id));
++}
++
++#[cfg(test)]
++#[path = "mod_raster_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
+new file mode 100644
+index 000000000..2e633cf22
+--- /dev/null
++++ b/codex-rs/tui/src/mod_raster_tests.rs
+@@ -0,0 +1,138 @@
++use super::*;
++use pretty_assertions::assert_eq;
++
++fn text(lines: &[Line<'static>]) -> Vec<String> {
++    lines
++        .iter()
++        .map(|line| {
++            line.spans
++                .iter()
++                .map(|span| span.content.as_ref())
++                .collect()
++        })
++        .collect()
++}
++
++fn blit_at(key: &str, caller: &str, value: Value, now: Instant) -> Result<Value, String> {
++    blit(
++        caller,
++        Some("owner".into()),
++        Some((4, 2)),
++        &json!({"key": key, "rect": value["rect"], "cells": value["cells"]}),
++        now,
++    )
++}
++
++#[test]
++#[serial_test::serial]
++fn blits_queue_and_apply_one_update_per_frame_interval() {
++    let start = Instant::now();
++    let key = "raster-queue";
++    for glyph in ["a", "b"] {
++        let reply = blit_at(
++            key,
++            "owner",
++            json!({"rect": {"x": 1, "y": 0, "width": 2, "height": 1},
++                "cells": [glyph, [glyph, "#ff0000", null]]}),
++            start,
++        )
++        .expect("queued");
++        assert_eq!(reply["frame_ms"], 33);
++    }
++    let (rows, next) = super::rows(key, "chart", 10, false, "", start);
++    assert_eq!(text(&rows), vec![" aa ", "    "]);
++    assert_eq!(next, Some(FRAME));
++    let (rows, next) = super::rows(
++        key,
++        "chart",
++        10,
++        false,
++        "",
++        start + Duration::from_millis(5),
++    );
++    assert_eq!(text(&rows), vec![" aa ", "    "]);
++    assert_eq!(next, Some(Duration::from_millis(28)));
++    let (rows, next) = super::rows(key, "chart", 3, false, "", start + FRAME);
++    assert_eq!(
++        text(&rows),
++        vec![" bb", "   "],
++        "narrow components clip the canvas"
++    );
++    assert_eq!(next, None);
++    assert_eq!(
++        rows[0].spans[3].style.fg,
++        Some(crate::mod_ui::color(ModColor::Rgb(255, 0, 0)))
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn blits_refuse_other_owners_bad_rects_and_report_backpressure() {
++    let now = Instant::now();
++    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
++    assert_eq!(
++        blit_at("raster-refuse", "intruder", cell.clone(), now),
++        Err("terminal_blit_not_owned".into())
++    );
++    assert_eq!(
++        blit(
++            "owner",
++            None,
++            None,
++            &json!({"key": "drawn-later", "rect": cell["rect"], "cells": cell["cells"]}),
++            now
++        ),
++        Err("terminal_blit_unknown".into())
++    );
++    assert_eq!(
++        blit_at(&"k".repeat(QUEUE_BYTES), "owner", cell.clone(), now),
++        Err("terminal_blit_too_large".into())
++    );
++    for invalid in [
++        json!({"rect": {"x": 4, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
++        json!({"rect": {"x": 0, "y": 0, "width": 2, "height": 1}, "cells": ["x"]}),
++        json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["xy"]}),
++        json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["\u{7}"]}),
++    ] {
++        assert_eq!(
++            blit_at("raster-refuse", "owner", invalid, now),
++            Err("terminal_blit_invalid".into())
++        );
++    }
++    for _ in 0..QUEUE_UPDATES {
++        blit_at("raster-refuse", "owner", cell.clone(), now).expect("queued");
++    }
++    assert_eq!(
++        blit_at("raster-refuse", "owner", cell, now).expect("reply"),
++        json!({"status": "backpressure", "retry_after_ms": 33})
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn rasters_show_alt_text_until_drawn_and_drop_with_their_component() {
++    let now = Instant::now();
++    assert_eq!(
++        text(&super::rows("raster-alt", "load chart", 10, false, "  ", now).0),
++        vec!["  [load chart]"]
++    );
++    blit_at(
++        "raster-alt",
++        "owner",
++        json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": [["#", "#00ff00", "#000000"]]}),
++        now,
++    )
++    .expect("queued");
++    let (rows, _) = super::rows("raster-alt", "load chart", 10, true, "", now);
++    assert_eq!(text(&rows)[0], "#   ");
++    assert_eq!(
++        rows[0].spans[1].style,
++        Style::default(),
++        "NO_COLOR drops cell colors"
++    );
++    retain(&BTreeSet::new());
++    assert_eq!(
++        text(&super::rows("raster-alt", "load chart", 10, false, "", now).0),
++        vec!["[load chart]"]
++    );
++}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..eca9edd2e
+index 000000000..b37f5b748
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
 @@ -0,0 +1,593 @@
@@ -102977,7 +104212,7 @@ index 000000000..eca9edd2e
 +    )
 +}
 +
-+fn schedule_frame(delay: Duration) {
++pub(crate) fn schedule_frame(delay: Duration) {
 +    if let Some(frames) = FRAMES
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -103388,10 +104623,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..f3d06c845
+index 000000000..f09188778
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1267 @@
+@@ -0,0 +1,1293 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -103582,6 +104817,7 @@ index 000000000..f3d06c845
 +            "identity": runtime.identity(crate::version::CODEX_CLI_VERSION,
 +                std::env::var(crate::omd::INSTALL_PROFILE_ENV).ok().as_deref(), "omd"),
 +            "presentation": {"thread_id": null, "phase": phase},
++            "client": crate::mod_client::value(),
 +        });
 +        let terminal = runtime.terminal_view(input.clone(), || true);
 +        Some(ModViewSnapshot {
@@ -103981,6 +105217,7 @@ index 000000000..f3d06c845
 +    let mut snapshot = ModViewSnapshot::read(&paths.evidence.join("mod-view.json")).ok()?;
 +    snapshot.rendered_ms = ModViewSnapshot::clock();
 +    reload(runtime);
++    snapshot.input["client"] = crate::mod_client::value();
 +    let terminal = runtime.terminal_view(snapshot.input.clone(), || true);
 +    snapshot.revision = snapshot.revision.saturating_add(1);
 +    snapshot.view = terminal.view;
@@ -104167,6 +105404,30 @@ index 000000000..f3d06c845
 +        codex_omd::client_surface::redraw();
 +    }
 +    Some(result.map_err(|error| error.to_string()))
++}
++
++/// Renders the mod view again with the current client facts.
++pub(crate) fn rerender() {
++    let Some(paths) = crate::omd::mod_paths() else {
++        return;
++    };
++    let Some(runtime) = paths
++        .store
++        .clone()
++        .and_then(|store| shared_host(store).ok())
++    else {
++        return;
++    };
++    let snapshot = {
++        let mut runtime = runtime
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        active_context().and_then(|context| preview(&mut runtime, &paths, &context))
++    };
++    if let Some(snapshot) = snapshot {
++        crate::mod_ui::preview(snapshot);
++        codex_omd::client_surface::redraw();
++    }
 +}
 +
 +pub(crate) fn invoke_replacement(point: &str, payload: Value) -> Option<Result<Value, String>> {
@@ -104934,10 +106195,10 @@ index 000000000..7c28c120a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..877772f3e
+index 000000000..bbfb8cb79
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,730 @@
+@@ -0,0 +1,759 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -104967,6 +106228,10 @@ index 000000000..877772f3e
 +
 +    fn redraw(&self) {
 +        self.0.send(AppEvent::ModViewChanged);
++    }
++
++    fn client(&self) -> Value {
++        crate::mod_client::value()
 +    }
 +}
 +
@@ -105368,6 +106633,17 @@ index 000000000..877772f3e
 +            let (sender, receiver) = std::sync::mpsc::channel::<Value>();
 +            std::thread::spawn(move || {
 +                while let Ok(payload) = receiver.recv() {
++                    let payload = if payload["kind"] == "motion" {
++                        let Some(latest) = payload["component"]
++                            .as_str()
++                            .and_then(|component| motion().remove(component))
++                        else {
++                            continue;
++                        };
++                        latest
++                    } else {
++                        payload
++                    };
 +                    if let Some(owner) = payload["component"]
 +                        .as_str()
 +                        .and_then(crate::mod_ui::component_owner)
@@ -105379,6 +106655,20 @@ index 000000000..877772f3e
 +            sender
 +        });
 +        let _ = queue.send(payload);
++    }
++}
++
++fn motion() -> std::sync::MutexGuard<'static, BTreeMap<String, Value>> {
++    static MOTION: Mutex<BTreeMap<String, Value>> = Mutex::new(BTreeMap::new());
++    MOTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++}
++
++/// Pointer motion is latest-wins per component: one queued marker delivers the newest position.
++pub(crate) fn pointer_motion(component: &str, payload: Value) {
++    if registered("component_event") && motion().insert(component.to_owned(), payload).is_none() {
++        component_event(json!({"component": component, "kind": "motion"}));
 +    }
 +}
 +
@@ -105928,10 +107218,10 @@ index 000000000..d1f0b5e66
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..fcc5db61e
+index 000000000..6fd6d79f4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3217 @@
+@@ -0,0 +1,3610 @@
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
@@ -106027,7 +107317,20 @@ index 000000000..fcc5db61e
 +    label: String,
 +    area: Rect,
 +    target: ComponentTarget,
++    layer: u16,
 +}
++
++/// A pointer-enabled component's visible rows; `top` is the component row drawn at `area.y`.
++#[derive(Clone, Debug, PartialEq)]
++struct Region {
++    id: String,
++    area: Rect,
++    top: u16,
++    indent: u16,
++    layer: u16,
++}
++
++const DIALOG_LAYER: u16 = u16::MAX;
 +
 +#[derive(Default)]
 +struct Interaction {
@@ -106052,6 +107355,12 @@ index 000000000..fcc5db61e
 +    checked: BTreeMap<String, BTreeSet<String>>,
 +    hotkeys: Vec<(String, String)>,
 +    autofocus: Vec<String>,
++    regions: Vec<Region>,
++    layers: Vec<(Rect, u16)>,
++    layer: u16,
++    anchors: BTreeMap<String, Rect>,
++    hovered: BTreeMap<String, Region>,
++    captured: Option<String>,
 +}
 +
 +struct ComponentRow {
@@ -106060,6 +107369,7 @@ index 000000000..fcc5db61e
 +    links: Vec<TerminalHyperlink>,
 +    line: Line<'static>,
 +    target: Option<ComponentTarget>,
++    regions: Vec<(String, u16, u16)>,
 +}
 +
 +fn span_line(
@@ -106149,6 +107459,12 @@ index 000000000..fcc5db61e
 +    checked: BTreeMap::new(),
 +    hotkeys: Vec::new(),
 +    autofocus: Vec::new(),
++    regions: Vec::new(),
++    layers: Vec::new(),
++    layer: 0,
++    anchors: BTreeMap::new(),
++    hovered: BTreeMap::new(),
++    captured: None,
 +});
 +static APPLIED_SYNTAX: Mutex<Option<String>> = Mutex::new(None);
 +static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -106411,7 +107727,8 @@ index 000000000..fcc5db61e
 +        | ModComponent::Document { id, .. }
 +        | ModComponent::Diff { id, .. }
 +        | ModComponent::Terminal { id, .. }
-+        | ModComponent::Image { id, .. } => {
++        | ModComponent::Image { id, .. }
++        | ModComponent::Raster { id, .. } => {
 +            interaction.ids.insert(id.clone());
 +        }
 +        ModComponent::Slot | ModComponent::Native { .. } => {}
@@ -106466,6 +107783,14 @@ index 000000000..fcc5db61e
 +    interaction.scroll.retain(|id, _| ids.contains(id));
 +    interaction.seeds.retain(|id, _| ids.contains(id));
 +    interaction.echoes.retain(|id, _| ids.contains(id));
++    interaction.hovered.retain(|id, _| ids.contains(id));
++    if interaction
++        .captured
++        .as_ref()
++        .is_some_and(|id| !ids.contains(id))
++    {
++        interaction.captured = None;
++    }
 +    crate::mod_components::retain(&ids);
 +    if interaction
 +        .focused
@@ -106813,6 +108138,7 @@ index 000000000..fcc5db61e
 +            ))
 +            .unwrap_or(u16::MAX),
 +            ModComponent::Image { height, .. } => height.unwrap_or(12),
++            ModComponent::Raster { height, .. } => *height,
 +            ModComponent::Terminal { height, .. } => height.unwrap_or(16) + 1,
 +            ModComponent::Slot | ModComponent::Native { .. } => 0,
 +        })
@@ -106849,7 +108175,7 @@ index 000000000..fcc5db61e
 +fn named_sites(view: &ModView) -> impl Iterator<Item = &ModRenderSite> {
 +    view.sites
 +        .iter()
-+        .filter(|(name, _)| name.contains('/'))
++        .filter(|(name, site)| name.contains('/') && site.overlay.is_none())
 +        .map(|(_, site)| site)
 +}
 +
@@ -107000,6 +108326,38 @@ index 000000000..fcc5db61e
 +        .collect()
 +}
 +
++fn push_region_rows(
++    rows: &mut Vec<ComponentRow>,
++    id: &str,
++    label: &str,
++    lines: Vec<Line<'static>>,
++    pointer: bool,
++    indent: usize,
++) {
++    let indent = u16::try_from(indent).unwrap_or(u16::MAX);
++    rows.extend(
++        lines
++            .into_iter()
++            .enumerate()
++            .map(|(row, line)| ComponentRow {
++                id: Some(id.to_owned()),
++                label: Some(label.to_owned()),
++                links: Vec::new(),
++                line,
++                target: None,
++                regions: if pointer {
++                    vec![(
++                        id.to_owned(),
++                        indent,
++                        u16::try_from(row).unwrap_or(u16::MAX),
++                    )]
++                } else {
++                    Vec::new()
++                },
++            }),
++    );
++}
++
 +fn component_rows(
 +    components: &[ModComponent],
 +    width: u16,
@@ -107012,8 +108370,13 @@ index 000000000..fcc5db61e
 +        match component {
 +            ModComponent::Box { .. } if !component.fits(width) => {}
 +            ModComponent::Box {
-+                title, children, ..
++                id,
++                title,
++                children,
++                pointer,
++                ..
 +            } => {
++                let start = rows.len();
 +                if let Some(title) = title {
 +                    rows.push(ComponentRow {
 +                        id: None,
@@ -107021,9 +108384,17 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{title}")).bold(),
 +                        target: None,
++                        regions: Vec::new(),
 +                    });
 +                }
 +                rows.extend(component_rows(children, width, interaction, indent + 1));
++                if *pointer {
++                    let indent = u16::try_from(indent).unwrap_or(u16::MAX);
++                    for (offset, row) in rows[start..].iter_mut().enumerate() {
++                        let offset = u16::try_from(offset).unwrap_or(u16::MAX);
++                        row.regions.insert(0, (id.clone(), indent, offset));
++                    }
++                }
 +            }
 +            ModComponent::Text {
 +                id,
@@ -107038,6 +108409,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{text}")).patch_style(tone_style(*tone)),
 +                        target: None,
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107049,6 +108421,7 @@ index 000000000..fcc5db61e
 +                    links,
 +                    line,
 +                    target: None,
++                    regions: Vec::new(),
 +                });
 +            }
 +            ModComponent::Button {
@@ -107063,6 +108436,7 @@ index 000000000..fcc5db61e
 +                links: Vec::new(),
 +                line: Line::from(format!("{prefix}[ {text} ]")),
 +                target: Some(ComponentTarget::Button(action.clone())),
++                regions: Vec::new(),
 +            }),
 +            ModComponent::Input {
 +                id,
@@ -107094,6 +108468,7 @@ index 000000000..fcc5db61e
 +                    links: Vec::new(),
 +                    line: Line::from(format!("{prefix}{label}: {shown}")),
 +                    target: Some(ComponentTarget::Input(action.clone())),
++                    regions: Vec::new(),
 +                });
 +            }
 +            ModComponent::Select {
@@ -107126,6 +108501,7 @@ index 000000000..fcc5db61e
 +                            .map(|option| (option.value.clone(), option.label.clone()))
 +                            .collect(),
 +                    }),
++                    regions: Vec::new(),
 +                });
 +            }
 +            ModComponent::Multiselect {
@@ -107154,6 +108530,7 @@ index 000000000..fcc5db61e
 +                    links: Vec::new(),
 +                    line: Line::from(format!("{prefix}{label}:")),
 +                    target: None,
++                    regions: Vec::new(),
 +                });
 +                for (index, option) in options.iter().enumerate() {
 +                    let mark = if checked.contains(&option.value) {
@@ -107176,6 +108553,7 @@ index 000000000..fcc5db61e
 +                            options: values.clone(),
 +                            index,
 +                        }),
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107196,6 +108574,7 @@ index 000000000..fcc5db61e
 +                        links: line.hyperlinks,
 +                        line: line.line,
 +                        target: None,
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107212,6 +108591,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{language}")).dim(),
 +                        target: None,
++                        regions: Vec::new(),
 +                    });
 +                }
 +                for line in text.lines() {
@@ -107221,6 +108601,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{line}")).cyan(),
 +                        target: None,
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107261,6 +108642,7 @@ index 000000000..fcc5db61e
 +                    ))
 +                    .bold(),
 +                    target: Some(ComponentTarget::Pane),
++                    regions: Vec::new(),
 +                });
 +                if !*collapsed {
 +                    let nested = component_rows(children, width, interaction, indent + 1);
@@ -107279,6 +108661,7 @@ index 000000000..fcc5db61e
 +                    links: Vec::new(),
 +                    line: Line::from(format!("{prefix}{title}")).bold(),
 +                    target: None,
++                    regions: Vec::new(),
 +                });
 +                rows.extend(component_rows(children, width, interaction, indent));
 +            }
@@ -107298,6 +108681,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line: Line::from(format!("{prefix}{label}: (empty)")).dim(),
 +                        target: None,
++                        regions: Vec::new(),
 +                    });
 +                    continue;
 +                }
@@ -107339,6 +108723,7 @@ index 000000000..fcc5db61e
 +                            options: options.clone(),
 +                            index,
 +                        }),
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107381,6 +108766,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107412,6 +108798,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107434,6 +108821,7 @@ index 000000000..fcc5db61e
 +                        links: Vec::new(),
 +                        line,
 +                        target: Some(ComponentTarget::Terminal(session.clone())),
++                        regions: Vec::new(),
 +                    });
 +                }
 +            }
@@ -107443,23 +108831,38 @@ index 000000000..fcc5db61e
 +                image,
 +                alt,
 +                height,
++                pointer,
 +            } => {
-+                for line in crate::mod_components::image_rows(
++                let lines = crate::mod_components::image_rows(
++                    id,
 +                    image,
 +                    alt,
 +                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
 +                    height.unwrap_or(12),
 +                    &interaction.owners,
 +                    &prefix,
-+                ) {
-+                    rows.push(ComponentRow {
-+                        id: Some(id.clone()),
-+                        label: Some(label.clone()),
-+                        links: Vec::new(),
-+                        line,
-+                        target: None,
-+                    });
++                );
++                push_region_rows(&mut rows, id, label, lines, *pointer, indent);
++            }
++            ModComponent::Raster {
++                id,
++                label,
++                alt,
++                pointer,
++                ..
++            } => {
++                let (lines, next) = crate::mod_raster::rows(
++                    id,
++                    alt,
++                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
++                    crate::mod_client::facts().no_color,
++                    &prefix,
++                    std::time::Instant::now(),
++                );
++                if let Some(next) = next {
++                    crate::mod_render::schedule_frame(next);
 +                }
++                push_region_rows(&mut rows, id, label, lines, *pointer, indent);
 +            }
 +            ModComponent::Slot | ModComponent::Native { .. } => {}
 +        }
@@ -107487,20 +108890,26 @@ index 000000000..fcc5db61e
 +    let rows = if comfortable_spacing
 +        && with_cache(|cache| cache.snapshot.view.theme.density) == Some(ModDensity::Comfortable)
 +    {
-+        rows.into_iter()
-+            .flat_map(|row| {
-+                [
-+                    row,
-+                    ComponentRow {
-+                        id: None,
-+                        label: None,
-+                        links: Vec::new(),
-+                        line: Line::from(""),
-+                        target: None,
-+                    },
-+                ]
-+            })
-+            .collect::<Vec<_>>()
++        let mut spaced = Vec::new();
++        let mut rows = rows.into_iter().peekable();
++        while let Some(row) = rows.next() {
++            // Picture rows (images, rasters) of one component stay contiguous.
++            let picture = row.target.is_none()
++                && row.id.is_some()
++                && rows.peek().is_some_and(|next| next.id == row.id);
++            spaced.push(row);
++            if !picture {
++                spaced.push(ComponentRow {
++                    id: None,
++                    label: None,
++                    links: Vec::new(),
++                    line: Line::from(""),
++                    target: None,
++                    regions: Vec::new(),
++                });
++            }
++        }
++        spaced
 +    } else {
 +        rows
 +    };
@@ -107531,6 +108940,38 @@ index 000000000..fcc5db61e
 +    interaction: &mut Interaction,
 +) {
 +    for (index, row) in rows.into_iter().enumerate() {
++        let area = index
++            .checked_sub(scroll)
++            .and_then(|offset| u16::try_from(offset).ok())
++            .filter(|offset| *offset < inner.height)
++            .map(|offset| Rect::new(inner.x, inner.y + offset, inner.width, 1));
++        for (id, indent, top) in row.regions {
++            let Some(area) = area else {
++                continue;
++            };
++            let layer = interaction.layer;
++            match interaction
++                .regions
++                .iter_mut()
++                .find(|region| region.id == id && region.layer == layer)
++            {
++                Some(region) => region.area = region.area.union(area),
++                None => interaction.regions.push(Region {
++                    id,
++                    area,
++                    top,
++                    indent,
++                    layer,
++                }),
++            }
++        }
++        if let (Some(id), Some(area)) = (&row.id, area) {
++            interaction
++                .anchors
++                .entry(id.clone())
++                .and_modify(|anchor| *anchor = anchor.union(area))
++                .or_insert(area);
++        }
 +        let Some(target) = row.target else {
 +            continue;
 +        };
@@ -107540,18 +108981,15 @@ index 000000000..fcc5db61e
 +        if !interaction.order.contains(&id) {
 +            interaction.order.push(id.clone());
 +        }
-+        let Some(offset) = index
-+            .checked_sub(scroll)
-+            .and_then(|offset| u16::try_from(offset).ok())
-+            .filter(|offset| *offset < inner.height)
-+        else {
++        let Some(area) = area else {
 +            continue;
 +        };
 +        interaction.hitboxes.push(HitBox {
 +            id,
 +            label,
-+            area: Rect::new(inner.x, inner.y + offset, inner.width, 1),
++            area,
 +            target,
++            layer: interaction.layer,
 +        });
 +    }
 +}
@@ -107624,6 +109062,10 @@ index 000000000..fcc5db61e
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
 +    interaction.hitboxes.clear();
++    interaction.regions.clear();
++    interaction.layers.clear();
++    interaction.anchors.clear();
++    interaction.layer = 0;
 +    interaction.owners = snapshot.contributors.clone();
 +    interaction.component_owners = snapshot.component_owners.clone();
 +    if let Some(bar) = sidebar(area, snapshot) {
@@ -107692,6 +109134,7 @@ index 000000000..fcc5db61e
 +                .render(Rect { height, ..column }, buffer);
 +        }
 +    }
++    render_overlays(area, snapshot, style, buffer, &mut interaction);
 +    render_dialog(area, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
 +}
@@ -107715,6 +109158,94 @@ index 000000000..fcc5db61e
 +            );
 +        }
 +    }
++}
++
++/// Where an overlay lands: its anchor point plus offset, clipped to the screen or its anchor.
++fn overlay_area(
++    screen: Rect,
++    overlay: &codex_omd::ModOverlay,
++    anchors: &BTreeMap<String, Rect>,
++) -> Option<Rect> {
++    use codex_omd::ModAnchor;
++    use codex_omd::ModScreenAnchor;
++    let (width, height) = (i32::from(overlay.width), i32::from(overlay.height));
++    let (left, top) = (i32::from(screen.x), i32::from(screen.y));
++    let (right, bottom) = (i32::from(screen.right()), i32::from(screen.bottom()));
++    let (x, y, clip) = match &overlay.anchor {
++        ModAnchor::Screen(ModScreenAnchor::TopLeft) => (left, top, screen),
++        ModAnchor::Screen(ModScreenAnchor::TopRight) => (right - width, top, screen),
++        ModAnchor::Screen(ModScreenAnchor::BottomLeft) => (left, bottom - height, screen),
++        ModAnchor::Screen(ModScreenAnchor::BottomRight) => (right - width, bottom - height, screen),
++        ModAnchor::Screen(ModScreenAnchor::Center) => (
++            left + (right - left - width) / 2,
++            top + (bottom - top - height) / 2,
++            screen,
++        ),
++        ModAnchor::Component { component } => {
++            let anchor = *anchors.get(component)?;
++            let clip = match overlay.clip {
++                codex_omd::ModOverlayClip::Screen => screen,
++                codex_omd::ModOverlayClip::Anchor => anchor.intersection(screen),
++            };
++            (i32::from(anchor.x), i32::from(anchor.y), clip)
++        }
++    };
++    let (dx, dy) = overlay
++        .offset
++        .as_ref()
++        .map_or((0, 0), |offset| (i32::from(offset.x), i32::from(offset.y)));
++    let (x, y) = (x + dx, y + dy);
++    let x0 = x.max(i32::from(clip.x));
++    let y0 = y.max(i32::from(clip.y));
++    let x1 = (x + width).min(i32::from(clip.right()));
++    let y1 = (y + height).min(i32::from(clip.bottom()));
++    (x1 > x0 && y1 > y0).then(|| {
++        Rect::new(
++            u16::try_from(x0).unwrap_or_default(),
++            u16::try_from(y0).unwrap_or_default(),
++            u16::try_from(x1 - x0).unwrap_or_default(),
++            u16::try_from(y1 - y0).unwrap_or_default(),
++        )
++    })
++}
++
++fn render_overlays(
++    screen: Rect,
++    snapshot: &ModViewSnapshot,
++    style: Style,
++    buffer: &mut Buffer,
++    interaction: &mut Interaction,
++) {
++    let mut overlays = snapshot
++        .view
++        .sites
++        .values()
++        .filter_map(|site| site.overlay.as_ref().map(|overlay| (overlay, site)))
++        .filter(|(_, site)| !site.components.is_empty())
++        .collect::<Vec<_>>();
++    overlays.sort_by_key(|(overlay, _)| overlay.z);
++    for (index, (overlay, site)) in overlays.into_iter().enumerate() {
++        let Some(area) = overlay_area(screen, overlay, &interaction.anchors) else {
++            continue;
++        };
++        interaction.layer = u16::try_from(index + 1).unwrap_or(DIALOG_LAYER - 1);
++        interaction.layers.push((area, interaction.layer));
++        Clear.render(area, buffer);
++        render_site(
++            area,
++            &site.components,
++            style,
++            buffer,
++            interaction,
++            overlay.border.then(|| {
++                Block::default()
++                    .borders(Borders::ALL)
++                    .border_type(border_type(&snapshot.view.theme))
++            }),
++            false,
++        );
++    }
++    interaction.layer = 0;
 +}
 +
 +fn render_dialog(
@@ -107765,6 +109296,7 @@ index 000000000..fcc5db61e
 +            height,
 +        );
 +        Clear.render(dialog_area, buffer);
++        interaction.layer = DIALOG_LAYER;
 +        render_site(
 +            dialog_area,
 +            &dialog.components,
@@ -107778,6 +109310,11 @@ index 000000000..fcc5db61e
 +            ),
 +            false,
 +        );
++        interaction.layer = 0;
++        interaction
++            .regions
++            .retain(|region| region.layer == DIALOG_LAYER);
++        interaction.layers = vec![(area, DIALOG_LAYER)];
 +        let dialog_order = interaction.order[dialog_start..].to_vec();
 +        let dialog_ids = dialog_order.iter().cloned().collect::<BTreeSet<_>>();
 +        interaction.order = dialog_order;
@@ -108050,6 +109587,10 @@ index 000000000..fcc5db61e
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
 +    interaction.hitboxes.clear();
++    interaction.regions.clear();
++    interaction.layers.clear();
++    interaction.anchors.clear();
++    interaction.layer = 0;
 +    interaction.owners = snapshot.contributors.clone();
 +    interaction.component_owners = snapshot.component_owners.clone();
 +    for region in &placement.regions {
@@ -108092,6 +109633,7 @@ index 000000000..fcc5db61e
 +            .collect::<Vec<_>>();
 +        Paragraph::new(Line::from(spans)).render(bar.area, buffer);
 +    }
++    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
 +}
@@ -108619,6 +110161,32 @@ index 000000000..fcc5db61e
 +    interaction.dismissed = None;
 +}
 +
++pub(crate) fn raster_size(id: &str) -> Option<(u16, u16)> {
++    fn find(components: &[ModComponent], id: &str) -> Option<(u16, u16)> {
++        components.iter().find_map(|component| match component {
++            ModComponent::Raster {
++                id: raster,
++                width,
++                height,
++                ..
++            } if raster == id => Some((*width, *height)),
++            ModComponent::Box { children, .. }
++            | ModComponent::Pane { children, .. }
++            | ModComponent::Dialog { children, .. } => find(children, id),
++            _ => None,
++        })
++    }
++    with_cache(|cache| {
++        cache
++            .snapshot
++            .view
++            .sites
++            .values()
++            .find_map(|site| find(&site.components, id))
++    })
++    .flatten()
++}
++
 +pub(crate) fn component_owner(component: &str) -> Option<String> {
 +    INTERACTION
 +        .lock()
@@ -108729,15 +110297,134 @@ index 000000000..fcc5db61e
 +    observed(|| handle_pointer(event))
 +}
 +
++fn button_name(button: MouseButton) -> &'static str {
++    match button {
++        MouseButton::Left => "left",
++        MouseButton::Right => "right",
++        MouseButton::Middle => "middle",
++    }
++}
++
++fn region_event(
++    region: &Region,
++    event: MouseEvent,
++    action: &str,
++    button: Option<MouseButton>,
++) -> serde_json::Value {
++    let column = i32::from(event.column) - i32::from(region.area.x) - i32::from(region.indent);
++    let row = i32::from(event.row) - i32::from(region.area.y) + i32::from(region.top);
++    serde_json::json!({"component": region.id, "kind": "pointer", "pointer": {
++        "column": column, "row": row, "half": crate::mod_client::last_half(),
++        "action": action, "button": button.map(button_name)}})
++}
++
++/// Hover, motion, drag and capture for pointer-enabled components on the topmost layer:
++/// returns whether the event was consumed and the `component_event` payloads to deliver.
++fn region_pointer(
++    interaction: &mut Interaction,
++    event: MouseEvent,
++    top: u16,
++) -> (bool, Vec<serde_json::Value>) {
++    let mut events = Vec::new();
++    if interaction.regions.is_empty()
++        && interaction.hovered.is_empty()
++        && interaction.captured.is_none()
++    {
++        return (false, events);
++    }
++    let here = interaction
++        .regions
++        .iter()
++        .filter(|region| region.layer == top && contains(region.area, event.column, event.row))
++        .cloned()
++        .collect::<Vec<_>>();
++    let hovered = here
++        .iter()
++        .map(|region| (region.id.clone(), region.clone()))
++        .collect::<BTreeMap<_, _>>();
++    for (id, last) in &interaction.hovered {
++        if !hovered.contains_key(id) {
++            let region = interaction
++                .regions
++                .iter()
++                .find(|region| &region.id == id)
++                .unwrap_or(last);
++            events.push(region_event(region, event, "leave", None));
++        }
++    }
++    for entered in here
++        .iter()
++        .filter(|region| !interaction.hovered.contains_key(&region.id))
++    {
++        events.push(region_event(entered, event, "enter", None));
++    }
++    interaction.hovered = hovered;
++    let innermost = here.iter().min_by_key(|region| region.area.area()).cloned();
++    let captured = interaction.captured.as_ref().and_then(|id| {
++        interaction
++            .regions
++            .iter()
++            .find(|region| &region.id == id)
++            .cloned()
++    });
++    let consumed = match event.kind {
++        MouseEventKind::Moved => innermost
++            .map(|region| events.push(region_event(&region, event, "move", None)))
++            .is_some(),
++        MouseEventKind::Drag(button) => captured
++            .map(|region| events.push(region_event(&region, event, "drag", Some(button))))
++            .is_some(),
++        MouseEventKind::Down(button) => innermost
++            .map(|region| {
++                interaction.captured = Some(region.id.clone());
++                events.push(region_event(&region, event, "down", Some(button)));
++            })
++            .is_some(),
++        MouseEventKind::Up(button) => {
++            interaction.captured = None;
++            captured
++                .or(innermost)
++                .map(|region| events.push(region_event(&region, event, "up", Some(button))))
++                .is_some()
++        }
++        _ => false,
++    };
++    (consumed, events)
++}
++
 +fn handle_pointer(event: MouseEvent) -> Option<ModPointer> {
 +    let mut interaction = INTERACTION
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let top = interaction
++        .layers
++        .iter()
++        .filter(|(area, _)| contains(*area, event.column, event.row))
++        .map(|(_, layer)| *layer)
++        .max()
++        .unwrap_or_default();
 +    let hit = interaction
 +        .hitboxes
 +        .iter()
-+        .find(|hitbox| contains(hitbox.area, event.column, event.row))
++        .rev()
++        .find(|hitbox| hitbox.layer == top && contains(hitbox.area, event.column, event.row))
 +        .cloned();
++    let (consumed, events) = region_pointer(&mut interaction, event, top);
++    for payload in events {
++        match payload["pointer"]["action"].as_str() {
++            Some("move" | "drag") => crate::mod_surface::pointer_motion(
++                payload["component"].as_str().unwrap_or_default(),
++                payload.clone(),
++            ),
++            _ => crate::mod_surface::component_event(payload),
++        }
++    }
++    if consumed && hit.is_none() {
++        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
++            interaction.focused = None;
++        }
++        return Some(ModPointer::Consumed);
++    }
 +    let action = match event.kind {
 +        MouseEventKind::Down(button) => Some(("down", Some(button))),
 +        MouseEventKind::Up(button) => Some(("up", Some(button))),
@@ -108750,11 +110437,7 @@ index 000000000..fcc5db61e
 +            serde_json::json!({"component": hit.id, "kind": "pointer",
 +            "pointer": {"column": event.column.saturating_sub(hit.area.x), "row": event.row.saturating_sub(hit.area.y),
 +                "action": action,
-+                "button": button.map(|button| match button {
-+                    MouseButton::Left => "left",
-+                    MouseButton::Right => "right",
-+                    MouseButton::Middle => "middle",
-+                })}}),
++                "button": button.map(button_name)}}),
 +        );
 +    }
 +    let Some(hit) = hit else {
@@ -109151,10 +110834,10 @@ index 000000000..fcc5db61e
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..3c50ccec3
+index 000000000..bf46a06cf
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1454 @@
+@@ -0,0 +1,1681 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -110608,6 +112291,233 @@ index 000000000..3c50ccec3
 +    assert_eq!(moved("next", 0), ("next".to_owned(), 0));
 +    assert_eq!(moved("next", 9), ("next".to_owned(), 5));
 +    preview(ModViewSnapshot::default());
++}
++
++fn pointer_events(kind: MouseEventKind, column: u16, row: u16) -> (bool, Vec<(String, String)>) {
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let top = interaction
++        .layers
++        .iter()
++        .filter(|(area, _)| contains(*area, column, row))
++        .map(|(_, layer)| *layer)
++        .max()
++        .unwrap_or_default();
++    let event = MouseEvent {
++        kind,
++        column,
++        row,
++        modifiers: KeyModifiers::NONE,
++    };
++    let (consumed, events) = region_pointer(&mut interaction, event, top);
++    let events = events
++        .iter()
++        .map(|event| {
++            let pointer = &event["pointer"];
++            (
++                event["component"].as_str().unwrap_or_default().to_owned(),
++                format!(
++                    "{} {} {}",
++                    pointer["action"].as_str().unwrap_or_default(),
++                    pointer["column"],
++                    pointer["row"]
++                ),
++            )
++        })
++        .collect();
++    (consumed, events)
++}
++
++fn events(items: &[(&str, &str)]) -> Vec<(String, String)> {
++    items
++        .iter()
++        .map(|(component, event)| ((*component).to_owned(), (*event).to_owned()))
++        .collect()
++}
++
++#[test]
++#[serial_test::serial]
++fn rasters_overlays_and_pointer_regions_share_layers_capture_and_hover() {
++    let mut view = snapshot(
++        serde_json::json!({"sidebar_width": 30, "theme": {"density": "comfortable"}, "sites": {
++            "sidebar": {"components": [
++                {"type":"text","id":"intro","label":"Intro","text":"hello"},
++                {"type":"raster","id":"chart","label":"Chart","alt":"cpu chart","width":6,"height":3,"pointer":true}
++            ]},
++            "demo/tip": {"overlay": {"anchor": {"component": "chart"}, "offset": {"x": 2, "y": 1}, "width": 8, "height": 1, "z": 1},
++                "components": [{"type":"box","id":"tip","label":"Tip","pointer":true,
++                    "children":[{"type":"text","id":"tip_text","label":"Tip text","text":"peak 92%"}]}]}
++        }}),
++    );
++    view.component_owners = [("chart", "demo"), ("tip", "demo")]
++        .into_iter()
++        .map(|(id, owner)| (id.to_owned(), owner.to_owned()))
++        .collect();
++    crate::mod_raster::blit(
++        "demo",
++        Some("demo".into()),
++        Some((6, 3)),
++        &serde_json::json!({"key":"chart","rect":{"x":0,"y":0,"width":6,"height":3},
++            "cells":["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r"]}),
++        std::time::Instant::now(),
++    )
++    .expect("queued");
++    let area = Rect::new(0, 0, 80, 24);
++    let mut buffer = Buffer::empty(area);
++    preview(view.clone());
++    render(area, area, &mut buffer, &view);
++    let chart = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .regions
++        .iter()
++        .find(|region| region.id == "chart")
++        .cloned()
++        .expect("chart region");
++    let (x, y) = (chart.area.x, chart.area.y);
++    assert_eq!(chart.area.height, 3);
++    let line = |row: u16, width: u16| {
++        (0..width)
++            .map(|column| buffer[(x + column, y + row)].symbol())
++            .collect::<String>()
++    };
++    assert_eq!(line(0, 6), "abcdef");
++    assert_eq!(
++        line(1, 10),
++        "gh peak 92",
++        "the overlay draws over the raster"
++    );
++    assert_eq!(line(2, 6), "mnopqr");
++
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, x + 1, y + 2),
++        (
++            true,
++            events(&[("chart", "enter 1 2"), ("chart", "move 1 2")])
++        )
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, x + 3, y + 1),
++        (
++            true,
++            events(&[
++                ("chart", "leave 3 1"),
++                ("tip", "enter 1 0"),
++                ("tip", "move 1 0")
++            ])
++        ),
++        "the overlay occludes the raster beneath it"
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Down(MouseButton::Left), x + 1, y),
++        (
++            true,
++            events(&[
++                ("tip", "leave -1 -1"),
++                ("chart", "enter 1 0"),
++                ("chart", "down 1 0")
++            ])
++        )
++    );
++    let (consumed, dragged) =
++        pointer_events(MouseEventKind::Drag(MouseButton::Left), x + 40, y + 10);
++    assert!(consumed);
++    assert_eq!(
++        dragged,
++        events(&[("chart", "leave 40 10"), ("chart", "drag 40 10")]),
++        "capture keeps drags with the pressed component outside its rect"
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Up(MouseButton::Left), x + 40, y + 10),
++        (true, events(&[("chart", "up 40 10")]))
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Drag(MouseButton::Left), x + 1, y),
++        (false, events(&[("chart", "enter 1 0")])),
++        "released capture forwards no drags"
++    );
++    let click = |kind| MouseEvent {
++        kind,
++        column: x + 1,
++        row: y,
++        modifiers: KeyModifiers::NONE,
++    };
++    INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .focused = Some("intro".to_owned());
++    assert!(matches!(
++        pointer(click(MouseEventKind::Down(MouseButton::Left))),
++        Some(ModPointer::Consumed)
++    ));
++    assert_eq!(
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused,
++        None,
++        "pressing a pointer region takes focus from earlier controls"
++    );
++    pointer(click(MouseEventKind::Up(MouseButton::Left)));
++
++    let plain = snapshot(
++        serde_json::json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
++        {"type":"raster","id":"chart","label":"Chart","alt":"cpu chart","width":6,"height":3}]}}}),
++    );
++    sync_interaction(&plain.view);
++    render(area, area, &mut buffer, &plain);
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, x + 1, y + 2),
++        (false, events(&[("chart", "leave 1 2")])),
++        "a vanished region leaves at its last known cells"
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, x + 1, y + 2),
++        (false, Vec::new()),
++        "views without pointer components add no pointer work"
++    );
++    crate::mod_raster::retain(&BTreeSet::new());
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++fn overlays_anchor_to_screen_corners_or_components_and_clip() {
++    let screen = Rect::new(0, 0, 40, 10);
++    let anchors = BTreeMap::from([("cell".to_owned(), Rect::new(10, 4, 6, 2))]);
++    let at = |value: serde_json::Value| {
++        let overlay: codex_omd::ModOverlay = serde_json::from_value(value).unwrap();
++        overlay_area(screen, &overlay, &anchors)
++    };
++    assert_eq!(
++        at(serde_json::json!({"anchor":"bottom_right","width":8,"height":2})),
++        Some(Rect::new(32, 8, 8, 2))
++    );
++    assert_eq!(
++        at(serde_json::json!({"anchor":"center","width":10,"height":4})),
++        Some(Rect::new(15, 3, 10, 4))
++    );
++    assert_eq!(
++        at(
++            serde_json::json!({"anchor":{"component":"cell"},"offset":{"x":-12,"y":5},"width":8,"height":3})
++        ),
++        Some(Rect::new(0, 9, 6, 1)),
++        "screen clipping keeps the visible part"
++    );
++    assert_eq!(
++        at(
++            serde_json::json!({"anchor":{"component":"cell"},"offset":{"x":2,"y":1},"width":8,"height":3,"clip":"anchor"})
++        ),
++        Some(Rect::new(12, 5, 4, 1))
++    );
++    assert_eq!(
++        at(serde_json::json!({"anchor":{"component":"gone"},"width":8,"height":3})),
++        None
++    );
++    assert_eq!(
++        at(serde_json::json!({"anchor":"top_left","offset":{"x":50,"y":0},"width":8,"height":3})),
++        None
++    );
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
 new file mode 100644

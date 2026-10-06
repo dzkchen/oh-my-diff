@@ -121,7 +121,7 @@ export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: bool
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
 export type TerminalControl = { hotkey?: KeyName; autofocus?: boolean };
 export type TerminalComponent =
-  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number }
+  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number; pointer?: boolean }
   | { type: 'line'; id: string; label: string; spans: TerminalSpan[] }
   | { type: 'text'; id: string; label: string; text: string; tone?: TerminalTone }
   | ({ type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction } & TerminalControl)
@@ -135,7 +135,9 @@ export type TerminalComponent =
   | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[] }
   | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
-  | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number }
+  | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
+  /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
+  | { type: 'raster'; id: string; label: string; alt: string; width: number; height: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
   | { type: 'slot' }
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
@@ -152,7 +154,12 @@ export type TerminalBackdrop =
   | { ascii: AsciiBackdrop }
   | { image: BackdropTransform & { resource: ResourceRef; overlay?: TerminalSurfacePaint }; fallback?: { ascii: AsciiBackdrop } };
 export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
-export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[] };
+/** An overlay draws a `owner/name` site above the layout at its anchor's top-left plus `offset`; higher `z` draws later. */
+export type TerminalOverlay = {
+  anchor: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center' | { component: string };
+  offset?: { x: number; y: number }; width: number; height: number; z?: number; clip?: 'screen' | 'anchor'; border?: boolean;
+};
+export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[]; overlay?: TerminalOverlay };
 export type TerminalWelcome = { show_while_composing?: boolean };
 /** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
 export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed' };
@@ -161,6 +168,11 @@ export interface TerminalTheme {
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';
   glyphs?: Record<string, string>;
 }
+export type TerminalClient = {
+  kind: 'terminal'; graphics: 'kitty' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
+  cell_px: { width: number; height: number } | null;
+};
+export type TerminalCell = string | [glyph: string, fg: ThemeColor | null, bg: ThemeColor | null];
 export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
@@ -371,6 +383,8 @@ export interface HostOperations {
   'terminal.panes': { arguments: Record<string, never>; result: { panes: { id: string; visible: boolean; collapsed: boolean; focused: boolean; scroll: number }[] } };
   'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
     result: { shown: true; model?: boolean } | { cleared: boolean } };
+  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] };
+    result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
   'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
@@ -384,7 +398,7 @@ export interface Events {
   routing: { input: { routes: RouteInfo[]; model: string | null; provider: string; reasoning: string | null }; output: { route: string } | null };
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
   tool_exposure: { input: { thread_id: string | null; ledger: Ledger | null; available: string[] }; output: { enable: string[] } };
-  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null }; output: TerminalPatch | null };
+  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null; client?: TerminalClient | null }; output: TerminalPatch | null };
   start: { input: Json; output: void };
   resume: { input: { thread_id: string; last_turn: { turn_id: string; status: 'completed' | 'interrupted' | 'failed' | 'in_progress' } | null; restarted: boolean }; output: void };
   idle: { input: Json; output: void };
@@ -418,7 +432,7 @@ export interface Events {
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
   component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'open' | 'close';
     origin?: 'user' | 'mod'; value?: string; values?: string[]; offset?: number;
-    pointer?: { column: number; row: number; action: 'down' | 'up' | 'scroll_up' | 'scroll_down'; button: 'left' | 'right' | 'middle' | null };
+    pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };

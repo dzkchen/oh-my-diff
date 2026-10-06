@@ -1,6 +1,6 @@
 const containers = ['box', 'pane', 'dialog'];
 const textual = ['text', 'button', 'markdown', 'code'];
-const kinds = [...containers, ...textual, 'line', 'input', 'select', 'multiselect', 'list', 'document', 'diff', 'image', 'terminal', 'slot', 'native'];
+const kinds = [...containers, ...textual, 'line', 'input', 'select', 'multiselect', 'list', 'document', 'diff', 'image', 'raster', 'terminal', 'slot', 'native'];
 
 const flatten = children => [children].flat(Infinity).filter(child => child !== null && child !== undefined && typeof child !== 'boolean');
 

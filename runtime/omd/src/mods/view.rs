@@ -220,7 +220,7 @@ impl ModLayout {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModBackdropOffset {
     pub x: i16,
@@ -392,6 +392,64 @@ pub struct ModRenderSite {
     pub mode: ModSiteMode,
     #[serde(default)]
     pub components: Vec<ModComponent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<ModOverlay>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModScreenAnchor {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ModAnchor {
+    Screen(ModScreenAnchor),
+    Component { component: String },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModOverlayClip {
+    #[default]
+    Screen,
+    Anchor,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModOverlay {
+    pub anchor: ModAnchor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<ModBackdropOffset>,
+    pub width: u16,
+    pub height: u16,
+    #[serde(default)]
+    pub z: u8,
+    #[serde(default)]
+    pub clip: ModOverlayClip,
+    #[serde(default)]
+    pub border: bool,
+}
+
+impl ModOverlay {
+    fn valid(&self) -> bool {
+        (1..=200).contains(&self.width)
+            && (1..=60).contains(&self.height)
+            && self.z <= 9
+            && self.offset.as_ref().is_none_or(|offset| {
+                offset.x.unsigned_abs() <= 500 && offset.y.unsigned_abs() <= 200
+            })
+            && match &self.anchor {
+                ModAnchor::Screen(_) => self.clip == ModOverlayClip::Screen,
+                ModAnchor::Component { component } => mod_component_id(component),
+            }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -408,6 +466,8 @@ pub enum ModComponent {
         min_width: Option<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_width: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
     },
     Line {
         id: String,
@@ -548,6 +608,17 @@ pub enum ModComponent {
         alt: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         height: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
+    },
+    Raster {
+        id: String,
+        label: String,
+        alt: String,
+        width: u16,
+        height: u16,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
     },
     Diff {
         id: String,
@@ -1095,6 +1166,7 @@ impl ModComponent {
                 children: nested,
                 min_width,
                 max_width,
+                ..
             } => {
                 let bound =
                     |width: &Option<u16>| width.is_none_or(|width| (1..=500).contains(&width));
@@ -1326,6 +1398,19 @@ impl ModComponent {
                     && visible(alt, 256)
                     && height.is_none_or(|height| (1..=40).contains(&height))
             }
+            Self::Raster {
+                id,
+                label,
+                alt,
+                width,
+                height,
+                ..
+            } => {
+                identified(id, label, ids)
+                    && visible(alt, 256)
+                    && (1..=200).contains(width)
+                    && (1..=40).contains(height)
+            }
             Self::Slot | Self::Native { .. } => {
                 *slots += 1;
                 *slots <= 1
@@ -1435,6 +1520,13 @@ fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>) -> Option<String> {
         if !valid_site(name) {
             return Some(format!("sites.{name}"));
         }
+        if site
+            .overlay
+            .as_ref()
+            .is_some_and(|overlay| !name.contains('/') || !overlay.valid())
+        {
+            return Some(format!("sites.{name}.overlay"));
+        }
         site.invalid(&mut ids)
             .map(|field| format!("sites.{name}.{field}"))
     })
@@ -1477,7 +1569,8 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
         | ModComponent::Document { id, .. }
         | ModComponent::Diff { id, .. }
         | ModComponent::Terminal { id, .. }
-        | ModComponent::Image { id, .. } => {
+        | ModComponent::Image { id, .. }
+        | ModComponent::Raster { id, .. } => {
             ids.insert(id.clone());
         }
         ModComponent::Slot | ModComponent::Native { .. } => {}
@@ -1512,6 +1605,7 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 children,
                 min_width,
                 max_width,
+                pointer,
             } => vec![ModComponent::Box {
                 id,
                 label,
@@ -1519,6 +1613,7 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 children: replace_slot(children, current),
                 min_width,
                 max_width,
+                pointer,
             }],
             ModComponent::Pane {
                 id,
@@ -1751,16 +1846,20 @@ impl ModViewPatch {
             let current = candidate.sites.remove(&name).unwrap_or(ModRenderSite {
                 mode: ModSiteMode::Wrap,
                 components: vec![ModComponent::Slot],
+                overlay: None,
             });
+            let overlay = site.overlay.clone().or(current.overlay);
             let composed = match (site.mode, current.mode) {
-                (ModSiteMode::Replace, ModSiteMode::Replace) => site,
+                (ModSiteMode::Replace, ModSiteMode::Replace) => ModRenderSite { overlay, ..site },
                 (ModSiteMode::Replace, ModSiteMode::Wrap) => ModRenderSite {
                     mode: ModSiteMode::Replace,
                     components: replace_slot(current.components, &site.components),
+                    overlay,
                 },
                 (ModSiteMode::Wrap, mode) => ModRenderSite {
                     mode,
                     components: replace_slot(site.components, &current.components),
+                    overlay,
                 },
             };
             candidate.sites.insert(name, composed);

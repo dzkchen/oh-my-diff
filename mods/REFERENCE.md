@@ -47,7 +47,7 @@ native work.
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`; the `component_change` interceptor |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.blit`; the `component_change` interceptor |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
@@ -1399,8 +1399,18 @@ detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
 reduced motion, other protocols and inline viewports use ASCII fallback.
 Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
 Components add `document` (up to 100,000 lines with anchors, selection and
-find), `diff`, `image` (truecolor half-block cells, alt text under
-`NO_COLOR`) and `terminal` (a PTY session). Spans accept `fg` and `bg` theme
+find), `diff`, `image`, `raster` and `terminal` (a PTY session). An `image`
+places a Kitty graphics image in its cells, aspect-fit to the measured cell
+size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
+and hides under dialogs and overlays like text); elsewhere it draws truecolor
+half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Each
+image component has its own image id; replacing or removing the component
+deletes it, and exit and suspend delete every image and the backdrop.
+Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side
+(`terminal_raster_v1`). Either way the image is aspect-fit into the
+component's cells from its top-left cell (Kitty with `client.cell_px`, or
+8×16 when unknown; half-block cells count as 1×2 pixels), so a mod can map
+`pointer` cells, and `half` rows, on an `image` back to image pixels. Spans accept `fg` and `bg` theme
 colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps
 span styles. A `pane` or `document` with `keys: true` (`terminal_input_v1`)
 forwards keys and pastes while focused as `component_event {kind: 'input',
@@ -1438,7 +1448,54 @@ interaction; `component_event` also reports, to the component's owner only and
 with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
-and dialogs (`ui_composition_v1`). Operations:
+and dialogs (`ui_composition_v1`).
+
+Raster, pointer and overlays (`terminal_raster_v1`):
+
+- The `terminal` event carries `client: {kind: 'terminal', graphics, pointer,
+  reduced_motion, cell_px}`: `graphics` is `kitty` (pixel images),
+  `cells` (half-block) or `text` (`NO_COLOR`); `pointer` is `half_cell`,
+  `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline
+  viewport); `reduced_motion` follows `tui.animations` and the system
+  setting, and mods that animate stop when it is true; `cell_px` is the
+  measured cell size or null. It is null without a terminal client. When
+  any of these change (the font is resized, animations are turned off) the
+  view renders again with the new `client`.
+- `{type: 'raster', id, label, alt, width, height, pointer?}` is a keyed
+  canvas of 1–200 × 1–40 cells that shows `alt` until its first frame and
+  clips to the component's width. `terminal.blit {key, rect: {x, y, width,
+  height}, cells}` updates part of the caller's own raster (`key` is its id;
+  another mod's is `terminal_blit_not_owned`, and a raster the terminal
+  has not received in a view yet, such as one returned by the same callback,
+  is `terminal_blit_unknown`): `cells` lists the rect's cells
+  row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
+  null. Updates queue per raster and apply one per 33 ms frame, so a timer
+  tick can enqueue an animation; at 32 queued updates or 256 KiB the call
+  returns `{status: 'backpressure', retry_after_ms}` instead of
+  `{frame, queued, frame_ms}`; one call over 256 KiB is
+  `terminal_blit_too_large`. A mod holds at most 16 rasters; a raster's
+  frames are dropped with its component.
+- `box`, `image` and `raster` accept `pointer: true`. The owner then receives
+  `component_event {kind: 'pointer'}` with `action` `enter`, `leave`,
+  `move`, `down`, `up` and `drag`, `column`/`row` relative to the
+  component's first cell (a nested box counts its title and children), and
+  `half` (0 or 1, the half-cell row) on terminals that report pixel
+  positions (Kitty, Ghostty and WezTerm), else null. A press captures the
+  pointer until release, so `drag` and `up` reach the component outside its
+  cells with out-of-range or negative coordinates. Motion is latest-wins per
+  component: a slow callback sees the newest position, never a backlog.
+  Views without pointer components add no pointer work.
+- A mod-named site (`mod/site`) with `overlay: {anchor, offset?, width,
+  height, z?, clip?, border?}` draws above the layout instead of in the
+  sidebar: `anchor` is a screen corner (`top_left`, `top_right`,
+  `bottom_left`, `bottom_right`) or `center`, or `{component}` (the
+  component's top-left cell; the overlay is skipped while that component is
+  not drawn); `offset` moves it by cells; `z` (0–9) orders overlays;
+  `clip: 'anchor'` clips it to the anchor component's cells, otherwise to the
+  screen. An overlay hides what lies beneath it from pointer events, and a
+  dialog stays above every overlay.
+
+Operations:
 
 - `terminal.notify {title, body?}` uses the configured notification method
   with a focus condition and a 2 s rate limit.
@@ -1463,6 +1520,8 @@ and dialogs (`ui_composition_v1`). Operations:
   native picker of up to 32 options: one value, several with `multiple`, or a
   typed answer through an `Other…` row with `other`; it returns
   `{status: 'accepted', values, other?}` or `declined` when cancelled.
+- `terminal.blit {key, rect, cells}` (`terminal_raster_v1`) queues a raster
+  update, described above.
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
   focuses, scrolls (`offset`) or reveals one of the caller's own panes,
   dialogs or controls; another mod's component is `terminal_pane_not_owned`.

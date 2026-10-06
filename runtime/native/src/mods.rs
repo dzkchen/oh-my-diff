@@ -464,7 +464,8 @@ fn publish(
     active: impl Fn() -> bool,
 ) {
     let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
-        "presentation": views.current_presentation()});
+        "presentation": views.current_presentation(),
+        "client": codex_omd::client_surface::client()});
     let rendered_ms = codex_omd::ModViewSnapshot::clock();
     let mut terminal = runtime.terminal_view(input.clone(), active);
     let status = runtime.status();

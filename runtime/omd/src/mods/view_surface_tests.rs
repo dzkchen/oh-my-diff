@@ -273,3 +273,99 @@ fn links_multiselects_and_control_hotkeys_are_validated() {
         assert!(view(invalid.clone()).is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn rasters_and_overlays_are_bounded_and_overlays_survive_wraps() {
+    let raster = |extra: Value| {
+        let mut raster = json!({"type": "raster", "id": "chart", "label": "Chart", "alt": "Load",
+            "width": 40, "height": 8, "pointer": true});
+        raster
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        view(json!({"sites": {"sidebar": {"components": [raster]}}}))
+    };
+    assert!(raster(json!({})).is_ok());
+    for invalid in [
+        json!({"width": 0}),
+        json!({"width": 201}),
+        json!({"height": 41}),
+        json!({"alt": "a\u{001b}[2J"}),
+        json!({"cells": []}),
+    ] {
+        assert!(raster(invalid.clone()).is_err(), "{invalid}");
+    }
+    let overlay = |site: &str, overlay: Value| {
+        view(json!({"sites": {site: {"overlay": overlay,
+            "components": [{"type": "box", "id": "tip", "label": "Tip", "pointer": true}]}}}))
+    };
+    let tooltip = json!({"anchor": {"component": "chart"}, "offset": {"x": 1, "y": -1},
+        "width": 20, "height": 3, "z": 9, "clip": "anchor", "border": true});
+    assert!(overlay("charts/tip", tooltip.clone()).is_ok());
+    assert!(
+        overlay(
+            "charts/menu",
+            json!({"anchor": "bottom_right", "width": 20, "height": 3})
+        )
+        .is_ok()
+    );
+    for (site, invalid) in [
+        ("sidebar", tooltip.clone()),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 0, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 10, "height": 3, "z": 10}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 10, "height": 3, "clip": "anchor"}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": {"component": "Bad Id"}, "width": 10, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "middle", "width": 10, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "offset": {"x": -32768, "y": 0}, "width": 10, "height": 3}),
+        ),
+    ] {
+        assert!(overlay(site, invalid.clone()).is_err(), "{site} {invalid}");
+    }
+
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    for (id, patch) in [
+        (
+            "charts",
+            json!({"sites": {"charts/tip": {"overlay": tooltip, "components": [{"type": "slot"}], "mode": "wrap"}}}),
+        ),
+        (
+            "notes",
+            json!({"sites": {"charts/tip": {"components": [{"type": "text", "id": "note", "label": "Note", "text": "peak"}]}}}),
+        ),
+    ] {
+        ModViewPatch::parse(patch)
+            .unwrap()
+            .apply(&mut target, &mut claims, id, "idle")
+            .unwrap();
+    }
+    target.close_wraps();
+    assert_eq!(
+        target.sites["charts/tip"]
+            .overlay
+            .as_ref()
+            .map(|overlay| overlay.z),
+        Some(9)
+    );
+    assert_eq!(
+        component_ids_of(&target.sites["charts/tip"].components),
+        BTreeSet::from(["note".to_owned()])
+    );
+}

@@ -32,6 +32,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "terminal.pane",
     "terminal.panes",
     "terminal.notice",
+    "terminal.blit",
     "terminal.pty",
 ];
 
@@ -72,6 +73,10 @@ pub trait ClientSurface: Send + Sync {
     fn submit(&self, call: SurfaceCall) -> Result<(), String>;
 
     fn redraw(&self) {}
+
+    fn client(&self) -> Value {
+        Value::Null
+    }
 }
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -146,6 +151,11 @@ pub fn redraw() {
     if let Some(surface) = surface {
         surface.redraw();
     }
+}
+
+pub fn client() -> Value {
+    let surface = hub().surface.as_ref().map(|(_, surface)| surface.clone());
+    surface.map_or(Value::Null, |surface| surface.client())
 }
 
 pub fn submit(

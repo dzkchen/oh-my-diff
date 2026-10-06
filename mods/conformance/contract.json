@@ -1092,6 +1092,34 @@
       "replace_note": null
     },
     {
+      "id": "terminal.raster",
+      "group": "terminal",
+      "decision": "Keyed rasters, pointer capture, overlays, Kitty image placement and client facts",
+      "observe": "the `terminal` event carries `client` graphics, pointer, reduced-motion and cell-pixel facts; pointer components report `enter`, `leave`, `move`, `down`, `up` and `drag` with half-cell rows",
+      "alter": "`terminal.blit` queues partial cell updates into the mod's own `raster`; named sites may be overlays anchored to the screen or a component with z-order and clipping",
+      "replace": null,
+      "timing": "one queued blit applied per 33 ms frame; latest-wins pointer motion; a press captures until release",
+      "ownership": "mod: its own rasters, overlays and images; host: frame pacing, hit-testing layers, image ids and teardown",
+      "limits": "rasters 200x40 cells, 16 per mod, 32 queued updates or 256 KiB; overlay z 0–9; images 8 MiB and 4,096 px",
+      "native": "no equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "intercepts": [],
+        "operations": [
+          "terminal.blit"
+        ]
+      },
+      "evidence": [
+        "patch:blits_queue_and_apply_one_update_per_frame_interval",
+        "patch:blits_refuse_other_owners_bad_rects_and_report_backpressure",
+        "patch:rasters_overlays_and_pointer_regions_share_layers_capture_and_hover",
+        "patch:overlays_anchor_to_screen_corners_or_components_and_clip"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "terminal.reactive_state",
       "group": "terminal",
       "decision": "Reactive atoms, selectors and keyed subscriptions",

@@ -399,6 +399,12 @@
       "why_mod": "Replaces the live terminal layout with splits, tabs, documents and diffs."
     },
     {
+      "path": "mods/examples/raster_canvas",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Draws an animated raster with pointer hover, drag and an anchored overlay."
+    },
+    {
       "path": "mods/examples/render_hooks",
       "extension_type": "mod",
       "role": "author_example",

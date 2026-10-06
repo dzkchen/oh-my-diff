@@ -15,6 +15,7 @@ mod packages;
 mod view;
 pub use view::MOD_KEY_LIMIT;
 pub use view::ModActivity;
+pub use view::ModAnchor;
 pub use view::ModAsciiBackdrop;
 pub use view::ModBackdrop;
 pub use view::ModBackdropOffset;
@@ -33,9 +34,12 @@ pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
 pub use view::ModLayoutTabs;
 pub use view::ModListRow;
+pub use view::ModOverlay;
+pub use view::ModOverlayClip;
 pub use view::ModPanel;
 pub use view::ModRange;
 pub use view::ModRenderSite;
+pub use view::ModScreenAnchor;
 pub use view::ModSelectOption;
 pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
@@ -323,6 +327,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "composer_v2",
     "lifecycle_events_v1",
     "user_submissions_v1",
+    "terminal_raster_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -411,6 +416,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.pane",
     "terminal.panes",
     "terminal.notice",
+    "terminal.blit",
     "terminal.pty",
     "model.complete",
     "model.fork",
