@@ -750,8 +750,32 @@ fn leaves<'a>(
     }
 }
 
+/// One provider-bound text leaf, borrowing its text from the request.
+#[derive(Debug, PartialEq)]
+pub struct SendSegment<'a> {
+    pub id: String,
+    pub kind: String,
+    pub role: String,
+    pub editable: bool,
+    pub text: &'a str,
+    pub sha256: String,
+}
+
+impl SendSegment<'_> {
+    pub fn to_json(&self) -> Value {
+        json!({"id": self.id, "kind": self.kind, "role": self.role, "editable": self.editable,
+            "text": self.text, "bytes": self.text.len(), "sha256": self.sha256})
+    }
+}
+
 /// Every provider-bound text leaf of a Responses request in request order, and the opaque values it carries.
 pub fn send_segments(request: &Value) -> (Vec<Value>, Vec<Value>) {
+    let (segments, opaque) = send_segment_refs(request);
+    (segments.iter().map(SendSegment::to_json).collect(), opaque)
+}
+
+/// `send_segments` without copying text, so callers can build JSON only for the segments they forward.
+pub fn send_segment_refs(request: &Value) -> (Vec<SendSegment<'_>>, Vec<Value>) {
     let mut texts = Vec::new();
     let mut opaque = Vec::new();
     for field in SEND_FIELDS {
@@ -764,8 +788,14 @@ pub fn send_segments(request: &Value) -> (Vec<Value>, Vec<Value>) {
         .filter(|(_, text)| !text.is_empty())
         .map(|(id, text)| {
             let (kind, role, editable) = classify(request, &id);
-            json!({"id": id, "kind": kind, "role": role, "editable": editable, "text": text,
-                "bytes": text.len(), "sha256": crate::mods::digest(text.as_bytes())})
+            SendSegment {
+                sha256: crate::mods::digest(text.as_bytes()),
+                id,
+                kind,
+                role,
+                editable,
+                text,
+            }
         })
         .collect();
     let opaque = opaque

@@ -2490,6 +2490,16 @@ fn hostless(event: &str, payload: &Value) -> bool {
             )
 }
 
+/// Interceptors the engine runs synchronously while a model request is built, sent or streamed; a sleep there would stall that request's worker.
+fn request_path(event: &str, payload: &Value) -> Option<&'static str> {
+    if event != "intercept" {
+        return None;
+    }
+    ["model_request", "model_send", "response_stream"]
+        .into_iter()
+        .find(|surface| payload["surface"] == *surface)
+}
+
 /// `time.sleep` waits outside the runtime lock and wakes early when the callback is cancelled.
 fn sleep(
     access: &mut Access<'_>,
@@ -2568,6 +2578,11 @@ fn invoke(
                     if hostless(event, &payload) {
                         return Err(failure(format!(
                             "host_operation_unavailable: time.sleep is not available during {event}"
+                        )));
+                    }
+                    if let Some(surface) = request_path(event, &payload) {
+                        return Err(failure(format!(
+                            "time_sleep_unavailable: {surface} runs on the request path"
                         )));
                     }
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);

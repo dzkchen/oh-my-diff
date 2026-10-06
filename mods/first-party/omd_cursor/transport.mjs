@@ -208,6 +208,7 @@ export class Router {
     this.turns = new Map();
     this.charged = new Map();
     this.seen = new Map();
+    this.settling = new Map();
     this.notice = '';
     this.plan = null;
     this.planAt = 0;
@@ -233,6 +234,14 @@ export class Router {
   }
   busy(agentId) {
     return [...this.turns.values()].some(turn => turn.agentId === agentId);
+  }
+  releaseInactive() {
+    for (const agentId of this.agents.keys()) {
+      if (this.state.agents[agentId] || this.busy(agentId) || this.settling.has(agentId)) continue;
+      this.agents.delete(agentId);
+      this.seen.delete(agentId);
+      this.charged.delete(agentId);
+    }
   }
   async agent(messages, thread, model, orphaned) {
     for (let index = messages.length - 1; !orphaned && index >= 0 && messages[index].role === 'user'; index--) {
@@ -285,7 +294,7 @@ export class Router {
           else if (update?.type === 'turn-ended' && update.usage) turn.pending = add(turn.pending, update.usage);
         } });
     } catch (error) {
-      this.turns.delete(key);
+      await this.finish(key, turn, false);
       throw error;
     }
     turn.run.wait().then(result => turn.push({ kind: 'end', result }), error => turn.push({ kind: 'end', error }));
@@ -342,8 +351,9 @@ export class Router {
       delete this.state.agents[turn.agentId];
     }
     this.state.agents = Object.fromEntries(Object.entries(this.state.agents).sort((a, b) => b[1].at - a[1].at).slice(0, 200));
-    await writeFile(this.statePath, JSON.stringify(this.state));
     this.settle(turn.agentId, turn.model, { thread: turn.thread, request_id: turn.requestId ?? null });
+    this.releaseInactive();
+    await writeFile(this.statePath, JSON.stringify(this.state));
   }
   // Best effort over an undocumented dashboard RPC bundled in the SDK: plan pools and spend limits as Cursor's editor shows them, at most once a minute, never failing a request.
   async refreshPlan() {
@@ -369,12 +379,17 @@ export class Router {
     const agent = this.agents.get(agentId);
     const seen = this.seen.get(agentId) ?? new Set();
     this.seen.set(agentId, seen);
+    this.settling.set(agentId, (this.settling.get(agentId) ?? 0) + 1);
     const total = (rows, key) => rows.reduce((sum, run) => sum + (run.cost?.[key] ?? 0), 0);
     let done = false;
+    let running = 0;
     SETTLE_MS.forEach((delay, index) => setTimeout(async () => {
-      if (index === 0) await this.refreshPlan();
       if (done) return;
+      running++;
       try {
+        if (index === 0) await this.refreshPlan();
+        if (done) return;
+        if (index === SETTLE_MS.length - 1) done = true;
         const report = await agent.getUsage();
         const fresh = (report?.runs ?? []).filter(run => !seen.has(run.runId));
         const priced = fresh.length ? fresh.every(run => plain(run.cost)) : plain(report?.cost);
@@ -392,7 +407,15 @@ export class Router {
         if (cost?.charged_cents > 0) {
           this.notice = `Cursor charged ${cost.charged_cents.toFixed(2)}¢ beyond included usage for a run on agent ${agentId} (raw ${cost.raw_cents.toFixed(2)}¢); see /cursor usage.`;
         }
-      } catch {}
+      } catch {} finally {
+        running--;
+        if (done && !running) {
+          const pending = this.settling.get(agentId) - 1;
+          if (pending) this.settling.set(agentId, pending);
+          else this.settling.delete(agentId);
+          this.releaseInactive();
+        }
+      }
     }, delay).unref?.());
   }
 }

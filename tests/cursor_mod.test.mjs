@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { pendingSettlements, usageReport } from '../mods/first-party/omd_cursor/index.ts';
+import { Router } from '../mods/first-party/omd_cursor/transport.mjs';
 
 const model = 'cursor-auto';
 const token = 'local-fixture-token-without-account-access';
@@ -133,6 +134,69 @@ const exec = [{ type: 'function', name: 'exec_command', description: 'Run a comm
 const text = events => events.filter(event => event.type === 'response.output_text.delta').map(event => event.delta).join('');
 const items = (events, type) => events.filter(event => event.type === 'response.output_item.done' && event.item.type === type).map(event => event.item);
 const output = (item, value) => ({ type: 'function_call_output', call_id: item.call_id, output: value });
+
+test('Cursor retains billing baselines until every settlement finishes', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-settlement-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const timers = [];
+  t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
+  const router = new Router({ data }, 'fixture');
+  router.refreshPlan = async () => {};
+  let report = { runs: [{ runId: 'r', usage: {} }] };
+  router.agents.set('a', { getUsage: async () => report });
+  router.state.agents.a = { at: 1 };
+  router.settle('a', 'auto', { thread: 't', request_id: 'A' });
+  await timers[0]();
+  delete router.state.agents.a;
+  router.settle('a', 'auto', { thread: 't', request_id: 'B' });
+  report = { runs: [{ runId: 'r', usage: {}, cost: { rawCostCents: 2.5, chargedCents: 2.5 } }],
+    cost: { rawCostCents: 2.5, chargedCents: 2.5 } };
+  await timers[4]();
+  assert.ok(router.agents.has('a'));
+  assert.ok(router.charged.has('a'));
+  await timers[1]();
+  const rows = (await readFile(join(data, 'usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(rows.reduce((sum, row) => sum + (row.cost?.charged_cents ?? 0), 0), 2.5);
+  for (const cache of [router.agents, router.charged, router.seen]) assert.equal(cache.has('a'), false);
+});
+
+test('Cursor releases settled agents evicted from its resume inventory', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-eviction-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  t.mock.method(globalThis, 'setTimeout', () => ({ unref() {} }));
+  const router = new Router({ data }, 'fixture');
+  for (let index = 0; index < 200; index++) router.state.agents[`a${index}`] = { at: index };
+  for (const cache of [router.agents, router.charged, router.seen]) {
+    cache.set('a0', {});
+    cache.set('a199', {});
+  }
+  router.agents.set('new', { getUsage: async () => ({}) });
+  await router.finish('new', { agentId: 'new', messages: [], text: '', thread: 't', model: 'auto', abandon() {} }, true);
+  assert.equal(Object.keys(router.state.agents).length, 200);
+  for (const cache of [router.agents, router.charged, router.seen]) {
+    assert.equal(cache.has('a0'), false);
+    assert.ok(cache.has('a199'));
+  }
+});
+
+test('Cursor settles and releases an agent when starting its run fails', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-send-failure-'));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  const timers = [];
+  t.mock.method(globalThis, 'setTimeout', callback => { timers.push(callback); return { unref() {} }; });
+  const router = new Router({ data }, 'fixture');
+  router.ready = async () => {};
+  router.refreshPlan = async () => {};
+  const agent = { agentId: 'failed', send: async () => { throw new Error('send_failed'); },
+    getUsage: async () => ({ cost: { rawCostCents: 0, chargedCents: 0 }, runs: [] }) };
+  router.agents.set(agent.agentId, agent);
+  router.agent = async messages => ({ agent, input: messages, fresh: true });
+  await assert.rejects(router.start({ input: [user('hello')] }, { id: 'auto', slug: model }, 't'), /send_failed/);
+  assert.equal(router.turns.size, 0);
+  assert.ok(timers.length);
+  await timers[0]();
+  for (const cache of [router.agents, router.charged, router.seen]) assert.equal(cache.has(agent.agentId), false);
+});
 
 test('Cursor lead runs only OMD tools through Codex, reports usage and continues its agent', async t => {
   const { call, calls } = await fixture(t);

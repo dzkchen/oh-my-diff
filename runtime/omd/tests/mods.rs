@@ -2986,6 +2986,54 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
 }
 
 #[test]
+fn request_path_interceptors_refuse_sleep_before_continuation() {
+    for required in [false, true] {
+        let source = format!(
+            "export default api => {{ for (const surface of ['model_request', 'model_send', 'response_stream']) api.intercept(surface, {{required: {required}}}, async (e, next) => {{ await api.time.sleep(1); return next(e); }}); }}"
+        );
+        let (temp, _, _) = fixture(&source, &["middleware", "request_policy", "events"]);
+        let runtime = std::sync::Mutex::new(host(&temp));
+        for surface in ["model_request", "model_send", "response_stream"] {
+            let input = match surface {
+                "model_request" => {
+                    json!({"route": "default", "routes": [{"name": "default"}], "sections": [], "effort": null})
+                }
+                "response_stream" => json!({"kind": "text", "text": "hello", "index": 0}),
+                _ => json!({"segments": [], "opaque": [], "page": 0, "pages": 1}),
+            };
+            let result = codex_omd::intercept_shared(
+                &runtime,
+                surface,
+                required,
+                input,
+                json!({"caller": "engine"}),
+                || true,
+                |_, _| panic!("unexpected host call"),
+                |_| Ok(json!({"native": true})),
+            );
+            if required {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("time_sleep_unavailable")
+                );
+            } else {
+                assert_eq!(result.unwrap().result, json!({"native": true}));
+            }
+            let chains = runtime.lock().unwrap().status()["chains"].clone();
+            let entry = chains.as_array().unwrap().last().unwrap();
+            assert!(
+                entry
+                    .to_string()
+                    .contains(&format!("time_sleep_unavailable: {surface}")),
+                "{entry}"
+            );
+        }
+    }
+}
+
+#[test]
 fn offline_status_retains_conflicts_without_running_paid_work() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

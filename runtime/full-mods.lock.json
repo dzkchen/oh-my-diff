@@ -101,14 +101,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "cd5589d6874522b91a8aa22805b0f776303e5ba5deb2a467c96a86d41706b946",
+        "index.ts": "904814edc357a13e07e321835e2480424a8457e7dcb2b5499b12dbee212ad769",
         "mod.json": "d6615ae46b95a12730dc49ea71ccf8bec3054aff95a95ef61726ae94156b34f7",
         "models.json": "623b6512353588d10a000dc6ccbd8d5ee647227678fa29c1c5cfa8ec3fc825fb",
         "setup.mjs": "bf1d02a918768f54b99cf7be17485d2805a125ea25c62bbcd713d96c4f23f457",
-        "transport.mjs": "262a75dbde91fa7e6dedfcc7892c18c13667b07e40bf5773567dd14e5e80a8fc"
+        "transport.mjs": "b0a3a14b463526ac8e994fa021dda0e4d35987cc92aaf9117e11a95d82e528e4"
       },
       "id": "omd_cursor",
-      "package_sha256": "8afb01685552ee00078ec3f594ee1cecce2ec4b2e6f5d5ce256b4191e777c2ad",
+      "package_sha256": "56180652c27fdd585f099e681bb084d31238fdfe3c1ca438788cf8e0861f05ec",
       "source": "mods/first-party/omd_cursor",
       "version": "0.1.0-preview.1"
     },
@@ -777,11 +777,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "41e3a186059e57fc371160a3c39a8d835b8d925166f443d9b353bd74d30908b0",
+        "index.ts": "f19af88c725b36fb3208ff13e2a59d7ac80bfb4ede2faadd2ea52d9873f7770b",
         "mod.json": "efdb8ae9ec92afc10de39b78ee44e9cf160d007b71f830c3d545bbcfe6dde38f"
       },
       "id": "omd_theme",
-      "package_sha256": "29468f248363af5e07815ca26efea9633c22e6c0d98071fb6f8d05987c93f601",
+      "package_sha256": "742ce39989005e1bf93b3d036a90520698430ec308b577abd87ea40262fa6c94",
       "source": "mods/first-party/omd_theme",
       "version": "0.4.0-candidate.3"
     },

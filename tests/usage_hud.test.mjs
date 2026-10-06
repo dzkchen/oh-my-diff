@@ -197,6 +197,8 @@ test('sidebar shows usage, allowance, tasks and workers; theme draws compact cac
   const data = { thread: 'lead', cache: { ratio: 0.8, expires: NOW + 240_000 }, spend: { usd: 0.42, kind: 'estimate', uncertain: true, list: null }, quota: { name: '5h', used: 72, resets: NOW + 5_400_000, observed: NOW - 60_000 }, budget: 'warn' };
   const on = { statusline: 'ascii' };
   const themed = call(theme, { event: 'channel', payload: { publisher: 'omd_usage', channel: 'omd_usage/hud', data, correlation: null, sequence: 1, dropped: 0 }, settings: on }).state;
+  const replayed = call(theme, { event: 'channel', payload: { publisher: 'omd_usage', channel: 'omd_usage/hud', data, correlation: null, sequence: 2, dropped: 0 }, state: themed, settings: on }).state;
+  assert.deepEqual(replayed ?? themed, themed, 'an unchanged HUD leaves theme state alone, so the view is not republished');
   const spans = call(theme, { event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead', cwd: '/', cost: null }, identity: null }, state: themed, settings: on }).value.sites.above_composer.components[1].spans;
   assert.equal(spans.map(span => span.text).join(''), 'cache:80% ~4m | ~$0.42? | 5h 72% r1h30m');
   const below = call(theme, { event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead', cwd: '/', cost: null }, identity: null }, state: themed, settings: { statusline: 'minimal', statusline_position: 'below' }, virtual_time_ms: NOW + 6_000_000 }).value;

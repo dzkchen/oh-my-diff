@@ -54,3 +54,22 @@ Full nightly/project test suites, release builds, Windows/Linux native builds, p
 ## Integrated into fixes/findings (uncommitted) — 2026-10-06
 
 The fifteen fixes are integrated into `fixes/findings` at `3934bc9`, with destination repairs preserved, no commits or staging, and main unchanged. Patch replay and parity pass; all 58 focused native regressions, 127 JavaScript cases, 27 Python cases and 16 lock/conformance checks pass. Clippy, ownership, formatting, typecheck, rebuilt signed artifacts, SDK packaging, exact source/artifact locks and all-package offline host scenarios pass. The source worktree is closed after source-fidelity verification; scratch cleanup is recorded in [the integration audit](.docs/audits/merge-b6e0-20261006.md). Broader review/release gates remain open.
+
+## PR #9 consolidation into fixes/findings — 2026-10-06
+
+`perf/hot-path-fixes` at `c1b1ebab211cf4f61f3c9d342edf72cf4c26ba8f` is consolidated into `fixes/findings` and PR #10. The destination's FIFO fail-closed elicitation queue, atomic consent writes, admitted Cursor SDK snapshots, dashboard channel subscription and quota issuer regressions are preserved. Incoming native changes were reconciled through `4893666` and the patch was regenerated from source.
+
+Integration review confirmed and repaired four additional defects:
+
+| Finding | Fix | Regression |
+|---|---|---|
+| Peer message expires during verification | Re-read time when accepting the verified message | Delayed-seal rejection and expired receipt; original code fails |
+| Overlapping Cursor pollers discard the billing baseline early | Retain caches until all settlement chains and active callbacks finish | Shared-agent settlement totals 2.5 cents once; original cleanup fails |
+| Settled Cursor agents remain cached after cap eviction | Sweep evicted inactive agents | Resume inventory stays bounded and evicted caches disappear; original cleanup fails |
+| Cursor run-start failure bypasses settlement and cleanup | Route failed starts through the existing finish path | Failed-send agent settles and releases; original path fails |
+
+Local macOS verification passes: 108 focused native cases across 12 groups, 35 JavaScript cases, 16 lock/conformance/integration checks, mod typecheck, focused clippy, native ownership, touched-file formatting and affected-package offline host scenarios. New tests cover all three request-path sleep refusals, nonblocking TUI contention and same-length atomic cache replacement. Clippy retains only the unchanged upstream `compact_remote_v2.rs` argument-count warning.
+
+Patch replay passes first application, no-op second application and exact parity across 8,423 files; 497 patch destinations are unchanged. All six signed distributable binaries and the SDK were rebuilt. Generated locks match exact sources and artifacts. Patch SHA-256: `063698880d83f3ae00f45ca0da6cfa16ef54692e4912ac2b384fb3b0a8a34a79`.
+
+Main remains unchanged. Full nightly suites, release-profile and cross-platform builds, installed-browser/installer acceptance, interactive PTY and paid/live-provider checks were not run. Earlier bounded-review and release qualification limits remain open.

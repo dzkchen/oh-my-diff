@@ -139,3 +139,19 @@ fn consents_are_single_use_content_bound_and_reconciled_by_client_id() {
     );
     assert!(grant(root, "../escape", "queue", &sha, "c3").is_err());
 }
+
+#[test]
+fn reads_and_unmatched_deliveries_leave_the_file_untouched() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    grant(root, "t1", "queue", &digest("ship it", &[]), "c1").unwrap();
+    let path = root.join("consents").join("t1.json");
+    let modified = || fs::metadata(&path).unwrap().modified().unwrap();
+    let before = modified();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    status(root, "t1", "queue", "c1").unwrap();
+    delivered(root, "t1", "no-such-message", "turn-1").unwrap();
+    assert_eq!(modified(), before);
+    grant(root, "t1", "queue", &digest("again", &[]), "c2").unwrap();
+    assert_ne!(modified(), before, "a real change is still written");
+}

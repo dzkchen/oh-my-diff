@@ -1680,7 +1680,9 @@ here under the mod's own grants, and none starts paid work implicitly.
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
   `config_list`, `tool_specs`, `agent_offers`, `admission` and `composer_edit` callbacks run
-  without host operations and get `host_operation_unavailable`. `api.time.wait(check, {interval_ms,
+  without host operations and get `host_operation_unavailable`; `model_request`,
+  `model_send` and `response_stream` interceptors run on the request path and get
+  `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
   timeout_ms})` polls `check` between sleeps within the 32 host calls.
   `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
   interval_ms, handler)` register during activation (1 s to 24 h) and return

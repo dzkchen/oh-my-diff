@@ -1914,6 +1914,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if let Ok(mut accounts) = self.host.accounts.0.lock() {
                 accounts.remove(&lead.thread.to_string());
             }
+            self.host.accounts.forget_thread(&lead.thread.to_string());
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
             }

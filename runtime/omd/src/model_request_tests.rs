@@ -242,6 +242,24 @@ fn final_request() -> Value {
 }
 
 #[test]
+fn send_segment_refs_borrow_the_text_and_render_the_published_shape() {
+    let request = final_request();
+    let (refs, _) = send_segment_refs(&request);
+    let (segments, _) = send_segments(&request);
+    assert_eq!(refs.len(), segments.len());
+    let text = request["instructions"].as_str().unwrap();
+    assert!(
+        std::ptr::eq(refs[0].text, text),
+        "the text is borrowed, not copied"
+    );
+    assert_eq!(
+        segments[0],
+        json!({"id": "/instructions", "kind": "instructions", "role": "system", "editable": true,
+            "text": text, "bytes": text.len(), "sha256": crate::mods::digest(text.as_bytes())})
+    );
+}
+
+#[test]
 fn send_segments_cover_every_text_leaf_and_name_opaque_values() {
     let (segments, opaque) = send_segments(&final_request());
     let view = segments

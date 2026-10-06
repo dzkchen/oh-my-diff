@@ -1488,33 +1488,53 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        let attempts = state.attempts.values().cloned().collect::<Vec<_>>();
-        let settled_task_charge_microusd = attempts
-            .iter()
+        Self::capture(&state, usize::MAX, state.observed.clone())
+    }
+
+    /// Totals over every attempt, but only the newest `attempts` cloned and observed requests counted, not copied.
+    pub fn cost_summary(&self, attempts: usize) -> io::Result<(TaskCostCapture, usize)> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        Ok((
+            Self::capture(&state, attempts, Vec::new())?,
+            state.observed.len(),
+        ))
+    }
+
+    fn capture(
+        state: &State,
+        newest: usize,
+        observed: Vec<Attempt>,
+    ) -> io::Result<TaskCostCapture> {
+        let all = || state.attempts.values();
+        let settled_task_charge_microusd = all()
             .filter(|attempt| !attempt.external_subscription)
             .filter_map(|attempt| attempt.settled_microusd)
             .sum();
-        let subscription_list_equivalent_microusd = attempts
-            .iter()
+        let subscription_list_equivalent_microusd = all()
             .filter(|attempt| attempt.external_subscription)
             .filter_map(|attempt| attempt.settled_microusd)
             .sum();
-        let retained_exposure_upper_bound_microusd = attempts.iter().map(Attempt::exposure).sum();
-        let raw_usage_attempts = attempts
-            .iter()
+        let retained_exposure_upper_bound_microusd = all().map(Attempt::exposure).sum();
+        let raw_usage_attempts = all()
             .filter(|attempt| attempt.raw_usage.is_some())
             .count()
             .try_into()
             .map_err(|_| denied("raw usage attempt count overflow"))?;
-        let uncertain_requests = attempts
-            .iter()
+        let uncertain_requests = all()
             .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
             .map(|attempt| attempt.request)
+            .collect();
+        let attempts = all()
+            .skip(state.attempts.len().saturating_sub(newest))
+            .cloned()
             .collect();
         Ok(TaskCostCapture {
             schema: 1,
             attempts,
-            observed: state.observed.clone(),
+            observed,
             settled_task_charge_microusd,
             subscription_list_equivalent_microusd,
             retained_exposure_upper_bound_microusd,
