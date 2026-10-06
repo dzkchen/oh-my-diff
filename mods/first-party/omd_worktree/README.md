@@ -34,11 +34,13 @@ A failed setup step is reported and the worktree is kept.
 uncommitted tracked changes. It shows the task branch's commits, changed files
 and diff, plus any uncommitted work in the task worktree, including the full
 content of up to eight new files (more must be committed there first; shared
-setup paths are never committed; already staged setup paths must be unstaged first). That work is committed there under the task
-name when you choose **Commit and merge**, only if the worktree, its new files
-and the branch tip still match the preview; the merge then runs only after
-rechecking this checkout's HEAD and clean status and that the branch moved by
-exactly that commit. A conflict aborts the merge and restores the checkout.
+setup paths are excluded even when already staged). **Commit and merge** commits
+the captured tree under the task name only if the allowed files, real index and
+branch tip still match. It holds Git's index lock across validation and commit,
+preserves excluded staged entries, and merges the exact commit after rechecking
+the destination HEAD and status. Captured-tree commits use `git commit-tree` and
+do not run commit hooks. A conflict attempts merge abort and reports a recovery
+failure if abort fails.
 Task names are kept in the mod's user-scope store, so every session sees them;
 the roster, selection and preview belong to the session thread.
 Merge commits use the repository's Git identity or exported `GIT_AUTHOR_*` and
@@ -48,8 +50,14 @@ Merge commits use the repository's Git identity or exported `GIT_AUTHOR_*` and
 paths alone don't count as dirty and are removed with the checkout),
 keeps session history, keeps unmerged branches and deletes a merged branch only
 after its own confirmation. The mod never stashes, resets or deletes
-another session's work, and commits it only through **Commit and merge**.
-Removal requires a complete session inventory before and after confirmation. Failed requests, malformed pages or inventories exceeding four pages of 100 sessions keep the checkout.
+another participating session's work, and commits it only through **Commit and merge**.
+Removal requires a complete session inventory before and after confirmation.
+Failed requests, malformed pages or inventories exceeding four pages of 100
+sessions keep the checkout. A shared checkout lease excludes
+other current-runtime sessions through removal; loaded idle sessions also hold
+leases. Missing ownership information refuses removal. The confirmation requires
+you to establish that older runtimes and other applications are not using the
+checkout, because those applications do not participate in this lease protocol.
 
 **Permissions.** Codex protects `.git`, and checkouts live outside the
 repository, so creation, integration and removal need a permission profile that

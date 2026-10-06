@@ -129,7 +129,14 @@ test('provider costs, cache policy and missing usage keep their own labels', () 
   assert.deepEqual(refreshed.state.ledger.cost, { settled_task_charge_microusd: null }, 'saved state keeps no ledger attempts');
 });
 
-test('quota samples are scoped to the lead account, deduplicated, projected only with enough span and stale after reset', () => {
+test('Codex account quotas retain their issuer when the lead uses another provider', () => {
+  const state = start({ thread_id: 'lead', model: 'claude', provider: 'omd_claude_cli' }, { primary: { usedPercent: 75, windowDurationMins: 300 } });
+  assert.deepEqual(state.hud.samples.map(sample => sample.scope), ['codex-account']);
+  assert.match(dialog(state).text, /Codex account 5h: 75%/);
+  assert.match(dialog(state).text, /Current route quota: unavailable/);
+});
+
+test('Codex account samples are deduplicated, projected only with enough span and stale after reset', () => {
   const limits = used => ({ primary: { usedPercent: used, windowDurationMins: 300, resetsAt: (NOW + 7_200_000) / 1000 }, secondary: { usedPercent: 10, windowDurationMins: 10080, resetsAt: null }, credits: { hasCredits: true, unlimited: false, balance: '12' } });
   let state = start(undefined, limits(20));
   state = feed(state, [['model_response', response('r1')]]);
@@ -144,7 +151,8 @@ test('quota samples are scoped to the lead account, deduplicated, projected only
   assert.match(text, /Extra-usage credits: balance 12/);
   assert.match(dialog(state, hud, NOW + 7_300_000).text, /5h: 40% used · reset passed 2m ago, awaiting a new reading/);
   state = feed(state, [['model_response', response('r2', { provider: 'omd_claude_cli', credential: 'claude', timing: { started_at_ms: NOW + 1_900_000, first_event_ms: 1, duration_ms: 1 } })]]);
-  assert.match(dialog(state, hud, NOW + 1_910_000).text, /No quota windows reported for this account and route/);
+  assert.match(dialog(state, hud, NOW + 1_910_000).text, /Current route quota: unavailable/);
+  assert.match(dialog(state, hud, NOW + 1_910_000).text, /Codex account 5h: 40%/);
 });
 
 test('compaction, rewind and route switches mark the context reading stale; categories need the detailed mode', () => {

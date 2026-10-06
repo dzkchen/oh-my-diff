@@ -593,6 +593,8 @@ async fn surface(
     let runtime = core.runtime.clone();
     let generation = caller.generation;
     let source = caller.source.to_owned();
+    let admitted_source = source.clone();
+    let admission_cancelled = cancelled.clone();
     tokio::task::spawn_blocking(move || {
         let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
         let owner = id.clone();
@@ -612,26 +614,33 @@ async fn surface(
                     grants.source_sha256 == source && grants.capabilities == admitted_capabilities
                 })
         });
-        if operation == "app.request" {
-            return codex_omd::client_surface::app_request(
-                &id,
-                &capabilities,
-                context,
-                Some(&thread),
-                &repository,
-                &routes,
-                arguments,
-                active,
-            );
-        }
-        codex_omd::client_surface::call(
-            &id,
-            &operation,
-            arguments,
-            context,
-            Some(&thread),
-            None,
-            active,
+        codex_omd::client_surface::with_admission(
+            &admitted_source,
+            generation,
+            Some(admission_cancelled),
+            || {
+                if operation == "app.request" {
+                    return codex_omd::client_surface::app_request(
+                        &id,
+                        &capabilities,
+                        context,
+                        Some(&thread),
+                        &repository,
+                        &routes,
+                        arguments,
+                        active,
+                    );
+                }
+                codex_omd::client_surface::call(
+                    &id,
+                    &operation,
+                    arguments,
+                    context,
+                    Some(&thread),
+                    None,
+                    active,
+                )
+            },
         )
     })
     .await

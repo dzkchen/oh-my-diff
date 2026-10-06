@@ -112,6 +112,24 @@ class BridgeTests(unittest.TestCase):
             finally:
                 host.close()
 
+    def test_python_reply_failure_does_not_discard_the_rest_of_the_batch(self):
+        client = load_python_client()({"url": "http://unused", "token": "fixture"},
+            {"id": "app", "adapter": "python", "version_sha256": VERSION, "reproduction_id": "fixture"})
+        client.instance_id = "instance"
+        client.handlers["health"] = lambda: "healthy"
+        replies = []
+        def post(route, body):
+            if route == "/v1/poll":
+                return {"commands": [{"name": "health", "request_id": "expired"}, {"name": "health", "request_id": "live"}]}
+            replies.append(body)
+            if body["request_id"] == "expired":
+                raise RuntimeError("expired")
+            return {}
+        client._post = post
+        client.poll()
+        self.assertEqual([reply["request_id"] for reply in replies], ["expired", "live"])
+        self.assertEqual(replies[-1]["value"], "healthy")
+
     def policy(self, root):
         applications = []
         for adapter in ("browser", "node", "rust", "python", "java"):
@@ -138,6 +156,20 @@ class BridgeTests(unittest.TestCase):
             "token": host.connection["token"], "app_id": adapter, "adapter": adapter,
             "version_sha256": VERSION, "reproduction_id": "repro-1", "exposed_state": ["health"], **extra,
         }
+
+    def test_expired_state_requests_leave_no_queued_commands(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            host = Host(root, self.policy(root))
+            try:
+                registration = post(host.connection, "/v1/register", self.registration(host, "node"))
+                body = self.registration(host, "node", instance_id=registration["instance_id"])
+                for _ in range(4):
+                    with self.assertRaisesRegex(RuntimeError, "timed out"):
+                        host.tool({"action": "request_state", "application": "node", "state": "health", "timeout_ms": 10})
+                self.assertEqual(post(host.connection, "/v1/poll", body)["commands"], [])
+            finally:
+                host.close()
 
     def test_authorization_version_redaction_bounds_state_and_teardown(self):
         with tempfile.TemporaryDirectory() as temporary:

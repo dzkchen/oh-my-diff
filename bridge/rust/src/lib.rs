@@ -134,7 +134,7 @@ impl BridgeClient {
                 Some(Err(error)) => body["error"] = json!(error),
                 None => body["error"] = json!("state handler unavailable"),
             }
-            post(&self.connection.url, "/v1/state", &body)?;
+            let _ = post(&self.connection.url, "/v1/state", &body);
         }
         Ok(())
     }

@@ -223,8 +223,19 @@ and `GIT_CONFIG` prefixes are refused.
 
 ### One-shot commands: `exec.run`
 
+`exclusive_workspace` names an absolute writable checkout to lock before guards
+and until the command exits. It requires sandboxed write mode and prior checkout
+enrollment by this runtime. Local sessions hold shared leases for their selected
+local roots, including inherited and subsequently selected roots. Removal fails
+closed when ownership is unavailable or another participating session holds a
+lease. Older runtimes and other applications do not participate; callers must
+obtain explicit user confirmation that those applications are not using a
+checkout before removing it. Exclusive ownership is unavailable on non-Unix hosts
+and filesystems that cannot report creation identity; creation identity prevents
+an inode reused by a new checkout from inheriting historical enrollment.
+
 `{program, sha256?, argv?, cwd?, env?, stdin?, timeout_ms?, max_output_bytes?, output_artifact?,
-write?, network?, unix_sockets?, guards?, required_access?}` runs one program in the session's effective sandbox. A bare
+write?, network?, unix_sockets?, guards?, required_access?, exclusive_workspace?}` runs one program in the session's effective sandbox. A bare
 program name resolves on `PATH` outside the repository; an absolute path must
 be canonical and outside the repository; `sha256` pins the resolved file. `cwd`
 is repository-relative. The environment starts empty except `PATH`, a private
@@ -1245,9 +1256,9 @@ A request to `$OMD_CREDENTIAL_GATEWAY/PROFILE/PATH` is sent over HTTPS to
 `PATH` on that profile's origin with `Authorization: Bearer` (or `x-api-key`
 when the request sets `x-omd-credential-header: x-api-key`) and the response
 streams back; redirects aren't followed. Stopping the sidecar cancels its
-in-flight gateway requests. The gateway admits at most 16 requests at once,
-with a 10-second connection timeout, 30-second inactivity timeout and
-five-minute total deadline. `omd-mod credentials STORE` lists
+in-flight gateway requests and streams. The gateway admits at most 16 connections
+globally and four forwards per registration, with a 30-second connection and
+inactivity timeout and a 10-minute total deadline. `omd-mod credentials STORE` lists
 profiles without secrets. `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN`
 reads a value from stdin and stores it as a secret owned by `MOD_ID` for `ORIGIN`, the same
 profile `credentials.request {kind: 'secret'}` creates, replacing the value of that mod's
@@ -1255,6 +1266,16 @@ existing secret with the same label and origin; it prints the profile and asks f
 authorization when the authority broker is deployed. Package setup scripts use it to enroll a
 key without writing it to disk. `providers.register {id, secrets?}` delivers owned secrets
 to a provider service as `sidecars.start` does.
+
+Service launches use private read-only sandbox snapshots of the package's admitted
+entrypoint and assets, preserving their relative paths. Original package paths are
+denied to the child. Grants may include `code_roots` mapping canonical dependency
+directories to SHA-256 digests of sorted JSON `[relativePath, kind, value]` rows:
+`kind` is `file` with a content SHA-256 or `link` with an internal relative target.
+Verified bytes are copied without reopening the source; `OMD_SERVICE_ROOT` names
+the snapshot root, under which absolute dependency paths are mirrored. Changed
+dependencies require a new grant. Reload and disable stop stale services before
+their IDs can be reused.
 
 ### Thread store, resume and turn activity (`store_thread_v1`, `turn_activity_v1`)
 

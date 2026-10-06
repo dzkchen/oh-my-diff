@@ -5,6 +5,33 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+type Admission = (Value, Option<Arc<AtomicBool>>);
+thread_local! {
+    static CALL_ADMISSION: std::cell::RefCell<Option<Admission>> = const { std::cell::RefCell::new(None) };
+}
+
+pub fn with_admission<T>(
+    source: &str,
+    generation: u64,
+    cancelled: Option<Arc<AtomicBool>>,
+    action: impl FnOnce() -> T,
+) -> T {
+    struct Reset(Option<Admission>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CALL_ADMISSION.with(|value| *value.borrow_mut() = self.0.take());
+        }
+    }
+    let previous = CALL_ADMISSION.with(|value| {
+        value.replace(Some((
+            serde_json::json!({"source": source, "generation": generation}),
+            cancelled,
+        )))
+    });
+    let _reset = Reset(previous);
+    action()
+}
+
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
     "credentials.request",
@@ -65,14 +92,37 @@ impl std::fmt::Debug for Validity {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct CallLifetime {
+    pub admission: Option<Value>,
+    upstream_cancelled: Option<Arc<AtomicBool>>,
+    cancelled: Arc<AtomicBool>,
+    deadline: Arc<Mutex<Option<Instant>>>,
+    pub binding: Option<Value>,
+}
+
+impl CallLifetime {
+    pub fn active(&self) -> bool {
+        !self.cancelled.load(Ordering::Acquire)
+            && !self
+                .upstream_cancelled
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+            && self
+                .deadline
+                .lock()
+                .is_ok_and(|deadline| deadline.is_none_or(|deadline| Instant::now() < deadline))
+    }
+}
+
 pub struct PendingReply {
     receiver: Receiver<Result<Value, String>>,
-    live: Arc<AtomicBool>,
+    lifetime: CallLifetime,
 }
 
 impl Drop for PendingReply {
     fn drop(&mut self) {
-        self.live.store(false, Ordering::Release);
+        self.lifetime.cancelled.store(true, Ordering::Release);
     }
 }
 
@@ -128,7 +178,7 @@ impl Drop for AuthorityGuard {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SurfaceCall {
     pub validity: Validity,
     pub caller: String,
@@ -139,6 +189,7 @@ pub struct SurfaceCall {
     pub authority: Option<Authority>,
     pub confirm: Option<String>,
     pub reply: Reply,
+    pub lifetime: CallLifetime,
 }
 
 pub trait ClientSurface: Send + Sync {
@@ -262,10 +313,22 @@ fn submit_bound(
         .map(|(_, surface)| surface.clone())
         .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
     let (reply, receiver) = sync_channel(1);
-    let live = Arc::new(AtomicBool::new(true));
-    let queued = live.clone();
+    let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
+    let lifetime = CallLifetime {
+        admission: admission.as_ref().map(|(binding, _)| binding.clone()),
+        upstream_cancelled: admission.and_then(|(_, flag)| flag),
+        ..CallLifetime::default()
+    };
+    if confirm.is_none() && !awaits_user(operation, &arguments) {
+        *lifetime
+            .deadline
+            .lock()
+            .map_err(|_| "client_surface_poisoned")? =
+            Some(Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
+    }
+    let queued = lifetime.clone();
     surface.submit(SurfaceCall {
-        validity: Validity(Arc::new(move || queued.load(Ordering::Acquire) && active())),
+        validity: Validity(Arc::new(move || queued.active() && active())),
         caller: caller.to_owned(),
         operation: operation.to_owned(),
         arguments,
@@ -276,8 +339,9 @@ fn submit_bound(
             .flatten(),
         confirm,
         reply,
+        lifetime: lifetime.clone(),
     })?;
-    Ok(PendingReply { receiver, live })
+    Ok(PendingReply { receiver, lifetime })
 }
 
 pub fn wait(
@@ -285,6 +349,13 @@ pub fn wait(
     active: &dyn Fn() -> bool,
     deadline: Option<Instant>,
 ) -> Result<Value, String> {
+    if let Some(deadline) = deadline {
+        *receiver
+            .lifetime
+            .deadline
+            .lock()
+            .map_err(|_| "client_surface_poisoned")? = Some(deadline);
+    }
     loop {
         if !active() {
             return Err("callback_cancelled".into());
@@ -295,7 +366,7 @@ pub fn wait(
                 crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
             ));
         }
-        match receiver.recv_timeout(Duration::from_millis(20)) {
+        match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
             Ok(result) => return result,
             Err(RecvTimeoutError::Timeout) => (),
             Err(RecvTimeoutError::Disconnected) => {

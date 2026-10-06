@@ -4496,6 +4496,39 @@ impl ModHost {
             .collect()
     }
 
+    pub fn launch_sources(
+        &self,
+        id: &str,
+        generation: u64,
+    ) -> io::Result<(PathBuf, BTreeMap<PathBuf, Vec<u8>>)> {
+        if generation != self.generation {
+            return Err(failure("service_generation_changed"));
+        }
+        let loaded = self
+            .active()
+            .find(|(owner, _)| owner.as_str() == id)
+            .map(|(_, loaded)| loaded)
+            .ok_or_else(|| failure("host_caller_inactive"))?;
+        if !loaded.selection.authority_current() {
+            return Err(failure("service_authority_changed"));
+        }
+        let root = loaded.selection.path.canonicalize()?;
+        if root != loaded.selection.path {
+            return Err(failure("service_source_path_changed"));
+        }
+        let mut files = BTreeMap::from([(
+            root.join(&loaded.package.entrypoint),
+            loaded.source.as_bytes().to_vec(),
+        )]);
+        for (name, value) in &loaded.assets {
+            let text = value["text"]
+                .as_str()
+                .ok_or_else(|| failure("service_asset_unavailable"))?;
+            files.insert(root.join(name), text.as_bytes().to_vec());
+        }
+        Ok((root, files))
+    }
+
     /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
     pub fn record_access(&mut self, receipt: Value) {
         self.access.push(receipt);

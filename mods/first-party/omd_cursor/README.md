@@ -12,6 +12,13 @@ Setup installs `@cursor/sdk@1.0.35` with pnpm into `<prefix>/cursor/sdk` (the SD
 
 How a turn runs:
 
+Setup pins the SDK dependency tree in the service grant. Launch copies verified
+dependencies and the admitted package helpers into a private sandbox snapshot;
+the transport loads the SDK only from that snapshot. Changing installed code
+cannot change an already admitted helper. Changed SDK dependencies require setup
+again. A custom SDK entrypoint must live in a dedicated directory separate from
+the installation prefix and mod store.
+
 - The SDK runs locally (no cloud agent and no repository upload). Cursor's built-in tools, ambient `.cursor` settings, rules and MCP servers are turned off. The agent works in an empty private directory, so it reaches your repository only through OMD tools.
 - Every Codex tool in the request, including deferred tools loaded through `tool_search`, is offered to Cursor as an SDK custom tool. When Cursor calls one, the transport parks the run and returns the call to Codex. Codex then executes it under OMD's sandbox, approvals and mods. The next request returns the output and the same run continues. Parallel calls are handed to Codex together. Tools loaded mid-turn are called through `omd_call`. Hosted web search is not offered.
 - Cursor keeps its own system prompt and context. Codex's base instructions are not sent. A new agent receives the developer context (permissions, environment) and the transcript. A thread's follow-up resumes the same Cursor agent from its local store (`/private/tmp/omd-cursor-<uid>`, lost on reboot), including after a transport restart. A forked thread, a concurrent request or an unknown history starts a new agent seeded with the transcript; tool exchanges are replayed only as text. Codex reasoning effort maps to the model's reasoning parameter when it has one. A model change applies to the next run.

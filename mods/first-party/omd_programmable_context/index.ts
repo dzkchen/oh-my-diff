@@ -248,7 +248,8 @@ export default function activate(api: ModAPI) {
     if (encodeURIComponent(encoded).replace(/%[0-9A-F]{2}|./g, 'x').length > 65_536) throw new Error('keep_limit: serialized value and provenance exceed 64 KiB');
     const key = `var.${await sha256(encoded)}`;
     const previous = api.host.call('store.get', { key, scope: 'thread' });
-    api.host.call('store.put', { key, value: envelope, expected_revision: previous?.revision ?? null, scope: 'thread' });
+    if (!previous) api.host.call('store.put', { key, value: envelope, expected_revision: null, scope: 'thread' });
+    else if (JSON.stringify(previous.value) !== encoded) throw new Error('variable_digest_mismatch');
     api.host.call('store.put', { key: 'vars', value: { ...vars, [value.name]: { ...kept, key } } as unknown as Json, expected_revision: registry?.revision ?? null, scope: 'thread' });
     publish({ vars: { ...vars, [value.name]: kept } });
     return kept;

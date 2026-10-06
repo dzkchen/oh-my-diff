@@ -134,7 +134,12 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Value> {
     let mut headers = 0_usize;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        if reader
+            .by_ref()
+            .take((8192 - headers + 1) as u64)
+            .read_line(&mut line)?
+            == 0
+        {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "process stopped",
@@ -741,6 +746,19 @@ impl ManagedProcesses {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_length_headers_are_bounded_before_allocation() {
+        for prefix in ["", "Content-Length: 2\r\n"] {
+            let bytes = format!("{prefix}{}", "x".repeat(16384));
+            let mut reader = io::Cursor::new(bytes.as_bytes());
+            assert_eq!(
+                read_message(&mut reader).unwrap_err().to_string(),
+                "process headers exceed limit"
+            );
+            assert_eq!(reader.position(), 8193);
+        }
+    }
 
     #[test]
     fn framed_process_is_owned_bounded_and_stopped() {

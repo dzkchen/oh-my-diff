@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index c14cdb126..1a805f749 100644
+index c14cdb126..c9f626150 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2113,6 +2113,7 @@ dependencies = [
@@ -10,7 +10,15 @@ index c14cdb126..1a805f749 100644
   "codex-otel",
   "codex-plugin",
   "codex-prompts",
-@@ -3000,6 +3001,7 @@ dependencies = [
+@@ -2938,6 +2939,7 @@ dependencies = [
+  "codex-model-provider-info",
+  "codex-models-manager",
+  "codex-network-proxy",
++ "codex-omd",
+  "codex-otel",
+  "codex-plugin",
+  "codex-prompts",
+@@ -3000,6 +3002,7 @@ dependencies = [
   "serde_json",
   "serial_test",
   "sha1 0.10.6",
@@ -18,7 +26,7 @@ index c14cdb126..1a805f749 100644
   "shlex",
   "similar",
   "tempfile",
-@@ -3142,6 +3144,7 @@ dependencies = [
+@@ -3142,6 +3145,7 @@ dependencies = [
   "codex-history",
   "codex-login",
   "codex-model-provider-info",
@@ -26,7 +34,7 @@ index c14cdb126..1a805f749 100644
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4155,6 +4158,60 @@ dependencies = [
+@@ -4155,6 +4159,65 @@ dependencies = [
   "wiremock",
  ]
 
@@ -44,6 +52,7 @@ index c14cdb126..1a805f749 100644
 + "serde",
 + "serde_json",
 + "sha2 0.10.9",
++ "socket2 0.6.3",
 + "tempfile",
 + "toml 0.9.11+spec-1.1.0",
 +]
@@ -52,8 +61,8 @@ index c14cdb126..1a805f749 100644
 +name = "codex-omd-extension"
 +version = "0.160.1"
 +dependencies = [
-+ "axum",
 + "base64 0.22.1",
++ "bytes",
 + "chrono",
 + "codex-api",
 + "codex-client",
@@ -73,8 +82,12 @@ index c14cdb126..1a805f749 100644
 + "codex-utils-absolute-path",
 + "codex-utils-path-uri",
 + "codex-utils-pty",
-+ "futures",
++ "futures-util",
 + "http 1.4.0",
++ "http-body-util",
++ "hyper",
++ "hyper-util",
++ "libc",
 + "reqwest 0.12.28",
 + "serde",
 + "serde_json",
@@ -87,7 +100,7 @@ index c14cdb126..1a805f749 100644
  [[package]]
  name = "codex-otel"
  version = "0.160.1"
-@@ -4774,6 +4831,8 @@ dependencies = [
+@@ -4774,6 +4837,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -96,7 +109,7 @@ index c14cdb126..1a805f749 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4795,6 +4854,7 @@ dependencies = [
+@@ -4795,6 +4860,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -663,6 +676,19 @@ index 6b2a7ed47..ca6909e2d 100644
      #[tokio::test]
      async fn parses_items_and_completed() {
          let item1 = json!({
+diff --git a/codex-rs/config/src/constraint.rs b/codex-rs/config/src/constraint.rs
+index e2c7f9430..0f74828b6 100644
+--- a/codex-rs/config/src/constraint.rs
++++ b/codex-rs/config/src/constraint.rs
+@@ -6,6 +6,8 @@ use thiserror::Error;
+
+ #[derive(Debug, Error, PartialEq, Eq)]
+ pub enum ConstraintError {
++    #[error("workspace ownership unavailable: {reason}")]
++    WorkspaceOwnership { reason: String },
+     #[error(
+         "invalid value for `{field_name}`: `{candidate}` is not in the allowed set {allowed} (set by {requirement_source})"
+     )]
 diff --git a/codex-rs/config/src/skills_config.rs b/codex-rs/config/src/skills_config.rs
 index cc944d817..bdc3c228b 100644
 --- a/codex-rs/config/src/skills_config.rs
@@ -838,7 +864,7 @@ index 2ae390470..fbea5f9da 100644
 
  #[tokio::test]
 diff --git a/codex-rs/core/Cargo.toml b/codex-rs/core/Cargo.toml
-index d5fd95d2d..5af535837 100644
+index d5fd95d2d..8ca68a182 100644
 --- a/codex-rs/core/Cargo.toml
 +++ b/codex-rs/core/Cargo.toml
 @@ -107,6 +107,7 @@ rmcp = { workspace = true, default-features = false, features = [
@@ -849,6 +875,14 @@ index d5fd95d2d..5af535837 100644
  shlex = { workspace = true }
  similar = { workspace = true }
  tempfile = { workspace = true }
+@@ -137,6 +138,7 @@ openssl-sys = { workspace = true, features = ["vendored"] }
+ openssl-sys = { workspace = true, features = ["vendored"] }
+
+ [target.'cfg(unix)'.dependencies]
++codex-omd = { path = "../omd" }
+ codex-shell-escalation = { workspace = true }
+
+ [dev-dependencies]
 diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
 index ac6171c01..0435997ac 100644
 --- a/codex-rs/core/config.schema.json
@@ -2334,10 +2368,70 @@ index 765fe5eda..e77e36031 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index e08a0fa5a..058fd8026 100644
+index e08a0fa5a..8b0497678 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -1436,6 +1436,100 @@ impl Session {
+@@ -504,7 +504,59 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+ const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
+ const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
+
++#[cfg(unix)]
++type WorkspaceLease = codex_omd::workspace_lease::Lease;
++#[cfg(not(unix))]
++type WorkspaceLease = ();
++
++#[cfg(unix)]
++fn shared_workspace_lease(path: &std::path::Path) -> std::io::Result<WorkspaceLease> {
++    codex_omd::workspace_lease::shared(path)
++}
++#[cfg(not(unix))]
++fn shared_workspace_lease(_path: &std::path::Path) -> std::io::Result<WorkspaceLease> {
++    Ok(())
++}
++
++fn selected_workspace_paths(
++    manager: &EnvironmentManager,
++    selections: &[TurnEnvironmentSelection],
++) -> std::io::Result<std::collections::BTreeSet<std::path::PathBuf>> {
++    let mut paths = std::collections::BTreeSet::new();
++    for selection in selections {
++        let environment = manager
++            .get_environment(&selection.environment_id)
++            .ok_or_else(|| std::io::Error::other("workspace_environment_unavailable"))?;
++        if environment.is_remote() {
++            continue;
++        }
++        for path in std::iter::once(&selection.cwd).chain(&selection.workspace_roots) {
++            let local = path
++                .to_abs_path()
++                .map_err(|_| std::io::Error::other("workspace_local_path_invalid"))?;
++            paths.insert(local.canonicalize()?.to_path_buf());
++        }
++    }
++    Ok(paths)
++}
++
+ impl Session {
++    fn retain_workspace_paths(
++        &self,
++        paths: std::collections::BTreeSet<std::path::PathBuf>,
++    ) -> std::io::Result<()> {
++        let mut held = self
++            .workspace_leases
++            .lock()
++            .map_err(|_| std::io::Error::other("workspace_lease_state_poisoned"))?;
++        let acquired = paths
++            .into_iter()
++            .filter(|path| !held.contains_key(path))
++            .map(|path| shared_workspace_lease(&path).map(|lease| (path, lease)))
++            .collect::<std::io::Result<Vec<_>>>()?;
++        held.extend(acquired);
++        Ok(())
++    }
+     /// Spawn and initialize a new session.
+     /// Hide the concrete startup future from callers while keeping initialization lazy.
+     #[inline(never)]
+@@ -1436,6 +1488,100 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -2438,7 +2532,28 @@ index e08a0fa5a..058fd8026 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -3841,6 +3935,7 @@ impl Session {
+@@ -1886,6 +2032,20 @@ impl Session {
+             if !should_commit(&state.session_configuration, &updated) {
+                 return Ok(None);
+             }
++            let retain = || -> std::io::Result<()> {
++                let mut paths = selected_workspace_paths(
++                    &self.services.turn_environments.environment_manager(),
++                    &updated.environments,
++                )?;
++                paths.insert(updated.cwd().canonicalize()?.to_path_buf());
++                for root in &updated.runtime_workspace_roots {
++                    paths.insert(root.canonicalize()?.to_path_buf());
++                }
++                self.retain_workspace_paths(paths)
++            };
++            retain().map_err(|error| codex_config::ConstraintError::WorkspaceOwnership {
++                reason: error.to_string(),
++            })?;
+
+             let previous_config = notify_config_contributors
+                 .then(|| self.build_effective_session_config(&state.session_configuration));
+@@ -3841,6 +4001,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -2446,7 +2561,7 @@ index e08a0fa5a..058fd8026 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3848,6 +3943,27 @@ impl Session {
+@@ -3848,6 +4009,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -2474,7 +2589,7 @@ index e08a0fa5a..058fd8026 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4274,6 +4390,10 @@ impl Session {
+@@ -4274,6 +4456,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -2485,7 +2600,7 @@ index e08a0fa5a..058fd8026 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4283,6 +4403,7 @@ impl Session {
+@@ -4283,6 +4469,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -2493,7 +2608,7 @@ index e08a0fa5a..058fd8026 100644
                  })
                  .await
              {
-@@ -4371,6 +4492,10 @@ impl Session {
+@@ -4371,6 +4558,10 @@ impl Session {
                  }
              }
          }
@@ -2504,7 +2619,7 @@ index e08a0fa5a..058fd8026 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4380,6 +4505,7 @@ impl Session {
+@@ -4380,6 +4571,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -2513,10 +2628,42 @@ index e08a0fa5a..058fd8026 100644
                  .await
              {
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 824cf589c..1a7943dc3 100644
+index 824cf589c..2e7bc6854 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -997,6 +997,12 @@ impl Session {
+@@ -58,6 +58,8 @@ type McpToolApprovalMetadataMap =
+ ///
+ /// A session has at most 1 running task at a time, and can be interrupted by user input.
+ pub(crate) struct Session {
++    pub(super) workspace_leases:
++        std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, WorkspaceLease>>,
+     pub(crate) thread_id: ThreadId,
+     pub(crate) installation_id: String,
+     pub(super) tx_event: Sender<Event>,
+@@ -775,6 +777,22 @@ impl Session {
+         git_enrichment_policy: GitEnrichmentPolicy,
+         windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
+     ) -> anyhow::Result<Arc<Self>> {
++        let mut workspace_paths =
++            selected_workspace_paths(&environment_manager, environment_selections)?;
++        if let Some(inherited) = &inherited_environments {
++            workspace_paths.extend(selected_workspace_paths(
++                &environment_manager,
++                &inherited.all_selections(),
++            )?);
++        }
++        workspace_paths.insert(session_configuration.cwd().canonicalize()?.to_path_buf());
++        for root in &session_configuration.runtime_workspace_roots {
++            workspace_paths.insert(root.canonicalize()?.to_path_buf());
++        }
++        let workspace_leases = workspace_paths
++            .into_iter()
++            .map(|path| shared_workspace_lease(&path).map(|lease| (path, lease)))
++            .collect::<std::io::Result<std::collections::BTreeMap<_, _>>>()?;
+         debug!(
+             "Configuring session: model={}; provider={:?}",
+             session_configuration
+@@ -997,6 +1015,12 @@ impl Session {
              thread_extension_init,
          );
          thread_extension_data.insert(crate::context::GuardianReviewEvidence::default());
@@ -2529,7 +2676,7 @@ index 824cf589c..1a7943dc3 100644
          // Kick off independent async setup tasks in parallel to reduce startup latency.
          //
          // - initialize thread persistence with new or resumed session info
-@@ -1648,6 +1654,9 @@ impl Session {
+@@ -1648,6 +1672,9 @@ impl Session {
                  extension_metrics::from_session_telemetry(session_telemetry.clone());
              let workspace_routing = thread_extension_data
                  .get_or_init(|| config.workspace_routing_context());
@@ -2539,6 +2686,55 @@ index 824cf589c..1a7943dc3 100644
              for contributor in extensions.thread_lifecycle_contributors() {
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
+@@ -1776,6 +1803,7 @@ impl Session {
+             };
+             let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
+             let sess = Arc::new(Session {
++                workspace_leases: std::sync::Mutex::new(workspace_leases),
+                 thread_id,
+                 installation_id,
+                 tx_event: tx_event.clone(),
+diff --git a/codex-rs/core/src/session/step_activation.rs b/codex-rs/core/src/session/step_activation.rs
+index c50b4b537..a13757a7e 100644
+--- a/codex-rs/core/src/session/step_activation.rs
++++ b/codex-rs/core/src/session/step_activation.rs
+@@ -359,6 +359,16 @@ impl Session {
+         if let Err(reason) = validation {
+             return TurnSettingsUpdateOutcome::Rejected { reason };
+         }
++        if let Err(error) = super::selected_workspace_paths(
++            &self.services.turn_environments.environment_manager(),
++            proposed,
++        )
++        .and_then(|paths| self.retain_workspace_paths(paths))
++        {
++            return TurnSettingsUpdateOutcome::Rejected {
++                reason: error.to_string(),
++            };
++        }
+
+         // Save changed settings first. The manager then installs any new environment list before
+         // waking waiting work. The next step cannot read either until we release this lock.
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index 13ebc6824..6b5494166 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -6730,6 +6730,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+     };
+
+     let session = Session {
++        workspace_leases: std::sync::Mutex::new(Default::default()),
+         thread_id,
+         installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
+         tx_event,
+@@ -9006,6 +9007,7 @@ where
+     };
+
+     let session = Arc::new(Session {
++        workspace_leases: std::sync::Mutex::new(Default::default()),
+         thread_id,
+         installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
+         tx_event,
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
 index 5b335c2c0..3dbe0dfbc 100644
 --- a/codex-rs/core/src/session/turn.rs
@@ -4051,23 +4247,10 @@ index 79a95b2ac..c15c317c8 100644
          cancellation_token,
          Arc::default(),
 diff --git a/codex-rs/core/src/tools/context.rs b/codex-rs/core/src/tools/context.rs
-index 1b02ab7ab..f3da8a825 100644
+index 1b02ab7ab..6c00f3cb9 100644
 --- a/codex-rs/core/src/tools/context.rs
 +++ b/codex-rs/core/src/tools/context.rs
-@@ -50,6 +50,12 @@ pub type SharedTurnDiffTracker = Arc<Mutex<TurnDiffTracker>>;
- pub(crate) struct ToolCallState {
-     pub(crate) terminal_outcome_reached: AtomicBool,
-     pub(crate) delivered_assistant_message: OnceLock<String>,
-+    pub(crate) execution_gate: OnceLock<ExecutionGate>,
-+}
-+
-+pub(crate) struct ExecutionGate {
-+    pub(crate) lock: Arc<tokio::sync::RwLock<()>>,
-+    pub(crate) started: Option<Arc<OnceLock<std::time::Instant>>>,
- }
-
- #[derive(Clone, Debug, Eq, PartialEq)]
-@@ -63,6 +69,7 @@ pub enum ToolCallSource {
+@@ -63,6 +63,7 @@ pub enum ToolCallSource {
          /// debugging the JS/runtime bridge, but it is not the Codex tool call id
          /// because the runtime id only needs to be unique within one cell.
          runtime_tool_call_id: String,
@@ -5408,18 +5591,18 @@ index 3473cd50d..71dba7c93 100644
              ExecApprovalRequirement::NeedsApproval { reason, .. } => {
                  let action = tool
 diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
-index 0a7afc54c..d2c66b19f 100644
+index 0a7afc54c..9305cbd20 100644
 --- a/codex-rs/core/src/tools/parallel.rs
 +++ b/codex-rs/core/src/tools/parallel.rs
-@@ -5,7 +5,6 @@ use std::time::Instant;
-
- use tokio::sync::RwLock;
- use tokio::task::JoinError;
--use tokio_util::either::Either;
- use tokio_util::sync::CancellationToken;
- use tokio_util::task::AbortOnDropHandle;
- use tracing::Instrument;
-@@ -64,6 +63,16 @@ impl ToolCallRuntime {
+@@ -24,6 +24,7 @@ use crate::tools::context::ToolPayload;
+ use crate::tools::lifecycle::notify_tool_aborted;
+ use crate::tools::registry::AnyToolResult;
+ use crate::tools::registry::ToolArgumentDiffConsumer;
++use crate::tools::registry::ToolPreparation;
+ use crate::tools::router::ToolCall;
+ use crate::tools::router::ToolCallSource;
+ use codex_history::ResponseItemEnvelope;
+@@ -64,6 +65,16 @@ impl ToolCallRuntime {
          }
      }
 
@@ -5436,7 +5619,7 @@ index 0a7afc54c..d2c66b19f 100644
      pub(crate) fn create_diff_consumer(
          &self,
          tool_name: &codex_tools::ToolName,
-@@ -137,8 +146,6 @@ impl ToolCallRuntime {
+@@ -137,8 +148,6 @@ impl ToolCallRuntime {
              .executed_tool_calls
              .record_tool_call(&call, &source, &step_context);
          let router = &step_context.tool_router;
@@ -5445,23 +5628,11 @@ index 0a7afc54c..d2c66b19f 100644
          let router = Arc::clone(router);
          let session = Arc::clone(&self.session);
          let turn = Arc::clone(&step_context.turn);
-@@ -167,6 +174,12 @@ impl ToolCallRuntime {
-         let execution_started_at = tool_call_timing_guard
-             .as_ref()
-             .map(|timing| Arc::clone(&timing.execution_started_at));
-+        let _ = call_state
-+            .execution_gate
-+            .set(crate::tools::context::ExecutionGate {
-+                lock,
-+                started: execution_started_at,
-+            });
-         let abort_session = Arc::clone(&session);
-         let abort_source = source.clone();
-         let abort_turn = Arc::clone(&turn);
-@@ -196,23 +209,6 @@ impl ToolCallRuntime {
+@@ -195,37 +204,53 @@ impl ToolCallRuntime {
+
          let mut dispatch_handle = AbortOnDropHandle::new(tokio::spawn(
              async move {
-                 let _message_admission = message_admission?;
+-                let _message_admission = message_admission?;
 -                if let Some(tool_runtime) = tool_runtime
 -                    && let Some(readiness) = tool_runtime.wait_until_ready(&session)
 -                {
@@ -5477,20 +5648,71 @@ index 0a7afc54c..d2c66b19f 100644
 -                // of dispatch waiting and the start of handler execution.
 -                if let Some(execution_started_at) = execution_started_at {
 -                    let _ = execution_started_at.set(Instant::now());
--                }
++                let message_admission_guard = message_admission?;
++                let result = async {
++                    let prepared = router
++                        .prepare_tool_call_with_state(
++                            Arc::clone(&session),
++                            step_context,
++                            invocation_cancellation_token,
++                            tracker,
++                            dispatch_call,
++                            source.clone(),
++                            Some(Arc::clone(&dispatch_call_state)),
++                        )
++                        .await?;
++                    let prepared = match prepared {
++                        ToolPreparation::Execute(prepared) => prepared,
++                        ToolPreparation::Complete(result) => return Ok(result),
++                    };
++                    let _effective_message_admission = if message_admission_guard.is_none() {
++                        super::user_messaging::admit_code_mode_send(
++                            &session,
++                            &source,
++                            prepared.tool_name(),
++                        )?
++                    } else {
++                        None
++                    };
++                    if let Some(tool_runtime) = router.tool_runtime(prepared.tool_name())
++                        && let Some(readiness) = tool_runtime.wait_until_ready(&session)
++                    {
++                        readiness.await;
++                    }
++                    let guard = if router.prepared_supports_parallel(&prepared) {
++                        Either::Left(lock.read().await)
++                    } else {
++                        Either::Right(lock.write().await)
++                    };
++                    if let Some(execution_started_at) = execution_started_at {
++                        let _ = execution_started_at.set(Instant::now());
++                    }
++                    let result = router
++                        .dispatch_prepared_with_state(prepared, Some(dispatch_call_state))
++                        .await;
++                    drop(guard);
++                    result
+                 }
 -
-                 let result = router
-                     .dispatch_tool_call_with_state(
-                         session,
-@@ -225,7 +221,6 @@ impl ToolCallRuntime {
-                     )
-                     .instrument(dispatch_span.clone())
-                     .await;
+-                let result = router
+-                    .dispatch_tool_call_with_state(
+-                        session,
+-                        step_context,
+-                        invocation_cancellation_token,
+-                        tracker,
+-                        dispatch_call,
+-                        source,
+-                        dispatch_call_state,
+-                    )
+-                    .instrument(dispatch_span.clone())
+-                    .await;
 -                drop(guard);
++                .instrument(dispatch_span.clone())
++                .await;
                  // The sampling loop collects results in order only after its stream ends.
                  // Record readiness here, before either caller encodes or collects the result.
                  // A fatal error still propagates to the caller instead of producing a tool
-@@ -511,6 +506,7 @@ mod tests {
+@@ -511,6 +536,7 @@ mod tests {
                  &ToolCallSource::CodeMode {
                      cell_id: "cell-1".to_string(),
                      runtime_tool_call_id: "runtime-call-1".to_string(),
@@ -5498,7 +5720,7 @@ index 0a7afc54c..d2c66b19f 100644
                  },
                  codex_extension_api::empty_extension_registry(),
              );
-@@ -667,6 +663,131 @@ mod tests {
+@@ -667,6 +693,131 @@ mod tests {
          tool_name: codex_tools::ToolName,
      }
 
@@ -5630,8 +5852,193 @@ index 0a7afc54c..d2c66b19f 100644
      impl ToolExecutor<ToolInvocation> for ImmediateHandler {
          fn tool_name(&self) -> codex_tools::ToolName {
              self.tool_name.clone()
+@@ -698,6 +849,184 @@ mod tests {
+
+     impl CoreToolRuntime for ImmediateHandler {}
+
++    struct RewriteSchedulingState {
++        interceptions: std::sync::atomic::AtomicUsize,
++        original_readiness: std::sync::atomic::AtomicUsize,
++        active: std::sync::atomic::AtomicUsize,
++        maximum: std::sync::atomic::AtomicUsize,
++        ready: tokio::sync::mpsc::UnboundedSender<()>,
++        started: tokio::sync::mpsc::UnboundedSender<String>,
++        allow_ready: tokio::sync::Semaphore,
++        allow_finish: tokio::sync::Semaphore,
++    }
++
++    struct SchedulingRewrite(Arc<RewriteSchedulingState>);
++
++    impl codex_extension_api::ToolLifecycleContributor for SchedulingRewrite {
++        fn intercept_tool<'a>(
++            &'a self,
++            input: codex_extension_api::ToolStartInput<'a>,
++        ) -> codex_extension_api::ExtensionFuture<
++            'a,
++            Result<codex_extension_api::ToolInterception, String>,
++        > {
++            Box::pin(async move {
++                assert_eq!(input.tool_name.name, "parallel_original");
++                self.0.interceptions.fetch_add(1, Ordering::SeqCst);
++                Ok(codex_extension_api::ToolInterception::Continue(Some((
++                    codex_tools::ToolName::plain("serial_replacement"),
++                    ToolPayload::Function {
++                        arguments: "{}".to_string(),
++                    },
++                ))))
++            })
++        }
++    }
++
++    struct SchedulingHandler {
++        original: bool,
++        state: Arc<RewriteSchedulingState>,
++    }
++
++    impl ToolExecutor<ToolInvocation> for SchedulingHandler {
++        fn tool_name(&self) -> codex_tools::ToolName {
++            codex_tools::ToolName::plain(if self.original {
++                "parallel_original"
++            } else {
++                "serial_replacement"
++            })
++        }
++        fn spec(&self) -> codex_tools::ToolSpec {
++            ImmediateHandler {
++                tool_name: self.tool_name(),
++            }
++            .spec()
++        }
++        fn supports_parallel_tool_calls(&self) -> bool {
++            self.original
++        }
++        fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
++        where
++            ToolInvocation: 'a,
++        {
++            Box::pin(async move {
++                assert!(!self.original);
++                let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
++                self.state.maximum.fetch_max(active, Ordering::SeqCst);
++                self.state.started.send(invocation.call_id).unwrap();
++                self.state.allow_finish.acquire().await.unwrap().forget();
++                self.state.active.fetch_sub(1, Ordering::SeqCst);
++                Ok(
++                    Box::new(FunctionToolOutput::from_text("ok".to_string(), Some(true)))
++                        as Box<dyn crate::tools::context::ToolOutput>,
++                )
++            })
++        }
++    }
++
++    impl CoreToolRuntime for SchedulingHandler {
++        fn wait_until_ready<'a>(
++            &'a self,
++            _session: &'a Arc<Session>,
++        ) -> Option<futures::future::BoxFuture<'a, ()>> {
++            if self.original {
++                self.state.original_readiness.fetch_add(1, Ordering::SeqCst);
++                return None;
++            }
++            Some(Box::pin(async move {
++                self.state.ready.send(()).unwrap();
++                self.state.allow_ready.acquire().await.unwrap().forget();
++            }))
++        }
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn rewritten_tools_use_effective_readiness_and_serial_execution() -> anyhow::Result<()> {
++        let (mut session, turn_context) = crate::session::tests::make_session_and_context().await;
++        let (ready, mut ready_rx) = tokio::sync::mpsc::unbounded_channel();
++        let (started, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
++        let state = Arc::new(RewriteSchedulingState {
++            interceptions: std::sync::atomic::AtomicUsize::new(0),
++            original_readiness: std::sync::atomic::AtomicUsize::new(0),
++            active: std::sync::atomic::AtomicUsize::new(0),
++            maximum: std::sync::atomic::AtomicUsize::new(0),
++            ready,
++            started,
++            allow_ready: tokio::sync::Semaphore::new(0),
++            allow_finish: tokio::sync::Semaphore::new(0),
++        });
++        let mut builder =
++            codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++        builder.tool_lifecycle_contributor(Arc::new(SchedulingRewrite(Arc::clone(&state))));
++        session.services.extensions = Arc::new(builder.build());
++        let handlers = [true, false].map(|original| {
++            Arc::new(SchedulingHandler {
++                original,
++                state: Arc::clone(&state),
++            }) as Arc<dyn CoreToolRuntime>
++        });
++        let router = Arc::new(ToolRouter::from_parts(
++            ToolRegistry::from_tools(handlers),
++            Vec::new(),
++            ToolMode::Direct,
++            BTreeMap::new(),
++            None,
++            &[],
++        ));
++        let step_context =
++            StepContext::for_test(Arc::new(turn_context)).with_tool_router_for_test(router);
++        let runtime = ToolCallRuntime::new(
++            Arc::new(session),
++            step_context,
++            Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
++        );
++        let calls = ["rewrite-a", "rewrite-b"].map(|id| {
++            tokio::spawn(runtime.clone().handle_tool_call(
++                ToolCall {
++                    tool_name: codex_tools::ToolName::plain("parallel_original"),
++                    call_id: id.to_string(),
++                    payload: ToolPayload::Function {
++                        arguments: "{}".to_string(),
++                    },
++                    encrypted_function_args: None,
++                },
++                CancellationToken::new(),
++            ))
++        });
++        for _ in 0..2 {
++            tokio::time::timeout(Duration::from_secs(1), ready_rx.recv())
++                .await?
++                .unwrap();
++        }
++        assert_eq!(state.interceptions.load(Ordering::SeqCst), 2);
++        assert_eq!(state.original_readiness.load(Ordering::SeqCst), 0);
++        assert_eq!(state.active.load(Ordering::SeqCst), 0);
++        assert!(started_rx.try_recv().is_err());
++        state.allow_ready.add_permits(2);
++        let first = tokio::time::timeout(Duration::from_secs(1), started_rx.recv())
++            .await?
++            .unwrap();
++        assert!(
++            tokio::time::timeout(Duration::from_millis(10), started_rx.recv())
++                .await
++                .is_err()
++        );
++        assert_eq!(state.active.load(Ordering::SeqCst), 1);
++        state.allow_finish.add_permits(1);
++        let second = tokio::time::timeout(Duration::from_secs(1), started_rx.recv())
++            .await?
++            .unwrap();
++        assert_ne!(first, second);
++        assert_eq!(state.maximum.load(Ordering::SeqCst), 1);
++        state.allow_finish.add_permits(1);
++        for call in calls {
++            tokio::time::timeout(Duration::from_secs(1), call).await???;
++        }
++        assert_eq!(state.interceptions.load(Ordering::SeqCst), 2);
++        assert_eq!(state.active.load(Ordering::SeqCst), 0);
++        Ok(())
++    }
++
+     struct BlockingFinishContributor {
+         records: Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>,
+         finish_started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index 7d88650f5..1f4bfcf94 100644
+index 7d88650f5..954a0f18c 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -13,7 +13,6 @@ use crate::memory_usage::shell_script_for_invocation;
@@ -5642,7 +6049,7 @@ index 7d88650f5..1f4bfcf94 100644
  use crate::tools::context::ToolCallState;
  use crate::tools::context::ToolInvocation;
  use crate::tools::context::ToolOutput;
-@@ -44,12 +43,33 @@ use futures::future::BoxFuture;
+@@ -44,12 +43,48 @@ use futures::future::BoxFuture;
  use indexmap::IndexMap;
  use indexmap::map::Entry;
  use serde_json::Value;
@@ -5651,6 +6058,21 @@ index 7d88650f5..1f4bfcf94 100644
 
  pub(crate) type ToolTelemetryTags = Vec<(&'static str, String)>;
 
++pub(crate) struct PreparedToolCall {
++    invocation: ToolInvocation,
++}
++
++impl PreparedToolCall {
++    pub(crate) fn tool_name(&self) -> &codex_tools::ToolName {
++        &self.invocation.tool_name
++    }
++}
++
++pub(crate) enum ToolPreparation {
++    Execute(PreparedToolCall),
++    Complete(AnyToolResult),
++}
++
  pub use codex_tools::ToolExecutor;
  pub use codex_tools::ToolExposure;
 
@@ -5676,7 +6098,7 @@ index 7d88650f5..1f4bfcf94 100644
  /// Typed runtime contract for locally executed tools.
  ///
  /// Implementers provide the shared `ToolExecutor` behavior plus optional
-@@ -83,6 +103,15 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
+@@ -83,6 +118,15 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
          None
      }
 
@@ -5692,15 +6114,54 @@ index 7d88650f5..1f4bfcf94 100644
      fn matches_kind(&self, payload: &ToolPayload) -> bool {
          matches!(
              payload,
-@@ -529,7 +558,6 @@ impl ToolRegistry {
+@@ -520,26 +564,33 @@ impl ToolRegistry {
+         Some(tool.exposure != ToolExposure::Hidden && tool.runtime.supports_parallel_tool_calls())
+     }
+
++    #[cfg(test)]
++    pub(crate) async fn dispatch_any_with_state(
++        &self,
++        invocation: ToolInvocation,
++        call_state: Option<Arc<ToolCallState>>,
++    ) -> Result<AnyToolResult, FunctionCallError> {
++        match self
++            .prepare_any_with_state(invocation, call_state.clone())
++            .await?
++        {
++            ToolPreparation::Execute(prepared) => {
++                self.dispatch_prepared_with_state(prepared, call_state)
++                    .await
++            }
++            ToolPreparation::Complete(result) => Ok(result),
++        }
++    }
++
+     #[expect(
+         clippy::await_holding_invalid_type,
+         reason = "tool dispatch must keep active-turn accounting atomic"
+     )]
+-    pub(crate) async fn dispatch_any_with_state(
++    pub(crate) async fn prepare_any_with_state(
+         &self,
          mut invocation: ToolInvocation,
          call_state: Option<Arc<ToolCallState>>,
-     ) -> Result<AnyToolResult, FunctionCallError> {
+-    ) -> Result<AnyToolResult, FunctionCallError> {
 -        let tool_name = invocation.tool_name.clone();
-         let call_id_owned = invocation.call_id.clone();
-         let otel = invocation
-             .step_context
-@@ -548,6 +576,40 @@ impl ToolRegistry {
+-        let call_id_owned = invocation.call_id.clone();
+-        let otel = invocation
+-            .step_context
+-            .session_telemetry
+-            .clone()
+-            .with_product_sku(invocation.turn.config.apps_mcp_product_sku.as_deref());
+-        // TODO(anp): Reconcile these tags with TurnEnvironment::sandbox_context
+-        // instead of reporting the thread-wide backend for environment-scoped tools.
+-        let sandbox_tags = invocation.turn.turn_metadata_state.sandbox_tags;
+-
++    ) -> Result<ToolPreparation, FunctionCallError> {
+         {
+             let mut active = invocation.session.active_turn.lock().await;
+             if let Some(active_turn) = active.as_mut() {
+@@ -548,6 +599,56 @@ impl ToolRegistry {
              }
          }
 
@@ -5717,7 +6178,7 @@ index 7d88650f5..1f4bfcf94 100644
 +            }
 +            Ok(Some((output, success))) => {
 +                let result = AnyToolResult {
-+                    call_id: call_id_owned,
++                    call_id: invocation.call_id.clone(),
 +                    payload: invocation.payload.clone(),
 +                    result: Box::new(FunctionToolOutput::from_text(output, Some(success))),
 +                    post_tool_use_payload: None,
@@ -5733,44 +6194,31 @@ index 7d88650f5..1f4bfcf94 100644
 +                    result_sha256.as_deref(),
 +                )
 +                .await;
-+                return Ok(result);
++                return Ok(ToolPreparation::Complete(result));
 +            }
 +            Ok(None) => {}
 +        }
++        Ok(ToolPreparation::Execute(PreparedToolCall { invocation }))
++    }
++
++    pub(crate) async fn dispatch_prepared_with_state(
++        &self,
++        prepared: PreparedToolCall,
++        call_state: Option<Arc<ToolCallState>>,
++    ) -> Result<AnyToolResult, FunctionCallError> {
++        let mut invocation = prepared.invocation;
++        let call_id_owned = invocation.call_id.clone();
++        let otel = invocation
++            .step_context
++            .session_telemetry
++            .clone()
++            .with_product_sku(invocation.turn.config.apps_mcp_product_sku.as_deref());
++        let sandbox_tags = invocation.turn.turn_metadata_state.sandbox_tags;
 +        let tool_name = invocation.tool_name.clone();
          let dispatch_trace = ToolDispatchTrace::start(&invocation);
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
-@@ -571,6 +633,28 @@ impl ToolRegistry {
-                 return Err(err);
-             }
-         };
-+        let _execution_guard = if let Some(gate) = call_state
-+            .as_ref()
-+            .and_then(|state| state.execution_gate.get())
-+        {
-+            if let Some(readiness) = tool.wait_until_ready(&invocation.session) {
-+                readiness.await;
-+            }
-+            let guard = if self
-+                .supports_parallel_tool_calls(&tool_name)
-+                .unwrap_or(false)
-+            {
-+                tokio_util::either::Either::Left(gate.lock.read().await)
-+            } else {
-+                tokio_util::either::Either::Right(gate.lock.write().await)
-+            };
-+            if let Some(started) = &gate.started {
-+                let _ = started.set(std::time::Instant::now());
-+            }
-+            Some(guard)
-+        } else {
-+            None
-+        };
-         let telemetry_tags = tool.telemetry_tags(&invocation);
-         let mut tool_result_tags = Vec::with_capacity(2 + telemetry_tags.len() + 1);
-         let mut extra_trace_fields = Vec::new();
-@@ -621,6 +705,7 @@ impl ToolRegistry {
+@@ -621,6 +722,7 @@ impl ToolRegistry {
                          &invocation,
                          call_state.as_deref(),
                          ToolCallOutcome::Blocked,
@@ -5778,7 +6226,7 @@ index 7d88650f5..1f4bfcf94 100644
                      )
                      .await;
                      return Err(err);
-@@ -643,6 +728,7 @@ impl ToolRegistry {
+@@ -643,6 +745,7 @@ impl ToolRegistry {
                              ToolCallOutcome::Failed {
                                  handler_executed: false,
                              },
@@ -5786,7 +6234,7 @@ index 7d88650f5..1f4bfcf94 100644
                          )
                          .await;
                          return Err(err);
-@@ -747,13 +833,19 @@ impl ToolRegistry {
+@@ -747,13 +850,19 @@ impl ToolRegistry {
                  handler_executed: true,
              },
          };
@@ -5809,7 +6257,7 @@ index 7d88650f5..1f4bfcf94 100644
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -771,6 +863,31 @@ impl ToolRegistry {
+@@ -771,6 +880,31 @@ impl ToolRegistry {
                          });
                      }
                  }
@@ -5841,7 +6289,7 @@ index 7d88650f5..1f4bfcf94 100644
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -781,6 +898,13 @@ impl ToolRegistry {
+@@ -781,6 +915,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -5855,7 +6303,7 @@ index 7d88650f5..1f4bfcf94 100644
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -792,12 +916,13 @@ async fn notify_tool_finish_if_unclaimed(
+@@ -792,12 +933,13 @@ async fn notify_tool_finish_if_unclaimed(
      invocation: &ToolInvocation,
      call_state: Option<&ToolCallState>,
      outcome: ToolCallOutcome,
@@ -6038,10 +6486,18 @@ index 895d8d4b9..355a002c4 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/tools/router.rs b/codex-rs/core/src/tools/router.rs
-index d9f1f63ee..0b5bd661c 100644
+index d9f1f63ee..46c63b49b 100644
 --- a/codex-rs/core/src/tools/router.rs
 +++ b/codex-rs/core/src/tools/router.rs
-@@ -134,6 +134,10 @@ impl ToolRouter {
+@@ -14,6 +14,7 @@ use crate::tools::registry::AnyToolResult;
+ use crate::tools::registry::CoreToolRuntime;
+ use crate::tools::registry::ToolArgumentDiffConsumer;
+ use crate::tools::registry::ToolRegistry;
++use crate::tools::registry::{PreparedToolCall, ToolPreparation};
+ #[cfg(test)]
+ use crate::tools::spec_plan::finalize_tool_router;
+ use codex_protocol::models::ResponseItem;
+@@ -134,6 +135,10 @@ impl ToolRouter {
          router
      }
 
@@ -6052,7 +6508,17 @@ index d9f1f63ee..0b5bd661c 100644
      pub(crate) fn model_visible_specs(&self) -> Arc<[ToolSpec]> {
          Arc::clone(&self.model_visible_specs)
      }
-@@ -244,6 +248,15 @@ impl ToolRouter {
+@@ -240,10 +245,25 @@ impl ToolRouter {
+             .unwrap_or(false)
+     }
+
++    pub(crate) fn prepared_supports_parallel(&self, call: &PreparedToolCall) -> bool {
++        self.registry
++            .supports_parallel_tool_calls(call.tool_name())
++            .unwrap_or(false)
++    }
++
+     pub(crate) fn tool_runtime(&self, tool_name: &ToolName) -> Option<Arc<dyn CoreToolRuntime>> {
          self.registry.tool(tool_name)
      }
 
@@ -6068,6 +6534,72 @@ index d9f1f63ee..0b5bd661c 100644
      #[instrument(level = "trace", skip_all, err)]
      pub fn build_tool_call(item: ResponseItem) -> Result<Option<ToolCall>, FunctionCallError> {
          match item {
+@@ -323,7 +343,7 @@ impl ToolRouter {
+     }
+
+     #[instrument(level = "trace", skip_all, err)]
+-    #[allow(clippy::too_many_arguments)]
++    #[allow(dead_code, clippy::too_many_arguments)]
+     pub(crate) async fn dispatch_tool_call_with_state(
+         &self,
+         session: Arc<Session>,
+@@ -357,6 +377,37 @@ impl ToolRouter {
+         source: ToolCallSource,
+         call_state: Option<Arc<ToolCallState>>,
+     ) -> Result<AnyToolResult, FunctionCallError> {
++        match self
++            .prepare_tool_call_with_state(
++                session,
++                step_context,
++                cancellation_token,
++                tracker,
++                call,
++                source,
++                call_state.clone(),
++            )
++            .await?
++        {
++            ToolPreparation::Execute(prepared) => {
++                self.dispatch_prepared_with_state(prepared, call_state)
++                    .await
++            }
++            ToolPreparation::Complete(result) => Ok(result),
++        }
++    }
++
++    #[allow(clippy::too_many_arguments)]
++    pub(crate) async fn prepare_tool_call_with_state(
++        &self,
++        session: Arc<Session>,
++        step_context: Arc<StepContext>,
++        cancellation_token: CancellationToken,
++        tracker: SharedTurnDiffTracker,
++        call: ToolCall,
++        source: ToolCallSource,
++        call_state: Option<Arc<ToolCallState>>,
++    ) -> Result<ToolPreparation, FunctionCallError> {
+         let ToolCall {
+             tool_name,
+             call_id,
+@@ -379,7 +430,17 @@ impl ToolRouter {
+         };
+
+         self.registry
+-            .dispatch_any_with_state(invocation, call_state)
++            .prepare_any_with_state(invocation, call_state)
++            .await
++    }
++
++    pub(crate) async fn dispatch_prepared_with_state(
++        &self,
++        prepared: PreparedToolCall,
++        call_state: Option<Arc<ToolCallState>>,
++    ) -> Result<AnyToolResult, FunctionCallError> {
++        self.registry
++            .dispatch_prepared_with_state(prepared, call_state)
+             .await
+     }
+ }
 diff --git a/codex-rs/core/src/tools/runtimes/apply_patch.rs b/codex-rs/core/src/tools/runtimes/apply_patch.rs
 index ddd577173..f5d5b3746 100644
 --- a/codex-rs/core/src/tools/runtimes/apply_patch.rs
@@ -8352,10 +8884,18 @@ index c57920741..9836705ad 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index da28bf2ca..6d8079707 100644
+index da28bf2ca..5b9335518 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -382,6 +382,76 @@ impl App {
+@@ -88,6 +88,7 @@ impl App {
+                 event,
+                 AppEvent::OpenAgentPicker
+                     | AppEvent::SelectAgentThread(_)
++                    | AppEvent::SelectModThread { .. }
+                     | AppEvent::StartSide { .. }
+                     | AppEvent::ForkCurrentSession { .. }
+                     | AppEvent::StartManagedWorktree {
+@@ -382,6 +383,76 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -8432,7 +8972,7 @@ index da28bf2ca..6d8079707 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -1581,8 +1651,27 @@ impl App {
+@@ -1581,8 +1652,27 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -8460,6 +9000,21 @@ index da28bf2ca..6d8079707 100644
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
+@@ -2773,6 +2863,14 @@ impl App {
+                 self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
+                     .await?;
+             }
++            AppEvent::SelectModThread { thread_id, call } => {
++                let result = match crate::mod_surface::validate_call(&call) {
++                    Ok(()) => self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
++                        .await.map(|_| serde_json::json!({"shown": true})).map_err(|error| error.to_string()),
++                    Err(error) => Err(error),
++                };
++                let _ = call.reply.send(result);
++            }
+             AppEvent::StartSide {
+                 parent_thread_id,
+                 user_message,
 diff --git a/codex-rs/tui/src/app/input.rs b/codex-rs/tui/src/app/input.rs
 index 0ab8d14e0..4b1c78690 100644
 --- a/codex-rs/tui/src/app/input.rs
@@ -10093,10 +10648,21 @@ index 22e27ed3f..3ed98010a 100644
          }
          let expected_cwd = if override_cwd {
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index ce30da4ad..03d3c6603 100644
+index ce30da4ad..eb667163a 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -461,6 +461,34 @@ pub(crate) enum AppEvent {
+@@ -373,6 +373,10 @@ pub(crate) enum AppEvent {
+     },
+     /// Switch the active thread to the selected agent.
+     SelectAgentThread(ThreadId),
++    SelectModThread {
++        thread_id: ThreadId,
++        call: codex_omd::client_surface::SurfaceCall,
++    },
+
+     /// Fork the current thread into a transient side conversation.
+     StartSide {
+@@ -461,6 +465,34 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -10131,7 +10697,7 @@ index ce30da4ad..03d3c6603 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -658,6 +686,15 @@ pub(crate) enum AppEvent {
+@@ -658,6 +690,15 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -11833,7 +12399,7 @@ index dc718a712..b7781c3c6 100644
                      name: display_name,
                      skill_name: skill.name.clone(),
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index 4fe2ed057..4a8f19b42 100644
+index 4fe2ed057..2e7852521 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 @@ -18,14 +18,15 @@ use crate::goal_display::GOAL_USAGE;
@@ -11856,7 +12422,7 @@ index 4fe2ed057..4a8f19b42 100644
      pending_pastes: Vec<(String, String)>,
      local_images: Vec<LocalImageAttachment>,
      remote_image_urls: Vec<String>,
-@@ -33,6 +34,32 @@ struct PreparedSlashCommandArgs {
+@@ -33,6 +34,33 @@ struct PreparedSlashCommandArgs {
      source: SlashCommandDispatchSource,
  }
 
@@ -11884,12 +12450,13 @@ index 4fe2ed057..4a8f19b42 100644
 +    pub(super) command: SlashCommand,
 +    pub(super) prepared: PreparedSlashCommandArgs,
 +    pub(super) token: crate::mod_runtime::ModInvocation,
++    pub(super) surface: Option<codex_omd::client_surface::SurfaceCall>,
 +}
 +
  const SIDE_STARTING_CONTEXT_LABEL: &str = "Side starting...";
  const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
      "Press Ctrl+C to return to the main thread first.";
-@@ -574,6 +601,9 @@ impl ChatWidget {
+@@ -574,6 +602,9 @@ impl ChatWidget {
              SlashCommand::Plugins => {
                  self.add_plugins_output();
              }
@@ -11899,7 +12466,7 @@ index 4fe2ed057..4a8f19b42 100644
              SlashCommand::Rollout => {
                  if let Some(path) = self.rollout_path() {
                      self.add_info_message(
-@@ -696,7 +726,7 @@ impl ChatWidget {
+@@ -696,7 +727,7 @@ impl ChatWidget {
          );
      }
 
@@ -11908,7 +12475,7 @@ index 4fe2ed057..4a8f19b42 100644
          &mut self,
          args: String,
          text_elements: Vec<TextElement>,
-@@ -744,6 +774,40 @@ impl ChatWidget {
+@@ -744,6 +775,48 @@ impl ChatWidget {
          }
      }
 
@@ -11917,7 +12484,15 @@ index 4fe2ed057..4a8f19b42 100644
 +            command,
 +            prepared,
 +            token,
++            surface,
 +        } = intercepted;
++        if let Some(call) = surface {
++            if let Err(error) = crate::mod_surface::validate_call(&call) {
++                let _ = call.reply.send(Err(error));
++                return;
++            }
++            let _ = call.reply.send(Ok(serde_json::json!({"invoked": true})));
++        }
 +        if !crate::mod_runtime::current(&token) {
 +            return;
 +        }
@@ -11949,7 +12524,7 @@ index 4fe2ed057..4a8f19b42 100644
      fn dispatch_prepared_command_with_args(
          &mut self,
          cmd: SlashCommand,
-@@ -1111,6 +1175,17 @@ impl ChatWidget {
+@@ -1111,6 +1184,17 @@ impl ChatWidget {
 
          if rest.is_empty() {
              return match command {
@@ -11967,7 +12542,7 @@ index 4fe2ed057..4a8f19b42 100644
                  SlashCommandItem::Builtin(cmd) => {
                      self.dispatch_command_from_source(cmd, SlashCommandDispatchSource::Queued);
                      self.queued_command_drain_result(cmd)
-@@ -1119,8 +1194,16 @@ impl ChatWidget {
+@@ -1119,8 +1203,16 @@ impl ChatWidget {
                      self.handle_service_tier_command_dispatch(command);
                      QueueDrain::Continue
                  }
@@ -11984,7 +12559,7 @@ index 4fe2ed057..4a8f19b42 100644
 
          if !command.supports_inline_args() {
              self.submit_user_message(UserMessage {
-@@ -1151,18 +1234,20 @@ impl ChatWidget {
+@@ -1151,18 +1243,20 @@ impl ChatWidget {
              rest_offset + leading_trimmed,
              &text_elements,
          );
@@ -12017,7 +12592,7 @@ index 4fe2ed057..4a8f19b42 100644
          self.queued_command_drain_result(cmd)
      }
 
-@@ -1255,6 +1340,7 @@ impl ChatWidget {
+@@ -1255,6 +1349,7 @@ impl ChatWidget {
              | SlashCommand::Compact
              | SlashCommand::Review
              | SlashCommand::Model
@@ -19604,10 +20179,10 @@ index 000000000..6c44c5e1a
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 000000000..d44ee38e7
+index 000000000..64d24f71a
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +[package]
 +name = "codex-omd-extension"
 +version = "0.160.1"
@@ -19615,9 +20190,13 @@ index 000000000..d44ee38e7
 +license = "Apache-2.0"
 +
 +[dependencies]
-+axum = { workspace = true, features = ["http1", "tokio"] }
-+futures = { workspace = true }
++libc = { workspace = true }
 +base64 = { workspace = true }
++bytes = { workspace = true }
++futures-util = "=0.3.34"
++http-body-util = "=0.1.3"
++hyper = { version = "=1.8.1", features = ["http1", "server"] }
++hyper-util = { version = "=0.1.20", features = ["tokio"] }
 +chrono = { workspace = true }
 +codex-api = { workspace = true }
 +codex-client = { workspace = true }
@@ -19642,11 +20221,9 @@ index 000000000..d44ee38e7
 +tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 +sha2 = { workspace = true }
 +tiny_http = { workspace = true }
++tempfile = { workspace = true }
 +codex-file-system = { workspace = true }
 +codex-sandboxing = { workspace = true }
-+
-+[dev-dependencies]
-+tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
 index 000000000..b2e96e536
@@ -24241,41 +24818,58 @@ index 000000000..cd27753e8
 +}
 diff --git a/codex-rs/ext/omd/src/credential_gateway.rs b/codex-rs/ext/omd/src/credential_gateway.rs
 new file mode 100644
-index 000000000..907ec29e3
+index 000000000..a341b9f56
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/credential_gateway.rs
-@@ -0,0 +1,307 @@
-+use axum::body::Body;
-+use axum::extract::State;
-+use axum::http::Request;
-+use axum::response::Response;
+@@ -0,0 +1,388 @@
++use bytes::Bytes;
 +use codex_omd::credentials::CredentialProfiles;
++use futures_util::stream;
++use http_body_util::combinators::UnsyncBoxBody;
++use http_body_util::{BodyExt, Full, StreamBody};
++use hyper::body::{Frame, Incoming};
++use hyper::server::conn::http1;
++use hyper::service::service_fn;
++use hyper::{Request, Response};
++use hyper_util::rt::{TokioIo, TokioTimer};
 +use std::collections::{BTreeMap, BTreeSet};
-+use std::io::{self, Read};
++use std::convert::Infallible;
++use std::io;
++use std::io::Read;
 +use std::path::PathBuf;
 +use std::sync::{Arc, Mutex, OnceLock};
 +use std::time::Duration;
 +use tokio::sync::{Semaphore, watch};
-+use tokio::time::Instant;
 +
 +const BODY_BYTES: usize = 16 * 1024 * 1024;
++const CONNECTIONS: usize = 16;
++const ROUTE_CONNECTIONS: usize = 4;
++const IDLE: Duration = Duration::from_secs(30);
++const LIFETIME: Duration = Duration::from_secs(600);
 +const HEADER: &str = "x-omd-credential-header";
-+const CONCURRENCY: usize = 16;
-+#[cfg(not(test))]
-+const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
-+#[cfg(test)]
-+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-+const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
++type Body = UnsyncBoxBody<Bytes, io::Error>;
++type Routes = Arc<Mutex<BTreeMap<String, Arc<Route>>>>;
++type Failure = (u16, String);
 +
-+#[derive(Clone)]
 +struct Route {
 +    store: PathBuf,
 +    profiles: BTreeSet<String>,
-+    cancelled: watch::Receiver<bool>,
++    active: Mutex<Vec<watch::Sender<bool>>>,
 +}
 +
-+type Routes = Arc<Mutex<BTreeMap<String, Route>>>;
-+type ServerState = (reqwest::Client, Routes, Arc<Semaphore>);
++struct Forward {
++    route: Arc<Route>,
++    cancelled: watch::Sender<bool>,
++}
++
++impl Drop for Forward {
++    fn drop(&mut self) {
++        if let Ok(mut active) = self.route.active.lock() {
++            active.retain(|sender| !sender.same_channel(&self.cancelled));
++        }
++    }
++}
++
 +struct Gateway {
 +    port: u16,
 +    routes: Routes,
@@ -24284,14 +24878,17 @@ index 000000000..907ec29e3
 +pub(crate) struct Registration {
 +    key: String,
 +    routes: Routes,
-+    cancelled: watch::Sender<bool>,
 +}
 +
 +impl Drop for Registration {
 +    fn drop(&mut self) {
-+        self.cancelled.send_replace(true);
-+        if let Ok(mut routes) = self.routes.lock() {
-+            routes.remove(&self.key);
++        if let Ok(mut routes) = self.routes.lock()
++            && let Some(route) = routes.remove(&self.key)
++            && let Ok(active) = route.active.lock()
++        {
++            for cancelled in active.iter() {
++                cancelled.send_replace(true);
++            }
 +        }
 +    }
 +}
@@ -24300,253 +24897,314 @@ index 000000000..907ec29e3
 +
 +fn gateway() -> io::Result<&'static Gateway> {
 +    GATEWAY
-+        .get_or_init(|| {
-+            let listener =
-+                std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-+            listener
-+                .set_nonblocking(true)
-+                .map_err(|error| error.to_string())?;
-+            let port = listener
-+                .local_addr()
-+                .map_err(|error| error.to_string())?
-+                .port();
-+            let runtime = tokio::runtime::Builder::new_multi_thread()
-+                .worker_threads(2)
-+                .enable_all()
-+                .build()
-+                .map_err(|error| error.to_string())?;
-+            let client = reqwest::Client::builder()
-+                .connect_timeout(Duration::from_secs(10))
-+                .read_timeout(IDLE_TIMEOUT)
-+                .timeout(REQUEST_TIMEOUT)
-+                .pool_max_idle_per_host(0)
-+                .redirect(reqwest::redirect::Policy::none())
-+                .build()
-+                .map_err(|error| error.to_string())?;
-+            let routes = Routes::default();
-+            let state = (
-+                client,
-+                routes.clone(),
-+                Arc::new(Semaphore::new(CONCURRENCY)),
-+            );
-+            std::thread::spawn(move || {
-+                runtime.block_on(async move {
-+                    if let Ok(listener) = tokio::net::TcpListener::from_std(listener) {
-+                        let _ = axum::serve(
-+                            listener,
-+                            axum::Router::new().fallback(forward).with_state(state),
-+                        )
-+                        .await;
-+                    }
-+                })
-+            });
-+            Ok(Gateway { port, routes })
-+        })
++        .get_or_init(|| start_gateway(IDLE, LIFETIME))
 +        .as_ref()
 +        .map_err(|error| io::Error::other(error.clone()))
++}
++
++fn start_gateway(idle: Duration, lifetime: Duration) -> Result<Gateway, String> {
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
++    listener
++        .set_nonblocking(true)
++        .map_err(|error| error.to_string())?;
++    let port = listener
++        .local_addr()
++        .map_err(|error| error.to_string())?
++        .port();
++    let runtime = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .map_err(|error| error.to_string())?;
++    let client = reqwest::Client::builder()
++        .connect_timeout(idle)
++        .redirect(reqwest::redirect::Policy::none())
++        .build()
++        .map_err(|error| error.to_string())?;
++    let routes = Routes::default();
++    let served = routes.clone();
++    std::thread::Builder::new()
++        .name("omd-credential-gateway".into())
++        .spawn(move || {
++            runtime.block_on(async move {
++                let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
++                    return;
++                };
++                let slots = Arc::new(Semaphore::new(CONNECTIONS));
++                loop {
++                    let Ok((socket, _)) = listener.accept().await else {
++                        break;
++                    };
++                    let Ok(slot) = slots.clone().try_acquire_owned() else {
++                        drop(socket);
++                        continue;
++                    };
++                    let routes = served.clone();
++                    let client = client.clone();
++                    tokio::spawn(async move {
++                        let _slot = slot;
++                        let (cancelled, mut cancellation) = watch::channel(false);
++                        let handler = service_fn(move |request| {
++                            let routes = routes.clone();
++                            let client = client.clone();
++                            let cancelled = cancelled.clone();
++                            async move {
++                                let response =
++                                    match forward(&client, &routes, request, cancelled, idle).await
++                                    {
++                                        Ok(response) => response,
++                                        Err((status, error)) => failure(status, error),
++                                    };
++                                Ok::<_, Infallible>(response)
++                            }
++                        });
++                        let mut builder = http1::Builder::new();
++                        builder
++                            .keep_alive(false)
++                            .max_headers(64)
++                            .max_buf_size(32 * 1024)
++                            .timer(TokioTimer::new())
++                            .header_read_timeout(idle);
++                        let connection = builder.serve_connection(TokioIo::new(socket), handler);
++                        tokio::select! {
++                            _ = connection => {}
++                            _ = cancellation.changed() => {}
++                            _ = tokio::time::sleep(lifetime) => {}
++                        }
++                    });
++                }
++            });
++        })
++        .map_err(|error| error.to_string())?;
++    Ok(Gateway { port, routes })
 +}
 +
 +pub(crate) fn register(
 +    store: PathBuf,
 +    profiles: BTreeSet<String>,
 +) -> io::Result<(String, Registration)> {
-+    let gateway = gateway()?;
++    register_at(gateway()?, store, profiles)
++}
++
++fn register_at(
++    gateway: &Gateway,
++    store: PathBuf,
++    profiles: BTreeSet<String>,
++) -> io::Result<(String, Registration)> {
 +    let mut bytes = [0u8; 16];
 +    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
 +    let key = bytes
 +        .iter()
 +        .map(|byte| format!("{byte:02x}"))
 +        .collect::<String>();
-+    let (cancelled, receiver) = watch::channel(false);
 +    gateway
 +        .routes
 +        .lock()
 +        .map_err(|_| io::Error::other("credential_gateway_poisoned"))?
 +        .insert(
 +            key.clone(),
-+            Route {
++            Arc::new(Route {
 +                store,
 +                profiles,
-+                cancelled: receiver,
-+            },
++                active: Mutex::new(Vec::new()),
++            }),
 +        );
 +    Ok((
 +        format!("http://127.0.0.1:{}/{key}", gateway.port),
 +        Registration {
 +            key,
 +            routes: gateway.routes.clone(),
-+            cancelled,
 +        },
 +    ))
 +}
 +
-+async fn bounded<T, E: std::fmt::Display>(
-+    cancelled: &mut watch::Receiver<bool>,
-+    deadline: Instant,
-+    future: impl std::future::Future<Output = Result<T, E>>,
-+) -> Result<T, (u16, String)> {
-+    if *cancelled.borrow() {
-+        return Err((403, "credential_gateway_revoked".into()));
-+    }
-+    tokio::select! {
-+        biased;
-+        _ = cancelled.changed() => Err((403, "credential_gateway_revoked".into())),
-+        result = tokio::time::timeout_at(deadline.min(Instant::now() + IDLE_TIMEOUT), future) => {
-+            result.map_err(|_| (504, "credential_gateway_deadline".into()))?
-+                .map_err(|error| (502, format!("credential_gateway_upstream: {error}")))
++fn failure(status: u16, error: String) -> Response<Body> {
++    let body = Full::new(Bytes::from(error))
++        .map_err(|never| match never {})
++        .boxed_unsync();
++    let mut response = Response::new(body);
++    *response.status_mut() =
++        http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::BAD_GATEWAY);
++    response.headers_mut().insert(
++        http::header::CONNECTION,
++        http::HeaderValue::from_static("close"),
++    );
++    response
++}
++
++fn admit(
++    routes: &Routes,
++    key: &str,
++    profile: &str,
++    cancelled: watch::Sender<bool>,
++) -> Result<Forward, Failure> {
++    let denied = || (403, "credential_not_host_approved".to_owned());
++    let routes = routes.lock().map_err(|_| denied())?;
++    let route = routes
++        .get(key)
++        .filter(|route| route.profiles.contains(profile))
++        .cloned()
++        .ok_or_else(denied)?;
++    {
++        let mut active = route.active.lock().map_err(|_| denied())?;
++        if active.len() >= ROUTE_CONNECTIONS {
++            return Err((429, "credential_gateway_busy".into()));
 +        }
++        active.push(cancelled.clone());
 +    }
++    Ok(Forward { route, cancelled })
 +}
 +
 +async fn forward(
-+    State((client, routes, capacity)): State<ServerState>,
-+    request: Request<Body>,
-+) -> Response {
-+    let result = async {
-+        let permit = capacity
-+            .try_acquire_owned()
-+            .map_err(|_| (503, "credential_gateway_busy".to_owned()))?;
-+        let deadline = Instant::now() + REQUEST_TIMEOUT;
-+        let (parts, body) = request.into_parts();
-+        let mut path = parts
-+            .uri
-+            .path_and_query()
-+            .map(|value| value.as_str())
-+            .unwrap_or("/")
-+            .trim_start_matches('/')
-+            .splitn(3, '/');
-+        let (key, profile, rest) = (
-+            path.next().unwrap_or_default(),
-+            path.next().unwrap_or_default(),
-+            path.next().unwrap_or_default(),
-+        );
-+        let mut route = routes
-+            .lock()
-+            .map_err(|_| (403, "credential_gateway_poisoned".to_owned()))?
-+            .get(key)
-+            .filter(|route| route.profiles.contains(profile))
-+            .cloned()
-+            .ok_or((403, "credential_not_host_approved".to_owned()))?;
-+        let denied = |error: io::Error| (403, error.to_string());
-+        let profiles = CredentialProfiles::open(&route.store).map_err(denied)?;
++    client: &reqwest::Client,
++    routes: &Routes,
++    request: Request<Incoming>,
++    cancelled: watch::Sender<bool>,
++    idle: Duration,
++) -> Result<Response<Body>, Failure> {
++    let denied = |error: &str| (403, error.to_owned());
++    let (parts, mut incoming) = request.into_parts();
++    let target = parts
++        .uri
++        .path_and_query()
++        .map(|value| value.as_str())
++        .unwrap_or("/");
++    let mut path = target.trim_start_matches('/').splitn(3, '/');
++    let key = path.next().unwrap_or_default();
++    let profile = path.next().unwrap_or_default();
++    let rest = path.next().unwrap_or_default();
++    let guard = admit(routes, key, profile, cancelled)?;
++    static LOOKUPS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
++        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
++    let permit = LOOKUPS
++        .clone()
++        .try_acquire_owned()
++        .map_err(|_| (429, "credential_gateway_busy".to_owned()))?;
++    let store = guard.route.store.clone();
++    let profile = profile.to_owned();
++    let (origin, secret) = tokio::task::spawn_blocking(move || {
++        let _permit = permit;
++        let profiles = CredentialProfiles::open(&store).map_err(|error| error.to_string())?;
 +        let origin = profiles
-+            .profile(profile)
-+            .map_err(denied)?
++            .profile(&profile)
++            .map_err(|error| error.to_string())?
 +            .destination()
 +            .map(str::to_owned)
-+            .ok_or((403, "credential_origin_missing".to_owned()))?;
-+        let secret = profiles.secret(profile, &origin).map_err(denied)?;
-+        let mut headers = reqwest::header::HeaderMap::new();
-+        for (name, value) in &parts.headers {
-+            if !matches!(
-+                name.as_str(),
-+                HEADER
-+                    | "host"
-+                    | "authorization"
-+                    | "x-api-key"
-+                    | "chatgpt-account-id"
-+                    | "cookie"
-+                    | "connection"
-+                    | "content-length"
-+                    | "transfer-encoding"
-+                    | "proxy-authorization"
-+                    | "upgrade"
-+                    | "trailer"
-+            ) {
-+                headers.append(name, value.clone());
-+            }
-+        }
-+        let (name, value) = match parts.headers.get(HEADER).map(|value| value.to_str()) {
-+            None | Some(Ok("authorization")) => (
-+                reqwest::header::AUTHORIZATION,
-+                format!("Bearer {}", secret.token),
-+            ),
-+            Some(Ok("x-api-key")) => (
-+                reqwest::header::HeaderName::from_static("x-api-key"),
-+                secret.token,
-+            ),
-+            _ => return Err((400, format!("{HEADER} must be authorization or x-api-key"))),
-+        };
-+        let mut value = reqwest::header::HeaderValue::from_str(&value)
-+            .map_err(|_| (403, "credential token is not a valid header".to_owned()))?;
-+        value.set_sensitive(true);
-+        headers.insert(name, value);
-+        if let Some(account) = secret.account_id
-+            && let Ok(account) = reqwest::header::HeaderValue::from_str(&account)
-+        {
-+            headers.insert("chatgpt-account-id", account);
-+        }
-+        let body = bounded(&mut route.cancelled, deadline, async {
-+            Ok::<_, io::Error>(axum::body::to_bytes(body, BODY_BYTES).await)
-+        })
-+        .await?
-+        .map_err(|error| (413, error.to_string()))?;
-+        let upstream = bounded(
-+            &mut route.cancelled,
-+            deadline,
-+            client
-+                .request(parts.method, format!("{origin}/{rest}"))
-+                .headers(headers)
-+                .body(body)
-+                .send(),
-+        )
-+        .await?;
-+        let mut response = Response::builder().status(upstream.status());
-+        for (name, value) in upstream.headers() {
-+            if !matches!(
-+                name.as_str(),
-+                "transfer-encoding" | "connection" | "trailer" | "upgrade"
-+            ) {
-+                response = response.header(name, value);
-+            }
-+        }
-+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
-+        let cancelled = route.cancelled.clone();
-+        tokio::spawn(async move {
-+            let _permit = permit;
-+            let mut upstream = upstream;
-+            let mut cancelled = route.cancelled;
-+            loop {
-+                match bounded(&mut cancelled, deadline, upstream.chunk()).await {
-+                    Ok(Some(chunk)) => {
-+                        if bounded(&mut cancelled, deadline, sender.send(Ok(chunk)))
-+                            .await
-+                            .is_err()
-+                        {
-+                            break;
-+                        }
-+                    }
-+                    Ok(None) => break,
-+                    Err((_, error)) => {
-+                        let _ = sender.try_send(Err(io::Error::other(error)));
-+                        break;
-+                    }
-+                }
-+            }
-+        });
-+        let stream = futures::stream::try_unfold(
-+            (receiver, cancelled),
-+            move |(mut receiver, mut cancelled)| async move {
-+                let chunk = bounded(&mut cancelled, deadline, async {
-+                    Ok::<_, io::Error>(receiver.recv().await)
-+                })
-+                .await
-+                .map_err(|(_, error)| io::Error::other(error))?
-+                .transpose()?;
-+                Ok::<_, io::Error>(chunk.map(|chunk| (chunk, (receiver, cancelled))))
-+            },
-+        );
-+        response
-+            .body(Body::from_stream(stream))
-+            .map_err(|error| (502, error.to_string()))
-+    }
-+    .await;
-+    result.unwrap_or_else(|(status, error)| {
-+        Response::builder()
-+            .status(status)
-+            .body(Body::from(error))
-+            .expect("valid gateway error")
++            .ok_or_else(|| "credential_origin_missing".to_owned())?;
++        let secret = profiles
++            .secret(&profile, &origin)
++            .map_err(|error| error.to_string())?;
++        Ok::<_, String>((origin, secret))
 +    })
++    .await
++    .map_err(|error| denied(&error.to_string()))?
++    .map_err(|error| denied(&error))?;
++    let mut headers = reqwest::header::HeaderMap::new();
++    let mut style = None;
++    for (name, value) in &parts.headers {
++        if name.as_str() == HEADER {
++            style = Some(
++                value
++                    .to_str()
++                    .map_err(|_| (400, "credential_header_invalid".to_owned()))?
++                    .to_owned(),
++            );
++        } else if !matches!(
++            name.as_str(),
++            "host"
++                | "authorization"
++                | "x-api-key"
++                | "chatgpt-account-id"
++                | "cookie"
++                | "connection"
++                | "content-length"
++                | "transfer-encoding"
++                | "proxy-authorization"
++                | "upgrade"
++                | "trailer"
++                | "expect"
++        ) {
++            headers.append(name.clone(), value.clone());
++        }
++    }
++    let (name, value) = match style.as_deref() {
++        None | Some("authorization") => (
++            reqwest::header::AUTHORIZATION,
++            format!("Bearer {}", secret.token),
++        ),
++        Some("x-api-key") => (
++            reqwest::header::HeaderName::from_static("x-api-key"),
++            secret.token,
++        ),
++        Some(_) => return Err((400, format!("{HEADER} must be authorization or x-api-key"))),
++    };
++    let mut value = reqwest::header::HeaderValue::from_str(&value)
++        .map_err(|_| denied("credential token is not a valid header"))?;
++    value.set_sensitive(true);
++    headers.insert(name, value);
++    if let Some(account) = secret.account_id
++        && let Ok(account) = reqwest::header::HeaderValue::from_str(&account)
++    {
++        headers.insert("chatgpt-account-id", account);
++    }
++    let mut body = Vec::new();
++    while let Some(frame) = tokio::time::timeout(idle, incoming.frame())
++        .await
++        .map_err(|_| (408, "credential_gateway_body_timeout".to_owned()))?
++    {
++        let frame = frame.map_err(|error| (400, error.to_string()))?;
++        if let Ok(data) = frame.into_data() {
++            if data.len() > BODY_BYTES.saturating_sub(body.len()) {
++                return Err((413, "credential_gateway_body_limit".into()));
++            }
++            body.extend_from_slice(&data);
++        }
++    }
++    let upstream = tokio::time::timeout(
++        idle,
++        client
++            .request(parts.method, format!("{origin}/{rest}"))
++            .headers(headers)
++            .body(body)
++            .send(),
++    )
++    .await
++    .map_err(|_| (504, "credential_gateway_upstream_timeout".to_owned()))?
++    .map_err(|error| (502, format!("credential_gateway_upstream: {error}")))?;
++    let status = upstream.status();
++    let headers = upstream.headers().clone();
++    let chunks = stream::unfold(Some((upstream, guard)), move |state| async move {
++        let (mut upstream, guard) = state?;
++        match tokio::time::timeout(idle, upstream.chunk()).await {
++            Ok(Ok(Some(bytes))) => Some((
++                Ok::<_, io::Error>(Frame::data(bytes)),
++                Some((upstream, guard)),
++            )),
++            Ok(Ok(None)) => None,
++            Ok(Err(error)) => Some((Err(io::Error::other(error)), None)),
++            Err(_) => Some((
++                Err(io::Error::new(
++                    io::ErrorKind::TimedOut,
++                    "credential_gateway_stream_timeout",
++                )),
++                None,
++            )),
++        }
++    });
++    let mut response = Response::new(StreamBody::new(chunks).boxed_unsync());
++    *response.status_mut() = status;
++    for (name, value) in &headers {
++        if !matches!(
++            name.as_str(),
++            "content-length" | "transfer-encoding" | "connection" | "trailer" | "upgrade"
++        ) {
++            response.headers_mut().append(name.clone(), value.clone());
++        }
++    }
++    response.headers_mut().insert(
++        http::header::CONNECTION,
++        http::HeaderValue::from_static("close"),
++    );
++    Ok(response)
 +}
 +
 +#[cfg(test)]
@@ -24554,15 +25212,11 @@ index 000000000..907ec29e3
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/credential_gateway_tests.rs b/codex-rs/ext/omd/src/credential_gateway_tests.rs
 new file mode 100644
-index 000000000..9101ee5da
+index 000000000..f08bb746c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/credential_gateway_tests.rs
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,358 @@
 +use super::*;
-+use std::io::{BufRead, Write};
-+use std::time::Duration;
-+
-+static TEST_GATEWAY: Mutex<()> = Mutex::new(());
 +
 +fn get(url: &str) -> (u16, String) {
 +    let response = reqwest::blocking::get(url).unwrap();
@@ -24571,7 +25225,6 @@ index 000000000..9101ee5da
 +
 +#[test]
 +fn only_registered_sidecars_reach_approved_profiles_until_revoked() {
-+    let _lock = TEST_GATEWAY.lock().unwrap();
 +    let temp = tempfile::tempdir().unwrap();
 +    let store = temp.path().canonicalize().unwrap();
 +    let profiles = CredentialProfiles::local(&store).unwrap();
@@ -24600,170 +25253,326 @@ index 000000000..9101ee5da
 +    );
 +}
 +
-+fn read_request(socket: &mut std::net::TcpStream) {
-+    let mut reader = std::io::BufReader::new(socket);
-+    let mut headers = String::new();
++use std::io::{BufRead, BufReader, Write};
++use std::net::{TcpListener, TcpStream};
++use std::sync::mpsc;
++use std::time::Instant;
++
++const WAIT: Duration = Duration::from_secs(3);
++
++fn upstream_listener() -> TcpListener {
++    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    listener
++}
++
++fn fixture(gateway: &Gateway, listener: &TcpListener) -> (tempfile::TempDir, String, Registration) {
++    let temp = tempfile::tempdir().unwrap();
++    let store = temp.path().canonicalize().unwrap();
++    let profiles = CredentialProfiles::local(&store).unwrap();
++    let profile = profiles
++        .create(
++            "fixture",
++            "provider",
++            Some("fixture"),
++            Some("https://fixture.invalid"),
++        )
++        .unwrap();
++    profiles
++        .store_auth(&profile.id, r#"{"OPENAI_API_KEY":"fixture-token"}"#)
++        .unwrap();
++    let path = store.join("credentials/profiles.json");
++    let mut document: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++    document["profiles"][0]["origin"] =
++        serde_json::json!(format!("http://{}", listener.local_addr().unwrap()));
++    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
++    let (base, registration) =
++        register_at(gateway, store, BTreeSet::from([profile.id.clone()])).unwrap();
++    (temp, format!("{base}/{}/v1", profile.id), registration)
++}
++
++fn begin(url: String) -> mpsc::Receiver<Result<reqwest::blocking::Response, reqwest::Error>> {
++    let (sender, receiver) = mpsc::channel();
++    std::thread::spawn(move || {
++        let result = reqwest::blocking::Client::builder()
++            .timeout(WAIT * 4)
++            .build()
++            .unwrap()
++            .get(url)
++            .send();
++        let _ = sender.send(result);
++    });
++    receiver
++}
++
++fn accepted(listener: &TcpListener) -> TcpStream {
++    let until = Instant::now() + WAIT;
++    let socket = loop {
++        match listener.accept() {
++            Ok((socket, _)) => break socket,
++            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
++                assert!(Instant::now() < until, "upstream request did not arrive");
++                std::thread::sleep(Duration::from_millis(5));
++            }
++            Err(error) => panic!("accept failed: {error}"),
++        }
++    };
++    socket.set_nonblocking(false).unwrap();
++    socket.set_read_timeout(Some(WAIT)).unwrap();
++    socket.set_write_timeout(Some(WAIT)).unwrap();
++    let mut reader = BufReader::new(socket.try_clone().unwrap());
++    let mut text = String::new();
 +    loop {
 +        let mut line = String::new();
-+        reader.read_line(&mut line).unwrap();
++        assert!(reader.read_line(&mut line).unwrap() > 0);
 +        if line == "\r\n" {
 +            break;
 +        }
-+        headers.push_str(&line);
++        text.push_str(&line);
++        assert!(text.len() < 32 * 1024);
 +    }
++    assert!(text.starts_with("GET /v1 HTTP/1.1\r\n"));
 +    assert!(
-+        headers
-+            .to_lowercase()
-+            .contains("authorization: bearer fixture")
++        text.to_ascii_lowercase()
++            .contains("authorization: bearer fixture-token")
 +    );
++    socket
 +}
 +
-+fn enrolled(root: &std::path::Path, address: std::net::SocketAddr) -> (String, Registration) {
-+    let root = root.canonicalize().unwrap();
-+    let profiles = CredentialProfiles::local(&root).unwrap();
-+    let profile = profiles
-+        .create_secret("fixture", &format!("http://{address}"), "owner")
-+        .unwrap();
-+    profiles.store_secret(&profile.id, "fixture").unwrap();
-+    std::fs::write(
-+        root.join("credentials").join(&profile.id).join("auth.json"),
-+        r#"{"OPENAI_API_KEY":"fixture"}"#,
-+    )
-+    .unwrap();
-+    let (base, registration) = register(root, BTreeSet::from([profile.id.clone()])).unwrap();
-+    (format!("{base}/{}/stream", profile.id), registration)
++fn closed(socket: &mut TcpStream) {
++    let mut byte = [0];
++    match socket.read(&mut byte) {
++        Ok(0) => {}
++        Err(error)
++            if matches!(
++                error.kind(),
++                io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
++            ) => {}
++        result => panic!("upstream socket remained open: {result:?}"),
++    }
++}
++
++fn first_chunk(socket: &mut TcpStream) {
++    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n9\r\ndata: 1\n\n\r\n").unwrap();
++    socket.flush().unwrap();
++}
++
++#[test]
++fn revocation_cancels_an_upstream_waiting_for_headers() {
++    let gateway = start_gateway(WAIT, WAIT * 2).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, registration) = fixture(&gateway, &listener);
++    let pending = begin(url);
++    let mut upstream = accepted(&listener);
++    drop(registration);
++    assert!(pending.recv_timeout(WAIT).unwrap().is_err());
++    closed(&mut upstream);
++}
++
++#[test]
++fn streaming_flushes_before_completion_and_revocation_cancels_the_body() {
++    let gateway = start_gateway(WAIT, WAIT * 2).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, registration) = fixture(&gateway, &listener);
++    let pending = begin(url);
++    let mut upstream = accepted(&listener);
++    first_chunk(&mut upstream);
++    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
++    assert_eq!(response.status().as_u16(), 200);
++    let mut first = [0; 9];
++    response.read_exact(&mut first).unwrap();
++    assert_eq!(&first, b"data: 1\n\n");
++    drop(registration);
++    assert!(response.read_to_end(&mut Vec::new()).is_err());
++    closed(&mut upstream);
 +}
 +
 +#[test]
 +fn streamed_replies_reach_the_client_before_the_body_ends() {
-+    let _lock = TEST_GATEWAY.lock().unwrap();
-+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-+    let root = tempfile::tempdir().unwrap();
-+    let (url, _registration) = enrolled(root.path(), server.local_addr().unwrap());
-+    let (more, wait) = std::sync::mpsc::channel();
-+    std::thread::spawn(move || {
-+        let (mut socket, _) = server.accept().unwrap();
-+        read_request(&mut socket);
-+        socket
-+            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\ndata: 1\n\n\r\n")
-+            .unwrap();
-+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
-+        socket.write_all(b"9\r\ndata: 2\n\n\r\n0\r\n\r\n").unwrap();
-+    });
-+    let mut response = reqwest::blocking::Client::builder()
-+        .timeout(std::time::Duration::from_secs(5))
-+        .build()
-+        .unwrap()
-+        .get(url)
-+        .send()
-+        .unwrap();
++    let gateway = start_gateway(WAIT, WAIT * 2).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, _registration) = fixture(&gateway, &listener);
++    let pending = begin(url);
++    let mut upstream = accepted(&listener);
++    first_chunk(&mut upstream);
++    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
 +    let mut first = [0; 9];
 +    response.read_exact(&mut first).unwrap();
 +    assert_eq!(&first, b"data: 1\n\n");
-+    more.send(()).unwrap();
++    upstream
++        .write_all(b"9\r\ndata: 2\n\n\r\n0\r\n\r\n")
++        .unwrap();
 +    let mut rest = String::new();
 +    response.read_to_string(&mut rest).unwrap();
 +    assert_eq!(rest, "data: 2\n\n");
 +}
 +
 +#[test]
-+fn revocation_closes_inflight_headers_and_streams() {
-+    let _lock = TEST_GATEWAY.lock().unwrap();
-+    for prefix in [
-+        "",
-+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n",
-+        "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nx",
-+    ] {
-+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-+        let root = tempfile::tempdir().unwrap();
-+        let (url, registration) = enrolled(root.path(), server.local_addr().unwrap());
-+        let (started, ready) = std::sync::mpsc::channel();
-+        let upstream = std::thread::spawn(move || {
-+            let (mut socket, _) = server.accept().unwrap();
-+            read_request(&mut socket);
-+            socket.write_all(prefix.as_bytes()).unwrap();
-+            started.send(()).unwrap();
-+            socket
-+                .set_read_timeout(Some(Duration::from_secs(1)))
-+                .unwrap();
-+            let result = socket.read(&mut [0u8; 1]);
-+            assert!(
-+                matches!(result, Ok(0))
-+                    || result.is_err_and(|error| matches!(
-+                        error.kind(),
-+                        io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
-+                    )),
-+                "authenticated connection survived revocation"
++fn revocation_cancels_a_fixed_length_response_body() {
++    let gateway = start_gateway(WAIT, WAIT * 2).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, registration) = fixture(&gateway, &listener);
++    let pending = begin(url);
++    let mut upstream = accepted(&listener);
++    upstream
++        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nx")
++        .unwrap();
++    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
++    let mut first = [0; 1];
++    response.read_exact(&mut first).unwrap();
++    assert_eq!(&first, b"x");
++    drop(registration);
++    assert!(response.read_to_end(&mut Vec::new()).is_err());
++    closed(&mut upstream);
++}
++
++#[test]
++fn upstream_header_and_body_idle_deadlines_close_the_upstream() {
++    for headers in [false, true] {
++        let gateway = start_gateway(Duration::from_millis(250), WAIT * 2).unwrap();
++        let listener = upstream_listener();
++        let (_temp, url, _registration) = fixture(&gateway, &listener);
++        let pending = begin(url);
++        let mut upstream = accepted(&listener);
++        if headers {
++            first_chunk(&mut upstream);
++            let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
++            let mut first = [0; 9];
++            response.read_exact(&mut first).unwrap();
++            assert!(response.read_to_end(&mut Vec::new()).is_err());
++        } else {
++            assert_eq!(
++                pending
++                    .recv_timeout(WAIT)
++                    .unwrap()
++                    .unwrap()
++                    .status()
++                    .as_u16(),
++                504
 +            );
-+        });
-+        let downstream = std::thread::spawn(move || {
-+            reqwest::blocking::Client::builder()
-+                .timeout(Duration::from_secs(3))
-+                .build()
-+                .unwrap()
-+                .get(url)
-+                .send()
-+                .and_then(|response| response.text())
-+        });
-+        ready.recv_timeout(Duration::from_secs(3)).unwrap();
-+        drop(registration);
-+        upstream.join().unwrap();
-+        let _ = downstream.join().unwrap();
++        }
++        closed(&mut upstream);
 +    }
 +}
 +
 +#[test]
 +fn stalled_requests_release_capacity_at_the_deadline() {
-+    let _lock = TEST_GATEWAY.lock().unwrap();
-+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-+    let root = tempfile::tempdir().unwrap();
-+    let (url, _registration) = enrolled(root.path(), server.local_addr().unwrap());
-+    let (started, ready) = std::sync::mpsc::channel();
-+    let upstream = std::thread::spawn(move || {
-+        let mut sockets = Vec::new();
-+        for _ in 0..16 {
-+            let (mut socket, _) = server.accept().unwrap();
-+            read_request(&mut socket);
-+            sockets.push(socket);
-+        }
-+        started.send(()).unwrap();
-+        for mut socket in sockets {
-+            socket
-+                .set_read_timeout(Some(Duration::from_secs(4)))
-+                .unwrap();
-+            let result = socket.read(&mut [0u8; 1]);
-+            assert!(
-+                matches!(result, Ok(0))
-+                    || result.is_err_and(|error| error.kind() == io::ErrorKind::ConnectionReset)
-+            );
-+        }
-+    });
-+    let clients: Vec<_> = (0..16)
-+        .map(|_| {
-+            let url = url.clone();
-+            std::thread::spawn(move || {
-+                reqwest::blocking::Client::builder()
-+                    .timeout(Duration::from_secs(5))
-+                    .build()
-+                    .unwrap()
-+                    .get(url)
-+                    .send()
-+                    .unwrap()
-+                    .status()
-+            })
-+        })
-+        .collect();
-+    ready.recv_timeout(Duration::from_secs(4)).unwrap();
-+    assert_eq!(get(&url).0, 503);
-+    for client in clients {
-+        assert!(client.join().unwrap().is_server_error());
++    let gateway = start_gateway(Duration::from_secs(1), WAIT * 4).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, _registration) = fixture(&gateway, &listener);
++    let mut pending = Vec::new();
++    let mut upstreams = Vec::new();
++    for _ in 0..ROUTE_CONNECTIONS {
++        pending.push(begin(url.clone()));
++        upstreams.push(accepted(&listener));
 +    }
-+    upstream.join().unwrap();
 +    assert_eq!(
-+        get(&url).0,
++        begin(url.clone())
++            .recv_timeout(WAIT)
++            .unwrap()
++            .unwrap()
++            .status()
++            .as_u16(),
++        429
++    );
++    for request in pending {
++        assert_eq!(
++            request
++                .recv_timeout(WAIT)
++                .unwrap()
++                .unwrap()
++                .status()
++                .as_u16(),
++            504
++        );
++    }
++    for mut upstream in upstreams {
++        closed(&mut upstream);
++    }
++    drop(listener);
++    assert_eq!(
++        begin(url)
++            .recv_timeout(WAIT)
++            .unwrap()
++            .unwrap()
++            .status()
++            .as_u16(),
 +        502,
 +        "capacity is reusable after all timed-out sockets close"
 +    );
++}
++
++#[test]
++fn connection_lifetime_closes_a_stream_even_when_its_idle_deadline_is_longer() {
++    let gateway = start_gateway(WAIT * 2, Duration::from_millis(250)).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, _registration) = fixture(&gateway, &listener);
++    let pending = begin(url);
++    let mut upstream = accepted(&listener);
++    first_chunk(&mut upstream);
++    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
++    let mut first = [0; 9];
++    response.read_exact(&mut first).unwrap();
++    assert!(response.read_to_end(&mut Vec::new()).is_err());
++    closed(&mut upstream);
++}
++
++#[test]
++fn concurrent_forwards_are_limited_per_registration() {
++    let gateway = start_gateway(WAIT * 4, WAIT * 4).unwrap();
++    let listener = upstream_listener();
++    let (_temp, url, registration) = fixture(&gateway, &listener);
++    let mut pending = Vec::new();
++    let mut upstreams = Vec::new();
++    for _ in 0..ROUTE_CONNECTIONS {
++        pending.push(begin(url.clone()));
++        upstreams.push(accepted(&listener));
++    }
++    assert_eq!(
++        begin(url)
++            .recv_timeout(WAIT)
++            .unwrap()
++            .unwrap()
++            .status()
++            .as_u16(),
++        429
++    );
++    drop(registration);
++    for request in pending {
++        assert!(request.recv_timeout(WAIT).unwrap().is_err());
++    }
++    for mut upstream in upstreams {
++        closed(&mut upstream);
++    }
++}
++
++#[test]
++fn concurrent_connections_are_limited_across_registrations() {
++    let gateway = start_gateway(WAIT * 4, WAIT * 4).unwrap();
++    let listener = upstream_listener();
++    let mut fixtures = Vec::new();
++    let mut pending = Vec::new();
++    let mut upstreams = Vec::new();
++    for _ in 0..CONNECTIONS {
++        let fixture = fixture(&gateway, &listener);
++        pending.push(begin(fixture.1.clone()));
++        upstreams.push(accepted(&listener));
++        fixtures.push(fixture);
++    }
++    assert!(
++        begin(fixtures[0].1.clone())
++            .recv_timeout(WAIT)
++            .unwrap()
++            .is_err()
++    );
++    drop(fixtures);
++    for request in pending {
++        assert!(request.recv_timeout(WAIT).unwrap().is_err());
++    }
++    for mut upstream in upstreams {
++        closed(&mut upstream);
++    }
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
@@ -25793,7 +26602,7 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..f9deeaa50
+index 000000000..667d73e6f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,697 @@
@@ -26169,7 +26978,7 @@ index 000000000..f9deeaa50
 +    }
 +
 +    fn protected_paths(&self) -> Vec<PathBuf> {
-+        let mut paths = vec![self.root.clone()];
++        let mut paths = vec![self.root.clone(), codex_omd::workspace_lease::directory()];
 +        paths.extend(self.config.protected.iter().cloned());
 +        paths.extend(self.config.secret_refs.values().cloned());
 +        paths
@@ -26496,10 +27305,10 @@ index 000000000..f9deeaa50
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..467e238b6
+index 000000000..4c888de7d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,980 @@
+@@ -0,0 +1,998 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -26636,7 +27445,12 @@ index 000000000..467e238b6
 +    let mut headers = 0_usize;
 +    loop {
 +        let mut line = String::new();
-+        if reader.read_line(&mut line)? == 0 {
++        if reader
++            .by_ref()
++            .take((8192 - headers + 1) as u64)
++            .read_line(&mut line)?
++            == 0
++        {
 +            return Err(io::Error::new(
 +                io::ErrorKind::UnexpectedEof,
 +                "process stopped",
@@ -27245,6 +28059,19 @@ index 000000000..467e238b6
 +    use super::*;
 +
 +    #[test]
++    fn content_length_headers_are_bounded_before_allocation() {
++        for prefix in ["", "Content-Length: 2\r\n"] {
++            let bytes = format!("{prefix}{}", "x".repeat(16384));
++            let mut reader = io::Cursor::new(bytes.as_bytes());
++            assert_eq!(
++                read_message(&mut reader).unwrap_err().to_string(),
++                "process headers exceed limit"
++            );
++            assert_eq!(reader.position(), 8193);
++        }
++    }
++
++    #[test]
 +    fn framed_process_is_owned_bounded_and_stopped() {
 +        let directory = tempfile::tempdir().unwrap();
 +        let repository = directory.path().canonicalize().unwrap();
@@ -27482,10 +28309,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..82e264529
+index 000000000..e40e70500
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2336 @@
+@@ -0,0 +1,2338 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -27495,6 +28322,7 @@ index 000000000..82e264529
 +mod expansion;
 +mod intercept;
 +mod inventory;
++mod launch_snapshot;
 +mod operations;
 +mod peering;
 +mod roles;
@@ -28110,6 +28938,7 @@ index 000000000..82e264529
 +            expansion::retain_sources(self, sources);
 +            if let Some(lead) = lead {
 +                lead.session.processes.cleanup_stale(*generation);
++                self.services.cleanup_stale(*generation, sources).await;
 +                access::release_servers(lead, *generation, None).await;
 +            }
 +        }
@@ -34069,10 +34898,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..fddaf0f8e
+index 000000000..527487648
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,643 @@
+@@ -0,0 +1,652 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -34668,6 +35497,8 @@ index 000000000..fddaf0f8e
 +    let runtime = core.runtime.clone();
 +    let generation = caller.generation;
 +    let source = caller.source.to_owned();
++    let admitted_source = source.clone();
++    let admission_cancelled = cancelled.clone();
 +    tokio::task::spawn_blocking(move || {
 +        let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
 +        let owner = id.clone();
@@ -34687,26 +35518,33 @@ index 000000000..fddaf0f8e
 +                    grants.source_sha256 == source && grants.capabilities == admitted_capabilities
 +                })
 +        });
-+        if operation == "app.request" {
-+            return codex_omd::client_surface::app_request(
-+                &id,
-+                &capabilities,
-+                context,
-+                Some(&thread),
-+                &repository,
-+                &routes,
-+                arguments,
-+                active,
-+            );
-+        }
-+        codex_omd::client_surface::call(
-+            &id,
-+            &operation,
-+            arguments,
-+            context,
-+            Some(&thread),
-+            None,
-+            active,
++        codex_omd::client_surface::with_admission(
++            &admitted_source,
++            generation,
++            Some(admission_cancelled),
++            || {
++                if operation == "app.request" {
++                    return codex_omd::client_surface::app_request(
++                        &id,
++                        &capabilities,
++                        context,
++                        Some(&thread),
++                        &repository,
++                        &routes,
++                        arguments,
++                        active,
++                    );
++                }
++                codex_omd::client_surface::call(
++                    &id,
++                    &operation,
++                    arguments,
++                    context,
++                    Some(&thread),
++                    None,
++                    active,
++                )
++            },
 +        )
 +    })
 +    .await
@@ -39699,9 +40537,202 @@ index 000000000..874a6b63b
 +        json!({"phase": phase, "agent": record}),
 +    ));
 +}
+diff --git a/codex-rs/ext/omd/src/mods/launch_snapshot.rs b/codex-rs/ext/omd/src/mods/launch_snapshot.rs
+new file mode 100644
+index 000000000..1dbd7f502
+--- /dev/null
++++ b/codex-rs/ext/omd/src/mods/launch_snapshot.rs
+@@ -0,0 +1,187 @@
++use std::collections::BTreeMap;
++use std::fs;
++use std::io::Read;
++use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
++use std::path::{Path, PathBuf};
++
++pub(super) struct Tree {
++    pub files: BTreeMap<PathBuf, Vec<u8>>,
++    pub links: BTreeMap<PathBuf, PathBuf>,
++    root: PathBuf,
++}
++
++pub(super) fn capture(root: &Path) -> Result<Tree, String> {
++    let canonical = root.canonicalize().map_err(|error| error.to_string())?;
++    if canonical != root || !root.is_dir() {
++        return Err("service_code_root_invalid".into());
++    }
++    let mut tree = Tree {
++        files: BTreeMap::new(),
++        links: BTreeMap::new(),
++        root: canonical,
++    };
++    let mut pending = vec![root.to_path_buf()];
++    let mut total = 0;
++    let mut entries = 0;
++    while let Some(directory) = pending.pop() {
++        for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
++            let entry = entry.map_err(|error| error.to_string())?;
++            let path = entry.path();
++            let kind = entry.file_type().map_err(|error| error.to_string())?;
++            entries += 1;
++            if entries > 8192 {
++                return Err("service_source_limit".into());
++            }
++            if kind.is_symlink() {
++                let target = fs::read_link(&path).map_err(|error| error.to_string())?;
++                if target.is_absolute()
++                    || !path
++                        .canonicalize()
++                        .map_err(|error| error.to_string())?
++                        .starts_with(root)
++                {
++                    return Err("service_dependency_escape".into());
++                }
++                tree.links.insert(path, target);
++            } else if kind.is_dir() {
++                pending.push(path);
++            } else if kind.is_file() {
++                let mut bytes = Vec::new();
++                let file = fs::OpenOptions::new()
++                    .read(true)
++                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++                    .open(&path)
++                    .map_err(|error| error.to_string())?;
++                if !file
++                    .metadata()
++                    .map_err(|error| error.to_string())?
++                    .is_file()
++                {
++                    return Err("service_dependency_type_invalid".into());
++                }
++                file.take(64 * 1024 * 1024 + 1)
++                    .read_to_end(&mut bytes)
++                    .map_err(|error| error.to_string())?;
++                total += bytes.len();
++                if bytes.len() > 64 * 1024 * 1024 || total > 128 * 1024 * 1024 {
++                    return Err("service_source_limit".into());
++                }
++                tree.files.insert(path, bytes);
++            } else {
++                return Err("service_dependency_type_invalid".into());
++            }
++        }
++    }
++    Ok(tree)
++}
++
++pub(super) fn digest(tree: &Tree) -> String {
++    let mut rows = BTreeMap::new();
++    for (path, bytes) in &tree.files {
++        rows.insert(
++            path.strip_prefix(&tree.root)
++                .unwrap()
++                .to_string_lossy()
++                .into_owned(),
++            ("file", super::execution::hash(bytes)),
++        );
++    }
++    for (path, target) in &tree.links {
++        rows.insert(
++            path.strip_prefix(&tree.root)
++                .unwrap()
++                .to_string_lossy()
++                .into_owned(),
++            ("link", target.to_string_lossy().into_owned()),
++        );
++    }
++    let rows = rows
++        .into_iter()
++        .map(|(path, (kind, value))| (path, kind, value))
++        .collect::<Vec<_>>();
++    super::execution::hash(&serde_json::to_vec(&rows).unwrap())
++}
++
++pub(super) fn path(root: &Path, source: &Path) -> Result<PathBuf, String> {
++    if source
++        .components()
++        .any(|part| matches!(part, std::path::Component::ParentDir))
++    {
++        return Err("service_source_path_invalid".into());
++    }
++    Ok(root.join(
++        source
++            .strip_prefix("/")
++            .map_err(|_| "service_source_path_invalid")?,
++    ))
++}
++
++pub(super) fn materialize(
++    root: &Path,
++    files: &BTreeMap<PathBuf, Vec<u8>>,
++    links: &BTreeMap<PathBuf, PathBuf>,
++) -> Result<tempfile::TempDir, String> {
++    use std::io::Write;
++    let snapshot = tempfile::Builder::new()
++        .prefix("service-code-")
++        .tempdir_in(root)
++        .map_err(|error| error.to_string())?;
++    for (source, bytes) in files {
++        let target = path(snapshot.path(), source)?;
++        fs::create_dir_all(target.parent().unwrap()).map_err(|error| error.to_string())?;
++        let mut file = fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .mode(0o500)
++            .open(target)
++            .map_err(|error| error.to_string())?;
++        file.write_all(bytes).map_err(|error| error.to_string())?;
++    }
++    for (source, relative) in links {
++        let target = path(snapshot.path(), source)?;
++        fs::create_dir_all(target.parent().unwrap()).map_err(|error| error.to_string())?;
++        std::os::unix::fs::symlink(relative, target).map_err(|error| error.to_string())?;
++    }
++    fs::set_permissions(snapshot.path(), fs::Permissions::from_mode(0o700))
++        .map_err(|error| error.to_string())?;
++    Ok(snapshot)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn captured_dependencies_are_verified_and_materialized_without_reopening() {
++        let root = tempfile::tempdir().unwrap();
++        let code = root.path().join("code");
++        fs::create_dir(&code).unwrap();
++        let code = code.canonicalize().unwrap();
++        fs::write(code.join("helper.mjs"), "admitted helper").unwrap();
++        fs::write(code.join("dependency.mjs"), "admitted dependency").unwrap();
++        fs::write(code.join("executable"), "#!/bin/sh\nexit 0\n").unwrap();
++        std::os::unix::fs::symlink("dependency.mjs", code.join("link.mjs")).unwrap();
++        let captured = capture(&code).unwrap();
++        let expected = digest(&captured);
++        fs::write(code.join("helper.mjs"), "changed helper").unwrap();
++        fs::write(code.join("dependency.mjs"), "changed dependency").unwrap();
++        assert_ne!(digest(&capture(&code).unwrap()), expected);
++        let snapshot = materialize(root.path(), &captured.files, &captured.links).unwrap();
++        assert!(
++            std::process::Command::new(path(snapshot.path(), &code.join("executable")).unwrap())
++                .status()
++                .unwrap()
++                .success()
++        );
++        assert_eq!(
++            fs::read(path(snapshot.path(), &code.join("helper.mjs")).unwrap()).unwrap(),
++            b"admitted helper"
++        );
++        assert_eq!(
++            fs::read(path(snapshot.path(), &code.join("link.mjs")).unwrap()).unwrap(),
++            b"admitted dependency"
++        );
++        std::os::unix::fs::symlink("../escape", code.join("escape")).unwrap();
++        assert!(capture(&code).is_err());
++    }
++}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..a143b5697
+index 000000000..68097469a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,646 @@
@@ -40215,7 +41246,7 @@ index 000000000..a143b5697
 +    if operation.starts_with("providers.") || operation.starts_with("sidecars.") {
 +        return core
 +            .services
-+            .call(lead, caller.id, caller.generation, request)
++            .call(&core.runtime, lead, caller.id, caller.generation, request)
 +            .await;
 +    }
 +    match operation.as_str() {
@@ -41049,10 +42080,10 @@ index 000000000..24a4f05ee
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..4b9707e9f
+index 000000000..a78de256d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,695 @@
+@@ -0,0 +1,904 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -41084,6 +42115,8 @@ index 000000000..4b9707e9f
 +    requests: bool,
 +    #[serde(default)]
 +    read_hashes: BTreeMap<PathBuf, String>,
++    #[serde(default)]
++    code_roots: BTreeMap<PathBuf, String>,
 +    #[serde(default)]
 +    credentials: BTreeSet<String>,
 +}
@@ -41120,6 +42153,107 @@ index 000000000..4b9707e9f
 +    task: Arc<Task>,
 +    worker: String,
 +    _gateway: Option<crate::credential_gateway::Registration>,
++    _snapshot: tempfile::TempDir,
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn session(root: &Path, name: &str) -> Session {
++        let directory = root.join(name);
++        std::fs::create_dir(&directory).unwrap();
++        Session {
++            task: Arc::new(
++                Task::create(
++                    codex_omd::Limits {
++                        requests: 20,
++                        exposure_microusd: 0,
++                        seconds: 60,
++                        concurrent_workers: 8,
++                        max_depth: 2,
++                    },
++                    directory.join("ledger"),
++                )
++                .unwrap(),
++            ),
++            repository_identity: name.into(),
++            evidence: directory.join("evidence"),
++            scratch: directory.join("scratch"),
++            contract: std::sync::Mutex::new(crate::contract::SessionContract::default()),
++            contract_state: directory.join("contract.json"),
++            processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
++            data: DataScope::default(),
++            access: AccessState::default(),
++        }
++    }
++
++    async fn insert(
++        services: &Services,
++        session: &Session,
++        id: &str,
++        owner: &str,
++        generation: u64,
++    ) -> (tokio::task::AbortHandle, PathBuf) {
++        let worker = format!("{id}-{generation}");
++        session
++            .task
++            .start_worker(
++                worker.clone(),
++                "lead".into(),
++                1,
++                codex_omd::WorkerLimits {
++                    requests: 1,
++                    exposure_microusd: 0,
++                    seconds: 30,
++                },
++            )
++            .unwrap();
++        let job = tokio::spawn(std::future::pending::<Result<Value, String>>());
++        let abort = job.abort_handle();
++        let snapshot = tempfile::tempdir().unwrap();
++        let path = snapshot.path().to_path_buf();
++        services.records.lock().await.insert(
++            id.into(),
++            Service {
++                mod_id: owner.into(),
++                generation,
++                route: None,
++                job: Some(job),
++                task: session.task.clone(),
++                worker,
++                _gateway: None,
++                _snapshot: snapshot,
++            },
++        );
++        (abort, path)
++    }
++
++    #[tokio::test]
++    async fn stale_and_disabled_services_stop_and_release_their_ids() {
++        let root = tempfile::tempdir().unwrap();
++        let first = session(root.path(), "first");
++        let other = session(root.path(), "other");
++        let services = Services::default();
++        let (stale, stale_path) = insert(&services, &first, "stale", "enabled", 1).await;
++        let (disabled, disabled_path) = insert(&services, &first, "disabled", "disabled", 2).await;
++        let (current, _) = insert(&services, &first, "current", "enabled", 2).await;
++        let (foreign, _) = insert(&services, &other, "foreign", "enabled", 2).await;
++        let (foreign_stale, _) = insert(&services, &other, "foreign-stale", "enabled", 1).await;
++        let owners = BTreeMap::from([("enabled".to_owned(), "hash".to_owned())]);
++        services.cleanup_stale(2, &owners).await;
++        assert!(stale.is_finished() && disabled.is_finished() && foreign_stale.is_finished());
++        assert!(!stale_path.exists() && !disabled_path.exists());
++        assert!(!current.is_finished() && !foreign.is_finished());
++        assert!(!services.records.lock().await.contains_key("stale"));
++        let (replacement, _) = insert(&services, &first, "stale", "enabled", 2).await;
++        services.cleanup_stale(2, &owners).await;
++        assert!(!replacement.is_finished());
++        services.cleanup_session(&first).await;
++        assert!(current.is_finished() && replacement.is_finished());
++        assert!(!foreign.is_finished());
++        services.cleanup_session(&other).await;
++    }
 +}
 +
 +impl Drop for Service {
@@ -41147,6 +42281,30 @@ index 000000000..4b9707e9f
 +}
 +
 +impl Services {
++    #[expect(
++        clippy::await_holding_invalid_type,
++        reason = "Stop stale services before admitting replacements"
++    )]
++    pub(super) async fn cleanup_stale(&self, generation: u64, owners: &BTreeMap<String, String>) {
++        let mut records = self.records.lock().await;
++        let stale = {
++            let keys = records
++                .iter()
++                .filter(|(_, service)| {
++                    service.generation != generation || !owners.contains_key(&service.mod_id)
++                })
++                .map(|(id, _)| id.clone())
++                .collect::<Vec<_>>();
++            keys.into_iter()
++                .filter_map(|id| records.remove(&id))
++                .collect::<Vec<_>>()
++        };
++        for service in stale {
++            service.stop().await;
++        }
++        drop(records);
++    }
++
 +    pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
 +        let owned = {
 +            let mut records = self.records.lock().await;
@@ -41202,6 +42360,7 @@ index 000000000..4b9707e9f
 +    )]
 +    pub(super) async fn call(
 +        &self,
++        runtime: &Mutex<ModHost>,
 +        lead: &Lead,
 +        mod_id: &str,
 +        generation: u64,
@@ -41264,7 +42423,7 @@ index 000000000..4b9707e9f
 +            return Err("service_already_registered".into());
 +        }
 +        let host = &lead.host;
-+        let grant = host
++        let mut grant = host
 +            .config
 +            .services
 +            .iter()
@@ -41280,6 +42439,46 @@ index 000000000..4b9707e9f
 +        if request.operation == "sidecars.start" && grant.route.is_some() {
 +            return Err("provider_registration_required".into());
 +        }
++        let (source_root, mut source_files) = runtime
++            .lock()
++            .map_err(|_| "runtime_poisoned")?
++            .launch_sources(mod_id, generation)
++            .map_err(|error| error.to_string())?;
++        let mut code_roots = vec![source_root];
++        let mut source_links = BTreeMap::new();
++        if grant.code_roots.len() > 4 {
++            return Err("service_source_limit".into());
++        }
++        let mut source_bytes = source_files.values().map(Vec::len).sum::<usize>();
++        for (root, expected) in &grant.code_roots {
++            if code_roots
++                .iter()
++                .any(|prior| root.starts_with(prior) || prior.starts_with(root))
++            {
++                return Err("service_code_roots_overlap".into());
++            }
++            let files = launch_snapshot::capture(root)?;
++            if launch_snapshot::digest(&files) != *expected {
++                return Err("service_source_changed".into());
++            }
++            source_bytes += files.files.values().map(Vec::len).sum::<usize>();
++            if source_bytes > 128 * 1024 * 1024
++                || source_files.len() + source_links.len() + files.files.len() + files.links.len()
++                    > 8192
++            {
++                return Err("service_source_limit".into());
++            }
++            for (path, bytes) in files.files {
++                if let Some(admitted) = source_files.get(&path)
++                    && admitted != &bytes
++                {
++                    return Err("service_source_changed".into());
++                }
++                source_files.insert(path, bytes);
++            }
++            source_links.extend(files.links);
++            code_roots.push(root.clone());
++        }
 +        if invoke && (!grant.requests || grant.route.is_some() || grant.read_hashes.is_empty()) {
 +            return Err("service_request_not_host_approved".into());
 +        }
@@ -41287,19 +42486,53 @@ index 000000000..4b9707e9f
 +            return Err("service_source_limit".into());
 +        }
 +        for (path, expected) in &grant.read_hashes {
++            use std::io::Read;
++            use std::os::unix::fs::OpenOptionsExt;
++            let mut bytes = Vec::new();
++            let file = std::fs::OpenOptions::new()
++                .read(true)
++                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
++                .open(path)
++                .map_err(|_| "service_source_unavailable")?;
++            if !file
++                .metadata()
++                .map_err(|_| "service_source_unavailable")?
++                .is_file()
++            {
++                return Err("service_source_unavailable".into());
++            }
++            file.take(4 * 1024 * 1024 + 1)
++                .read_to_end(&mut bytes)
++                .map_err(|_| "service_source_unavailable")?;
 +            if !path.is_absolute()
 +                || path
 +                    .canonicalize()
 +                    .map_err(|_| "service_source_unavailable")?
 +                    != *path
-+                || std::fs::metadata(path)
-+                    .map_err(|_| "service_source_unavailable")?
-+                    .len()
-+                    > 4 * 1024 * 1024
-+                || execution::hash(&std::fs::read(path).map_err(|_| "service_source_unavailable")?)
-+                    != *expected
++                || bytes.len() > 4 * 1024 * 1024
++                || execution::hash(&bytes) != *expected
 +            {
 +                return Err("service_source_changed".into());
++            }
++            if let Some(admitted) = source_files.get(path)
++                && admitted != &bytes
++            {
++                return Err("service_source_changed".into());
++            }
++            source_files.insert(path.clone(), bytes);
++        }
++        if source_files.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024
++            || source_files.len() + source_links.len() > 8192
++        {
++            return Err("service_source_limit".into());
++        }
++        let snapshot = launch_snapshot::materialize(&host.root, &source_files, &source_links)?;
++        for argument in &mut grant.arguments {
++            let path = Path::new(argument);
++            if source_files.contains_key(path) {
++                *argument = launch_snapshot::path(snapshot.path(), path)?
++                    .to_string_lossy()
++                    .into_owned();
 +            }
 +        }
 +        if grant.program.starts_with(&host.repository)
@@ -41337,11 +42570,13 @@ index 000000000..4b9707e9f
 +            .map_err(|e| e.to_string())?;
 +        reads.push(supervisor.clone());
 +        reads.extend(grant.read_paths.iter().cloned());
++        reads.push(snapshot.path().to_path_buf());
 +        let mut denied = host
 +            .protected_paths()
 +            .into_iter()
 +            .filter(|path| *path != host.root)
 +            .collect::<Vec<_>>();
++        denied.extend(code_roots);
 +        let mut parent = (*parent).clone();
 +        let inherited = execution::intersect(
 +            &parent.permissions.effective_permission_profile(),
@@ -41394,8 +42629,12 @@ index 000000000..4b9707e9f
 +                .map_err(|e| e.to_string())?;
 +        }
 +        config.permissions.shell_environment_policy.r#set.clear();
++        config.permissions.shell_environment_policy.r#set.insert(
++            "OMD_SERVICE_ROOT".into(),
++            snapshot.path().to_string_lossy().into_owned(),
++        );
 +        for (environment, reference) in &grant.secrets {
-+            if environment == "OMD_READY_TOKEN"
++            if matches!(environment.as_str(), "OMD_READY_TOKEN" | "OMD_SERVICE_ROOT")
 +                || environment.is_empty()
 +                || environment.len() > 64
 +                || !environment
@@ -41627,6 +42866,7 @@ index 000000000..4b9707e9f
 +                task: lead.session.task.clone(),
 +                worker: worker.clone(),
 +                _gateway: gateway,
++                _snapshot: snapshot,
 +            },
 +        );
 +        // Every mod shares these records, so wait for readiness without holding the lock.
@@ -43844,10 +45084,10 @@ index 000000000..718e22cef
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 000000000..3c57323c4
+index 000000000..0733cc4f6
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,23 @@
 +[package]
 +name = "codex-omd"
 +version = "0.1.0"
@@ -43856,6 +45096,7 @@ index 000000000..3c57323c4
 +license = "Apache-2.0"
 +
 +[dependencies]
++socket2 = { workspace = true }
 +serde = { version = "=1.0.228", features = ["derive"] }
 +serde_json = "=1.0.149"
 +base64 = "=0.22.1"
@@ -49615,10 +50856,10 @@ index 000000000..ba97c6052
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..f9719b786
+index 000000000..a8146c5c9
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,890 @@
+@@ -0,0 +1,896 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -49708,8 +50949,14 @@ index 000000000..f9719b786
 +    }
 +
 +    pub fn at(path: &Path) -> io::Result<Self> {
-+        let stream =
-+            UnixStream::connect(path).map_err(|_| failure("authority_broker_unavailable"))?;
++        let timeout = std::time::Duration::from_secs(30);
++        let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
++        socket
++            .connect_timeout(&socket2::SockAddr::unix(path)?, timeout)
++            .map_err(|_| failure("authority_broker_unavailable"))?;
++        socket.set_read_timeout(Some(timeout))?;
++        socket.set_write_timeout(Some(timeout))?;
++        let stream: UnixStream = socket.into();
 +        Ok(Self {
 +            stream: BufReader::new(stream),
 +        })
@@ -51055,16 +52302,43 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..42b6bb129
+index 000000000..0e502d888
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,620 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::atomic::{AtomicBool, Ordering};
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 +use std::sync::{Arc, Mutex};
 +use std::time::{Duration, Instant};
++
++type Admission = (Value, Option<Arc<AtomicBool>>);
++thread_local! {
++    static CALL_ADMISSION: std::cell::RefCell<Option<Admission>> = const { std::cell::RefCell::new(None) };
++}
++
++pub fn with_admission<T>(
++    source: &str,
++    generation: u64,
++    cancelled: Option<Arc<AtomicBool>>,
++    action: impl FnOnce() -> T,
++) -> T {
++    struct Reset(Option<Admission>);
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            CALL_ADMISSION.with(|value| *value.borrow_mut() = self.0.take());
++        }
++    }
++    let previous = CALL_ADMISSION.with(|value| {
++        value.replace(Some((
++            serde_json::json!({"source": source, "generation": generation}),
++            cancelled,
++        )))
++    });
++    let _reset = Reset(previous);
++    action()
++}
 +
 +pub const SURFACE_OPERATIONS: &[&str] = &[
 +    "app.request",
@@ -51126,14 +52400,37 @@ index 000000000..42b6bb129
 +    }
 +}
 +
++#[derive(Clone, Debug, Default)]
++pub struct CallLifetime {
++    pub admission: Option<Value>,
++    upstream_cancelled: Option<Arc<AtomicBool>>,
++    cancelled: Arc<AtomicBool>,
++    deadline: Arc<Mutex<Option<Instant>>>,
++    pub binding: Option<Value>,
++}
++
++impl CallLifetime {
++    pub fn active(&self) -> bool {
++        !self.cancelled.load(Ordering::Acquire)
++            && !self
++                .upstream_cancelled
++                .as_ref()
++                .is_some_and(|flag| flag.load(Ordering::Acquire))
++            && self
++                .deadline
++                .lock()
++                .is_ok_and(|deadline| deadline.is_none_or(|deadline| Instant::now() < deadline))
++    }
++}
++
 +pub struct PendingReply {
 +    receiver: Receiver<Result<Value, String>>,
-+    live: Arc<AtomicBool>,
++    lifetime: CallLifetime,
 +}
 +
 +impl Drop for PendingReply {
 +    fn drop(&mut self) {
-+        self.live.store(false, Ordering::Release);
++        self.lifetime.cancelled.store(true, Ordering::Release);
 +    }
 +}
 +
@@ -51189,7 +52486,7 @@ index 000000000..42b6bb129
 +    }
 +}
 +
-+#[derive(Debug)]
++#[derive(Debug, Clone)]
 +pub struct SurfaceCall {
 +    pub validity: Validity,
 +    pub caller: String,
@@ -51200,6 +52497,7 @@ index 000000000..42b6bb129
 +    pub authority: Option<Authority>,
 +    pub confirm: Option<String>,
 +    pub reply: Reply,
++    pub lifetime: CallLifetime,
 +}
 +
 +pub trait ClientSurface: Send + Sync {
@@ -51323,10 +52621,22 @@ index 000000000..42b6bb129
 +        .map(|(_, surface)| surface.clone())
 +        .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
 +    let (reply, receiver) = sync_channel(1);
-+    let live = Arc::new(AtomicBool::new(true));
-+    let queued = live.clone();
++    let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
++    let lifetime = CallLifetime {
++        admission: admission.as_ref().map(|(binding, _)| binding.clone()),
++        upstream_cancelled: admission.and_then(|(_, flag)| flag),
++        ..CallLifetime::default()
++    };
++    if confirm.is_none() && !awaits_user(operation, &arguments) {
++        *lifetime
++            .deadline
++            .lock()
++            .map_err(|_| "client_surface_poisoned")? =
++            Some(Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
++    }
++    let queued = lifetime.clone();
 +    surface.submit(SurfaceCall {
-+        validity: Validity(Arc::new(move || queued.load(Ordering::Acquire) && active())),
++        validity: Validity(Arc::new(move || queued.active() && active())),
 +        caller: caller.to_owned(),
 +        operation: operation.to_owned(),
 +        arguments,
@@ -51337,8 +52647,9 @@ index 000000000..42b6bb129
 +            .flatten(),
 +        confirm,
 +        reply,
++        lifetime: lifetime.clone(),
 +    })?;
-+    Ok(PendingReply { receiver, live })
++    Ok(PendingReply { receiver, lifetime })
 +}
 +
 +pub fn wait(
@@ -51346,6 +52657,13 @@ index 000000000..42b6bb129
 +    active: &dyn Fn() -> bool,
 +    deadline: Option<Instant>,
 +) -> Result<Value, String> {
++    if let Some(deadline) = deadline {
++        *receiver
++            .lifetime
++            .deadline
++            .lock()
++            .map_err(|_| "client_surface_poisoned")? = Some(deadline);
++    }
 +    loop {
 +        if !active() {
 +            return Err("callback_cancelled".into());
@@ -51356,7 +52674,7 @@ index 000000000..42b6bb129
 +                crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
 +            ));
 +        }
-+        match receiver.recv_timeout(Duration::from_millis(20)) {
++        match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
 +            Ok(result) => return result,
 +            Err(RecvTimeoutError::Timeout) => (),
 +            Err(RecvTimeoutError::Disconnected) => {
@@ -51610,15 +52928,40 @@ index 000000000..42b6bb129
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..15a3719c3
+index 000000000..b58976c27
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,346 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
 +
 +struct Echo;
++
++#[test]
++fn dropping_a_pending_reply_revokes_queued_effects() {
++    let (reply, receiver) = sync_channel(1);
++    let lifetime = CallLifetime::default();
++    let pending = PendingReply {
++        receiver,
++        lifetime: lifetime.clone(),
++    };
++    assert!(lifetime.active());
++    drop(pending);
++    assert!(!lifetime.active());
++    assert!(reply.send(Ok(Value::Null)).is_err());
++    let expired = CallLifetime::default();
++    *expired.deadline.lock().unwrap() = Some(Instant::now());
++    assert!(!expired.active());
++    let cancelled = Arc::new(AtomicBool::new(false));
++    let admitted = CallLifetime {
++        upstream_cancelled: Some(cancelled.clone()),
++        ..Default::default()
++    };
++    assert!(admitted.active());
++    cancelled.store(true, Ordering::Release);
++    assert!(!admitted.active());
++}
 +
 +impl ClientSurface for Echo {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
@@ -52119,10 +53462,10 @@ index 000000000..ae02ea56f
 +mod tests;
 diff --git a/codex-rs/omd/src/consents_tests.rs b/codex-rs/omd/src/consents_tests.rs
 new file mode 100644
-index 000000000..5e9263384
+index 000000000..5af50d186
 --- /dev/null
 +++ b/codex-rs/omd/src/consents_tests.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,141 @@
 +use super::*;
 +
 +#[test]
@@ -52197,6 +53540,29 @@ index 000000000..5e9263384
 +            .unwrap()
 +            .len(),
 +        40
++    );
++}
++
++#[test]
++fn consent_status_preserves_the_recovery_document() {
++    use std::os::unix::fs::MetadataExt;
++    let root = tempfile::tempdir().unwrap();
++    grant(root.path(), "thread", "owner", "hash", "id").unwrap();
++    let path = root.path().join("consents/thread.json");
++    let bytes = fs::read(&path).unwrap();
++    let before = fs::metadata(&path).unwrap();
++    status(root.path(), "thread", "owner", "id").unwrap();
++    let after = fs::metadata(&path).unwrap();
++    assert_eq!(fs::read(&path).unwrap(), bytes);
++    assert_eq!(
++        (before.ino(), before.mtime_nsec()),
++        (after.ino(), after.mtime_nsec())
++    );
++    consume(root.path(), "thread", "owner", "id", "hash", "client").unwrap();
++    assert_ne!(fs::metadata(&path).unwrap().ino(), before.ino());
++    assert_eq!(
++        serde_json::from_slice::<Vec<Consent>>(&bytes).unwrap()[0].client_id,
++        None
 +    );
 +}
 +
@@ -54959,10 +56325,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..9baa69a16
+index 000000000..84e30c368
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1577 @@
+@@ -0,0 +1,1590 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -55809,6 +57175,8 @@ index 000000000..9baa69a16
 +            #[serde(default)]
 +            required_access: Option<RequiredAccess>,
 +            #[serde(default)]
++            exclusive_workspace: Option<String>,
++            #[serde(default)]
 +            sandbox: Option<String>,
 +        }
 +        #[derive(Deserialize)]
@@ -55942,6 +57310,17 @@ index 000000000..9baa69a16
 +            return Err("exec_cwd_unavailable".into());
 +        }
 +        let guarded_started = Instant::now();
++        let _workspace_lease = if let Some(path) = input.exclusive_workspace {
++            let path = Path::new(&path)
++                .canonicalize()
++                .map_err(|_| "workspace_ownership_unavailable")?;
++            if !input.write || unrestricted.is_some() || !self.authority.writable(&path) {
++                return Err("workspace_exclusive_access_denied".into());
++            }
++            Some(crate::workspace_lease::exclusive(&path).map_err(|error| error.to_string())?)
++        } else {
++            None
++        };
 +        let guard_count = input.guards.len();
 +        for guard in input.guards {
 +            let remaining = timeout.saturating_sub(guarded_started.elapsed());
@@ -56542,10 +57921,10 @@ index 000000000..9baa69a16
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..7f19a1445
+index 000000000..dd84da082
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,212 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -56574,6 +57953,7 @@ index 000000000..7f19a1445
 +pub mod turn_activity;
 +pub mod watch_filter;
 +mod workspace;
++pub mod workspace_lease;
 +
 +pub use admission::Admission;
 +pub use admission::Attempt;
@@ -58395,10 +59775,10 @@ index 000000000..fe2e0fb34
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..9789e58ff
+index 000000000..8c2465c68
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4802 @@
+@@ -0,0 +1,4835 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -62895,6 +64275,39 @@ index 000000000..9789e58ff
 +        self.active()
 +            .map(|(id, m)| (id.clone(), Self::owner(m)))
 +            .collect()
++    }
++
++    pub fn launch_sources(
++        &self,
++        id: &str,
++        generation: u64,
++    ) -> io::Result<(PathBuf, BTreeMap<PathBuf, Vec<u8>>)> {
++        if generation != self.generation {
++            return Err(failure("service_generation_changed"));
++        }
++        let loaded = self
++            .active()
++            .find(|(owner, _)| owner.as_str() == id)
++            .map(|(_, loaded)| loaded)
++            .ok_or_else(|| failure("host_caller_inactive"))?;
++        if !loaded.selection.authority_current() {
++            return Err(failure("service_authority_changed"));
++        }
++        let root = loaded.selection.path.canonicalize()?;
++        if root != loaded.selection.path {
++            return Err(failure("service_source_path_changed"));
++        }
++        let mut files = BTreeMap::from([(
++            root.join(&loaded.package.entrypoint),
++            loaded.source.as_bytes().to_vec(),
++        )]);
++        for (name, value) in &loaded.assets {
++            let text = value["text"]
++                .as_str()
++                .ok_or_else(|| failure("service_asset_unavailable"))?;
++            files.insert(root.join(name), text.as_bytes().to_vec());
++        }
++        Ok((root, files))
 +    }
 +
 +    /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
@@ -76762,6 +78175,207 @@ index 000000000..3c79277f7
 +        );
 +    }
 +}
+diff --git a/codex-rs/omd/src/workspace_lease.rs b/codex-rs/omd/src/workspace_lease.rs
+new file mode 100644
+index 000000000..63d80c21f
+--- /dev/null
++++ b/codex-rs/omd/src/workspace_lease.rs
+@@ -0,0 +1,195 @@
++use std::fs::{self, File};
++use std::io;
++#[cfg(unix)]
++use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
++use std::path::{Path, PathBuf};
++
++pub struct Lease {
++    _file: Option<File>,
++}
++
++#[cfg(unix)]
++pub fn directory() -> PathBuf {
++    let uid = rustix::process::geteuid().as_raw();
++    PathBuf::from("/tmp")
++        .canonicalize()
++        .unwrap_or_else(|_| PathBuf::from("/tmp"))
++        .join(format!("codex-workspace-leases-{uid}"))
++}
++
++#[cfg(unix)]
++fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
++    let path = path.canonicalize()?;
++    let root = path
++        .ancestors()
++        .find(|parent| parent.join(".git").exists())
++        .unwrap_or(&path);
++    let metadata = fs::metadata(root)?;
++    let created = metadata
++        .created()
++        .ok()
++        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
++        .map(|time| time.as_nanos());
++    if exclusive && created.is_none() {
++        return Err(io::Error::other("workspace_ownership_unavailable"));
++    }
++    let key = crate::resource_data::hash(
++        format!("{}:{}:{created:?}", metadata.dev(), metadata.ino()).as_bytes(),
++    );
++    Ok((root.to_owned(), key))
++}
++
++#[cfg(unix)]
++fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
++    let (_, key) = identity(path, exclusive)?;
++    let uid = rustix::process::geteuid().as_raw();
++    let directory = directory();
++    match fs::DirBuilder::new().mode(0o700).create(&directory) {
++        Ok(()) => (),
++        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
++        Err(error) => return Err(error),
++    }
++    let directory_file = File::from(rustix::fs::open(
++        &directory,
++        rustix::fs::OFlags::RDONLY
++            | rustix::fs::OFlags::DIRECTORY
++            | rustix::fs::OFlags::NOFOLLOW
++            | rustix::fs::OFlags::CLOEXEC,
++        rustix::fs::Mode::empty(),
++    )?);
++    let metadata = directory_file.metadata()?;
++    if !metadata.is_dir() || metadata.uid() != uid || metadata.permissions().mode() & 0o077 != 0 {
++        return Err(io::Error::other("workspace_ownership_unavailable"));
++    }
++    let mut flags =
++        rustix::fs::OFlags::RDWR | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC;
++    if !exclusive {
++        flags |= rustix::fs::OFlags::CREATE;
++    }
++    let file = File::from(
++        rustix::fs::openat(
++            &directory_file,
++            key,
++            flags,
++            rustix::fs::Mode::from_raw_mode(0o600),
++        )
++        .map_err(|_| io::Error::other("workspace_ownership_unavailable"))?,
++    );
++    let metadata = file.metadata()?;
++    if !metadata.is_file()
++        || metadata.uid() != uid
++        || metadata.nlink() != 1
++        || metadata.permissions().mode() & 0o077 != 0
++    {
++        return Err(io::Error::other("workspace_ownership_unavailable"));
++    }
++    if exclusive {
++        file.try_lock()
++    } else {
++        file.try_lock_shared()
++    }
++    .map_err(|_| io::Error::other("workspace_in_use"))?;
++    Ok(Lease { _file: Some(file) })
++}
++
++#[cfg(not(unix))]
++pub fn directory() -> PathBuf {
++    std::env::temp_dir().join("codex-workspace-leases")
++}
++
++#[cfg(not(unix))]
++fn acquire(_path: &Path, exclusive: bool) -> io::Result<Lease> {
++    if exclusive {
++        Err(io::Error::new(
++            io::ErrorKind::Unsupported,
++            "workspace_ownership_unavailable",
++        ))
++    } else {
++        Ok(Lease { _file: None })
++    }
++}
++
++pub fn shared(path: &Path) -> io::Result<Lease> {
++    acquire(path, false)
++}
++pub fn exclusive(path: &Path) -> io::Result<Lease> {
++    acquire(path, true)
++}
++
++#[cfg(all(test, unix))]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn lease_child() {
++        let Some(path) = std::env::var_os("LEASE_TEST_PATH") else {
++            return;
++        };
++        let lease = exclusive(Path::new(&path));
++        assert_eq!(
++            lease.is_ok(),
++            std::env::var_os("LEASE_TEST_ALLOWED").is_some()
++        );
++    }
++
++    #[test]
++    fn workspace_leases_exclude_other_processes_and_release_on_drop() {
++        let root = tempfile::tempdir().unwrap();
++        assert!(exclusive(root.path()).is_err());
++        let lease = shared(root.path()).unwrap();
++        let child = |allowed: bool| {
++            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
++            command
++                .args(["--exact", "workspace_lease::tests::lease_child"])
++                .env("LEASE_TEST_PATH", root.path())
++                .env_remove("LEASE_TEST_ALLOWED");
++            if allowed {
++                command.env("LEASE_TEST_ALLOWED", "1");
++            }
++            assert!(command.output().unwrap().status.success());
++        };
++        child(false);
++        let other = shared(root.path()).unwrap();
++        drop(lease);
++        child(false);
++        drop(other);
++        child(true);
++        let exclusive = exclusive(root.path()).unwrap();
++        assert!(shared(root.path()).is_err());
++        drop(exclusive);
++        assert!(shared(root.path()).is_ok());
++    }
++
++    #[test]
++    fn renaming_a_checkout_does_not_split_its_lease_identity() {
++        const CHILD: &str = "OMD_LEASE_RENAME_TEST_CHILD";
++        if std::env::var_os(CHILD).is_none() {
++            let output = std::process::Command::new(std::env::current_exe().unwrap())
++                .args([
++                    "--exact",
++                    "workspace_lease::tests::renaming_a_checkout_does_not_split_its_lease_identity",
++                    "--test-threads=1",
++                    "--nocapture",
++                ])
++                .env(CHILD, "1")
++                .output()
++                .unwrap();
++            assert!(
++                output.status.success(),
++                "{}\n{}",
++                String::from_utf8_lossy(&output.stdout),
++                String::from_utf8_lossy(&output.stderr)
++            );
++            return;
++        }
++        let parent = tempfile::tempdir().unwrap();
++        let before = parent.path().join("before");
++        let after = parent.path().join("after");
++        fs::create_dir(&before).unwrap();
++        let held = shared(&before).unwrap();
++        fs::rename(&before, &after).unwrap();
++        assert!(exclusive(&after).is_err());
++        drop(held);
++        exclusive(&after).expect("renamed checkout lease must release on drop");
++    }
++}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
 index 000000000..4dd06a9c3
@@ -79788,10 +81402,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..e796585a3
+index 000000000..90ccc73e8
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4293 @@
+@@ -0,0 +1,4315 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -80218,6 +81832,28 @@ index 000000000..e796585a3
 +            .is_err()
 +    );
 +    assert!(runtime.status()["mods"].as_array().unwrap().is_empty());
++}
++
++#[test]
++fn service_launch_uses_admitted_helpers_after_unchanged_configuration_reload() {
++    let (temp, store, path) = fixture("export default () => {};", &[]);
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["assets"] = json!(["helper.mjs"]);
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    std::fs::write(path.join("helper.mjs"), "admitted helper").unwrap();
++    trust(&store, &path, &[]);
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    std::fs::write(path.join("helper.mjs"), "changed helper").unwrap();
++    runtime.reload().unwrap();
++    assert_eq!(runtime.generation(), generation);
++    let (_, files) = runtime.launch_sources("fixture", generation).unwrap();
++    assert_eq!(files[&path.join("helper.mjs")], b"admitted helper");
++    store.enable(&path, false).unwrap();
++    runtime.reload().unwrap();
++    assert!(runtime.launch_sources("fixture", generation).is_err());
 +}
 +
 +#[test]
@@ -86912,10 +88548,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..f15b76939
+index 000000000..80178a1d8
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1630 @@
+@@ -0,0 +1,1642 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -87787,8 +89423,8 @@ index 000000000..f15b76939
 +        call: SurfaceCall,
 +        binding: Option<crate::mod_pty::Binding>,
 +    ) {
-+        if !(call.validity.0)() {
-+            let _ = call.reply.send(Err("client_context_changed".into()));
++        if let Err(error) = crate::mod_surface::validate_call(&call) {
++            let _ = call.reply.send(Err(error));
 +            return;
 +        }
 +        if call.operation == "terminal.pty"
@@ -87904,6 +89540,7 @@ index 000000000..f15b76939
 +        } else {
 +            format!("Mod {} asks: {title}", call.caller)
 +        };
++        let held_call = call.clone();
 +        let reply = std::sync::Arc::new(std::sync::Mutex::new(Some(call.reply)));
 +        let answer = move |value: Value| {
 +            if let Some(reply) = reply
@@ -87911,7 +89548,7 @@ index 000000000..f15b76939
 +                .unwrap_or_else(std::sync::PoisonError::into_inner)
 +                .take()
 +            {
-+                let _ = reply.send(Ok(value));
++                let _ = reply.send(crate::mod_surface::validate_call(&held_call).map(|()| value));
 +            }
 +        };
 +        let declined = json!({"status": "declined"});
@@ -87957,6 +89594,7 @@ index 000000000..f15b76939
 +            .collect::<Vec<_>>();
 +        if other {
 +            let validity = call.validity.clone();
++            let lifetime = call.lifetime.clone();
 +            let (answer, caller, context, thread, question) = (
 +                answer.clone(),
 +                call.caller.clone(),
@@ -87987,6 +89625,7 @@ index 000000000..f15b76939
 +                        authority: None,
 +                        confirm: None,
 +                        reply,
++                        lifetime: lifetime.clone(),
 +                    }), None));
 +                })],
 +                dismiss_on_select: true,
@@ -88011,8 +89650,8 @@ index 000000000..f15b76939
 +        call: SurfaceCall,
 +        held: Option<Confirmed>,
 +    ) {
-+        if !(call.validity.0)() {
-+            let _ = call.reply.send(Err("client_context_changed".into()));
++        if let Err(error) = crate::mod_surface::validate_call(&call) {
++            let _ = call.reply.send(Err(error));
 +            return;
 +        }
 +        let pty = match &held {
@@ -88043,17 +89682,16 @@ index 000000000..f15b76939
 +                match serde_json::from_value::<codex_app_server_protocol::ClientRequest>(request) {
 +                    Ok(request) => {
 +                        let handle = app_server.request_handle();
-+                        let reply = call.reply;
 +                        tokio::spawn(async move {
-+                            if !(call.validity.0)() {
-+                                let _ = reply.send(Err("client_context_changed".into()));
++                            if let Err(error) = crate::mod_surface::validate_call(&call) {
++                                let _ = call.reply.send(Err(error));
 +                                return;
 +                            }
 +                            let result = handle
 +                                .request_typed::<Value>(request)
 +                                .await
 +                                .map_err(|error| error.to_string());
-+                            let _ = reply.send(result);
++                            let _ = call.reply.send(result);
 +                        });
 +                        return;
 +                    }
@@ -88066,8 +89704,11 @@ index 000000000..f15b76939
 +                .and_then(|thread| codex_protocol::ThreadId::from_string(thread).ok())
 +            {
 +                Some(thread) => {
-+                    self.app_event_tx.send(AppEvent::SelectAgentThread(thread));
-+                    Ok(json!({"shown": true}))
++                    self.app_event_tx.send(AppEvent::SelectModThread {
++                        thread_id: thread,
++                        call,
++                    });
++                    return;
 +                }
 +                None => Err("thread_id_invalid".into()),
 +            },
@@ -88122,6 +89763,7 @@ index 000000000..f15b76939
 +                        return;
 +                    }
 +                };
++                let held_call = call.clone();
 +                let reply = call.reply;
 +                let view = crate::bottom_pane::SecretPromptView::new(
 +                    if call.caller == codex_omd::broker::HOST_CALLER {
@@ -88131,6 +89773,10 @@ index 000000000..f15b76939
 +                    },
 +                    title.1,
 +                    Box::new(move |value| {
++                        if let Err(error) = crate::mod_surface::validate_call(&held_call) {
++                            let _ = reply.send(Err(error));
++                            return;
++                        }
 +                        let _ = reply.send(Ok(match value {
 +                            Some(value) => json!({"status": "accepted", "value": value}),
 +                            None => json!({"status": "declined"}),
@@ -88146,14 +89792,10 @@ index 000000000..f15b76939
 +                return;
 +            }
 +            "packages.apply" => {
-+                let reply = call.reply;
 +                tokio::task::spawn_blocking(move || {
-+                    let result = if (call.validity.0)() {
-+                        apply_package(held)
-+                    } else {
-+                        Err("client_context_changed".into())
-+                    };
-+                    let _ = reply.send(result);
++                    let result =
++                        crate::mod_surface::validate_call(&call).and_then(|()| apply_package(held));
++                    let _ = call.reply.send(result);
 +                });
 +                return;
 +            }
@@ -88203,9 +89845,9 @@ index 000000000..f15b76939
 +                            .await
 +                            .map_err(|error| error.to_string())?;
 +                        tokio::task::spawn_blocking(move || {
-+                            if !(call.validity.0)() { return Err("client_context_changed".into()); }
++                            crate::mod_surface::validate_call(&call)?;
 +                            config_call(&call, &read, |key, value, version| {
-+                                if !(call.validity.0)() { return Err("client_context_changed".into()); }
++                                crate::mod_surface::validate_call(&call)?;
 +                                let request = serde_json::from_value::<codex_app_server_protocol::ClientRequest>(json!({
 +                                    "method": "config/value/write", "id": write_id,
 +                                    "params": {"keyPath": key, "value": value, "mergeStrategy": "replace", "expectedVersion": version}}))
@@ -88274,6 +89916,10 @@ index 000000000..f15b76939
 +                        .collect::<Result<Vec<_>, _>>();
 +                match attachments {
 +                    Ok(attachments) => {
++                        if let Err(error) = crate::mod_surface::validate_call(&call) {
++                            let _ = call.reply.send(Err(error));
++                            return;
++                        }
 +                        let mut arguments = call.arguments.clone();
 +                        if let Some(object) = arguments.as_object_mut() {
 +                            object.remove("attach");
@@ -88455,6 +90101,7 @@ index 000000000..f15b76939
 +                authority: None,
 +                confirm: None,
 +                reply,
++                lifetime: Default::default(),
 +            };
 +            if confirmed {
 +                let id = crate::mod_surface::hold(call);
@@ -88486,6 +90133,7 @@ index 000000000..f15b76939
 +                authority: None,
 +                confirm: None,
 +                reply,
++                lifetime: Default::default(),
 +            })
 +            .unwrap()
 +            .is_some()
@@ -89491,10 +91139,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..bc33bc3ef
+index 000000000..fb540c65d
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,600 @@
+@@ -0,0 +1,606 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -89893,6 +91541,7 @@ index 000000000..bc33bc3ef
 +                        command,
 +                        prepared,
 +                        token: token.clone(),
++                        surface: None,
 +                    })));
 +                    Ok(serde_json::json!({"invoked": true}))
 +                },
@@ -89959,12 +91608,13 @@ index 000000000..bc33bc3ef
 +        let token = self.mod_invocation(crate::mod_runtime::join);
 +        let tx = self.app_event_tx.clone();
 +        std::thread::spawn(move || {
-+            if !(call.validity.0)() {
-+                let _ = call.reply.send(Err("client_context_changed".into()));
++            if let Err(error) = crate::mod_surface::validate_call(&call) {
++                let _ = call.reply.send(Err(error));
 +                return;
 +            }
 +            DEPTH.fetch_add(1, Ordering::AcqRel);
 +            let dispatch = tx.clone();
++            let queued = std::sync::atomic::AtomicBool::new(false);
 +            let result = crate::mod_runtime::run_command(
 +                &name,
 +                &args,
@@ -89973,8 +91623,9 @@ index 000000000..bc33bc3ef
 +                running,
 +                &call.caller,
 +                &token,
-+                |args| match builtin.filter(|_| (call.validity.0)()) {
++                |args| match builtin.filter(|_| crate::mod_surface::validate_call(&call).is_ok()) {
 +                    Some(command) => {
++                        queued.store(true, Ordering::Release);
 +                        dispatch.send(AppEvent::OmdDispatchCommand(Box::new(InterceptedCommand {
 +                            command,
 +                            prepared: PreparedSlashCommandArgs::new(
@@ -89983,6 +91634,7 @@ index 000000000..bc33bc3ef
 +                                SlashCommandDispatchSource::Queued,
 +                            ),
 +                            token: token.clone(),
++                            surface: Some(call.clone()),
 +                        })));
 +                        Ok(serde_json::json!({"invoked": true}))
 +                    }
@@ -89992,9 +91644,11 @@ index 000000000..bc33bc3ef
 +            DEPTH.fetch_sub(1, Ordering::AcqRel);
 +            match result {
 +                Ok(result) => {
-+                    let _ = call.reply.send(Ok(
-+                        serde_json::json!({"command": name, "result": result.value}),
-+                    ));
++                    if target.is_some() || !queued.load(Ordering::Acquire) {
++                        let _ = call.reply.send(Ok(
++                            serde_json::json!({"command": name, "result": result.value}),
++                        ));
++                    }
 +                    if target.is_some() {
 +                        tx.send(AppEvent::ModCommandFinished {
 +                            invocation: name,
@@ -91146,10 +92800,10 @@ index 000000000..bc5548f51
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..5e7a51c8b
+index 000000000..60c79e7ca
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,409 @@
+@@ -0,0 +1,428 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -91249,16 +92903,16 @@ index 000000000..5e7a51c8b
 +}
 +
 +#[allow(clippy::too_many_arguments)]
-+fn load_blob(
++fn authorized_blob(
 +    reference: &codex_omd::resource_data::ResourceRef,
 +    owners: &[String],
-+) -> Option<Vec<u8>> {
++) -> Option<(codex_omd::scoped_data::ScopedDataHost, String)> {
 +    let thread = crate::mod_surface::current_thread();
 +    owners.iter().find_map(|owner| {
 +        let (host, _) = crate::mod_surface::resource_binding(owner, thread.as_deref()).ok()?;
 +        let resources = host.resources();
 +        let record = resources.load(reference, "evidence").ok()?;
-+        resources.blob(record["blob"].as_str()?).ok()
++        Some((host, record["blob"].as_str()?.to_owned()))
 +    })
 +}
 +
@@ -91275,16 +92929,22 @@ index 000000000..5e7a51c8b
 +    if std::env::var_os("NO_COLOR").is_some() || width < 4 {
 +        return vec![Line::from(format!("{prefix}[image: {alt}]")).dim()];
 +    }
-+    let Some(bytes) = load_blob(reference, owners) else {
++    let Some((host, blob)) = authorized_blob(reference, owners) else {
 +        return vec![Line::from(format!("{prefix}[image unavailable: {alt}]")).dim()];
 +    };
-+    let key = format!("{}:{width}:{height}:{prefix}", reference.sha256);
++    let key = format!(
++        "{reference:?}:{owners:?}:{}:{width}:{height}:{prefix}",
++        crate::mod_surface::current_thread().unwrap_or_default()
++    );
 +    let mut images = IMAGES
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    if let Some(rows) = images.get(&key) {
 +        return rows.clone();
 +    }
++    let Ok(bytes) = host.resources().blob(&blob) else {
++        return vec![Line::from(format!("{prefix}[image unavailable: {alt}]")).dim()];
++    };
 +    let decoded = image::load_from_memory(&bytes)
 +        .ok()
 +        .filter(|image| image.width() <= 8192 && image.height() <= 8192);
@@ -91347,12 +93007,15 @@ index 000000000..5e7a51c8b
 +        Content::Spans(lines) => {
 +            format!("spans:{}", serde_json::to_string(lines).unwrap_or_default())
 +        }
-+        Content::Source(reference) => format!("source:{}:{resolved:?}", reference.sha256),
++        Content::Source(reference) => format!(
++            "source:{reference:?}:{owners:?}:{}",
++            crate::mod_surface::current_thread().unwrap_or_default()
++        ),
 +        Content::Diff(unified) => format!("diff:{unified}"),
 +    };
 +    let mut documents = documents();
 +    let document = documents.entry(id.to_owned()).or_default();
-+    if document.key != key {
++    if document.key != key || matches!(&content, Content::Source(_)) {
 +        let (lines, spans, parsed_anchors) = match content {
 +            Content::Spans(lines) => (
 +                lines.iter().map(|line| span_text(line)).collect::<Vec<_>>(),
@@ -91402,23 +93065,25 @@ index 000000000..5e7a51c8b
 +                )
 +            }
 +        };
-+        let view = if keys {
-+            DocumentView {
-+                cursor: document.view.cursor,
-+                scroll: document.view.scroll,
-+                ..DocumentView::default()
-+            }
-+        } else {
-+            DocumentView::default()
-+        };
-+        *document = Document {
-+            view,
-+            key,
-+            lines: Arc::new(lines),
-+            spans: Arc::new(spans),
-+            anchors: Arc::new(parsed_anchors),
-+            ..Document::default()
-+        };
++        if document.key != key || document.lines.as_ref() != &lines {
++            let view = if keys {
++                DocumentView {
++                    cursor: document.view.cursor,
++                    scroll: document.view.scroll,
++                    ..DocumentView::default()
++                }
++            } else {
++                DocumentView::default()
++            };
++            *document = Document {
++                view,
++                key,
++                lines: Arc::new(lines),
++                spans: Arc::new(spans),
++                anchors: Arc::new(parsed_anchors),
++                ..Document::default()
++            };
++        }
 +    }
 +    if selected != document.applied_selection {
 +        document.applied_selection = selected;
@@ -91556,17 +93221,92 @@ index 000000000..5e7a51c8b
 +    documents().retain(|id, _| ids.contains(id));
 +}
 +
++pub(crate) fn invalidate() {
++    documents().clear();
++    IMAGES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .clear();
++}
++
 +#[cfg(test)]
 +#[path = "mod_components_tests.rs"]
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..dc983c033
+index 000000000..c8fc71b04
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,239 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
++
++#[test]
++#[serial_test::serial]
++fn cached_resource_rows_require_current_owner_authority() {
++    struct RestoreColor(Option<std::ffi::OsString>);
++    impl Drop for RestoreColor {
++        fn drop(&mut self) {
++            match self.0.take() {
++                Some(value) => unsafe { std::env::set_var("NO_COLOR", value) },
++                None => unsafe { std::env::remove_var("NO_COLOR") },
++            }
++        }
++    }
++    let _color = RestoreColor(std::env::var_os("NO_COLOR"));
++    unsafe { std::env::remove_var("NO_COLOR") };
++    let reference = codex_omd::resource_data::ResourceRef {
++        reference: "revoked-reference".to_owned(),
++        sha256: "a".repeat(64),
++    };
++    let owners: Vec<String> = Vec::new();
++    let thread = crate::mod_surface::current_thread().unwrap_or_default();
++    for key in [
++        format!("source:{}", reference.sha256),
++        format!("source:{reference:?}:{owners:?}:{thread}"),
++    ] {
++        documents().insert(
++            "revoked-document".to_owned(),
++            Document {
++                key,
++                lines: Arc::new(vec!["private cached document".to_owned()]),
++                spans: Arc::new(vec![vec![Span::raw("private cached document")]]),
++                anchors: Arc::new(vec![None]),
++                ..Default::default()
++            },
++        );
++        let rendered = text(&rows(
++            "revoked-document",
++            Content::Source(&reference),
++            &[],
++            None,
++            None,
++            Some(2),
++            &owners,
++            false,
++            false,
++            "",
++        ));
++        assert!(rendered.iter().all(|line| !line.contains("private cached")));
++        assert!(rendered.iter().any(|line| line.contains("unavailable")));
++    }
++    for key in [
++        format!("{}:4:2", reference.sha256),
++        format!("{reference:?}:{owners:?}:{thread}:4:2:"),
++    ] {
++        IMAGES
++            .lock()
++            .unwrap()
++            .insert(key, vec![Line::from("private cached image")]);
++    }
++    assert_eq!(
++        text(&image_rows(&reference, "revoked", 4, 2, &owners, "")),
++        vec!["[image unavailable: revoked]"]
++    );
++    invalidate();
++    assert!(documents().is_empty());
++    assert!(IMAGES.lock().unwrap().is_empty());
++}
 +
 +fn text(lines: &[Line<'static>]) -> Vec<String> {
 +    lines
@@ -93768,10 +95508,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..34b1b8cea
+index 000000000..be1788e4f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1269 @@
+@@ -0,0 +1,1271 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -94277,6 +96017,7 @@ index 000000000..34b1b8cea
 +    loopback: bool,
 +) -> Result<std::process::Command, String> {
 +    let mut protected = paths.protected.clone();
++    protected.push(codex_omd::workspace_lease::directory());
 +    protected.push(paths.evidence.clone());
 +    CommandAuthority {
 +        repository: &paths.repository,
@@ -94334,6 +96075,7 @@ index 000000000..34b1b8cea
 +    }
 +    let grants = grants.ok_or_else(|| std::io::Error::other("host_caller_inactive"))?;
 +    let mut protected = paths.protected.clone();
++    protected.push(codex_omd::workspace_lease::directory());
 +    protected.push(paths.evidence.clone());
 +    let data_root = paths
 +        .store
@@ -95316,10 +97058,10 @@ index 000000000..7c28c120a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..dbecc052d
+index 000000000..4a3de4f88
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,781 @@
+@@ -0,0 +1,830 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -95343,6 +97085,7 @@ index 000000000..dbecc052d
 +
 +impl ClientSurface for TuiSurface {
 +    fn submit(&self, mut call: SurfaceCall) -> Result<(), String> {
++        call.lifetime.binding = Some(call_binding(&call.caller));
 +        let admitted = call.validity.clone();
 +        let current = crate::mod_runtime::context_unchanged().1;
 +        let thread = call.thread.clone();
@@ -95393,6 +97136,7 @@ index 000000000..dbecc052d
 +}
 +
 +static STATE: Mutex<Option<State>> = Mutex::new(None);
++static CONTEXT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +
 +fn state() -> MutexGuard<'static, Option<State>> {
 +    STATE
@@ -95410,6 +97154,9 @@ index 000000000..dbecc052d
 +        return;
 +    }
 +    with(|state| {
++        if state.thread != thread {
++            CONTEXT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
++        }
 +        state.thread = thread;
 +        if state.registration.is_none() {
 +            state.registration = Some(codex_omd::client_surface::register(Arc::new(TuiSurface(
@@ -95421,6 +97168,42 @@ index 000000000..dbecc052d
 +
 +pub(crate) fn current_thread() -> Option<String> {
 +    with(|state| state.thread.clone())
++}
++
++fn call_binding(caller: &str) -> Value {
++    let status = crate::omd::mod_status().unwrap_or_default();
++    let source = status["mods"]
++        .as_array()
++        .and_then(|mods| {
++            mods.iter()
++                .find(|item| item["id"] == caller && item["error"].is_null())
++        })
++        .map(|item| item["sha256"].clone());
++    json!({"thread": current_thread(), "repository": crate::omd::mod_paths().map(|paths| paths.repository), "epoch": CONTEXT_EPOCH.load(std::sync::atomic::Ordering::Acquire), "generation": status["generation"], "source": source})
++}
++
++pub(crate) fn validate_call(call: &SurfaceCall) -> Result<(), String> {
++    if !call.lifetime.active() {
++        return Err("callback_cancelled_or_expired".into());
++    }
++    if !(call.validity.0)() {
++        return Err("client_context_changed".into());
++    }
++    let binding = call_binding(&call.caller);
++    if let Some(admitted) = &call.lifetime.admission
++        && (admitted["source"] != binding["source"]
++            || admitted["generation"] != binding["generation"])
++    {
++        return Err("client_surface_admission_changed".into());
++    }
++    if call.lifetime.binding.as_ref() != Some(&binding)
++        || (call.caller != codex_omd::broker::HOST_CALLER
++            && (binding["source"].is_null()
++                || call.thread.is_some() && call.thread != current_thread()))
++    {
++        return Err("client_surface_context_changed".into());
++    }
++    Ok(())
 +}
 +
 +fn refresh_subscribers(state: &mut State) {
@@ -95997,6 +97780,7 @@ index 000000000..dbecc052d
 +            .unwrap_or_else(std::sync::PoisonError::into_inner)
 +            .generation();
 +        let source = grants.source_sha256.clone();
++        let admitted_source = source.clone();
 +        let capabilities = grants.capabilities.clone();
 +        let id = caller.to_owned();
 +        let continued = scope.active.clone();
@@ -96016,29 +97800,36 @@ index 000000000..dbecc052d
 +                        grants.source_sha256 == source && grants.capabilities == capabilities
 +                    })
 +            });
-+        if operation == "app.request" {
-+            return codex_omd::client_surface::app_request(
-+                caller,
-+                &grants.capabilities,
-+                context,
-+                thread.as_deref(),
-+                &paths.repository,
-+                &configured_routes(paths),
-+                call.arguments,
-+                active,
-+            )
-+            .map_err(std::io::Error::other);
-+        }
-+        return codex_omd::client_surface::call(
-+            caller,
-+            operation,
-+            call.arguments,
-+            context,
-+            thread.as_deref(),
++        return codex_omd::client_surface::with_admission(
++            &admitted_source,
++            generation,
 +            None,
-+            active,
-+        )
-+        .map_err(std::io::Error::other);
++            || {
++                if operation == "app.request" {
++                    return codex_omd::client_surface::app_request(
++                        caller,
++                        &grants.capabilities,
++                        context,
++                        thread.as_deref(),
++                        &paths.repository,
++                        &configured_routes(paths),
++                        call.arguments,
++                        active,
++                    )
++                    .map_err(std::io::Error::other);
++                }
++                codex_omd::client_surface::call(
++                    caller,
++                    operation,
++                    call.arguments,
++                    context,
++                    thread.as_deref(),
++                    None,
++                    active,
++                )
++                .map_err(std::io::Error::other)
++            },
++        );
 +    }
 +    match operation {
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
@@ -96103,10 +97894,10 @@ index 000000000..dbecc052d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..988e30bc1
+index 000000000..ffd81a082
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,561 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -96180,6 +97971,74 @@ index 000000000..988e30bc1
 +        .is_err()
 +    );
 +    with(|state| state.thread = previous_thread);
++}
++
++#[test]
++#[serial_test::serial]
++fn queued_surface_calls_reject_thread_round_trip_and_cancelled_confirmation() {
++    struct Restore {
++        mode: Option<std::ffi::OsString>,
++        previous: Option<State>,
++    }
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *state() = self.previous.take();
++            match self.mode.take() {
++                Some(mode) => unsafe { std::env::set_var(codex_omd::MODE_ENV, mode) },
++                None => unsafe { std::env::remove_var(codex_omd::MODE_ENV) },
++            }
++        }
++    }
++    let _restore = Restore {
++        mode: std::env::var_os(codex_omd::MODE_ENV),
++        previous: state().take(),
++    };
++    unsafe { std::env::set_var(codex_omd::MODE_ENV, "omd") };
++    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++    let sender = AppEventSender::new(tx);
++    attach(&sender, Some("surface-a".to_owned()));
++    let pending = codex_omd::client_surface::submit(
++        codex_omd::broker::HOST_CALLER,
++        "composer.read",
++        json!({}),
++        InvocationContext::User,
++        Some("surface-a"),
++        None,
++    )
++    .unwrap();
++    let AppEvent::ModSurfaceCall(call, _) = rx.try_recv().unwrap() else {
++        panic!("expected queued call");
++    };
++    assert!(validate_call(&call).is_ok());
++    attach(&sender, Some("surface-b".to_owned()));
++    assert_eq!(
++        validate_call(&call).unwrap_err(),
++        "client_surface_context_changed"
++    );
++    attach(&sender, Some("surface-a".to_owned()));
++    assert_eq!(
++        validate_call(&call).unwrap_err(),
++        "client_surface_context_changed"
++    );
++    drop(pending);
++    let pending = codex_omd::client_surface::submit(
++        codex_omd::broker::HOST_CALLER,
++        "composer.write",
++        json!({"text":"must not be applied"}),
++        InvocationContext::User,
++        Some("surface-a"),
++        Some("Confirm".into()),
++    )
++    .unwrap();
++    let AppEvent::ModSurfaceCall(call, _) = rx.try_recv().unwrap() else {
++        panic!("expected confirmation");
++    };
++    let id = hold(*call);
++    drop(pending);
++    assert_eq!(
++        validate_call(&release(id).unwrap()).unwrap_err(),
++        "callback_cancelled_or_expired"
++    );
 +}
 +
 +impl ClientSurface for Echo {
@@ -96461,6 +98320,7 @@ index 000000000..988e30bc1
 +            authority: None,
 +            confirm: Some("held".into()),
 +            reply,
++            lifetime: Default::default(),
 +        })
 +        .unwrap();
 +    let AppEvent::ModSurfaceCall(queued, _) = receiver.try_recv().unwrap() else {
@@ -96601,10 +98461,10 @@ index 000000000..988e30bc1
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..bf30310e7
+index 000000000..c2e149859
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2726 @@
+@@ -0,0 +1,2743 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -97086,6 +98946,7 @@ index 000000000..bf30310e7
 +}
 +
 +pub(crate) fn invalidate_context() {
++    crate::mod_components::invalidate();
 +    let (_, snapshot) = crate::omd::mod_snapshot();
 +    let context = crate::mod_runtime::active_context();
 +    if context.as_ref().is_some_and(|context| {
@@ -97834,7 +99695,12 @@ index 000000000..bf30310e7
 +                    interaction.key_panes.insert(id.clone());
 +                }
 +                let focused = interaction.focused.as_deref() == Some(id.as_str());
-+                let owners = interaction.owners.clone();
++                let owners = interaction
++                    .component_owners
++                    .get(id)
++                    .cloned()
++                    .into_iter()
++                    .collect::<Vec<_>>();
 +                for line in crate::mod_components::rows(
 +                    id,
 +                    content,
@@ -97864,7 +99730,12 @@ index 000000000..bf30310e7
 +                action,
 +            } => {
 +                let focused = interaction.focused.as_deref() == Some(id.as_str());
-+                let owners = interaction.owners.clone();
++                let owners = interaction
++                    .component_owners
++                    .get(id)
++                    .cloned()
++                    .into_iter()
++                    .collect::<Vec<_>>();
 +                for line in crate::mod_components::rows(
 +                    id,
 +                    crate::mod_components::Content::Diff(unified),
@@ -97918,12 +99789,18 @@ index 000000000..bf30310e7
 +                alt,
 +                height,
 +            } => {
++                let owners = interaction
++                    .component_owners
++                    .get(id)
++                    .cloned()
++                    .into_iter()
++                    .collect::<Vec<_>>();
 +                for line in crate::mod_components::image_rows(
 +                    image,
 +                    alt,
 +                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
 +                    height.unwrap_or(12),
-+                    &interaction.owners,
++                    &owners,
 +                    &prefix,
 +                ) {
 +                    rows.push(ComponentRow {

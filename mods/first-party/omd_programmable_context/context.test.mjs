@@ -23,7 +23,7 @@ function session(settings = {}, prompt = 'accepted', beforePut = () => {}) {
       case 'store.get': return store[args.key] ?? null;
       case 'store.put': {
         beforePut(args);
-        if (Buffer.byteLength(JSON.stringify(args.value)) > 65536) throw new Error('store_value_limit');
+        if (Buffer.byteLength(JSON.stringify(args.value)) > 65_536) throw new Error('store_value_limit');
         if ((store[args.key]?.revision ?? null) !== args.expected_revision) throw new Error('store_revision_conflict');
         store[args.key] = { value: args.value, revision: (store[args.key]?.revision ?? 0) + 1 };
         return { revision: store[args.key].revision };
@@ -102,6 +102,32 @@ test('kept variables preserve complete provenance when publication fails and ver
   assert.ok(record);
   record[1].value.value = 'tampered';
   assert.match(s.tool('vars', { name: 'summary' }).error, /provenance/);
+});
+
+test('failed variable publication preserves the old body and provenance', () => {
+  const s = session();
+  s.tool('keep', { name: 'summary', value: 'old', sources: ['old-source'] });
+  const registry = s.stores.thread.vars;
+  registry.value.padding = { sources: ['界'.repeat(21_750)] };
+  const result = s.tool('keep', { name: 'summary', value: 'new', sources: ['界'.repeat(200)] });
+  assert.match(result.error, /store_value_limit/);
+  const restored = s.tool('vars', { name: 'summary' });
+  assert.equal(restored.value, 'old');
+  assert.equal(restored.sha256, sha('old'));
+  assert.deepEqual(restored.sources, ['old-source']);
+});
+
+test('restoring rejects corrupt content and keep measures UTF-8 bytes', () => {
+  const s = session();
+  s.tool('keep', { name: 'summary', value: 'original', sources: ['source'] });
+  const key = s.stores.thread.vars.value.summary.key;
+  const record = s.stores.thread[key];
+  record.value.value = 'corrupt';
+  assert.match(s.tool('vars', { name: 'summary' }).error, /provenance/);
+  assert.match(s.tool('keep', { name: 'summary', value: 'original', sources: ['source'] }).error, /digest/);
+  assert.equal(s.stores.thread[key].revision, record.revision);
+  assert.equal(s.stores.thread[key].value.value, 'corrupt');
+  assert.match(s.tool('keep', { name: 'large', value: '界'.repeat(12_000), sources: [] }).error, /keep_limit/);
 });
 
 test('child agents, completions and integration stay host-owned', () => {

@@ -427,6 +427,28 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
 }
 
 #[test]
+fn service_launch_uses_admitted_helpers_after_unchanged_configuration_reload() {
+    let (temp, store, path) = fixture("export default () => {};", &[]);
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["assets"] = json!(["helper.mjs"]);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(path.join("helper.mjs"), "admitted helper").unwrap();
+    trust(&store, &path, &[]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    std::fs::write(path.join("helper.mjs"), "changed helper").unwrap();
+    runtime.reload().unwrap();
+    assert_eq!(runtime.generation(), generation);
+    let (_, files) = runtime.launch_sources("fixture", generation).unwrap();
+    assert_eq!(files[&path.join("helper.mjs")], b"admitted helper");
+    store.enable(&path, false).unwrap();
+    runtime.reload().unwrap();
+    assert!(runtime.launch_sources("fixture", generation).is_err());
+}
+
+#[test]
 fn mod_capabilities_source_tamper_and_symlinks_are_rejected() {
     let (temp, store, path) = fixture(
         "export default api => api.command('bad', () => api.state.set(1))",

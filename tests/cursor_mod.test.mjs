@@ -10,6 +10,7 @@ import { pendingSettlements, usageReport } from '../mods/first-party/omd_cursor/
 
 const model = 'cursor-auto';
 const token = 'local-fixture-token-without-account-access';
+const fixtures = new WeakMap();
 const sdk = `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 const log = new URL('calls.jsonl', import.meta.url);
 const registry = new URL('agents.json', import.meta.url);
@@ -84,9 +85,22 @@ export const Cursor = {
 `;
 
 async function fixture(t, { secrets = [{ id: 'p1', label: 'cursor', origin: 'https://api2.cursor.sh', value: 'crsr_fixture' }], route = {}, root } = {}) {
+  let cleanup = fixtures.get(t);
+  if (!cleanup) {
+    cleanup = { children: [], roots: [] };
+    fixtures.set(t, cleanup);
+    t.after(async () => {
+      for (const child of cleanup.children) if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise(resolve => child.once('exit', resolve));
+        child.kill('SIGKILL');
+        await exited;
+      }
+      for (const path of cleanup.roots) await rm(path, { recursive: true, force: true });
+    });
+  }
   if (!root) {
     root = await mkdtemp(join(tmpdir(), 'omd-cursor-'));
-    t.after(() => rm(root, { recursive: true, force: true }));
+    cleanup.roots.push(root);
     await writeFile(join(root, 'sdk.mjs'), sdk);
   }
   const reserve = createServer();
@@ -94,12 +108,12 @@ async function fixture(t, { secrets = [{ id: 'p1', label: 'cursor', origin: 'htt
   const port = reserve.address().port;
   await new Promise(resolve => reserve.close(resolve));
   const routePath = join(root, 'route.json');
-  await writeFile(routePath, JSON.stringify({ port, sdk: join(root, 'sdk.mjs'), data: join(root, 'data'), default: model,
+  await writeFile(routePath, JSON.stringify({ port, sdk: '/sdk.mjs', data: join(root, 'data'), default: model,
     models: [{ slug: model, id: 'auto', effort: { id: 'reasoning', values: ['low', 'high'] } }], backend_url: 'http://127.0.0.1:9', secret_profile: 'p1', ...route }));
   const child = spawn(process.execPath, [new URL('../mods/first-party/omd_cursor/transport.mjs', import.meta.url).pathname, 'serve', routePath],
-    { cwd: root, env: { PATH: '/usr/bin:/bin', OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready',
+    { cwd: root, env: { PATH: '/usr/bin:/bin', OMD_SERVICE_ROOT: root, OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready',
       OMD_SECRETS: JSON.stringify(secrets) }, stdio: 'ignore' });
-  t.after(() => child.kill('SIGKILL'));
+  cleanup.children.push(child);
   for (let attempt = 0; attempt < 50; attempt++) {
     try { if ((await fetch(`http://127.0.0.1:${port}/_omd/ready`)).ok) break; } catch {}
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -266,7 +280,8 @@ test('Cursor setup enrolls through the SDK login, hands the key to the broker an
     await mkdir(prefix);
     await mkdir(join(store, 'sources'), { recursive: true });
     await cp(new URL('../mods/first-party/omd_cursor', import.meta.url).pathname, join(store, 'sources/omd_cursor'), { recursive: true });
-    await writeFile(join(root, 'sdk.mjs'), sdk);
+    await mkdir(join(root, 'sdk'));
+    await writeFile(join(root, 'sdk/index.mjs'), sdk);
     const manager = join(root, 'omd-mod');
     await writeFile(manager, `#!${process.execPath}
 import { appendFileSync, readFileSync } from 'node:fs';
@@ -276,7 +291,7 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     const recordPath = join(prefix, 'install.json');
     await writeFile(recordPath, JSON.stringify({ profile: 'full', prefix, store, packages: { omd_cursor: {} }, author: { node: process.execPath },
       manager: { installed_path: manager } }));
-    const setup = env => spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), 'setup', recordPath, join(root, 'sdk.mjs')],
+    const setup = env => spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), 'setup', recordPath, join(root, 'sdk/index.mjs')],
       { encoding: 'utf8', env: { ...process.env, ...env } });
     const denied = setup({ FIXTURE_DENY: '1' });
     assert.equal(denied.status, 1);
@@ -291,6 +306,7 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     assert.equal(result.account, 'dev@example.com');
     const host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
     const grant = host.services.find(service => service.id === 'cursor');
+    assert.match(grant.code_roots[join(root, 'sdk')], /^[a-f0-9]{64}$/);
     assert.deepEqual(grant.secrets, { OMD_CURSOR_LOCAL_TOKEN: 'cursor_local_token' });
     assert.deepEqual([grant.route.rates.provider_billed, grant.route.rates.included_subscription, grant.route.rates.reservation_microusd], [true, false, 0]);
     assert.deepEqual(Object.keys(host.secret_refs), ['cursor_local_token']);

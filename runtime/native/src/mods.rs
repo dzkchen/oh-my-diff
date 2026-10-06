@@ -7,6 +7,7 @@ mod evidence;
 mod expansion;
 mod intercept;
 mod inventory;
+mod launch_snapshot;
 mod operations;
 mod peering;
 mod roles;
@@ -622,6 +623,7 @@ impl Core {
             expansion::retain_sources(self, sources);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_stale(*generation);
+                self.services.cleanup_stale(*generation, sources).await;
                 access::release_servers(lead, *generation, None).await;
             }
         }

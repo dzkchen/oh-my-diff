@@ -4,6 +4,31 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Echo;
 
+#[test]
+fn dropping_a_pending_reply_revokes_queued_effects() {
+    let (reply, receiver) = sync_channel(1);
+    let lifetime = CallLifetime::default();
+    let pending = PendingReply {
+        receiver,
+        lifetime: lifetime.clone(),
+    };
+    assert!(lifetime.active());
+    drop(pending);
+    assert!(!lifetime.active());
+    assert!(reply.send(Ok(Value::Null)).is_err());
+    let expired = CallLifetime::default();
+    *expired.deadline.lock().unwrap() = Some(Instant::now());
+    assert!(!expired.active());
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let admitted = CallLifetime {
+        upstream_cancelled: Some(cancelled.clone()),
+        ..Default::default()
+    };
+    assert!(admitted.active());
+    cancelled.store(true, Ordering::Release);
+    assert!(!admitted.active());
+}
+
 impl ClientSurface for Echo {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         let value = json!({"operation": call.operation, "caller": call.caller,

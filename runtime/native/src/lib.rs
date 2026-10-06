@@ -370,7 +370,7 @@ impl Host {
     }
 
     fn protected_paths(&self) -> Vec<PathBuf> {
-        let mut paths = vec![self.root.clone()];
+        let mut paths = vec![self.root.clone(), codex_omd::workspace_lease::directory()];
         paths.extend(self.config.protected.iter().cloned());
         paths.extend(self.config.secret_refs.values().cloned());
         paths

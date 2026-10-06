@@ -76,6 +76,29 @@ fn concurrent_status_reads_observe_complete_atomic_documents() {
 }
 
 #[test]
+fn consent_status_preserves_the_recovery_document() {
+    use std::os::unix::fs::MetadataExt;
+    let root = tempfile::tempdir().unwrap();
+    grant(root.path(), "thread", "owner", "hash", "id").unwrap();
+    let path = root.path().join("consents/thread.json");
+    let bytes = fs::read(&path).unwrap();
+    let before = fs::metadata(&path).unwrap();
+    status(root.path(), "thread", "owner", "id").unwrap();
+    let after = fs::metadata(&path).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(
+        (before.ino(), before.mtime_nsec()),
+        (after.ino(), after.mtime_nsec())
+    );
+    consume(root.path(), "thread", "owner", "id", "hash", "client").unwrap();
+    assert_ne!(fs::metadata(&path).unwrap().ino(), before.ino());
+    assert_eq!(
+        serde_json::from_slice::<Vec<Consent>>(&bytes).unwrap()[0].client_id,
+        None
+    );
+}
+
+#[test]
 fn consents_are_single_use_content_bound_and_reconciled_by_client_id() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();

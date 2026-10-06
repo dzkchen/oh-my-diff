@@ -2,7 +2,7 @@ import type { CommandResult, ExecGuard, Json, ModAPI, TerminalComponent, Termina
 
 type Tree = { path: string; head: string | null; branch: string | null; locked: string | null; prunable: string | null; main: boolean; current: boolean };
 type Meta = { task: string; issue: string | null; base: string };
-type Integration = { path: string; branch: string; tip: string; summary: string; diff: string; guards: ExecGuard[]; commit: { message: string; guards: ExecGuard[]; paths: string[] } | null };
+type Integration = { path: string; branch: string; tip: string; summary: string; diff: string; guards: ExecGuard[]; commit: { message: string; tree: string; index: string; paths: string[] } | null };
 type State = { trees: Tree[]; tasks: Record<string, Meta>; error: string | null; open: boolean; query: string; selected: string | null; preview: Integration | null; notice: string | null };
 type Git = { ok: boolean; out: string; err: string; sha: string; truncated: boolean };
 type Setup = { path: string; mode: 'symlink' | 'clone' };
@@ -20,6 +20,70 @@ const fit = (text: string, limit: number, lines = false) => {
 };
 const GIT = ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.quotepath=false'];
 const NEW_FILES = 8;
+const SNAPSHOT = `!f() {
+  set -eu
+  omd_base=$1
+  shift
+  test "$(git rev-parse HEAD)" = "$omd_base"
+  omd_index=$(git rev-parse --path-format=absolute --git-path index)
+  omd_digest=$(git hash-object "$omd_index")
+  omd_temp=$(mktemp -d)
+  trap 'rm -rf "$omd_temp"' EXIT
+  export GIT_INDEX_FILE="$omd_temp/index"
+  git read-tree "$omd_base"
+  git add -A -- . "$@"
+  git write-tree
+  printf '%s\\n' "$omd_digest"
+}; f`;
+const COMMIT = `!f() {
+  set -eu
+  omd_expected=$1
+  omd_base=$2
+  omd_tree=$3
+  omd_branch=$4
+  omd_message=$5
+  shift 5
+  omd_index=$(git rev-parse --path-format=absolute --git-path index)
+  omd_lock="$omd_index.lock"
+  if ! (set -C; : > "$omd_lock") 2>/dev/null; then
+    echo 'exec_guard_changed: task index is locked' >&2
+    exit 1
+  fi
+  omd_temp=
+  omd_advanced=false
+  omd_cleanup() {
+    if [ "$omd_advanced" = true ]; then
+      printf 'Commit created; prepared index retained at %s; original index at %s\\n' "$omd_lock" "$omd_index" >&2
+    else
+      rm -f "$omd_lock"
+    fi
+    if [ -n "$omd_temp" ]; then rm -rf "$omd_temp"; fi
+  }
+  trap omd_cleanup EXIT
+  if [ "$(git hash-object "$omd_index")" != "$omd_expected" ] ||
+     [ "$(git rev-parse HEAD)" != "$omd_base" ] ||
+     [ "$(git symbolic-ref HEAD)" != "refs/heads/$omd_branch" ]; then
+    echo 'exec_guard_changed: task branch or index changed' >&2
+    exit 1
+  fi
+  omd_temp=$(mktemp -d)
+  export GIT_INDEX_FILE="$omd_temp/index"
+  git read-tree "$omd_base"
+  git add -A -- . "$@"
+  if [ "$(git write-tree)" != "$omd_tree" ]; then
+    echo 'exec_guard_changed: task files changed' >&2
+    exit 1
+  fi
+  cp "$omd_index" "$GIT_INDEX_FILE"
+  git restore --staged --source="$omd_tree" -- . "$@"
+  cp "$GIT_INDEX_FILE" "$omd_lock"
+  omd_commit=$(git commit-tree "$omd_tree" -p "$omd_base" -m "$omd_message")
+  git update-ref -m "$omd_message" "refs/heads/$omd_branch" "$omd_commit" "$omd_base"
+  omd_advanced=true
+  mv "$omd_lock" "$omd_index"
+  omd_advanced=false
+  printf '%s\\n' "$omd_commit"
+}; f`;
 const ROWS_BYTES = 8_192;
 const bytes = (value: unknown) => [...JSON.stringify(value)].reduce((total, char) => {
   const code = char.codePointAt(0) ?? 0;
@@ -32,9 +96,9 @@ export default function activate(api: ModAPI) {
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const words = (value: Json) => String(value ?? '').trim();
-  const git = (argv: string[], options: { write?: boolean; timeout?: number; guards?: ExecGuard[]; limit?: number } = {}): Git => {
+  const git = (argv: string[], options: { write?: boolean; timeout?: number; guards?: ExecGuard[]; limit?: number; exclusive?: string } = {}): Git => {
     const run = api.host.tryCall('exec.run', { program: 'git', argv: [...GIT, ...argv], timeout_ms: options.timeout ?? 10_000, network: 'none',
-      ...(options.write ? { write: true } : {}), ...(options.guards ? { guards: options.guards } : {}), ...(options.limit ? { max_output_bytes: options.limit } : {}) });
+      ...(options.write ? { write: true } : {}), ...(options.guards ? { guards: options.guards } : {}), ...(options.limit ? { max_output_bytes: options.limit } : {}), ...(options.exclusive ? { exclusive_workspace: options.exclusive } : {}) });
     if (!run.ok) return { ok: false, out: '', err: run.error, sha: '', truncated: false };
     return { ok: run.value.exit_code === 0, out: run.value.stdout, err: run.value.stderr.trim(), sha: run.value.stdout_sha256, truncated: run.value.stdout_preview_truncated || run.value.stdout_truncated };
   };
@@ -206,39 +270,40 @@ export default function activate(api: ModAPI) {
     const destination = git(status);
     if (!destination.ok || destination.out) return { display: destination.ok ? 'The destination checkout has uncommitted changes; commit or stash them yourself first' : destination.err };
     const excluded = setups().shared.map(item => `:(exclude,literal)${item.path}`);
-    const stagedSetup = ['-C', tree.path, 'diff', '--cached', '--name-only', '-z', '--', ...setups().shared.map(item => `:(literal)${item.path}`)];
-    const staged = excluded.length ? git(stagedSetup) : null;
-    if (staged && (!staged.ok || staged.truncated || staged.out)) return { display: 'Shared setup files are staged; unstage them before integrating' };
     const pending = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...excluded];
     const source = git(pending);
     if (!source.ok) return { display: source.err };
     const dirty = source.out.split('\0').filter(Boolean).length;
     if (!dirty && git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, 'HEAD']).ok) return { display: `${tree.branch} is already integrated` };
-    const range = `HEAD...refs/heads/${tree.branch}`;
-    const log = git(['log', '--oneline', '--max-count=50', `HEAD..refs/heads/${tree.branch}`]);
-    const stat = git(['diff', '--no-ext-diff', '--stat', range]);
-    const diff = git(['diff', '--no-ext-diff', '--no-color', range], { limit: 32_768 });
-    const message = tasks().value[tree.path]?.task ?? `Task ${tree.branch}`;
-    const content = ['-C', tree.path, 'diff', '--no-ext-diff', '--no-color', '--binary', 'HEAD'];
-    const local = dirty ? git(content) : null;
-    if (local && (!local.ok || local.truncated)) return { display: local.ok ? 'The uncommitted changes in the task worktree are too large to review here; commit them there first' : local.err };
-    const fresh = ['-C', tree.path, 'ls-files', '-z', '--others', '--exclude-standard', '--', '.', ...excluded];
-    const listed = dirty ? git(fresh) : null;
-    const added = listed?.out.split('\0').filter(Boolean) ?? [];
-    if (added.length > NEW_FILES) return { display: `The task worktree has ${added.length} new files; commit them there (or keep at most ${NEW_FILES}) before integrating` };
-    const hashes = ['-C', tree.path, 'hash-object', '--no-filters', '--', ...added];
-    const hashed = added.length ? git(hashes) : null;
-    const created = added.map(file => git(['-C', tree.path, 'diff', '--no-index', '--no-ext-diff', '--no-color', '--', '/dev/null', file], { limit: 8_192 }).out).join('');
-    const full = `${diff.out}${local?.out ?? ''}${created}`;
-    const shown = fit(full, 40_000, true);
     const head = ['rev-parse', 'HEAD'];
+    const headed = git(head);
     const tip = ['rev-parse', `refs/heads/${tree.branch}`];
     const tipped = git(tip);
+    if (!tipped.ok || !headed.ok) return { display: tipped.err || headed.err };
+    const range = `${headed.out.trim()}...${tipped.out.trim()}`;
+    const log = git(['log', '--oneline', '--max-count=50', `${headed.out.trim()}..${tipped.out.trim()}`]);
+    const stat = git(['diff', '--no-ext-diff', '--stat', range]);
+    const diff = git(['diff', '--no-ext-diff', '--no-color', range], { limit: 32_768 });
+    if (!log.ok || !stat.ok || !diff.ok) return { display: log.err || stat.err || diff.err || 'Could not preview the task changes' };
+    const message = tasks().value[tree.path]?.task ?? `Task ${tree.branch}`;
+    const fresh = ['-C', tree.path, 'ls-files', '-z', '--others', '--exclude-standard', '--', '.', ...excluded];
+    const listed = dirty ? git(fresh) : null;
+    if (listed && (!listed.ok || listed.truncated)) return { display: listed.err || 'The task file inventory is too large to review here' };
+    const added = listed?.out.split('\0').filter(Boolean) ?? [];
+    if (added.length > NEW_FILES) return { display: `The task worktree has ${added.length} new files; commit them there (or keep at most ${NEW_FILES}) before integrating` };
+    const captured = dirty ? git(['-C', tree.path, '-c', `alias.omd-snapshot=${SNAPSHOT}`, 'omd-snapshot', tipped.out.trim(), ...excluded], { write: true }) : null;
+    if (captured && (!captured.ok || captured.truncated)) return { display: captured.err || 'Could not capture the task tree' };
+    const [capturedTree, capturedIndex] = captured?.out.trim().split('\n') ?? [];
+    if (captured && (!/^[a-f0-9]{40,64}$/.test(capturedTree ?? '') || !/^[a-f0-9]{40,64}$/.test(capturedIndex ?? ''))) return { display: 'Could not capture the task tree' };
+    const local = captured ? git(['diff', '--no-ext-diff', '--no-color', '--binary', tipped.out.trim(), capturedTree]) : null;
+    if (local && (!local.ok || local.truncated)) return { display: local.ok ? 'The task changes are too large to review here; commit them there first' : local.err };
+    const full = `${diff.out}${local?.out ?? ''}`;
+    const shown = fit(full, 40_000, true);
     state.preview = { path: tree.path, branch: tree.branch, tip: tipped.out.trim(),
       summary: fit(`${dirty ? `Uncommitted changes in the task worktree (${dirty} paths${added.length ? `, ${added.length} new` : ''}) are committed as "${message}" first.\n` : ''}${log.out}${stat.out}`, 4_000, true),
       diff: diff.truncated || shown !== full ? `${fit(shown, 39_900, true)}\n… diff truncated; review the full change in the worktree` : shown,
-      guards: [guardOf(head, git(head)), guardOf(tip, tipped), guardOf(status, destination)],
-      commit: local ? { message, paths: excluded, guards: [guardOf(pending, source), guardOf(content, local), guardOf(fresh, listed!), ...(staged ? [guardOf(stagedSetup, staged)] : []), ...(hashed ? [guardOf(hashes, hashed)] : []), guardOf(tip, tipped)] } : null };
+      guards: [guardOf(head, headed), guardOf(tip, tipped), guardOf(status, destination)],
+      commit: local ? { message, tree: capturedTree, index: capturedIndex, paths: excluded } : null };
     state.open = true;
     save(state);
     return null;
@@ -250,31 +315,28 @@ export default function activate(api: ModAPI) {
     const preview = state.preview;
     if (!preview) return { display: 'Open an integration preview first' };
     state.preview = null;
+    let mergeTip = preview.tip;
     if (preview.commit) {
-      const shared = setups().shared.map(item => `:(literal)${item.path}`);
-      const stagedSetup = ['-C', preview.path, 'diff', '--cached', '--name-only', '-z', '--', ...shared];
-      const staged = shared.length ? git(stagedSetup) : null;
-      if (staged && (!staged.ok || staged.truncated || staged.out)) return { display: 'Shared setup files are staged; unstage them before integrating' };
-      const added = git(['-C', preview.path, 'add', '-A', '--', '.', ...preview.commit.paths], { write: true, guards: preview.commit.guards });
-      const committed = added.ok ? git(['-C', preview.path, 'commit', '--quiet', '-m', preview.commit.message], { write: true, timeout: 120_000, guards: staged ? [guardOf(stagedSetup, staged)] : [] }) : added;
+      const committed = git(['-C', preview.path, '-c', `alias.omd-reviewed-commit=${COMMIT}`, 'omd-reviewed-commit', preview.commit.index,
+        preview.tip, preview.commit.tree, preview.branch, preview.commit.message, ...preview.commit.paths], { write: true, timeout: 120_000 });
       if (!committed.ok) {
         state.notice = /exec_guard/.test(committed.err) ? 'The task worktree changed since the preview; integrate again to review the current state' : `Committing the task worktree failed: ${committed.err.split('\n').slice(0, 4).join(' ')}`;
         save(refresh(state));
         return { display: state.notice };
       }
-      const parent = git(['rev-parse', `refs/heads/${preview.branch}^`]);
-      if (parent.out.trim() !== preview.tip) {
+      mergeTip = committed.out.trim();
+      if (!/^[a-f0-9]{40,64}$/.test(mergeTip)) {
         state.notice = 'The task branch moved while committing; integrate again to review the current state';
         save(refresh(state));
         return { display: state.notice };
       }
     }
     const tip = ['rev-parse', `refs/heads/${preview.branch}`];
-    const guards = preview.commit ? [...preview.guards.filter(item => item.argv?.join(' ') !== [...GIT, ...tip].join(' ')), guardOf(tip, git(tip))] : preview.guards;
-    const merged = git(['merge', '--no-edit', `refs/heads/${preview.branch}`], { write: true, timeout: 120_000, guards });
-    if (!merged.ok && git(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).ok) git(['merge', '--abort'], { write: true });
+    const guards = preview.commit ? preview.guards.filter(item => item.argv?.join(' ') !== [...GIT, ...tip].join(' ')) : preview.guards;
+    const merged = git(['merge', '--no-edit', mergeTip], { write: true, timeout: 120_000, guards });
+    const aborted = !merged.ok && git(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).ok ? git(['merge', '--abort'], { write: true }).ok : true;
     state.notice = merged.ok ? `Integrated ${preview.branch}` : /exec_guard/.test(merged.err) ? 'The checkout or branch changed since the preview; integrate again to review the current state'
-      : `Integration failed and the checkout was restored: ${merged.err.split('\n').slice(0, 4).join(' ')}`;
+      : `Integration failed${aborted ? ' and the checkout was restored' : '; merge recovery is required'}: ${merged.err.split('\n').slice(0, 4).join(' ')}`;
     save(refresh(state));
     return { display: state.notice };
   }), { description: 'Merge the previewed task branch after rechecking it' });
@@ -290,7 +352,7 @@ export default function activate(api: ModAPI) {
       const listed = api.host.tryCall('app.request', { method: 'thread/list', params: { cwd: path, limit: 100, ...(cursor ? { cursor } : {}) } });
       if (!listed.ok) return 'Session inventory is unavailable; the worktree is kept';
       const result = listed.value as { data?: { status?: { type?: string } }[]; nextCursor?: string | null };
-      if (!Array.isArray(result.data) || result.data.some(thread => !['notLoaded', 'idle', 'systemError', 'active'].includes(thread.status?.type ?? ''))) return 'Session inventory is incomplete; the worktree is kept';
+      if (!result || !Array.isArray(result.data) || result.data.some(thread => !thread || !['notLoaded', 'idle', 'systemError', 'active'].includes(thread.status?.type ?? ''))) return 'Session inventory is incomplete; the worktree is kept';
       if (result.data.some(thread => thread.status?.type === 'active')) return `A session is working in ${path}; wait for it to finish`;
       if (result.nextCursor === null) return null;
       if (typeof result.nextCursor !== 'string' || !result.nextCursor || result.nextCursor === cursor) break;
@@ -311,12 +373,12 @@ export default function activate(api: ModAPI) {
     const status = git(listing);
     if (!status.ok || status.out) return { display: status.ok ? `${tree.path} has uncommitted or untracked changes; they are kept` : status.err };
     const merged = tree.branch ? git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, `${state.trees[0].head}`]).ok : false;
-    const preview = [`Remove the checkout ${tree.path}.`, tree.branch ? `Branch ${tree.branch} is ${merged ? 'merged into the main checkout' : 'NOT merged'} and is kept unless you confirm its deletion next.` : '', 'Session history is kept.'].join('\n');
+    const preview = [`Remove the checkout ${tree.path}.`, tree.branch ? `Branch ${tree.branch} is ${merged ? 'merged into the main checkout' : 'NOT merged'} and is kept unless you confirm its deletion next.` : '', 'Current OMD processes are checked and locked out during removal. Older runtimes and other applications cannot be checked. Confirm that none are using this checkout before continuing.', 'Session history is kept.'].join('\n');
     if (!confirm(branch ? 'Delete task worktree' : 'Archive task worktree', preview)) return null;
     const changed = sessionCheck(tree.path);
     if (changed) return { display: changed };
     // The status excludes shared setup links and copies, so force removes just those.
-    const removed = git(['worktree', 'remove', '--force', tree.path], { write: true, timeout: 60_000, guards: [guardOf(listing, status)] });
+    const removed = git(['worktree', 'remove', '--force', tree.path], { write: true, timeout: 60_000, guards: [guardOf(listing, status)], exclusive: tree.path });
     if (!removed.ok) return { display: denied(removed.err, rootFor(state.trees[0].path)) };
     updateTasks(value => { delete value[tree.path]; });
     let note = `Removed ${tree.path}`;

@@ -34,11 +34,11 @@ test('pinned Codex executes an OMD tool that a Cursor run called through the tra
     await new Promise(done => reserve.listen(0, '127.0.0.1', done));
     const port = reserve.address().port;
     await new Promise(done => reserve.close(done));
-    await writeFile(join(root, 'route.json'), JSON.stringify({ port, sdk: join(root, 'sdk.mjs'), data: join(root, 'data'),
+    await writeFile(join(root, 'route.json'), JSON.stringify({ port, sdk: '/sdk.mjs', data: join(root, 'data'),
       models: [{ slug: 'cursor-auto', id: 'auto' }], secret_profile: 'p1', backend_url: 'http://127.0.0.1:9' }));
     const token = 'x'.repeat(40);
     const transport = spawn(process.execPath, [new URL('../mods/first-party/omd_cursor/transport.mjs', import.meta.url).pathname, 'serve', join(root, 'route.json')],
-      { env: { PATH: '/usr/bin:/bin', OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_SECRETS: '[{"id":"p1","value":"crsr_fixture"}]' }, stdio: 'ignore' });
+      { env: { PATH: '/usr/bin:/bin', OMD_SERVICE_ROOT: root, OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_SECRETS: '[{"id":"p1","value":"crsr_fixture"}]' }, stdio: 'ignore' });
     try {
       for (let attempt = 0; attempt < 50; attempt++) {
         try { if ((await fetch(`http://127.0.0.1:${port}/_omd/ready`)).ok) break; } catch {}

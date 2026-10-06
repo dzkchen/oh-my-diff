@@ -508,7 +508,7 @@ async fn run(
     if operation.starts_with("providers.") || operation.starts_with("sidecars.") {
         return core
             .services
-            .call(lead, caller.id, caller.generation, request)
+            .call(&core.runtime, lead, caller.id, caller.generation, request)
             .await;
     }
     match operation.as_str() {

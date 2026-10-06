@@ -50,8 +50,9 @@ uninstall. Selecting retained upstream does not register the managed browser.
 
 ## Updates and removal
 
-Updates build or unpack a replacement, verify it, atomically exchange it, and
-restore the prior verified tree if post-swap verification fails:
+Updates build and verify a replacement, journal activation, and restore the prior
+verified tree if activation fails. Rerunning the update reconciles an interrupted
+activation before checking the installed bundle:
 
 ```sh
 python3 scripts/browser_bundle.py update /absolute/browser-bundle

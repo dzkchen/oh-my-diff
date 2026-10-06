@@ -218,7 +218,9 @@ export class Router {
       throw new Error('cursor_credential_expired:rerun omd-package cursor --setup');
     }
     if (this.sdk) return;
-    const sdk = await loadSdk(this.route.sdk);
+    const root = process.env.OMD_SERVICE_ROOT;
+    if (!root || !this.route.sdk?.startsWith('/') || this.route.sdk.split('/').includes('..')) throw new Error('cursor_sdk_snapshot_unavailable');
+    const sdk = await loadSdk(`${root}${this.route.sdk}`);
     await mkdir(join(this.route.data, 'workspace'), { recursive: true, mode: 0o700 });
     this.store = new sdk.JsonlLocalAgentStore(join(this.route.data, 'agents'));
     try { this.state = JSON.parse(await readFile(this.statePath, 'utf8')); } catch {}

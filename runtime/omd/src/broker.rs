@@ -87,8 +87,14 @@ impl Client {
     }
 
     pub fn at(path: &Path) -> io::Result<Self> {
-        let stream =
-            UnixStream::connect(path).map_err(|_| failure("authority_broker_unavailable"))?;
+        let timeout = std::time::Duration::from_secs(30);
+        let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+        socket
+            .connect_timeout(&socket2::SockAddr::unix(path)?, timeout)
+            .map_err(|_| failure("authority_broker_unavailable"))?;
+        socket.set_read_timeout(Some(timeout))?;
+        socket.set_write_timeout(Some(timeout))?;
+        let stream: UnixStream = socket.into();
         Ok(Self {
             stream: BufReader::new(stream),
         })

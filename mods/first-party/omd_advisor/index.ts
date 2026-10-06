@@ -166,14 +166,13 @@ export default function activate(api: ModAPI) {
     api.on('turn_start', hide);
     api.on('workspace_change', hide);
     api.on('turn_end', event => {
-      if (event.outcome !== 'completed' || !event.evidence) return;
+      if (event.outcome !== 'completed' || !event.evidence || sameModel()) return;
       if (!everyTurn) {
         const activity = api.host.tryCall('turns.activity', { turn_id: event.turn_id });
         if (!activity.ok || !activity.value.turns[0]?.files.length) return;
       }
       const previous = prior();
       if (previous?.reference.sha256 === event.evidence.sha256) return;
-      if (sameModel()) return;
       if (previous?.status === 'reviewing' && previous.handle) api.host.tryCall('agents.cancel', { handle: previous.handle });
       const receipt: Receipt = { reference: event.evidence, turn: event.turn_id, thread: '', candidate: '', handle: '', brief: '', findings: [], status: 'unreviewed', reason: '', ledger: null, present: true };
       const loaded = read(event.evidence);

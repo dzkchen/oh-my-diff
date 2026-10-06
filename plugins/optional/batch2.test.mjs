@@ -347,7 +347,7 @@ test('advisor failure and loop triggers fire at their thresholds and ignore prog
 });
 
 test('advisor completion trigger reviews only completed turns that changed files', () => {
-  const options = { ...advisorOptions, settings: { triggers: ['completion'] } };
+  const options = { ...advisorOptions, settings: { triggers: ['completion'], skip_same_model: false } };
   const unchanged = advisorHost({ 'turns.activity': () => ({ turns: [{ files: [] }], recording: true }) });
   invoke('advisor', completed, unchanged.host, options);
   assert.deepEqual(unchanged.calls.map(call => call.operation), ['turns.activity']);
