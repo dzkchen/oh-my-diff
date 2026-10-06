@@ -1095,6 +1095,17 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
         request.headers["x-omd-attempt"], "1",
         "a retry core declined does not number the next turn's request"
     );
+    accounts
+        .6
+        .lock()
+        .unwrap()
+        .fingerprints
+        .insert("child".into(), vec![("i0".into(), "sha".into())]);
+    accounts.forget_thread("child");
+    assert!(
+        accounts.6.lock().unwrap().fingerprints.is_empty(),
+        "a closed thread keeps no request fingerprints"
+    );
 }
 
 #[test]

@@ -2707,6 +2707,16 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         thread_store,
     })
     .await;
+    mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+        server: "docs",
+        request_id: "evicted",
+        action: "accept",
+        content: Some(&json!({"token": "hunter2"})),
+        by: None,
+        session_store,
+        thread_store,
+    })
+    .await;
     let log = fixture
         .core
         .runtime
@@ -2724,6 +2734,11 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     assert_eq!(log[1]["reason"], "explicit");
     assert_eq!(log[2]["content"], json!({"token": "[redacted]"}));
     assert_eq!(log[2]["by"], Value::Null);
+    assert_eq!(
+        log[3]["content"],
+        json!("[redacted]"),
+        "an answer with no recorded schema is withheld"
+    );
 
     let failed = mods
         .continue_turn(codex_extension_api::TurnContinueInput {
