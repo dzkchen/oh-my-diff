@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "5640560d5ac8611301a50ae18b4e35b6c2f7a0f0ae2f707aa6a51e4832ab4ab7"
+    "sha256": "8c2497be546d4499598eb6508b4b39b214c7efe330f212583549eba0852f5726"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -2165,19 +2165,19 @@
     },
     "codex-rs/tui/src/mod_raster.rs": {
       "before": null,
-      "after": "5cef2d784c9bfadd06716bbb3848672832edc751e8586b9e84a41a82a953c4d6"
+      "after": "3755c4634b1dc67ab73e49845b4ca46ca25629315df54f7487ec79e7e123ca9d"
     },
     "codex-rs/tui/src/mod_raster_tests.rs": {
       "before": null,
-      "after": "a140b75efeaceab0da9985bb9803a38670ca025554d5812287d78d334d46891e"
+      "after": "613d3ad22564c3f73c92f13832bab95d3b123e2cea11ece7559b531819656b0a"
     },
     "codex-rs/tui/src/mod_render.rs": {
       "before": null,
-      "after": "dabe0b03bc75412aa45a5ed8e10059dbacf6184d47fb1e2c184461c02e4321d1"
+      "after": "70ec6e6805cc262a6d69524ad685668145735497c4973e8a9030b30749bd1837"
     },
     "codex-rs/tui/src/mod_render_tests.rs": {
       "before": null,
-      "after": "33cd96cb3a7d12db781ca8d4d4368e363f3542a8703dd6fdf5d110960260e5d3"
+      "after": "72c9af30351771ec44d2b08c0a334582d042e08d7ebae48787a239601420dbb9"
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
@@ -2197,11 +2197,11 @@
     },
     "codex-rs/tui/src/mod_ui.rs": {
       "before": null,
-      "after": "7e1504ca61eb77d69d7683e544ca28b37c7d0fb7d0ab9d7ccf14db9797352dbb"
+      "after": "cc8d4b6b64557c1b8ec0d7752477ec452b0b71c9655bfd9420cc9e3461d1addc"
     },
     "codex-rs/tui/src/mod_ui_tests.rs": {
       "before": null,
-      "after": "ca7827e13a8c432a93e8ea21b4670e9376388ff407bbc0476a5e9a70a6990d91"
+      "after": "90c9a3750307a68a530a8a8f367a59bd252ad2e26f34cdf2231a05b33731382a"
     },
     "codex-rs/tui/src/notifications/mod.rs": {
       "before": "dd368133d86e072dad4fa3e48ae60c84d38da53871c019fc1078ee88826a9bff",
