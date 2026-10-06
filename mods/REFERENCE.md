@@ -1477,8 +1477,9 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   tick can enqueue an animation; at 32 queued updates or 256 KiB the call
   returns `{status: 'backpressure', retry_after_ms}` instead of
   `{frame, queued, frame_ms}`; one call over 256 KiB is
-  `terminal_blit_too_large`. A mod holds at most 16 rasters; a raster's
-  frames are dropped with its component.
+  `terminal_blit_too_large`. A mod holds at most 16 rasters: a blit to a
+  17th key is `terminal_blit_limit`; a raster's frames are dropped with its
+  component.
 - `box`, `image` and `raster` accept `pointer: true`. The owner then receives
   `component_event {kind: 'pointer'}` with `action` `enter`, `leave`,
   `move`, `down`, `up` and `drag`, `column`/`row` relative to the
@@ -1497,7 +1498,12 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   not drawn); `offset` moves it by cells; `z` (0–9) orders overlays;
   `clip: 'anchor'` clips it to the anchor component's cells, otherwise to the
   screen. An overlay hides what lies beneath it from pointer events, and a
-  dialog stays above every overlay.
+  dialog stays above every overlay. A view with an overlay outside these
+  bounds is invalid: `width` 1–200, `height` 1–60, `offset.x` within ±500,
+  `offset.y` within ±200, and a screen anchor cannot use `clip: 'anchor'`. Overlays
+  are not exclusive: when several patches set one for the same site, the patch
+  that composes last wins, and a `wrap` patch overrides another mod's overlay
+  without a claim or a `terminal.conflicts` entry.
 
 Operations:
 
@@ -1604,7 +1610,7 @@ attach before any other `omd/*` call; before it every method fails with
 `client_not_attached`. Errors are JSON-RPC errors whose message starts with
 the code: besides those below, `mod_host_inactive`, `session_unavailable`,
 `host_operation_unavailable` and `view_unavailable` (no mods, thread, session
-runtime or readable view in this host), `command_unavailable` and
+runtime or published view in this host), `command_unavailable` and
 `command_unavailable_during_turn` for the action's command,
 `render_slot_invalid` and `render_props_invalid`, `resource_not_in_view` and
 `resource_unavailable`, and `recovery_action_invalid`, `mod_not_found` and
@@ -1612,22 +1618,27 @@ runtime or readable view in this host), `command_unavailable` and
 
 | Request | Params | Result |
 | --- | --- | --- |
-| `omd/client/attach` | `{name, renderer: {kind: 'terminal'\|'gui'\|'text', formats: ('svg'\|'png'\|'jpeg'\|'cells'\|'text')[], pointer: 'pixel'\|'cell'\|'half_cell'\|'none', reducedMotion, cellPx?}, operations}` | `{clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}`, then `omd/view/updated`; the result's `roster` already lists the new client, and `omd/roster/updated` reports later changes; attaching again on the connection replaces its entry |
+| `omd/client/attach` | `{name, renderer: {kind: 'terminal'\|'gui'\|'text', formats: ('svg'\|'png'\|'jpeg'\|'cells'\|'text')[], pointer: 'pixel'\|'cell'\|'half_cell'\|'none', reducedMotion, cellPx?}, operations}` | `{clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}`, then `omd/view/updated`; the result's `roster` already lists the new client, and `omd/roster/updated` reports later changes; attaching again on the connection replaces its entry; attach also succeeds while mods are inactive or failed to start (empty `epoch`, null `snapshot`), so the recovery calls stay reachable |
 | `omd/client/update` | `{renderer?, viewport?: {width, height, unit}, focus?}` | `{}`; `focus` sets the entry's `focused`; every client gets `omd/roster/updated` and mods render again |
 | `omd/client/detach` | `{}` | `{}` |
 | `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
-| `omd/client/event` | `{epoch, revision, component, event: {kind: 'change'\|'pointer'\|'focus'\|'scroll'\|'key', ...}}` | `{delivered}`; the owner (from `component_owners`) gets `component_event` with `client: clientId`; `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing field the kind requires or an event over 64 KiB |
+| `omd/client/event` | `{epoch, component, event}` with `event` one of `{kind: 'change', value}`, `{kind: 'change', values}` (strings), `{kind: 'pointer', pointer: {column, row, half?: 0\|1\|null, action: 'down'\|'up'\|'scroll_up'\|'scroll_down'\|'move'\|'drag'\|'enter'\|'leave', button: 'left'\|'right'\|'middle'\|null}}`, `{kind: 'scroll', offset}`, `{kind: 'key', key, text?}` or `{kind: 'focus'}` | `{delivered}`; the owner (from `component_owners`) gets `component_event` with `client: clientId` and only the kind's fields above (`origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped); `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing or malformed field the kind requires or an event over 64 KiB |
 | `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
 | `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}` |
 | `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
-| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, managed, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; an apply reloads the mods at once and pushes the new view. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
+| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, managed, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
 The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
 full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
 `activity`, `diagnostics`), `omd/roster/updated {roster}` and
 `omd/surface/mirrored {caller, operation, arguments}`, and the server request
 `omd/surface/call {caller, operation, arguments, confirm?}`, answered with the
-operation's result or an error whose message the mod receives.
+operation's result or an error whose message the mod receives. Other server
+requests (approvals, `requestUserInput`, permissions, elicitation) reach every
+subscribed client, and the first answer wins, an error included: an SDK client
+answers only what its `onServerRequest` returns a value for (`undefined` leaves
+the request unanswered), so a client that does not handle a request never
+resolves it before the user at the terminal.
 
 Actions: a client names a component and row, never a command. The host
 resolves the action from its own current view and runs it like Space/Enter in
@@ -2505,7 +2516,8 @@ Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.
 Observers compose in that order; interceptors follow the continuation order above. Every mod's `terminal` patch composes in that order too
 (`ui_composition_v1`): sites wrap or replace (a wrap encloses the site's
-replacement whichever composes first), presentation fields merge, and
+replacement whichever composes first; a site's `overlay` is not claimed, so
+the last patch that sets one wins, even a wrap over another mod's), presentation fields merge, and
 exclusive fields (layout, backdrop, panels, header, footer, placeholder,
 replaced sites, keys, glyphs and the status budget) go to the first claimant;
 each later claim is reported in `omd-mod status` under `terminal.conflicts` as

@@ -114,25 +114,77 @@ fn actions_resolve_only_values_the_view_offers() {
 fn client_events_need_a_known_kind_its_fields_and_a_bounded_size() {
     for event in [
         json!({"kind": "change", "value": "x"}),
-        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "down"}}),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "down", "button": "left"}}),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "half": 1, "action": "move", "button": null}}),
         json!({"kind": "scroll", "offset": -3}),
         json!({"kind": "key", "key": "Enter"}),
         json!({"kind": "focus"}),
     ] {
-        assert!(event_payload(event.clone()).is_ok(), "{event}");
+        assert!(event_payload(&event).is_ok(), "{event}");
     }
     for event in [
         json!({"kind": "open"}),
+        json!({"kind": "motion"}),
         json!({"kind": "change"}),
         json!({"kind": "pointer", "pointer": {"column": -1, "row": 0}}),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2}}),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "click", "button": null}}),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "down", "button": "back"}}),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "half": 2, "action": "down", "button": null}}),
         json!({"kind": "change", "value": "x".repeat(EVENT_BYTES)}),
         json!("change"),
     ] {
         assert!(
-            event_payload(event.clone())
+            event_payload(&event)
                 .unwrap_err()
                 .starts_with("component_event_invalid:"),
             "{event}"
+        );
+    }
+}
+
+#[test]
+fn client_events_keep_only_their_kinds_fields() {
+    let forged = |kind: &str, fields: Value| {
+        let mut event = json!({"kind": kind, "origin": "user", "events": [1], "anchor": "a",
+            "range": {"start": 0}, "index": 3, "component": "other", "client": "forged"});
+        event
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        Value::Object(event_payload(&event).unwrap())
+    };
+    assert_eq!(
+        forged("change", json!({"value": "x"})),
+        json!({"kind": "change", "value": "x"})
+    );
+    assert_eq!(forged("focus", json!({})), json!({"kind": "focus"}));
+    assert_eq!(
+        forged("key", json!({"key": "Enter"})),
+        json!({"kind": "key", "key": "Enter", "text": null})
+    );
+    assert_eq!(
+        forged(
+            "pointer",
+            json!({"pointer": {"column": 1, "row": 2, "action": "down", "button": "left", "extra": 1}})
+        ),
+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "half": null,
+            "action": "down", "button": "left"}})
+    );
+}
+
+#[test]
+fn clients_see_a_null_view_while_mods_are_inactive() {
+    assert_eq!(view(), Ok((0, 0, Value::Null)));
+}
+
+#[test]
+fn clients_cannot_enable_disable_or_reset_mods() {
+    for action in ["enable", "disable", "reset"] {
+        let refused = recovery_apply(action, "alpha").unwrap_err();
+        assert!(
+            refused.starts_with("client_surface_operation_unavailable:"),
+            "{refused}"
         );
     }
 }

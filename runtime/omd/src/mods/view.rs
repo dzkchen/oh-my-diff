@@ -702,6 +702,42 @@ pub struct ModSpan {
 }
 
 impl ModComponent {
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Self::Box { id, .. }
+            | Self::Line { id, .. }
+            | Self::Text { id, .. }
+            | Self::Button { id, .. }
+            | Self::Input { id, .. }
+            | Self::Select { id, .. }
+            | Self::Multiselect { id, .. }
+            | Self::Markdown { id, .. }
+            | Self::Code { id, .. }
+            | Self::Pane { id, .. }
+            | Self::Dialog { id, .. }
+            | Self::List { id, .. }
+            | Self::Document { id, .. }
+            | Self::Terminal { id, .. }
+            | Self::Image { id, .. }
+            | Self::Raster { id, .. }
+            | Self::Diff { id, .. } => Some(id),
+            Self::Slot | Self::Native { .. } => None,
+        }
+    }
+
+    /// Pushes this component and every descendant, parents first.
+    pub fn descendants<'a>(&'a self, into: &mut Vec<&'a ModComponent>) {
+        into.push(self);
+        if let Self::Box { children, .. }
+        | Self::Pane { children, .. }
+        | Self::Dialog { children, .. } = self
+        {
+            for child in children {
+                child.descendants(into);
+            }
+        }
+    }
+
     pub fn fits(&self, width: u16) -> bool {
         match self {
             Self::Box {
@@ -1562,33 +1598,12 @@ pub fn component_ids_of<'a>(
 }
 
 fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
-    match component {
-        ModComponent::Box { id, children, .. }
-        | ModComponent::Pane { id, children, .. }
-        | ModComponent::Dialog { id, children, .. } => {
-            ids.insert(id.clone());
-            for child in children {
-                component_ids(child, ids);
-            }
-        }
-        ModComponent::Text { id, .. }
-        | ModComponent::Line { id, .. }
-        | ModComponent::Button { id, .. }
-        | ModComponent::Input { id, .. }
-        | ModComponent::Select { id, .. }
-        | ModComponent::Multiselect { id, .. }
-        | ModComponent::Markdown { id, .. }
-        | ModComponent::Code { id, .. }
-        | ModComponent::List { id, .. }
-        | ModComponent::Document { id, .. }
-        | ModComponent::Diff { id, .. }
-        | ModComponent::Terminal { id, .. }
-        | ModComponent::Image { id, .. }
-        | ModComponent::Raster { id, .. } => {
-            ids.insert(id.clone());
-        }
-        ModComponent::Slot | ModComponent::Native { .. } => {}
-    }
+    let mut all = Vec::new();
+    component.descendants(&mut all);
+    ids.extend(
+        all.into_iter()
+            .filter_map(|found| found.id().map(str::to_owned)),
+    );
 }
 
 fn valid_focus_targets(
