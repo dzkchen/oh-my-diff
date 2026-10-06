@@ -19175,14 +19175,15 @@ index 824cf589c..1a7943dc3 100644
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 13ebc6824..e3e08f20b 100644
+index 13ebc6824..a80a2274d 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -12593,6 +12593,50 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
+@@ -12593,6 +12593,51 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
      );
  }
 
 +#[tokio::test]
++#[allow(clippy::await_holding_invalid_type)]
 +async fn start_task_keeps_mailbox_mail_pending_until_it_owns_the_active_turn_lock() {
 +    let (sess, tc, _rx) = make_session_and_context_with_rx().await;
 +    sess.input_queue
@@ -110037,10 +110038,10 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread.rs b/codex-rs/thread-store/src/local/rewrite_thread.rs
 new file mode 100644
-index 000000000..3c9404088
+index 000000000..298300af0
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread.rs
-@@ -0,0 +1,1534 @@
+@@ -0,0 +1,1539 @@
 +use std::collections::BTreeSet;
 +use std::collections::HashMap;
 +use std::collections::HashSet;
@@ -110787,7 +110788,11 @@ index 000000000..3c9404088
 +fn rows(entries: &[Entry]) -> Vec<Row> {
 +    #[cfg(test)]
 +    FULL_BUILDS.with(|builds| builds.set(builds.get() + 1));
-+    build(entries, [0..entries.len()], compaction(entries))
++    build(
++        entries,
++        std::iter::once(0..entries.len()),
++        compaction(entries),
++    )
 +}
 +
 +fn build(
@@ -111023,6 +111028,7 @@ index 000000000..3c9404088
 +        at: usize,
 +        inserted: Vec<Entry>,
 +    ) -> Vec<Entry> {
++        debug_assert!(removed.is_sorted(), "row entries stay ascending");
 +        let mut seeds: Vec<usize> = removed
 +            .iter()
 +            .map(|&index| self.starts.partition_point(|&start| start <= index))
@@ -111577,7 +111583,7 @@ index 000000000..3c9404088
 +mod tests;
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread_tests.rs b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
 new file mode 100644
-index 000000000..51ce810bc
+index 000000000..58c5b3883
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
 @@ -0,0 +1,1196 @@
@@ -112761,7 +112767,7 @@ index 000000000..51ce810bc
 +            assert_synced(step, &view, &entries);
 +        }
 +    }
-+    let builds = FULL_BUILDS.with(|builds| builds.get());
++    let builds = FULL_BUILDS.with(std::cell::Cell::get);
 +    assert_synced(256, &view, &entries);
 +    (length, builds)
 +}
