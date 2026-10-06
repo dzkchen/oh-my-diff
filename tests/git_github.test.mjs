@@ -115,7 +115,7 @@ test('GitHub watch pages over 100 checks, binds required checks to the head and 
   assert.deepEqual(watch.runs.filter(item => item.id === 5007).map(item => [item.attempt, item.state]), [[2, 'fail']]);
   assert.equal(world.http.filter(request => request.url.includes('/runs/5003')).length, 1);
   assert.equal(world.scheduled.at(-1).delay_ms, 30_000);
-  const details = invoke(world.host, 'terminal', {}, invoke(world.host, 'command', 'octo/proj#42', state, { name: 'inspect' }).state).value;
+  const details = invoke(world.host, 'terminal', {}, invoke(world.host, 'command', 'octo/proj#42', state, { name: 'pr' }).state).value;
   const text = details.sites.dialog.components[0].children[0].children[0].text;
   assert.match(text, /required 1 pass, 1 fail, 0 pending/);
   assert.match(text, /workflow 7 run 5007 attempt 2/);

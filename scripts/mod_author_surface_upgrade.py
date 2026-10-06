@@ -22,10 +22,11 @@ def call(*args):
 
 def install(store, source):
     manifest = json.loads((source / "mod.json").read_text())
-    request = json.dumps({"source": {"kind": "local", "path": str(source)}, "activate": True,
+    request = json.dumps({"source": {"kind": "local", "path": str(source)},
                           "trust": {"packages": {manifest["id"]: {"capabilities": manifest["capabilities"]}}}})
     plan = call("package-plan", store, request)
-    lock = call("package-apply", store, request, plan["confirmation"])
+    call("package-apply", store, request, plan["confirmation"])
+    lock = call("package-enable", store, manifest["id"])
     return {"confirmation": plan["confirmation"], "lock": lock}
 
 

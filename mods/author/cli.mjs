@@ -41,6 +41,7 @@ function packageJson(name) {
     version: '0.1.0',
     private: true,
     type: 'module',
+    files: ['mod.json', 'index.ts'],
     scripts: {
       check: 'omd-mod-author check .',
       test: 'omd-mod-author test .',

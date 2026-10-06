@@ -53,7 +53,7 @@ native work.
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` interceptor and the `completion` replacement |
-| `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` interceptors |
@@ -100,8 +100,10 @@ wider scope needs a new trust:
   `approvals` and `middleware`; `approve.override` needs `approve`.
 
 `omd-mod trust ... --expires SECONDS` ends the three grants at a time, project
-scope keeps them to one repository, and `omd-mod revoke STORE PACKAGE` ends
-them at once without uninstalling the mod. Trust output, the TUI trust dialog
+scope keeps them to one repository, and `omd-mod revoke STORE MOD_ID_OR_PACKAGE`
+disables the mod and drops its grant at once: capabilities and secret
+environment are cleared, and enabling it again needs a new trust or install.
+Trust output, the TUI trust dialog
 and status (`mods[].authority`: `os_access`, `approves`, `expires_at`,
 `current`, `exposure`) state what the grant exposes. An expired or revoked
 grant fails `os` calls with `grant_expired: os`, stops the mod's unsandboxed
@@ -114,7 +116,7 @@ text cannot issue or widen a grant.
 `http`, `fs.external` and `mcp` are authority grants like `os`: the manifest
 scope is part of the trusted digest, `--expires`, project scope and
 `omd-mod revoke` end them, status `mods[].authority` shows the scope, and an
-expired grant fails calls with `grant_expired`. They give granted access
+expired or revoked grant fails calls with `grant_expired`. They give granted access
 without an unrestricted child process.
 
 - `http_access: {origins, credentials?}` lists up to 32 origins
@@ -1775,12 +1777,21 @@ failure after `next` keeps the host's result with a diagnostic.
 `evidence.write` accepts `{media_type: 'image/png' | 'image/jpeg' |
 'application/octet-stream', base64}` up to 8 MiB (`binary_evidence_v1`);
 image references can be attached through `composer.write` and image-capable
-app methods. `packages.list`, `packages.preview`, `packages.apply` and
-`packages.reload` (`package_controls_v1`) install, update, remove, roll back,
-enable and disable packages from local directories, pinned Git revisions and
-curated index releases; `index` resolves dependencies. `packages.list` reports
+app methods. `packages.list`, `packages.index`, `packages.preview`,
+`packages.apply` and `packages.reload` (`package_controls_v1`) install, update,
+remove, roll back, enable and disable packages from local directories, Git
+repositories, curated index releases and npm packages (sources and references
+are listed under Package commands); `index` resolves dependencies. A request
+names its package with `source` or with a `reference` string and an optional
+`version`. `packages.list` reports
 every store selection: managed packages and trusted `omd-mod` selections
-(`source: 'selection'`, which enable, disable and `trust` but do not update).
+(`source: 'selection'`, which enable, disable and `trust` but do not update);
+`source` is also `npm` for npm packages, and `blocked` is the quarantine reason
+or `null`. `packages.index {index?, query?}` is read-only and returns `{index,
+packages: [{id, latest, description, support, versions: [{version, blocked}],
+installed}]}` from the named index (the store's `package-index.json` by
+default), filtered by `query`; it fails with `package_index_unavailable` when no
+index exists.
 `effective`, `pending: 'reload'` and `failed` describe the serving session, so
 a change shows as pending until that session's next safe boundary, and a
 removed mod stays listed with `installed: false` until it stops.
@@ -1789,7 +1800,10 @@ removed mod stays listed with `installed: false` until it stops.
 keeps it enabled. `apply` and `reload` run from user contexts; `apply` shows a
 native confirmation naming every new grant, dependencies as `id:capability`,
 and applies exactly the confirmed plan or refuses if the package, lock or
-selection changed.
+selection changed. Installing never enables a package: an update keeps it on
+only if it was on and its grant, authority scopes and origin are unchanged,
+otherwise it stays off until enabled. The preview lists per package
+`authority {from, to}`, `grant {from, to}` and `renewed_approval`.
 Once a confirmed package mutation starts, it returns its definitive result
 even if its writes reload or disable the calling mod. Queued calls still
 reject cancellation, changed source, originating generation or client context.
@@ -1896,7 +1910,7 @@ publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 
 | Command | Result |
 | --- | --- |
-| `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, authority, settings, and activation changes |
+| `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, per-package authority and grant changes, settings, and enablement |
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
@@ -1905,13 +1919,61 @@ publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 | `omd-mod selection-status STORE` | Show saved user/project selections, precedence, source errors, and setting keys without running mod code |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
 | `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
+| `omd-mod package-quarantine STORE ID REASON` | Disable the package and block its installed version and integrity; enable, reinstall and rollback of it are refused while data, cache and sources stay |
+| `omd-mod package-unblock STORE ID` | Lift the blocks; the package stays disabled |
+| `omd-mod revoke STORE MOD_ID_OR_PACKAGE` | Disable the mod and drop its grant (capabilities and secret environment cleared) |
+| `omd-mod security-events STORE` | Print the store's redacted security log |
 | `omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE` | Compare a local plugin candidate and its skills/hooks against the installed cache without applying it |
 | `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
 | `omd-mod package-rollback STORE ID CONFIRMATION` | Restore the prior cached package disabled, preserving explicit settings |
 | `omd-mod package-uninstall-plan STORE ID` | Preview removal and reject installed dependents |
 | `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the managed selection while retaining local source, state, cache, and history |
 
-A package-index file is bounded JSON with schema 1:
+`REQUEST_JSON` is `{action, id?, source?, reference?, version?, index?,
+scope?}` with `action` one of `install`, `update`, `remove`, `rollback`,
+`enable`, `disable` or `trust`. A request names a package with `source` or with
+a `reference` (and optional `version`), never both. A `source` is one of:
+
+| `source.kind` | Fields |
+| --- | --- |
+| `local` | `path` |
+| `repository` | `repository`, `revision`, `subdirectory?`; `revision` is a 40-hex commit or a branch or tag name, resolved when the plan is made and locked as the commit (an offline install needs a commit) |
+| `package` | `index`, `id`, `version`; `version` is empty (newest unblocked release), exact or `^x.y.z` |
+| `npm` | `package`, `version?`, `registry?` (default from the user's npmrc, else `https://registry.npmjs.org`; `https` or loopback `http` only), `integrity?` (a sha512 SRI pin) |
+
+A `reference` is the same choice as one string, shared by the `/mods`
+directory and the `omd` CLI:
+
+| Reference | Meaning |
+| --- | --- |
+| `ID[@VERSION]` | A release from the curated index |
+| `npm:NAME[@VERSION]` | An npm package; scoped names work (`npm:@author/omd-mod@1.2.3`) |
+| `git+URL[#REF[:DIRECTORY]]` | A Git repository; `REF` defaults to `HEAD`; `git+file:///path` and a local path work |
+| a folder | A local directory (absolute in the directory; `./`, `../`, `~/` or absolute in the CLI) |
+
+npm resolution reads the registry metadata and picks the exact version (empty is
+`dist-tags.latest`; otherwise an exact version or `^x.y.z`). The tarball must
+match the registry's sha512 `dist.integrity` and is extracted safely: regular
+files only, with symlinks, hardlinks and path escapes rejected, a tarball of at
+most 4 MiB, at most 16 MiB unpacked and at most 1024 entries. Its `package.json`
+`name` and `version` must match the request and `dependencies` must be empty:
+bundle runtime code into the self-contained entrypoint (`peerDependencies` and
+`devDependencies` on `@oh-my-diff/mod-api` are fine). The package must publish
+`mod.json` (same version as `package.json`), the entrypoint, the assets and the
+lifecycle scripts. npm `scripts` such as `preinstall` and `postinstall` never
+run; only the manifest's OMD `lifecycle` scripts run, sandboxed and only with an
+exact grant. The lock records the exact version and the tarball SRI, and an
+offline install reuses the content-addressed cache. Without `registry`, the
+host follows the user's npmrc (`$NPM_CONFIG_USERCONFIG` or `~/.npmrc`) like npm
+and pnpm: `@scope:registry=`, then `registry=`, then the public registry. A
+`//host/path/:_authToken=` entry (with `${ENV}` expansion) authenticates
+requests under that prefix; the token reaches curl on stdin and never appears
+in arguments, the lock or the security log. Proxy variables
+(`HTTPS_PROXY`, `NO_PROXY` and lower-case forms) pass through. Local package files reached through a symlinked
+directory outside the package are refused (`package_path_escape`).
+
+The store's `package-index.json` is the default curated index. An index file is
+bounded JSON with schema 1:
 
 ```json
 {
@@ -1926,12 +1988,24 @@ A package-index file is bounded JSON with schema 1:
           "revision": "0123456789abcdef0123456789abcdef01234567",
           "subdirectory": "mod"
         },
-        "integrity": "SHA256_FROM_OMD_MOD_INSPECT"
+        "integrity": "SHA256_FROM_OMD_MOD_INSPECT",
+        "description": "What this release adds",
+        "support": "Where to get help"
+      },
+      {
+        "version": "1.2.2",
+        "source": { "kind": "npm", "package": "@author/example", "version": "1.2.2" },
+        "integrity": "SHA256_FROM_OMD_MOD_INSPECT",
+        "blocked": "Reason this release can't be selected"
       }
     ]
   }
 }
 ```
+
+`blocked` (a reason string) makes a release unselectable: planning it fails
+with `package_version_blocked: REASON`, and `packages.index` lists it with that
+reason.
 
 A managed package manifest must declare `license` and `provenance`; the
 scaffold emits both with placeholders to change. An optional `description` of
@@ -1940,10 +2014,52 @@ scaffold emits both with placeholders to change. An optional `description` of
 selection at the immutable store cache, so returning to editable local
 development is a fresh local install of the rolled-back source.
 
-Resolution selects the highest exact/caret-compatible semantic version and then
-checks the index integrity against the manifest, entrypoint, and every declared
-lifecycle script. Each dependency needs its own exact trust entry. Index files
-do not grant capabilities or script execution.
+Resolution selects the highest unblocked exact or caret-compatible semantic
+version and then checks the index integrity against the manifest, entrypoint,
+and every declared lifecycle script. Each dependency needs its own exact trust
+entry. Index files do not grant capabilities or script execution.
+
+Installing never enables a package. An update keeps a package on only if it
+was on and its grant, authority scopes and origin are unchanged; otherwise it
+is off until enabled. `package-plan` shows per package `authority {from, to}`
+(exposure text plus the `os_access`, `approves`, `http_access`, `fs_access`,
+`mcp_servers`, `policy`, `peer_access` and `autonomy` scopes), `grant {from,
+to}` and `renewed_approval`, true for a new install or a changed grant,
+authority or origin.
+
+`omd-mod`'s protection and recovery commands work without any control mod.
+Quarantine keeps the package's data, cache and sources, so unblocking and
+enabling restores it. `security-events` prints `security-events.jsonl`, bounded
+to 64 KiB (the oldest half is dropped) and redacted: sources lose credentials
+and query strings. Its events are `install`, `update`, `uninstall`, `rollback`,
+`enable`, `disable`, `quarantine`, `unblock`, `revoke`, `trust`, `lifecycle`,
+`package_refused` (with an error code and the stripped source) and
+`load_denied` (a selection rejected at reload).
+
+Permissions a user deliberately grants (`os` unsandboxed, network, `approve`,
+secrets) still run with that authority. Scanning, integrity checks, signatures
+and directory inclusion do not make a mod safe, and a trusted service provider
+acts with its own authority for any caller.
+
+### Publish a mod to npm
+
+`omd-mod-author package .` (`pnpm run package`) writes the checked directory
+`dist/ID-VERSION` with a JavaScript build, source map and digest report; it
+doesn't produce a tarball, so check the npm tarball with `pnpm pack`.
+
+1. In `package.json` remove `"private": true` (the scaffold's publish guard)
+   and set the scoped `name` (for example `@author/omd-mod`) and a `version`
+   equal to `mod.json`'s; set `license` and `provenance` in `mod.json`.
+2. Keep `files` listing `mod.json` and the entrypoint (the scaffold starts with
+   both) and add every declared asset and lifecycle script.
+3. Keep `dependencies` empty: bundle runtime code into the entrypoint and keep
+   `@oh-my-diff/mod-api` a `peerDependency` or `devDependency`.
+4. Run `pnpm check`, `pnpm test`, then `pnpm pack`; the tarball must stay under
+   4 MiB and 1024 entries and list only regular files. Inspect it with
+   `tar -tzf *.tgz`.
+5. Run `pnpm publish --access public`.
+6. Share `npm:@author/omd-mod@1.2.3`; users run `omd install` with it or paste
+   it into `/mods` under Add from source. Catalog inclusion isn't needed.
 
 ## Offline scenarios
 

@@ -26,7 +26,7 @@ click) unfolds it. Its panels follow the session status of `omd_workspace`.
 /omd_git:github watch [OWNER/REPO#N | PR URL | #N]
 /omd_git:github unwatch [KEY]
 /omd_git:github token [remove] add or remove the read-only GitHub token
-/omd_git:inspect [KEY]         pull request details, or every watch
+/omd_git:pr [KEY]              pull request details, or every watch
 ```
 
 ## GitHub pull request and CI status

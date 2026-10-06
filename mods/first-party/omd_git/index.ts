@@ -402,7 +402,7 @@ export default function activate(api: ModAPI) {
     return lines.filter(text => (size += bytes(text) + 1) <= DIALOG_TEXT_LIMIT).join('\n');
   };
   const pulls = (gh: Github): TerminalComponent[] => gh.watches.length ? [{ type: 'pane', id: 'omd_git_github', label: 'GitHub pull requests', title: `GitHub  ${gh.watches.length}`, children: [
-    { type: 'list', id: 'omd_git_prs', label: 'Watched pull requests', height: gh.watches.length, rows: gh.watches.map(w => ({ value: w.key, label: trim(summary(w, gh), 200), spans: [{ text: `${ICON[bucket(w)] ?? '?'} `, tone: TONE[bucket(w)] ?? 'muted' }, { text: trim(summary(w, gh), width - 6), tone: stale(w, gh) ? 'muted' : 'normal' }] })), action: { command: 'omd_git:inspect' } },
+    { type: 'list', id: 'omd_git_prs', label: 'Watched pull requests', height: gh.watches.length, rows: gh.watches.map(w => ({ value: w.key, label: trim(summary(w, gh), 200), spans: [{ text: `${ICON[bucket(w)] ?? '?'} `, tone: TONE[bucket(w)] ?? 'muted' }, { text: trim(summary(w, gh), width - 6), tone: stale(w, gh) ? 'muted' : 'normal' }] })), action: { command: 'omd_git:pr' } },
     ...(gh.token === 'missing' || gh.token === 'invalid' ? [line('omd_git_token', 'GitHub token', trim(gh.token === 'missing' ? 'no token: /omd_git:github token' : 'token rejected: /omd_git:github token'), 'attention')] : []),
   ] }] : [];
   const inspector = (w: Watch, gh: Github): TerminalRenderSite => ({ mode: 'replace', components: [{ type: 'dialog', id: 'omd_git_pr', label: 'Pull request details', title: trim(w.key, 128), children: [{ type: 'pane', id: 'omd_git_pr_pane', label: 'Pull request status', title: 'Status', collapsed: false, scroll: 0, children: [line('omd_git_pr_details', 'Details', details(w, gh))] }, button('omd_git_unwatch', `Stop watching ${w.key}`, 'Unwatch', 'github', `unwatch ${w.key}`), button('omd_git_pr_close', 'Close details', 'Close', 'dismiss')] }] });
@@ -699,7 +699,7 @@ export default function activate(api: ModAPI) {
     save({ ...state, github: { ...state.github, watches: all.filter(w => w !== gone), view: null } });
     return { display: `stopped watching ${gone.key}` };
   };
-  api.command('inspect', value => {
+  api.command('pr', value => {
     const state = saved();
     const key = String(value ?? '').trim();
     if (!key) return { display: state.github.watches.map(w => trim(summary(w, state.github), 200)).join('\n') || 'no watched pull requests; /omd_git:github watch adds one' };

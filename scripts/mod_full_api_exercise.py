@@ -76,10 +76,9 @@ def engine(logs, name, binary, args, env, expect_failure=False):
     return output if expect_failure else json.loads(output)
 
 
-def install_request(path, identifier, capabilities, activate=True):
+def install_request(path, identifier, capabilities):
     request = {
         "source": {"kind": "local", "path": str(path)},
-        "activate": activate,
         "trust": {"packages": {identifier: {"capabilities": capabilities}}},
     }
     if identifier in SETTINGS:
@@ -196,6 +195,7 @@ def main():
                 install_request(project, identifier, declared["capabilities"]),
                 env,
             )
+            engine(logs, f"{identifier}-enable-v1", binary, ["package-enable", str(store), identifier], env)
 
         combined_one = engine(
             logs,
@@ -229,7 +229,7 @@ def main():
             migrated[identifier] = engine(
                 logs, f"{identifier}-migrate", binary, ["migrate", str(store), str(project)], env
             )
-            apply_package(logs, f"{identifier}-reactivate", binary, str(store), request, env)
+            engine(logs, f"{identifier}-reactivate", binary, ["package-enable", str(store), identifier], env)
 
         combined_two = engine(
             logs,
@@ -280,7 +280,7 @@ def main():
         request = install_request(console, "atlas_console", manifests["atlas_console"]["capabilities"])
         apply_package(logs, "console-reupgrade", binary, str(store), request, env)
         engine(logs, "console-remigrate", binary, ["migrate", str(store), str(console)], env)
-        apply_package(logs, "console-reactivate", binary, str(store), request, env)
+        engine(logs, "console-reactivate", binary, ["package-enable", str(store), "atlas_console"], env)
 
         final_lock = engine(logs, "package-lock", binary, ["package-lock", str(store)], env)
         final_status = engine(logs, "status", binary, ["status", str(store)], env)

@@ -7,6 +7,7 @@
   "state_scope": "thread",
   "description": "Session status and activity sidebar, state and shortcut header, review draft key and sidebar settings",
   "license": "MIT",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_workspace" },
   "capabilities": [
     "terminal",
     "commands",

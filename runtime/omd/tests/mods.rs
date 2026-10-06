@@ -3931,16 +3931,17 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
     assert!(rejected(&status, "blocked").starts_with("admission_policy_unavailable"));
     assert!(runtime.grants("guard").is_some());
     let guard = root.join("guard");
-    contended(|| store.revoke_authority(&guard));
+    let guard = guard.display().to_string();
+    contended(|| store.revoke(&guard));
     runtime.reload().unwrap();
     assert!(
         runtime.grants("limited").is_some() && runtime.grants("blocked").is_some(),
-        "an expired policy grant no longer judges packages"
+        "a revoked policy mod no longer judges packages"
     );
     write_guard(strict);
     runtime.reload().unwrap();
     assert!(invoke(&mut runtime, "run").is_err());
-    contended(|| store.revoke_authority(&guard));
+    contended(|| store.revoke(&guard));
     runtime.reload().unwrap();
     assert_eq!(
         invoke(&mut runtime, "run").unwrap(),
@@ -4280,34 +4281,31 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
     assert_eq!(status["exposure"].as_array().unwrap().len(), 5);
-    contended(|| store.revoke_authority(&path));
+    contended(|| store.revoke("delegate"));
     runtime.reload().unwrap();
-    let revoked = runtime.grants("delegate").unwrap();
-    assert!(revoked.os_access.is_none() && revoked.approves.is_none());
-    assert!(revoked.http_access.is_none() && revoked.fs_access.is_none());
-    assert!(revoked.mcp_servers.is_empty());
     assert!(
-        !revoked
-            .capabilities
-            .iter()
-            .any(|c| c == "os" || c == "approve")
-    );
-    assert!(
-        runtime
-            .invoke(
-                "delegate",
-                runtime.generation(),
-                "command",
-                "run",
-                Value::Null
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("grant_expired: os")
+        runtime.grants("delegate").is_none(),
+        "a revoked mod is disabled"
     );
     assert_eq!(
-        store.selection_status().unwrap()["selections"][0]["authority_current"],
-        false
+        store.selection_status().unwrap()["selections"][0]["capabilities"],
+        json!([])
+    );
+    assert!(
+        store
+            .enable(&path, true)
+            .unwrap_err()
+            .to_string()
+            .starts_with("capability_denied"),
+        "re-enabling needs a new grant"
+    );
+    let events = store.security_events().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event["event"].clone())
+            .collect::<Vec<_>>(),
+        [json!("trust"), json!("revoke")]
     );
 }
 
