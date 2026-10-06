@@ -28891,10 +28891,34 @@ index 3981e7808..c2ca34adf 100644
 -  status line stays visible
 +  Oh My Diff · upstream-style direct · hooks off · status line stays visible
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index 36c873351..cb6559fb3 100644
+index 36c873351..6f7017997 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
-@@ -222,7 +222,7 @@ impl ChatWidget {
+@@ -12,6 +12,23 @@ use ratatui::text::Span;
+ use ratatui::widgets::Block;
+ use std::cell::Cell;
+
++struct FooterNotes(Vec<crate::terminal_hyperlinks::HyperlinkLine>);
++
++impl Renderable for FooterNotes {
++    fn render(&self, area: Rect, buf: &mut Buffer) {
++        ratatui::widgets::Widget::render(
++            HyperlinkParagraph::new(&self.0, Style::default()),
++            area,
++            buf,
++        );
++    }
++
++    fn desired_height(&self, width: u16) -> u16 {
++        u16::try_from(HyperlinkParagraph::new(&self.0, Style::default()).line_count(width))
++            .unwrap_or(u16::MAX)
++    }
++}
++
+ struct ExternalWriterNotice {
+     command_center_available: bool,
+     agents_navigation_key_available: bool,
+@@ -222,7 +239,7 @@ impl ChatWidget {
          composer_gap: Option<&'a crate::bottom_pane::ComposerGap>,
          working_tip: Option<&'a crate::turn_tip::TurnTip>,
      ) -> RenderableItem<'a> {
@@ -28903,19 +28927,21 @@ index 36c873351..cb6559fb3 100644
              RenderableItem::Owned(Box::new(
                  Paragraph::new("Forking conversation…".dim()).inset(Insets::tlbr(
                      /*top*/ 1, /*left*/ 2, /*bottom*/ 1, /*right*/ 2,
-@@ -255,7 +255,18 @@ impl ChatWidget {
+@@ -255,7 +272,20 @@ impl ChatWidget {
                      command_popup_placement,
                      footer,
                  })
 +        };
-+        let notes = crate::mod_ui::footer_lines(self.last_rendered_width.get().unwrap_or(80));
-+        if notes.is_empty() || self.bottom_pane.has_active_view() || self.external_writer_view {
++        let notes = FooterNotes(crate::mod_ui::footer_hyperlink_lines(
++            self.last_rendered_width.get().unwrap_or(80),
++        ));
++        if notes.0.is_empty() || self.bottom_pane.has_active_view() || self.external_writer_view {
 +            return bottom;
          }
 +        let mut flex = FlexRenderable::new();
 +        flex.push(
 +            0,
-+            RenderableItem::Owned(Box::new(Paragraph::new(notes))).inset(Insets::tlbr(1, 0, 0, 0)),
++            RenderableItem::Owned(Box::new(notes)).inset(Insets::tlbr(1, 0, 0, 0)),
 +        );
 +        flex.push(0, bottom);
 +        RenderableItem::Owned(Box::new(flex))
@@ -28923,7 +28949,7 @@ index 36c873351..cb6559fb3 100644
 
      /// Returns compact live-history lines using the current rich or raw presentation.
 diff --git a/codex-rs/tui/src/chatwidget/rendering_tests.rs b/codex-rs/tui/src/chatwidget/rendering_tests.rs
-index 624d58765..bf7adb1ca 100644
+index 624d58765..bf1b8e9a2 100644
 --- a/codex-rs/tui/src/chatwidget/rendering_tests.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering_tests.rs
 @@ -133,9 +133,10 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
@@ -28962,6 +28988,37 @@ index 624d58765..bf7adb1ca 100644
      ");
 
      widget.local_settings.tui.animations = false;
+@@ -230,6 +231,30 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
+     }
+ }
+
++#[tokio::test]
++#[serial_test::serial]
++async fn above_composer_links_are_marked_in_the_rendered_footer() {
++    let (widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot {
++        view: codex_omd::ModView::parse(serde_json::json!({"sites": {"above_composer": {"components": [
++            {"type":"line","id":"ref","label":"Ref","spans":[{"text":"see "},{"text":"docs","link":"https://example.com/docs"}]}
++        ]}}}))
++        .unwrap(),
++        ..codex_omd::ModViewSnapshot::default()
++    });
++    let frame = render_frame(&widget, /*width*/ 80);
++    let marked = frame
++        .content
++        .iter()
++        .filter(|cell| {
++            cell.symbol()
++                .starts_with("\x1b]8;;https://example.com/docs\x07")
++        })
++        .count();
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    assert_eq!(marked, 4);
++}
++
+ #[tokio::test]
+ async fn external_writer_view_shows_notice_instead_of_composer() {
+     let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
 diff --git a/codex-rs/tui/src/chatwidget/skills.rs b/codex-rs/tui/src/chatwidget/skills.rs
 index dc718a712..b7781c3c6 100644
 --- a/codex-rs/tui/src/chatwidget/skills.rs
@@ -111064,10 +111121,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..df6f7ab17
+index 000000000..fdbd513d9
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1738 @@
+@@ -0,0 +1,1743 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -112451,9 +112508,14 @@ index 000000000..df6f7ab17
 +                    codex_omd::model_request::queue_section(thread, &call.caller, text)?;
 +                }
 +                match call_id {
-+                    Some(call_id) if tui.is_owned_screen() => {
-+                        crate::mod_render::tool_notice(call_id, kind, text, &call.caller);
-+                    }
++                    Some(call_id)
++                        if tui.is_owned_screen()
++                            && crate::mod_render::tool_notice(
++                                call_id,
++                                kind,
++                                text,
++                                &call.caller,
++                            ) => {}
 +                    Some(call_id) => {
 +                        self.chat_widget
 +                            .add_to_history(crate::history_cell::new_mod_notice(
@@ -117819,10 +117881,10 @@ index 000000000..814471ce1
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..7769c57c7
+index 000000000..978001e0a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,193 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -117941,15 +118003,18 @@ index 000000000..7769c57c7
 +fn undrawn_rasters_drain_their_queue_under_the_frame_budget() {
 +    let now = Instant::now();
 +    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
-+    let status = |at| {
-+        blit_at("raster-undrawn", "owner", cell.clone(), at).expect("reply")["status"].clone()
-+    };
++    let status =
++        |at| blit_at("raster-undrawn", "owner", cell.clone(), at).expect("reply")["status"].clone();
 +    for _ in 0..QUEUE_UPDATES {
 +        assert_eq!(status(now), Value::Null);
 +    }
 +    assert_eq!(status(now), Value::Null, "the first update is due at once");
 +    assert_eq!(status(now), "backpressure");
-+    assert_eq!(status(now + FRAME), Value::Null, "one update drains per frame");
++    assert_eq!(
++        status(now + FRAME),
++        Value::Null,
++        "one update drains per frame"
++    );
 +    retain(&BTreeSet::new());
 +}
 +
@@ -118015,10 +118080,10 @@ index 000000000..7769c57c7
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..f9a95d284
+index 000000000..db8f63e96
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,621 @@
+@@ -0,0 +1,624 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -118146,12 +118211,15 @@ index 000000000..f9a95d284
 +    owner: String,
 +}
 +
-+/// Attaches a mod notice beneath the transcript cell of one tool call; false while no drawn cell claims the call.
++/// Attaches a mod notice beneath the drawn transcript cell of one tool call; false, storing nothing, when no drawn cell claims the call.
 +pub(crate) fn tool_notice(call_id: &str, kind: &str, text: &str, owner: &str) -> bool {
-+    let drawn = DRAWN_CALLS
++    if !DRAWN_CALLS
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .contains(call_id);
++        .contains(call_id)
++    {
++        return false;
++    }
 +    let mut notices = TOOL_NOTICES
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -118166,7 +118234,7 @@ index 000000000..f9a95d284
 +    });
 +    EPOCH.fetch_add(1, Ordering::Relaxed);
 +    schedule_frame(Duration::ZERO);
-+    drawn
++    true
 +}
 +
 +pub(crate) fn tool_notice_lines(target: &RenderTarget) -> Vec<HyperlinkLine> {
@@ -118642,10 +118710,10 @@ index 000000000..f9a95d284
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 000000000..181e20198
+index 000000000..3dcaec12a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,130 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -118768,8 +118836,13 @@ index 000000000..181e20198
 +fn tool_notices_report_whether_a_drawn_cell_claims_the_call() {
 +    let target = |id: &str| RenderTarget::new("tool_call", id, false, json!({}));
 +    assert!(!tool_notice("call_unseen", "info", "x", "checks"));
++    assert!(
++        tool_notice_lines(&target("call_unseen")).is_empty(),
++        "a refused notice is not stored for a cell drawn later"
++    );
 +    tool_notice_lines(&target("call_seen"));
 +    assert!(tool_notice("call_seen", "info", "x", "checks"));
++    assert_eq!(tool_notice_lines(&target("call_seen")).len(), 1);
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
@@ -121354,10 +121427,10 @@ index 000000000..d1f0b5e66
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..be21097ee
+index 000000000..d63e96d04
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3685 @@
+@@ -0,0 +1,3699 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -121491,6 +121564,8 @@ index 000000000..be21097ee
 +    checked: BTreeMap<String, BTreeSet<String>>,
 +    hotkeys: Vec<(String, String)>,
 +    autofocus: Vec<String>,
++    /// Controls that held focus when their overlay's anchor vanished.
++    parked: BTreeSet<String>,
 +    regions: Vec<Region>,
 +    layers: Vec<(Rect, u16)>,
 +    layer: u16,
@@ -121601,6 +121676,7 @@ index 000000000..be21097ee
 +    checked: BTreeMap::new(),
 +    hotkeys: Vec::new(),
 +    autofocus: Vec::new(),
++    parked: BTreeSet::new(),
 +    regions: Vec::new(),
 +    layers: Vec::new(),
 +    layer: 0,
@@ -121926,6 +122002,7 @@ index 000000000..be21097ee
 +    interaction.seeds.retain(|id, _| ids.contains(id));
 +    interaction.echoes.retain(|id, _| ids.contains(id));
 +    interaction.hovered.retain(|id, _| ids.contains(id));
++    interaction.parked.retain(|id| ids.contains(id));
 +    if interaction
 +        .captured
 +        .as_ref()
@@ -123428,14 +123505,28 @@ index 000000000..be21097ee
 +        .collect::<Vec<_>>();
 +    overlays.sort_by_key(|(overlay, _)| overlay.z);
 +    for (index, (overlay, site)) in overlays.into_iter().enumerate() {
++        let ids = codex_omd::component_ids_of(&site.components);
 +        let Some(area) = overlay_area(screen, overlay, &interaction.anchors) else {
-+            if interaction.focused.as_ref().is_some_and(|focused| {
-+                codex_omd::component_ids_of(&site.components).contains(focused)
-+            }) {
-+                interaction.focused = None;
++            if let Some(held) = interaction
++                .focused
++                .take_if(|focused| ids.contains(&*focused))
++            {
++                interaction.parked.insert(held);
 +            }
 +            continue;
 +        };
++        let parked = interaction
++            .parked
++            .iter()
++            .filter(|id| ids.contains(*id))
++            .cloned()
++            .collect::<Vec<_>>();
++        if interaction.focused.is_none() {
++            interaction.focused = parked.first().cloned();
++        }
++        for id in parked {
++            interaction.parked.remove(&id);
++        }
 +        interaction.layer = u16::try_from(index + 1).unwrap_or(DIALOG_LAYER - 1);
 +        interaction.layers.push((area, interaction.layer));
 +        Clear.render(area, buffer);
@@ -123844,10 +123935,6 @@ index 000000000..be21097ee
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
-+}
-+
-+pub(crate) fn footer_lines(width: u16) -> Vec<Line<'static>> {
-+    crate::terminal_hyperlinks::visible_lines(footer_hyperlink_lines(width))
 +}
 +
 +pub(crate) fn footer_hyperlink_lines(width: u16) -> Vec<HyperlinkLine> {
@@ -125045,10 +125132,10 @@ index 000000000..be21097ee
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..7ed08bd8b
+index 000000000..d4933ece9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1829 @@
+@@ -0,0 +1,1911 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -126301,12 +126388,19 @@ index 000000000..7ed08bd8b
 +#[test]
 +#[serial_test::serial]
 +fn autofocus_in_an_overlay_without_a_drawn_anchor_is_released() {
-+    let snapshot = snapshot(serde_json::json!({"sites":{
-+        "sidebar":{"components":[{"type":"text","id":"body","label":"Body","text":"x"}]},
-+        "fixture/tip":{"overlay":{"anchor":{"component":"gone"},"width":20,"height":3},"components":[
-+            {"type":"input","id":"tip_query","label":"Query","autofocus":true,"action":{"command":"fixture:search"}}
-+        ]}
-+    },"sidebar_width":30}));
++    let view = |anchor: &str| {
++        snapshot(serde_json::json!({"sites":{
++            "sidebar":{"components":[
++                {"type":"text","id":anchor,"label":"Body","text":"x"},
++                {"type":"input","id":"other","label":"Other","action":{"command":"fixture:other"}}
++            ]},
++            "fixture/tip":{"overlay":{"anchor":{"component":"gone"},"width":20,"height":3},"components":[
++                {"type":"input","id":"tip_query","label":"Query","autofocus":true,"action":{"command":"fixture:search"}},
++                {"type":"input","id":"tip_note","label":"Note","action":{"command":"fixture:note"}}
++            ]}
++        },"sidebar_width":30}))
++    };
++    let (snapshot, anchored) = (view("body"), view("gone"));
 +    let area = Rect::new(0, 0, 80, 24);
 +    preview(ModViewSnapshot::default());
 +    sync_interaction(&ModView::default());
@@ -126321,6 +126415,48 @@ index 000000000..7ed08bd8b
 +    assert_eq!(focused().as_deref(), Some("tip_query"));
 +    render(area, area, &mut Buffer::empty(area), &snapshot);
 +    assert_eq!(focused(), None);
++    let set = |id: Option<&str>| {
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused = id.map(str::to_owned);
++    };
++    let draw = |view: &ModViewSnapshot| {
++        sync_interaction(&view.view);
++        render(area, area, &mut Buffer::empty(area), view);
++    };
++    draw(&anchored);
++    assert_eq!(
++        focused().as_deref(),
++        Some("tip_query"),
++        "the returning anchor restores focus nobody has taken"
++    );
++    set(Some("tip_note"));
++    draw(&snapshot);
++    assert_eq!(focused(), None);
++    draw(&anchored);
++    assert_eq!(
++        focused().as_deref(),
++        Some("tip_note"),
++        "the control that held focus returns, not the autofocus one"
++    );
++    set(Some("tip_query"));
++    draw(&snapshot);
++    assert_eq!(focused(), None);
++    set(Some("other"));
++    draw(&anchored);
++    assert_eq!(
++        focused().as_deref(),
++        Some("other"),
++        "focus the user moved is not taken back"
++    );
++    set(None);
++    draw(&anchored);
++    assert_eq!(
++        focused(),
++        None,
++        "a restore is spent once the anchor is back"
++    );
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -126363,17 +126499,39 @@ index 000000000..7ed08bd8b
 +            {"type":"markdown","id":"notes","label":"Notes","text":"[site](https://example.org/)"}
 +        ]}}}),
 +    ));
-+    let destinations = footer_hyperlink_lines(80)
-+        .iter()
-+        .flat_map(|line| {
-+            line.hyperlinks
-+                .iter()
-+                .filter_map(|link| link.terminal_destination())
-+        })
-+        .collect::<Vec<_>>();
-+    for destination in ["https://example.com/docs", "https://example.org/"] {
-+        assert!(destinations.iter().any(|found| found == destination));
-+    }
++    let lines = footer_hyperlink_lines(80);
++    let area = Rect::new(0, 0, 80, 2);
++    let mut buffer = Buffer::empty(area);
++    crate::terminal_hyperlinks::HyperlinkParagraph::new(&lines, Style::default())
++        .render(area, &mut buffer);
++    let linked = |destination: &str| {
++        area.positions()
++            .filter(|position| {
++                buffer[*position]
++                    .symbol()
++                    .starts_with(&format!("\x1b]8;;{destination}\x07"))
++            })
++            .count()
++    };
++    assert_eq!(linked("https://example.com/docs"), 4);
++    let site = &lines[1];
++    assert_eq!(
++        site.line
++            .to_string()
++            .matches("https://example.org/")
++            .count(),
++        1
++    );
++    assert_eq!(
++        site.hyperlinks.len(),
++        2,
++        "the label and the shown destination are separate links"
++    );
++    assert!(site.hyperlinks[0].columns.end <= site.hyperlinks[1].columns.start);
++    assert_eq!(
++        linked("https://example.org/"),
++        4 + "https://example.org/".len()
++    );
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -126525,9 +126683,9 @@ index 000000000..7ed08bd8b
 +    );
 +    assert_eq!(texts(NoticePlacement::Toast), ["two"]);
 +    assert!(
-+        footer_lines(80)
++        footer_hyperlink_lines(80)
 +            .iter()
-+            .any(|line| line.to_string().contains("two (checks)"))
++            .any(|line| line.line.to_string().contains("two (checks)"))
 +    );
 +    assert!(!clear_notice("other", "run"));
 +    assert!(clear_notice("checks", "run"));
@@ -126563,7 +126721,18 @@ index 000000000..7ed08bd8b
 +
 +#[test]
 +fn tool_notices_attach_to_their_call_and_tool_groups() {
-+    crate::mod_render::tool_notice("call_4ej_notice", "warning", "slow test", "checks");
++    crate::mod_render::tool_notice_lines(&crate::mod_render::RenderTarget::new(
++        "tool_call",
++        "call_4ej_notice",
++        false,
++        serde_json::json!({}),
++    ));
++    assert!(crate::mod_render::tool_notice(
++        "call_4ej_notice",
++        "warning",
++        "slow test",
++        "checks"
++    ));
 +    let lines = |target: crate::mod_render::RenderTarget| {
 +        crate::mod_render::tool_notice_lines(&target)
 +            .into_iter()
