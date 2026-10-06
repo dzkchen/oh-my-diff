@@ -120,7 +120,7 @@
     }
   },
   "qualification": "development package candidate; supported collection and default pending",
-  "runtime_patch_sha256": "65335d9154864df60511ef9a0b19878a1b43b7e4b3189ee8cf0d5d8d6bdf5f01",
+  "runtime_patch_sha256": "ae3565831b1c094c5fc519aa35807fd7fadc85cc0c59b88dda3f820cbc6374b4",
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "source_sha256": {
@@ -316,7 +316,7 @@
     "plugins/optional/plugins/omd-session-review/tsconfig.json": "921e1c62c4469bcfea370d6a993d2dacc88a0bfcdaa6394fb1408692b1a6d26a",
     "runtime/full-mods.lock.json": "4f81b15251ae10912d86c8ea0815cf6cb7fba48d81f9f33744157d6eef4db913",
     "runtime/hardened-entitlements.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
-    "runtime/patches/manifest.json": "9d064b4017a805d1c71b00cbab63fcb5eee6a7af15b16df3e68849684abe2d01",
+    "runtime/patches/manifest.json": "f0c841f69c86d2f6d41f7024e02f82318c5ea21dc5078f6d0fcdf3dd0793b741",
     "runtime/plugin-v1.lock.json": "85972cc47a22d3b571cc1bba65ff8eca0dc09709f30b1ae59253c1bee95245f7",
     "runtime/preview-v1.lock.json": "a4787a96336ca9cd035d21bf7d287b9949d0cc4bacec4d10e6225a4efb3bdbfc",
     "scripts/authority_broker.py": "7178e9b86feafaf0665e154af71ae603a09d11c001c576f8708d66c19df01e11",
@@ -326,7 +326,7 @@
     "scripts/lean_profiles.py": "58027d0d77296e5139ad0ba629c5e585dd13fda5037abddef037d38d69c44363",
     "scripts/lean_release_lock.py": "e1f3be7641a6ed6890c4aa89550b5bb1d2027e324030d0b6e7710ffb1834b476",
     "scripts/preview_lock.py": "a4bd67597366322d58e58739781be7e2a24020fd1e311a4ad42f03a5b49240fc",
-    "upstream.lock.json": "23640bb2bf196119e92e182dc9edd9062e9f8f41798aa1edbe9f01cdd11be2a4"
+    "upstream.lock.json": "c3fcf9b5f93a9e278835fd44a0eaba44c153f6f1a30d27781fb6351ccc7f7ee1"
   },
   "target": "aarch64-apple-darwin",
   "upstream_commit": "d27764b82f7118f674371e6d6e76271d9d606edb",

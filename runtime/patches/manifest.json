@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "65335d9154864df60511ef9a0b19878a1b43b7e4b3189ee8cf0d5d8d6bdf5f01"
+    "sha256": "ae3565831b1c094c5fc519aa35807fd7fadc85cc0c59b88dda3f820cbc6374b4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1339,9 +1339,21 @@
       "before": "038bcf65e1cc5040795789c83350ac41f5c56dffc50889d12faec8d08420c34c",
       "after": "ffcc9985a1bda6afb02d8c8143479fe019d1fca5a5e1931ec278e8c8b4c156f2"
     },
+    "codex-rs/tui/src/app/owned_transcript_browsing_tests.rs": {
+      "before": "66355c463725e00f3149827c5729aec1ca1ed1b8f1eaed0f7f12193b831c58b1",
+      "after": "32f321a634901964839af646f3ad50e8109b24fe735f5ac7057c929fd427381e"
+    },
+    "codex-rs/tui/src/app/owned_transcript_follow_tests.rs": {
+      "before": "8b9d25092d536198d5000ad130c28fac4c925f08968cbece7aa7ab23b7c83286",
+      "after": "ecaa9009a757617c90c02dee9723c221d2d009386c344cf7ed9a0a5da688935c"
+    },
+    "codex-rs/tui/src/app/owned_transcript_input_tests.rs": {
+      "before": "9a8d857ea4a9e1feb6c2b1373a87bb1c89cf583d0a2d3042c3b77d63ba432bc0",
+      "after": "3f681edfd4cff9dbf1df208fb7abefdaca8c4f891471c11fc15fb704bad0e541"
+    },
     "codex-rs/tui/src/app/owned_transcript_tests.rs": {
       "before": "2bdf55e478e931d53727afe1164a00c156966b1f32591e4ab74632841b08abe5",
-      "after": "698a9c59f99ba82999c0b25935afbf1db156d2e4efd88bcf2733af0c18e92a70"
+      "after": "affbbc2bccf6637af0651762a5ff73a16adb6b9422f6156d11970029ffb710b6"
     },
     "codex-rs/tui/src/app/resize_reflow.rs": {
       "before": "d0b80af2822367bca42ebdd8ff535954f9bc22396076fe3f077f670ceca87b0a",
@@ -1506,6 +1518,10 @@
     "codex-rs/tui/src/app/tests/startup_defaults_tests.rs": {
       "before": "2bed44a2f52b2f1c88066443253658f87581d701a363471a21aade37066adf96",
       "after": "130f49ad929b813db1240e3112f375a65e3e142fc3d82e5a64c2329871492a59"
+    },
+    "codex-rs/tui/src/app/warning_notice_tests.rs": {
+      "before": "73f6c992a60541ec93f3d34660ed63c3dfc79fbd10d5eaff900db25c5e9f0c18",
+      "after": "1e75cc10f74cb1caa634d559704735effd3923c5d4b66d309d268598487b3bd6"
     },
     "codex-rs/tui/src/app_event.rs": {
       "before": "c9f3c338d451bfb48e0a3390490d3091ee82ee59bef6f4d57ef271c5575b7776",

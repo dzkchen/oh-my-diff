@@ -25790,8 +25790,148 @@ index 23d40daaa..d9932172c 100644
          if footer_height_changed {
              tui.frame_requester().schedule_frame();
          }
+diff --git a/codex-rs/tui/src/app/owned_transcript_browsing_tests.rs b/codex-rs/tui/src/app/owned_transcript_browsing_tests.rs
+index 0bcc70d6a..30fac9ede 100644
+--- a/codex-rs/tui/src/app/owned_transcript_browsing_tests.rs
++++ b/codex-rs/tui/src/app/owned_transcript_browsing_tests.rs
+@@ -6,6 +6,7 @@ use crate::history_cell::PlainHistoryCell;
+ use pretty_assertions::assert_eq;
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn escape_restores_reading_origin_after_details_navigation_and_resize() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -88,6 +89,7 @@ async fn escape_restores_reading_origin_after_details_navigation_and_resize() ->
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn browsing_search_and_selection_consume_escape_before_mode_exit() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -138,6 +140,7 @@ async fn browsing_search_and_selection_consume_escape_before_mode_exit() -> Resu
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn browsing_footer_adapts_to_width() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -201,6 +204,7 @@ async fn browsing_footer_adapts_to_width() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn inline_browsing_is_compact_and_escape_restores_the_existing_overlay() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -238,6 +242,7 @@ async fn inline_browsing_is_compact_and_escape_restores_the_existing_overlay() -
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn browsing_details_use_the_remapped_chord_without_cancelling_preview() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -345,6 +350,7 @@ async fn browsing_details_use_the_remapped_chord_without_cancelling_preview() ->
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn browsing_requires_fresh_escape_presses_and_ignores_confirmation_repeats() -> Result<()> {
+     let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -468,6 +474,7 @@ async fn browsing_requires_fresh_escape_presses_and_ignores_confirmation_repeats
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn browsing_arrows_and_vim_keys_navigate_without_editing_the_draft() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+diff --git a/codex-rs/tui/src/app/owned_transcript_follow_tests.rs b/codex-rs/tui/src/app/owned_transcript_follow_tests.rs
+index 6f05c021e..5aca9ccfe 100644
+--- a/codex-rs/tui/src/app/owned_transcript_follow_tests.rs
++++ b/codex-rs/tui/src/app/owned_transcript_follow_tests.rs
+@@ -8,6 +8,7 @@ use crossterm::event::MouseEventKind;
+ use pretty_assertions::assert_eq;
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn follow_control_click_preserves_draft_caret_and_composer_geometry() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     app.local_settings.tui.animations = false;
+diff --git a/codex-rs/tui/src/app/owned_transcript_input_tests.rs b/codex-rs/tui/src/app/owned_transcript_input_tests.rs
+index e30be6b96..cd0fe2979 100644
+--- a/codex-rs/tui/src/app/owned_transcript_input_tests.rs
++++ b/codex-rs/tui/src/app/owned_transcript_input_tests.rs
+@@ -138,6 +138,7 @@ fn pointer_event(kind: MouseEventKind, column: u16, row: u16) -> TuiEvent {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn plan_menu_allows_transcript_wheel_scrolling_and_keeps_keyboard_ownership() -> Result<()> {
+     for close in [KeyCode::Esc, KeyCode::Enter] {
+         let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+@@ -230,6 +231,7 @@ async fn plan_menu_allows_transcript_wheel_scrolling_and_keeps_keyboard_ownershi
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn plan_menu_wheel_scrolling_respects_modal_and_completion_popup_bounds() -> Result<()> {
+     let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+     let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+@@ -286,6 +288,7 @@ async fn plan_menu_wheel_scrolling_respects_modal_and_completion_popup_bounds()
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn empty_enter_returns_to_latest_with_contextual_hints() -> Result<()> {
+     let (mut app, mut events, mut operations) = make_test_app_with_channels().await;
+     let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+@@ -357,6 +360,7 @@ async fn empty_enter_returns_to_latest_with_contextual_hints() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn submitting_a_draft_from_history_queues_once_and_follows_immediately() -> Result<()> {
+     let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+     let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+@@ -399,6 +403,7 @@ async fn submitting_a_draft_from_history_queues_once_and_follows_immediately() -
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn enter_preserves_search_backtrack_and_modal_ownership_while_scrolled() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+@@ -458,6 +463,7 @@ async fn enter_preserves_search_backtrack_and_modal_ownership_while_scrolled() -
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn escape_returns_to_latest_without_changing_the_composer_draft() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+@@ -533,6 +539,7 @@ async fn escape_returns_to_latest_without_changing_the_composer_draft() -> Resul
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn composer_paste_releases_selection_and_retains_normal_cursor_movement() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+@@ -581,6 +588,7 @@ async fn composer_paste_releases_selection_and_retains_normal_cursor_movement()
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn modified_arrows_and_editor_chords_resume_composer_movement() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index 46c0da6d9..411d36d57 100644
+index 46c0da6d9..1dd37cf90 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -25814,7 +25954,167 @@ index 46c0da6d9..411d36d57 100644
          runtime_workspace_roots: Vec::new(),
          instruction_source_paths: Vec::new(),
          reasoning_effort: None,
-@@ -1512,3 +1516,281 @@ async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
+@@ -75,6 +79,7 @@ pub(in crate::app) fn buffer_text(buffer: &Buffer) -> String {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn external_writer_escape_returns_to_command_center_without_editing() -> Result<()> {
+     for (detailed, scrolled, offline) in [
+         (false, false, false),
+@@ -150,6 +155,7 @@ async fn external_writer_escape_returns_to_command_center_without_editing() -> R
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn list_spacing_completion_preserves_the_scrolled_reader() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     app.transcript_cells = vec![Arc::new(history_cell::AgentMessageCell::new(
+@@ -196,6 +202,7 @@ async fn list_spacing_completion_preserves_the_scrolled_reader() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn older_page_loading_uses_the_status_row_without_moving_content_or_cursor() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -261,6 +268,7 @@ async fn older_page_loading_uses_the_status_row_without_moving_content_or_cursor
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn recap_spacing_belongs_to_the_transcript_tail() -> Result<()> {
+     let mut snapshots = Vec::new();
+     for (width, height, next_action) in [
+@@ -324,6 +332,7 @@ async fn recap_spacing_belongs_to_the_transcript_tail() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -417,6 +426,7 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()> {
+     use crossterm::event::MouseButton;
+     use crossterm::event::MouseEvent;
+@@ -498,6 +508,7 @@ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()>
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -552,6 +563,7 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     app.transcript_cells = vec![Arc::new(crate::history_cell::PlainHistoryCell::new(vec![
+@@ -582,6 +594,7 @@ async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Result<()> {
+     let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+     let thread_id = ThreadId::new();
+@@ -633,6 +646,7 @@ async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Re
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view() -> Result<()> {
+     let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+     let thread_id = ThreadId::new();
+@@ -693,6 +707,7 @@ async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view(
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Result<()> {
+     for input in [
+         vec![TuiEvent::Paste("abc".to_string())],
+@@ -760,6 +775,7 @@ async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Resu
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn owned_search_and_selection_consume_input_before_composer_and_backtrack() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -824,6 +840,7 @@ async fn owned_search_and_selection_consume_input_before_composer_and_backtrack(
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -869,6 +886,7 @@ async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Resul
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     app.transcript_cells = vec![user_cell("alpha beta")];
+@@ -977,6 +995,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     app.chat_widget
+@@ -1029,6 +1048,7 @@ async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Result<()> {
+     for owned in [true, false] {
+         let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+@@ -1121,6 +1141,7 @@ async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Re
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     attach_thread(&mut app, ThreadId::new());
+@@ -1215,6 +1236,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn double_escape_browses_prompts_without_reverting_and_explains_editing() -> Result<()> {
+     let (mut app, mut events, _operations) = make_test_app_with_channels().await;
+     app.keymap = RuntimeKeymap::from_config(&toml::from_str(
+@@ -1286,6 +1308,7 @@ async fn double_escape_browses_prompts_without_reverting_and_explains_editing()
+ mod browsing;
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn find_refreshes_live_details_before_searching_the_first_query() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     crate::chatwidget::tests::helpers::set_active_cell(
+@@ -1344,6 +1367,7 @@ fn row_containing(tui: &tui::Tui, text: &str) -> u16 {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
+@@ -1512,3 +1536,281 @@ async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
      tui.set_owned_screen(/*owned*/ false)?;
      Ok(())
  }
@@ -27308,6 +27608,18 @@ index 22e27ed3f..3ed98010a 100644
              ");
          }
          let expected_cwd = if override_cwd {
+diff --git a/codex-rs/tui/src/app/warning_notice_tests.rs b/codex-rs/tui/src/app/warning_notice_tests.rs
+index 649160e1e..ac8c09998 100644
+--- a/codex-rs/tui/src/app/warning_notice_tests.rs
++++ b/codex-rs/tui/src/app/warning_notice_tests.rs
+@@ -20,6 +20,7 @@ fn screen(tui: &tui::Tui) -> String {
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn warning_notice_keeps_details_in_transcript_and_preserves_draft() -> Result<()> {
+     let mut app = crate::app::test_support::make_test_app().await;
+     let mut tui = crate::tui::test_support::make_test_tui()?;
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
 index ce30da4ad..1f822ab12 100644
 --- a/codex-rs/tui/src/app_event.rs
