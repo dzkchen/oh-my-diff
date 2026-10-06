@@ -19,9 +19,10 @@
     "lifecycle",
     "terminal"
   ],
+  "assets": ["fingerprint.mjs"],
   "exec_environment": ["GIT_OPTIONAL_LOCKS"],
   "compatibility": {
-    "required_features": ["exec_v1", "guarded_exec_v1", "workspace_access_v1", "workspace_fs_v1", "terminal_lists_v1", "store_v1"]
+    "required_features": ["exec_v1", "guarded_exec_v1", "workspace_access_v1", "workspace_fs_v1", "terminal_lists_v1", "store_v1", "package_text_assets_v1"]
   },
   "settings_schema": {
     "type": "object",
