@@ -44061,10 +44061,10 @@ index 000000000..1681f886e
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..ead6a385d
+index 000000000..1f8698a43
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,689 @@
+@@ -0,0 +1,691 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -44561,19 +44561,21 @@ index 000000000..ead6a385d
 +    let (_, store) = store()?;
 +    store.reload().map_err(|error| error.to_string())?;
 +    if let Ok(core) = core() {
-+        let lead = core.expansion.current();
-+        if let Some(lead) = &lead {
-+            let _ = lead.host.refresh_session(&lead.session);
-+        }
-+        if let Ok(mut runtime) = core.runtime.lock() {
-+            runtime.turn_boundary();
-+            if let Some(lead) = &lead {
-+                refresh_contract(&runtime, &lead.session);
-+            }
-+        }
-+        republish(&core);
++        reloaded(&core);
 +    }
 +    Ok(json!({"action": action, "target": target, "status": "applied"}))
++}
++
++pub(super) fn reloaded(core: &Core) {
++    match core.expansion.current() {
++        Some(lead) => refresh_turn(&lead.host, &lead.session, &core.runtime),
++        None => {
++            if let Ok(mut runtime) = core.runtime.lock() {
++                runtime.turn_boundary();
++            }
++        }
++    }
++    republish(core);
 +}
 +
 +fn components(view: &ModView) -> Vec<&ModComponent> {
@@ -49380,10 +49382,10 @@ index 000000000..6fdc31dcb
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..59f2ba8a5
+index 000000000..881a2fe79
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2339 @@
+@@ -0,0 +1,2338 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -49926,6 +49928,16 @@ index 000000000..59f2ba8a5
 +// `turns.activity` readers see changed files from the turn-activity ledger.
 +fn observes_workspace(runtime: &ModHost) -> bool {
 +    runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
++}
++
++/// Re-reads `host.json`, mod generations and the session contract the way a turn start does.
++fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
++    let _ = host.refresh_session(session);
++    if let Ok(mut runtime) = runtime.lock() {
++        runtime.turn_boundary();
++        refresh_contract(&runtime, session);
++        codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
++    }
 +}
 +
 +fn refresh_contract(runtime: &ModHost, session: &Session) {
@@ -50994,19 +51006,8 @@ index 000000000..59f2ba8a5
 +            let runtime = self.runtime.clone();
 +            let session = lead.session.clone();
 +            let host = lead.host.clone();
-+            let session_repository = lead.host.repository.clone();
-+            let _ = tokio::task::spawn_blocking(move || {
-+                let _ = host.refresh_session(&session);
-+                if let Ok(mut runtime) = runtime.lock() {
-+                    runtime.turn_boundary();
-+                    refresh_contract(&runtime, &session);
-+                    codex_omd::observe_workspace_changes(
-+                        &session_repository,
-+                        observes_workspace(&runtime),
-+                    );
-+                }
-+            })
-+            .await;
++            let _ =
++                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime)).await;
 +            self.publish_workspace_changes(&lead).await;
 +            let evidence = evidence::begin(&self.core, &lead).await;
 +            if let Ok(mut turns) = self.turns.lock() {
@@ -58406,10 +58407,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..0d587fbc5
+index 000000000..2474c85f7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2797 @@
+@@ -0,0 +1,2831 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -58558,6 +58559,40 @@ index 000000000..0d587fbc5
 +            |_| Err(std::io::Error::other("unexpected_host_call")),
 +        )
 +        .unwrap()
++}
++
++#[test]
++fn a_client_recovery_reload_refreshes_the_running_thread_like_a_turn_start() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let lead = &fixture.lead;
++    let write = |exposure: u64| {
++        let config = json!({"limits": {"requests": 400, "exposure_microusd": exposure, "seconds": 86400,
++            "concurrent_workers": 4, "max_depth": 2}, "routes": [{"name": "first", "provider": "local",
++            "model": "first-model", "reasoning_effort": "high", "responses_url": "http://127.0.0.1:1/v1/responses",
++            "roles": ["lead"], "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
++            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
++            "input_token_ceiling": 1000, "included_subscription": true}}]});
++        std::fs::write(lead.host.root.join("host.json"), config.to_string()).unwrap();
++    };
++    write(1000);
++    let route = lead
++        .host
++        .route_config()
++        .0
++        .route("first", config::RouteRole::Lead, None)
++        .cloned()
++        .unwrap();
++    lead.host
++        .enroll(lead.thread, &lead.session, "lead", Some(&route), None)
++        .unwrap();
++    lead.host.refresh_session(&lead.session).unwrap();
++    assert_eq!(lead.session.task.remaining().unwrap().2, 1000);
++    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(lead));
++    write(5000);
++    super::super::clients::reloaded(&fixture.core);
++    assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
 +}
 +
 +#[test]
@@ -112324,10 +112359,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..fdbd513d9
+index 000000000..5a23c38c7
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1743 @@
+@@ -0,0 +1,1801 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -113946,6 +113981,64 @@ index 000000000..fdbd513d9
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn tool_notices_without_a_drawn_call_fall_back_to_a_history_notice()
++    -> color_eyre::Result<()> {
++        let (mut app, mut events, _ops) = crate::app::tests::make_test_app_with_channels().await;
++        let mut tui = crate::tui::test_support::make_test_tui()?;
++        tui.set_owned_screen(/*owned*/ true)?;
++        let notice = |call_id: &str| {
++            let (reply, _) = std::sync::mpsc::sync_channel(1);
++            SurfaceCall {
++                caller: "checks".into(),
++                operation: "terminal.notice".into(),
++                arguments: json!({"text": "lint failed", "placement": "transcript", "tool_call_id": call_id}),
++                context: codex_omd::app_routes::InvocationContext::User,
++                remote: false,
++                thread: None,
++                confirm: None,
++                reply,
++            }
++        };
++        let mut history = || {
++            std::iter::from_fn(|| events.try_recv().ok())
++                .filter_map(|event| match event {
++                    AppEvent::InsertHistoryCell(cell) => Some(
++                        cell.transcript_lines(/*width*/ 80)
++                            .iter()
++                            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
++                            .collect::<String>(),
++                    ),
++                    _ => None,
++                })
++                .collect::<Vec<_>>()
++        };
++        app.mod_notice(&mut tui, &notice("call_unseen"))
++            .expect("notice");
++        let shown = history();
++        assert!(
++            shown.len() == 1
++                && shown[0].contains("lint failed")
++                && shown[0].contains("checks · tool call_unseen"),
++            "{shown:?}"
++        );
++        crate::mod_render::tool_notice_lines(&crate::mod_render::RenderTarget::new(
++            "tool_call",
++            "call_seen",
++            false,
++            json!({}),
++        ));
++        app.mod_notice(&mut tui, &notice("call_seen"))
++            .expect("notice");
++        assert_eq!(
++            history(),
++            Vec::<String>::new(),
++            "a drawn call shows the notice in its cell"
++        );
++        Ok(())
++    }
 +
 +    #[test]
 +    fn config_set_confirms_every_key_but_the_callers_own_settings() {
@@ -116584,10 +116677,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..4f5649b7d
+index 000000000..64442dbd0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,347 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -116715,25 +116808,31 @@ index 000000000..4f5649b7d
 +/// Called before each draw; measures cell pixels again only when the grid size changes.
 +pub(crate) fn update(animations: bool, columns: u16, rows: u16, pointer: bool) {
 +    let changed = with(|facts| {
-+        let before = (*facts, PIXEL_MODE.load(Ordering::Relaxed));
++        let pixel = PIXEL_MODE.load(Ordering::Relaxed);
++        let before = *facts;
 +        facts.reduced_motion = !animations;
 +        facts.pointer = pointer;
 +        if facts.size != (columns, rows) {
 +            facts.measure();
 +            facts.size = (columns, rows);
 +        }
-+        let after = (
-+            Facts {
-+                size: before.0.size,
-+                ..*facts
-+            },
-+            PIXEL_MODE.load(Ordering::Relaxed),
-+        );
-+        after != before
++        reports_differ((before, pixel), (*facts, pixel))
 +    });
 +    if changed {
 +        std::thread::spawn(crate::mod_runtime::rerender);
 +    }
++}
++
++/// Whether what the mod view reports changed; the grid size alone does not re-render.
++fn reports_differ(before: (Facts, bool), after: (Facts, bool)) -> bool {
++    let after = (
++        Facts {
++            size: before.0.size,
++            ..after.0
++        },
++        after.1,
++    );
++    after != before
 +}
 +
 +/// SGR-pixel reports are requested only where the terminal is known to honor them.
@@ -116750,7 +116849,8 @@ index 000000000..4f5649b7d
 +/// Returns the previous mode; the pointer fact the mod view reports follows it, so a flip re-renders.
 +fn set_pixel_mode(on: bool) -> bool {
 +    let was = PIXEL_MODE.swap(on, Ordering::Relaxed);
-+    if was != on {
++    let facts = facts();
++    if reports_differ((facts, was), (facts, on)) {
 +        std::thread::spawn(crate::mod_runtime::rerender);
 +    }
 +    was
@@ -116930,10 +117030,10 @@ index 000000000..4f5649b7d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..896744104
+index 000000000..a08e43ad2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,148 @@
 +use super::*;
 +use crossterm::event::KeyModifiers;
 +use crossterm::event::MouseEventKind;
@@ -117028,6 +117128,41 @@ index 000000000..896744104
 +    assert_eq!(value["pointer"], "none");
 +    assert_eq!(value["cell_px"], json!({"width": 10, "height": 20}));
 +    *FACTS.lock().unwrap() = None;
++}
++
++#[test]
++fn only_reported_facts_and_pixel_mode_changes_re_render() {
++    let facts = Facts {
++        pointer: true,
++        cell: Some((10, 20)),
++        ..Facts::default()
++    };
++    let resized = Facts {
++        size: (120, 40),
++        ..facts
++    };
++    assert!(!reports_differ((facts, false), (resized, false)));
++    assert!(reports_differ((facts, false), (facts, true)));
++    assert!(reports_differ(
++        (facts, false),
++        (
++            Facts {
++                pointer: false,
++                ..resized
++            },
++            false
++        )
++    ));
++    assert!(reports_differ(
++        (facts, true),
++        (
++            Facts {
++                cell: Some((8, 16)),
++                ..facts
++            },
++            true
++        )
++    ));
 +}
 +
 +#[test]

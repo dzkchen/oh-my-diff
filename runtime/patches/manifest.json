@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "ae3565831b1c094c5fc519aa35807fd7fadc85cc0c59b88dda3f820cbc6374b4"
+    "sha256": "9a815e1dc1b201a3ab84057a3cfaf7f5f5f76418cf4db84189f06872d8da8136"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -729,7 +729,7 @@
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
-      "after": "61b2833ed8131b84912a1c64c7b027592c6bfbdd381dc968156065d9f39e0350"
+      "after": "30485ee77c7f4b20699b870192d527b7899a06d4d433eab5a5ee580f49467624"
     },
     "codex-rs/ext/omd/src/clients_tests.rs": {
       "before": null,
@@ -773,7 +773,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "8685ab1867f6821ff5ba2f8ad5205fd5b6edf313c4ccd9d9624f3024d55e10bb"
+      "after": "3dafb18336278f223f8dd472c96e03858dca92a798aa44ec5c060daff158e12c"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -829,7 +829,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "1768c16409c680794feab1d6b6569ec363a4246194c5f9475ea5cc4457556d1a"
+      "after": "0799cc8f03fe7865cf70d006adaf77d77f94770384b48cae0b1f6af60af5aafe"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1333,7 +1333,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "639860147145e70d07d930145600911f096641c3ae6000d95cbc06ffb10022d7"
+      "after": "e0f5afb9bb70dd1627a53ebe170df6a801f294a07d5cbe09e49b545bb6c584a4"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "038bcf65e1cc5040795789c83350ac41f5c56dffc50889d12faec8d08420c34c",
@@ -2149,11 +2149,11 @@
     },
     "codex-rs/tui/src/mod_client.rs": {
       "before": null,
-      "after": "5dccf4a9e6730c67bc8e4bbed61057d3db52c6beab520a49c95f15c00efc27b6"
+      "after": "6f7df29e650d1d9ac51f06816fc5a84dc4f316e04cd180988d02ee632af9b28c"
     },
     "codex-rs/tui/src/mod_client_tests.rs": {
       "before": null,
-      "after": "70b49516782c11d19bb9186d15fc3bd85afda23e568e57562f5a3184e9edd113"
+      "after": "636b989af88d747d302d607272be1a99e283e28eb2452cda6fe874e9181fe554"
     },
     "codex-rs/tui/src/mod_components.rs": {
       "before": null,

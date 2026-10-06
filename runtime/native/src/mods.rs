@@ -542,6 +542,16 @@ fn observes_workspace(runtime: &ModHost) -> bool {
     runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 }
 
+/// Re-reads `host.json`, mod generations and the session contract the way a turn start does.
+fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
+    let _ = host.refresh_session(session);
+    if let Ok(mut runtime) = runtime.lock() {
+        runtime.turn_boundary();
+        refresh_contract(&runtime, session);
+        codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
+    }
+}
+
 fn refresh_contract(runtime: &ModHost, session: &Session) {
     let documents = runtime.contract_documents();
     if session
@@ -1608,19 +1618,8 @@ impl TurnLifecycleContributor for Mods {
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
             let host = lead.host.clone();
-            let session_repository = lead.host.repository.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = host.refresh_session(&session);
-                if let Ok(mut runtime) = runtime.lock() {
-                    runtime.turn_boundary();
-                    refresh_contract(&runtime, &session);
-                    codex_omd::observe_workspace_changes(
-                        &session_repository,
-                        observes_workspace(&runtime),
-                    );
-                }
-            })
-            .await;
+            let _ =
+                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime)).await;
             self.publish_workspace_changes(&lead).await;
             let evidence = evidence::begin(&self.core, &lead).await;
             if let Ok(mut turns) = self.turns.lock() {

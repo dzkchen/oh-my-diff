@@ -494,19 +494,21 @@ pub fn recovery_apply(action: &str, target: &str) -> Result<Value, String> {
     let (_, store) = store()?;
     store.reload().map_err(|error| error.to_string())?;
     if let Ok(core) = core() {
-        let lead = core.expansion.current();
-        if let Some(lead) = &lead {
-            let _ = lead.host.refresh_session(&lead.session);
-        }
-        if let Ok(mut runtime) = core.runtime.lock() {
-            runtime.turn_boundary();
-            if let Some(lead) = &lead {
-                refresh_contract(&runtime, &lead.session);
-            }
-        }
-        republish(&core);
+        reloaded(&core);
     }
     Ok(json!({"action": action, "target": target, "status": "applied"}))
+}
+
+pub(super) fn reloaded(core: &Core) {
+    match core.expansion.current() {
+        Some(lead) => refresh_turn(&lead.host, &lead.session, &core.runtime),
+        None => {
+            if let Ok(mut runtime) = core.runtime.lock() {
+                runtime.turn_boundary();
+            }
+        }
+    }
+    republish(core);
 }
 
 fn components(view: &ModView) -> Vec<&ModComponent> {

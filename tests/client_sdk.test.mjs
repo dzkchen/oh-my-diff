@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -19,7 +20,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', pushes = true } = {}) {
+function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0 } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -46,9 +47,10 @@ function fakeHost({ padding = '', pushes = true } = {}) {
     if (message.method === 'initialize') reply({ userAgent: 'fake' });
     else if (message.method === 'omd/client/attach') {
       reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
-      if (pushes) host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view: {}, padding }, actionToken: host.token } });
+      if (pushes) host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
     } else if (message.method === 'omd/action') {
-      if (message.params.actionToken !== host.token) host.send({ id: message.id, error: { code: -32600, message: 'action_replayed' } });
+      if (staleActions > 0 && staleActions--) host.send({ id: message.id, error: { code: -32600, message: 'action_stale' } });
+      else if (message.params.actionToken !== host.token) host.send({ id: message.id, error: { code: -32600, message: 'action_replayed' } });
       else {
         const spent = (host.token = `token-${++host.used}`);
         if (message.params.component === 'redraws') {
@@ -58,7 +60,7 @@ function fakeHost({ padding = '', pushes = true } = {}) {
         if (message.params.component === 'gone') host.send({ id: message.id, error: { code: -32600, message: 'action_unavailable: gone' } });
         else reply({ status: 'completed', outcome: { display: `ran ${message.params.component}` }, actionToken: spent });
       }
-    } else if (message.method === 'omd/view/read') reply({ epoch: host.epoch, revision: 1, snapshot: { view: {} }, actionToken: host.token });
+    } else if (message.method === 'omd/view/read') reply({ epoch: host.epoch, revision: 1, snapshot: { view }, actionToken: host.token });
     else if (message.method && message.id !== undefined) reply({});
   }
   const push = message => [...sockets].at(-1).write(encodeFrame(1, Buffer.from(JSON.stringify(message)), false));
@@ -213,4 +215,25 @@ test('stdio client survives a child that closes its stdin', async () => {
   await new Promise(resolve => setTimeout(resolve, 300));
   await session.request('thread/list', {}).catch(() => {});
   await until(() => closed);
+});
+
+test('the external client example picks itself again after a stale action', async () => {
+  const view = { sites: { sidebar: { components: [{ type: 'list', id: 'external_clients', rows: [{ value: 'client-1', label: 'this client' }] }] } } };
+  const host = fakeHost({ view, staleActions: 1 });
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  const example = new URL('../mods/examples/external_client/client.mjs', import.meta.url);
+  const child = spawn(process.execPath, [example.pathname, `ws://127.0.0.1:${host.server.address().port}`], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let log = '';
+  child.stderr.on('data', chunk => { log += chunk; });
+  const exited = new Promise(resolve => child.on('exit', resolve));
+  try {
+    await until(() => log.includes('action action_stale'));
+    host.push({ method: 'omd/view/updated', params: { epoch: '1', revision: 2, snapshot: { view }, actionToken: 'token-0' } });
+    await until(() => log.includes('action completed: ran external_clients'));
+    assert.equal(host.seen.filter(message => message.method === 'omd/action').length, 2);
+  } finally {
+    child.kill();
+    await exited;
+    host.server.close();
+  }
 });
