@@ -63,9 +63,7 @@ retain detailed local evidence but are not required to read this register.
 | `omd-application-bridges` | Local plugin exposes prompt-approved managed bridge tools and session hooks | Real application task, exact dependency/teardown and disclosure checks |
 | `omd-artifact-reading` | Local plugin packages one source-anchored reading skill | Per-source task value, parser/source drift and missing-dependency checks |
 
-Every plugin currently declares `UNLICENSED`; the first-party coordination and
-workspace mod manifests omit a license. Those exact labels appear in the
-index. Distribution or ownership transfer needs a reviewed license decision.
+Every first-party plugin and mod declares `MIT`, and the index repeats it.
 Installed source is separate from activation, and none of these entries is a
 supported release package yet.
 

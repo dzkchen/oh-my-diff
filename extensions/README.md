@@ -67,9 +67,8 @@ Each reviewed row records an extension type, capability, exact tested host
 versions and compatibility conditions, source, license, maintainer, evidence,
 and support status. A plugin may contain skills or hooks; its `components` list
 names those types without suggesting they can be installed independently.
-`undeclared` and `UNLICENSED` report the current source truth. They are
-release blockers for distribution or transfer until the owner publishes an
-appropriate license. Check the latest lock and manifest at installation time;
+The license is the manifest's declaration, or `undeclared` when it has none.
+Check the latest lock and manifest at installation time;
 the index is descriptive and never grants trust or overrides native checks.
 
 ## Install without the index

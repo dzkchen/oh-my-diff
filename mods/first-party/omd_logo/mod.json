@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "The OMD mark on fresh sessions and the install profile in the version heading",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"

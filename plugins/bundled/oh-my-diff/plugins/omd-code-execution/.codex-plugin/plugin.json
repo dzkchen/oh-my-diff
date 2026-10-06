@@ -18,6 +18,6 @@
       "Read a bounded CSV through an agent tool in Python, then chart it in Bun"
     ]
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "keywords": ["javascript", "python", "bun", "code-mode", "execution"]
 }

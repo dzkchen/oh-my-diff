@@ -1,25 +1,56 @@
+use bytes::Bytes;
 use codex_omd::credentials::CredentialProfiles;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use futures_util::stream;
+use http_body_util::combinators::UnsyncBoxBody;
+use http_body_util::{BodyExt, Full, StreamBody};
+use hyper::body::{Frame, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::{TokioIo, TokioTimer};
+use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 use std::io;
 use std::io::Read;
-use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+use tokio::sync::{Semaphore, watch};
 
-const BODY_BYTES: u64 = 16 * 1024 * 1024;
+const BODY_BYTES: usize = 16 * 1024 * 1024;
+const CONNECTIONS: usize = 16;
+const ROUTE_CONNECTIONS: usize = 4;
+const IDLE: Duration = Duration::from_secs(30);
+const LIFETIME: Duration = Duration::from_secs(600);
 const HEADER: &str = "x-omd-credential-header";
+type Body = UnsyncBoxBody<Bytes, io::Error>;
+type Routes = Arc<Mutex<BTreeMap<String, Arc<Route>>>>;
+type Failure = (u16, String);
 
-type Routes = Arc<Mutex<BTreeMap<String, (PathBuf, BTreeSet<String>)>>>;
+struct Route {
+    store: PathBuf,
+    profiles: BTreeSet<String>,
+    active: Mutex<Vec<watch::Sender<bool>>>,
+}
+
+struct Forward {
+    route: Arc<Route>,
+    cancelled: watch::Sender<bool>,
+}
+
+impl Drop for Forward {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.route.active.lock() {
+            active.retain(|sender| !sender.same_channel(&self.cancelled));
+        }
+    }
+}
 
 struct Gateway {
     port: u16,
     routes: Routes,
 }
 
-/// Keeps a sidecar's gateway path open; dropping it revokes the path.
 pub(crate) struct Registration {
     key: String,
     routes: Routes,
@@ -27,8 +58,13 @@ pub(crate) struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        if let Ok(mut routes) = self.routes.lock() {
-            routes.remove(&self.key);
+        if let Ok(mut routes) = self.routes.lock()
+            && let Some(route) = routes.remove(&self.key)
+            && let Ok(active) = route.active.lock()
+        {
+            for cancelled in active.iter() {
+                cancelled.send_replace(true);
+            }
         }
     }
 }
@@ -37,43 +73,99 @@ static GATEWAY: OnceLock<Result<Gateway, String>> = OnceLock::new();
 
 fn gateway() -> io::Result<&'static Gateway> {
     GATEWAY
-        .get_or_init(|| {
-            let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
-            let port = server
-                .server_addr()
-                .to_ip()
-                .ok_or("credential_gateway_unavailable")?
-                .port();
-            // A blocking client must not be built on an async runtime thread.
-            let client = std::thread::spawn(|| {
-                reqwest::blocking::Client::builder()
-                    .timeout(None::<std::time::Duration>)
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-            })
-            .join()
-            .map_err(|_| "credential_gateway_unavailable")?
-            .map_err(|e| e.to_string())?;
-            let routes = Routes::default();
-            let served = routes.clone();
-            std::thread::spawn(move || {
-                for request in server.incoming_requests() {
-                    let (client, routes) = (client.clone(), served.clone());
-                    std::thread::spawn(move || forward(&client, &routes, request));
-                }
-            });
-            Ok(Gateway { port, routes })
-        })
+        .get_or_init(|| start_gateway(IDLE, LIFETIME))
         .as_ref()
         .map_err(|error| io::Error::other(error.clone()))
 }
 
-/// Opens `http://127.0.0.1:PORT/KEY`; `KEY/PROFILE/PATH` reaches `PATH` on that profile's enrolled origin.
+fn start_gateway(idle: Duration, lifetime: Duration) -> Result<Gateway, String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(idle)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| error.to_string())?;
+    let routes = Routes::default();
+    let served = routes.clone();
+    std::thread::Builder::new()
+        .name("omd-credential-gateway".into())
+        .spawn(move || {
+            runtime.block_on(async move {
+                let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
+                    return;
+                };
+                let slots = Arc::new(Semaphore::new(CONNECTIONS));
+                loop {
+                    let Ok((socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let Ok(slot) = slots.clone().try_acquire_owned() else {
+                        drop(socket);
+                        continue;
+                    };
+                    let routes = served.clone();
+                    let client = client.clone();
+                    tokio::spawn(async move {
+                        let _slot = slot;
+                        let (cancelled, mut cancellation) = watch::channel(false);
+                        let handler = service_fn(move |request| {
+                            let routes = routes.clone();
+                            let client = client.clone();
+                            let cancelled = cancelled.clone();
+                            async move {
+                                let response =
+                                    match forward(&client, &routes, request, cancelled, idle).await
+                                    {
+                                        Ok(response) => response,
+                                        Err((status, error)) => failure(status, error),
+                                    };
+                                Ok::<_, Infallible>(response)
+                            }
+                        });
+                        let mut builder = http1::Builder::new();
+                        builder
+                            .keep_alive(false)
+                            .max_headers(64)
+                            .max_buf_size(32 * 1024)
+                            .timer(TokioTimer::new())
+                            .header_read_timeout(idle);
+                        let connection = builder.serve_connection(TokioIo::new(socket), handler);
+                        tokio::select! {
+                            _ = connection => {}
+                            _ = cancellation.changed() => {}
+                            _ = tokio::time::sleep(lifetime) => {}
+                        }
+                    });
+                }
+            });
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(Gateway { port, routes })
+}
+
 pub(crate) fn register(
     store: PathBuf,
     profiles: BTreeSet<String>,
 ) -> io::Result<(String, Registration)> {
-    let gateway = gateway()?;
+    register_at(gateway()?, store, profiles)
+}
+
+fn register_at(
+    gateway: &Gateway,
+    store: PathBuf,
+    profiles: BTreeSet<String>,
+) -> io::Result<(String, Registration)> {
     let mut bytes = [0u8; 16];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
     let key = bytes
@@ -84,7 +176,14 @@ pub(crate) fn register(
         .routes
         .lock()
         .map_err(|_| io::Error::other("credential_gateway_poisoned"))?
-        .insert(key.clone(), (store, profiles));
+        .insert(
+            key.clone(),
+            Arc::new(Route {
+                store,
+                profiles,
+                active: Mutex::new(Vec::new()),
+            }),
+        );
     Ok((
         format!("http://127.0.0.1:{}/{key}", gateway.port),
         Registration {
@@ -94,112 +193,97 @@ pub(crate) fn register(
     ))
 }
 
-fn forward(client: &reqwest::blocking::Client, routes: &Routes, mut request: tiny_http::Request) {
-    let response = upstream(client, routes, &mut request);
-    let _ = match response {
-        Ok(upstream) => {
-            let status = upstream.status().as_u16();
-            let headers = upstream
-                .headers()
-                .iter()
-                .filter(|(name, _)| {
-                    !matches!(
-                        name.as_str(),
-                        "content-length"
-                            | "transfer-encoding"
-                            | "connection"
-                            | "trailer"
-                            | "upgrade"
-                    )
-                })
-                .filter_map(|(name, value)| {
-                    tiny_http::Header::from_bytes(name.as_str(), value.as_bytes()).ok()
-                })
-                .collect();
-            let length = upstream.content_length().map(|length| length as usize);
-            if length.is_none()
-                && request.method() != &tiny_http::Method::Head
-                && !matches!(status, 204 | 304)
-            {
-                stream(request, status, headers, upstream)
-            } else {
-                request.respond(tiny_http::Response::new(
-                    tiny_http::StatusCode(status),
-                    headers,
-                    upstream,
-                    length,
-                    None,
-                ))
-            }
-        }
-        Err((status, error)) => {
-            request.respond(tiny_http::Response::from_string(error).with_status_code(status))
-        }
-    };
-}
-
-/// tiny_http's chunked encoder holds 8 KiB before writing, so streamed replies are framed and flushed here.
-fn stream(
-    request: tiny_http::Request,
-    status: u16,
-    headers: Vec<tiny_http::Header>,
-    mut body: impl Read,
-) -> io::Result<()> {
-    let mut writer = request.into_writer();
-    let reason = tiny_http::StatusCode(status).default_reason_phrase();
-    write!(writer, "HTTP/1.1 {status} {reason}\r\n")?;
-    for header in headers {
-        write!(writer, "{}: {}\r\n", header.field, header.value)?;
-    }
-    writer.write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
-    let mut buffer = [0; 8192];
-    loop {
-        let read = body.read(&mut buffer)?;
-        write!(writer, "{read:x}\r\n")?;
-        writer.write_all(&buffer[..read])?;
-        writer.write_all(b"\r\n")?;
-        writer.flush()?;
-        if read == 0 {
-            return Ok(());
-        }
-    }
-}
-
-fn upstream(
-    client: &reqwest::blocking::Client,
-    routes: &Routes,
-    request: &mut tiny_http::Request,
-) -> Result<reqwest::blocking::Response, (u16, String)> {
-    let denied = |error: &str| (403, error.to_owned());
-    let mut parts = request.url().trim_start_matches('/').splitn(3, '/');
-    let (key, profile, rest) = (
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default().to_owned(),
-        parts.next().unwrap_or_default().to_owned(),
+fn failure(status: u16, error: String) -> Response<Body> {
+    let body = Full::new(Bytes::from(error))
+        .map_err(|never| match never {})
+        .boxed_unsync();
+    let mut response = Response::new(body);
+    *response.status_mut() =
+        http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::BAD_GATEWAY);
+    response.headers_mut().insert(
+        http::header::CONNECTION,
+        http::HeaderValue::from_static("close"),
     );
-    let store = routes
-        .lock()
-        .map_err(|_| denied("credential_gateway_poisoned"))?
+    response
+}
+
+fn admit(
+    routes: &Routes,
+    key: &str,
+    profile: &str,
+    cancelled: watch::Sender<bool>,
+) -> Result<Forward, Failure> {
+    let denied = || (403, "credential_not_host_approved".to_owned());
+    let routes = routes.lock().map_err(|_| denied())?;
+    let route = routes
         .get(key)
-        .filter(|(_, profiles)| profiles.contains(&profile))
-        .map(|(store, _)| store.clone())
-        .ok_or_else(|| denied("credential_not_host_approved"))?;
-    let profiles = CredentialProfiles::open(&store).map_err(|e| denied(&e.to_string()))?;
-    let origin = profiles
-        .profile(&profile)
-        .map_err(|e| denied(&e.to_string()))?
-        .destination()
-        .map(str::to_owned)
-        .ok_or_else(|| denied("credential_origin_missing"))?;
-    let secret = profiles
-        .secret(&profile, &origin)
-        .map_err(|e| denied(&e.to_string()))?;
+        .filter(|route| route.profiles.contains(profile))
+        .cloned()
+        .ok_or_else(denied)?;
+    {
+        let mut active = route.active.lock().map_err(|_| denied())?;
+        if active.len() >= ROUTE_CONNECTIONS {
+            return Err((429, "credential_gateway_busy".into()));
+        }
+        active.push(cancelled.clone());
+    }
+    Ok(Forward { route, cancelled })
+}
+
+async fn forward(
+    client: &reqwest::Client,
+    routes: &Routes,
+    request: Request<Incoming>,
+    cancelled: watch::Sender<bool>,
+    idle: Duration,
+) -> Result<Response<Body>, Failure> {
+    let denied = |error: &str| (403, error.to_owned());
+    let (parts, mut incoming) = request.into_parts();
+    let target = parts
+        .uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
+    let mut path = target.trim_start_matches('/').splitn(3, '/');
+    let key = path.next().unwrap_or_default();
+    let profile = path.next().unwrap_or_default();
+    let rest = path.next().unwrap_or_default();
+    let guard = admit(routes, key, profile, cancelled)?;
+    static LOOKUPS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+    let permit = LOOKUPS
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (429, "credential_gateway_busy".to_owned()))?;
+    let store = guard.route.store.clone();
+    let profile = profile.to_owned();
+    let (origin, secret) = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let profiles = CredentialProfiles::open(&store).map_err(|error| error.to_string())?;
+        let origin = profiles
+            .profile(&profile)
+            .map_err(|error| error.to_string())?
+            .destination()
+            .map(str::to_owned)
+            .ok_or_else(|| "credential_origin_missing".to_owned())?;
+        let secret = profiles
+            .secret(&profile, &origin)
+            .map_err(|error| error.to_string())?;
+        Ok::<_, String>((origin, secret))
+    })
+    .await
+    .map_err(|error| denied(&error.to_string()))?
+    .map_err(|error| denied(&error))?;
     let mut headers = reqwest::header::HeaderMap::new();
     let mut style = None;
-    for header in request.headers() {
-        let name = header.field.as_str().as_str().to_ascii_lowercase();
-        if name == HEADER {
-            style = Some(header.value.as_str().to_owned());
+    for (name, value) in &parts.headers {
+        if name.as_str() == HEADER {
+            style = Some(
+                value
+                    .to_str()
+                    .map_err(|_| (400, "credential_header_invalid".to_owned()))?
+                    .to_owned(),
+            );
         } else if !matches!(
             name.as_str(),
             "host"
@@ -211,11 +295,11 @@ fn upstream(
                 | "content-length"
                 | "transfer-encoding"
                 | "proxy-authorization"
-        ) && let (Ok(name), Ok(value)) = (
-            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-            reqwest::header::HeaderValue::from_bytes(header.value.as_bytes()),
+                | "upgrade"
+                | "trailer"
+                | "expect"
         ) {
-            headers.append(name, value);
+            headers.append(name.clone(), value.clone());
         }
     }
     let (name, value) = match style.as_deref() {
@@ -239,22 +323,64 @@ fn upstream(
         headers.insert("chatgpt-account-id", account);
     }
     let mut body = Vec::new();
-    request
-        .as_reader()
-        .take(BODY_BYTES + 1)
-        .read_to_end(&mut body)
-        .map_err(|e| (400, e.to_string()))?;
-    if body.len() as u64 > BODY_BYTES {
-        return Err((413, "credential_gateway_body_limit".to_owned()));
+    while let Some(frame) = tokio::time::timeout(idle, incoming.frame())
+        .await
+        .map_err(|_| (408, "credential_gateway_body_timeout".to_owned()))?
+    {
+        let frame = frame.map_err(|error| (400, error.to_string()))?;
+        if let Ok(data) = frame.into_data() {
+            if data.len() > BODY_BYTES.saturating_sub(body.len()) {
+                return Err((413, "credential_gateway_body_limit".into()));
+            }
+            body.extend_from_slice(&data);
+        }
     }
-    let method = reqwest::Method::from_bytes(request.method().as_str().as_bytes())
-        .map_err(|_| (405, "method_unsupported".to_owned()))?;
-    client
-        .request(method, format!("{origin}/{rest}"))
-        .headers(headers)
-        .body(body)
-        .send()
-        .map_err(|e| (502, format!("credential_gateway_upstream: {e}")))
+    let upstream = tokio::time::timeout(
+        idle,
+        client
+            .request(parts.method, format!("{origin}/{rest}"))
+            .headers(headers)
+            .body(body)
+            .send(),
+    )
+    .await
+    .map_err(|_| (504, "credential_gateway_upstream_timeout".to_owned()))?
+    .map_err(|error| (502, format!("credential_gateway_upstream: {error}")))?;
+    let status = upstream.status();
+    let headers = upstream.headers().clone();
+    let chunks = stream::unfold(Some((upstream, guard)), move |state| async move {
+        let (mut upstream, guard) = state?;
+        match tokio::time::timeout(idle, upstream.chunk()).await {
+            Ok(Ok(Some(bytes))) => Some((
+                Ok::<_, io::Error>(Frame::data(bytes)),
+                Some((upstream, guard)),
+            )),
+            Ok(Ok(None)) => None,
+            Ok(Err(error)) => Some((Err(io::Error::other(error)), None)),
+            Err(_) => Some((
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "credential_gateway_stream_timeout",
+                )),
+                None,
+            )),
+        }
+    });
+    let mut response = Response::new(StreamBody::new(chunks).boxed_unsync());
+    *response.status_mut() = status;
+    for (name, value) in &headers {
+        if !matches!(
+            name.as_str(),
+            "content-length" | "transfer-encoding" | "connection" | "trailer" | "upgrade"
+        ) {
+            response.headers_mut().append(name.clone(), value.clone());
+        }
+    }
+    response.headers_mut().insert(
+        http::header::CONNECTION,
+        http::HeaderValue::from_static("close"),
+    );
+    Ok(response)
 }
 
 #[cfg(test)]

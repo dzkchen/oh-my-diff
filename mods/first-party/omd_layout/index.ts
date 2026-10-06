@@ -10,7 +10,7 @@ type Activity = { note?: string; context?: number; ports?: number[]; brief?: str
 type Brief = { current: string; next: string; remaining: string[]; questions: string[]; estimate: string | null; at: number; thread: string | null; turn: number; objective: string | null; resumed: string | null };
 type Worktree = { path: string; branch: string | null; task: string | null; issue: string | null };
 type State = {
-  threads: Thread[]; error: string | null; search: string; selected: string | null; current: string | null; seen: Record<string, number>;
+  threads: Thread[]; error: string | null; search: string; selected: string | null; current: string | null; current_status: Status | null; seen: Record<string, number>;
   activity: Record<string, Activity>; worktrees: Worktree[]; picker: Picker | null; restore: string | null; drafts: Record<string, string>;
   find: Search; transcript: string[]; open: boolean; revisions: Record<string, number>;
   brief: Brief | null; cleared: string | null; hidden: boolean; turns: number; workflow: { objective: string; remaining: string[] } | null;
@@ -49,7 +49,7 @@ export default function activate(api: ModAPI) {
   const ascii = api.settings.icons === 'ascii';
   const glyph: Record<Status | 'unread' | 'group', string> = ascii ? { working: '*', waiting: '!', done: '+', error: 'x', unread: '>', group: '-' } : { working: '●', waiting: '◆', done: '✓', error: '✗', unread: '•', group: '▾' };
   const tones: Record<Status, TerminalTone> = { working: 'accent', waiting: 'attention', done: 'success', error: 'failure' };
-  const empty = (): State => ({ threads: [], error: null, search: '', selected: null, current: null, seen: {}, activity: {}, worktrees: [], picker: null, restore: null, drafts: {},
+  const empty = (): State => ({ threads: [], error: null, search: '', selected: null, current: null, current_status: null, seen: {}, activity: {}, worktrees: [], picker: null, restore: null, drafts: {},
     find: { query: '', regex: false, case: false }, transcript: [], open: false, revisions: {}, brief: null, cleared: null, hidden: false, turns: 0, workflow: null });
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
@@ -87,6 +87,11 @@ export default function activate(api: ModAPI) {
   const statusOf = (status: { type?: string; activeFlags?: string[] } | undefined): Status => status?.type === 'active'
     ? status.activeFlags?.length ? 'waiting' : 'working' : status?.type === 'systemError' ? 'error' : 'done';
   const keep = (next: Status, failed: boolean): Status => failed && next === 'done' ? 'error' : next;
+  const current = (state: State, id: string | null) => {
+    if (id === state.current) return;
+    state.current = id;
+    state.current_status = state.threads.find(thread => thread.id === id)?.status ?? null;
+  };
 
   const flag = (state: State, brief: Brief) => state.current && brief.thread && brief.thread !== state.current ? 'forked, not revalidated'
     : brief.resumed ?? (brief.turn < state.turns ? 'stale' : null);
@@ -110,13 +115,13 @@ export default function activate(api: ModAPI) {
 
   // Sessions in other OMD processes read each other's live status, ports, notes and brief summaries from the shared user-scope store.
   const share = (state: State) => {
-    const thread = state.threads.find(item => item.id === state.current);
-    if (!thread) return;
-    const activity = state.activity[thread.id] ?? {};
-    const value: Shared = { status: thread.status, note: activity.note ?? null, context: activity.context ?? null, ports: activity.ports ?? [], brief: summary(state), at: Date.now() };
-    const put = api.host.tryCall('store.put', { scope: 'user', key: `s:${thread.id}`, value, expected_revision: state.revisions[thread.id] ?? null });
-    if (put.ok) state.revisions[thread.id] = put.value.revision;
-    if (thread.status === 'working' || thread.status === 'waiting') api.host.tryCall('events.schedule', { key: 'share', delay_ms: FRESH_MS / 3 });
+    const id = state.current;
+    if (!id || !state.current_status) return;
+    const activity = state.activity[id] ?? {};
+    const value: Shared = { status: state.current_status, note: activity.note ?? null, context: activity.context ?? null, ports: activity.ports ?? [], brief: summary(state), at: Date.now() };
+    const put = api.host.tryCall('store.put', { scope: 'user', key: `s:${id}`, value, expected_revision: state.revisions[id] ?? null });
+    if (put.ok) state.revisions[id] = put.value.revision;
+    if (state.current_status === 'working' || state.current_status === 'waiting') api.host.tryCall('events.schedule', { key: 'share', delay_ms: FRESH_MS / 3 });
   };
   const refresh = (state: State, full = true) => {
     const listed = app<{ data?: { id: string; name?: string | null; preview?: string; cwd: string; model?: string | null; status?: { type?: string; activeFlags?: string[] }; updatedAt?: number; gitInfo?: { branch?: string | null; originUrl?: string | null } | null }[] }>(
@@ -128,6 +133,8 @@ export default function activate(api: ModAPI) {
       branch: state.worktrees.find(tree => tree.path === thread.cwd)?.branch ?? thread.gitInfo?.branch ?? null,
       project: base(thread.gitInfo?.originUrl || thread.cwd), model: thread.model ?? null, status: keep(statusOf(thread.status), failed.has(`${thread.id}:${thread.updatedAt ?? 0}`)), updated: thread.updatedAt ?? 0, loaded: thread.status?.type !== 'notLoaded' }));
     for (const thread of state.threads) state.seen[thread.id] ??= thread.updated;
+    const own = state.threads.find(thread => thread.id === state.current);
+    if (own) own.status = state.current_status = keep(own.status, state.current_status === 'error');
     if (state.current) state.seen[state.current] = Math.max(state.seen[state.current] ?? 0, state.threads.find(thread => thread.id === state.current)?.updated ?? 0);
     if (state.current && full) {
       const ports = api.host.tryCall('sessions.ports', null);
@@ -532,7 +539,7 @@ export default function activate(api: ModAPI) {
     const fields = { current: text(args.current, 200, 'current'), next: text(args.next, 200, 'next'), remaining: texts(args.remaining, 12, 160, 'remaining'),
       questions: texts(args.questions, 6, 200, 'questions'), estimate: args.estimate === undefined ? null : text(args.estimate, 40, 'estimate') };
     const state = load();
-    state.current = self() ?? state.current;
+    current(state, self() ?? state.current);
     workflow(state);
     state.brief = { ...fields, at: Date.now(), thread: state.current, turn: state.turns, objective: state.workflow?.objective ?? null, resumed: null };
     state.cleared = null;
@@ -554,8 +561,8 @@ export default function activate(api: ModAPI) {
   api.on('terminal', ({ ledger }) => {
     const state = load();
     if (ledger?.thread_id && ledger.thread_id !== state.current) {
-      state.current = ledger.thread_id;
-      state.seen[state.current] = Math.max(state.seen[state.current] ?? 0, state.threads.find(thread => thread.id === state.current)?.updated ?? 0);
+      current(state, ledger.thread_id);
+      state.seen[ledger.thread_id] = Math.max(state.seen[ledger.thread_id] ?? 0, state.threads.find(thread => thread.id === ledger.thread_id)?.updated ?? 0);
       save(state);
     }
     const sites: Record<string, TerminalRenderSite> = { 'omd_layout/sessions': { mode: 'replace', components: sessionList(state, 0, 'site') } };
@@ -574,7 +581,7 @@ export default function activate(api: ModAPI) {
   api.on('start', () => save(refresh(load())));
   api.on('resume', ({ thread_id, last_turn, restarted }) => {
     const state = load();
-    state.current = thread_id;
+    current(state, thread_id);
     if (state.brief && restarted) state.brief.resumed = last_turn?.status === 'in_progress' ? 'resumed after an unfinished turn' : 'resumed, not revalidated';
     refresh(state);
     const draft = state.drafts[thread_id];
@@ -594,6 +601,7 @@ export default function activate(api: ModAPI) {
     state.turns += 1;
     workflow(state);
     const thread = state.threads.find(item => item.id === state.current);
+    state.current_status = 'working';
     if (thread) thread.status = 'working';
     share(state);
     save(state);
@@ -610,12 +618,15 @@ export default function activate(api: ModAPI) {
     if (!id) return;
     const activity = state.activity[id] ??= {};
     const thread = state.threads.find(item => item.id === id);
-    if (method === 'thread/status/changed' && thread) {
-      thread.status = keep(statusOf(data.status), thread.status === 'error');
-      if (thread.status === 'waiting') activity.note = data.status?.activeFlags?.includes('waitingOnApproval') ? 'needs approval' : 'needs input';
+    if (method === 'thread/status/changed') {
+      const status = keep(statusOf(data.status), (id === state.current ? state.current_status : thread?.status) === 'error');
+      if (id === state.current) state.current_status = status;
+      if (thread) thread.status = status;
+      if (status === 'waiting') activity.note = data.status?.activeFlags?.includes('waitingOnApproval') ? 'needs approval' : 'needs input';
     }
     if (method === 'turn/completed') {
       activity.note = `turn ${data.turn?.status ?? 'completed'}`;
+      if (id === state.current) state.current_status = data.turn?.status === 'failed' ? 'error' : 'done';
       if (thread) {
         thread.status = data.turn?.status === 'failed' ? 'error' : 'done';
         thread.updated = Math.max(thread.updated, (state.seen[id] ?? 0) + 1);
@@ -624,8 +635,8 @@ export default function activate(api: ModAPI) {
     if (method === 'thread/name/updated' && thread && data.name) thread.name = fit(data.name, 80);
     if (method === 'error') activity.note = fit(data.error?.message ?? 'error', 80);
     if (method === 'thread/tokenUsage/updated' && data.tokenUsage?.modelContextWindow) activity.context = Math.round(100 * (data.tokenUsage.last?.totalTokens ?? 0) / data.tokenUsage.modelContextWindow);
-    if (id === state.current && thread) {
-      state.seen[id] = thread.updated;
+    if (id === state.current) {
+      if (thread) state.seen[id] = thread.updated;
       if (method === 'thread/status/changed' || method === 'turn/completed') share(state);
     }
     save(state);

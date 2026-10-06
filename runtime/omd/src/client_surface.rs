@@ -1,8 +1,36 @@
 use crate::app_routes::InvocationContext;
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+type Admission = (Value, Option<Arc<AtomicBool>>);
+thread_local! {
+    static CALL_ADMISSION: std::cell::RefCell<Option<Admission>> = const { std::cell::RefCell::new(None) };
+}
+
+pub fn with_admission<T>(
+    source: &str,
+    generation: u64,
+    cancelled: Option<Arc<AtomicBool>>,
+    action: impl FnOnce() -> T,
+) -> T {
+    struct Reset(Option<Admission>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CALL_ADMISSION.with(|value| *value.borrow_mut() = self.0.take());
+        }
+    }
+    let previous = CALL_ADMISSION.with(|value| {
+        value.replace(Some((
+            serde_json::json!({"source": source, "generation": generation}),
+            cancelled,
+        )))
+    });
+    let _reset = Reset(previous);
+    action()
+}
 
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
@@ -55,15 +83,136 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
 
 pub type Reply = SyncSender<Result<Value, String>>;
 
-#[derive(Debug)]
+#[derive(Clone)]
+pub struct Validity(pub Arc<dyn Fn() -> bool + Send + Sync>);
+
+impl std::fmt::Debug for Validity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Validity(..)")
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CallLifetime {
+    pub admission: Option<Value>,
+    upstream_cancelled: Option<Arc<AtomicBool>>,
+    cancelled: Arc<AtomicBool>,
+    phase: Arc<AtomicU8>,
+    deadline: Arc<Mutex<Option<Instant>>>,
+    pub binding: Option<Value>,
+}
+
+const QUEUED: u8 = 0;
+const EXECUTING: u8 = 1;
+const CANCELLED: u8 = 2;
+
+impl CallLifetime {
+    pub fn active(&self) -> bool {
+        self.phase.load(Ordering::Acquire) != CANCELLED
+            && !self.cancelled.load(Ordering::Acquire)
+            && !self
+                .upstream_cancelled
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+            && self
+                .deadline
+                .lock()
+                .is_ok_and(|deadline| deadline.is_none_or(|deadline| Instant::now() < deadline))
+    }
+
+    pub fn begin_execution(&self) -> Result<(), String> {
+        if !self.active() {
+            return Err("callback_cancelled_or_expired".into());
+        }
+        self.phase
+            .compare_exchange(QUEUED, EXECUTING, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| "callback_cancelled_or_executing".into())
+    }
+
+    fn cancel_queued(&self) -> bool {
+        self.phase
+            .compare_exchange(QUEUED, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+}
+
+pub struct PendingReply {
+    receiver: Receiver<Result<Value, String>>,
+    lifetime: CallLifetime,
+}
+
+impl Drop for PendingReply {
+    fn drop(&mut self) {
+        self.lifetime.cancel_queued();
+        self.lifetime.cancelled.store(true, Ordering::Release);
+    }
+}
+
+impl std::ops::Deref for PendingReply {
+    type Target = Receiver<Result<Value, String>>;
+    fn deref(&self) -> &Self::Target {
+        &self.receiver
+    }
+}
+
+static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ADMISSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn admission() -> u64 {
+    ADMISSION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+pub fn advance_admission() -> u64 {
+    ADMISSION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1
+}
+
+pub fn epoch() -> u64 {
+    EPOCH.load(std::sync::atomic::Ordering::Acquire)
+}
+
+pub fn set_epoch(epoch: u64) {
+    EPOCH.store(epoch, std::sync::atomic::Ordering::Release);
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Authority {
+    pub epoch: u64,
+    pub admission: u64,
+    pub configuration: String,
+    pub source: String,
+}
+
+thread_local! {
+    static AUTHORITY: std::cell::RefCell<Option<Authority>> = const { std::cell::RefCell::new(None) };
+}
+
+pub struct AuthorityGuard(Option<Authority>);
+
+impl Authority {
+    pub fn enter(self) -> AuthorityGuard {
+        AuthorityGuard(AUTHORITY.replace(Some(self)))
+    }
+}
+
+impl Drop for AuthorityGuard {
+    fn drop(&mut self) {
+        AUTHORITY.set(self.0.take());
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SurfaceCall {
+    pub validity: Validity,
     pub caller: String,
     pub operation: String,
     pub arguments: Value,
     pub context: InvocationContext,
     pub thread: Option<String>,
+    pub authority: Option<Authority>,
     pub confirm: Option<String>,
     pub reply: Reply,
+    pub lifetime: CallLifetime,
 }
 
 pub trait ClientSurface: Send + Sync {
@@ -172,7 +321,28 @@ pub fn submit(
     context: InvocationContext,
     thread: Option<&str>,
     confirm: Option<String>,
-) -> Result<Receiver<Result<Value, String>>, String> {
+) -> Result<PendingReply, String> {
+    submit_bound(
+        caller,
+        operation,
+        arguments,
+        context,
+        thread,
+        confirm,
+        Arc::new(|| true),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn submit_bound(
+    caller: &str,
+    operation: &str,
+    arguments: Value,
+    context: InvocationContext,
+    thread: Option<&str>,
+    confirm: Option<String>,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<PendingReply, String> {
     if !SURFACE_OPERATIONS.contains(&operation) {
         return Err(format!("unsupported_host_operation: {operation}"));
     }
@@ -185,34 +355,65 @@ pub fn submit(
         .map(|(_, surface)| surface.clone())
         .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
     let (reply, receiver) = sync_channel(1);
+    let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
+    let lifetime = CallLifetime {
+        admission: admission.as_ref().map(|(binding, _)| binding.clone()),
+        upstream_cancelled: admission.and_then(|(_, flag)| flag),
+        ..CallLifetime::default()
+    };
+    if confirm.is_none() && !awaits_user(operation, &arguments) {
+        *lifetime
+            .deadline
+            .lock()
+            .map_err(|_| "client_surface_poisoned")? =
+            Some(Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
+    }
+    let queued = lifetime.clone();
     surface.submit(SurfaceCall {
+        validity: Validity(Arc::new(move || queued.active() && active())),
         caller: caller.to_owned(),
         operation: operation.to_owned(),
         arguments,
         context,
         thread: thread.map(str::to_owned),
+        authority: (operation == "terminal.pty")
+            .then(|| AUTHORITY.with_borrow(Clone::clone))
+            .flatten(),
         confirm,
         reply,
+        lifetime: lifetime.clone(),
     })?;
-    Ok(receiver)
+    Ok(PendingReply { receiver, lifetime })
 }
 
 pub fn wait(
-    receiver: Receiver<Result<Value, String>>,
+    receiver: PendingReply,
     active: &dyn Fn() -> bool,
     deadline: Option<Instant>,
 ) -> Result<Value, String> {
+    if let Some(deadline) = deadline {
+        *receiver
+            .lifetime
+            .deadline
+            .lock()
+            .map_err(|_| "client_surface_poisoned")? = Some(deadline);
+    }
     loop {
-        if !active() {
+        if receiver.lifetime.phase.load(Ordering::Acquire) != EXECUTING
+            && !active()
+            && receiver.lifetime.cancel_queued()
+        {
             return Err("callback_cancelled".into());
         }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            && receiver.lifetime.cancel_queued()
+        {
             return Err(format!(
                 "callback_execution_budget: the client did not answer within {} ms",
                 crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
             ));
         }
-        match receiver.recv_timeout(Duration::from_millis(20)) {
+        match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
             Ok(result) => return result,
             Err(RecvTimeoutError::Timeout) => (),
             Err(RecvTimeoutError::Disconnected) => {
@@ -236,7 +437,7 @@ pub fn app_request(
     repository: &std::path::Path,
     routes: &[(String, String)],
     arguments: Value,
-    active: &dyn Fn() -> bool,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
     let method = arguments["method"]
         .as_str()
@@ -439,13 +640,24 @@ pub fn call(
     context: InvocationContext,
     thread: Option<&str>,
     confirm: Option<String>,
-    active: &dyn Fn() -> bool,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
+    if !active() {
+        return Err("callback_cancelled".into());
+    }
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     wait(
-        submit(caller, operation, arguments, context, thread, confirm)?,
-        active,
+        submit_bound(
+            caller,
+            operation,
+            arguments,
+            context,
+            thread,
+            confirm,
+            active.clone(),
+        )?,
+        active.as_ref(),
         deadline,
     )
 }

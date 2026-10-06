@@ -112,15 +112,9 @@ export default function activate(api: ModAPI) {
     const used = same.filter(entry => (entry.tokens?.cached ?? 0) > 0 || (entry.tokens?.write ?? 0) > 0).at(-1);
     return ttl !== null && used ? used.at + ttl * 1000 : null;
   };
-  // Account readings carry no route: attribute them to the lead's latest account, or to its provider until the first lead response names one.
-  const quotaScope = (hud: Hud) => {
-    const last = leads(hud).at(-1);
-    return last ? `${last.provider}|${last.credential ?? 'default'}` : `${hud.current.provider ?? 'unknown'}|?`;
-  };
   const quota = (hud: Hud, now: number) => {
-    const scope = quotaScope(hud);
     const groups = new Map<number | null, Sample[]>();
-    for (const sample of hud.samples.filter(item => item.scope === scope)) groups.set(sample.minutes, [...groups.get(sample.minutes) ?? [], sample]);
+    for (const sample of hud.samples.filter(item => item.scope === 'codex-account')) groups.set(sample.minutes, [...groups.get(sample.minutes) ?? [], sample]);
     return [...groups.values()].map(samples => {
       const current = samples.at(-1)!;
       const passed = current.resets !== null && now > current.resets;
@@ -129,7 +123,7 @@ export default function activate(api: ModAPI) {
       const horizon = Math.max(300000, (current.minutes ?? 0) * 6000);
       const rate = period.length > 1 && current.at - first.at >= horizon ? (current.used - first.used) / (current.at - first.at) : null;
       const projected = rate !== null && current.resets !== null && !passed ? Math.round(current.used + rate * (current.resets - now)) : null;
-      return { name: windowName(current.minutes), current, passed, projected, samples: period.length, spanned: current.at - first.at };
+      return { name: `Codex account ${windowName(current.minutes)}`, current, passed, projected, samples: period.length, spanned: current.at - first.at };
     }).sort((a, b) => (a.current.minutes ?? 0) - (b.current.minutes ?? 0));
   };
 
@@ -154,7 +148,6 @@ export default function activate(api: ModAPI) {
     const plain = (item: Entry) => JSON.stringify({ ...item, revision: 0, turn: null });
     const index = hud.entries.findIndex(item => item.key === entry.key);
     const old = hud.entries[index];
-    if (isLead(hud, entry) && !leads(hud).length) for (const sample of hud.samples) if (sample.scope === `${entry.provider}|?`) sample.scope = `${entry.provider}|${entry.credential ?? 'default'}`;
     if (!old) hud.entries.push(entry);
     else if (rank(entry) >= rank(old) && plain(entry) !== plain(old)) hud.entries[index] = { ...entry, turn: old.turn, revision: old.revision + 1 };
     hud.entries.sort((a, b) => a.at - b.at);
@@ -168,7 +161,7 @@ export default function activate(api: ModAPI) {
 
   const limits = (hud: Hud, params: Record<string, any>, now: number) => {
     const snapshot = object(params.rateLimits);
-    const scope = quotaScope(hud);
+    const scope = 'codex-account';
     for (const name of ['primary', 'secondary']) {
       const slot = object(snapshot[name]);
       const used = number(slot.usedPercent);
@@ -260,8 +253,8 @@ export default function activate(api: ModAPI) {
       `Retained: ${h.entries.length} requests${h.since ? ` since ${span(now - h.since)} ago` : ''}${h.dropped ? ` · ${h.dropped} older dropped (not in these totals)` : ''}; totals are not lifetime spend`,
       ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(totals(h.entries).billed + totals(h.entries).estimate)} spent (warning only, not a spending limit)`] : [])];
     const quotaLines = quota(h, now).map(slot => `${slot.name}: ${slot.current.used}% used${slot.current.resets ? slot.passed ? ` · reset passed ${span(now - slot.current.resets)} ago, awaiting a new reading` : ` · resets in ${span(slot.current.resets - now)}` : ' · reset time not reported'} · observed ${span(now - slot.current.seen)} ago${slot.projected !== null ? ` · projection ~${Math.min(slot.projected, 999)}% at reset (${slot.samples} samples over ${span(slot.spanned)})` : ' · insufficient data for a projection'}`);
-    if (!quotaLines.length) quotaLines.push('No quota windows reported for this account and route');
-    if (h.credits) quotaLines.push(`Extra-usage credits: ${h.credits}`);
+    quotaLines.unshift('Current route quota: unavailable (account-to-route binding is not reported)');
+    if (h.credits) quotaLines.push(`Codex account Extra-usage credits: ${h.credits}`);
     const agents = Object.entries(h.agents);
     const activity = [
       h.plan ? `Task progress ${h.plan.done}/${h.plan.total}${h.plan.step ? ` · now: ${visible(h.plan.step, 80)}` : ''}` : 'No plan in this session',
@@ -352,6 +345,8 @@ export default function activate(api: ModAPI) {
       state.current = { model: session.ok ? session.value.model : state.current.model, provider: session.ok ? session.value.provider : state.current.provider,
         effort: typeof values.model_reasoning_effort === 'string' ? values.model_reasoning_effort : state.current.effort };
       state.room = { size: number(values.model_context_window), compact: number(values.model_auto_compact_token_limit) };
+      state.samples = [];
+      state.credits = null;
     });
     const read = api.usage.rateLimits();
     if (read.available) hud(state => limits(state, object(read.value), Date.now()));
@@ -404,6 +399,11 @@ export default function activate(api: ModAPI) {
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update = object(params);
     const thread = thread_id ?? update.threadId ?? null;
+    if (method === 'account/updated') {
+      hud(state => { state.samples = []; state.credits = null; });
+      publish();
+      return;
+    }
     if (method === 'account/rateLimits/updated') {
       hud(state => limits(state, update, Date.now()));
       publish();

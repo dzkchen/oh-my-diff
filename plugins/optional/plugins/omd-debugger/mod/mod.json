@@ -4,7 +4,7 @@
   "version": "0.2.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "plugins/optional/plugins/omd-debugger/mod" },
   "capabilities": ["tools", "exec", "store", "lifecycle", "network"]
 }

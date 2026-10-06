@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Ranks @ file mentions and file-tree find by typo-tolerant fuzzy match, per-project frecency and Git status",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_frecency"},
   "capabilities": ["composer", "input", "lifecycle", "store", "exec", "fs.read", "services"],
   "compatibility": {"required_features": ["completion_v1", "exec_v1", "service_dispatch_v1", "store_v1"]},

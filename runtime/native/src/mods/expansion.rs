@@ -487,7 +487,7 @@ pub(super) async fn dispatch(
         }
         "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
         "settings.write" => Err("host_operation_user_only: settings.write".into()),
-        _ => surface(lead, caller, request, cancelled).await,
+        _ => surface(core, lead, caller, request, cancelled).await,
     }
 }
 
@@ -554,6 +554,7 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
 }
 
 async fn surface(
+    core: &Core,
     lead: &Lead,
     caller: &Caller<'_>,
     request: ModHostCall,
@@ -585,28 +586,61 @@ async fn surface(
     let repository = lead.host.repository.clone();
     let arguments = request.arguments;
     let cancelled = cancelled.clone();
+    let surface_authority = caller
+        .grants
+        .as_ref()
+        .map(|grants| grants.surface_authority.clone());
+    let runtime = core.runtime.clone();
+    let generation = caller.generation;
+    let source = caller.source.to_owned();
+    let admitted_source = source.clone();
+    let admission_cancelled = cancelled.clone();
     tokio::task::spawn_blocking(move || {
-        let active = || !cancelled.load(Ordering::Acquire);
-        if operation == "app.request" {
-            return codex_omd::client_surface::app_request(
-                &id,
-                &capabilities,
-                context,
-                Some(&thread),
-                &repository,
-                &routes,
-                arguments,
-                &active,
-            );
-        }
-        codex_omd::client_surface::call(
-            &id,
-            &operation,
-            arguments,
-            context,
-            Some(&thread),
-            None,
-            &active,
+        let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
+        let owner = id.clone();
+        let admitted_capabilities = capabilities.clone();
+        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            if cancelled.load(Ordering::Acquire) {
+                return false;
+            }
+            let mut runtime = runtime
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if runtime.reload().is_err() {
+                return false;
+            }
+            runtime.generation() == generation
+                && runtime.grants(&owner).is_some_and(|grants| {
+                    grants.source_sha256 == source && grants.capabilities == admitted_capabilities
+                })
+        });
+        codex_omd::client_surface::with_admission(
+            &admitted_source,
+            generation,
+            Some(admission_cancelled),
+            || {
+                if operation == "app.request" {
+                    return codex_omd::client_surface::app_request(
+                        &id,
+                        &capabilities,
+                        context,
+                        Some(&thread),
+                        &repository,
+                        &routes,
+                        arguments,
+                        active,
+                    );
+                }
+                codex_omd::client_surface::call(
+                    &id,
+                    &operation,
+                    arguments,
+                    context,
+                    Some(&thread),
+                    None,
+                    active,
+                )
+            },
         )
     })
     .await

@@ -14,19 +14,19 @@ globalThis.tool = async (name, args = {}) => {
   if (Buffer.byteLength(payload) > 65536) throw new Error("tool request limit exceeded");
   return await new Promise((resolve, reject) => {
     const connection = net.createConnection({ host: "127.0.0.1", port: bridge.port });
-    let response = "";
+    let response = Buffer.alloc(0);
     let reachable = false;
     connection.setTimeout(120000, () => { reachable = true; connection.destroy(new Error("tool bridge timeout")); });
     connection.on("connect", () => connection.write(payload));
     connection.on("data", (data) => {
-      response += data.toString();
-      if (Buffer.byteLength(response) > 262144) {
+      response = Buffer.concat([response, data]);
+      if (response.length > 262144) {
         reachable = true;
         connection.destroy(new Error("tool response limit exceeded"));
       } else if (response.includes("\n")) {
         connection.end();
         try {
-          const result = JSON.parse(response.slice(0, response.indexOf("\n")));
+          const result = JSON.parse(response.subarray(0, response.indexOf("\n")).toString('utf8'));
           if (result.ok) resolve(result.result);
           else reject(new Error(result.error || "tool call failed"));
         } catch (error) {

@@ -86,7 +86,9 @@ public final class BridgeClient implements AutoCloseable {
             } catch (RuntimeException error) {
                 result = ",\"error\":" + quote(error.getMessage());
             }
-            post("/v1/state", body() + ",\"request_id\":" + quote(matcher.group(1)) + result + "}");
+            try {
+                post("/v1/state", body() + ",\"request_id\":" + quote(matcher.group(1)) + result + "}");
+            } catch (IOException ignored) {}
         }
     }
 

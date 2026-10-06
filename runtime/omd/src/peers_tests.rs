@@ -168,6 +168,80 @@ fn tampered_and_expired_messages_are_not_delivered() {
 }
 
 #[test]
+fn seen_ids_are_forgotten_once_their_message_expires() {
+    let store = tempfile::tempdir().unwrap();
+    let alpha = Peers::open(store.path(), "alpha", Path::new("/repo")).unwrap();
+    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
+    let chat = endpoint("chat", "same");
+    beta.publish(std::slice::from_ref(&chat)).unwrap();
+    alpha
+        .send(&TestSeal, &chat, "beta", "chat", json!("hi"), None, 60_000)
+        .unwrap();
+    let path = inbox_file(store.path(), "beta");
+    let mut message =
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap()["message"].clone();
+    message["expires_at_ms"] = json!(now_ms() + 150);
+    let envelope = serde_json::to_vec(&sealed(&TestSeal, "message", message).unwrap()).unwrap();
+    fs::write(&path, &envelope).unwrap();
+    assert_eq!(beta.receive(&TestSeal).unwrap().len(), 1);
+    fs::write(&path, &envelope).unwrap();
+    assert!(
+        beta.receive(&TestSeal).unwrap().is_empty(),
+        "a replay is dropped"
+    );
+    assert_eq!(beta.seen.lock().unwrap().len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    fs::write(&path, &envelope).unwrap();
+    assert!(
+        beta.receive(&TestSeal).unwrap().is_empty(),
+        "a replay after expiry is still refused"
+    );
+    assert!(
+        beta.seen.lock().unwrap().values().all(|at| *at < now_ms()),
+        "only the expired replay is recorded"
+    );
+    fs::remove_file(&path).ok();
+    beta.receive(&TestSeal).unwrap();
+    assert!(
+        beta.seen.lock().unwrap().is_empty(),
+        "expired ids are swept"
+    );
+}
+
+#[test]
+fn messages_expiring_during_verification_are_not_delivered() {
+    struct ExpiringSeal;
+    impl Seal for ExpiringSeal {
+        fn seal(&self, sha256: &str) -> io::Result<String> {
+            TestSeal.seal(sha256)
+        }
+        fn verify(&self, sha256: &str, tag: &str) -> io::Result<bool> {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            TestSeal.verify(sha256, tag)
+        }
+    }
+    let store = tempfile::tempdir().unwrap();
+    let alpha = Peers::open(store.path(), "alpha", Path::new("/repo")).unwrap();
+    let beta = Peers::open(store.path(), "beta", Path::new("/repo")).unwrap();
+    let chat = endpoint("chat", "same");
+    beta.publish(std::slice::from_ref(&chat)).unwrap();
+    alpha
+        .send(&TestSeal, &chat, "beta", "chat", json!("hi"), None, 60_000)
+        .unwrap();
+    let path = inbox_file(store.path(), "beta");
+    let mut message =
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap()["message"].clone();
+    message["expires_at_ms"] = json!(now_ms() + 50);
+    fs::write(
+        &path,
+        serde_json::to_vec(&sealed(&TestSeal, "message", message).unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert!(beta.receive(&ExpiringSeal).unwrap().is_empty());
+    assert_eq!(alpha.receipts(&TestSeal).unwrap()[0].1["status"], "expired");
+}
+
+#[test]
 fn closed_sessions_and_other_projects_are_refused() {
     let store = tempfile::tempdir().unwrap();
     let alpha = Peers::open(store.path(), "alpha", Path::new("/repo")).unwrap();

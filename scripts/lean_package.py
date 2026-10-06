@@ -165,7 +165,7 @@ def source_build(args):
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
         run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
-            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
+            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
             "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker",
             cwd=checkout / "codex-rs", env=environment)
         artifacts = Path(temporary) / "artifacts"

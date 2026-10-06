@@ -33,9 +33,14 @@ function fixture(launch = '') {
   writeFileSync(join(repository, 'build/out.js'), '');
   const root = join(repository, launch);
   const store = new Map();
+  const stores = new Map();
+  const states = new Map();
   const backups = new Map();
   const answers = [];
   const calls = [];
+  const ptys = new Set();
+  const exited = new Set();
+  let thread = 'thread-1';
   const kind = path => {
     const full = join(root, path);
     if (!existsSync(full)) return null;
@@ -76,7 +81,18 @@ function fixture(launch = '') {
         for (const [path, data] of Object.entries(backups.get(args.backup.reference))) writeFileSync(join(root, path), data);
         return { files: {} };
       case 'terminal.prompt': return args.kind === 'text' ? { status: 'accepted', value: answers.shift() } : { status: 'accepted' };
-      case 'terminal.pty': return args.action === 'start' ? { session: args.session, running: true } : { stopped: true };
+      case 'terminal.pty':
+        if (args.action === 'start') {
+          assert.equal(ptys.has(args.session), false);
+          ptys.add(args.session);
+          return { session: args.session, running: true };
+        }
+        if (args.action === 'read') {
+          if (!ptys.has(args.session)) throw new Error('pty_session_unknown');
+          return { text: '', running: !exited.has(args.session), exit_code: exited.has(args.session) ? 0 : null };
+        }
+        ptys.delete(args.session);
+        return { stopped: true };
       case 'app.request': return { files: walk('', true).filter(entry => entry.kind === 'file' && entry.path.includes(args.params.query.split(' ').at(-1))).map(entry => ({ path: entry.path })) };
       default: return { delivered: 1, dropped: 0 };
     }
@@ -85,7 +101,7 @@ function fixture(launch = '') {
     const receipts = [];
     for (;;) {
       const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { git: true, lsp: true }, event, name, payload, receipts, surface, hook_budget_ms: 10000 };
-      const output = callback(request, call => host(call.operation, call.arguments), receipts, { capture: () => false });
+      const output = callback(request, call => host(call.operation, call.arguments), receipts, { capture: error => error.message === 'pty_session_unknown' });
       if (output.error) throw new Error(output.error);
       if (!output.host_call) return { value: output.value, state: output.state };
       receipts.push({ call: output.host_call, value: host(output.host_call.operation, output.host_call.arguments) });
@@ -103,8 +119,76 @@ function fixture(launch = '') {
     state = result.state;
     return result.value;
   };
-  return { repository, store, answers, calls, command, view, service, event: (event, payload) => { state = invoke(state, event, payload).state; }, state: () => state };
+  return { repository, store, answers, calls, command, view, service, exitPty: id => exited.add(id), event: (event, payload) => {
+    if ((event === 'start' || event === 'resume') && payload.thread_id !== thread) {
+      states.set(thread, state);
+      stores.set(thread, new Map(store));
+      thread = payload.thread_id;
+      if (manifest.state_scope === 'thread') state = states.get(thread) ?? null;
+      store.clear();
+      for (const [key, value] of stores.get(thread) ?? []) store.set(key, value);
+      ptys.clear();
+      exited.clear();
+    }
+    state = invoke(state, event, payload).state;
+  }, state: () => state };
 }
+
+test('restoring another thread drops shell handles even when pane IDs match', () => {
+  const { repository, store, command, event, state, calls, exitPty } = fixture();
+  try {
+    command('pane', 'split right shell');
+    assert.deepEqual(state().running, ['p1']);
+    event('resume', { thread_id: 'thread-1', last_turn: null, restarted: false });
+    assert.deepEqual(state().running, ['p1']);
+    exitPty('p1');
+    event('resume', { thread_id: 'thread-1', last_turn: null, restarted: false });
+    assert.deepEqual(state().running, ['p1']);
+    event('resume', { thread_id: 'thread-2', last_turn: null, restarted: false });
+    assert.equal(state().layout.root, 'chat');
+    assert.deepEqual(state().running, []);
+    assert.equal(calls.filter(call => call.operation === 'terminal.pty' && call.args.action === 'stop').length, 0);
+    command('pane', 'split right shell');
+    assert.deepEqual(state().running, ['p1']);
+    const stopped = calls.filter(call => call.operation === 'terminal.pty' && call.args.action === 'stop').length;
+    store.set('thread:layout', { value: { root: 'chat', panes: { chat: { kind: 'chat' } }, active: 'chat', next: 1 }, revision: 8 });
+    event('resume', { thread_id: 'thread-2', last_turn: null, restarted: false });
+    assert.deepEqual(state().running, []);
+    assert.equal(calls.filter(call => call.operation === 'terminal.pty' && call.args.action === 'stop').length, stopped + 1);
+    store.delete('thread:layout');
+    event('resume', { thread_id: 'thread-3', last_turn: null, restarted: false });
+    assert.equal(state().layout.root, 'chat');
+    assert.deepEqual(state().running, []);
+    assert.deepEqual(state().views, {});
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('viewer positions and pending Undo stay with their thread across resume', () => {
+  const { repository, command, event, state } = fixture();
+  try {
+    command('tree', '');
+    command('tree', 'select src/app.ts');
+    command('view', 'line @p2 1');
+    command('file', 'delete file2.txt');
+    const backup = state().backup;
+    assert.ok(backup);
+    event('resume', { thread_id: 'thread-1', last_turn: null, restarted: false });
+    assert.deepEqual(state().backup, backup);
+    assert.equal(state().views.p2.line, 1);
+    event('resume', { thread_id: 'thread-2', last_turn: null, restarted: false });
+    assert.equal(state().backup, null);
+    assert.deepEqual(state().views, {});
+    event('resume', { thread_id: 'thread-1', last_turn: null, restarted: false });
+    assert.deepEqual(state().backup, backup);
+    assert.equal(state().views.p2.line, 1);
+    command('file', 'undo .');
+    assert.equal(readFileSync(join(repository, 'file2.txt'), 'utf8'), 'two\n');
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('panes split, focus, move, resize and persist a valid layout per thread', () => {
   const { repository, store, command, view, event, state } = fixture();

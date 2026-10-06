@@ -132,7 +132,16 @@ def tree_identity(root):
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    directory = path.parent.parent if path.name == "bundle.json" else path.parent
+    with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def browser_metadata(package_dir, lock):
@@ -367,19 +376,68 @@ def install_archive(archive, expected_sha256, destination):
         raise
 
 
-def update(destination, node_archive=None, archive=None, expected_sha256=None):
-    destination = validate_destination(destination)
-    verify(destination)
+def recover_update(destination):
+    journal = destination.parent / f".{destination.name}.update.json"
     replacement = destination.parent / f".{destination.name}.replacement"
     backup = destination.parent / f".{destination.name}.rollback"
-    if replacement.exists() or backup.exists():
-        raise ValueError("browser update staging or rollback path exists")
-    if archive:
-        install_archive(archive, expected_sha256, replacement)
+    if not journal.exists():
+        return
+    transaction = json.loads(journal.read_text())
+    if transaction.get("destination") != str(destination) or transaction.get("phase") not in {"building", "prepared", "committed"}:
+        raise ValueError("browser update recovery journal is invalid")
+    if transaction["phase"] == "committed":
+        if verify(destination)["tree"] != transaction["new_tree"]:
+            raise ValueError("browser update recovery tree mismatch")
+        if backup.exists():
+            shutil.rmtree(backup)
     else:
-        build_bundle(replacement, node_archive)
-    destination.rename(backup)
+        if backup.exists():
+            manifest = json.loads((backup / "bundle.json").read_text())
+            if manifest.get("destination") != str(destination) or tree_identity(backup) != transaction["old_tree"]:
+                raise ValueError("browser update rollback tree mismatch")
+            if destination.exists():
+                if replacement.exists() or tree_identity(destination) != transaction.get("new_tree"):
+                    raise ValueError("browser update activation state is invalid")
+                destination.rename(replacement)
+            backup.rename(destination)
+        if verify(destination)["tree"] != transaction["old_tree"]:
+            raise ValueError("browser update original tree mismatch")
+    if replacement.exists():
+        shutil.rmtree(replacement)
+    staging = replacement.parent / f".{replacement.name}.staging"
+    if staging.exists():
+        shutil.rmtree(staging)
+    journal.unlink()
+
+
+def update(destination, node_archive=None, archive=None, expected_sha256=None):
+    import fcntl
+    destination = validate_destination(destination)
+    with (destination.parent / f".{destination.name}.update.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return update_locked(destination, node_archive, archive, expected_sha256)
+
+
+def update_locked(destination, node_archive=None, archive=None, expected_sha256=None):
+    destination = validate_destination(destination)
+    recover_update(destination)
+    original = verify(destination)
+    replacement = destination.parent / f".{destination.name}.replacement"
+    backup = destination.parent / f".{destination.name}.rollback"
+    journal = destination.parent / f".{destination.name}.update.json"
+    staging = replacement.parent / f".{replacement.name}.staging"
+    if replacement.exists() or backup.exists() or staging.exists():
+        raise ValueError("browser update staging or rollback path exists")
+    transaction = {"destination": str(destination), "phase": "building", "old_tree": original["tree"]}
+    write_json(journal, transaction)
     try:
+        if archive:
+            replacement_manifest = install_archive(archive, expected_sha256, replacement)
+        else:
+            replacement_manifest = build_bundle(replacement, node_archive)
+        transaction.update(phase="prepared", new_tree=replacement_manifest["tree"])
+        write_json(journal, transaction)
+        destination.rename(backup)
         replacement.rename(destination)
         manifest = json.loads((destination / "bundle.json").read_text())
         if manifest.get("schema") != SCHEMA or manifest.get("product") != PRODUCT:
@@ -387,14 +445,12 @@ def update(destination, node_archive=None, archive=None, expected_sha256=None):
         manifest["destination"] = str(destination)
         write_json(destination / "bundle.json", manifest)
         result = verify(destination)
+        transaction["phase"] = "committed"
+        write_json(journal, transaction)
     except BaseException:
-        if destination.exists():
-            destination.rename(replacement)
-        backup.rename(destination)
-        if replacement.exists():
-            shutil.rmtree(replacement)
+        recover_update(destination)
         raise
-    shutil.rmtree(backup)
+    recover_update(destination)
     return result
 
 

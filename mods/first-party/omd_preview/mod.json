@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "/preview renders a response or a Markdown, code or diff file as HTML in the browser or inline, or opens the session's dev server",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_preview"},
   "capabilities": ["commands", "terminal", "store", "sessions", "exec", "fs.read", "fs.write", "events", "lifecycle"],
   "assets": ["render.mjs"],

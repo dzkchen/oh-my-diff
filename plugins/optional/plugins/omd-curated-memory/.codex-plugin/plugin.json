@@ -17,5 +17,5 @@
     ],
     "defaultPrompt": "Curate project memory with source evidence and explicit approval."
   },
-  "license": "Apache-2.0"
+  "license": "MIT"
 }

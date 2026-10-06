@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "/theme: color themes, backgrounds, glyphs, the startup greeting, a powerline status line and a prompt stash",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party/omd_theme"

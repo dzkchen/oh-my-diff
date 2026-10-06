@@ -427,6 +427,28 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
 }
 
 #[test]
+fn service_launch_uses_admitted_helpers_after_unchanged_configuration_reload() {
+    let (temp, store, path) = fixture("export default () => {};", &[]);
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["assets"] = json!(["helper.mjs"]);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(path.join("helper.mjs"), "admitted helper").unwrap();
+    trust(&store, &path, &[]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    std::fs::write(path.join("helper.mjs"), "changed helper").unwrap();
+    runtime.reload().unwrap();
+    assert_eq!(runtime.generation(), generation);
+    let (_, files) = runtime.launch_sources("fixture", generation).unwrap();
+    assert_eq!(files[&path.join("helper.mjs")], b"admitted helper");
+    store.enable(&path, false).unwrap();
+    runtime.reload().unwrap();
+    assert!(runtime.launch_sources("fixture", generation).is_err());
+}
+
+#[test]
 fn mod_capabilities_source_tamper_and_symlinks_are_rejected() {
     let (temp, store, path) = fixture(
         "export default api => api.command('bad', () => api.state.set(1))",
@@ -1949,6 +1971,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         &["commands", "exec", "fs.write"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default (api: any) => api.command('count',()=>{ api.atom<number>('n', 0).set(1); return null; })",
+        &["commands", "store"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
     assert_eq!(
         policies["intercept.response_stream"]["usage"],
@@ -2397,6 +2424,61 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
     let store_root = root.join("store");
     assert!(store_root.join("state-shared.project.json").exists());
     assert!(!store_root.join("state-shared.json").exists());
+}
+
+#[test]
+fn thread_state_separates_selected_package_scopes_and_forks_both() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let source = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
+    let user = packaged(&root, "user", "shared", source, &["commands", "store"], &[]);
+    let project = packaged(
+        &root,
+        "project",
+        "shared",
+        source,
+        &["commands", "store"],
+        &[],
+    );
+    for path in [&user, &project] {
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+        manifest["state_scope"] = json!("thread");
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    trust_scoped(&store, &user, &["commands", "store"], "user");
+    let mut runtime = host(&temp);
+    let count = |runtime: &mut ModHost, thread: &str| {
+        runtime
+            .invoke(
+                "shared",
+                runtime.generation(),
+                "command",
+                "count",
+                json!({"thread_id":thread}),
+            )
+            .unwrap()
+    };
+    assert_eq!(count(&mut runtime, "t1"), json!(1));
+    trust_scoped(&store, &project, &["commands", "store"], "project");
+    runtime.reload().unwrap();
+    assert_eq!(count(&mut runtime, "t1"), json!(1));
+    let store_root = root.join("store");
+    assert!(codex_omd::data_store::fork_thread_data(&store_root, "t1", "t2").unwrap());
+    assert_eq!(count(&mut runtime, "t2"), json!(2));
+    assert_eq!(
+        std::fs::read_dir(store_root.join("data/threads/t2/.state"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -2900,6 +2982,54 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
                 .contains("time.sleep is not available during intercept"),
             "{entry}"
         );
+    }
+}
+
+#[test]
+fn request_path_interceptors_refuse_sleep_before_continuation() {
+    for required in [false, true] {
+        let source = format!(
+            "export default api => {{ for (const surface of ['model_request', 'model_send', 'response_stream']) api.intercept(surface, {{required: {required}}}, async (e, next) => {{ await api.time.sleep(1); return next(e); }}); }}"
+        );
+        let (temp, _, _) = fixture(&source, &["middleware", "request_policy", "events"]);
+        let runtime = std::sync::Mutex::new(host(&temp));
+        for surface in ["model_request", "model_send", "response_stream"] {
+            let input = match surface {
+                "model_request" => {
+                    json!({"route": "default", "routes": [{"name": "default"}], "sections": [], "effort": null})
+                }
+                "response_stream" => json!({"kind": "text", "text": "hello", "index": 0}),
+                _ => json!({"segments": [], "opaque": [], "page": 0, "pages": 1}),
+            };
+            let result = codex_omd::intercept_shared(
+                &runtime,
+                surface,
+                required,
+                input,
+                json!({"caller": "engine"}),
+                || true,
+                |_, _| panic!("unexpected host call"),
+                |_| Ok(json!({"native": true})),
+            );
+            if required {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("time_sleep_unavailable")
+                );
+            } else {
+                assert_eq!(result.unwrap().result, json!({"native": true}));
+            }
+            let chains = runtime.lock().unwrap().status()["chains"].clone();
+            let entry = chains.as_array().unwrap().last().unwrap();
+            assert!(
+                entry
+                    .to_string()
+                    .contains(&format!("time_sleep_unavailable: {surface}")),
+                "{entry}"
+            );
+        }
     }
 }
 

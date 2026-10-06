@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Scrollback-first mini presentation for sessions started with `omd mini`: compact tool summaries, a simple prompt, one status line and switching to the full UI",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_mini"},
   "capabilities": ["terminal", "commands", "lifecycle", "store", "exec", "threads"],
   "exec_environment": ["OH_MY_DIFF_PRESENTATION", "OH_MY_DIFF_LAUNCH"],

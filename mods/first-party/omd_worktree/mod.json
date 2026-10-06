@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Task worktrees: create from a base ref with opt-in setup and a session, switch, integrate after review and remove safely",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_worktree"},
   "capabilities": ["commands", "terminal", "lifecycle", "store", "exec", "fs.write", "threads", "sessions", "builtins", "services"],
   "exec_environment": ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"],

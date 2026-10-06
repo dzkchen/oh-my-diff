@@ -44,12 +44,14 @@ export class BridgeClient {
     const value = await this.post("/v1/poll", this.body());
     for (const command of value.commands) {
       const handler = this.handlers.get(command.name);
+      let response;
       try {
         const state = handler ? await handler() : null;
-        await this.post("/v1/state", this.body({request_id: command.request_id, value: state, ...(handler ? {} : {error: "state handler unavailable"})}));
+        response = {value: state, ...(handler ? {} : {error: "state handler unavailable"})};
       } catch (error) {
-        await this.post("/v1/state", this.body({request_id: command.request_id, error: String(error?.message || error)}));
+        response = {error: String(error?.message || error)};
       }
+      try { await this.post("/v1/state", this.body({request_id: command.request_id, ...response})); } catch {}
     }
   }
 

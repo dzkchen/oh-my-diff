@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "license": "Apache-2.0",
+  "license": "MIT",
   "capabilities": ["commands", "terminal", "store"],
   "compatibility": {
     "required_features": ["terminal_media_v1", "binary_evidence_v1", "terminal_editor_v1"]

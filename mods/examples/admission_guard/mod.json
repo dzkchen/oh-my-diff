@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "license": "Apache-2.0",
+  "license": "MIT",
   "description": "Refuses unsandboxed network packages, keeps exec from network-capable ones and requires https.",
   "capabilities": [
     "policy",

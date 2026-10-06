@@ -88,6 +88,48 @@ def post(connection, route, body, origin=None):
 
 
 class BridgeTests(unittest.TestCase):
+    def test_expired_state_commands_do_not_poison_later_polling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Host(Path(temporary), self.policy(Path(temporary)))
+            try:
+                registered = post(host.connection, '/v1/register', self.registration(host, 'python'))
+                base = self.registration(host, 'python', instance_id=registered['instance_id'])
+                for _ in range(4):
+                    with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                        host.tool({'action': 'request_state', 'application': 'python', 'state': 'health', 'timeout_ms': 20})
+                self.assertEqual(post(host.connection, '/v1/poll', base)['commands'], [])
+                results = []
+                worker = threading.Thread(target=lambda: results.append(host.tool({'action': 'request_state', 'application': 'python', 'state': 'health', 'timeout_ms': 1500})))
+                worker.start()
+                commands = []
+                deadline = time.monotonic() + 1
+                while not commands and time.monotonic() < deadline:
+                    commands = post(host.connection, '/v1/poll', base)['commands']
+                self.assertEqual(len(commands), 1)
+                post(host.connection, '/v1/state', {**base, 'request_id': commands[0]['request_id'], 'value': 'fresh'})
+                worker.join(timeout=2)
+                self.assertEqual(results[0]['value'], 'fresh')
+            finally:
+                host.close()
+
+    def test_python_reply_failure_does_not_discard_the_rest_of_the_batch(self):
+        client = load_python_client()({"url": "http://unused", "token": "fixture"},
+            {"id": "app", "adapter": "python", "version_sha256": VERSION, "reproduction_id": "fixture"})
+        client.instance_id = "instance"
+        client.handlers["health"] = lambda: "healthy"
+        replies = []
+        def post(route, body):
+            if route == "/v1/poll":
+                return {"commands": [{"name": "health", "request_id": "expired"}, {"name": "health", "request_id": "live"}]}
+            replies.append(body)
+            if body["request_id"] == "expired":
+                raise RuntimeError("expired")
+            return {}
+        client._post = post
+        client.poll()
+        self.assertEqual([reply["request_id"] for reply in replies], ["expired", "live"])
+        self.assertEqual(replies[-1]["value"], "healthy")
+
     def policy(self, root):
         applications = []
         for adapter in ("browser", "node", "rust", "python", "java"):
@@ -114,6 +156,20 @@ class BridgeTests(unittest.TestCase):
             "token": host.connection["token"], "app_id": adapter, "adapter": adapter,
             "version_sha256": VERSION, "reproduction_id": "repro-1", "exposed_state": ["health"], **extra,
         }
+
+    def test_expired_state_requests_leave_no_queued_commands(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            host = Host(root, self.policy(root))
+            try:
+                registration = post(host.connection, "/v1/register", self.registration(host, "node"))
+                body = self.registration(host, "node", instance_id=registration["instance_id"])
+                for _ in range(4):
+                    with self.assertRaisesRegex(RuntimeError, "timed out"):
+                        host.tool({"action": "request_state", "application": "node", "state": "health", "timeout_ms": 10})
+                self.assertEqual(post(host.connection, "/v1/poll", body)["commands"], [])
+            finally:
+                host.close()
 
     def test_authorization_version_redaction_bounds_state_and_teardown(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -15,6 +15,8 @@ another program after the buffer was read.
 /edit pane | hide               pane site or popup; hide keeps the buffers
 ```
 
+Unknown close arguments are rejected without changing buffers; a dirty buffer requires save, discard or cancel.
+
 Alt+u focuses the buffer; Ctrl+] (Ctrl+5 where the terminal sends it so) or
 Ctrl+C leaves it. The popup is modal: outside the buffer, Tab, arrows and Enter
 act on its rows (Editor actions first, so hide is two Ups away), and slash

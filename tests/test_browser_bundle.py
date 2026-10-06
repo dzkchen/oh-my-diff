@@ -1,5 +1,7 @@
 import io
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -114,14 +116,73 @@ class BrowserBundleTests(unittest.TestCase):
             archive = root / "browser.tar.xz"
             packaged = browser_bundle.create_archive(source, archive)
             verified = browser_bundle.verify(destination)
-            with mock.patch.object(browser_bundle, "verify",
-                                   side_effect=[verified, verified, RuntimeError("post-swap")]):
+            verify = browser_bundle.verify
+            calls = 0
+            def fail_once(path):
+                nonlocal calls
+                calls += 1
+                if calls == 3:
+                    raise RuntimeError("post-swap")
+                return verify(path)
+            with mock.patch.object(browser_bundle, "verify", side_effect=fail_once):
                 with self.assertRaisesRegex(RuntimeError, "post-swap"):
                     browser_bundle.update(destination, archive=archive,
                                           expected_sha256=packaged["sha256"])
             self.assertEqual(browser_bundle.load_manifest(destination)["tree"], original["tree"])
             self.assertFalse((root / ".installed.replacement").exists())
             self.assertFalse((root / ".installed.rollback").exists())
+
+    def test_update_recovers_process_death_at_each_activation_boundary(self):
+        for boundary in (1, 2, 3):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                destination = root / "installed"
+                self.managed(destination)
+                source = root / "source"
+                self.managed(source)
+                archive = root / "browser.tar.xz"
+                packaged = browser_bundle.create_archive(source, archive)
+                script = '''
+import os, sys
+from pathlib import Path
+from scripts import browser_bundle as b
+destination, archive, sha, boundary = sys.argv[1:]
+destination = Path(destination).resolve()
+boundary = int(boundary)
+rename = Path.rename
+def crash_rename(self, target):
+    result = rename(self, target)
+    if (boundary == 1 and self == destination) or (boundary == 2 and Path(target) == destination):
+        os._exit(73)
+    return result
+Path.rename = crash_rename
+write = b.write_json
+def crash_write(path, value):
+    write(path, value)
+    if boundary == 3 and path == destination / 'bundle.json':
+        os._exit(73)
+b.write_json = crash_write
+b.update(destination, archive=Path(archive), expected_sha256=sha)
+'''
+                result = subprocess.run([sys.executable, "-c", script, str(destination), str(archive), packaged["sha256"], str(boundary)])
+                self.assertEqual(result.returncode, 73)
+                result = browser_bundle.update(destination, archive=archive, expected_sha256=packaged["sha256"])
+                self.assertTrue(result["verified"])
+                self.assertFalse((root / ".installed.rollback").exists())
+                self.assertFalse((root / ".installed.update.json").exists())
+
+    def test_update_refuses_to_reconcile_another_running_update(self):
+        import fcntl
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            destination = root / "installed"
+            self.managed(destination)
+            before = browser_bundle.verify(destination)
+            with (root / ".installed.update.lock").open("a+b") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
+                    browser_bundle.update(destination)
+            self.assertEqual(browser_bundle.verify(destination)["tree"], before["tree"])
 
 
 if __name__ == "__main__":

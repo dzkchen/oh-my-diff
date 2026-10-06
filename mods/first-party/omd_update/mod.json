@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Tells you when a newer Oh My Diff release is out and controls update checks, channel, cadence, version pin and automatic updates",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party/omd_update"

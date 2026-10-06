@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Hover, definition, references, symbols, diagnostics, code actions and formatting from the omd_lsp_sync language servers",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_lsp_view"},
   "capabilities": ["commands", "terminal", "store", "events", "exec", "services"],
   "subscriptions": {"channels": ["omd_lsp_view/*", "omd_lsp_sync/status"]},

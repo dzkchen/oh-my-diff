@@ -1037,9 +1037,9 @@ fn source_use(
             capabilities.insert("request_policy".to_owned());
         }
     }
-    if [".state.get(", ".state.set(", ".atom(", ".member("]
+    if [".state.get", ".state.set", ".atom", ".member"]
         .iter()
-        .any(|call| source.contains(call))
+        .any(|call| source.contains(&format!("{call}(")) || source.contains(&format!("{call}<")))
     {
         capabilities.insert("store".to_owned());
     }
@@ -1049,6 +1049,7 @@ fn source_use(
         (".session(", "inventory"),
         (".fs.", "fs.read"),
         (".classify(", "agents"),
+        (".classify<", "agents"),
         (".rateLimits(", "account"),
     ] {
         if source.contains(call) {
@@ -2339,6 +2340,7 @@ impl ModTelemetry {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModGrants {
+    pub surface_authority: crate::client_surface::Authority,
     pub api: String,
     pub source_sha256: String,
     pub capabilities: Vec<String>,
@@ -2488,6 +2490,16 @@ fn hostless(event: &str, payload: &Value) -> bool {
             )
 }
 
+/// Interceptors the engine runs synchronously while a model request is built, sent or streamed; a sleep there would stall that request's worker.
+fn request_path(event: &str, payload: &Value) -> Option<&'static str> {
+    if event != "intercept" {
+        return None;
+    }
+    ["model_request", "model_send", "response_stream"]
+        .into_iter()
+        .find(|surface| payload["surface"] == *surface)
+}
+
 /// `time.sleep` waits outside the runtime lock and wakes early when the callback is cancelled.
 fn sleep(
     access: &mut Access<'_>,
@@ -2566,6 +2578,11 @@ fn invoke(
                     if hostless(event, &payload) {
                         return Err(failure(format!(
                             "host_operation_unavailable: time.sleep is not available during {event}"
+                        )));
+                    }
+                    if let Some(surface) = request_path(event, &payload) {
+                        return Err(failure(format!(
+                            "time_sleep_unavailable: {surface} runs on the request path"
                         )));
                     }
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
@@ -2844,7 +2861,7 @@ impl ModHost {
                         .join("threads")
                         .join(thread)
                         .join(".state"),
-                    name,
+                    ModStore::state_name(&package.id, scope),
                 ),
                 None => store::StateLocation::Unavailable("state_thread_unavailable"),
             },
@@ -4494,6 +4511,39 @@ impl ModHost {
             .collect()
     }
 
+    pub fn launch_sources(
+        &self,
+        id: &str,
+        generation: u64,
+    ) -> io::Result<(PathBuf, BTreeMap<PathBuf, Vec<u8>>)> {
+        if generation != self.generation {
+            return Err(failure("service_generation_changed"));
+        }
+        let loaded = self
+            .active()
+            .find(|(owner, _)| owner.as_str() == id)
+            .map(|(_, loaded)| loaded)
+            .ok_or_else(|| failure("host_caller_inactive"))?;
+        if !loaded.selection.authority_current() {
+            return Err(failure("service_authority_changed"));
+        }
+        let root = loaded.selection.path.canonicalize()?;
+        if root != loaded.selection.path {
+            return Err(failure("service_source_path_changed"));
+        }
+        let mut files = BTreeMap::from([(
+            root.join(&loaded.package.entrypoint),
+            loaded.source.as_bytes().to_vec(),
+        )]);
+        for (name, value) in &loaded.assets {
+            let text = value["text"]
+                .as_str()
+                .ok_or_else(|| failure("service_asset_unavailable"))?;
+            files.insert(root.join(name), text.as_bytes().to_vec());
+        }
+        Ok((root, files))
+    }
+
     /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
     pub fn record_access(&mut self, receipt: Value) {
         self.access.push(receipt);
@@ -4506,6 +4556,12 @@ impl ModHost {
         self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| {
             let current = m.selection.authority_current();
             ModGrants {
+                surface_authority: crate::client_surface::Authority {
+                    epoch: crate::client_surface::epoch(),
+                    admission: crate::client_surface::admission(),
+                    configuration: self.configuration_sha256.clone(),
+                    source: m.selection.sha256.clone(),
+                },
                 api: m.package.api.clone(),
                 source_sha256: m.selection.sha256.clone(),
                 capabilities: m

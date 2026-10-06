@@ -62,13 +62,17 @@ const commands = (script: string) => {
 };
 const simple = (argv: string[], depth = 0): string[][] => {
   let words = argv;
+  let directory = false;
   while (words.length && (/^\w+=/.test(words[0]) || WRAPPERS[base(words[0])])) {
+    if (base(words[0]) === 'env' && words.some(word => word === '-C' || word.startsWith('--chdir'))
+      || base(words[0]) === 'sudo' && words.some(word => word === '-D' || word.startsWith('--chdir'))) directory = true;
     const values = WRAPPERS[base(words[0])] ?? [];
     words = words.slice(1);
     while (values.length && words[0]?.startsWith('-')) words = words.slice(values.includes(words[0]) ? 2 : 1);
   }
   const flag = SHELLS.has(base(words[0] ?? '')) && depth < 3 ? words.findIndex(word => /^-\w*c\w*$/.test(word)) : -1;
-  return flag > 0 && words[flag + 1] ? commands(words[flag + 1]).flatMap(nested => simple(nested, depth + 1)) : words.length ? [words] : [];
+  const parsed = flag > 0 && words[flag + 1] ? commands(words[flag + 1]).flatMap(nested => simple(nested, depth + 1)) : words.length ? [words] : [];
+  return directory ? [['cd'], ...parsed] : parsed;
 };
 const parse = (command: string[] | string) => (typeof command === 'string' ? commands(command) : [command]).flatMap(words => simple(words));
 const targets = (words: string[]) => {
@@ -296,6 +300,9 @@ export default function activate(api: ModAPI) {
       save(state);
     }
     const scripts = details.command ? parse(details.command) : [];
+    if (scripts.some(words => ['cd', 'pushd', 'popd'].includes(base(words[0] ?? ''))) && scripts.some(words => targets(words).length)) {
+      return { ask: `Shell directory changes make write destinations uncertain. ${COORDINATE}` };
+    }
     const command = scripts.map(gitWrite).find(Boolean) ?? null;
     const cwd = local(details.cwd ?? '');
     const written = [...new Set(scripts.flatMap(targets).map(path => resolve(cwd, path)).filter(path => path.startsWith(`${root}/`)).map(path => path.slice(root.length + 1)))];

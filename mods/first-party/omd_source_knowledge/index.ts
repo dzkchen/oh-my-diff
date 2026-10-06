@@ -20,7 +20,7 @@ const MAX_EVIDENCE_BYTES = 8192;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_EXCERPT_BYTES = 32768;
 const MAX_CONTEXT_BYTES = 131072;
-const MAX_STORE_BYTES = 240 * 1024;
+const MAX_STORE_BYTES = 64 * 1024;
 
 function object(input: Json): Record<string, Json> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('knowledge_input_invalid');
@@ -139,15 +139,7 @@ async function seal(body: Body): Promise<State> {
 async function stored(api: ModAPI, repository_identity: string): Promise<{ state: State; store_revision: number | null }> {
   const entry = api.host.call('store.get', { key: KEY, scope: 'repository' });
   if (!entry) return { state: await seal({ schema: 2, repository_identity, generation: 0, revision: 0, facts: [], evidence: [], lessons: [] }), store_revision: null };
-  const raw = entry.value as unknown as State;
-  let value = raw;
-  if (raw?.schema === (1 as number)) {
-    const legacy = raw as unknown as { schema: 1; repository_identity: string; revision: number; facts: Fact[]; integrity_sha256: string };
-    if (legacy.integrity_sha256 !== await digest(JSON.stringify({ schema: 1, repository_identity: legacy.repository_identity,
-      revision: legacy.revision, facts: legacy.facts }))) throw new Error('knowledge_state_invalid');
-    value = await seal({ schema: 2, repository_identity: legacy.repository_identity, generation: 0, revision: legacy.revision,
-      facts: legacy.facts, evidence: [], lessons: [] });
-  }
+  const value = entry.value as unknown as State;
   if (!value || value.schema !== 2 || value.repository_identity !== repository_identity || !Number.isSafeInteger(value.revision) || value.revision < 0
     || !Number.isSafeInteger(value.generation) || value.generation < 0
     || !Array.isArray(value.facts) || value.facts.length > MAX_FACTS
@@ -308,7 +300,9 @@ async function remove(api: ModAPI, input: Json): Promise<Json> {
   const field = value.kind === 'fact' ? state.facts : value.kind === 'evidence' ? state.evidence : state.lessons;
   if (!field.some(item => item.id === id)) throw new Error('knowledge_record_missing');
   const next = state.revision + 1;
-  const saved = await seal({ ...body(state), revision: next, [value.kind === 'fact' ? 'facts' : value.kind === 'evidence' ? 'evidence' : 'lessons']:
+  const lessons = value.kind === 'evidence' ? state.lessons.map(item => item.evidence_ids.includes(id)
+    ? { ...item, state: 'candidate' as const, action: null, approved_revision: null } : item) : state.lessons;
+  const saved = await seal({ ...body(state), revision: next, lessons, [value.kind === 'fact' ? 'facts' : value.kind === 'evidence' ? 'evidence' : 'lessons']:
     field.filter(item => item.id !== id) });
   api.host.call('store.put', { key: KEY, scope: 'repository', expected_revision: store_revision, value: saved as unknown as Json });
   return { display: `Knowledge ${value.kind} ${id} removed at revision ${next}` };

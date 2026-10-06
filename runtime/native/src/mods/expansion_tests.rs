@@ -128,7 +128,7 @@ fn mods(core: &Arc<Core>) -> Mods {
         answered: Mutex::new(BTreeMap::new()),
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
-        elicitations: Mutex::new(BTreeMap::new()),
+        elicitations: Mutex::default(),
     }
 }
 
@@ -1380,11 +1380,13 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
         return;
     };
     let grants = fixture.core.runtime.lock().unwrap().grants("steerer");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
     let caller = Caller {
         id: "steerer",
-        source: "",
+        source: &source,
         grants,
-        generation: 0,
+        generation,
         origin: Origin::Event,
         record_changes: false,
     };
@@ -2726,6 +2728,31 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         thread_store,
     })
     .await;
+    let request = json!({"mode": "form", "message": "token?", "requested_schema":
+        {"type": "object", "properties": {"token": {"type": "string", "format": "password"}}}});
+    for id in (0..=64).rev() {
+        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
+            turn_id: "turn-2",
+            server: "bulk",
+            request_id: &format!("{id:02}"),
+            request: &request,
+            session_store,
+            thread_store,
+        })
+        .await;
+    }
+    for id in ["64", "00"] {
+        mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+            server: "bulk",
+            request_id: id,
+            action: "accept",
+            content: Some(&json!({"token": "hunter2"})),
+            by: None,
+            session_store,
+            thread_store,
+        })
+        .await;
+    }
     let log = fixture
         .core
         .runtime
@@ -2743,6 +2770,12 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     assert_eq!(log[1]["reason"], "explicit");
     assert_eq!(log[2]["content"], json!({"token": "[redacted]"}));
     assert_eq!(log[2]["by"], Value::Null);
+    assert_eq!(
+        log[3]["content"],
+        json!("[redacted]"),
+        "the oldest pending schema is evicted and its answer withheld"
+    );
+    assert_eq!(log[4]["content"], json!({"token": "[redacted]"}));
 
     let failed = mods
         .continue_turn(codex_extension_api::TurnContinueInput {
@@ -2790,8 +2823,8 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         .cloned()
         .unwrap();
     assert_eq!(
-        log[3],
+        log[5],
         json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
     );
-    assert_eq!(log[4]["roots"]["added"], json!(["/extra"]));
+    assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
 }

@@ -30,6 +30,8 @@ pub(crate) struct Grant {
     #[serde(default)]
     read_hashes: BTreeMap<PathBuf, String>,
     #[serde(default)]
+    code_roots: BTreeMap<PathBuf, String>,
+    #[serde(default)]
     credentials: BTreeSet<String>,
 }
 
@@ -65,6 +67,7 @@ struct Service {
     task: Arc<Task>,
     worker: String,
     _gateway: Option<crate::credential_gateway::Registration>,
+    _snapshot: tempfile::TempDir,
 }
 
 impl Drop for Service {
@@ -92,6 +95,30 @@ impl Service {
 }
 
 impl Services {
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "Stop stale services before admitting replacements"
+    )]
+    pub(super) async fn cleanup_stale(&self, generation: u64, owners: &BTreeMap<String, String>) {
+        let mut records = self.records.lock().await;
+        let stale = {
+            let keys = records
+                .iter()
+                .filter(|(_, service)| {
+                    service.generation != generation || !owners.contains_key(&service.mod_id)
+                })
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|id| records.remove(&id))
+                .collect::<Vec<_>>()
+        };
+        for service in stale {
+            service.stop().await;
+        }
+        drop(records);
+    }
+
     pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
         let owned = {
             let mut records = self.records.lock().await;
@@ -147,6 +174,7 @@ impl Services {
     )]
     pub(super) async fn call(
         &self,
+        runtime: &Mutex<ModHost>,
         lead: &Lead,
         mod_id: &str,
         generation: u64,
@@ -209,7 +237,7 @@ impl Services {
             return Err("service_already_registered".into());
         }
         let host = &lead.host;
-        let grant = host
+        let mut grant = host
             .config
             .services
             .iter()
@@ -225,6 +253,46 @@ impl Services {
         if request.operation == "sidecars.start" && grant.route.is_some() {
             return Err("provider_registration_required".into());
         }
+        let (source_root, mut source_files) = runtime
+            .lock()
+            .map_err(|_| "runtime_poisoned")?
+            .launch_sources(mod_id, generation)
+            .map_err(|error| error.to_string())?;
+        let mut code_roots = vec![source_root];
+        let mut source_links = BTreeMap::new();
+        if grant.code_roots.len() > 4 {
+            return Err("service_source_limit".into());
+        }
+        let mut source_bytes = source_files.values().map(Vec::len).sum::<usize>();
+        for (root, expected) in &grant.code_roots {
+            if code_roots
+                .iter()
+                .any(|prior| root.starts_with(prior) || prior.starts_with(root))
+            {
+                return Err("service_code_roots_overlap".into());
+            }
+            let files = launch_snapshot::capture(root)?;
+            if launch_snapshot::digest(&files) != *expected {
+                return Err("service_source_changed".into());
+            }
+            source_bytes += files.files.values().map(Vec::len).sum::<usize>();
+            if source_bytes > 128 * 1024 * 1024
+                || source_files.len() + source_links.len() + files.files.len() + files.links.len()
+                    > 8192
+            {
+                return Err("service_source_limit".into());
+            }
+            for (path, bytes) in files.files {
+                if let Some(admitted) = source_files.get(&path)
+                    && admitted != &bytes
+                {
+                    return Err("service_source_changed".into());
+                }
+                source_files.insert(path, bytes);
+            }
+            source_links.extend(files.links);
+            code_roots.push(root.clone());
+        }
         if invoke && (!grant.requests || grant.route.is_some() || grant.read_hashes.is_empty()) {
             return Err("service_request_not_host_approved".into());
         }
@@ -232,19 +300,53 @@ impl Services {
             return Err("service_source_limit".into());
         }
         for (path, expected) in &grant.read_hashes {
+            use std::io::Read;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut bytes = Vec::new();
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(path)
+                .map_err(|_| "service_source_unavailable")?;
+            if !file
+                .metadata()
+                .map_err(|_| "service_source_unavailable")?
+                .is_file()
+            {
+                return Err("service_source_unavailable".into());
+            }
+            file.take(4 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "service_source_unavailable")?;
             if !path.is_absolute()
                 || path
                     .canonicalize()
                     .map_err(|_| "service_source_unavailable")?
                     != *path
-                || std::fs::metadata(path)
-                    .map_err(|_| "service_source_unavailable")?
-                    .len()
-                    > 4 * 1024 * 1024
-                || execution::hash(&std::fs::read(path).map_err(|_| "service_source_unavailable")?)
-                    != *expected
+                || bytes.len() > 4 * 1024 * 1024
+                || execution::hash(&bytes) != *expected
             {
                 return Err("service_source_changed".into());
+            }
+            if let Some(admitted) = source_files.get(path)
+                && admitted != &bytes
+            {
+                return Err("service_source_changed".into());
+            }
+            source_files.insert(path.clone(), bytes);
+        }
+        if source_files.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024
+            || source_files.len() + source_links.len() > 8192
+        {
+            return Err("service_source_limit".into());
+        }
+        let snapshot = launch_snapshot::materialize(&host.root, &source_files, &source_links)?;
+        for argument in &mut grant.arguments {
+            let path = Path::new(argument);
+            if source_files.contains_key(path) {
+                *argument = launch_snapshot::path(snapshot.path(), path)?
+                    .to_string_lossy()
+                    .into_owned();
             }
         }
         if grant.program.starts_with(&host.repository)
@@ -282,11 +384,13 @@ impl Services {
             .map_err(|e| e.to_string())?;
         reads.push(supervisor.clone());
         reads.extend(grant.read_paths.iter().cloned());
+        reads.push(snapshot.path().to_path_buf());
         let mut denied = host
             .protected_paths()
             .into_iter()
             .filter(|path| *path != host.root)
             .collect::<Vec<_>>();
+        denied.extend(code_roots);
         let mut parent = (*parent).clone();
         let inherited = execution::intersect(
             &parent.permissions.effective_permission_profile(),
@@ -339,8 +443,12 @@ impl Services {
                 .map_err(|e| e.to_string())?;
         }
         config.permissions.shell_environment_policy.r#set.clear();
+        config.permissions.shell_environment_policy.r#set.insert(
+            "OMD_SERVICE_ROOT".into(),
+            snapshot.path().to_string_lossy().into_owned(),
+        );
         for (environment, reference) in &grant.secrets {
-            if environment == "OMD_READY_TOKEN"
+            if matches!(environment.as_str(), "OMD_READY_TOKEN" | "OMD_SERVICE_ROOT")
                 || environment.is_empty()
                 || environment.len() > 64
                 || !environment
@@ -572,6 +680,7 @@ impl Services {
                 task: lead.session.task.clone(),
                 worker: worker.clone(),
                 _gateway: gateway,
+                _snapshot: snapshot,
             },
         );
         // Every mod shares these records, so wait for readiness without holding the lock.
@@ -692,4 +801,104 @@ async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, 
         return Err("service_response_limit_or_incomplete".into());
     }
     serde_json::from_slice(&line).map_err(|_| "service_response_invalid".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(root: &Path, name: &str) -> Session {
+        let directory = root.join(name);
+        std::fs::create_dir(&directory).unwrap();
+        Session {
+            task: Arc::new(
+                Task::create(
+                    codex_omd::Limits {
+                        requests: 20,
+                        exposure_microusd: 0,
+                        seconds: 60,
+                        concurrent_workers: 8,
+                        max_depth: 2,
+                    },
+                    directory.join("ledger"),
+                )
+                .unwrap(),
+            ),
+            repository_identity: name.into(),
+            evidence: directory.join("evidence"),
+            scratch: directory.join("scratch"),
+            contract: std::sync::Mutex::new(crate::contract::SessionContract::default()),
+            contract_state: directory.join("contract.json"),
+            processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
+            data: DataScope::default(),
+            access: AccessState::default(),
+        }
+    }
+
+    async fn insert(
+        services: &Services,
+        session: &Session,
+        id: &str,
+        owner: &str,
+        generation: u64,
+    ) -> (tokio::task::AbortHandle, PathBuf) {
+        let worker = format!("{id}-{generation}");
+        session
+            .task
+            .start_worker(
+                worker.clone(),
+                "lead".into(),
+                1,
+                codex_omd::WorkerLimits {
+                    requests: 1,
+                    exposure_microusd: 0,
+                    seconds: 30,
+                },
+            )
+            .unwrap();
+        let job = tokio::spawn(std::future::pending::<Result<Value, String>>());
+        let abort = job.abort_handle();
+        let snapshot = tempfile::tempdir().unwrap();
+        let path = snapshot.path().to_path_buf();
+        services.records.lock().await.insert(
+            id.into(),
+            Service {
+                mod_id: owner.into(),
+                generation,
+                route: None,
+                job: Some(job),
+                task: session.task.clone(),
+                worker,
+                _gateway: None,
+                _snapshot: snapshot,
+            },
+        );
+        (abort, path)
+    }
+
+    #[tokio::test]
+    async fn stale_and_disabled_services_stop_and_release_their_ids() {
+        let root = tempfile::tempdir().unwrap();
+        let first = session(root.path(), "first");
+        let other = session(root.path(), "other");
+        let services = Services::default();
+        let (stale, stale_path) = insert(&services, &first, "stale", "enabled", 1).await;
+        let (disabled, disabled_path) = insert(&services, &first, "disabled", "disabled", 2).await;
+        let (current, _) = insert(&services, &first, "current", "enabled", 2).await;
+        let (foreign, _) = insert(&services, &other, "foreign", "enabled", 2).await;
+        let (foreign_stale, _) = insert(&services, &other, "foreign-stale", "enabled", 1).await;
+        let owners = BTreeMap::from([("enabled".to_owned(), "hash".to_owned())]);
+        services.cleanup_stale(2, &owners).await;
+        assert!(stale.is_finished() && disabled.is_finished() && foreign_stale.is_finished());
+        assert!(!stale_path.exists() && !disabled_path.exists());
+        assert!(!current.is_finished() && !foreign.is_finished());
+        assert!(!services.records.lock().await.contains_key("stale"));
+        let (replacement, _) = insert(&services, &first, "stale", "enabled", 2).await;
+        services.cleanup_stale(2, &owners).await;
+        assert!(!replacement.is_finished());
+        services.cleanup_session(&first).await;
+        assert!(current.is_finished() && replacement.is_finished());
+        assert!(!foreign.is_finished());
+        services.cleanup_session(&other).await;
+    }
 }

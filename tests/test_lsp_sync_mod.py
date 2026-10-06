@@ -137,6 +137,8 @@ class Host:
             self.close()
             return {"stopped": True}
         if operation == "workspace.stat":
+            if len(arguments["paths"]) > 128:
+                raise HostFailure("workspace_path_limit")
             files = {}
             for name in arguments["paths"]:
                 path = self.repository / name
@@ -366,6 +368,70 @@ while True:
 
 
 class LspSyncModTest(unittest.TestCase):
+    def test_feedback_batches_languages_and_reports_incomplete_checks(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve()
+            servers = {}
+            for adapter, extension, count in [("python", "py", 65), ("typescript", "ts", 64)]:
+                documents = {}
+                for index in range(count):
+                    name = f"f{index:03}.{extension}"
+                    (repository / name).write_text("x=1\n")
+                    documents[name] = {"sha256": digest(b"x=1\n"), "version": 1}
+                servers[adapter] = {"repository": str(repository), "running": True, "status": "synced", "documents": documents}
+                (repository / f"f000.{extension}").write_text("x=2\n")
+
+            class FeedbackHost(Host):
+                def __init__(self, refusal=None):
+                    super().__init__(repository, None)
+                    self.batches = []
+                    self.refusal = refusal
+
+                def call(self, call):
+                    operation, arguments = call["operation"], call["arguments"]
+                    if operation == "workspace.stat":
+                        self.batches.append(arguments["paths"])
+                        if self.refusal == "stat" and len(self.batches) == 2:
+                            raise HostFailure("stat_unavailable")
+                    if operation == "process.exchange":
+                        messages = []
+                        for message in arguments["send"]:
+                            if message.get("method") == "textDocument/didChange":
+                                if self.refusal == "sync":
+                                    raise HostFailure("sync_unavailable")
+                                document = message["params"]["textDocument"]
+                                messages.append({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+                                    **document, "diagnostics": [{"severity": 1, "message": "new error", "range": {"start": {"line": 0, "character": 0}}}]}})
+                        return {"session": arguments["session"], "running": True, "messages": messages}
+                    return super().call(call)
+
+            event = {"tool": "apply_patch", "arguments": "", "success": True}
+            host = FeedbackHost()
+            output = run(node, "tool_output", event, {"servers": servers}, host)
+            self.assertEqual([len(batch) for batch in host.batches], [128, 1])
+            for extension in ["py", "ts"]:
+                self.assertIn(f"f000.{extension}: 1 new, 0 resolved", output["value"]["append"])
+            for refusal in ["stat", "sync"]:
+                with self.subTest(refusal=refusal):
+                    output = run(node, "tool_output", event, {"servers": servers}, FeedbackHost(refusal))
+                    self.assertIn("feedback incomplete", output["value"]["append"])
+                    for adapter in servers:
+                        self.assertEqual(output["state"]["servers"][adapter]["status"], "stale")
+            for server in servers.values():
+                documents = {}
+                for name, document in server["documents"].items():
+                    long_name = "a" * 180 + name
+                    (repository / name).rename(repository / long_name)
+                    documents[long_name] = document
+                server["documents"] = documents
+            output = run(node, "tool_output", event, {"servers": servers}, FeedbackHost())
+            self.assertIn("feedback incomplete: callback_budget", output["value"]["append"])
+            for adapter in servers:
+                self.assertEqual(output["state"]["servers"][adapter]["status"], "stale")
+
     def test_lsp_service_answers_through_the_running_server_and_confirms_edits(self):
         node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
         if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
@@ -490,7 +556,7 @@ class LspSyncModTest(unittest.TestCase):
             try:
                 host.fail_open_once = "process_cancelled"
                 cancelled = run(node, "tool_output", read, None, host)
-                self.assertIsNone(cancelled["value"])
+                self.assertIn("feedback incomplete: process_cancelled", cancelled["value"]["append"])
                 self.assertEqual(cancelled["state"]["servers"]["python"]["status"], "stale")
                 self.assertFalse(cancelled["state"]["servers"]["python"]["running"])
                 self.assertIsNone(host.child)

@@ -5,7 +5,7 @@
     "store.put": [{ "result": { "revision": 1 } }]
   },
   "steps": [
-    { "type": "invoke", "mod": "omd_source_knowledge", "event": "command", "name": "reset",
+    { "type": "invoke", "mod": "omd_source_knowledge", "event": "command", "name": "discard",
       "payload": "{\"repository_identity\":\"fixture/repository\",\"expected_revision\":0,\"action\":{\"actor\":\"fixture-maintainer\",\"reason\":\"Explicit reset\"}}" }
   ]
 }

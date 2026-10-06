@@ -77,7 +77,9 @@ test('startup updates build a per-thread inventory from the thread connection an
 });
 
 test('setup drafts reviewed upstream commands in the composer and refuses legacy SSE', () => {
-  const drafted = payload => invoke({ event: 'command', name: 'mcps', payload, reply: call => ({ text: call.arguments.text, cursor: 0 }) }).calls.map(call => call.arguments.text);
+  const composer = { text: '', cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
+  const drafted = payload => invoke({ event: 'command', name: 'mcps', payload, reply: call => call.operation === 'composer.read' ? composer : { ...composer, text: call.arguments.edit.text, revision: 2 } })
+    .calls.filter(call => call.operation === 'composer.write').map(call => call.arguments.edit.text);
   assert.deepEqual(drafted('add docs --url https://mcp.example/v1 --bearer-token-env-var DOCS_TOKEN'), ['!codex mcp add docs --url https://mcp.example/v1 --bearer-token-env-var DOCS_TOKEN']);
   assert.deepEqual(drafted("add fs --env ROOT=/tmp/a -- npx -y @scope/server it's"), ["!codex mcp add fs --env ROOT=/tmp/a -- npx -y @scope/server 'it'\\''s'"]);
   assert.deepEqual(drafted('login docs'), ['!codex mcp login docs']);

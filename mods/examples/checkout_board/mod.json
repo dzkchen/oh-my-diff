@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "state_scope": "checkout",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "capabilities": [
     "store",
     "terminal",

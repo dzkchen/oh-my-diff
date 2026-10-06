@@ -20,6 +20,8 @@ const leaves = (value: unknown): string[] => typeof value === 'string' ? [value]
 const validPath = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\\:\x00-\x1f]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..');
 const validRef = (value: unknown): value is ResourceRef => object(value) && typeof value.reference === 'string' && value.reference.length > 0 && value.reference.length <= 256 && typeof value.sha256 === 'string' && /^[a-f0-9]{64}$/.test(value.sha256);
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const bytes = (value: unknown) => encodeURIComponent(JSON.stringify(value)).replace(/%[0-9A-F]{2}|./g, 'x').length;
+const sourceBudget = (value: Memory) => Math.max(0, 110_000 - bytes(value) - 4096);
 
 export default function activate(api: ModAPI) {
   if (api.settings.enabled === false) return;
@@ -38,15 +40,22 @@ export default function activate(api: ModAPI) {
     if (entry.revision !== args.expected_revision) throw new Error('memory_revision_changed_reinspect');
     return entry;
   };
-  const sourceFresh = (row: Fact) => {
-    const result = api.host.tryCall('workspace.read', { paths: [row.source.path] });
-    if (!result.ok) return false;
-    const file = result.value.files[row.source.path];
-    return !!file && file.sha256 === row.source.sha256 && file.text.split('\n').slice(row.source.start_line - 1, row.source.end_line).join('\n') === row.source.excerpt;
-  };
-  const evidenceFresh = (row: Evidence) => api.host.tryCall('evidence.read', { reference: row.reference, max_bytes: 1024 }).ok;
+  const evidenceFresh = (row: Evidence) => api.host.tryCall('evidence.read', { reference: row.reference, max_bytes: 4 }).ok;
   const select = (value: Memory) => {
-    const facts = value.facts.filter(sourceFresh);
+    const paths = [...new Set(value.facts.map(row => row.source.path))];
+    const stat = paths.length ? api.host.tryCall('workspace.stat', { paths }) : null;
+    let remaining = Math.max(0, Math.floor((sourceBudget(value) - bytes(stat?.ok ? stat.value : null) - bytes(paths)) / 6));
+    const bounded = paths.filter(path => {
+      const file = stat?.ok ? stat.value.files[path] : null;
+      if (!file || file.kind !== 'file' || file.size > remaining) return false;
+      remaining -= file.size;
+      return true;
+    });
+    const result = bounded.length ? api.host.tryCall('workspace.read', { paths: bounded }) : null;
+    const facts = value.facts.filter(row => {
+      const file = result?.ok ? result.value.files[row.source.path] : null;
+      return !!file && file.sha256 === row.source.sha256 && file.text.split('\n').slice(row.source.start_line - 1, row.source.end_line).join('\n') === row.source.excerpt;
+    });
     const evidence = new Set(value.evidence.filter(evidenceFresh).map(row => row.id));
     const conflicts = value.lessons.filter(row => value.lessons.some(other => other.id !== row.id && opposed(row.text, other.text))).map(row => row.id);
     const lessons = value.lessons.filter(row => row.state === 'approved' && row.evidence_ids.length > 0 && row.evidence_ids.every(id => evidence.has(id)) && !conflicts.includes(row.id));
@@ -65,6 +74,8 @@ export default function activate(api: ModAPI) {
     if (object(args.source) && args.evidence === undefined) {
       const ref = args.source;
       if (!validPath(ref.path) || !Number.isSafeInteger(ref.start_line) || !Number.isSafeInteger(ref.end_line) || Number(ref.start_line) < 1 || Number(ref.end_line) < Number(ref.start_line) || Number(ref.end_line) - Number(ref.start_line) > 80 || value.facts.length >= 16) throw new Error('memory_source_scope_invalid');
+      const info = api.host.call('workspace.stat', { paths: [ref.path] }).files[ref.path];
+      if (!info || info.kind !== 'file' || info.size > Math.floor((sourceBudget(value) - bytes(info) - bytes(ref.path)) / 6)) throw new Error('memory_source_unavailable');
       const file = api.host.call('workspace.read', { paths: [ref.path] }).files[ref.path];
       if (!file) throw new Error('memory_source_unavailable');
       const lines = file.text.split('\n');
@@ -73,7 +84,7 @@ export default function activate(api: ModAPI) {
       if (!safeText(excerpt, 4096)) throw new Error('memory_source_unsafe');
       value.facts.push({ id: args.id, label: args.label, source: { path: ref.path, start_line: Number(ref.start_line), end_line: Number(ref.end_line), sha256: file.sha256, excerpt } });
     } else if (validRef(args.evidence) && args.source === undefined && value.evidence.length < 16) {
-      if (!api.host.tryCall('evidence.read', { reference: args.evidence, max_bytes: 1024 }).ok) throw new Error('memory_evidence_unavailable');
+      if (!api.host.tryCall('evidence.read', { reference: args.evidence, max_bytes: 4 }).ok) throw new Error('memory_evidence_unavailable');
       value.evidence.push({ id: args.id, label: args.label, reference: args.evidence });
     } else throw new Error('memory_exactly_one_source_required');
     return { status: 'retained', id: args.id, revision: save(entry.revision, value) };

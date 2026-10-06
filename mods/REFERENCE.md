@@ -223,8 +223,19 @@ and `GIT_CONFIG` prefixes are refused.
 
 ### One-shot commands: `exec.run`
 
+`exclusive_workspace` names an absolute writable checkout to lock before guards
+and until the command exits. It requires sandboxed write mode and prior checkout
+enrollment by this runtime. Local sessions hold shared leases for their selected
+local roots, including inherited and subsequently selected roots. Removal fails
+closed when ownership is unavailable or another participating session holds a
+lease. Older runtimes and other applications do not participate; callers must
+obtain explicit user confirmation that those applications are not using a
+checkout before removing it. Exclusive ownership is unavailable on non-Unix hosts
+and filesystems that cannot report creation identity; creation identity prevents
+an inode reused by a new checkout from inheriting historical enrollment.
+
 `{program, sha256?, argv?, cwd?, env?, stdin?, timeout_ms?, max_output_bytes?, output_artifact?,
-write?, network?, unix_sockets?, guards?, required_access?}` runs one program in the session's effective sandbox. A bare
+write?, network?, unix_sockets?, guards?, required_access?, exclusive_workspace?}` runs one program in the session's effective sandbox. A bare
 program name resolves on `PATH` outside the repository; an absolute path must
 be canonical and outside the repository; `sha256` pins the resolved file. `cwd`
 is repository-relative. The environment starts empty except `PATH`, a private
@@ -385,7 +396,8 @@ every recorded call was read-only; otherwise it fails with the transient
 Its location follows the manifest's `state_scope` (`state_scopes_v1`).
 `"store"` (the default) keeps one state of at most 64 KiB in the mod store,
 shared by every OMD process that uses that store. `"thread"` keeps one state per
-session thread with the thread's data: it forks with the thread and is removed
+session thread and selection scope, so a project copy cannot inherit a same-ID
+user copy's state. It forks with the thread and is removed
 when the thread is deleted. Routing and compaction decisions made while a
 thread is set up see that thread's state (a fork's copy is made first), and
 registration reads the state of the thread whose callback reloaded the mods
@@ -912,7 +924,8 @@ thread:
   isolated agent worktrees and worktrees the terminal creates or removes.
 - `elicitation_result {server, request_id, action, content, by}` (capability
   `approvals`) after an MCP elicitation is answered; password and write-only
-  fields are `[redacted]`.
+  fields are `[redacted]`, and `content` is the string `[redacted]` when the
+  host no longer holds the request's schema.
 
 `api.intercept('elicitation', …)` (capability `approvals`) sees MCP form
 elicitations before the user is asked: `{server, request_id, mode, message,
@@ -1242,7 +1255,10 @@ loopback URL with a per-sidecar secret path that closes when the sidecar stops.
 A request to `$OMD_CREDENTIAL_GATEWAY/PROFILE/PATH` is sent over HTTPS to
 `PATH` on that profile's origin with `Authorization: Bearer` (or `x-api-key`
 when the request sets `x-omd-credential-header: x-api-key`) and the response
-streams back; redirects aren't followed. `omd-mod credentials STORE` lists
+streams back; redirects aren't followed. Stopping the sidecar cancels its
+in-flight gateway requests and streams. The gateway admits at most 16 connections
+globally and four forwards per registration, with a 30-second connection and
+inactivity timeout and a 10-minute total deadline. `omd-mod credentials STORE` lists
 profiles without secrets. `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN`
 reads a value from stdin and stores it as a secret owned by `MOD_ID` for `ORIGIN`, the same
 profile `credentials.request {kind: 'secret'}` creates, replacing the value of that mod's
@@ -1250,6 +1266,16 @@ existing secret with the same label and origin; it prints the profile and asks f
 authorization when the authority broker is deployed. Package setup scripts use it to enroll a
 key without writing it to disk. `providers.register {id, secrets?}` delivers owned secrets
 to a provider service as `sidecars.start` does.
+
+Service launches use private read-only sandbox snapshots of the package's admitted
+entrypoint and assets, preserving their relative paths. Original package paths are
+denied to the child. Grants may include `code_roots` mapping canonical dependency
+directories to SHA-256 digests of sorted JSON `[relativePath, kind, value]` rows:
+`kind` is `file` with a content SHA-256 or `link` with an internal relative target.
+Verified bytes are copied without reopening the source; `OMD_SERVICE_ROOT` names
+the snapshot root, under which absolute dependency paths are mirrored. Changed
+dependencies require a new grant. Reload and disable stop stale services before
+their IDs can be reused.
 
 ### Thread store, resume and turn activity (`store_thread_v1`, `turn_activity_v1`)
 
@@ -1479,8 +1505,11 @@ and dialogs (`ui_composition_v1`). Operations:
   starts a listed program unsandboxed with the real `HOME` (no `write` or
   `network` fields), skips the per-start confirmation and stops when the grant
   ends.
-  Sessions belong to the calling mod (four per mod, sixteen in all), render
-  only in views that mod owns or contributes to, and stop when it unloads. A
+  Sessions belong to the calling mod, thread and admitted generation (four per
+  mod, sixteen in all). They render only in terminal components owned by that
+  mod and stop when the thread, repository, permission context or admitted
+  generation changes, or the mod unloads. Queued requests and terminal input
+  retain their original binding and cannot address a replacement session. A
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 - `builtins.invoke {action}` runs a key action from user contexts;
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never
@@ -1572,7 +1601,11 @@ detach?}` applies only to that revision and fails with `stale_revision`
 otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:
 'splice', start, end, text}` (byte offsets on character boundaries), `cursor`
 and `selection: {start, end}` place the cursor or select, `attach` adds image
-resources and `detach` removes attachments by placeholder. A write never
+resources and `detach` removes attachments by placeholder. The complete edit,
+positions and detach list are validated before the draft changes; rejected
+writes leave its content and attachments intact. Queued client calls remain
+bound to their admitted thread, source generation and active authority,
+including after confirmation. A write never
 submits. Images a mod attached leave the draft when that mod is unloaded,
 reloaded or disabled.
 
@@ -1650,7 +1683,9 @@ here under the mod's own grants, and none starts paid work implicitly.
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
   `config_list`, `tool_specs`, `agent_offers`, `admission` and `composer_edit` callbacks run
-  without host operations and get `host_operation_unavailable`. `api.time.wait(check, {interval_ms,
+  without host operations and get `host_operation_unavailable`; `model_request`,
+  `model_send` and `response_stream` interceptors run on the request path and get
+  `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
   timeout_ms})` polls `check` between sleeps within the 32 host calls.
   `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
   interval_ms, handler)` register during activation (1 s to 24 h) and return
@@ -1750,7 +1785,11 @@ removed mod stays listed with `installed: false` until it stops.
 keeps it enabled. `apply` and `reload` run from user contexts; `apply` shows a
 native confirmation naming every new grant, dependencies as `id:capability`,
 and applies exactly the confirmed plan or refuses if the package, lock or
-selection changed. An update resolves dependencies through the index the
+selection changed.
+Once a confirmed package mutation starts, it returns its definitive result
+even if its writes reload or disable the calling mod. Queued calls still
+reject cancellation, changed source, originating generation or client context.
+An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
 failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`

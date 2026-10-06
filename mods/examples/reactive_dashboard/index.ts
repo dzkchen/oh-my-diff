@@ -7,9 +7,7 @@ export default function activate(api: ModAPI) {
   const summary = api.derive(() => `${query.get() || 'no filter'} · ${searches.get()} searches · ${ticks.get()} ticks`);
   api.subscribe(query, () => searches.update(count => count + 1));
 
-  api.on('component_event', event => {
-    if (event.component === 'dashboard_query' && event.kind === 'change' && typeof event.value === 'string') query.set(event.value);
-  });
+  // The input submits through `search`; following every keystroke would re-run each terminal mod per edit.
   api.command('search', text => {
     query.set(typeof text === 'string' ? text.trim() : '');
     return null;
@@ -23,7 +21,7 @@ export default function activate(api: ModAPI) {
     return { display: 'Streaming status once a second for ten ticks.' };
   });
   api.on('channel', ({ channel }) => {
-    if (channel === 'stream') api.host.call('events.schedule', { key: 'tick', delay_ms: 1000 });
+    if (channel === 'reactive_dashboard/stream') api.host.call('events.schedule', { key: 'tick', delay_ms: 1000 });
   });
   api.on('timer', ({ key }) => {
     if (key !== 'tick') return;

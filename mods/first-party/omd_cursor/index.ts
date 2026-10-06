@@ -6,7 +6,9 @@ const settleKey = 'settle';
 const LOG_TAIL_BYTES = 32_768;
 
 type Row = Record<string, any>;
-type State = { ours: boolean; applied: string[]; polls: number };
+type State = { ours: boolean; applied: string[]; polls: number; data?: string | null; thread?: string | null };
+
+const SETTLE_POLLS = 6;
 
 function lines(text: string): Row[] {
   return text.split('\n').flatMap(line => { try { const row = JSON.parse(line); return row && typeof row === 'object' ? [row] : []; } catch { return []; } });
@@ -78,28 +80,37 @@ export default function activate(api: ModAPI): void {
   const route = (): Row | null => {
     try { return typeof api.settings.route === 'string' && api.settings.route ? JSON.parse(read(api.settings.route) ?? '') : null; } catch { return null; }
   };
-  // The provider is read once per thread at start or resume; each turn only restarts a stopped sidecar.
+  // The provider, the route's data directory and the thread are read once per thread at start or resume; each turn only restarts a stopped sidecar.
+  const located = (current: State): State => {
+    if (current.data && current.thread) return current;
+    const data = route()?.data;
+    const info = api.host.tryCall('session.info', null);
+    return { ...current, data: typeof data === 'string' ? data : null, thread: info.ok ? info.value.thread_id : null };
+  };
   const detect = () => {
     const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
     const ours = config.ok && (config.value as Row).config?.model_provider === 'omd_cursor';
-    api.state.set({ ...state(), ours });
+    const current = { ...state(), ours, data: null, thread: null };
+    api.state.set(ours ? located(current) : current);
     if (ours) ensure();
   };
-  // Cursor prices a run minutes after it ends; each run's charge is applied to this session's ledger once, polling for up to six minutes after a turn.
+  // Cursor prices a run minutes after it ends; poll through six minutes and drain ready charges in bounded batches.
   const settle = (poll: boolean) => {
-    const current = state();
-    if (!current.ours) return;
-    const config = route();
-    const info = api.host.tryCall('session.info', null);
-    const log = config && info.ok ? read(`${config.data}/usage.jsonl`, true) : null;
+    if (!state().ours) return;
+    const current = located(state());
+    if (!current.data || !current.thread) return;
+    const log = read(`${current.data}/usage.jsonl`, true);
     const applied = [...current.applied];
-    for (const settlement of log && info.ok ? pendingSettlements(log, info.value.thread_id, applied).slice(0, 8) : []) {
+    const pending = log ? pendingSettlements(log, current.thread, applied) : [];
+    for (const settlement of pending.slice(0, 8)) {
       const result = api.host.tryCall('ledger.settle', settlement);
       if (result.ok || result.error.includes('not_awaiting_settlement')) applied.push(settlement.request_id);
     }
-    const polls = poll ? current.polls + 1 : 0;
-    api.state.set({ ...current, applied: applied.slice(-200), polls });
-    if (polls < 6) api.host.tryCall('events.schedule', { key: settleKey, delay_ms: 60_000 });
+    const polls = poll ? Math.min(current.polls + 1, SETTLE_POLLS) : 0;
+    const recent = log === null ? null : new Set(lines(log).filter(row => row.thread === current.thread).map(row => row.request_id));
+    api.state.set({ ...current, applied: recent ? applied.filter(id => recent.has(id)) : applied, polls });
+    if (polls < SETTLE_POLLS || pending.length > 8 && applied.length > current.applied.length)
+      api.host.tryCall('events.schedule', { key: settleKey, delay_ms: polls < SETTLE_POLLS ? 60_000 : 1_000 });
   };
   api.on('start', detect);
   api.on('resume', detect);

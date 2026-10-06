@@ -366,12 +366,14 @@ test('tracked discard keeps a scoped backup and rejects a changed precondition',
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   const beforeHash = 'e'.repeat(64);
+  const restored = reply('original\n');
   const before = { call: { operation: 'workspace.stat', arguments: { paths: ['important.txt'], hash: true } }, value: { files: { 'important.txt': { kind: 'file', size: 12, mtime_ms: 1, sha256: beforeHash } } } };
   const access = { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, value: { paths: ['important.txt'], write: true } };
   const preview = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'discard', state: inspected.state, receipts: [
     ...gitReceipts, before, access,
     { call: gitArgs(['diff', '--binary', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--', 'important.txt']), value: reply('diff --git a/important.txt b/important.txt\n') },
     { call: gitArgs(['ls-files', '-s', '-z']), value: reply(`100644 ${'f'.repeat(40)} 0\timportant.txt\0`) },
+    { call: gitArgs(['cat-file', '--filters', '--path=important.txt', 'f'.repeat(40)]), value: restored },
     { call: gitArgs(['hash-object', '--no-filters', '--', 'important.txt'], 256), value: reply(`${'c'.repeat(40)}\n`) },
   ] });
   assert.equal(preview.state.preview.tracked, true);
@@ -387,11 +389,10 @@ test('tracked discard keeps a scoped backup and rejects a changed precondition',
     gitReceipts[0], gitReceipts[1],
     { call: { operation: 'workspace.backup', arguments: { expected: { 'important.txt': beforeHash } } }, value: { backup } },
     { call: { operation: 'exec.run', arguments: { program: 'git', sha256: 'd'.repeat(64), argv: ['--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'core.fsmonitor=false', 'restore', '--worktree', '--', 'important.txt'], timeout_ms: 30000, max_output_bytes: 65536, write: true, network: 'none', guards: preview.state.preview.guards, required_access: { write: ['important.txt'] } } }, value: { ...reply(''), guards_verified: 4 } },
-    { call: before.call, value: { files: { 'important.txt': { kind: 'file', size: 10, mtime_ms: 2, sha256: 'a'.repeat(64) } } } },
     { call: gitReceipts[0].call, value: reply('## main\0?? new.txt\0') }, ...gitReceipts.slice(1),
   ] });
   assert.match(written.value.display, /discarded important\.txt; backup/);
-  assert.equal(written.state.backup.expected, 'a'.repeat(64));
+  assert.equal(written.state.backup.expected, restored.stdout_sha256);
   assert.deepEqual(written.calls.find(call => call.operation === 'exec.run' && call.arguments.write === true).arguments.required_access, { write: ['important.txt'] });
 });
 
