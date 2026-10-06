@@ -37,6 +37,11 @@
           "components": [{"type": "text", "id": "graph_tip", "label": "Value under pointer", "text": "x 5 = 7"}]}}}},
     {"type": "event", "event": "start", "payload": {}},
     {"type": "advance_time", "ms": 5000, "expect": {"now_ms": 1006000, "timers": [{"mod": "raster_canvas", "key": "frame", "at_ms": 1002000}]}},
-    {"type": "advance_time", "ms": 5000, "expect": {"now_ms": 1011000}}
+    {"type": "advance_time", "ms": 5000, "expect": {"now_ms": 1011000}},
+    {"type": "event", "event": "component_event", "payload": {"component": "canvas_graph", "kind": "pointer", "pointer": {"column": 45, "row": 2, "half": 0, "action": "drag", "button": "left"}}},
+    {"type": "terminal_mount", "mod": "raster_canvas",
+      "payload": {"event": "idle", "ledger": null, "client": {"kind": "terminal", "graphics": "cells", "pointer": "half_cell", "reduced_motion": true, "cell_px": null}},
+      "expect": {"sites": {
+        "sidebar": {"components": [{"type": "raster", "id": "canvas_graph", "label": "Series graph", "alt": "Animated line graph; hover for a value, drag to pan", "width": 40, "height": 8, "pointer": true}]}}}}
   ]
 }

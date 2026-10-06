@@ -66,7 +66,7 @@ export default function activate(api: ModAPI) {
     if (action === 'down') g.grab = { column, pan: g.pan };
     if (action === 'drag' && g.grab) g.pan = g.grab.pan + g.grab.column - column;
     if (action === 'up') g.grab = null;
-    g.hover = action === 'leave' ? null : { column: Math.max(0, Math.min(W - 1, column)), row: Math.max(0, Math.min(H - 1, row)) };
+    g.hover = action !== 'leave' && column >= 0 && column < W && row >= 0 && row < H ? { column, row } : null;
     backpressured(g);
     api.state.set(g);
     if (action === 'enter' && animated(g.client)) schedule();

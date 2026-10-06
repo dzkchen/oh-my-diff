@@ -49,6 +49,9 @@ async function pick({ snapshot }) {
   const self = rows.findIndex(row => row.value === session.attachment.clientId);
   if (self < 0) return;
   picked = true;
-  const result = await session.action({ component: 'external_clients', row: self }).catch(error => ({ status: error.message }));
+  const result = await session.action({ component: 'external_clients', row: self }).catch(error => {
+    picked = false;
+    return { status: error.message };
+  });
   console.error(`action ${result.status}${result.outcome?.display ? `: ${result.outcome.display}` : ''}`);
 }

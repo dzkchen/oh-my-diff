@@ -1,6 +1,6 @@
 import type { ModAPI, TerminalComponent, TerminalListRow, TerminalPatch } from '@oh-my-diff/mod-api';
 
-const KINDS = ['exec', 'patch', 'network', 'mcp_tool', 'permissions'];
+const KINDS = ['exec', 'stdin', 'execve', 'patch', 'network', 'mcp_tool', 'permissions'];
 type Entry = { id: string; kind: string; summary: string; decision: string | null; source: string | null };
 type State = { entries: Entry[]; kinds: string[]; note: string; inspected: string | null };
 

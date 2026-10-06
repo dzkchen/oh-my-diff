@@ -115319,10 +115319,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..5e3abdcb9
+index 000000000..4f5649b7d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,340 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -115387,14 +115387,19 @@ index 000000000..5e3abdcb9
 +    }
 +
 +    fn measure(&mut self) {
-+        let Ok(size) = crossterm::terminal::window_size() else {
-+            self.cell = None;
++        self.apply(crossterm::terminal::window_size().ok());
++    }
++
++    /// A failed or pixel-less measurement keeps the last cell size: pixel pointer reports can't be converted without one.
++    fn apply(&mut self, size: Option<crossterm::terminal::WindowSize>) {
++        let Some(size) = size else {
 +            return;
 +        };
 +        self.size = (size.columns, size.rows);
-+        self.cell = (size.columns > 0 && size.rows > 0 && size.width > 0 && size.height > 0)
++        let measured = (size.columns > 0 && size.rows > 0 && size.width > 0 && size.height > 0)
 +            .then(|| (size.width / size.columns, size.height / size.rows))
 +            .filter(|(width, height)| *width > 0 && *height > 0);
++        self.cell = measured.or(self.cell);
 +    }
 +
 +    pub(crate) fn graphics(&self) -> &'static str {
@@ -115445,14 +115450,21 @@ index 000000000..5e3abdcb9
 +/// Called before each draw; measures cell pixels again only when the grid size changes.
 +pub(crate) fn update(animations: bool, columns: u16, rows: u16, pointer: bool) {
 +    let changed = with(|facts| {
-+        let before = facts.value();
++        let before = (*facts, PIXEL_MODE.load(Ordering::Relaxed));
 +        facts.reduced_motion = !animations;
 +        facts.pointer = pointer;
 +        if facts.size != (columns, rows) {
 +            facts.measure();
 +            facts.size = (columns, rows);
 +        }
-+        facts.value() != before
++        let after = (
++            Facts {
++                size: before.0.size,
++                ..*facts
++            },
++            PIXEL_MODE.load(Ordering::Relaxed),
++        );
++        after != before
 +    });
 +    if changed {
 +        std::thread::spawn(crate::mod_runtime::rerender);
@@ -115462,12 +115474,21 @@ index 000000000..5e3abdcb9
 +/// SGR-pixel reports are requested only where the terminal is known to honor them.
 +pub(crate) fn enable_pixel_pointer() -> bool {
 +    let enabled = with(|facts| facts.pixel_pointer && facts.cell.is_some());
-+    PIXEL_MODE.store(enabled, Ordering::Relaxed);
++    set_pixel_mode(enabled);
 +    enabled
 +}
 +
 +pub(crate) fn disable_pixel_pointer() -> bool {
-+    PIXEL_MODE.swap(false, Ordering::Relaxed)
++    set_pixel_mode(false)
++}
++
++/// Returns the previous mode; the pointer fact the mod view reports follows it, so a flip re-renders.
++fn set_pixel_mode(on: bool) -> bool {
++    let was = PIXEL_MODE.swap(on, Ordering::Relaxed);
++    if was != on {
++        std::thread::spawn(crate::mod_runtime::rerender);
++    }
++    was
 +}
 +
 +/// Pixel reports become cell events; motion that stays in the same half cell is dropped.
@@ -115573,11 +115594,11 @@ index 000000000..5e3abdcb9
 +        .iter()
 +        .take(usize::from(rows))
 +        .map(|row| {
-+            let mut cells = format!("{PLACEHOLDER}{row}{}", DIACRITICS[0]);
-+            cells.extend(std::iter::repeat_n(
-+                PLACEHOLDER,
-+                usize::from(columns.saturating_sub(1)),
-+            ));
++            let cells = DIACRITICS
++                .iter()
++                .take(usize::from(columns))
++                .map(|column| format!("{PLACEHOLDER}{row}{column}"))
++                .collect::<String>();
 +            Line::from(vec![
 +                Span::raw(prefix.to_owned()),
 +                Span::styled(cells, style),
@@ -115586,7 +115607,7 @@ index 000000000..5e3abdcb9
 +        .collect()
 +}
 +
-+pub(crate) fn max_placeholder_rows() -> u16 {
++pub(crate) fn max_placeholder_cells() -> u16 {
 +    DIACRITICS.len() as u16
 +}
 +
@@ -115644,10 +115665,10 @@ index 000000000..5e3abdcb9
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..c8376fd54
+index 000000000..896744104
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,113 @@
 +use super::*;
 +use crossterm::event::KeyModifiers;
 +use crossterm::event::MouseEventKind;
@@ -115660,13 +115681,13 @@ index 000000000..c8376fd54
 +#[test]
 +#[serial_test::serial]
 +#[allow(clippy::disallowed_methods)]
-+fn placeholder_rows_encode_the_image_id_and_row_in_single_width_cells() {
++fn placeholder_rows_encode_the_image_id_row_and_column_in_every_cell() {
 +    let rows = placeholder_rows(0x4f_4d_07, 3, 2, " ");
 +    let mut buffer = Buffer::empty(Rect::new(0, 0, 6, 2));
 +    Paragraph::new(rows).render(buffer.area, &mut buffer);
 +    assert_eq!(buffer[(1, 0)].symbol(), "\u{10EEEE}\u{0305}\u{0305}");
-+    assert_eq!(buffer[(2, 0)].symbol(), "\u{10EEEE}");
-+    assert_eq!(buffer[(3, 0)].symbol(), "\u{10EEEE}");
++    assert_eq!(buffer[(2, 0)].symbol(), "\u{10EEEE}\u{0305}\u{030D}");
++    assert_eq!(buffer[(3, 0)].symbol(), "\u{10EEEE}\u{0305}\u{030E}");
 +    assert_eq!(buffer[(4, 0)].symbol(), " ", "three cells wide");
 +    assert_eq!(buffer[(1, 1)].symbol(), "\u{10EEEE}\u{030D}\u{0305}");
 +    assert_eq!(buffer[(1, 0)].fg, Color::Rgb(0x4f, 0x4d, 0x07));
@@ -115743,12 +115764,30 @@ index 000000000..c8376fd54
 +    assert_eq!(value["cell_px"], json!({"width": 10, "height": 20}));
 +    *FACTS.lock().unwrap() = None;
 +}
++
++#[test]
++fn a_failed_or_pixel_less_measurement_keeps_the_last_cell_size() {
++    let window = |width, height| crossterm::terminal::WindowSize {
++        rows: 10,
++        columns: 20,
++        width,
++        height,
++    };
++    let mut facts = Facts::default();
++    facts.apply(Some(window(200, 200)));
++    assert_eq!(facts.cell, Some((10, 20)));
++    facts.apply(None);
++    facts.apply(Some(window(0, 0)));
++    assert_eq!(facts.cell, Some((10, 20)));
++    facts.apply(Some(window(400, 300)));
++    assert_eq!(facts.cell, Some((20, 30)));
++}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..17d1950f5
+index 000000000..0d9eec9e5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,505 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -115763,6 +115802,7 @@ index 000000000..17d1950f5
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
++use std::collections::BTreeSet;
 +use std::sync::Arc;
 +use std::sync::Mutex;
 +
@@ -115866,11 +115906,37 @@ index 000000000..17d1950f5
 +
 +static IMAGES: Mutex<BTreeMap<String, Vec<Line<'static>>>> = Mutex::new(BTreeMap::new());
 +
++static UNDECODABLE: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
++
 +fn decode(
 +    reference: &codex_omd::resource_data::ResourceRef,
 +    owners: &[String],
 +) -> Option<image::DynamicImage> {
-+    load_blob(reference, owners).and_then(|bytes| crate::mod_backdrop::decode_image(&bytes).ok())
++    decode_once(&reference.sha256, || load_blob(reference, owners))
++}
++
++/// Content that failed to decode is remembered by hash, so frames don't retry it.
++fn decode_once(
++    sha256: &str,
++    load: impl FnOnce() -> Option<Vec<u8>>,
++) -> Option<image::DynamicImage> {
++    let failed = || {
++        UNDECODABLE
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++    };
++    if failed().contains(sha256) {
++        return None;
++    }
++    let decoded = crate::mod_backdrop::decode_image(&load()?).ok();
++    if decoded.is_none() {
++        let mut failed = failed();
++        if failed.len() >= 32 {
++            failed.clear();
++        }
++        failed.insert(sha256.to_owned());
++    }
++    decoded
 +}
 +
 +/// Fits the image into `width`×`height` cells of `cell` pixels, keeping its aspect ratio.
@@ -115896,7 +115962,10 @@ index 000000000..17d1950f5
 +    owners: &[String],
 +    prefix: &str,
 +) -> Option<Vec<Line<'static>>> {
-+    let height = height.min(crate::mod_client::max_placeholder_rows());
++    let (width, height) = (
++        width.min(crate::mod_client::max_placeholder_cells()),
++        height.min(crate::mod_client::max_placeholder_cells()),
++    );
 +    let key = format!(
 +        "{}:{width}:{height}:{}x{}",
 +        reference.sha256, cell.0, cell.1
@@ -116226,10 +116295,10 @@ index 000000000..17d1950f5
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..1af661dbe
+index 000000000..cfaca7fa5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,144 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -116361,6 +116430,18 @@ index 000000000..1af661dbe
 +    assert_eq!(fit((900, 1600), 40, 12, (8, 16)), (14, 12));
 +    assert_eq!(fit((900, 1600), 40, 12, (10, 20)), (14, 12));
 +    assert_eq!(fit((1, 4000), 40, 12, (8, 16)), (1, 12));
++}
++
++#[test]
++fn undecodable_images_are_loaded_and_decoded_once() {
++    let loads = std::cell::Cell::new(0);
++    let load = || {
++        loads.set(loads.get() + 1);
++        Some(b"not an image".to_vec())
++    };
++    assert!(decode_once("undecodable-test", load).is_none());
++    assert!(decode_once("undecodable-test", load).is_none());
++    assert_eq!(loads.get(), 1);
 +}
 diff --git a/codex-rs/tui/src/mod_document.rs b/codex-rs/tui/src/mod_document.rs
 new file mode 100644
@@ -118646,10 +118727,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..f09188778
+index 000000000..3ed6a1e40
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1293 @@
+@@ -0,0 +1,1310 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -119834,10 +119915,27 @@ index 000000000..f09188778
 +    }
 +}
 +
-+/// Fails closed: a busy runtime counts as intercepting, so the call takes the blocking path.
 +pub(crate) fn intercepts(surface: &str) -> bool {
 +    crate::omd::mod_paths().is_some_and(|paths| paths.store.is_some())
-+        && try_with_host(|runtime, _| Some(runtime.intercepts(surface).is_some())).unwrap_or(true)
++        && remembered_intercept(
++            surface,
++            try_with_host(|runtime, _| Some(runtime.intercepts(surface).is_some())),
++        )
++}
++
++/// A busy runtime answers from the last lookup; a surface never looked up fails closed so it takes the blocking path.
++fn remembered_intercept(surface: &str, fresh: Option<bool>) -> bool {
++    static KNOWN: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
++    let mut known = KNOWN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    match fresh {
++        Some(intercepted) => {
++            known.insert(surface.to_owned(), intercepted);
++            intercepted
++        }
++        None => known.get(surface).copied().unwrap_or(true),
++    }
 +}
 +
 +/// Runs a command behind `command` interceptors: a mod command through its handler, a built-in through `builtin`.
@@ -119945,10 +120043,10 @@ index 000000000..f09188778
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..7c28c120a
+index 000000000..63899a8c0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,276 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -120216,12 +120314,21 @@ index 000000000..7c28c120a
 +    });
 +    assert_eq!(refused.unwrap_err(), "config_not_editable: model");
 +}
++
++#[test]
++fn a_busy_runtime_answers_interception_from_the_last_lookup() {
++    assert!(remembered_intercept("busy_test_never", None));
++    assert!(!remembered_intercept("busy_test_seen", Some(false)));
++    assert!(!remembered_intercept("busy_test_seen", None));
++    assert!(remembered_intercept("busy_test_hooked", Some(true)));
++    assert!(remembered_intercept("busy_test_hooked", None));
++}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..7182d8dfa
+index 000000000..b6fd34ece
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,745 @@
+@@ -0,0 +1,756 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -120677,8 +120784,19 @@ index 000000000..7182d8dfa
 +            });
 +            sender
 +        });
++        if let Some(pending) = close_motion(&payload) {
++            let _ = queue.send(pending);
++        }
 +        let _ = queue.send(payload);
 +    }
++}
++
++/// A queued non-motion event closes its component's pending motion, which then delivers ahead of it.
++fn close_motion(payload: &Value) -> Option<Value> {
++    if payload["kind"] == "motion" {
++        return None;
++    }
++    motion().remove(payload["component"].as_str()?)
 +}
 +
 +fn motion() -> std::sync::MutexGuard<'static, BTreeMap<String, Value>> {
@@ -120969,10 +121087,10 @@ index 000000000..7182d8dfa
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..d1f0b5e66
+index 000000000..7d4eeda5f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,267 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -121199,6 +121317,21 @@ index 000000000..d1f0b5e66
 +    );
 +    assert!(ranked_files(&json!({"items": [{"path": "../x"}]}), root, 200).is_none());
 +    assert!(ranked_files(&json!({"items": [{"path": "/etc/passwd"}]}), root, 200).is_none());
++}
++
++#[test]
++fn queued_pointer_events_close_pending_motion_so_order_holds() {
++    let moved = |column: u64| json!({"component": "closing", "kind": "pointer", "pointer": {"action": "move", "column": column}});
++    let down = json!({"component": "closing", "kind": "pointer", "pointer": {"action": "down"}});
++    motion().insert("closing".to_owned(), moved(3));
++    assert_eq!(
++        close_motion(&json!({"component": "closing", "kind": "motion"})),
++        None
++    );
++    assert_eq!(close_motion(&down), Some(moved(3)));
++    assert_eq!(motion().insert("closing".to_owned(), moved(9)), None);
++    assert_eq!(close_motion(&down), Some(moved(9)));
++    assert_eq!(close_motion(&down), None);
 +}
 +
 +#[test]
