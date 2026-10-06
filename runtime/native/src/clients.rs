@@ -78,7 +78,7 @@ pub(super) fn install(core: &Arc<Core>) {
 
 /// Renders the view again so mods see the changed roster, keeping the last published event.
 fn republish(core: &Core) {
-    let Ok(snapshot) = ModViewSnapshot::read(&core.host.root.join("mod-view.json")) else {
+    let Some(snapshot) = core.views.published() else {
         return;
     };
     let event = snapshot.input["event"].as_str().unwrap_or("start");
@@ -126,9 +126,10 @@ fn block<T>(future: impl std::future::Future<Output = T>) -> Result<T, String> {
     }
 }
 
-fn snapshot(core: &Core) -> Result<ModViewSnapshot, String> {
-    ModViewSnapshot::read(&core.host.root.join("mod-view.json"))
-        .map_err(|error| format!("view_unavailable: {error}"))
+fn snapshot(core: &Core) -> Result<Arc<ModViewSnapshot>, String> {
+    core.views
+        .published()
+        .ok_or_else(|| "view_unavailable: the host has not published a view".to_owned())
 }
 
 fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, String> {
@@ -144,11 +145,10 @@ pub fn view() -> Result<(u64, u64, Value), String> {
     let Ok(core) = core() else {
         return Ok((0, 0, Value::Null));
     };
-    if !core.host.root.join("mod-view.json").exists() {
+    let Some(snapshot) = core.views.published() else {
         return Ok((0, 0, Value::Null));
-    }
-    let snapshot = snapshot(&core)?;
-    let value = serde_json::to_value(&snapshot).map_err(|error| error.to_string())?;
+    };
+    let value = serde_json::to_value(&*snapshot).map_err(|error| error.to_string())?;
     Ok((snapshot.epoch, snapshot.revision, value))
 }
 
@@ -227,7 +227,8 @@ fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String
 pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
     let mut payload = event_payload(&event)?;
     let core = core()?;
-    let owner = owner(&snapshot(&core)?, component)?.to_owned();
+    let snapshot = snapshot(&core)?;
+    let owner = owner(&snapshot, component)?.to_owned();
     payload.insert("component".into(), component.into());
     payload.insert("client".into(), client.into());
     let lead = session(&core)?;

@@ -14,6 +14,8 @@ struct State {
 
 pub(super) struct Views {
     state: Mutex<State>,
+    /// The snapshot as last persisted; `None` until the first publish.
+    published: Mutex<Option<Arc<ModViewSnapshot>>>,
     /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
     pub(super) quiet: AtomicBool,
 }
@@ -77,8 +79,13 @@ impl Views {
                 },
                 ..State::default()
             }),
+            published: Mutex::new(None),
             quiet: AtomicBool::new(false),
         }
+    }
+
+    pub(super) fn published(&self) -> Option<Arc<ModViewSnapshot>> {
+        self.published.lock().ok()?.clone()
     }
 
     fn update(&self, owner: &Host, change: impl FnOnce(&mut State)) {
@@ -88,6 +95,9 @@ impl Views {
         change(&mut state);
         state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
         let _ = owner.persist_json("mod-view.json", &state.snapshot);
+        if let Ok(mut published) = self.published.lock() {
+            *published = Some(Arc::new(state.snapshot.clone()));
+        }
         codex_omd::client_surface::redraw();
     }
 
@@ -210,6 +220,32 @@ mod tests {
         views.start_thread(&fork);
         assert_eq!(views.current_presentation()["phase"], "resumed");
         assert_eq!(views.current_presentation()["thread_id"], "forked");
+    }
+
+    #[test]
+    fn the_published_snapshot_is_served_from_memory_after_the_first_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let host = crate::Host {
+            root: root.clone(),
+            repository: root.clone(),
+            repository_identity: "fixture".into(),
+            config: crate::config::HostConfig::default(),
+            routes: std::sync::Mutex::new(crate::RouteTable {
+                stamp: None,
+                config: std::sync::Arc::new(crate::config::HostConfig::default()),
+                error: None,
+            }),
+            accounts: std::sync::Arc::new(crate::accounting::Accounts::default()),
+            manager: std::sync::Weak::new(),
+            epoch: 1,
+        };
+        let views = Views::new();
+        assert!(views.published().is_none());
+        views.diagnostic(&host, "k", Some("broken".into()));
+        std::fs::remove_file(root.join("mod-view.json")).unwrap();
+        let published = views.published().expect("published after an update");
+        assert_eq!(published.diagnostics, vec!["broken".to_owned()]);
     }
 
     #[test]

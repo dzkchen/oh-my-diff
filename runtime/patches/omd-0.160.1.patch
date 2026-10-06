@@ -35931,10 +35931,10 @@ index 000000000..d2b3b9967
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/omd_clients.rs b/codex-rs/app-server/tests/suite/v2/omd_clients.rs
 new file mode 100644
-index 000000000..509b2ca78
+index 000000000..c98b405be
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/omd_clients.rs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,191 @@
 +use super::connection_handling_websocket::WsClient;
 +use super::connection_handling_websocket::connect_websocket;
 +use super::connection_handling_websocket::create_config_toml;
@@ -36021,10 +36021,6 @@ index 000000000..509b2ca78
 +        store.join("mods.json"),
 +        json!({"schema": 1, "node": "/usr/bin/true", "mods": []}).to_string(),
 +    )?;
-+    std::fs::write(
-+        store.join("mod-view.json"),
-+        json!({"epoch": 7, "revision": 3, "component_owners": {"panel": "demo"}}).to_string(),
-+    )?;
 +    let (mut process, bind_addr) = spawn_websocket_server_with_env(
 +        codex_home.path(),
 +        "ws://127.0.0.1:0",
@@ -36050,6 +36046,7 @@ index 000000000..509b2ca78
 +                .params
 +                .context("view params")?,
 +        )?;
++        assert_eq!((pushed.epoch.as_str(), pushed.snapshot), ("", Value::Null));
 +        assert_eq!(pushed.action_token.len(), 32);
 +
 +        let mut phone = connect_websocket(bind_addr).await?;
@@ -36070,7 +36067,16 @@ index 000000000..509b2ca78
 +            vec!["desk", "phone"]
 +        );
 +
++        send_request(
++            &mut desk,
++            "thread/start",
++            3,
++            Some(json!({"model": "mock-model"})),
++        )
++        .await?;
++        read_response_for_id(&mut desk, 3).await?;
 +        let view = settled_view(&mut desk, 10).await?;
++        assert_ne!(view.epoch, "");
 +        let stale = error_message(
 +            &mut desk,
 +            30,
@@ -43467,10 +43473,10 @@ index 000000000..30c6356a8
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..ce275c965
+index 000000000..ead6a385d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,689 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -43551,7 +43557,7 @@ index 000000000..ce275c965
 +
 +/// Renders the view again so mods see the changed roster, keeping the last published event.
 +fn republish(core: &Core) {
-+    let Ok(snapshot) = ModViewSnapshot::read(&core.host.root.join("mod-view.json")) else {
++    let Some(snapshot) = core.views.published() else {
 +        return;
 +    };
 +    let event = snapshot.input["event"].as_str().unwrap_or("start");
@@ -43599,9 +43605,10 @@ index 000000000..ce275c965
 +    }
 +}
 +
-+fn snapshot(core: &Core) -> Result<ModViewSnapshot, String> {
-+    ModViewSnapshot::read(&core.host.root.join("mod-view.json"))
-+        .map_err(|error| format!("view_unavailable: {error}"))
++fn snapshot(core: &Core) -> Result<Arc<ModViewSnapshot>, String> {
++    core.views
++        .published()
++        .ok_or_else(|| "view_unavailable: the host has not published a view".to_owned())
 +}
 +
 +fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, String> {
@@ -43617,11 +43624,10 @@ index 000000000..ce275c965
 +    let Ok(core) = core() else {
 +        return Ok((0, 0, Value::Null));
 +    };
-+    if !core.host.root.join("mod-view.json").exists() {
++    let Some(snapshot) = core.views.published() else {
 +        return Ok((0, 0, Value::Null));
-+    }
-+    let snapshot = snapshot(&core)?;
-+    let value = serde_json::to_value(&snapshot).map_err(|error| error.to_string())?;
++    };
++    let value = serde_json::to_value(&*snapshot).map_err(|error| error.to_string())?;
 +    Ok((snapshot.epoch, snapshot.revision, value))
 +}
 +
@@ -43700,7 +43706,8 @@ index 000000000..ce275c965
 +pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
 +    let mut payload = event_payload(&event)?;
 +    let core = core()?;
-+    let owner = owner(&snapshot(&core)?, component)?.to_owned();
++    let snapshot = snapshot(&core)?;
++    let owner = owner(&snapshot, component)?.to_owned();
 +    payload.insert("component".into(), component.into());
 +    payload.insert("client".into(), client.into());
 +    let lead = session(&core)?;
@@ -44161,10 +44168,10 @@ index 000000000..ce275c965
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 000000000..af0454409
+index 000000000..4ae0b77da
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,228 @@
 +use super::*;
 +
 +fn snapshot() -> ModViewSnapshot {
@@ -44291,6 +44298,7 @@ index 000000000..af0454409
 +    }
 +    for event in [
 +        json!({"kind": "open"}),
++        json!({"kind": "motion"}),
 +        json!({"kind": "change"}),
 +        json!({"kind": "pointer", "pointer": {"column": -1, "row": 0}}),
 +        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2}}),
@@ -63919,10 +63927,10 @@ index 000000000..88b18991e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..753966763
+index 000000000..738976d38
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,258 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -63939,6 +63947,8 @@ index 000000000..753966763
 +
 +pub(super) struct Views {
 +    state: Mutex<State>,
++    /// The snapshot as last persisted; `None` until the first publish.
++    published: Mutex<Option<Arc<ModViewSnapshot>>>,
 +    /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
 +    pub(super) quiet: AtomicBool,
 +}
@@ -64002,8 +64012,13 @@ index 000000000..753966763
 +                },
 +                ..State::default()
 +            }),
++            published: Mutex::new(None),
 +            quiet: AtomicBool::new(false),
 +        }
++    }
++
++    pub(super) fn published(&self) -> Option<Arc<ModViewSnapshot>> {
++        self.published.lock().ok()?.clone()
 +    }
 +
 +    fn update(&self, owner: &Host, change: impl FnOnce(&mut State)) {
@@ -64013,6 +64028,9 @@ index 000000000..753966763
 +        change(&mut state);
 +        state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
 +        let _ = owner.persist_json("mod-view.json", &state.snapshot);
++        if let Ok(mut published) = self.published.lock() {
++            *published = Some(Arc::new(state.snapshot.clone()));
++        }
 +        codex_omd::client_surface::redraw();
 +    }
 +
@@ -64135,6 +64153,32 @@ index 000000000..753966763
 +        views.start_thread(&fork);
 +        assert_eq!(views.current_presentation()["phase"], "resumed");
 +        assert_eq!(views.current_presentation()["thread_id"], "forked");
++    }
++
++    #[test]
++    fn the_published_snapshot_is_served_from_memory_after_the_first_update() {
++        let dir = tempfile::tempdir().unwrap();
++        let root = dir.path().canonicalize().unwrap();
++        let host = crate::Host {
++            root: root.clone(),
++            repository: root.clone(),
++            repository_identity: "fixture".into(),
++            config: crate::config::HostConfig::default(),
++            routes: std::sync::Mutex::new(crate::RouteTable {
++                stamp: None,
++                config: std::sync::Arc::new(crate::config::HostConfig::default()),
++                error: None,
++            }),
++            accounts: std::sync::Arc::new(crate::accounting::Accounts::default()),
++            manager: std::sync::Weak::new(),
++            epoch: 1,
++        };
++        let views = Views::new();
++        assert!(views.published().is_none());
++        views.diagnostic(&host, "k", Some("broken".into()));
++        std::fs::remove_file(root.join("mod-view.json")).unwrap();
++        let published = views.published().expect("published after an update");
++        assert_eq!(published.diagnostics, vec!["broken".to_owned()]);
 +    }
 +
 +    #[test]
@@ -72609,7 +72653,7 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..37d334e83
+index 000000000..544e1a5ee
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
 @@ -0,0 +1,713 @@
@@ -73204,7 +73248,7 @@ index 000000000..37d334e83
 +        active,
 +        deadline,
 +    )?;
-+    if let Some(arguments) = mirrored {
++    if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
 +        notify(Observed::Mirrored {
 +            caller: caller.to_owned(),
 +            operation: operation.to_owned(),
@@ -73328,10 +73372,10 @@ index 000000000..37d334e83
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..3e6b47e2f
+index 000000000..a7cd609f6
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,431 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -73363,12 +73407,12 @@ index 000000000..3e6b47e2f
 +    }
 +}
 +
-+struct Reject;
++struct Answers(Result<Value, String>);
 +
-+impl ClientSurface for Reject {
++impl ClientSurface for Answers {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
 +        call.reply
-+            .send(Err("terminal_blit_not_owned".into()))
++            .send(self.0.clone())
 +            .map_err(|error| error.to_string())
 +    }
 +}
@@ -73548,9 +73592,8 @@ index 000000000..3e6b47e2f
 +}
 +
 +#[test]
-+fn rejected_mirrored_operations_are_not_mirrored() {
++fn only_accepted_mirrored_operations_are_mirrored() {
 +    let _serial = hub_test();
-+    let registration = register(Arc::new(Reject));
 +    let mirrored = Arc::new(AtomicUsize::new(0));
 +    let counter = mirrored.clone();
 +    let observer = register_observer(Arc::new(move |observed| {
@@ -73558,20 +73601,30 @@ index 000000000..3e6b47e2f
 +            counter.fetch_add(1, Ordering::SeqCst);
 +        }
 +    }));
-+    let blit = call(
-+        "m",
-+        "terminal.blit",
-+        json!({"key": "r"}),
-+        InvocationContext::Event,
-+        false,
-+        None,
-+        None,
-+        &|| true,
-+    );
-+    assert_eq!(blit, Err("terminal_blit_not_owned".into()));
-+    assert_eq!(mirrored.load(Ordering::SeqCst), 0);
++    for (answer, count) in [
++        (Err("terminal_blit_not_owned".to_owned()), 0),
++        (
++            Ok(json!({"status": "backpressure", "retry_after_ms": 5})),
++            0,
++        ),
++        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 33})), 1),
++    ] {
++        let registration = register(Arc::new(Answers(answer.clone())));
++        let blit = call(
++            "m",
++            "terminal.blit",
++            json!({"key": "r"}),
++            InvocationContext::Event,
++            false,
++            None,
++            None,
++            &|| true,
++        );
++        assert_eq!(blit, answer);
++        assert_eq!(mirrored.swap(0, Ordering::SeqCst), count, "{answer:?}");
++        drop(registration);
++    }
 +    drop(observer);
-+    drop(registration);
 +}
 +
 +#[test]

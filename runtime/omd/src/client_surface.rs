@@ -589,7 +589,7 @@ pub fn call(
         active,
         deadline,
     )?;
-    if let Some(arguments) = mirrored {
+    if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
         notify(Observed::Mirrored {
             caller: caller.to_owned(),
             operation: operation.to_owned(),

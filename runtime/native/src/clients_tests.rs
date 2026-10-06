@@ -124,6 +124,7 @@ fn client_events_need_a_known_kind_its_fields_and_a_bounded_size() {
     }
     for event in [
         json!({"kind": "open"}),
+        json!({"kind": "motion"}),
         json!({"kind": "change"}),
         json!({"kind": "pointer", "pointer": {"column": -1, "row": 0}}),
         json!({"kind": "pointer", "pointer": {"column": 1, "row": 2}}),

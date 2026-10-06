@@ -1610,7 +1610,7 @@ attach before any other `omd/*` call; before it every method fails with
 `client_not_attached`. Errors are JSON-RPC errors whose message starts with
 the code: besides those below, `mod_host_inactive`, `session_unavailable`,
 `host_operation_unavailable` and `view_unavailable` (no mods, thread, session
-runtime or readable view in this host), `command_unavailable` and
+runtime or published view in this host), `command_unavailable` and
 `command_unavailable_during_turn` for the action's command,
 `render_slot_invalid` and `render_props_invalid`, `resource_not_in_view` and
 `resource_unavailable`, and `recovery_action_invalid`, `mod_not_found` and

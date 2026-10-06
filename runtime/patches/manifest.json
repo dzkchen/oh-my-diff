@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "3fb3729a4f6754c6adda1d9b0ea2fe0cbd365e663c664bab55f2645b5e05bcb3"
+    "sha256": "8406b010834f5032e96402a003d8fed02552e6d3007d95514dbaee727e9eded4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -237,7 +237,7 @@
     },
     "codex-rs/app-server/tests/suite/v2/omd_clients.rs": {
       "before": null,
-      "after": "e9811ae3b06e99d284aae36f18f30b38e4a2c9cec7de08558c607d78d0d932ac"
+      "after": "773c9f9ef86cc30c5c49c8040828d47c3818190aedf46ef44a6d993f0cb3716a"
     },
     "codex-rs/app-server/tests/suite/v2/thread_resume.rs": {
       "before": "ca67555394168f6b5b1164290907d0539b0d857974b802e75d79615a21ccb5cf",
@@ -729,11 +729,11 @@
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
-      "after": "1783a9c7e511c6a392c2062815961506e9cae49496692c53582314cf65eaa0df"
+      "after": "61b2833ed8131b84912a1c64c7b027592c6bfbdd381dc968156065d9f39e0350"
     },
     "codex-rs/ext/omd/src/clients_tests.rs": {
       "before": null,
-      "after": "49e945861406c29fbc554412ff0176c94cc0e3013afdddab389263451bd2b018"
+      "after": "a3ac658c15ef3c4143aea0ddbad339a668a0c5837888190dc86af20c489b7cc8"
     },
     "codex-rs/ext/omd/src/config.rs": {
       "before": null,
@@ -865,7 +865,7 @@
     },
     "codex-rs/ext/omd/src/mods/view.rs": {
       "before": null,
-      "after": "b1dd98802845dfd4d829946838dd08f4bb19f3f573a6ae96ffd08694878ba602"
+      "after": "87e77e78525ca14b6f99f2f0097399ff970a2806bcf57996390af1bb50f23491"
     },
     "codex-rs/ext/omd/src/workspace_operations.rs": {
       "before": null,
@@ -977,11 +977,11 @@
     },
     "codex-rs/omd/src/client_surface.rs": {
       "before": null,
-      "after": "a2e57fbc74c150fe9537d43fed9b915d50ae47ebfa27b175be663ffde75c970d"
+      "after": "af611c64d744b72feae85525a6cc369cb00d776a41716b803516694ce700801b"
     },
     "codex-rs/omd/src/client_surface_tests.rs": {
       "before": null,
-      "after": "e84bf2093e70200006dacd67a81eab1a1ee4b03ee2076661e62c2c972fa45803"
+      "after": "62a971dd78ec54a08c249cdef42170b981214d081a0fed720393cbe692d9da54"
     },
     "codex-rs/omd/src/consents.rs": {
       "before": null,

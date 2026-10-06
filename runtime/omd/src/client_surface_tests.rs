@@ -29,12 +29,12 @@ impl ClientSurface for Password {
     }
 }
 
-struct Reject;
+struct Answers(Result<Value, String>);
 
-impl ClientSurface for Reject {
+impl ClientSurface for Answers {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         call.reply
-            .send(Err("terminal_blit_not_owned".into()))
+            .send(self.0.clone())
             .map_err(|error| error.to_string())
     }
 }
@@ -214,9 +214,8 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
 }
 
 #[test]
-fn rejected_mirrored_operations_are_not_mirrored() {
+fn only_accepted_mirrored_operations_are_mirrored() {
     let _serial = hub_test();
-    let registration = register(Arc::new(Reject));
     let mirrored = Arc::new(AtomicUsize::new(0));
     let counter = mirrored.clone();
     let observer = register_observer(Arc::new(move |observed| {
@@ -224,20 +223,30 @@ fn rejected_mirrored_operations_are_not_mirrored() {
             counter.fetch_add(1, Ordering::SeqCst);
         }
     }));
-    let blit = call(
-        "m",
-        "terminal.blit",
-        json!({"key": "r"}),
-        InvocationContext::Event,
-        false,
-        None,
-        None,
-        &|| true,
-    );
-    assert_eq!(blit, Err("terminal_blit_not_owned".into()));
-    assert_eq!(mirrored.load(Ordering::SeqCst), 0);
+    for (answer, count) in [
+        (Err("terminal_blit_not_owned".to_owned()), 0),
+        (
+            Ok(json!({"status": "backpressure", "retry_after_ms": 5})),
+            0,
+        ),
+        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 33})), 1),
+    ] {
+        let registration = register(Arc::new(Answers(answer.clone())));
+        let blit = call(
+            "m",
+            "terminal.blit",
+            json!({"key": "r"}),
+            InvocationContext::Event,
+            false,
+            None,
+            None,
+            &|| true,
+        );
+        assert_eq!(blit, answer);
+        assert_eq!(mirrored.swap(0, Ordering::SeqCst), count, "{answer:?}");
+        drop(registration);
+    }
     drop(observer);
-    drop(registration);
 }
 
 #[test]
