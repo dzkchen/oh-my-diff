@@ -1031,7 +1031,8 @@ pub fn apply_send_edits(
 #[derive(Default)]
 struct Queue {
     pending: Vec<Value>,
-    sent: Vec<Value>,
+    /// Request id and the batch it was sent with, which only a retry of that request repeats.
+    sent: (String, Vec<Value>),
     issued: usize,
 }
 
@@ -1055,9 +1056,14 @@ pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String
     Ok(())
 }
 
-/// Adds the thread's queued sections to an outgoing request without taking them; a retry carries the batch
-/// its first attempt sent. Returns whether the request changed and how many pending sections it carries.
-pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> (bool, usize) {
+/// Adds the thread's queued sections to an outgoing request without taking them. A retry of `retry_of` repeats
+/// the batch that request sent and nothing else; any other request carries the pending sections.
+/// Returns whether the request changed and how many pending sections it carries.
+pub fn apply_queued_sections(
+    request: &mut Value,
+    thread: &str,
+    retry_of: Option<&str>,
+) -> (bool, usize) {
     let (batch, carried) = {
         let queued = QUEUED
             .lock()
@@ -1065,8 +1071,8 @@ pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> 
         let Some(queue) = queued.get(thread) else {
             return (false, 0);
         };
-        if retry {
-            (queue.sent.clone(), 0)
+        if retry_of.is_some_and(|of| of == queue.sent.0) {
+            (queue.sent.1.clone(), 0)
         } else {
             (queue.pending.clone(), queue.pending.len())
         }
@@ -1079,16 +1085,26 @@ pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> 
     (apply_sections(request, &given, &effective), carried)
 }
 
-/// Takes the sections a request carried once it is ready to send, so a denied request leaves them queued.
-pub fn commit_queued_sections(thread: &str, carried: usize) {
-    if carried == 0 {
-        return;
-    }
+/// Records what request `request_id` sent once it is ready to send, so a denied request leaves its sections queued.
+pub fn commit_queued_sections(
+    thread: &str,
+    request_id: &str,
+    carried: usize,
+    retry_of: Option<&str>,
+) {
     let mut queued = QUEUED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(queue) = queued.get_mut(thread) {
-        queue.sent = queue.pending.drain(..carried).collect();
+    let Some(queue) = queued.get_mut(thread) else {
+        return;
+    };
+    if carried > 0 {
+        queue.sent = (
+            request_id.to_owned(),
+            queue.pending.drain(..carried).collect(),
+        );
+    } else if retry_of.is_some_and(|of| of == queue.sent.0) {
+        queue.sent.0 = request_id.to_owned();
     }
 }
 

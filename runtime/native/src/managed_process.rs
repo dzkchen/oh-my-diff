@@ -70,15 +70,42 @@ struct ManagedProcess {
     receiver: mpsc::Receiver<io::Result<Value>>,
     scratch: PathBuf,
     last_used: Instant,
+    /// Set under the lock that reaps the child, so nothing signals a pid the system may have reused.
+    reaped: Arc<Mutex<bool>>,
+}
+
+impl ManagedProcess {
+    fn try_reap(&mut self) -> io::Result<bool> {
+        let mut reaped = self
+            .reaped
+            .lock()
+            .map_err(|_| io::Error::other("process_reap_poisoned"))?;
+        if !*reaped && self.child.try_wait()?.is_some() {
+            *reaped = true;
+        }
+        Ok(*reaped)
+    }
+}
+
+fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
+    if let Ok(reaped) = reaped.lock()
+        && !*reaped
+    {
+        let _ = kill_process_group(group);
+    }
 }
 
 impl Drop for ManagedProcess {
     fn drop(&mut self) {
-        let _ = kill_process_group(self.child.id());
-        if self.child.try_wait().ok().flatten().is_none() {
+        kill_group_if_alive(self.child.id(), &self.reaped);
+        if matches!(self.try_reap(), Ok(false)) {
             let _ = self.child.kill();
         }
+        let mut reaped = self.reaped.lock().ok();
         let _ = self.child.wait();
+        if let Some(reaped) = reaped.as_mut() {
+            **reaped = true;
+        }
         let _ = fs::remove_dir_all(&self.scratch);
     }
 }
@@ -232,7 +259,7 @@ impl ManagedProcesses {
             .iter()
             .find(|((id, _, name), _)| id == owner && name == session)?;
         let mut process = process.lock().ok()?;
-        Some(process.child.try_wait().ok()?.is_none())
+        Some(!process.try_reap().ok()?)
     }
 
     pub fn cleanup_stale(&self, generation: u64) {
@@ -543,6 +570,8 @@ impl ManagedProcesses {
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
                     let group = child.id();
+                    let reaped = Arc::new(Mutex::new(false));
+                    let reader_reaped = Arc::clone(&reaped);
                     std::thread::spawn(move || {
                         let mut reader = BufReader::new(stdout);
                         loop {
@@ -551,7 +580,7 @@ impl ManagedProcesses {
                             if let Err(error) = &result
                                 && error.kind() != io::ErrorKind::UnexpectedEof
                             {
-                                let _ = kill_process_group(group);
+                                kill_group_if_alive(group, &reader_reaped);
                             }
                             let bytes = match (&result, notify_output) {
                                 (Ok(message), true) => {
@@ -589,6 +618,7 @@ impl ManagedProcesses {
                         receiver,
                         scratch: scratch.clone(),
                         last_used: Instant::now(),
+                        reaped,
                     })
                 })();
                 match launched {
@@ -637,12 +667,7 @@ impl ManagedProcesses {
                     self.remove(&key, &session);
                     return Err("grant_expired: os".into());
                 }
-                if process
-                    .child
-                    .try_wait()
-                    .map_err(|error| error.to_string())?
-                    .is_some()
-                {
+                if process.try_reap().map_err(|error| error.to_string())? {
                     self.remove(&key, &session);
                     return Err("process_stopped".into());
                 }
@@ -979,6 +1004,34 @@ mod tests {
                 .unwrap_err(),
             "process_session_unavailable"
         );
+    }
+
+    #[test]
+    fn a_reaped_child_is_never_signalled_through_its_old_group_id() {
+        let mut finished = ManagedProcess {
+            child: Command::new("true").process_group(0).spawn().unwrap(),
+            unrestricted: false,
+            sender: mpsc::sync_channel(1).0,
+            receiver: mpsc::sync_channel(1).1,
+            scratch: PathBuf::from("/nonexistent/omd-reaped"),
+            last_used: Instant::now(),
+            reaped: Arc::default(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !finished.try_reap().unwrap() {
+            assert!(Instant::now() < deadline, "the child never exited");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut bystander = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        kill_group_if_alive(bystander.id(), &finished.reaped);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(bystander.try_wait().unwrap().is_none());
+        kill_group_if_alive(bystander.id(), &Mutex::new(false));
+        assert!(bystander.wait().is_ok());
     }
 
     #[test]
