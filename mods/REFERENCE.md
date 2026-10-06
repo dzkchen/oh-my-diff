@@ -1481,8 +1481,11 @@ and dialogs (`ui_composition_v1`). Operations:
   starts a listed program unsandboxed with the real `HOME` (no `write` or
   `network` fields), skips the per-start confirmation and stops when the grant
   ends.
-  Sessions belong to the calling mod (four per mod, sixteen in all), render
-  only in views that mod owns or contributes to, and stop when it unloads. A
+  Sessions belong to the calling mod, thread and admitted generation (four per
+  mod, sixteen in all). They render only in terminal components owned by that
+  mod and stop when the thread, repository, permission context or admitted
+  generation changes, or the mod unloads. Queued requests and terminal input
+  retain their original binding and cannot address a replacement session. A
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 - `builtins.invoke {action}` runs a key action from user contexts;
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never

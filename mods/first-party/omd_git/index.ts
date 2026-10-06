@@ -3,7 +3,7 @@ import type { ExecGuard, Fingerprint, ModAPI, ResourceRef, TerminalComponent, Te
 type Entry = { path: string; original: string | null; index: string; worktree: string; conflicted: boolean };
 type Commit = { oid: string; parents: string[]; subject: string };
 type Head = { branch: string | null; oid: string | null; upstream: string | null; ahead: number; behind: number };
-type Preview = { kind: 'discard' | 'commit' | 'switch'; tracked: boolean; target: string; from: string | null; destination: string | null; status: string; lines: string[]; guards: ExecGuard[]; paths: string[]; expected: Record<string, Fingerprint> | null };
+type Preview = { kind: 'discard' | 'commit' | 'switch'; tracked: boolean; target: string; from: string | null; destination: string | null; restoreHash?: string; status: string; lines: string[]; guards: ExecGuard[]; paths: string[]; expected: Record<string, Fingerprint> | null };
 type Saved = { error: string | null; head: Head | null; entries: Entry[]; total: number; rows: string[]; more: boolean; branches: string[]; selected: string | null; branch: string | null; message: string; preview: Preview | null; notice: string | null; status: string; guards: ExecGuard[]; backup: { path: string; reference: ResourceRef; expected: Fingerprint } | null };
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -292,12 +292,17 @@ export default function activate(api: ModAPI) {
     if (!allowed.ok) return { display: allowed.error };
     const change = tracked ? read(['diff', '--binary', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--', entry.path]) : null;
     if (change && !change.ok) return { display: change.error };
-    const index = tracked ? indexGuard() : null;
+    const index = tracked ? read(['ls-files', '-s', '-z']) : null;
     if (index && !index.ok) return { display: index.error };
+    const indexed = index?.ok ? index.value.text.split('\0').find(record => record.slice(record.indexOf('\t') + 1) === entry.path) : null;
+    const blob = indexed && /^100(?:644|755) ([0-9a-f]{40,64}) 0\t/.exec(indexed)?.[1];
+    if (tracked && !blob) return { display: 'discard requires a regular file in the index' };
+    const restored = blob ? read(['cat-file', '--filters', `--path=${entry.path}`, blob]) : null;
+    if (restored && !restored.ok) return { display: restored.error };
     const content = tracked ? read(['hash-object', '--no-filters', '--', entry.path], 256) : null;
     if (content && (!content.ok || !/^[0-9a-f]{40,64}\n$/.test(content.value.text))) return { display: content.ok ? 'Git file fingerprint unavailable' : content.error };
     const lines = [`  ${trim(entry.path, width - 4)}`, '', ...(change?.ok ? [visible(change.value.text.slice(0, 8_000)), ''] : []), 'The current file will be backed up outside this repository before the change.', 'Confirmation refuses a changed file or Git status.'];
-    save({ ...state, preview: { kind: 'discard', tracked, target: entry.path, from: state.head?.oid ?? null, destination: null, status: state.status, lines, guards: tracked && index?.ok && content?.ok ? [...state.guards, index.value, content.value.guard] : state.guards, paths: [entry.path], expected: { [entry.path]: file.sha256 } } });
+    save({ ...state, preview: { kind: 'discard', tracked, target: entry.path, from: state.head?.oid ?? null, destination: null, ...(restored?.ok ? { restoreHash: restored.value.guard.stdout_sha256 } : {}), status: state.status, lines, guards: tracked && index?.ok && content?.ok ? [...state.guards, index.value.guard, content.value.guard] : state.guards, paths: [entry.path], expected: { [entry.path]: file.sha256 } } });
     return null;
   };
   api.command('act', value => {
@@ -418,12 +423,11 @@ export default function activate(api: ModAPI) {
       return { display: STALE };
     }
     if (preview.tracked) {
+      if (!preview.restoreHash) return { display: WRITE_UNAVAILABLE };
       const backup = api.host.tryCall('workspace.backup', { expected: preview.expected });
       if (!backup.ok) { save({ ...previous, preview: null, notice: backup.error }); return { display: backup.error }; }
       const result = write(['restore', '--worktree', '--', preview.target], preview.guards, preview.paths);
-      const version = api.host.tryCall('workspace.stat', { paths: preview.paths, hash: true });
-      const expected = version.ok ? version.value.files[preview.target]?.sha256 ?? null : null;
-      const retained = { path: preview.target, reference: backup.value.backup, expected };
+      const retained = { path: preview.target, reference: backup.value.backup, expected: preview.restoreHash };
       if (!result.ok) { save({ ...previous, preview: null, notice: result.error, backup: retained }); return { display: `${result.error}; backup retained` }; }
       const next = refresh({ ...previous, preview: null });
       const notice = `discarded ${trim(preview.target, 80)}; backup ${backup.value.backup.reference}`;
@@ -440,7 +444,7 @@ export default function activate(api: ModAPI) {
     const notice = `discarded ${trim(preview.target, 80)}; backup ${result.value.backup.reference}`;
     save({ ...next, notice, backup: { path: preview.target, reference: result.value.backup, expected: null } });
     return { display: notice };
-  }, { description: 'Confirm an untracked discard with an outside-repository backup' });
+  }, { description: 'Confirm a Git action with checked preconditions' });
   api.command('restore', () => {
     const state = saved();
     if (!state.backup) return { display: 'no Git discard backup to restore' };
@@ -450,7 +454,7 @@ export default function activate(api: ModAPI) {
     const notice = `restored ${trim(state.backup.path, 80)}`;
     save({ ...next, notice });
     return { display: notice };
-  }, { description: 'Restore the last discarded file if its path is still absent' });
+  }, { description: 'Restore the last discarded file if its expected content is unchanged' });
   api.command('dismiss', () => { save({ ...saved(), preview: null }); return null; }, { description: 'Close the Git preview' });
   for (const event of ['start', 'resume', 'turn_start', 'turn_end', 'idle'] as const) api.on(event, () => { refresh(); });
   api.on('terminal', () => view());

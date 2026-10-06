@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { FileStat, Json, ModAPI } from '../../api.d.ts';
 
 type Adapter = 'python' | 'typescript' | 'rust' | 'java';
 type Document = { sha256: string; version: number };
@@ -557,6 +557,11 @@ export default function activate(api: ModAPI) {
   api.on('tool_output', event => announce(appended(feedback(event))));
   const feedback = (event: { tool: string; arguments: Json; success: boolean }): string[] => {
     const report: string[] = [];
+    const incomplete = (s: State, reason: string) => {
+      failure(s, reason, true);
+      save(s);
+      report.unshift(`${s.adapter} language-server feedback incomplete: ${s.reason}`);
+    };
     if (READ_ONLY_TOOLS.has(event.tool)) return report;
     const texts = strings(event.arguments);
     const viewing = event.success && event.tool !== 'apply_patch' && texts.some(text => VIEW.test(text));
@@ -584,23 +589,33 @@ export default function activate(api: ModAPI) {
       return s.running && s.repository && candidates.length ? [{ adapter, candidates, named }] : [];
     });
     if (!work.length) return report;
-    const stat = budget({ paths: [...new Set(work.flatMap(item => item.candidates))], hash: true }, argument => api.host.tryCall('workspace.stat', argument));
-    if (!stat.ok) return report;
+    const paths = [...new Set(work.flatMap(item => item.candidates))];
+    const files: Record<string, FileStat | null> = {};
+    for (let index = 0; index < paths.length; index += 128) {
+      const stat = budget({ paths: paths.slice(index, index + 128), hash: true }, argument => api.host.tryCall('workspace.stat', argument));
+      if (!stat.ok) {
+        for (const { adapter } of work) incomplete(state(api.state.get(), adapter), stat.error);
+        return report;
+      }
+      Object.assign(files, stat.value.files);
+    }
     for (const { adapter, candidates, named } of work) {
       const s = state(api.state.get(), adapter);
-      const changed = candidates.filter(path => stat.value.files[path]?.kind === 'file' ? stat.value.files[path]?.sha256 !== s.documents[path]?.sha256 : Boolean(s.documents[path]));
+      const changed = candidates.filter(path => files[path]?.kind === 'file' ? files[path]?.sha256 !== s.documents[path]?.sha256 : Boolean(s.documents[path]));
       if (!changed.length) continue;
-      const edited = changed.filter(path => s.documents[path] && stat.value.files[path]);
-      const opened = viewing ? changed.filter(path => !s.documents[path] && stat.value.files[path] && named.includes(path)) : [];
+      const edited = changed.filter(path => s.documents[path] && files[path]);
+      const opened = viewing ? changed.filter(path => !s.documents[path] && files[path] && named.includes(path)) : [];
       const pending = exchange(s, [], 0);
-      if (pending.ok) settle(s, handle(s, pending.value));
+      const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
+      if (!settled.ok) { incomplete(s, settled.error); continue; }
       const before = Object.fromEntries(Object.entries(s.diagnostics).map(([path, entry]) => [path, entry.errors]));
       const synced = synchronize(s, changed);
-      if (!synced.ok) { failure(s, synced.error, true); save(s); continue; }
+      if (!synced.ok) { incomplete(s, synced.error); continue; }
+      let reason = '';
       for (let wait = 0; wait < DIAGNOSTIC_WAITS && [...edited, ...opened].some(path => !s.diagnostics[path]); wait++) {
         const batch = exchange(s, [], 250);
         const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
-        if (!settled.ok) break;
+        if (!settled.ok) { reason = settled.error; break; }
       }
       for (const path of new Set([...edited, ...Object.keys(s.diagnostics)])) {
         const after = s.diagnostics[path]?.errors;
@@ -614,6 +629,10 @@ export default function activate(api: ModAPI) {
       for (const path of opened) {
         const errors = s.diagnostics[path]?.errors;
         if (errors?.length) report.push(`${path}: ${errors.length} existing (v${s.documents[path].version})`, ...errors.slice(0, 8).map(entry => `  ${entry}`));
+      }
+      if (reason || [...edited, ...opened].some(path => !s.diagnostics[path])) {
+        incomplete(s, reason || 'diagnostics_pending');
+        continue;
       }
       s.status = 'synced';
       s.reason = '';

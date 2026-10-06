@@ -586,10 +586,15 @@ async fn surface(
     let repository = lead.host.repository.clone();
     let arguments = request.arguments;
     let cancelled = cancelled.clone();
+    let surface_authority = caller
+        .grants
+        .as_ref()
+        .map(|grants| grants.surface_authority.clone());
     let runtime = core.runtime.clone();
     let generation = caller.generation;
     let source = caller.source.to_owned();
     tokio::task::spawn_blocking(move || {
+        let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
         let owner = id.clone();
         let admitted_capabilities = capabilities.clone();
         let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {

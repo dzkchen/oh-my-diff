@@ -286,7 +286,7 @@ async function promote(api: ModAPI, input: Json): Promise<Json> {
   const proposed = state.proposals.find(item => item.proposal.version === selected.version && item.sha256 === selected.proposal_sha256);
   const checked = state.validations.find(item => item.validation.proposal_version === selected.version && item.validation.id === validation_id
     && item.sha256 === validation_sha256 && item.validation.proposal_sha256 === selected.proposal_sha256 && item.validation.outcome === 'passed');
-  if (!proposed || !checked || state.transitions.length >= MAX_HISTORY) throw new Error('guideline_promotion_unavailable');
+  if (!proposed || !checked || state.transitions.length + state.rollback.length + 2 > MAX_HISTORY) throw new Error('guideline_promotion_unavailable');
   const revision = state.revision + 1;
   const transition: Transition = { revision, kind: 'promotion', from: state.active, to: selected, validation_id, validation_sha256: validation_sha256 as string, maintainer };
   await save(api, { ...body(state), revision, active: selected, rollback: [...state.rollback, state.active], transitions: [...state.transitions, transition] }, store_revision);

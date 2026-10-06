@@ -8352,7 +8352,7 @@ index c57920741..9836705ad 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index da28bf2ca..45af19dd2 100644
+index da28bf2ca..6d8079707 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -382,6 +382,76 @@ impl App {
@@ -8422,8 +8422,8 @@ index da28bf2ca..45af19dd2 100644
 +                self.chat_widget.maybe_send_next_queued_input();
 +            }
 +            AppEvent::ModViewChanged => tui.frame_requester().schedule_frame(),
-+            AppEvent::ModSurfaceCall(call) => {
-+                self.handle_mod_surface_call(tui, app_server, *call).await;
++            AppEvent::ModSurfaceCall(call, binding) => {
++                self.handle_mod_surface_call(tui, app_server, *call, binding).await;
 +            }
 +            AppEvent::ModSurfaceConfirmed { id, approved } => {
 +                self.handle_mod_surface_confirmed(tui, app_server, id, approved)
@@ -10093,10 +10093,10 @@ index 22e27ed3f..3ed98010a 100644
          }
          let expected_cwd = if override_cwd {
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index ce30da4ad..9a3fe07c8 100644
+index ce30da4ad..03d3c6603 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -461,6 +461,31 @@ pub(crate) enum AppEvent {
+@@ -461,6 +461,34 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -10119,7 +10119,10 @@ index ce30da4ad..9a3fe07c8 100644
 +        result: Result<crate::mod_runtime::ModCommandResult, String>,
 +        quiet: bool,
 +    },
-+    ModSurfaceCall(Box<codex_omd::client_surface::SurfaceCall>),
++    ModSurfaceCall(
++        Box<codex_omd::client_surface::SurfaceCall>,
++        Option<crate::mod_pty::Binding>,
++    ),
 +    ModViewChanged,
 +    ModSurfaceConfirmed {
 +        id: u64,
@@ -10128,7 +10131,7 @@ index ce30da4ad..9a3fe07c8 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -658,6 +683,15 @@ pub(crate) enum AppEvent {
+@@ -658,6 +686,15 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -27479,10 +27482,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..f08d16c00
+index 000000000..82e264529
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2334 @@
+@@ -0,0 +1,2336 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -27948,10 +27951,12 @@ index 000000000..f08d16c00
 +    ledger: Value,
 +    active: impl Fn() -> bool,
 +) {
-+    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
++    let mut input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
 +        "presentation": views.current_presentation()});
++    let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
 +    let rendered_ms = codex_omd::ModViewSnapshot::clock();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
++    input["pty_scope"] = pty_scope;
 +    let status = runtime.status();
 +    let mut errors = status["mods"]
 +        .as_array()
@@ -34064,10 +34069,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..4502c3bd0
+index 000000000..fddaf0f8e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,638 @@
+@@ -0,0 +1,643 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -34656,10 +34661,15 @@ index 000000000..4502c3bd0
 +    let repository = lead.host.repository.clone();
 +    let arguments = request.arguments;
 +    let cancelled = cancelled.clone();
++    let surface_authority = caller
++        .grants
++        .as_ref()
++        .map(|grants| grants.surface_authority.clone());
 +    let runtime = core.runtime.clone();
 +    let generation = caller.generation;
 +    let source = caller.source.to_owned();
 +    tokio::task::spawn_blocking(move || {
++        let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
 +        let owner = id.clone();
 +        let admitted_capabilities = capabilities.clone();
 +        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
@@ -36461,10 +36471,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..0c99ba2b6
+index 000000000..28c4f0465
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2828 @@
+@@ -0,0 +1,2830 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -37847,11 +37857,13 @@ index 000000000..0c99ba2b6
 +        return;
 +    };
 +    let grants = fixture.core.runtime.lock().unwrap().grants("steerer");
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let generation = fixture.core.runtime.lock().unwrap().generation();
 +    let caller = Caller {
 +        id: "steerer",
-+        source: "",
++        source: &source,
 +        grants,
-+        generation: 0,
++        generation,
 +        origin: Origin::Event,
 +        record_changes: false,
 +    };
@@ -51043,10 +51055,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..31ada3db9
+index 000000000..42b6bb129
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,549 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::atomic::{AtomicBool, Ordering};
@@ -51132,6 +51144,51 @@ index 000000000..31ada3db9
 +    }
 +}
 +
++static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++static ADMISSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++pub fn admission() -> u64 {
++    ADMISSION.load(std::sync::atomic::Ordering::Acquire)
++}
++
++pub fn advance_admission() -> u64 {
++    ADMISSION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1
++}
++
++pub fn epoch() -> u64 {
++    EPOCH.load(std::sync::atomic::Ordering::Acquire)
++}
++
++pub fn set_epoch(epoch: u64) {
++    EPOCH.store(epoch, std::sync::atomic::Ordering::Release);
++}
++
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct Authority {
++    pub epoch: u64,
++    pub admission: u64,
++    pub configuration: String,
++    pub source: String,
++}
++
++thread_local! {
++    static AUTHORITY: std::cell::RefCell<Option<Authority>> = const { std::cell::RefCell::new(None) };
++}
++
++pub struct AuthorityGuard(Option<Authority>);
++
++impl Authority {
++    pub fn enter(self) -> AuthorityGuard {
++        AuthorityGuard(AUTHORITY.replace(Some(self)))
++    }
++}
++
++impl Drop for AuthorityGuard {
++    fn drop(&mut self) {
++        AUTHORITY.set(self.0.take());
++    }
++}
++
 +#[derive(Debug)]
 +pub struct SurfaceCall {
 +    pub validity: Validity,
@@ -51140,6 +51197,7 @@ index 000000000..31ada3db9
 +    pub arguments: Value,
 +    pub context: InvocationContext,
 +    pub thread: Option<String>,
++    pub authority: Option<Authority>,
 +    pub confirm: Option<String>,
 +    pub reply: Reply,
 +}
@@ -51274,6 +51332,9 @@ index 000000000..31ada3db9
 +        arguments,
 +        context,
 +        thread: thread.map(str::to_owned),
++        authority: (operation == "terminal.pty")
++            .then(|| AUTHORITY.with_borrow(Clone::clone))
++            .flatten(),
 +        confirm,
 +        reply,
 +    })?;
@@ -51524,6 +51585,9 @@ index 000000000..31ada3db9
 +    confirm: Option<String>,
 +    active: Arc<dyn Fn() -> bool + Send + Sync>,
 +) -> Result<Value, String> {
++    if !active() {
++        return Err("callback_cancelled".into());
++    }
 +    let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
 +        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
 +    wait(
@@ -51546,10 +51610,10 @@ index 000000000..31ada3db9
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..a839576c9
+index 000000000..15a3719c3
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,321 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51559,7 +51623,8 @@ index 000000000..a839576c9
 +impl ClientSurface for Echo {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
 +        let value = json!({"operation": call.operation, "caller": call.caller,
-+            "confirm": call.confirm, "arguments": call.arguments});
++            "confirm": call.confirm, "arguments": call.arguments,
++            "authority": call.authority.map(|authority| json!({"epoch": authority.epoch, "admission": authority.admission, "source": authority.source, "configuration": authority.configuration}))});
 +        call.reply
 +            .send(Ok(value))
 +            .map_err(|error| error.to_string())
@@ -51618,6 +51683,42 @@ index 000000000..a839576c9
 +        .starts_with("client_surface_unavailable")
 +    );
 +    let registration = register(Arc::new(Echo));
++    let authority = Authority {
++        epoch: 7,
++        admission: 11,
++        configuration: "configuration".into(),
++        source: "source".into(),
++    };
++    for context in [InvocationContext::User, InvocationContext::Event] {
++        let _guard = authority.clone().enter();
++        let value = call(
++            "m",
++            "terminal.pty",
++            json!({"action": "read", "session": "p1"}),
++            context,
++            Some("thread"),
++            None,
++            Arc::new(active),
++        )
++        .unwrap();
++        assert_eq!(
++            value["authority"],
++            json!({"epoch": 7, "admission": 11, "source": "source", "configuration": "configuration"})
++        );
++        assert!(
++            call(
++                "m",
++                "terminal.pty",
++                json!({"action": "read", "session": "p1"}),
++                context,
++                Some("thread"),
++                None,
++                Arc::new(|| false)
++            )
++            .is_err()
++        );
++    }
++    assert!(AUTHORITY.with_borrow(Option::is_none));
 +    assert!(hub().surface.is_some());
 +    let value = call(
 +        "m",
@@ -58294,10 +58395,10 @@ index 000000000..fe2e0fb34
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..937a4cdbe
+index 000000000..9789e58ff
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4795 @@
+@@ -0,0 +1,4802 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -60640,6 +60741,7 @@ index 000000000..937a4cdbe
 +
 +#[derive(Clone, Debug, Default, PartialEq)]
 +pub struct ModGrants {
++    pub surface_authority: crate::client_surface::Authority,
 +    pub api: String,
 +    pub source_sha256: String,
 +    pub capabilities: Vec<String>,
@@ -62807,6 +62909,12 @@ index 000000000..937a4cdbe
 +        self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| {
 +            let current = m.selection.authority_current();
 +            ModGrants {
++                surface_authority: crate::client_surface::Authority {
++                    epoch: crate::client_surface::epoch(),
++                    admission: crate::client_surface::admission(),
++                    configuration: self.configuration_sha256.clone(),
++                    source: m.selection.sha256.clone(),
++                },
 +                api: m.package.api.clone(),
 +                source_sha256: m.selection.sha256.clone(),
 +                capabilities: m
@@ -86804,10 +86912,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..4f6908ff7
+index 000000000..f15b76939
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1599 @@
+@@ -0,0 +1,1630 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -87059,6 +87167,7 @@ index 000000000..4f6908ff7
 +enum Confirmed {
 +    Package(Box<PackageControl>),
 +    Contract(Option<String>),
++    Pty(crate::mod_pty::Binding),
 +}
 +
 +static CONFIRMED: std::sync::Mutex<std::collections::BTreeMap<u64, Confirmed>> =
@@ -87676,16 +87785,29 @@ index 000000000..4f6908ff7
 +        tui: &mut tui::Tui,
 +        app_server: &mut AppServerSession,
 +        call: SurfaceCall,
++        binding: Option<crate::mod_pty::Binding>,
 +    ) {
 +        if !(call.validity.0)() {
 +            let _ = call.reply.send(Err("client_context_changed".into()));
 +            return;
 +        }
++        if call.operation == "terminal.pty"
++            && !binding.as_ref().is_some_and(crate::mod_pty::current)
++        {
++            let _ = call.reply.send(Err("pty_context_changed".into()));
++            return;
++        }
 +        match confirmation(&call) {
-+            Ok(Some((title, prompt, held))) => {
-+                self.confirm_mod_surface_call(call, title, prompt, held)
++            Ok(Some((title, prompt, held))) => self.confirm_mod_surface_call(
++                call,
++                title,
++                prompt,
++                binding.map(Confirmed::Pty).or(held),
++            ),
++            Ok(None) => {
++                self.run_mod_surface_call(tui, app_server, call, binding.map(Confirmed::Pty))
++                    .await
 +            }
-+            Ok(None) => self.run_mod_surface_call(tui, app_server, call, None).await,
 +            Err(error) => {
 +                let _ = call.reply.send(Err(error));
 +            }
@@ -87862,9 +87984,10 @@ index 000000000..4f6908ff7
 +                        arguments: json!({"kind": "text", "title": "Other", "message": question}),
 +                        context,
 +                        thread: thread.clone(),
++                        authority: None,
 +                        confirm: None,
 +                        reply,
-+                    })));
++                    }), None));
 +                })],
 +                dismiss_on_select: true,
 +                ..Default::default()
@@ -87890,6 +88013,16 @@ index 000000000..4f6908ff7
 +    ) {
 +        if !(call.validity.0)() {
 +            let _ = call.reply.send(Err("client_context_changed".into()));
++            return;
++        }
++        let pty = match &held {
++            Some(Confirmed::Pty(binding)) if crate::mod_pty::current(binding) => {
++                Some(binding.clone())
++            }
++            _ => None,
++        };
++        if call.operation == "terminal.pty" && pty.is_none() {
++            let _ = call.reply.send(Err("pty_context_changed".into()));
 +            return;
 +        }
 +        let result = match call.operation.as_str() {
@@ -87946,10 +88079,10 @@ index 000000000..4f6908ff7
 +                    .then_some(())
 +                    .ok_or_else(|| "host_operation_user_only: terminal.pty start".to_owned())
 +                    .and_then(|()| self.mod_shell_command(&call.caller, &call.arguments));
-+                match command {
-+                    Ok((command, home)) => {
++                match (command, pty.as_ref()) {
++                    (Ok((command, home)), Some(binding)) => {
 +                        crate::mod_pty::start(
-+                            &call.caller,
++                            binding,
 +                            &call.arguments,
 +                            command,
 +                            &home,
@@ -87957,10 +88090,14 @@ index 000000000..4f6908ff7
 +                        )
 +                        .await
 +                    }
-+                    Err(error) => Err(error),
++                    (Err(error), _) => Err(error),
++                    (_, None) => Err("pty_context_changed".into()),
 +                }
 +            }
-+            "terminal.pty" => crate::mod_pty::call(&call.caller, &call.arguments),
++            "terminal.pty" => pty
++                .as_ref()
++                .ok_or_else(|| "pty_context_changed".to_owned())
++                .and_then(|binding| crate::mod_pty::call(binding, &call.arguments)),
 +            "terminal.prompt" if call.arguments["kind"] == "confirm" => {
 +                Ok(json!({"status": "accepted"}))
 +            }
@@ -88295,8 +88432,8 @@ index 000000000..4f6908ff7
 +
 +    #[tokio::test]
 +    #[serial_test::serial]
-+    async fn revoked_queued_and_confirmed_calls_leave_the_composer_unchanged() -> color_eyre::Result<()>
-+    {
++    async fn revoked_queued_and_confirmed_calls_leave_the_composer_unchanged()
++    -> color_eyre::Result<()> {
 +        use std::sync::atomic::{AtomicBool, Ordering};
 +        let mut app = crate::app::test_support::make_test_app().await;
 +        let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
@@ -88315,6 +88452,7 @@ index 000000000..4f6908ff7
 +                arguments: json!({"revision": before["revision"], "edit": {"kind":"fill", "text":"foreign draft"}}),
 +                context: codex_omd::app_routes::InvocationContext::User,
 +                thread: None,
++                authority: None,
 +                confirm: None,
 +                reply,
 +            };
@@ -88325,7 +88463,7 @@ index 000000000..4f6908ff7
 +                    .await;
 +            } else {
 +                active.store(false, Ordering::Release);
-+                app.handle_mod_surface_call(&mut tui, &mut server, call)
++                app.handle_mod_surface_call(&mut tui, &mut server, call, None)
 +                    .await;
 +            }
 +            assert_eq!(answer.try_recv()?, Err("client_context_changed".into()));
@@ -88345,6 +88483,7 @@ index 000000000..4f6908ff7
 +                arguments: json!({"key": key, "value": true}),
 +                context: codex_omd::app_routes::InvocationContext::User,
 +                thread: None,
++                authority: None,
 +                confirm: None,
 +                reply,
 +            })
@@ -92349,10 +92488,10 @@ index 000000000..346f5fa4a
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 000000000..b43029f5b
+index 000000000..95bc511f4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,635 @@
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyModifiers;
@@ -92381,9 +92520,30 @@ index 000000000..b43029f5b
 +    unrestricted: bool,
 +}
 +
-+type Sessions = BTreeMap<(String, String), Pane>;
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++struct Scope {
++    epoch: u64,
++    admission: u64,
++    generation: u64,
++    configuration: String,
++    thread: Option<String>,
++}
 +
-+static SESSIONS: Mutex<Sessions> = Mutex::new(BTreeMap::new());
++#[derive(Clone, Debug)]
++pub(crate) struct Binding {
++    owner: String,
++    scope: Scope,
++}
++
++#[derive(Default)]
++struct Sessions {
++    scope: Scope,
++    owners: BTreeMap<String, String>,
++    panes: BTreeMap<(String, String), Pane>,
++}
++
++static SESSIONS: std::sync::LazyLock<Mutex<Sessions>> =
++    std::sync::LazyLock::new(|| Mutex::new(Sessions::default()));
 +
 +fn sessions() -> std::sync::MutexGuard<'static, Sessions> {
 +    SESSIONS
@@ -92393,31 +92553,106 @@ index 000000000..b43029f5b
 +
 +fn owned<'a>(
 +    sessions: &'a mut Sessions,
-+    owner: &str,
++    binding: &Binding,
 +    session: &str,
 +) -> Result<&'a mut Pane, String> {
++    validate(sessions, binding)?;
 +    sessions
-+        .get_mut(&(owner.to_owned(), session.to_owned()))
++        .panes
++        .get_mut(&(binding.owner.clone(), session.to_owned()))
 +        .ok_or_else(|| format!("pty_session_unknown: {session}"))
 +}
 +
-+fn visible<'a>(
-+    sessions: &'a mut Sessions,
-+    owners: &[String],
-+    session: &str,
-+) -> Option<&'a mut Pane> {
-+    let owner = owners
-+        .iter()
-+        .find(|owner| sessions.contains_key(&((*owner).clone(), session.to_owned())))?;
-+    sessions.get_mut(&(owner.clone(), session.to_owned()))
++fn validate(sessions: &Sessions, binding: &Binding) -> Result<(), String> {
++    if sessions.scope != binding.scope || !sessions.owners.contains_key(&binding.owner) {
++        return Err("pty_context_changed".into());
++    }
++    Ok(())
++}
++
++pub(crate) fn binding(
++    owner: &str,
++    thread: Option<&str>,
++    authority: &codex_omd::client_surface::Authority,
++) -> Result<Binding, String> {
++    let sessions = sessions();
++    let binding = Binding {
++        owner: owner.to_owned(),
++        scope: sessions.scope.clone(),
++    };
++    validate(&sessions, &binding)?;
++    if thread != binding.scope.thread.as_deref()
++        || authority.epoch != binding.scope.epoch
++        || authority.admission != binding.scope.admission
++        || authority.configuration != binding.scope.configuration
++        || sessions.owners.get(owner) != Some(&authority.source)
++    {
++        return Err("pty_context_changed".into());
++    }
++    Ok(binding)
++}
++
++pub(crate) fn current(binding: &Binding) -> bool {
++    validate(&sessions(), binding).is_ok()
++}
++
++pub(crate) fn view_binding(
++    owner: &str,
++    thread: Option<&str>,
++    epoch: u64,
++    admission: u64,
++    configuration: &str,
++) -> Result<Binding, String> {
++    let source = sessions()
++        .owners
++        .get(owner)
++        .cloned()
++        .ok_or("pty_context_changed")?;
++    binding(
++        owner,
++        thread,
++        &codex_omd::client_surface::Authority {
++            epoch,
++            admission,
++            configuration: configuration.to_owned(),
++            source,
++        },
++    )
++}
++
++fn clear(sessions: &mut Sessions) {
++    for pane in sessions.panes.values() {
++        pane.handle.terminate();
++    }
++    sessions.panes.clear();
++}
++
++pub(crate) fn context(epoch: u64, thread: Option<String>) {
++    let mut sessions = sessions();
++    if sessions.scope.epoch != epoch || sessions.scope.thread != thread {
++        clear(&mut sessions);
++        sessions.scope.epoch = epoch;
++        sessions.scope.thread = thread;
++    }
 +}
 +
 +pub(crate) fn retain(
-+    active: &std::collections::BTreeSet<String>,
++    generation: u64,
++    configuration: &str,
++    active: &BTreeMap<String, String>,
 +    unrestricted: &std::collections::BTreeSet<String>,
 +) {
-+    sessions().retain(|(owner, _), pane| {
-+        let keep = active.contains(owner) && (!pane.unrestricted || unrestricted.contains(owner));
++    let mut sessions = sessions();
++    if sessions.scope.generation != generation || sessions.scope.configuration != configuration {
++        clear(&mut sessions);
++        sessions.scope.generation = generation;
++        sessions.scope.admission = codex_omd::client_surface::advance_admission();
++        sessions.scope.configuration = configuration.to_owned();
++    }
++    sessions.owners = active.clone();
++    sessions.panes.retain(|(owner, _), pane| {
++        let keep =
++            active.contains_key(owner) && (!pane.unrestricted || unrestricted.contains(owner));
 +        if !keep {
 +            pane.handle.terminate();
 +        }
@@ -92489,26 +92724,30 @@ index 000000000..b43029f5b
 +}
 +
 +pub(crate) async fn start(
-+    owner: &str,
++    binding: &Binding,
 +    arguments: &Value,
 +    command: std::process::Command,
 +    home: &Path,
 +    frames: crate::tui::FrameRequester,
 +) -> Result<Value, String> {
 +    let session = session_name(&arguments["session"])?;
-+    let key = (owner.to_owned(), session.clone());
++    let owner = &binding.owner;
++    let key = (owner.clone(), session.clone());
++    let limit = crate::omd::mod_paths()
++        .and_then(|paths| paths.store)
++        .map_or_else(Default::default, |store| {
++            codex_omd::mod_limits::ModLimits::read(&store)
++        })
++        .pty_panes_per_mod;
++    let unavailable = |sessions: &Sessions| {
++        sessions.panes.contains_key(&key)
++            || sessions.panes.len() >= PANES
++            || sessions.panes.keys().filter(|(id, _)| id == owner).count() >= limit
++    };
 +    {
 +        let sessions = sessions();
-+        if sessions.contains_key(&key)
-+            || sessions.len() >= PANES
-+            || sessions.keys().filter(|(id, _)| id == owner).count()
-+                >= crate::omd::mod_paths()
-+                    .and_then(|paths| paths.store)
-+                    .map_or_else(Default::default, |store| {
-+                        codex_omd::mod_limits::ModLimits::read(&store)
-+                    })
-+                    .pty_panes_per_mod
-+        {
++        validate(&sessions, binding)?;
++        if unavailable(&sessions) {
 +            return Err("pty_session_exists_or_limit".into());
 +        }
 +    }
@@ -92565,7 +92804,16 @@ index 000000000..b43029f5b
 +            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(code);
 +        frames.schedule_frame();
 +    });
-+    sessions().insert(
++    let mut sessions = sessions();
++    if let Err(error) = validate(&sessions, binding) {
++        spawned.session.terminate();
++        return Err(error);
++    }
++    if unavailable(&sessions) {
++        spawned.session.terminate();
++        return Err("pty_session_exists_or_limit".into());
++    }
++    sessions.panes.insert(
 +        key,
 +        Pane {
 +            writer: spawned.session.writer_sender(),
@@ -92579,7 +92827,7 @@ index 000000000..b43029f5b
 +    Ok(json!({"session": session, "running": true}))
 +}
 +
-+pub(crate) fn call(owner: &str, arguments: &Value) -> Result<Value, String> {
++pub(crate) fn call(binding: &Binding, arguments: &Value) -> Result<Value, String> {
 +    let session = session_name(&arguments["session"])?;
 +    let mut sessions = sessions();
 +    match arguments["action"].as_str() {
@@ -92588,14 +92836,14 @@ index 000000000..b43029f5b
 +                .as_str()
 +                .filter(|text| text.len() <= WRITE_BYTES)
 +                .ok_or("pty_write_invalid")?;
-+            owned(&mut sessions, owner, &session)?
++            owned(&mut sessions, binding, &session)?
 +                .writer
 +                .try_send(text.as_bytes().to_vec())
 +                .map_err(|_| "pty_write_unavailable")?;
 +            Ok(json!({"written": text.len()}))
 +        }
 +        Some("read") => {
-+            let pane = owned(&mut sessions, owner, &session)?;
++            let pane = owned(&mut sessions, binding, &session)?;
 +            let text = pane
 +                .screen
 +                .lock()
@@ -92609,8 +92857,8 @@ index 000000000..b43029f5b
 +            Ok(json!({"text": text, "running": exit_code.is_none(), "exit_code": exit_code}))
 +        }
 +        Some("stop") => {
-+            owned(&mut sessions, owner, &session)?.handle.terminate();
-+            sessions.remove(&(owner.to_owned(), session));
++            owned(&mut sessions, binding, &session)?.handle.terminate();
++            sessions.panes.remove(&(binding.owner.clone(), session));
 +            Ok(json!({"stopped": true}))
 +        }
 +        _ => Err("pty_action_invalid".into()),
@@ -92627,14 +92875,14 @@ index 000000000..b43029f5b
 +}
 +
 +pub(crate) fn rows(
-+    owners: &[String],
++    binding: Option<&Binding>,
 +    session: &str,
 +    width: u16,
 +    height: u16,
 +    prefix: &str,
 +) -> Vec<Line<'static>> {
 +    let mut sessions = sessions();
-+    let Some(pane) = visible(&mut sessions, owners, session) else {
++    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
 +        return vec![Line::from(format!(
 +            "{prefix}[shell {session} is not running]"
 +        ))];
@@ -92691,7 +92939,7 @@ index 000000000..b43029f5b
 +    lines
 +}
 +
-+pub(crate) fn key(owners: &[String], session: &str, key: KeyEvent) -> bool {
++pub(crate) fn key(binding: Option<&Binding>, session: &str, key: KeyEvent) -> bool {
 +    let bytes = match (key.code, key.modifiers) {
 +        (KeyCode::Char(c), KeyModifiers::CONTROL) if c.is_ascii_alphabetic() => {
 +            vec![(c.to_ascii_lowercase() as u8) & 0x1f]
@@ -92710,13 +92958,15 @@ index 000000000..b43029f5b
 +        (KeyCode::Delete, _) => b"\x1b[3~".to_vec(),
 +        _ => return false,
 +    };
-+    visible(&mut sessions(), owners, session)
++    let mut sessions = sessions();
++    binding
++        .and_then(|binding| owned(&mut sessions, binding, session).ok())
 +        .is_some_and(|pane| pane.writer.try_send(bytes).is_ok())
 +}
 +
-+pub(crate) fn paste(owners: &[String], session: &str, text: &str) {
++pub(crate) fn paste(binding: Option<&Binding>, session: &str, text: &str) {
 +    let mut sessions = sessions();
-+    let Some(pane) = visible(&mut sessions, owners, session) else {
++    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
 +        return;
 +    };
 +    let bracketed = pane
@@ -92734,11 +92984,53 @@ index 000000000..b43029f5b
 +}
 +
 +#[cfg(test)]
++pub(crate) struct TestScope(Option<Sessions>);
++
++#[cfg(test)]
++impl Drop for TestScope {
++    fn drop(&mut self) {
++        let mut state = sessions();
++        clear(&mut state);
++        *state = self.0.take().unwrap();
++        state.scope.admission = codex_omd::client_surface::admission();
++    }
++}
++
++#[cfg(test)]
++pub(crate) fn test_scope() -> TestScope {
++    TestScope(Some(std::mem::take(&mut *sessions())))
++}
++
++#[cfg(test)]
 +mod tests {
 +    use super::*;
 +
 +    #[tokio::test]
++    #[serial_test::serial]
 +    async fn pty_output_renders_and_sessions_stay_owner_scoped() {
++        let _restore = test_scope();
++        let owners = BTreeMap::from([
++            ("m".to_owned(), "source".to_owned()),
++            ("other".to_owned(), "other-source".to_owned()),
++        ]);
++        context(1, Some("a".into()));
++        retain(1, "admitted", &owners, &Default::default());
++        let authority = codex_omd::client_surface::Authority {
++            epoch: 1,
++            admission: codex_omd::client_surface::admission(),
++            configuration: "admitted".into(),
++            source: "source".into(),
++        };
++        let a = binding("m", Some("a"), &authority).unwrap();
++        let other = binding(
++            "other",
++            Some("a"),
++            &codex_omd::client_surface::Authority {
++                source: "other-source".into(),
++                ..authority.clone()
++            },
++        )
++        .unwrap();
 +        let dir = tempfile::tempdir().unwrap();
 +        let mut command = std::process::Command::new("/bin/sh");
 +        command
@@ -92746,7 +93038,7 @@ index 000000000..b43029f5b
 +            .current_dir(dir.path());
 +        let arguments = json!({"session": "t1"});
 +        start(
-+            "m",
++            &a,
 +            &arguments,
 +            command,
 +            dir.path(),
@@ -92756,7 +93048,7 @@ index 000000000..b43029f5b
 +        .unwrap();
 +        let mut text = String::new();
 +        for _ in 0..100 {
-+            text = rows(&["m".to_owned()], "t1", 40, 4, "")
++            text = rows(Some(&a), "t1", 40, 4, "")
 +                .iter()
 +                .map(ToString::to_string)
 +                .collect();
@@ -92766,19 +93058,73 @@ index 000000000..b43029f5b
 +            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 +        }
 +        assert!(text.contains("hello pane"));
-+        assert!(call("other", &json!({"session": "t1", "action": "read"})).is_err());
++        assert!(call(&other, &json!({"session": "t1", "action": "read"})).is_err());
 +        assert!(
-+            rows(&["other".to_owned()], "t1", 40, 4, "")
++            rows(Some(&other), "t1", 40, 4, "")
 +                .iter()
 +                .any(|line| line.to_string().contains("not running"))
 +        );
 +        assert!(
-+            call("m", &json!({"session": "t1", "action": "read"})).unwrap()["text"]
++            call(&a, &json!({"session": "t1", "action": "read"})).unwrap()["text"]
 +                .as_str()
 +                .unwrap()
 +                .contains("hello pane")
 +        );
-+        assert!(call("m", &json!({"session": "t1", "action": "stop"})).is_ok());
++        context(1, Some("a".into()));
++        retain(1, "admitted", &owners, &Default::default());
++        assert!(call(&a, &json!({"session": "t1", "action": "read"})).is_ok());
++        context(2, Some("b".into()));
++        assert!(binding("m", Some("b"), &authority).is_err());
++        assert!(!current(&a));
++        assert!(call(&a, &json!({"session": "t1", "action": "read"})).is_err());
++        context(3, Some("a".into()));
++        assert!(binding("m", Some("a"), &authority).is_err());
++        assert!(view_binding("m", Some("a"), 1, authority.admission, "admitted").is_err());
++        let fresh = codex_omd::client_surface::Authority {
++            epoch: 3,
++            ..authority.clone()
++        };
++        let b = binding("m", Some("a"), &fresh).unwrap();
++        let mut command = std::process::Command::new("/bin/sh");
++        command.args(["-c", "sleep 5"]).current_dir(dir.path());
++        start(
++            &b,
++            &arguments,
++            command,
++            dir.path(),
++            crate::tui::FrameRequester::test_dummy(),
++        )
++        .await
++        .unwrap();
++        for action in ["read", "write", "stop"] {
++            assert!(
++                call(
++                    &a,
++                    &json!({"session": "t1", "action": action, "text": "unsafe"})
++                )
++                .is_err()
++            );
++        }
++        assert!(!key(
++            Some(&a),
++            "t1",
++            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)
++        ));
++        paste(Some(&a), "t1", "unsafe");
++        assert!(
++            rows(Some(&a), "t1", 40, 4, "")[0]
++                .to_string()
++                .contains("not running")
++        );
++        assert!(call(&b, &json!({"session": "t1", "action": "read"})).is_ok());
++        retain(2, "readmitted", &owners, &Default::default());
++        assert!(!current(&b));
++        assert!(binding("m", Some("a"), &fresh).is_err());
++        assert!(view_binding("m", Some("a"), 3, fresh.admission, "admitted").is_err());
++        retain(3, "admitted", &owners, &Default::default());
++        assert!(binding("m", Some("a"), &fresh).is_err());
++        assert!(view_binding("m", Some("a"), 3, fresh.admission, "admitted").is_err());
++        assert!(sessions().panes.is_empty());
 +    }
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
@@ -93422,10 +93768,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..e4dd5f5b3
+index 000000000..34b1b8cea
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1236 @@
+@@ -0,0 +1,1269 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -93532,25 +93878,42 @@ index 000000000..e4dd5f5b3
 +}
 +
 +pub(crate) fn synchronize_context(context: ModContext) -> bool {
-+    ACTIVE_CONTEXT
++    let mut active = ACTIVE_CONTEXT
 +        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .synchronize(context)
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let changed = active.synchronize(context);
++    sync_pty_context(&active);
++    changed
 +}
 +
 +pub(crate) fn begin(context: ModContext) -> ModInvocation {
-+    ACTIVE_CONTEXT
++    let mut active = ACTIVE_CONTEXT
 +        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .begin(context)
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let invocation = active.begin(context);
++    sync_pty_context(&active);
++    invocation
 +}
 +
 +/// Shares the current invocation, so a nested or intercepted command never supersedes the command running it.
 +pub(crate) fn join(context: ModContext) -> ModInvocation {
-+    ACTIVE_CONTEXT
++    let mut active = ACTIVE_CONTEXT
 +        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .join(context)
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let invocation = active.join(context);
++    sync_pty_context(&active);
++    invocation
++}
++
++fn sync_pty_context(active: &ActiveContext) {
++    codex_omd::client_surface::set_epoch(active.epoch);
++    crate::mod_pty::context(
++        active.epoch,
++        active
++            .context
++            .as_ref()
++            .and_then(|context| context.thread_id.map(|id| id.to_string())),
++    );
 +}
 +
 +pub(crate) fn current(invocation: &ModInvocation) -> bool {
@@ -93561,18 +93924,18 @@ index 000000000..e4dd5f5b3
 +}
 +
 +/// True until the session context (thread, repository or permissions) changes.
-+pub(crate) fn context_unchanged() -> impl Fn() -> bool + Send + Sync + 'static {
++pub(crate) fn context_unchanged() -> (u64, impl Fn() -> bool + Send + Sync + 'static) {
 +    let epoch = ACTIVE_CONTEXT
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
 +        .epoch;
-+    move || {
++    (epoch, move || {
 +        ACTIVE_CONTEXT
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner)
 +            .epoch
 +            == epoch
-+    }
++    })
 +}
 +
 +pub(crate) fn active_context() -> Option<ModContext> {
@@ -93611,13 +93974,15 @@ index 000000000..e4dd5f5b3
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
 +        reload(&mut runtime);
-+        let input = serde_json::json!({
++        let mut input = serde_json::json!({
 +            "event": "startup", "ledger": null,
 +            "identity": runtime.identity(crate::version::CODEX_CLI_VERSION,
 +                std::env::var(crate::omd::INSTALL_PROFILE_ENV).ok().as_deref(), "omd"),
 +            "presentation": {"thread_id": null, "phase": phase},
 +        });
++        let pty_scope = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
 +        let terminal = runtime.terminal_view(input.clone(), || true);
++        input["pty_scope"] = pty_scope;
 +        Some(ModViewSnapshot {
 +            view: terminal.view,
 +            contributors: terminal.contributors,
@@ -93930,6 +94295,7 @@ index 000000000..e4dd5f5b3
 +}
 +
 +pub(crate) struct CallScope<'a> {
++    pub(crate) epoch: u64,
 +    pub(crate) context: codex_omd::app_routes::InvocationContext,
 +    pub(crate) thread: Option<&'a str>,
 +    pub(crate) active: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -93944,6 +94310,7 @@ index 000000000..e4dd5f5b3
 +    call: codex_omd::ModHostCall,
 +) -> std::io::Result<Value> {
 +    let scope = CallScope {
++        epoch: codex_omd::client_surface::epoch(),
 +        context: codex_omd::app_routes::InvocationContext::User,
 +        thread: None,
 +        active: Arc::new(|| true),
@@ -94015,7 +94382,9 @@ index 000000000..e4dd5f5b3
 +    let mut snapshot = ModViewSnapshot::read(&paths.evidence.join("mod-view.json")).ok()?;
 +    snapshot.rendered_ms = ModViewSnapshot::clock();
 +    reload(runtime);
++    let pty_scope = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
 +    let terminal = runtime.terminal_view(snapshot.input.clone(), || true);
++    snapshot.input["pty_scope"] = pty_scope;
 +    snapshot.revision = snapshot.revision.saturating_add(1);
 +    snapshot.view = terminal.view;
 +    snapshot.conflicts = terminal.conflicts;
@@ -94064,10 +94433,10 @@ index 000000000..e4dd5f5b3
 +    let owners = runtime
 +        .owners()
 +        .into_iter()
-+        .map(|(id, _)| id)
-+        .collect::<std::collections::BTreeSet<_>>();
++        .map(|(id, owner)| (id, owner.sha256))
++        .collect::<std::collections::BTreeMap<_, _>>();
 +    let unrestricted = owners
-+        .iter()
++        .keys()
 +        .filter(|id| {
 +            runtime
 +                .grants(id)
@@ -94075,7 +94444,12 @@ index 000000000..e4dd5f5b3
 +        })
 +        .cloned()
 +        .collect();
-+    crate::mod_pty::retain(&owners, &unrestricted);
++    crate::mod_pty::retain(
++        runtime.generation(),
++        runtime.configuration_sha256(),
++        &owners,
++        &unrestricted,
++    );
 +}
 +
 +fn with_host<T>(run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>) -> Option<T> {
@@ -94158,11 +94532,12 @@ index 000000000..e4dd5f5b3
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
 +    let thread = crate::mod_surface::current_thread();
 +    let _thread = codex_omd::StateThread::enter(thread.clone());
-+    let active = context_unchanged();
++    let (epoch, active) = context_unchanged();
 +    let scope = CallScope {
++        epoch,
 +        context: codex_omd::app_routes::InvocationContext::Event,
 +        thread: thread.as_deref(),
-+        active: Arc::new(context_unchanged()),
++        active: Arc::new(active),
 +    };
 +    let result = codex_omd::invoke_shared(
 +        &runtime,
@@ -94171,7 +94546,7 @@ index 000000000..e4dd5f5b3
 +        event,
 +        "",
 +        payload,
-+        &active,
++        scope.active.as_ref(),
 +        |caller, call| {
 +            crate::mod_surface::host_call(
 +                &paths,
@@ -94326,10 +94701,12 @@ index 000000000..e4dd5f5b3
 +    };
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
 +    let thread = crate::mod_surface::current_thread();
++    let (epoch, active) = context_unchanged();
 +    let scope = CallScope {
++        epoch,
 +        context: codex_omd::app_routes::InvocationContext::Event,
 +        thread: thread.as_deref(),
-+        active: Arc::new(|| true),
++        active: Arc::new(active),
 +    };
 +    let input = serde_json::json!({"key": key, "value": value, "original": row["value"],
 +        "source": row["source"], "scope": row["scope"]});
@@ -94407,7 +94784,7 @@ index 000000000..e4dd5f5b3
 +    let Some(runtime) = lock_within(&HOST)?.clone() else {
 +        return Some(None);
 +    };
-+    match codex_omd::render_shared(&runtime, input, context_unchanged()) {
++    match codex_omd::render_shared(&runtime, input, context_unchanged().1) {
 +        Err(error)
 +            if ["mod_runtime_busy", "callback_cancelled"]
 +                .iter()
@@ -94447,6 +94824,7 @@ index 000000000..e4dd5f5b3
 +    let thread = invocation.context.thread_id.map(|id| id.to_string());
 +    let _thread = codex_omd::StateThread::enter(thread.clone());
 +    let scope = CallScope {
++        epoch: invocation.epoch,
 +        context: codex_omd::app_routes::InvocationContext::User,
 +        thread: thread.as_deref(),
 +        active: {
@@ -94604,6 +94982,7 @@ index 000000000..e4dd5f5b3
 +        let active = || current(invocation);
 +        let thread = invocation.context.thread_id.map(|id| id.to_string());
 +        let scope = CallScope {
++            epoch: invocation.epoch,
 +            context: codex_omd::app_routes::InvocationContext::User,
 +            thread: thread.as_deref(),
 +            active: {
@@ -94937,10 +95316,10 @@ index 000000000..7c28c120a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..206284f65
+index 000000000..dbecc052d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,766 @@
+@@ -0,0 +1,781 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -94965,7 +95344,7 @@ index 000000000..206284f65
 +impl ClientSurface for TuiSurface {
 +    fn submit(&self, mut call: SurfaceCall) -> Result<(), String> {
 +        let admitted = call.validity.clone();
-+        let current = crate::mod_runtime::context_unchanged();
++        let current = crate::mod_runtime::context_unchanged().1;
 +        let thread = call.thread.clone();
 +        let host = call.caller == codex_omd::broker::HOST_CALLER;
 +        call.validity = codex_omd::client_surface::Validity(std::sync::Arc::new(move || {
@@ -94974,7 +95353,17 @@ index 000000000..206284f65
 +        if !(call.validity.0)() {
 +            return Err("client_context_changed".into());
 +        }
-+        self.0.send(AppEvent::ModSurfaceCall(Box::new(call)));
++        let binding = (call.operation == "terminal.pty")
++            .then(|| {
++                crate::mod_pty::binding(
++                    &call.caller,
++                    call.thread.as_deref(),
++                    call.authority.as_ref().ok_or("pty_authority_missing")?,
++                )
++            })
++            .transpose()?;
++        self.0
++            .send(AppEvent::ModSurfaceCall(Box::new(call), binding));
 +        Ok(())
 +    }
 +
@@ -95594,6 +95983,11 @@ index 000000000..206284f65
 +    let operation = call.operation.as_str();
 +    let context = scope.context;
 +    if codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation) {
++        let _authority = grants.as_ref().map(|grants| {
++            let mut authority = grants.surface_authority.clone();
++            authority.epoch = scope.epoch;
++            authority.enter()
++        });
 +        let thread = scope.thread.map(str::to_owned).or_else(current_thread);
 +        let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
 +        let runtime =
@@ -95709,20 +96103,90 @@ index 000000000..206284f65
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..86b76cbd8
+index 000000000..988e30bc1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,492 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
 +
 +struct Echo;
 +
++#[test]
++#[serial_test::serial]
++fn pty_requests_keep_their_original_authority_while_queued() {
++    let _scope = crate::mod_pty::test_scope();
++    let previous_thread = with(|state| state.thread.replace("a".into()));
++    let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
++    let _registration =
++        codex_omd::client_surface::register(Arc::new(TuiSurface(AppEventSender::new(sender))));
++    let owners = BTreeMap::from([("m".to_owned(), "source".to_owned())]);
++    crate::mod_pty::context(1, Some("a".into()));
++    crate::mod_pty::retain(1, "admitted", &owners, &Default::default());
++    let authority = codex_omd::client_surface::Authority {
++        epoch: 1,
++        admission: codex_omd::client_surface::admission(),
++        configuration: "admitted".into(),
++        source: "source".into(),
++    };
++    for context in [InvocationContext::User, InvocationContext::Event] {
++        let _guard = authority.clone().enter();
++        let _reply = codex_omd::client_surface::submit(
++            "m",
++            "terminal.pty",
++            json!({"action": "read", "session": "p1"}),
++            context,
++            Some("a"),
++            None,
++        )
++        .unwrap();
++        let AppEvent::ModSurfaceCall(call, Some(binding)) = events.try_recv().unwrap() else {
++            panic!("PTY binding missing")
++        };
++        assert!((call.validity.0)());
++        assert!(crate::mod_pty::current(&binding));
++        crate::mod_pty::context(2, Some("b".into()));
++        with(|state| state.thread = Some("b".into()));
++        assert!(!(call.validity.0)());
++        crate::mod_pty::context(3, Some("a".into()));
++        with(|state| state.thread = Some("a".into()));
++        assert!(!crate::mod_pty::current(&binding));
++        assert!(
++            codex_omd::client_surface::submit(
++                "m",
++                "terminal.pty",
++                json!({"action": "read", "session": "p1"}),
++                context,
++                Some("a"),
++                None
++            )
++            .is_err()
++        );
++        crate::mod_pty::context(1, Some("a".into()));
++    }
++    crate::mod_pty::retain(2, "changed", &owners, &Default::default());
++    crate::mod_pty::retain(3, "admitted", &owners, &Default::default());
++    let _guard = authority.enter();
++    assert!(
++        codex_omd::client_surface::submit(
++            "m",
++            "terminal.pty",
++            json!({"action": "read", "session": "p1"}),
++            InvocationContext::Event,
++            Some("a"),
++            None
++        )
++        .is_err()
++    );
++    with(|state| state.thread = previous_thread);
++}
++
 +impl ClientSurface for Echo {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
 +        let value = json!({"operation": call.operation, "context": format!("{:?}", call.context),
-+            "thread": call.thread, "confirm": call.confirm, "arguments": call.arguments});
++            "thread": call.thread, "confirm": call.confirm, "arguments": call.arguments,
++            "authority": call.authority.map(|authority| json!({"epoch": authority.epoch, "admission": authority.admission, "configuration": authority.configuration, "source": authority.source}))});
 +        call.reply
 +            .send(Ok(value))
 +            .map_err(|error| error.to_string())
@@ -95743,6 +96207,7 @@ index 000000000..86b76cbd8
 +        true
 +    }
 +    crate::mod_runtime::CallScope {
++        epoch: codex_omd::client_surface::epoch(),
 +        context,
 +        thread: None,
 +        active: std::sync::Arc::new(active),
@@ -95789,6 +96254,38 @@ index 000000000..86b76cbd8
 +        .trust(package.clone(), source, vec!["sessions".into()], "user")
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
++    let pty_package = root.join("pty-package");
++    std::fs::create_dir(&pty_package).unwrap();
++    std::fs::write(pty_package.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"pty_fixture","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["pty"]})).unwrap()).unwrap();
++    std::fs::write(pty_package.join("index.ts"), "export default () => {};").unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&pty_package).unwrap();
++    store
++        .trust(
++            pty_package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["pty".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&pty_package, true).unwrap();
++    let packages_package = root.join("packages-package");
++    std::fs::create_dir(&packages_package).unwrap();
++    std::fs::write(packages_package.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"packages_fixture","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["packages"]})).unwrap()).unwrap();
++    std::fs::write(
++        packages_package.join("index.ts"),
++        "export default () => {};",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&packages_package).unwrap();
++    store
++        .trust(
++            packages_package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["packages".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&packages_package, true).unwrap();
 +    paths.store = Some(root.join("store"));
 +    let _environment = crate::omd::tests::omd_environment(paths.store.as_deref().unwrap());
 +    let grants = |capabilities: &[&str]| {
@@ -95800,6 +96297,47 @@ index 000000000..86b76cbd8
 +    let _registration = codex_omd::client_surface::register(Arc::new(Echo));
 +    with(|state| state.thread = Some("thread-1".into()));
 +    let user = InvocationContext::User;
++    for context in [user, InvocationContext::Event] {
++        let mut captured = crate::mod_runtime::shared_host(paths.store.clone().unwrap())
++            .unwrap()
++            .lock()
++            .unwrap()
++            .grants("pty_fixture")
++            .unwrap();
++        let expected = captured.surface_authority.clone();
++        captured.surface_authority.epoch = 99;
++        let scope = crate::mod_runtime::CallScope {
++            epoch: 7,
++            thread: Some("thread-1"),
++            ..scope(context)
++        };
++        let value = host_call(
++            &paths,
++            &policy,
++            Some(captured),
++            "pty_fixture",
++            codex_omd::ModHostCall {
++                operation: "terminal.pty".into(),
++                arguments: json!({"action": "read", "session": "p1"}),
++            },
++            &scope,
++        )
++        .unwrap();
++        assert_eq!(
++            value["authority"],
++            json!({"epoch": 7, "admission": expected.admission, "configuration": expected.configuration, "source": expected.source})
++        );
++        let receiver = codex_omd::client_surface::submit(
++            "pty_fixture",
++            "terminal.pty",
++            json!({"action": "read", "session": "p1"}),
++            context,
++            Some("thread-1"),
++            None,
++        )
++        .unwrap();
++        assert!(receiver.recv().unwrap().unwrap()["authority"].is_null());
++    }
 +
 +    let listed = host_call(
 +        &paths,
@@ -95871,11 +96409,16 @@ index 000000000..86b76cbd8
 +        "{from_event}"
 +    );
 +
++    let packages_grants = crate::mod_runtime::shared_host(paths.store.clone().unwrap())
++        .unwrap()
++        .lock()
++        .unwrap()
++        .grants("packages_fixture");
 +    let refused = host_call(
 +        &paths,
 +        &policy,
-+        grants(&["packages"]),
-+        "m",
++        packages_grants,
++        "packages_fixture",
 +        codex_omd::ModHostCall {
 +            operation: "packages.apply".into(),
 +            arguments: json!({"action": "enable", "id": "x", "expected_generation": 1}),
@@ -95915,11 +96458,12 @@ index 000000000..86b76cbd8
 +            arguments: json!({"revision":0}),
 +            context: user,
 +            thread: Some("thread-1".into()),
++            authority: None,
 +            confirm: Some("held".into()),
 +            reply,
 +        })
 +        .unwrap();
-+    let AppEvent::ModSurfaceCall(queued) = receiver.try_recv().unwrap() else {
++    let AppEvent::ModSurfaceCall(queued, _) = receiver.try_recv().unwrap() else {
 +        panic!("queued call");
 +    };
 +    assert!((queued.validity.0)());
@@ -96057,10 +96601,10 @@ index 000000000..86b76cbd8
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..1a6b55834
+index 000000000..bf30310e7
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2701 @@
+@@ -0,0 +1,2726 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -96138,7 +96682,7 @@ index 000000000..1a6b55834
 +        index: usize,
 +    },
 +    Pane,
-+    Terminal(String),
++    Terminal(String, Option<crate::mod_pty::Binding>),
 +    Document(Option<codex_omd::ModCommandAction>),
 +}
 +
@@ -96164,6 +96708,7 @@ index 000000000..1a6b55834
 +    scroll: BTreeMap<String, u16>,
 +    owners: Vec<String>,
 +    component_owners: BTreeMap<String, String>,
++    pty_bindings: BTreeMap<String, crate::mod_pty::Binding>,
 +    key_panes: BTreeSet<String>,
 +    dialog: Option<String>,
 +    dismissed: Option<String>,
@@ -96206,6 +96751,7 @@ index 000000000..1a6b55834
 +    scroll: BTreeMap::new(),
 +    owners: Vec::new(),
 +    component_owners: BTreeMap::new(),
++    pty_bindings: BTreeMap::new(),
 +    key_panes: BTreeSet::new(),
 +    dialog: None,
 +    dismissed: None,
@@ -97345,8 +97891,13 @@ index 000000000..1a6b55834
 +                session,
 +                height,
 +            } => {
++                let binding = interaction
++                    .component_owners
++                    .get(id)
++                    .and_then(|owner| interaction.pty_bindings.get(owner))
++                    .cloned();
 +                for line in crate::mod_pty::rows(
-+                    &interaction.owners,
++                    binding.as_ref(),
 +                    session,
 +                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
 +                    height.unwrap_or(16),
@@ -97356,7 +97907,7 @@ index 000000000..1a6b55834
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
 +                        line,
-+                        target: Some(ComponentTarget::Terminal(session.clone())),
++                        target: Some(ComponentTarget::Terminal(session.clone(), binding.clone())),
 +                    });
 +                }
 +            }
@@ -97534,6 +98085,22 @@ index 000000000..1a6b55834
 +    render(area, chat, buffer, snapshot);
 +}
 +
++fn bind_terminals(interaction: &mut Interaction, snapshot: &ModViewSnapshot) {
++    let thread = snapshot.input["ledger"]["thread_id"].as_str();
++    let epoch = snapshot.input["pty_scope"]["epoch"].as_u64();
++    let admission = snapshot.input["pty_scope"]["admission"].as_u64();
++    let configuration = snapshot.input["pty_scope"]["configuration"].as_str();
++    interaction.pty_bindings = snapshot
++        .contributors
++        .iter()
++        .filter_map(|owner| {
++            crate::mod_pty::view_binding(owner, thread, epoch?, admission?, configuration?)
++                .ok()
++                .map(|binding| (owner.clone(), binding))
++        })
++        .collect();
++}
++
 +pub(crate) fn render(area: Rect, chat: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION
@@ -97545,6 +98112,7 @@ index 000000000..1a6b55834
 +    interaction.hitboxes.clear();
 +    interaction.owners = snapshot.contributors.clone();
 +    interaction.component_owners = snapshot.component_owners.clone();
++    bind_terminals(&mut interaction, snapshot);
 +    if let Some(bar) = sidebar(area, snapshot) {
 +        let mut components = site(&snapshot.view, "sidebar")
 +            .map(|site| site.components.clone())
@@ -97971,6 +98539,7 @@ index 000000000..1a6b55834
 +    interaction.hitboxes.clear();
 +    interaction.owners = snapshot.contributors.clone();
 +    interaction.component_owners = snapshot.component_owners.clone();
++    bind_terminals(&mut interaction, snapshot);
 +    for region in &placement.regions {
 +        let Some(name) = region.content.strip_prefix("site:") else {
 +            continue;
@@ -98131,7 +98700,7 @@ index 000000000..1a6b55834
 +                command_action(action, value),
 +            ))
 +        }
-+        ComponentTarget::Terminal(_) => Some(ModInput::Consumed),
++        ComponentTarget::Terminal(_, _) => Some(ModInput::Consumed),
 +        ComponentTarget::Pane => {
 +            let collapsed = interaction.collapsed.entry(id.to_owned()).or_default();
 +            *collapsed = !*collapsed;
@@ -98182,7 +98751,7 @@ index 000000000..1a6b55834
 +    let in_terminal = interaction.focused.as_ref().is_some_and(|focused| {
 +        matches!(
 +            interaction.targets.get(focused),
-+            Some(ComponentTarget::Terminal(_))
++            Some(ComponentTarget::Terminal(_, _))
 +        )
 +    });
 +    if (escape && !in_terminal) || crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
@@ -98217,12 +98786,12 @@ index 000000000..1a6b55834
 +        return Some(ModInput::Consumed);
 +    }
 +    if let Some(focused) = interaction.focused.clone()
-+        && let Some(ComponentTarget::Terminal(session)) = interaction.targets.get(&focused)
++        && let Some(ComponentTarget::Terminal(session, binding)) = interaction.targets.get(&focused)
 +    {
 +        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
 +            interaction.focused = None;
 +        } else {
-+            crate::mod_pty::key(&interaction.owners, session, key);
++            crate::mod_pty::key(binding.as_ref(), session, key);
 +        }
 +        return Some(ModInput::Consumed);
 +    }
@@ -98453,8 +99022,8 @@ index 000000000..1a6b55834
 +        return true;
 +    }
 +    let bounded = &text[..text.floor_char_boundary(PASTE_BYTES)];
-+    if let Some(ComponentTarget::Terminal(session)) = interaction.targets.get(&focused) {
-+        crate::mod_pty::paste(&interaction.owners, session, bounded);
++    if let Some(ComponentTarget::Terminal(session, binding)) = interaction.targets.get(&focused) {
++        crate::mod_pty::paste(binding.as_ref(), session, bounded);
 +        return true;
 +    }
 +    if !interaction.key_panes.contains(&focused) {
@@ -98764,10 +99333,10 @@ index 000000000..1a6b55834
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..fab5d7948
+index 000000000..093f2eb4a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1150 @@
+@@ -0,0 +1,1195 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -98787,6 +99356,51 @@ index 000000000..fab5d7948
 +        view: ModView::parse(value).unwrap(),
 +        ..ModViewSnapshot::default()
 +    }
++}
++
++#[test]
++#[serial_test::serial]
++fn terminal_bindings_refresh_when_scope_changes_without_a_view_revision() {
++    let _scope = crate::mod_pty::test_scope();
++    let owners = BTreeMap::from([
++        ("m".to_owned(), "source".to_owned()),
++        ("other".to_owned(), "other-source".to_owned()),
++    ]);
++    crate::mod_pty::context(1, Some("a".into()));
++    crate::mod_pty::retain(1, "admitted", &owners, &Default::default());
++    let mut snapshot = ModViewSnapshot {
++        epoch: 7,
++        revision: 9,
++        contributors: vec!["m".into()],
++        input: serde_json::json!({"ledger": {"thread_id": "a"}, "pty_scope": {
++            "epoch": 1, "admission": codex_omd::client_surface::admission(), "configuration": "admitted"
++        }}),
++        ..Default::default()
++    };
++    let mut interaction = Interaction::default();
++    bind_terminals(&mut interaction, &snapshot);
++    let original = interaction.pty_bindings["m"].clone();
++    assert!(crate::mod_pty::current(&original));
++    crate::mod_pty::context(2, Some("b".into()));
++    snapshot.input["ledger"]["thread_id"] = serde_json::json!("b");
++    snapshot.input["pty_scope"]["epoch"] = serde_json::json!(2);
++    bind_terminals(&mut interaction, &snapshot);
++    assert!(!crate::mod_pty::current(&original));
++    assert!(crate::mod_pty::current(&interaction.pty_bindings["m"]));
++    let previous = interaction.pty_bindings["m"].clone();
++    let stale = snapshot.clone();
++    crate::mod_pty::retain(2, "admitted", &owners, &Default::default());
++    snapshot.input["pty_scope"]["admission"] =
++        serde_json::json!(codex_omd::client_surface::admission());
++    bind_terminals(&mut interaction, &snapshot);
++    assert!(!crate::mod_pty::current(&previous));
++    assert!(crate::mod_pty::current(&interaction.pty_bindings["m"]));
++    snapshot.contributors = vec!["other".into()];
++    bind_terminals(&mut interaction, &snapshot);
++    assert!(!interaction.pty_bindings.contains_key("m"));
++    assert!(crate::mod_pty::current(&interaction.pty_bindings["other"]));
++    bind_terminals(&mut interaction, &stale);
++    assert!(interaction.pty_bindings.is_empty());
 +}
 +
 +#[test]

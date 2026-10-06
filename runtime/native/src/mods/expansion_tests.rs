@@ -1380,11 +1380,13 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
         return;
     };
     let grants = fixture.core.runtime.lock().unwrap().grants("steerer");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
     let caller = Caller {
         id: "steerer",
-        source: "",
+        source: &source,
         grants,
-        generation: 0,
+        generation,
         origin: Origin::Event,
         record_changes: false,
     };

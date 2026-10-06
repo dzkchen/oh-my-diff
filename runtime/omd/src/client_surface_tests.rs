@@ -7,7 +7,8 @@ struct Echo;
 impl ClientSurface for Echo {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         let value = json!({"operation": call.operation, "caller": call.caller,
-            "confirm": call.confirm, "arguments": call.arguments});
+            "confirm": call.confirm, "arguments": call.arguments,
+            "authority": call.authority.map(|authority| json!({"epoch": authority.epoch, "admission": authority.admission, "source": authority.source, "configuration": authority.configuration}))});
         call.reply
             .send(Ok(value))
             .map_err(|error| error.to_string())
@@ -66,6 +67,42 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         .starts_with("client_surface_unavailable")
     );
     let registration = register(Arc::new(Echo));
+    let authority = Authority {
+        epoch: 7,
+        admission: 11,
+        configuration: "configuration".into(),
+        source: "source".into(),
+    };
+    for context in [InvocationContext::User, InvocationContext::Event] {
+        let _guard = authority.clone().enter();
+        let value = call(
+            "m",
+            "terminal.pty",
+            json!({"action": "read", "session": "p1"}),
+            context,
+            Some("thread"),
+            None,
+            Arc::new(active),
+        )
+        .unwrap();
+        assert_eq!(
+            value["authority"],
+            json!({"epoch": 7, "admission": 11, "source": "source", "configuration": "configuration"})
+        );
+        assert!(
+            call(
+                "m",
+                "terminal.pty",
+                json!({"action": "read", "session": "p1"}),
+                context,
+                Some("thread"),
+                None,
+                Arc::new(|| false)
+            )
+            .is_err()
+        );
+    }
+    assert!(AUTHORITY.with_borrow(Option::is_none));
     assert!(hub().surface.is_some());
     let value = call(
         "m",

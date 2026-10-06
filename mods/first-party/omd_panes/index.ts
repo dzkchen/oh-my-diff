@@ -755,14 +755,26 @@ export default function activate(api: ModAPI) {
 
   const restore = () => {
     const state = load();
+    const running = state.running;
+    state.running = [];
+    if (state.watch) api.host.tryCall('workspace.unwatch', { watch_id: state.watch });
+    state.watch = null;
+    state.watched = [];
     const saved = api.host.tryCall('store.get', { key: 'layout', scope: 'thread' });
     if (saved.ok && saved.value) {
       state.layout = saved.value.value as unknown as Layout;
       state.revision = saved.value.revision;
-    } else if (saved.ok) state.revision = null;
+    } else if (saved.ok) {
+      state.layout = chat();
+      state.revision = null;
+    }
     const keep = new Set(leaves(state.layout.root));
-    for (const session of state.running.filter(item => !keep.has(item))) api.host.tryCall('terminal.pty', { action: 'stop', session });
-    state.running = state.running.filter(item => keep.has(item));
+    for (const id of running) {
+      const session = api.host.tryCall('terminal.pty', { action: 'read', session: id });
+      if (!session.ok || !('running' in session.value)) continue;
+      if (keep.has(id)) state.running.push(id);
+      else api.host.tryCall('terminal.pty', { action: 'stop', session: id });
+    }
     for (const id of Object.keys(state.views)) if (!keep.has(id)) delete state.views[id];
     for (const id of Object.keys(state.diffs)) if (!keep.has(id)) delete state.diffs[id];
     refresh(state, null);

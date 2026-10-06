@@ -2340,6 +2340,7 @@ impl ModTelemetry {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModGrants {
+    pub surface_authority: crate::client_surface::Authority,
     pub api: String,
     pub source_sha256: String,
     pub capabilities: Vec<String>,
@@ -4507,6 +4508,12 @@ impl ModHost {
         self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| {
             let current = m.selection.authority_current();
             ModGrants {
+                surface_authority: crate::client_surface::Authority {
+                    epoch: crate::client_surface::epoch(),
+                    admission: crate::client_surface::admission(),
+                    configuration: self.configuration_sha256.clone(),
+                    source: m.selection.sha256.clone(),
+                },
                 api: m.package.api.clone(),
                 source_sha256: m.selection.sha256.clone(),
                 capabilities: m

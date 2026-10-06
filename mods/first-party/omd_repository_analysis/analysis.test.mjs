@@ -23,7 +23,7 @@ function run(name, payload, receipts = [], event = 'tool') {
   return refusal(JSON.parse(result.stdout));
 }
 
-function replay(name, payload, files, saved = null, stale = false, event = 'tool') {
+function replay(name, payload, files, saved = null, stale = false, event = 'tool', staleStat = null) {
   const receipts = [];
   const calls = [];
   let written = null;
@@ -46,8 +46,12 @@ function replay(name, payload, files, saved = null, stale = false, event = 'tool
     } else if (call.operation === 'workspace.read') {
       value = { files: Object.fromEntries(call.arguments.paths.map(path => [path, { text: files[path], sha256: hash(files[path]) }])) };
     } else if (call.operation === 'workspace.stat') {
+      if (call.arguments.paths.length > 128) {
+        receipts.push({ call, error: 'workspace_path_limit' });
+        continue;
+      }
       value = { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] === undefined ? null
-        : { kind: 'file', size: Buffer.byteLength(files[path]), mtime_ms: 1, sha256: hash(files[path]) }])) };
+        : { kind: 'file', size: Buffer.byteLength(files[path]), mtime_ms: 1, sha256: path === staleStat ? '0'.repeat(64) : hash(files[path]) }])) };
     } else if (call.operation === 'store.get') {
       value = saved ? { value: sorted(saved), revision: 1, provenance: { mod: 'omd_repository_analysis', source_sha256: candidate, thread_id: null, origin: 'tool', at: 1 } } : null;
     } else if (call.operation === 'store.put') {
@@ -60,6 +64,15 @@ function replay(name, payload, files, saved = null, stale = false, event = 'tool
 }
 
 const graphInput = { repository_identity: 'fixture/repository', revision: 'r1' };
+test('live-source stat batches preserve freshness beyond 128 files', () => {
+  const files = Object.fromEntries(Array.from({ length: 129 }, (_, index) => [`f${String(index).padStart(3, '0')}.py`, 'x=1\n']));
+  const result = replay('omd.repository_analysis.search', {}, files, null, false, 'service');
+  assert.equal(result.output.error, undefined, result.output.error);
+  assert.deepEqual(result.calls.filter(call => call.operation === 'workspace.stat').map(call => call.arguments.paths.length), [128, 1]);
+  assert.ok(result.calls.length <= 32);
+  const stale = replay('omd.repository_analysis.search', {}, files, null, false, 'service', 'f128.py');
+  assert.match(stale.output.error, /analysis_source_stale/);
+});
 const graphFiles = {
   'src/lib.rs': 'mod worker;\nuse crate::worker::run;\npub fn entry() { run(); mystery(); }\n',
   'src/worker.rs': 'pub fn run() { service(); }\nfn service() {}\n',

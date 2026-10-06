@@ -142,6 +142,27 @@ test('rollback restores the prior explicit selection, then clears it', () => {
   assert.equal(f.tool('active').value.transitions.length, 4);
 });
 
+test('every admitted promotion retains enough history to roll back all selections', () => {
+  const f = fixture();
+  const selected = f.tool('propose', { expected_revision: 0, proposal: full('full-v1', 'dev-a') }).value.selection;
+  const validation = f.tool('validate', { expected_revision: 0, validation: validated('full-pass', selected, 'val-a') }).value.validation_sha256;
+  let revision = 0;
+  let active = null;
+  for (; revision < 32; revision++) {
+    const result = f.command('promote', { expected_revision: revision, expected_active: active, proposal: selected,
+      validation_id: 'full-pass', validation_sha256: validation, maintainer });
+    if (result.error) break;
+    active = selected;
+  }
+  assert.ok(revision > 0);
+  const count = revision;
+  for (let index = 0; index < count; index++) {
+    const result = f.command('rollback', { expected_revision: revision++, expected_active: selected, maintainer });
+    assert.equal(result.error, undefined, result.error);
+  }
+  assert.equal(f.tool('active').value.active, null);
+});
+
 test('stale workspace, concurrent store write, active mismatch and tampering fail closed', () => {
   const f = fixture();
   f.stale = true;

@@ -463,10 +463,12 @@ fn publish(
     ledger: Value,
     active: impl Fn() -> bool,
 ) {
-    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
+    let mut input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
         "presentation": views.current_presentation()});
+    let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
     let rendered_ms = codex_omd::ModViewSnapshot::clock();
     let mut terminal = runtime.terminal_view(input.clone(), active);
+    input["pty_scope"] = pty_scope;
     let status = runtime.status();
     let mut errors = status["mods"]
         .as_array()

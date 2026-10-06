@@ -153,9 +153,10 @@ async function liveSources(api: ModAPI, root: string): Promise<{ files: Source[]
   }
   const after = selected(list());
   if (JSON.stringify(before.map(entry => [entry.path, entry.size])) !== JSON.stringify(after.map(entry => [entry.path, entry.size]))) throw new Error('analysis_source_stale');
-  if (files.length) {
-    const final = api.host.call('workspace.stat', { paths: files.map(file => file.path), hash: true }).files;
-    for (const file of files) if (final[file.path]?.kind !== 'file' || final[file.path]?.size !== file.bytes
+  for (let index = 0; index < files.length; index += 128) {
+    const batch = files.slice(index, index + 128);
+    const final = api.host.call('workspace.stat', { paths: batch.map(file => file.path), hash: true }).files;
+    for (const file of batch) if (final[file.path]?.kind !== 'file' || final[file.path]?.size !== file.bytes
       || final[file.path]?.sha256 !== file.sha256) throw new Error('analysis_source_stale');
   }
   return { files, source_digest: await digest(JSON.stringify(files.map(file => [file.path, file.sha256]))) };

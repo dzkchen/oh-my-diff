@@ -83,6 +83,51 @@ impl std::ops::Deref for PendingReply {
     }
 }
 
+static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ADMISSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn admission() -> u64 {
+    ADMISSION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+pub fn advance_admission() -> u64 {
+    ADMISSION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1
+}
+
+pub fn epoch() -> u64 {
+    EPOCH.load(std::sync::atomic::Ordering::Acquire)
+}
+
+pub fn set_epoch(epoch: u64) {
+    EPOCH.store(epoch, std::sync::atomic::Ordering::Release);
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Authority {
+    pub epoch: u64,
+    pub admission: u64,
+    pub configuration: String,
+    pub source: String,
+}
+
+thread_local! {
+    static AUTHORITY: std::cell::RefCell<Option<Authority>> = const { std::cell::RefCell::new(None) };
+}
+
+pub struct AuthorityGuard(Option<Authority>);
+
+impl Authority {
+    pub fn enter(self) -> AuthorityGuard {
+        AuthorityGuard(AUTHORITY.replace(Some(self)))
+    }
+}
+
+impl Drop for AuthorityGuard {
+    fn drop(&mut self) {
+        AUTHORITY.set(self.0.take());
+    }
+}
+
 #[derive(Debug)]
 pub struct SurfaceCall {
     pub validity: Validity,
@@ -91,6 +136,7 @@ pub struct SurfaceCall {
     pub arguments: Value,
     pub context: InvocationContext,
     pub thread: Option<String>,
+    pub authority: Option<Authority>,
     pub confirm: Option<String>,
     pub reply: Reply,
 }
@@ -225,6 +271,9 @@ fn submit_bound(
         arguments,
         context,
         thread: thread.map(str::to_owned),
+        authority: (operation == "terminal.pty")
+            .then(|| AUTHORITY.with_borrow(Clone::clone))
+            .flatten(),
         confirm,
         reply,
     })?;
@@ -475,6 +524,9 @@ pub fn call(
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
+    if !active() {
+        return Err("callback_cancelled".into());
+    }
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     wait(

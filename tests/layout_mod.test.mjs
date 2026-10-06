@@ -42,7 +42,7 @@ function fixture() {
     calls.push(call);
     switch (call.operation) {
       case 'app.request':
-        if (args.method === 'thread/list') return { data: threads.map(thread => ({ ...thread })) };
+        if (args.method === 'thread/list') return { data: threads.filter(thread => !args.params.searchTerm || (thread.name ?? thread.preview).includes(args.params.searchTerm)).map(thread => ({ ...thread })) };
         if (args.method === 'skills/list') return { data: [{ skills: [{ name: 'release-notes', description: 'Draft release notes' }] }] };
         if (args.method === 'model/list') return { data: [{ model: 'gpt-6', displayName: 'GPT-6' }, { model: 'hidden', hidden: true }] };
         if (args.method === 'thread/turns/list') return { data: [{ items: [{ type: 'agentMessage', text: 'Login fixed.\nlogin works' }] }, { items: [{ type: 'userMessage', content: [{ type: 'text', text: 'fix LOGIN' }] }] }] };
@@ -119,6 +119,28 @@ test('session list groups projects with status, unread, worktree, context, ports
     assert.deepEqual(view().status, ['2 working · 1 unread']);
     assert.equal(view().keybindings['Ctrl+Alt+p'].command, 'omd_layout:palette');
     assert.equal(command('sessions', 'list').display.split('\n')[0], '● Fix login  app/main  t1');
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('filtering out the current session preserves its heartbeat and status notifications', () => {
+  const { repository, calls, store, command, event, view, state } = fixture();
+  try {
+    view();
+    command('sessions', 'refresh');
+    command('sessions', 'search Other');
+    assert.ok(state().threads.every(thread => thread.id !== 't1'));
+    const before = store.get('s:t1').revision;
+    event('timer', { key: 'share' });
+    assert.ok(store.get('s:t1').revision > before);
+    assert.equal(calls.at(-1).operation, 'events.schedule');
+    event('app_notification', { method: 'thread/status/changed', params: { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnApproval'] } }, thread_id: 't1' });
+    assert.equal(store.get('s:t1').value.status, 'waiting');
+    event('app_notification', { method: 'turn/completed', params: { threadId: 't1', turn: { status: 'failed' } }, thread_id: 't1' });
+    assert.equal(store.get('s:t1').value.status, 'error');
+    event('turn_start', {});
+    assert.equal(store.get('s:t1').value.status, 'working');
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

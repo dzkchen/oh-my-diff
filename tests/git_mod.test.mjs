@@ -19,11 +19,13 @@ const gitSha256 = digest(readFileSync(realpathSync(gitPath)));
 
 function repositoryHost(repository) {
   const git = (argv, env = {}, stdin) => spawnSync(gitPath, argv, { cwd: repository, env: { ...process.env, ...env }, input: stdin });
+  const backups = new Map();
   return call => {
     const args = call.arguments;
     switch (call.operation) {
       case 'exec.run': {
         assert.equal(args.program, 'git');
+        assert.ok((args.guards?.length ?? 0) <= 4);
         for (const guard of args.guards ?? []) {
           assert.equal(guard.program, 'git');
           if (digest(git(guard.argv, guard.env).stdout) !== guard.stdout_sha256) throw new Error('exec_guard_stale');
@@ -34,6 +36,25 @@ function repositoryHost(repository) {
           program: { path: gitPath, sha256: gitSha256 }, guards_verified: args.guards?.length ?? 0 };
       }
       case 'workspace.check_access': return { paths: args.paths };
+      case 'workspace.backup': {
+        const files = Object.fromEntries(Object.entries(args.expected).map(([path, expected]) => {
+          const bytes = readFileSync(join(repository, path));
+          if (digest(bytes) !== expected) throw new Error('stale expected version');
+          return [path, bytes];
+        }));
+        const reference = digest(JSON.stringify(files));
+        backups.set(reference, files);
+        return { backup: { reference, sha256: reference } };
+      }
+      case 'workspace.restore': {
+        const files = backups.get(args.backup.reference);
+        assert.ok(files);
+        for (const path of Object.keys(files)) {
+          if (digest(readFileSync(join(repository, path))) !== args.expected[path]) throw new Error('stale expected version');
+        }
+        for (const [path, bytes] of Object.entries(files)) writeFileSync(join(repository, path), bytes);
+        return { files: Object.fromEntries(Object.entries(files).map(([path, bytes]) => [path, digest(bytes)])) };
+      }
       case 'workspace.stat': return { files: Object.fromEntries(args.paths.map(path => {
         try {
           const bytes = readFileSync(join(repository, path));
@@ -94,3 +115,63 @@ test('Git mod stages, unstages and commits through real git argument lists', () 
     rmSync(repository, { recursive: true, force: true });
   }
 });
+
+for (const transform of ['plain', 'crlf', 'smudge']) {
+  for (const scenario of ['restore', 'intervening edit', ...(transform === 'smudge' ? ['filter failure'] : [])]) {
+    const interveningEdit = scenario === 'intervening edit';
+    test(`Git discard recovery preserves ${transform} worktree bytes: ${scenario}`, () => {
+      const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-git-recovery-')));
+      try {
+        const git = (...argv) => execFileSync(gitPath, argv, { cwd: repository, encoding: 'utf8' });
+        git('init', '--quiet');
+        git('config', 'user.email', 'fixture@example.com');
+        git('config', 'user.name', 'Fixture');
+        const clean = transform === 'crlf' ? 'one\r\n' : transform === 'smudge' ? 'ONE\n' : 'one\n';
+        if (transform === 'crlf') writeFileSync(join(repository, '.gitattributes'), 'a.txt text eol=crlf\n');
+        if (transform === 'smudge') {
+          writeFileSync(join(repository, '.gitattributes'), 'a.txt filter=case\n');
+          git('config', 'filter.case.clean', 'tr A-Z a-z');
+          git('config', 'filter.case.smudge', 'tr a-z A-Z');
+        }
+        writeFileSync(join(repository, 'a.txt'), clean);
+        git('add', '.');
+        git('commit', '--quiet', '-m', 'initial');
+        writeFileSync(join(repository, 'a.txt'), 'unsaved edits\n');
+        if (scenario === 'filter failure') {
+          git('config', 'filter.case.smudge', 'false');
+          git('config', 'filter.case.required', 'true');
+        }
+        const repositoryCall = repositoryHost(repository);
+        const host = call => {
+          if (scenario === 'filter failure') assert.notEqual(call.operation, 'workspace.backup');
+          const result = repositoryCall(call);
+          if (call.operation === 'exec.run' && call.arguments.write && call.arguments.argv.includes('restore')) {
+            assert.equal(readFileSync(join(repository, 'a.txt'), 'utf8'), clean);
+            if (interveningEdit) writeFileSync(join(repository, 'a.txt'), 'external edits\n');
+          }
+          return result;
+        };
+        let state = null;
+        const run = (name, payload = '') => {
+          const reply = command(host, name, payload, state);
+          state = reply.state;
+          return reply.value;
+        };
+        const preview = run('act', 'discard a.txt');
+        if (scenario === 'filter failure') {
+          assert.match(preview.display, /external filter|smudge filter/);
+          assert.equal(state.preview, null);
+          assert.equal(readFileSync(join(repository, 'a.txt'), 'utf8'), 'unsaved edits\n');
+          return;
+        }
+        assert.equal(preview, null);
+        assert.match(run('confirm').display, /^discarded a.txt/);
+        const result = run('restore');
+        assert.match(result.display, interveningEdit ? /stale expected version/ : /^restored a.txt/);
+        assert.equal(readFileSync(join(repository, 'a.txt'), 'utf8'), interveningEdit ? 'external edits\n' : 'unsaved edits\n');
+      } finally {
+        rmSync(repository, { recursive: true, force: true });
+      }
+    });
+  }
+}

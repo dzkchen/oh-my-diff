@@ -26,6 +26,7 @@ function invoke(event, name, payload, receipts = []) {
 }
 
 function fixture(files = {}) {
+  let retainedText = evidenceText;
   let saved = null;
   let revision = 0;
   const calls = [];
@@ -38,6 +39,7 @@ function fixture(files = {}) {
     set stale(value) { stale = value; },
     set collision(value) { collision = value; },
     set evidenceAvailable(value) { evidenceAvailable = value; },
+    set evidenceText(value) { retainedText = value; },
     set hashStale(value) { hashStale = value; },
     get saved() { return saved; },
     set saved(value) { saved = value; revision = value ? revision + 1 : 0; },
@@ -79,7 +81,7 @@ function fixture(files = {}) {
             receipts.push({ call, error: 'resource_scope_mismatch' });
             continue;
           }
-          value = { reference: evidenceRef, text: evidenceText, cursor: null, bytes: Buffer.byteLength(evidenceText) };
+          value = { reference: call.arguments.reference, text: retainedText, cursor: null, bytes: Buffer.byteLength(retainedText) };
         } else assert.fail(`unexpected operation ${call.operation}`);
         receipts.push({ call, value });
       }
@@ -186,8 +188,15 @@ test('retained evidence supports inert lessons, exact approval, and dependency i
   assert.deepEqual(f.run('session', { ...common, mode: 'cold' }).value.approved_lessons, []);
   assert.equal(command(f, 'forget', { ...common, expected_revision: 3, kind: 'evidence', id: 'check-1', action }).error, undefined);
   assert.deepEqual(f.run('session', { ...common, mode: 'reuse' }).value.approved_lessons, []);
-  assert.equal(f.run('inspect', common).value.lessons[0].state, 'approved');
-  assert.equal(command(f, 'discard', { ...common, expected_revision: 4, action }).error, undefined);
+  assert.equal(f.run('inspect', common).value.lessons[0].state, 'candidate');
+  f.evidenceAvailable = true;
+  f.evidenceText = JSON.stringify({ media_type: 'text/plain', label: 'different', content: 'An unrelated check passed' });
+  assert.equal(f.run('retain_evidence', { ...retainEvidence, expected_revision: 4, reference: { reference: 'c'.repeat(64), sha256: 'c'.repeat(64) } }).error, undefined);
+  assert.notEqual(f.saved.evidence[0].payload_sha256, captured.value.evidence.payload_sha256);
+  assert.deepEqual(f.run('session', { ...common, mode: 'reuse' }).value.approved_lessons, []);
+  assert.equal(command(f, 'approve_lesson', { ...common, expected_revision: 5, lesson_id: 'lesson-1', action }).error, undefined);
+  assert.equal(f.run('session', { ...common, mode: 'reuse' }).value.approved_lessons.length, 1);
+  assert.equal(command(f, 'discard', { ...common, expected_revision: 6, action }).error, undefined);
   assert.equal(f.run('inspect', common).value.generation, 1);
   assert.deepEqual(f.run('inspect', common).value.lessons, []);
 });
@@ -215,17 +224,15 @@ test('evidence scope, stale revisions, malformed commands, and store races fail 
   assert.match(f.run('inspect', common).error, /knowledge_state_invalid/);
 });
 
-test('preview.1 facts migrate on the next compare-and-swap write', () => {
-  const f = fixture({ 'src/config.txt': 'first\nsecond\n' });
-  const old = { schema: 1, repository_identity: common.repository_identity, revision: 0, facts: [] };
-  f.saved = { ...old, integrity_sha256: sha(JSON.stringify(old)) };
-  const captured = f.run('retain_source', retain);
-  assert.equal(captured.error, undefined, captured.error);
-  assert.equal(f.saved.schema, 2);
-  assert.equal(f.saved.generation, 0);
-  assert.deepEqual(f.saved.evidence, []);
-  assert.deepEqual(f.saved.lessons, []);
-  assert.equal(f.run('session', { ...common, mode: 'reuse' }).value.facts.length, 1);
+test('retention refuses oversized state before the native store write', () => {
+  const f = fixture({ 'large.txt': 'x'.repeat(32768) });
+  const value = { ...retain, source: { path: 'large.txt', start_line: 1, end_line: 1 } };
+  assert.equal(f.run('retain_source', value).error, undefined);
+  const before = JSON.stringify(f.saved);
+  f.calls.length = 0;
+  assert.match(f.run('retain_source', { ...value, id: 'second', expected_revision: 1 }).error, /knowledge_state_limit/);
+  assert.equal(JSON.stringify(f.saved), before);
+  assert.equal(f.calls.filter(call => call.operation === 'store.put').length, 0);
 });
 
 test('source policy permits harmless hidden files and rejects a changed post-read hash', () => {
