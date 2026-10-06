@@ -416,11 +416,11 @@ fn queued_sections_reach_the_next_request_once_and_its_retries() {
     queue_section(thread, "checks", "build failed").unwrap();
     let mut denied = request();
     let (_, carried) = apply_queued_sections(&mut denied, thread, None);
-    assert_eq!(carried, 1);
+    assert_eq!(carried.len(), 1);
     let mut first = request();
     let (edited, carried) = apply_queued_sections(&mut first, thread, None);
     assert!(edited);
-    commit_queued_sections(thread, "req-1", carried, None);
+    commit_queued_sections(thread, "req-1", &carried, None);
     assert_eq!(first, denied);
     let text = first.to_string();
     assert!(
@@ -430,9 +430,9 @@ fn queued_sections_reach_the_next_request_once_and_its_retries() {
     for (request_id, retry_of) in [("req-2", "req-1"), ("req-3", "req-2")] {
         let mut retry = request();
         let (edited, carried) = apply_queued_sections(&mut retry, thread, Some(retry_of));
-        assert!(edited && carried == 0);
+        assert!(edited && carried.is_empty());
         assert_eq!(retry, first);
-        commit_queued_sections(thread, request_id, carried, Some(retry_of));
+        commit_queued_sections(thread, request_id, &carried, Some(retry_of));
     }
     assert!(!apply_queued_sections(&mut request(), thread, None).0);
     assert!(!apply_queued_sections(&mut request(), thread, Some("req-never-sent")).0);
@@ -441,10 +441,27 @@ fn queued_sections_reach_the_next_request_once_and_its_retries() {
     let (_, carried) = apply_queued_sections(&mut stale, thread, Some("req-never-sent"));
     let text = stale.to_string();
     assert!(
-        carried == 1 && text.contains("second notice") && !text.contains("build failed"),
+        carried.len() == 1 && text.contains("second notice") && !text.contains("build failed"),
         "{text}"
     );
-    commit_queued_sections(thread, "req-4", carried, Some("req-never-sent"));
+    commit_queued_sections(thread, "req-4", &carried, Some("req-never-sent"));
+    queue_section(thread, "checks", "third notice").unwrap();
+    let (_, raced) = apply_queued_sections(&mut request(), thread, None);
+    let (_, winner) = apply_queued_sections(&mut request(), thread, None);
+    commit_queued_sections(thread, "req-5", &winner, None);
+    queue_section(thread, "checks", "fourth notice").unwrap();
+    commit_queued_sections(thread, "req-6", &raced, None);
+    let mut retry = request();
+    apply_queued_sections(&mut retry, thread, Some("req-5"));
+    assert!(retry.to_string().contains("third notice"), "{retry}");
+    let mut next = request();
+    let (_, carried) = apply_queued_sections(&mut next, thread, None);
+    let text = next.to_string();
+    assert!(
+        carried.len() == 1 && text.contains("fourth notice") && !text.contains("third notice"),
+        "{text}"
+    );
+    commit_queued_sections(thread, "req-7", &carried, None);
     for _ in 0..INSERTED_SECTIONS {
         queue_section(thread, "checks", "note").unwrap();
     }

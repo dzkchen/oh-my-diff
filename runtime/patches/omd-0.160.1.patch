@@ -40297,7 +40297,7 @@ index 000000000..e69aaed34
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..1f15adaa4
+index 000000000..8c755d4ae
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2185 @@
@@ -41404,7 +41404,7 @@ index 000000000..1f15adaa4
 +        codex_omd::model_request::commit_queued_sections(
 +            &thread,
 +            &request_id,
-+            carried,
++            &carried,
 +            retry_of.as_deref(),
 +        );
 +        Ok(())
@@ -79064,10 +79064,10 @@ index 000000000..44647048b
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..d702bf300
+index 000000000..fc326a6a1
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1113 @@
+@@ -0,0 +1,1115 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -80128,27 +80128,28 @@ index 000000000..d702bf300
 +
 +/// Adds the thread's queued sections to an outgoing request without taking them. A retry of `retry_of` repeats
 +/// the batch that request sent and nothing else; any other request carries the pending sections.
-+/// Returns whether the request changed and how many pending sections it carries.
++/// Returns whether the request changed and the ids of the pending sections it carries.
 +pub fn apply_queued_sections(
 +    request: &mut Value,
 +    thread: &str,
 +    retry_of: Option<&str>,
-+) -> (bool, usize) {
++) -> (bool, Vec<Value>) {
 +    let (batch, carried) = {
 +        let queued = QUEUED
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
 +        let Some(queue) = queued.get(thread) else {
-+            return (false, 0);
++            return (false, Vec::new());
 +        };
 +        if retry_of.is_some_and(|of| of == queue.sent.0) {
-+            (queue.sent.1.clone(), 0)
++            (queue.sent.1.clone(), Vec::new())
 +        } else {
-+            (queue.pending.clone(), queue.pending.len())
++            let ids = queue.pending.iter().map(|section| section["id"].clone());
++            (queue.pending.clone(), ids.collect())
 +        }
 +    };
 +    if batch.is_empty() {
-+        return (false, 0);
++        return (false, Vec::new());
 +    }
 +    let given = sections(request);
 +    let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
@@ -80159,7 +80160,7 @@ index 000000000..d702bf300
 +pub fn commit_queued_sections(
 +    thread: &str,
 +    request_id: &str,
-+    carried: usize,
++    carried: &[Value],
 +    retry_of: Option<&str>,
 +) {
 +    let mut queued = QUEUED
@@ -80168,11 +80169,12 @@ index 000000000..d702bf300
 +    let Some(queue) = queued.get_mut(thread) else {
 +        return;
 +    };
-+    if carried > 0 {
-+        queue.sent = (
-+            request_id.to_owned(),
-+            queue.pending.drain(..carried).collect(),
-+        );
++    let (sent, pending) = std::mem::take(&mut queue.pending)
++        .into_iter()
++        .partition::<Vec<_>, _>(|section| carried.contains(&section["id"]));
++    queue.pending = pending;
++    if !sent.is_empty() {
++        queue.sent = (request_id.to_owned(), sent);
 +    } else if retry_of.is_some_and(|of| of == queue.sent.0) {
 +        queue.sent.0 = request_id.to_owned();
 +    }
@@ -80183,10 +80185,10 @@ index 000000000..d702bf300
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..28a234c88
+index 000000000..e8a8efd37
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,459 @@
+@@ -0,0 +1,476 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -80605,11 +80607,11 @@ index 000000000..28a234c88
 +    queue_section(thread, "checks", "build failed").unwrap();
 +    let mut denied = request();
 +    let (_, carried) = apply_queued_sections(&mut denied, thread, None);
-+    assert_eq!(carried, 1);
++    assert_eq!(carried.len(), 1);
 +    let mut first = request();
 +    let (edited, carried) = apply_queued_sections(&mut first, thread, None);
 +    assert!(edited);
-+    commit_queued_sections(thread, "req-1", carried, None);
++    commit_queued_sections(thread, "req-1", &carried, None);
 +    assert_eq!(first, denied);
 +    let text = first.to_string();
 +    assert!(
@@ -80619,9 +80621,9 @@ index 000000000..28a234c88
 +    for (request_id, retry_of) in [("req-2", "req-1"), ("req-3", "req-2")] {
 +        let mut retry = request();
 +        let (edited, carried) = apply_queued_sections(&mut retry, thread, Some(retry_of));
-+        assert!(edited && carried == 0);
++        assert!(edited && carried.is_empty());
 +        assert_eq!(retry, first);
-+        commit_queued_sections(thread, request_id, carried, Some(retry_of));
++        commit_queued_sections(thread, request_id, &carried, Some(retry_of));
 +    }
 +    assert!(!apply_queued_sections(&mut request(), thread, None).0);
 +    assert!(!apply_queued_sections(&mut request(), thread, Some("req-never-sent")).0);
@@ -80630,10 +80632,27 @@ index 000000000..28a234c88
 +    let (_, carried) = apply_queued_sections(&mut stale, thread, Some("req-never-sent"));
 +    let text = stale.to_string();
 +    assert!(
-+        carried == 1 && text.contains("second notice") && !text.contains("build failed"),
++        carried.len() == 1 && text.contains("second notice") && !text.contains("build failed"),
 +        "{text}"
 +    );
-+    commit_queued_sections(thread, "req-4", carried, Some("req-never-sent"));
++    commit_queued_sections(thread, "req-4", &carried, Some("req-never-sent"));
++    queue_section(thread, "checks", "third notice").unwrap();
++    let (_, raced) = apply_queued_sections(&mut request(), thread, None);
++    let (_, winner) = apply_queued_sections(&mut request(), thread, None);
++    commit_queued_sections(thread, "req-5", &winner, None);
++    queue_section(thread, "checks", "fourth notice").unwrap();
++    commit_queued_sections(thread, "req-6", &raced, None);
++    let mut retry = request();
++    apply_queued_sections(&mut retry, thread, Some("req-5"));
++    assert!(retry.to_string().contains("third notice"), "{retry}");
++    let mut next = request();
++    let (_, carried) = apply_queued_sections(&mut next, thread, None);
++    let text = next.to_string();
++    assert!(
++        carried.len() == 1 && text.contains("fourth notice") && !text.contains("third notice"),
++        "{text}"
++    );
++    commit_queued_sections(thread, "req-7", &carried, None);
 +    for _ in 0..INSERTED_SECTIONS {
 +        queue_section(thread, "checks", "note").unwrap();
 +    }
@@ -109326,7 +109345,7 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread.rs b/codex-rs/thread-store/src/local/rewrite_thread.rs
 new file mode 100644
-index 000000000..792948994
+index 000000000..a987248fa
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread.rs
 @@ -0,0 +1,1362 @@
@@ -109617,7 +109636,7 @@ index 000000000..792948994
 +    }
 +    let log = log_path(store, thread_id);
 +    if dry_run {
-+        let (records, _) = read_log(&log)?;
++        let records = recover(store, thread_id, &log, witness.as_deref(), false).await?;
 +        let planned = plan(
 +            store,
 +            thread_id,
@@ -110694,10 +110713,10 @@ index 000000000..792948994
 +mod tests;
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread_tests.rs b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
 new file mode 100644
-index 000000000..8c65f25d2
+index 000000000..46cb44f1e
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
-@@ -0,0 +1,940 @@
+@@ -0,0 +1,955 @@
 +use std::collections::HashMap;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -111312,6 +111331,21 @@ index 000000000..8c65f25d2
 +        .verify_thread_history(fixture.thread_id, Some(Arc::clone(&witness)))
 +        .await
 +        .expect_err("tampered log fails");
++    assert!(err.to_string().contains("history_anchor_mismatch"), "{err}");
++    let err = fixture
++        .store
++        .rewrite_thread(RewriteThreadParams {
++            thread_id: fixture.thread_id,
++            expected_revision: Some(fixture.read().await.revision),
++            edits: Vec::new(),
++            undo: true,
++            author: "mod:redactor".to_string(),
++            multi_agent_version: None,
++            witness: Some(Arc::clone(&witness)),
++            dry_run: true,
++        })
++        .await
++        .expect_err("a dry run refuses the tampered log too");
 +    assert!(err.to_string().contains("history_anchor_mismatch"), "{err}");
 +
 +    std::fs::write(

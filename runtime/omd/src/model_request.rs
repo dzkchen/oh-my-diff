@@ -1058,27 +1058,28 @@ pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String
 
 /// Adds the thread's queued sections to an outgoing request without taking them. A retry of `retry_of` repeats
 /// the batch that request sent and nothing else; any other request carries the pending sections.
-/// Returns whether the request changed and how many pending sections it carries.
+/// Returns whether the request changed and the ids of the pending sections it carries.
 pub fn apply_queued_sections(
     request: &mut Value,
     thread: &str,
     retry_of: Option<&str>,
-) -> (bool, usize) {
+) -> (bool, Vec<Value>) {
     let (batch, carried) = {
         let queued = QUEUED
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(queue) = queued.get(thread) else {
-            return (false, 0);
+            return (false, Vec::new());
         };
         if retry_of.is_some_and(|of| of == queue.sent.0) {
-            (queue.sent.1.clone(), 0)
+            (queue.sent.1.clone(), Vec::new())
         } else {
-            (queue.pending.clone(), queue.pending.len())
+            let ids = queue.pending.iter().map(|section| section["id"].clone());
+            (queue.pending.clone(), ids.collect())
         }
     };
     if batch.is_empty() {
-        return (false, 0);
+        return (false, Vec::new());
     }
     let given = sections(request);
     let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
@@ -1089,7 +1090,7 @@ pub fn apply_queued_sections(
 pub fn commit_queued_sections(
     thread: &str,
     request_id: &str,
-    carried: usize,
+    carried: &[Value],
     retry_of: Option<&str>,
 ) {
     let mut queued = QUEUED
@@ -1098,11 +1099,12 @@ pub fn commit_queued_sections(
     let Some(queue) = queued.get_mut(thread) else {
         return;
     };
-    if carried > 0 {
-        queue.sent = (
-            request_id.to_owned(),
-            queue.pending.drain(..carried).collect(),
-        );
+    let (sent, pending) = std::mem::take(&mut queue.pending)
+        .into_iter()
+        .partition::<Vec<_>, _>(|section| carried.contains(&section["id"]));
+    queue.pending = pending;
+    if !sent.is_empty() {
+        queue.sent = (request_id.to_owned(), sent);
     } else if retry_of.is_some_and(|of| of == queue.sent.0) {
         queue.sent.0 = request_id.to_owned();
     }

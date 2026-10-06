@@ -7,7 +7,8 @@
       {"result": {"frame": 2, "queued": 2, "frame_ms": 33}},
       {"result": {"status": "backpressure", "retry_after_ms": 66}},
       {"result": {"frame": 3, "queued": 1, "frame_ms": 33}},
-      {"result": {"frame": 4, "queued": 2, "frame_ms": 33}}
+      {"result": {"frame": 4, "queued": 2, "frame_ms": 33}},
+      {"result": {"frame": 5, "queued": 1, "frame_ms": 33}}
     ],
     "events.schedule": [
       {"result": {"key": "frame", "delay_ms": 1000}},

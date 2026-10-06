@@ -1101,7 +1101,7 @@ impl ResponseObserver for Accounts {
         codex_omd::model_request::commit_queued_sections(
             &thread,
             &request_id,
-            carried,
+            &carried,
             retry_of.as_deref(),
         );
         Ok(())
