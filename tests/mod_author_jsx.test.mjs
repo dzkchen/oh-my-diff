@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -72,6 +72,22 @@ export const tree = (
     ],
   });
 }));
+
+test('scenario runs compile the index.tsx of every package they install', async () => {
+  const stub = join(mkdtempSync(join(tmpdir(), 'omd-stub-')), 'omd-mod');
+  writeFileSync(stub, '#!/bin/sh\nexit 1\n');
+  chmodSync(stub, 0o755);
+  await withProject('export const tree = <slot />;', {}, async sibling => {
+    await withProject('export const tree = <slot />;', {}, async main => {
+      writeFileSync(join(main, 'mod.test.json'), JSON.stringify({ packages: [sibling] }));
+      const result = spawnSync(process.execPath, ['--no-warnings', cli, 'test', main], { encoding: 'utf8', env: { ...process.env, OMD_MOD_BIN: stub } });
+      assert.notEqual(result.status, 0);
+      assert.ok(existsSync(join(main, 'index.ts')));
+      assert.ok(existsSync(join(sibling, 'index.ts')), result.stderr);
+    });
+  });
+  rmSync(dirname(stub), { recursive: true, force: true });
+});
 
 test('unknown elements and children on childless kinds fail at evaluation', async () => {
   for (const [source, message] of [

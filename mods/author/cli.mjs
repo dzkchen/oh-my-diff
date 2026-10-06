@@ -282,14 +282,14 @@ function copyDeclarations(store, directory) {
 }
 
 function runScenario(directory, file) {
-  compileJsx(directory);
   const scenarioPath = resolve(directory, file);
   const scenario = JSON.parse(readFileSync(scenarioPath, 'utf8'));
+  const packages = [...(scenario.packages || []).map(path => resolve(directory, path)), directory];
+  for (const packagePath of packages) compileJsx(packagePath);
   const temporary = mkdtempSync(join(tmpdir(), 'omd-mod-author-'));
   const store = join(temporary, 'store');
   try {
     engineJson(['init', store, node]);
-    const packages = [...(scenario.packages || []).map(path => resolve(directory, path)), directory];
     const installed = new Map(packages.map(packagePath => {
       const inspected = trustPackage(store, resolve(packagePath));
       return [inspected.manifest.id, inspected.path];
