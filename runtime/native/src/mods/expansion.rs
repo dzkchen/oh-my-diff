@@ -47,6 +47,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "routes.select",
     "turns.activity",
     "packages.list",
+    "packages.index",
     "packages.preview",
     "packages.reload",
     "settings.write",
@@ -481,6 +482,15 @@ pub(super) async fn dispatch(
                 codex_omd::ModStore::open(host.root.clone())
                     .and_then(|store| codex_omd::package_controls::preview(&store, arguments))
                     .map(|preview| preview.public)
+                    .map_err(|error| error.to_string())
+            }))
+            .await
+        }
+        "packages.index" => {
+            let arguments = request.arguments;
+            blocking(Box::new(move || {
+                codex_omd::ModStore::open(host.root.clone())
+                    .and_then(|store| codex_omd::package_controls::index(&store, arguments))
                     .map_err(|error| error.to_string())
             }))
             .await

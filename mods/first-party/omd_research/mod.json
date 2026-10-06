@@ -6,6 +6,7 @@
   "state_version": 1,
   "description": "Lets the lead hand broad read-only source gathering to a cheaper configured research route",
   "license": "MIT",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_research" },
   "capabilities": [
     "tools",
     "agents",

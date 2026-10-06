@@ -1,9 +1,13 @@
-import type { Json, ModAPI, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalListRow, TerminalPatch, TerminalTone } from '../../api.d.ts';
+import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalListRow, TerminalPatch, TerminalTone } from '../../api.d.ts';
 
 type Review = { request: PackageRequest; label: string; changes: Json; grants: string[] };
-type Saved = { open: boolean; generation: number; packages: PackageState[]; reloadError: string | null; details: string | null; filter: string; review: Review | null; notice: string | null; onboarded: boolean };
+type Scope = 'user' | 'project';
+type Saved = { open: boolean; generation: number; packages: PackageState[]; reloadError: string | null; details: string | null; filter: string; review: Review | null; notice: string | null; onboarded: boolean;
+  directory: boolean; catalog: PackageCatalogEntry[]; catalogError: string | null; query: string; picked: string | null; pickedVersion: string; scope: Scope };
 type Property = { type?: string; enum?: Json[] };
-const EMPTY: Saved = { open: false, generation: 0, packages: [], reloadError: null, details: null, filter: '', review: null, notice: null, onboarded: false };
+const EMPTY: Saved = { open: false, generation: 0, packages: [], reloadError: null, details: null, filter: '', review: null, notice: null, onboarded: false,
+  directory: false, catalog: [], catalogError: null, query: '', picked: null, pickedVersion: '', scope: 'user' };
+const CLOSED = { open: false, details: null, review: null, notice: null, directory: false, picked: null, query: '' } as const;
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const HINT = '↑↓ move · space toggle · tab more · esc close';
 
@@ -26,7 +30,8 @@ export default function activate(api: ModAPI) {
       : request.action === 'enable' ? `${name} is on. Its commands work now; the rest starts with your next message.`
         : request.action === 'disable' ? `${name} is off from your next message.` : 'done; it applies from your next message';
     const notice = !result.ok ? `${label} failed: ${result.error}` : result.value.status === 'declined' ? `${label} was declined` : request.action === 'enable' || request.action === 'disable' ? done : `${label} ${done}`;
-    return refresh({ ...state, review: null }, notice);
+    const next = refresh({ ...state, review: null }, notice);
+    return next.directory ? search(next, next.query) : next;
   };
   const review = (state: Saved, request: PackageRequest, label: string): Saved => {
     const result = api.host.tryCall('packages.preview', { ...request, expected_generation: state.generation });
@@ -34,6 +39,12 @@ export default function activate(api: ModAPI) {
       ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added }, notice: null }
       : { ...state, review: null, notice: `${label} is unavailable (${result.error})` };
   };
+  const search = (state: Saved, query: string): Saved => {
+    const found = api.host.tryCall('packages.index', { query });
+    return found.ok ? { ...state, query, catalog: found.value.packages, catalogError: null } : { ...state, query, catalog: [], catalogError: found.error };
+  };
+  const newest = (entry: PackageCatalogEntry | undefined) => entry?.versions.find(item => !item.blocked)?.version ?? '';
+  const picked = (state: Saved) => state.catalog.find(entry => entry.id === state.picked);
   const find = (state: Saved, argument: string) => state.packages.find(item => item.installed && (key(item) === argument || item.id === argument));
   const write = (state: Saved, argument: string): Saved => {
     const [target = '', name = '', ...rest] = argument.split(' ');
@@ -53,7 +64,19 @@ export default function activate(api: ModAPI) {
     if (verb === 'cancel') return { ...state, review: null, notice: null };
     if (verb === 'apply') return state.review ? apply(state, state.review.request, state.review.label) : { ...state, notice: 'Nothing to apply' };
     if (verb === 'set') return write(state, argument);
-    if (verb === 'install') return argument ? review(state, { action: 'install', source: { kind: 'local', path: argument } }, `Install ${argument}`) : { ...state, notice: 'Enter the folder of a mod to install' };
+    if (verb === 'directory') return search({ ...state, directory: true, details: null, notice: null }, state.query);
+    if (verb === 'installed') return { ...state, directory: false, picked: null, notice: null };
+    if (verb === 'search') return search({ ...state, picked: null }, visible(argument, 64).trim());
+    if (verb === 'pick') return { ...state, picked: argument || null, pickedVersion: newest(state.catalog.find(entry => entry.id === argument)) };
+    if (verb === 'version') return { ...state, pickedVersion: argument };
+    if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument } : state;
+    if (verb === 'get') {
+      const entry = picked(state);
+      return entry && state.pickedVersion ? review(state, { action: 'install', reference: `${entry.id}@${state.pickedVersion}`, scope: state.scope }, `Install ${friendly(entry.id)} ${state.pickedVersion} (${state.scope})`)
+        : { ...state, notice: 'Pick a mod and an available version first' };
+    }
+    if (verb === 'install') return argument ? review(state, { action: 'install', reference: argument, scope: state.scope }, `Install ${argument} (${state.scope})`)
+      : { ...state, notice: 'Enter npm:NAME@VERSION, git+URL#TAG, a folder path or a directory id' };
     if (verb === 'reload') {
       const result = api.host.tryCall('packages.reload', null);
       return refresh(state, !result.ok ? `Reload failed: ${result.error}` : `Every mod reloads from your next message${result.value.failed.length ? `; failing now: ${result.value.failed.map(friendly).join(', ')}` : ''}`);
@@ -81,29 +104,30 @@ export default function activate(api: ModAPI) {
   api.command('mods', input => {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/);
     const current = saved();
-    if (verb === 'close') { api.state.set({ ...current, open: false, details: null, review: null, notice: null }); return null; }
-    const state = ['details', 'back', 'filter', 'cancel', 'apply'].includes(verb) && current.packages.length ? current : refresh(current, null);
+    if (verb === 'close') { api.state.set({ ...current, ...CLOSED }); return null; }
+    const state = ['details', 'back', 'filter', 'cancel', 'apply', 'pick', 'version', 'scope', 'installed'].includes(verb) && current.packages.length ? current : refresh(current, null);
     const next = act(state, verb === 'open' ? '' : verb, rest.join(' '));
     const open = current.open || !verb || verb === 'open';
     api.state.set({ ...next, open });
     if (open) return null;
     return { display: next.review ? `${reviewText(next.review)}\nRun /mods apply or /mods cancel` : next.notice ?? 'No change' };
-  }, { description: 'Turn mods on or off and change their settings' });
+  }, { description: 'Browse and install mods, turn them on or off and change their settings' });
   api.on('component_event', event => {
     if (!event.component.startsWith('omd_mods_') || !event.events?.some(input => 'key' in input && input.key === 'Esc')) return;
-    api.state.set({ ...saved(), open: false, details: null, review: null, notice: null });
+    api.state.set({ ...saved(), ...CLOSED });
   });
 
   // Dialog height counts text lines, so long text is wrapped here instead of by the renderer.
-  const wrap = (text: string, lines = 6, width = 72) => visible(text, 2000).split(' ').reduce<string[]>((rows, word) => {
+  const wrap = (text: string, lines = 6, width = 52) => visible(text, 2000).split(' ').reduce<string[]>((rows, word) => {
     const last = rows.length ? `${rows[rows.length - 1]} ${word}` : word;
     if (rows.length && last.length <= width) rows[rows.length - 1] = last; else rows.push(word);
     return rows;
   }, []).slice(0, lines).join('\n');
-  const line = (id: string, label: string, text: string, tone: TerminalTone = 'normal', lines = 6, width = 72): TerminalComponent => ({ type: 'text', id: `omd_mods_${id}`, label, text: wrap(text, lines, width), tone });
+  const line = (id: string, label: string, text: string, tone: TerminalTone = 'normal', lines = 6, width = 52): TerminalComponent => ({ type: 'text', id: `omd_mods_${id}`, label, text: wrap(text, lines, width), tone });
   const button = (verb: string, text: string, value = ''): TerminalComponent => ({ type: 'button', id: `omd_mods_${verb}`, label: text, text, action: { command: 'omd_mods:mods', args: `${verb} ${value}`.trim() } });
   const status = (item: PackageState): [string, string, TerminalTone] =>
     !item.installed ? ['◇', 'removed', 'attention']
+      : item.blocked ? ['✕', 'quarantined', 'failure']
       : item.failed ? ['✕', 'failed', 'failure']
       : item.pending ? ['◇', item.effective ? 'stopping' : 'starting', 'attention']
       : item.effective ? ['◆', 'on', 'success']
@@ -131,7 +155,36 @@ export default function activate(api: ModAPI) {
       { type: 'input', id: 'omd_mods_filter', label: 'Filter', value: state.filter, placeholder: 'type a name, Enter filters', action: { command: 'omd_mods:mods', args: 'filter' } },
       ...(configurable.length ? [{ type: 'select' as const, id: 'omd_mods_settings', label: 'Settings', value: key(configurable[0]),
         options: configurable.slice(0, 16).map(item => ({ value: key(item), label: friendly(item.id) })), action: { command: 'omd_mods:mods', args: 'details' } }] : []),
-      { type: 'input', id: 'omd_mods_install', label: 'Install a mod folder', placeholder: '/absolute/path/to/mod', action: { command: 'omd_mods:mods', args: 'install' } },
+      button('directory', 'Browse the directory'),
+      ...adding(state),
+    ];
+  };
+  const adding = (state: Saved): TerminalComponent[] => [
+    { type: 'select', id: 'omd_mods_scope', label: 'Install for', value: state.scope, options: [{ value: 'user', label: 'me (user)' }, { value: 'project', label: 'this project' }], action: { command: 'omd_mods:mods', args: 'scope' } },
+    { type: 'input', id: 'omd_mods_install', label: 'Add from source', placeholder: 'npm:@author/mod@1.2.3 · git+https://host/repo.git#v1 · /path', action: { command: 'omd_mods:mods', args: 'install' } },
+  ];
+  const catalogRow = (entry: PackageCatalogEntry): TerminalListRow => ({ value: entry.id, label: visible(`${friendly(entry.id)} ${entry.latest}`, 128), spans: [
+    { text: visible(friendly(entry.id), 40), bold: true }, { text: ` ${visible(entry.latest, 24)}`, tone: 'muted' },
+    ...(entry.installed ? [{ text: ` installed ${visible(entry.installed, 24)}`, tone: 'success' as const }] : []),
+    ...(entry.description ? [{ text: `  ${visible(entry.description, 60)}`, tone: 'muted' as const }] : [])] });
+  const directory = (state: Saved): TerminalComponent[] => {
+    const entry = picked(state);
+    const available = entry?.versions.filter(item => !item.blocked) ?? [];
+    const blocked = entry?.versions.filter(item => item.blocked) ?? [];
+    return [
+      button('installed', 'Back to installed mods'),
+      ...adding(state),
+      ...(state.catalogError ? [line('catalog_error', 'Directory', `The directory is unavailable (${brief(state.catalogError)}). Add a mod from npm, Git or a folder below.`, 'attention', 6)] : [
+        { type: 'input' as const, id: 'omd_mods_search', label: 'Search', value: state.query, placeholder: 'name or purpose, Enter searches', action: { command: 'omd_mods:mods', args: 'search' } },
+        state.catalog.length ? { type: 'list' as const, id: 'omd_mods_catalog', label: 'Directory', height: 10, rows: state.catalog.slice(0, 200).map(catalogRow), action: { command: 'omd_mods:mods', args: 'pick' } }
+          : line('catalog_empty', 'Directory', state.query ? `No directory mod matches "${state.query}"` : 'The directory is empty', 'muted'),
+      ]),
+      ...(entry ? [
+        line('picked', friendly(entry.id), `${entry.description || 'No description'}${entry.support ? ` · support: ${entry.support}` : ''}${entry.installed ? ` · installed ${entry.installed}` : ''}`, 'normal', 3),
+        ...(available.length ? [{ type: 'select' as const, id: 'omd_mods_version', label: 'Version', value: state.pickedVersion, options: available.slice(0, 16).map(item => ({ value: item.version, label: item.version })), action: { command: 'omd_mods:mods', args: 'version' } }] : []),
+        ...(blocked.length ? [line('blocked', 'Blocked', blocked.map(item => `${item.version}: ${item.blocked}`).join('; '), 'failure', 2)] : []),
+        button('get', 'Review install'),
+      ] : []),
     ];
   };
   const tag = (text: string) => {
@@ -154,6 +207,7 @@ export default function activate(api: ModAPI) {
     return [
       { type: 'line', id: 'omd_mods_details_title', label: friendly(item.id), spans: [{ text: `${mark} `, tone }, { text: friendly(item.id), bold: true }, { text: ` ${word}`, tone: 'muted' }] },
       line('description', 'What it adds', item.description ?? 'No description', 'normal', 3),
+      ...(item.blocked ? [line('blocked', 'Quarantined', `${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, 'failure', 2)] : []),
       ...(item.failed ? [line('failed', 'Why it failed', brief(item.failed), 'failure', 2)] : []),
       ...item.conflicts.map((conflict, index) => line(`conflict_${index}`, 'Conflict', conflict, 'attention', 2)),
       button('toggle', item.enabled ? 'Turn off' : 'Turn on', key(item)),
@@ -171,12 +225,12 @@ export default function activate(api: ModAPI) {
     const children: TerminalComponent[] = [
       { type: 'line', id: 'omd_mods_header', label: 'Mods', spans: [{ text: 'Mods', bold: true, tone: 'accent' }, { text: `  ${on} of ${installed} on`, tone: 'muted' }] },
       ...(state.reloadError ? [line('reload_error', 'Rejected change', `The last change was rejected; your mods keep running as before. ${brief(state.reloadError)}`, 'failure', 3)] : []),
-      ...(state.notice ? [line('notice', 'Result', state.notice, 'attention', 3)] : []),
-      ...(state.review ? [line('review', 'Review', reviewText(state.review), 'accent', 3), button('apply', 'Apply'), button('cancel', 'Cancel')] : []),
-      ...(current ? details(current) : listing(state)),
+      ...(state.notice ? [line('notice', 'Result', state.notice, 'attention', 4)] : []),
+      ...(state.review ? [line('review', 'Review', reviewText(state.review), 'accent', 8), button('apply', 'Apply'), button('cancel', 'Cancel')] : []),
+      ...(current ? details(current) : state.directory ? directory(state) : listing(state)),
       line('hint', 'Keys', current ? '↑↓ move · enter changes · esc close' : HINT, 'muted', 1),
     ];
-    return { type: 'dialog', id: 'omd_mods_dialog', label: 'Oh My Diff mods', title: current ? friendly(current.id) : 'Mods', children };
+    return { type: 'dialog', id: 'omd_mods_dialog', label: 'Oh My Diff mods', title: current ? friendly(current.id) : state.directory ? 'Mod directory' : 'Mods', children };
   };
   const welcome = (identity: TerminalIdentity | undefined): TerminalComponent[] => {
     const mods = identity?.mods;
@@ -189,7 +243,7 @@ export default function activate(api: ModAPI) {
   api.on('terminal', (input): TerminalPatch | null => {
     let state = saved();
     const phase = input.presentation?.phase;
-    if (input.event === 'startup' && state.open) api.state.set(state = { ...state, open: false, details: null, review: null, notice: null });
+    if (input.event === 'startup' && state.open) api.state.set(state = { ...state, ...CLOSED });
     if (!state.onboarded && phase && phase !== 'fresh') api.state.set({ ...state, onboarded: true });
     const intro = !state.onboarded && phase === 'fresh';
     if (!intro && !state.open) return null;

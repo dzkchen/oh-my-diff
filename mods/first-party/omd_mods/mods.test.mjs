@@ -17,7 +17,12 @@ function run(input, host = unexpected) {
     const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
     if (!output.host_call) return output;
-    receipts.push({ call: output.host_call, value: host(output.host_call) });
+    try {
+      receipts.push({ call: output.host_call, value: host(output.host_call) });
+    } catch (error) {
+      if (host === unexpected) throw error;
+      receipts.push({ call: output.host_call, error: error.message });
+    }
   }
 }
 
@@ -73,13 +78,62 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   assert.deepEqual(state.review.grants, ['exec']);
   state = command('apply', state);
   assert.deepEqual(calls.filter(call => call.operation === 'packages.apply').at(-1).arguments, { action: 'update', id: 'omd_lsp_sync', scope: 'user', expected_generation: 7 });
-  const escaped = run({ event: 'component_event', state, payload: { component: 'omd_mods_list', kind: 'input', events: [{ key: 'Esc', text: null }] } });
-  assert.equal(escaped.state.open, false);
+  const escaped = run({ event: 'component_event', state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_list', kind: 'input', events: [{ key: 'Esc', text: null }] } });
+  assert.deepEqual([escaped.state.open, escaped.state.directory, escaped.state.query], [false, false, ''], 'closing forgets the directory search');
+  assert.ok(view({ ...state, review: { request: { action: 'install' }, label: 'Install Git', changes: {}, grants: Array(12).fill('fs.write') } }).children
+    .find(child => child.id === 'omd_mods_review').text.split('\n').every(text => text.length <= 52), 'review text wraps for narrow terminals');
   const reopened = run({ event: 'terminal', state, payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'resumed' } } });
   assert.deepEqual([reopened.value, reopened.state.open], [null, false]);
   const typed = run({ event: 'command', name: 'mods', payload: 'update omd_lsp_sync', state: command('close', state) }, host);
   assert.equal(typed.state.open, false);
   assert.equal(typed.value.display, 'update Lsp Sync: omd_lsp_sync 1.0.0 → 1.1.0 · new permissions: exec\nRun /mods apply or /mods cancel');
+});
+
+test('the directory searches the catalog, installs a picked version or a typed source in the chosen scope and survives a missing catalog', () => {
+  const calls = [];
+  let catalog = true;
+  const entry = { id: 'omd_notes', latest: '1.2.0', description: 'Session notes', support: 'maintained', installed: null,
+    versions: [{ version: '1.3.0', blocked: 'leaks tokens' }, { version: '1.2.0', blocked: null }, { version: '1.1.0', blocked: null }] };
+  const host = call => {
+    calls.push(call);
+    if (call.operation === 'packages.list') return { generation: 3, reload_error: null, packages: [item('omd_git', { source: 'npm', blocked: 'exfiltrates tokens' })] };
+    if (call.operation === 'packages.index') {
+      if (!catalog) throw new Error('package_index_unavailable: install from npm:, git+ or a folder instead');
+      return { index: '/store/package-index.json', packages: call.arguments.query === 'zzz' ? [] : [entry] };
+    }
+    if (call.operation === 'packages.preview') return { action: 'install', id: 'omd_notes', changes: { packages: [{ id: 'omd_notes', version: { from: null, to: '1.1.0' } }] }, grants_added: ['commands'] };
+    return { status: 'applied', generation: 4 };
+  };
+  const command = (payload, state) => run({ event: 'command', name: 'mods', payload, state }, host).state;
+  const view = state => run({ event: 'terminal', state, payload: { event: 'idle', ledger: null } }).value.sites.dialog.components[1];
+  let state = command('', null);
+  assert.equal(view(state).children.find(child => child.type === 'list').rows[1].spans[2].text, ' quarantined');
+  assert.ok(view(state).children.some(child => child.id === 'omd_mods_directory'));
+  state = command('directory', state);
+  let dialog = view(state);
+  assert.equal(dialog.title, 'Mod directory');
+  assert.deepEqual(dialog.children.find(child => child.id === 'omd_mods_catalog').rows.map(row => row.value), ['omd_notes']);
+  state = command('search zzz', state);
+  assert.equal(view(state).children.find(child => child.id === 'omd_mods_catalog_empty').text, 'No directory mod matches "zzz"');
+  state = command('search notes', state);
+  state = command('pick omd_notes', state);
+  dialog = view(state);
+  assert.deepEqual(dialog.children.find(child => child.id === 'omd_mods_version').options.map(option => option.value), ['1.2.0', '1.1.0']);
+  assert.equal(dialog.children.find(child => child.id === 'omd_mods_blocked').text, '1.3.0: leaks tokens');
+  state = command('version 1.1.0', command('scope project', state));
+  state = command('get', state);
+  assert.deepEqual(calls.findLast(call => call.operation === 'packages.preview').arguments, { action: 'install', reference: 'omd_notes@1.1.0', scope: 'project', expected_generation: 3 });
+  state = command('apply', state);
+  assert.deepEqual(calls.findLast(call => call.operation === 'packages.apply').arguments, { action: 'install', id: 'omd_notes', reference: 'omd_notes@1.1.0', scope: 'project', expected_generation: 3 });
+  assert.equal(state.notice, 'Install Notes 1.1.0 (project) installed and off; turn it on to use it');
+  assert.equal(calls.at(-1).operation, 'packages.index', 'the directory refreshes after an install');
+
+  catalog = false;
+  state = command('directory', state);
+  assert.match(view(state).children.find(child => child.id === 'omd_mods_catalog_error').text.replace(/\n/g, ' '), /directory is unavailable[^]*npm, Git or a folder below/);
+  state = command('install npm:@author/omd-notes@2.0.0', state);
+  assert.deepEqual(calls.findLast(call => call.operation === 'packages.preview').arguments, { action: 'install', reference: 'npm:@author/omd-notes@2.0.0', scope: 'project', expected_generation: 3 });
+  assert.match(command('install', state).notice, /npm:NAME@VERSION/);
 });
 
 test('the first-run card is plain, profile-aware and never repeats once a session has started', () => {

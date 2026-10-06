@@ -75,7 +75,8 @@ impl ModHostCall {
             "builtins.invoke" | "commands.invoke" => Ok("builtins"),
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),
-            "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
+            "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
+            | "packages.reload" => {
                 Ok("packages")
             }
             "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
