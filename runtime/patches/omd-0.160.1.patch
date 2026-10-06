@@ -15614,7 +15614,7 @@ index a3bb780b3..0e5ee229c 100644
          | ServerNotification::WindowsSandboxSetupCompleted(_)
          | ServerNotification::AccountLoginCompleted(_)
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 289cb6395..4d2079e65 100644
+index 289cb6395..b8ff0294a 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -19,6 +19,10 @@ use codex_app_server_protocol::ThreadItemsListCursor;
@@ -15668,7 +15668,7 @@ index 289cb6395..4d2079e65 100644
      pub(crate) async fn thread_archive(
          &self,
          request_id: ConnectionRequestId,
-@@ -2158,6 +2195,129 @@ impl ThreadRequestProcessor {
+@@ -2158,6 +2195,158 @@ impl ThreadRequestProcessor {
                  "thread/revert only supports paginated threads",
              ));
          }
@@ -15719,24 +15719,19 @@ index 289cb6395..4d2079e65 100644
 +        let author = author
 +            .or_else(|| app_server_client_name.clone())
 +            .unwrap_or_else(|| "app-server client".to_string());
-+        if expected_revision.is_none() {
++        let Some(expected_revision) = expected_revision else {
++            if !edits.is_empty() || undo {
++                return Err(invalid_request(
++                    "history_rewrite_invalid: edits and undo need expectedRevision",
++                ));
++            }
 +            let thread_id = ThreadId::from_string(&thread_id)
 +                .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-+            let read = self
-+                .thread_store
-+                .rewrite_thread(codex_thread_store::RewriteThreadParams {
-+                    thread_id,
-+                    expected_revision: None,
-+                    edits: Vec::new(),
-+                    undo: false,
-+                    author,
-+                    multi_agent_version: None,
-+                    witness: None,
-+                })
-+                .await
-+                .map_err(|err| thread_store_mutation_error("read", err))?;
-+            return Ok((thread_rewrite_response(read), thread_id.to_string()));
-+        }
++            return Ok((
++                thread_rewrite_response(self.read_history_rows(thread_id, author).await?),
++                thread_id.to_string(),
++            ));
++        };
 +        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
 +        let (thread_id, thread) = self.load_thread(&thread_id).await?;
 +        ensure_direct_input_allowed(thread.as_ref()).await?;
@@ -15758,6 +15753,13 @@ index 289cb6395..4d2079e65 100644
 +                "history_rewrite_busy: thread {thread_id} has a turn in progress"
 +            )));
 +        }
++        let current = self.read_history_rows(thread_id, author.clone()).await?;
++        if current.revision != expected_revision {
++            return Err(invalid_request(format!(
++                "history_revision_conflict: thread {thread_id} is at revision {}",
++                current.revision
++            )));
++        }
 +        let runtime_snapshot = self
 +            .unload_for_history_replacement(request_id, thread_id, &thread, "rewritten")
 +            .await?;
@@ -15765,7 +15767,7 @@ index 289cb6395..4d2079e65 100644
 +            .thread_store
 +            .rewrite_thread(codex_thread_store::RewriteThreadParams {
 +                thread_id,
-+                expected_revision,
++                expected_revision: Some(expected_revision),
 +                edits,
 +                undo,
 +                author,
@@ -15774,18 +15776,45 @@ index 289cb6395..4d2079e65 100644
 +            })
 +            .await
 +            .map_err(|err| thread_store_mutation_error("rewrite", err));
-+        self.reload_paginated_thread(
-+            request_id,
-+            thread_id,
-+            runtime_snapshot,
-+            app_server_client_name,
-+            app_server_client_version,
-+        )
-+        .await?;
++        // A committed rewrite is reported even when the runtime reload fails; the client can resume the thread.
++        if let Err(err) = self
++            .reload_paginated_thread(
++                request_id,
++                thread_id,
++                runtime_snapshot,
++                app_server_client_name,
++                app_server_client_version,
++            )
++            .await
++        {
++            warn!(
++                "failed to reload thread {thread_id} after a rewrite: {}",
++                err.message
++            );
++        }
 +        Ok((
 +            thread_rewrite_response(rewrite_result?),
 +            thread_id.to_string(),
 +        ))
++    }
++
++    async fn read_history_rows(
++        &self,
++        thread_id: ThreadId,
++        author: String,
++    ) -> Result<codex_thread_store::ThreadRewrite, JSONRPCErrorError> {
++        self.thread_store
++            .rewrite_thread(codex_thread_store::RewriteThreadParams {
++                thread_id,
++                expected_revision: None,
++                edits: Vec::new(),
++                undo: false,
++                author,
++                multi_agent_version: None,
++                witness: None,
++            })
++            .await
++            .map_err(|err| thread_store_mutation_error("read", err))
 +    }
 +
 +    async fn unload_for_history_replacement(
@@ -15798,7 +15827,7 @@ index 289cb6395..4d2079e65 100644
          let runtime_snapshot = ThreadRevertRuntimeSnapshot {
              config: thread.config().await.as_ref().clone(),
              settings: thread.restorable_thread_settings().await,
-@@ -2177,24 +2337,24 @@ impl ThreadRequestProcessor {
+@@ -2177,24 +2366,24 @@ impl ThreadRequestProcessor {
              EnsureConversationListenerResult::ConnectionClosed
          ) {
              return Err(internal_error(format!(
@@ -15827,7 +15856,7 @@ index 289cb6395..4d2079e65 100644
                  )));
              }
          }
-@@ -2223,35 +2383,15 @@ impl ThreadRequestProcessor {
+@@ -2223,35 +2412,15 @@ impl ThreadRequestProcessor {
              .is_none()
          {
              return Err(internal_error(format!(
@@ -15866,7 +15895,7 @@ index 289cb6395..4d2079e65 100644
      }
 
      async fn reload_paginated_thread(
-@@ -3600,6 +3740,12 @@ impl ThreadRequestProcessor {
+@@ -3600,6 +3769,12 @@ impl ThreadRequestProcessor {
          }
      }
 
@@ -15879,7 +15908,7 @@ index 289cb6395..4d2079e65 100644
      pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
          self.thread_watch_manager.subscribe_running_turn_count()
      }
-@@ -4290,13 +4436,24 @@ impl ThreadRequestProcessor {
+@@ -4290,13 +4465,24 @@ impl ThreadRequestProcessor {
          } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
              && let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await
          {
@@ -15906,7 +15935,7 @@ index 289cb6395..4d2079e65 100644
              Some((existing_thread_id, existing_thread, source_thread))
          } else {
              let source_thread = self
-@@ -4308,7 +4465,9 @@ impl ThreadRequestProcessor {
+@@ -4308,7 +4494,9 @@ impl ThreadRequestProcessor {
                  .await?;
              let existing_thread_id = source_thread.thread_id;
              match self.thread_manager.get_thread(existing_thread_id).await {
@@ -15917,7 +15946,7 @@ index 289cb6395..4d2079e65 100644
                  Err(_) => {
                      return Ok(RunningThreadResumeResult::NotRunning(Some(Box::new(
                          source_thread,
-@@ -4318,12 +4477,13 @@ impl ThreadRequestProcessor {
+@@ -4318,12 +4506,13 @@ impl ThreadRequestProcessor {
          };
 
          if let Some((existing_thread_id, existing_thread, mut source_thread)) = running_thread {
@@ -15935,7 +15964,7 @@ index 289cb6395..4d2079e65 100644
              if let (Some(requested_path), Some(active_path)) = (params.path.as_ref(), active_path)
                  && !path_utils::paths_match_after_normalization(requested_path, active_path)
              {
-@@ -4394,18 +4554,20 @@ impl ThreadRequestProcessor {
+@@ -4394,18 +4583,20 @@ impl ThreadRequestProcessor {
                  )
                  .await;
              }
@@ -15964,7 +15993,7 @@ index 289cb6395..4d2079e65 100644
              }
              if paginated_resume && (include_turns || params.initial_turns_page.is_some()) {
                  self.thread_store
-@@ -4415,8 +4577,8 @@ impl ThreadRequestProcessor {
+@@ -4415,8 +4606,8 @@ impl ThreadRequestProcessor {
              }
              let history_items = if needs_history {
                  source_thread
@@ -15975,7 +16004,7 @@ index 289cb6395..4d2079e65 100644
                      .map(|history| history.items)
                      .ok_or_else(|| {
                          internal_error(format!(
-@@ -4444,11 +4606,18 @@ impl ThreadRequestProcessor {
+@@ -4444,11 +4635,18 @@ impl ThreadRequestProcessor {
              )
              .await?;
 
@@ -15999,7 +16028,7 @@ index 289cb6395..4d2079e65 100644
              thread_summary.session_id = existing_thread.startup_metadata().session_id.to_string();
              thread_summary.thread_source = config_snapshot.thread_source.clone().map(Into::into);
              apply_live_thread_settings(&mut thread_summary, &config_snapshot);
-@@ -4670,6 +4839,10 @@ impl ThreadRequestProcessor {
+@@ -4670,6 +4868,10 @@ impl ThreadRequestProcessor {
                  "session {thread_id} is archived. Run `codex unarchive {thread_id}` to unarchive it first."
              )));
          }
@@ -16010,7 +16039,7 @@ index 289cb6395..4d2079e65 100644
 
          Ok(stored_thread)
      }
-@@ -6031,6 +6204,44 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
+@@ -6031,6 +6233,44 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
      }
  }
 
@@ -24115,10 +24144,10 @@ index e6220cdd9..65c24b177 100644
 
  impl SectionHistory for Vec<ResponseItem> {
 diff --git a/codex-rs/guardian-context/src/transcript.rs b/codex-rs/guardian-context/src/transcript.rs
-index a0452be20..31a37ba5a 100644
+index a0452be20..ff8cf59e3 100644
 --- a/codex-rs/guardian-context/src/transcript.rs
 +++ b/codex-rs/guardian-context/src/transcript.rs
-@@ -125,6 +125,14 @@ pub fn collect_transcript(
+@@ -125,10 +125,19 @@ pub fn collect_transcript(
      let retained_context = history
          .retained_context()
          .filter(|context| !crate::retained_instructions::has_legacy_order(context));
@@ -24133,7 +24162,25 @@ index a0452be20..31a37ba5a 100644
 
      for (item, mut source) in history.items_with_sources() {
          let (kind, mut text) = match item {
-@@ -221,7 +229,10 @@ pub fn collect_transcript(
+             ResponseItem::Message {
++                id,
+                 role,
+                 content,
+                 phase,
+@@ -163,6 +172,12 @@ pub fn collect_transcript(
+                     "assistant" => ConversationTranscriptEntryKind::Assistant,
+                     _ => continue,
+                 };
++                let text = match id {
++                    Some(id) if !text.is_empty() && rewritten.contains(id.as_str()) => {
++                        format!("(rewritten, not an original {role} message)\n{text}")
++                    }
++                    _ => text,
++                };
+                 (kind, text)
+             }
+             ResponseItem::AgentMessage {
+@@ -221,7 +236,10 @@ pub fn collect_transcript(
                      continue;
                  }
                  (
@@ -24145,7 +24192,7 @@ index a0452be20..31a37ba5a 100644
                      arguments.clone(),
                  )
              }
-@@ -236,16 +247,19 @@ pub fn collect_transcript(
+@@ -236,16 +254,19 @@ pub fn collect_transcript(
                  if !config.options.include_tool_outputs {
                      continue;
                  }
@@ -24170,10 +24217,10 @@ index a0452be20..31a37ba5a 100644
                  let Some(text) = output.body.to_text() else {
                      continue;
 diff --git a/codex-rs/guardian-context/src/transcript_tests.rs b/codex-rs/guardian-context/src/transcript_tests.rs
-index 2bf9152ba..63fa282dd 100644
+index 2bf9152ba..584bb9d4b 100644
 --- a/codex-rs/guardian-context/src/transcript_tests.rs
 +++ b/codex-rs/guardian-context/src/transcript_tests.rs
-@@ -266,6 +266,60 @@ fn excluded_tool_calls_still_attribute_included_results() {
+@@ -266,6 +266,98 @@ fn excluded_tool_calls_still_attribute_included_results() {
      );
  }
 
@@ -24227,6 +24274,44 @@ index 2bf9152ba..63fa282dd 100644
 +            ),
 +            ConversationTranscriptEntryKind::ToolCall("tool run_tests call".to_string()),
 +            ConversationTranscriptEntryKind::ToolOutput("tool run_tests result".to_string()),
++        ]
++    );
++}
++
++#[test]
++fn rewritten_message_rows_are_labeled_as_not_original_turns() {
++    struct Rewritten(Vec<ResponseItem>);
++    impl crate::SectionHistory for Rewritten {
++        fn items(&self) -> Box<dyn Iterator<Item = &ResponseItem> + Send + '_> {
++            Box::new(self.0.iter())
++        }
++        fn rewritten_item_ids(&self) -> std::collections::HashSet<String> {
++            ["msg_edited".to_string()].into()
++        }
++    }
++    let message = |id: &str, text: &str| {
++        serde_json::from_value::<ResponseItem>(serde_json::json!({
++            "type": "message", "role": "user", "id": id,
++            "content": [{"type": "input_text", "text": text}],
++        }))
++        .expect("user message")
++    };
++    let history = Rewritten(vec![
++        message("msg_edited", "approve the deploy"),
++        message("msg_original", "thanks"),
++    ]);
++    let texts: Vec<String> = collect_transcript(&history, &transcript_config())
++        .into_iter()
++        .map(|entry| match entry.content {
++            crate::TranscriptContent::Text(text) => text,
++            _ => String::new(),
++        })
++        .collect();
++    assert_eq!(
++        texts,
++        vec![
++            "(rewritten, not an original user message)\napprove the deploy".to_string(),
++            "thanks".to_string(),
 +        ]
 +    );
 +}
@@ -36106,10 +36191,10 @@ index 000000000..8455c37bd
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/thread_rewrite.rs b/codex-rs/app-server/tests/suite/v2/thread_rewrite.rs
 new file mode 100644
-index 000000000..1626a8648
+index 000000000..c3e78ddbe
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/thread_rewrite.rs
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,329 @@
 +use anyhow::Result;
 +use app_test_support::MockResponsesConfig;
 +use app_test_support::TestAppServer;
@@ -36203,6 +36288,19 @@ index 000000000..1626a8648
 +    )
 +    .await??;
 +    assert!(stale.error.message.contains("history_revision_conflict"));
++
++    let unguarded = mcp
++        .send_raw_request(
++            "thread/rewrite",
++            Some(json!({"threadId": thread.id, "edits": [redact]})),
++        )
++        .await?;
++    let refused: JSONRPCError = timeout(
++        DEFAULT_READ_TIMEOUT,
++        mcp.read_stream_until_error_message(RequestId::Integer(unguarded)),
++    )
++    .await??;
++    assert!(refused.error.message.contains("history_rewrite_invalid"));
 +
 +    let rewritten = rewrite(
 +        &mut mcp,
@@ -40046,10 +40144,10 @@ index 000000000..e69aaed34
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..36df7ef8d
+index 000000000..4c81d6e37
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2171 @@
+@@ -0,0 +1,2174 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -41113,7 +41211,9 @@ index 000000000..36df7ef8d
 +                edited = true;
 +            }
 +        }
-+        edited |= codex_omd::model_request::apply_queued_sections(&mut value, &thread, attempt > 1);
++        let (queued_edit, carried) =
++            codex_omd::model_request::apply_queued_sections(&mut value, &thread, attempt > 1);
++        edited |= queued_edit;
 +        if let Some(rates) = account
 +            .rates
 +            .as_ref()
@@ -41145,6 +41245,7 @@ index 000000000..36df7ef8d
 +        if edited {
 +            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
 +        }
++        codex_omd::model_request::commit_queued_sections(&thread, carried);
 +        Ok(())
 +    }
 +
@@ -42223,10 +42324,10 @@ index 000000000..36df7ef8d
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..30c6356a8
+index 000000000..1681f886e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1222 @@
+@@ -0,0 +1,1255 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -43436,18 +43537,51 @@ index 000000000..30c6356a8
 +
 +#[test]
 +fn queued_mod_notices_join_only_the_threads_next_request() {
-+    let (_root, accounts, _task, _request, _body) = setup();
++    let (root, accounts, task, _request, _body) = setup();
++    let thread = "queued-notices";
++    accounts
++        .0
++        .lock()
++        .unwrap()
++        .insert(thread.into(), account(&task, root.path(), "worker"));
 +    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
 +        "max_output_tokens": 128, "input": [{"type": "message", "role": "user",
 +        "content": [{"type": "input_text", "text": "hi"}]}]});
-+    codex_omd::model_request::queue_section("child", "checks", "lint failed").unwrap();
-+    let first = prepared(&accounts, "child", &body).unwrap().to_string();
++    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
++    let first = prepared(&accounts, thread, &body).unwrap().to_string();
 +    assert!(
 +        first.contains("Mod-provided context") && first.contains("lint failed"),
 +        "{first}"
 +    );
-+    let next = prepared(&accounts, "child", &body).unwrap().to_string();
++    let next = prepared(&accounts, thread, &body).unwrap().to_string();
 +    assert!(!next.contains("lint failed"), "{next}");
++}
++
++#[test]
++fn queued_mod_notices_survive_a_request_the_final_policy_refuses() {
++    let (root, accounts, task, _request, _body) = setup();
++    let thread = "queued-refused";
++    accounts
++        .0
++        .lock()
++        .unwrap()
++        .insert(thread.into(), account(&task, root.path(), "worker"));
++    let source = "export default api => { throw new Error('policy failed to start'); }";
++    let (store, package, runtime) = install_package(
++        &accounts,
++        root.path(),
++        source,
++        &["middleware", "request_policy"],
++    );
++    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
++        "input": [{"type": "message", "role": "user",
++        "content": [{"type": "input_text", "text": "hi"}]}]});
++    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
++    assert!(prepared(&accounts, thread, &body).is_err());
++    store.enable(&package, false).unwrap();
++    runtime.lock().unwrap().reload().unwrap();
++    let next = prepared(&accounts, thread, &body).unwrap().to_string();
++    assert!(next.contains("lint failed"), "{next}");
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
@@ -78576,10 +78710,10 @@ index 000000000..44647048b
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..040a56222
+index 000000000..768871653
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1076 @@
+@@ -0,0 +1,1097 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -79610,47 +79744,68 @@ index 000000000..040a56222
 +    Ok(())
 +}
 +
-+type QueuedSections = BTreeMap<String, (Vec<Value>, Vec<Value>)>;
++#[derive(Default)]
++struct Queue {
++    pending: Vec<Value>,
++    sent: Vec<Value>,
++    issued: usize,
++}
 +
-+static QUEUED: std::sync::Mutex<QueuedSections> = std::sync::Mutex::new(BTreeMap::new());
++static QUEUED: std::sync::Mutex<BTreeMap<String, Queue>> = std::sync::Mutex::new(BTreeMap::new());
 +
 +/// Queues mod text for the thread's next model request as an inserted section.
 +pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String> {
 +    let mut queued = QUEUED
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    let (pending, _) = queued.entry(thread.to_owned()).or_default();
-+    if pending.len() >= INSERTED_SECTIONS {
++    let queue = queued.entry(thread.to_owned()).or_default();
++    if queue.pending.len() >= INSERTED_SECTIONS {
 +        return Err("model_context_queue_full".into());
 +    }
-+    let id = format!("mod:{owner}:notice:{}", pending.len() + 1);
++    let id = format!("mod:{owner}:notice:{}", queue.issued + 1);
 +    if id.len() > 64 || text.trim().is_empty() || text.len() > INSERTED_TEXT_BYTES {
 +        return Err("model_context_invalid".into());
 +    }
-+    pending.push(json!({"id": id, "text": text}));
++    queue.issued += 1;
++    queue.pending.push(json!({"id": id, "text": text}));
 +    Ok(())
 +}
 +
-+/// Adds the thread's queued sections to an outgoing request; a retry carries the batch its first attempt took.
-+pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> bool {
-+    let batch = {
-+        let mut queued = QUEUED
++/// Adds the thread's queued sections to an outgoing request without taking them; a retry carries the batch
++/// its first attempt sent. Returns whether the request changed and how many pending sections it carries.
++pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> (bool, usize) {
++    let (batch, carried) = {
++        let queued = QUEUED
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        let Some((pending, sent)) = queued.get_mut(thread) else {
-+            return false;
++        let Some(queue) = queued.get(thread) else {
++            return (false, 0);
 +        };
-+        if !retry {
-+            *sent = std::mem::take(pending);
++        if retry {
++            (queue.sent.clone(), 0)
++        } else {
++            (queue.pending.clone(), queue.pending.len())
 +        }
-+        sent.clone()
 +    };
 +    if batch.is_empty() {
-+        return false;
++        return (false, 0);
 +    }
 +    let given = sections(request);
 +    let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
-+    apply_sections(request, &given, &effective)
++    (apply_sections(request, &given, &effective), carried)
++}
++
++/// Takes the sections a request carried once it is ready to send, so a denied request leaves them queued.
++pub fn commit_queued_sections(thread: &str, carried: usize) {
++    if carried == 0 {
++        return;
++    }
++    let mut queued = QUEUED
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some(queue) = queued.get_mut(thread) {
++        queue.sent = queue.pending.drain(..carried).collect();
++    }
 +}
 +
 +#[cfg(test)]
@@ -79658,10 +79813,10 @@ index 000000000..040a56222
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..6be4db790
+index 000000000..69c86522c
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,445 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -80076,19 +80231,25 @@ index 000000000..6be4db790
 +#[test]
 +fn queued_sections_reach_the_next_request_once_and_its_retries() {
 +    let thread = "thread-queued-sections";
-+    assert!(!apply_queued_sections(&mut request(), thread, false));
++    assert!(!apply_queued_sections(&mut request(), thread, false).0);
 +    queue_section(thread, "checks", "build failed").unwrap();
++    let mut denied = request();
++    let (_, carried) = apply_queued_sections(&mut denied, thread, false);
++    assert_eq!(carried, 1);
 +    let mut first = request();
-+    assert!(apply_queued_sections(&mut first, thread, false));
++    let (edited, carried) = apply_queued_sections(&mut first, thread, false);
++    assert!(edited);
++    commit_queued_sections(thread, carried);
++    assert_eq!(first, denied);
 +    let text = first.to_string();
 +    assert!(
 +        text.contains("Mod-provided context") && text.contains("build failed"),
 +        "{text}"
 +    );
 +    let mut retry = request();
-+    assert!(apply_queued_sections(&mut retry, thread, true));
++    assert!(apply_queued_sections(&mut retry, thread, true).0);
 +    assert_eq!(retry, first);
-+    assert!(!apply_queued_sections(&mut request(), thread, false));
++    assert!(!apply_queued_sections(&mut request(), thread, false).0);
 +    for _ in 0..INSERTED_SECTIONS {
 +        queue_section(thread, "checks", "note").unwrap();
 +    }
@@ -108766,10 +108927,10 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread.rs b/codex-rs/thread-store/src/local/rewrite_thread.rs
 new file mode 100644
-index 000000000..4677a4766
+index 000000000..7fedace39
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread.rs
-@@ -0,0 +1,1206 @@
+@@ -0,0 +1,1249 @@
 +use std::collections::HashMap;
 +use std::collections::HashSet;
 +use std::io::Write;
@@ -108832,6 +108993,14 @@ index 000000000..4677a4766
 +struct Entry {
 +    item: RolloutItem,
 +    source: Option<u64>,
++    /// Position when the revision was read, so `line-N` ids survive the edits of one batch.
++    key: usize,
++}
++
++fn renumber(entries: &mut [Entry]) {
++    for (index, entry) in entries.iter_mut().enumerate() {
++        entry.key = index;
++    }
 +}
 +
 +struct Row {
@@ -108952,7 +109121,7 @@ index 000000000..4677a4766
 +        revision: new_rollout_id.to_string(),
 +        author: &author,
 +    };
-+    let (entries, forked, subagent) = if undo {
++    let (mut entries, forked, subagent) = if undo {
 +        let Some(Record::Begin {
 +            sources: restored_sources,
 +            written,
@@ -108972,6 +109141,7 @@ index 000000000..4677a4766
 +        restored.extend(appended.map(|entry| Entry {
 +            item: entry.item,
 +            source: None,
++            key: 0,
 +        }));
 +        let forked = map_cutoff(&restored, *source_forked_from_ordinal_exclusive);
 +        let subagent = map_cutoff(&restored, *source_subagent_history_start_ordinal);
@@ -108985,6 +109155,7 @@ index 000000000..4677a4766
 +        let subagent = map_cutoff(&entries, source_subagent);
 +        (entries, forked, subagent)
 +    };
++    renumber(&mut entries);
 +
 +    append_record(
 +        &log,
@@ -109053,13 +109224,14 @@ index 000000000..4677a4766
 +        let _ = abort(store, &log, witness.as_deref(), new_rollout_id).await;
 +        return Err(err);
 +    }
-+    append_record(
++    // The rollout switch is the commit point; a missing record is resolved by the next access.
++    let _ = append_record(
 +        &log,
 +        witness.as_deref(),
 +        &Record::Commit {
 +            revision: new_rollout_id,
 +        },
-+    )?;
++    );
 +    Ok(ThreadRewrite {
 +        revision: revision(new_rollout_id, &entries),
 +        previous_revision: Some(previous_revision),
@@ -109098,12 +109270,23 @@ index 000000000..4677a4766
 +    resolve_pending: bool,
 +) -> ThreadStoreResult<Vec<Record>> {
 +    let (mut records, digests) = read_log(log)?;
-+    if let Some(witness) = witness {
-+        witness.verify(log, &digests).map_err(|err| {
-+            invalid(format!(
++    if let Some(witness) = witness
++        && let Err(err) = witness.verify(log, &digests)
++    {
++        // A record is fsynced before its anchor, so a crash or lost reply leaves the log one record ahead.
++        let behind = digests
++            .len()
++            .checked_sub(1)
++            .is_some_and(|last| witness.verify(log, &digests[..last]).is_ok());
++        if !behind {
++            return Err(invalid(format!(
 +                "history_anchor_mismatch: revision log of thread {thread_id}: {err}"
-+            ))
-+        })?;
++            )));
++        }
++        if resolve_pending {
++            drop_last_record(log)?;
++            records.pop();
++        }
 +    }
 +    if resolve_pending && let Some(Record::Begin { revision, .. }) = records.last() {
 +        let revision = *revision;
@@ -109125,14 +109308,10 @@ index 000000000..4677a4766
 +            _ => None,
 +        })
 +        .collect();
-+    for record in &records {
-+        if let Record::Begin {
-+            revision, sources, ..
-+        } = record
-+            && committed.contains(revision)
-+        {
-+            load_segments(store, sources).await?;
-+        }
++    if let Some(Record::Begin { sources, .. }) = records.iter().rev().find(
++        |record| matches!(record, Record::Begin { revision, .. } if committed.contains(revision)),
++    ) {
++        load_segments(store, sources).await?;
 +    }
 +    Ok(records)
 +}
@@ -109204,7 +109383,8 @@ index 000000000..4677a4766
 +            sha256: String::new(),
 +        })
 +        .collect();
-+    let (entries, segments) = read_segments(store, segments).await?;
++    let (mut entries, segments) = read_segments(store, segments).await?;
++    renumber(&mut entries);
 +    Ok((current.rollout_id, meta, entries, segments))
 +}
 +
@@ -109284,6 +109464,7 @@ index 000000000..4677a4766
 +                entries.push(Entry {
 +                    item: parsed.item,
 +                    source: Some(ordinal),
++                    key: 0,
 +                });
 +            }
 +        }
@@ -109362,7 +109543,7 @@ index 000000000..4677a4766
 +                    .map(str::to_string)
 +                    .or_else(|| envelope.item.id().map(ToString::to_string))
 +                    .filter(|key| !key.is_empty())
-+                    .or_else(|| (kind == "message").then(|| format!("line-{index}")))
++                    .or_else(|| (kind == "message").then(|| format!("line-{}", entry.key)))
 +                else {
 +                    continue;
 +                };
@@ -109545,6 +109726,7 @@ index 000000000..4677a4766
 +            require(row, HistoryRowAccess::Edit)?;
 +            let (shape, mut items) = new_items(items, row.turn_id.as_deref())?;
 +            let mut original_id = None;
++            let mut original_key = 0;
 +            let mut completed = None;
 +            let mut completed_first = false;
 +            for &index in &row.entries {
@@ -109553,6 +109735,7 @@ index 000000000..4677a4766
 +                        let value = item_value(&envelope.item);
 +                        if original_id.is_none() {
 +                            original_id = Some((value.clone(), envelope.item.id().cloned()));
++                            original_key = entries[index].key;
 +                        }
 +                    }
 +                    RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => {
@@ -109593,12 +109776,16 @@ index 000000000..4677a4766
 +                edit,
 +                checkpoint(entries, row),
 +            );
++            for entry in &mut replacement {
++                entry.key = original_key;
++            }
 +            let display = completed.and_then(|mut event| {
 +                let item = display_item(&items[0], &row.id, Some(&event.item))?;
 +                event.item = item;
 +                Some(Entry {
 +                    item: RolloutItem::EventMsg(EventMsg::ItemCompleted(event)),
 +                    source: None,
++                    key: 0,
 +                })
 +            });
 +            if let Some(display) = display {
@@ -109645,6 +109832,7 @@ index 000000000..4677a4766
 +                        completed_at_ms: chrono::Utc::now().timestamp_millis(),
 +                    })),
 +                    source: None,
++                    key: 0,
 +                });
 +            }
 +            entries.splice(at..at, inserted);
@@ -109672,6 +109860,7 @@ index 000000000..4677a4766
 +            let rows = self::rows(entries);
 +            let (at, turn_id) = position(entries, &rows, before.as_deref(), after.as_deref())?;
 +            for entry in &mut moved {
++                entry.source = None;
 +                match &mut entry.item {
 +                    RolloutItem::ResponseItem(envelope) => {
 +                        envelope
@@ -109800,6 +109989,7 @@ index 000000000..4677a4766
 +                }),
 +            }),
 +            source: None,
++            key: 0,
 +        })
 +        .collect()
 +}
@@ -109941,20 +110131,34 @@ index 000000000..4677a4766
 +        .append(true)
 +        .open(path)
 +        .map_err(thread_store_io_error)?;
-+    let length = file.metadata().map_err(thread_store_io_error)?.len();
 +    file.write_all(format!("{line}\n").as_bytes())
 +        .and_then(|()| file.sync_all())
 +        .map_err(thread_store_io_error)?;
 +    if let Some(witness) = witness
 +        && let Err(err) = witness.append(path, &sha256(&line))
 +    {
-+        let _ = file.set_len(length);
 +        return Err(internal(format!(
 +            "failed to anchor revision log {}: {err}",
 +            path.display()
 +        )));
 +    }
 +    Ok(())
++}
++
++fn drop_last_record(path: &Path) -> ThreadStoreResult<()> {
++    let text = std::fs::read_to_string(path).map_err(thread_store_io_error)?;
++    let keep = text
++        .trim_end_matches('\n')
++        .rfind('\n')
++        .map_or(0, |at| at + 1);
++    std::fs::OpenOptions::new()
++        .write(true)
++        .open(path)
++        .and_then(|file| {
++            file.set_len(keep as u64)?;
++            file.sync_all()
++        })
++        .map_err(thread_store_io_error)
 +}
 +
 +fn sha256(text: &str) -> String {
@@ -109978,15 +110182,18 @@ index 000000000..4677a4766
 +mod tests;
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread_tests.rs b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
 new file mode 100644
-index 000000000..739346729
+index 000000000..5212d8edf
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
-@@ -0,0 +1,742 @@
+@@ -0,0 +1,909 @@
 +use std::collections::HashMap;
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::AtomicUsize;
++use std::sync::atomic::Ordering;
 +
 +use codex_protocol::ResponseItemId;
 +use codex_protocol::ThreadId;
@@ -110009,6 +110216,7 @@ index 000000000..739346729
 +use codex_protocol::user_input::UserInput;
 +use codex_rollout::RolloutItem;
 +use pretty_assertions::assert_eq;
++use serde_json::Value;
 +use serde_json::json;
 +use tempfile::TempDir;
 +
@@ -110072,6 +110280,10 @@ index 000000000..739346729
 +}
 +
 +async fn fixture() -> Fixture {
++    fixture_with(None).await
++}
++
++async fn fixture_with(subagent_history_start_ordinal: Option<u64>) -> Fixture {
 +    let home = TempDir::new().expect("temp dir");
 +    let config = test_config(home.path());
 +    let state_db = codex_state::StateRuntime::init(
@@ -110100,7 +110312,7 @@ index 000000000..739346729
 +            multi_agent_version: None,
 +            history_mode: ThreadHistoryMode::Paginated,
 +            history_base: None,
-+            subagent_history_start_ordinal: None,
++            subagent_history_start_ordinal,
 +            initial_window_id: "window-1".to_string(),
 +            runtime_workspace_roots: None,
 +            metadata: ThreadPersistenceMetadata {
@@ -110608,6 +110820,165 @@ index 000000000..739346729
 +        err.to_string().contains("history_original_mismatch"),
 +        "{err}"
 +    );
++}
++
++#[derive(Default)]
++struct Flaky {
++    chain: Chain,
++    appends: AtomicUsize,
++    fail_at: AtomicUsize,
++    record_failed: AtomicBool,
++}
++
++impl Flaky {
++    fn fail_append(&self, nth: usize, record: bool) {
++        self.fail_at
++            .store(self.appends.load(Ordering::SeqCst) + nth, Ordering::SeqCst);
++        self.record_failed.store(record, Ordering::SeqCst);
++    }
++}
++
++impl HistoryWitness for Flaky {
++    fn append(&self, stream: &Path, sha256: &str) -> std::io::Result<()> {
++        let count = self.appends.fetch_add(1, Ordering::SeqCst) + 1;
++        if count != self.fail_at.load(Ordering::SeqCst) {
++            return self.chain.append(stream, sha256);
++        }
++        if self.record_failed.load(Ordering::SeqCst) {
++            self.chain.append(stream, sha256)?;
++        }
++        Err(std::io::Error::other("broker unreachable"))
++    }
++
++    fn verify(&self, stream: &Path, sha256s: &[String]) -> std::io::Result<()> {
++        self.chain.verify(stream, sha256s)
++    }
++}
++
++fn anonymous_assistant(text: &str) -> RolloutItem {
++    let item: ResponseItem = serde_json::from_value(json!({
++        "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]
++    }))
++    .expect("anonymous message");
++    RolloutItem::ResponseItem(item.into())
++}
++
++#[tokio::test]
++async fn edits_keep_naming_rows_without_ids_by_the_ids_they_were_read_with() {
++    let fixture = fixture().await;
++    for text in ["first anonymous", "second anonymous"] {
++        codex_rollout::append_rollout_item_to_path(
++            fixture.original.as_path(),
++            &anonymous_assistant(text),
++        )
++        .await
++        .expect("append anonymous message");
++    }
++    let read = fixture.read().await;
++    let anonymous: Vec<String> = read
++        .rows
++        .iter()
++        .filter(|row| row.id.starts_with("line-"))
++        .map(|row| row.id.clone())
++        .collect();
++    assert_eq!(anonymous.len(), 2, "{anonymous:?}");
++    fixture
++        .rewrite(
++            Some(read.revision),
++            vec![
++                HistoryRowEdit::Delete {
++                    id: "call-1".to_string(),
++                },
++                HistoryRowEdit::Delete {
++                    id: anonymous[1].clone(),
++                },
++            ],
++            false,
++            None,
++        )
++        .await
++        .expect("both edits address the rows they were read with");
++    let model = fixture.model_text().await;
++    assert!(model.contains("first anonymous"), "{model}");
++    assert!(!model.contains("second anonymous"), "{model}");
++    assert!(!model.contains("call-1"), "{model}");
++}
++
++#[tokio::test]
++async fn a_failed_anchor_keeps_the_record_and_a_failed_commit_anchor_keeps_the_rewrite() {
++    let fixture = fixture().await;
++    let revision = fixture.read().await.revision;
++    let flaky = Arc::new(Flaky::default());
++    let witness: Arc<dyn HistoryWitness> = flaky.clone();
++    let delete = |id: &str| vec![HistoryRowEdit::Delete { id: id.to_string() }];
++    flaky.fail_append(1, true);
++    fixture
++        .rewrite(
++            Some(revision.clone()),
++            delete("user-2"),
++            false,
++            Some(Arc::clone(&witness)),
++        )
++        .await
++        .expect_err("the begin record reports an unanchored reply");
++    assert_eq!(fixture.current_path().await, fixture.original);
++    fixture
++        .store
++        .verify_thread_history(fixture.thread_id, Some(Arc::clone(&witness)))
++        .await
++        .expect("a lost broker reply does not break the log");
++
++    flaky.fail_append(2, false);
++    let rewritten = fixture
++        .rewrite(
++            Some(revision),
++            delete("user-2"),
++            false,
++            Some(Arc::clone(&witness)),
++        )
++        .await
++        .expect("the rollout switch is the commit point");
++    assert_ne!(fixture.current_path().await, fixture.original);
++    fixture
++        .rewrite(
++            Some(rewritten.revision),
++            delete("user-1"),
++            false,
++            Some(Arc::clone(&witness)),
++        )
++        .await
++        .expect("the next rewrite rolls the unanchored record back");
++    fixture
++        .store
++        .verify_thread_history(fixture.thread_id, Some(witness))
++        .await
++        .expect("the log matches its anchors again");
++}
++
++#[tokio::test]
++async fn moving_a_row_across_the_inherited_boundary_keeps_the_boundary() {
++    let fixture = fixture_with(Some(6)).await;
++    let revision = fixture.read().await.revision;
++    fixture
++        .rewrite(
++            Some(revision),
++            vec![HistoryRowEdit::Move {
++                id: "user-2".to_string(),
++                before: Some("user-1".to_string()),
++                after: None,
++            }],
++            false,
++            None,
++        )
++        .await
++        .expect("move a local row ahead of the inherited rows");
++    let rewritten = std::fs::read_to_string(fixture.current_path().await).expect("read rollout");
++    let meta: Value = serde_json::from_str(rewritten.lines().next().expect("session meta"))
++        .expect("parse session meta");
++    let start = meta["payload"]["subagent_history_start_ordinal"]
++        .as_u64()
++        .expect("subagent start ordinal");
++    assert!(start >= 6, "{start}");
 +}
 +
 +fn turn_started(turn_id: &str) -> RolloutItem {

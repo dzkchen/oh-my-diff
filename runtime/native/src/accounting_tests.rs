@@ -1207,16 +1207,49 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
 
 #[test]
 fn queued_mod_notices_join_only_the_threads_next_request() {
-    let (_root, accounts, _task, _request, _body) = setup();
+    let (root, accounts, task, _request, _body) = setup();
+    let thread = "queued-notices";
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .insert(thread.into(), account(&task, root.path(), "worker"));
     let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
         "max_output_tokens": 128, "input": [{"type": "message", "role": "user",
         "content": [{"type": "input_text", "text": "hi"}]}]});
-    codex_omd::model_request::queue_section("child", "checks", "lint failed").unwrap();
-    let first = prepared(&accounts, "child", &body).unwrap().to_string();
+    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
+    let first = prepared(&accounts, thread, &body).unwrap().to_string();
     assert!(
         first.contains("Mod-provided context") && first.contains("lint failed"),
         "{first}"
     );
-    let next = prepared(&accounts, "child", &body).unwrap().to_string();
+    let next = prepared(&accounts, thread, &body).unwrap().to_string();
     assert!(!next.contains("lint failed"), "{next}");
+}
+
+#[test]
+fn queued_mod_notices_survive_a_request_the_final_policy_refuses() {
+    let (root, accounts, task, _request, _body) = setup();
+    let thread = "queued-refused";
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .insert(thread.into(), account(&task, root.path(), "worker"));
+    let source = "export default api => { throw new Error('policy failed to start'); }";
+    let (store, package, runtime) = install_package(
+        &accounts,
+        root.path(),
+        source,
+        &["middleware", "request_policy"],
+    );
+    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
+        "input": [{"type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "hi"}]}]});
+    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
+    assert!(prepared(&accounts, thread, &body).is_err());
+    store.enable(&package, false).unwrap();
+    runtime.lock().unwrap().reload().unwrap();
+    let next = prepared(&accounts, thread, &body).unwrap().to_string();
+    assert!(next.contains("lint failed"), "{next}");
 }

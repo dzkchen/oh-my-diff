@@ -1028,47 +1028,68 @@ pub fn apply_send_edits(
     Ok(())
 }
 
-type QueuedSections = BTreeMap<String, (Vec<Value>, Vec<Value>)>;
+#[derive(Default)]
+struct Queue {
+    pending: Vec<Value>,
+    sent: Vec<Value>,
+    issued: usize,
+}
 
-static QUEUED: std::sync::Mutex<QueuedSections> = std::sync::Mutex::new(BTreeMap::new());
+static QUEUED: std::sync::Mutex<BTreeMap<String, Queue>> = std::sync::Mutex::new(BTreeMap::new());
 
 /// Queues mod text for the thread's next model request as an inserted section.
 pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String> {
     let mut queued = QUEUED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (pending, _) = queued.entry(thread.to_owned()).or_default();
-    if pending.len() >= INSERTED_SECTIONS {
+    let queue = queued.entry(thread.to_owned()).or_default();
+    if queue.pending.len() >= INSERTED_SECTIONS {
         return Err("model_context_queue_full".into());
     }
-    let id = format!("mod:{owner}:notice:{}", pending.len() + 1);
+    let id = format!("mod:{owner}:notice:{}", queue.issued + 1);
     if id.len() > 64 || text.trim().is_empty() || text.len() > INSERTED_TEXT_BYTES {
         return Err("model_context_invalid".into());
     }
-    pending.push(json!({"id": id, "text": text}));
+    queue.issued += 1;
+    queue.pending.push(json!({"id": id, "text": text}));
     Ok(())
 }
 
-/// Adds the thread's queued sections to an outgoing request; a retry carries the batch its first attempt took.
-pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> bool {
-    let batch = {
-        let mut queued = QUEUED
+/// Adds the thread's queued sections to an outgoing request without taking them; a retry carries the batch
+/// its first attempt sent. Returns whether the request changed and how many pending sections it carries.
+pub fn apply_queued_sections(request: &mut Value, thread: &str, retry: bool) -> (bool, usize) {
+    let (batch, carried) = {
+        let queued = QUEUED
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some((pending, sent)) = queued.get_mut(thread) else {
-            return false;
+        let Some(queue) = queued.get(thread) else {
+            return (false, 0);
         };
-        if !retry {
-            *sent = std::mem::take(pending);
+        if retry {
+            (queue.sent.clone(), 0)
+        } else {
+            (queue.pending.clone(), queue.pending.len())
         }
-        sent.clone()
     };
     if batch.is_empty() {
-        return false;
+        return (false, 0);
     }
     let given = sections(request);
     let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
-    apply_sections(request, &given, &effective)
+    (apply_sections(request, &given, &effective), carried)
+}
+
+/// Takes the sections a request carried once it is ready to send, so a denied request leaves them queued.
+pub fn commit_queued_sections(thread: &str, carried: usize) {
+    if carried == 0 {
+        return;
+    }
+    let mut queued = QUEUED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(queue) = queued.get_mut(thread) {
+        queue.sent = queue.pending.drain(..carried).collect();
+    }
 }
 
 #[cfg(test)]

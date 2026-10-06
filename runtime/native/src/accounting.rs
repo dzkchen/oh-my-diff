@@ -1061,7 +1061,9 @@ impl ResponseObserver for Accounts {
                 edited = true;
             }
         }
-        edited |= codex_omd::model_request::apply_queued_sections(&mut value, &thread, attempt > 1);
+        let (queued_edit, carried) =
+            codex_omd::model_request::apply_queued_sections(&mut value, &thread, attempt > 1);
+        edited |= queued_edit;
         if let Some(rates) = account
             .rates
             .as_ref()
@@ -1093,6 +1095,7 @@ impl ResponseObserver for Accounts {
         if edited {
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
         }
+        codex_omd::model_request::commit_queued_sections(&thread, carried);
         Ok(())
     }
 

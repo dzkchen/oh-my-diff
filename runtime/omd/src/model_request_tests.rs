@@ -412,19 +412,25 @@ fn send_results_keep_inner_edits_and_stay_inside_editable_text() {
 #[test]
 fn queued_sections_reach_the_next_request_once_and_its_retries() {
     let thread = "thread-queued-sections";
-    assert!(!apply_queued_sections(&mut request(), thread, false));
+    assert!(!apply_queued_sections(&mut request(), thread, false).0);
     queue_section(thread, "checks", "build failed").unwrap();
+    let mut denied = request();
+    let (_, carried) = apply_queued_sections(&mut denied, thread, false);
+    assert_eq!(carried, 1);
     let mut first = request();
-    assert!(apply_queued_sections(&mut first, thread, false));
+    let (edited, carried) = apply_queued_sections(&mut first, thread, false);
+    assert!(edited);
+    commit_queued_sections(thread, carried);
+    assert_eq!(first, denied);
     let text = first.to_string();
     assert!(
         text.contains("Mod-provided context") && text.contains("build failed"),
         "{text}"
     );
     let mut retry = request();
-    assert!(apply_queued_sections(&mut retry, thread, true));
+    assert!(apply_queued_sections(&mut retry, thread, true).0);
     assert_eq!(retry, first);
-    assert!(!apply_queued_sections(&mut request(), thread, false));
+    assert!(!apply_queued_sections(&mut request(), thread, false).0);
     for _ in 0..INSERTED_SECTIONS {
         queue_section(thread, "checks", "note").unwrap();
     }
