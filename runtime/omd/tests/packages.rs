@@ -806,16 +806,29 @@ fn command_line_and_directory_share_one_package_lifecycle() {
     mod_package(&root, "cli_mod", "1.0.0", &["commands"], json!([]));
     let (code, output) = omd(&["install", "./cli_mod"]);
     assert_eq!(code, 2, "{output}");
-    assert!(output.contains("package_approval_required") && output.contains("capabilities: commands"));
+    assert!(
+        output.contains("package_approval_required") && output.contains("capabilities: commands")
+    );
     assert!(store.package_lock().unwrap().packages.is_empty());
     let (code, output) = omd(&["mods", "inspect", "./cli_mod"]);
-    assert!(code == 0 && output.contains("install cli_mod") && output.contains("needs your approval"), "{output}");
+    assert!(
+        code == 0 && output.contains("install cli_mod") && output.contains("needs your approval"),
+        "{output}"
+    );
     let (code, output) = omd(&["install", "./cli_mod", "--scope", "project", "--yes"]);
     assert!(code == 0 && output.contains("It is off"), "{output}");
 
     let listed = codex_omd::package_controls::list(&store, None).unwrap();
-    let cli = listed["packages"].as_array().unwrap().iter().find(|item| item["id"] == "cli_mod").unwrap();
-    assert_eq!((cli["scope"].as_str(), cli["enabled"].as_bool()), (Some("project"), Some(false)));
+    let cli = listed["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "cli_mod")
+        .unwrap();
+    assert_eq!(
+        (cli["scope"].as_str(), cli["enabled"].as_bool()),
+        (Some("project"), Some(false))
+    );
     let directory = mod_package(&root, "directory_mod", "1.0.0", &["commands"], json!([]));
     let preview = codex_omd::package_controls::preview(
         &store,
@@ -825,16 +838,35 @@ fn command_line_and_directory_share_one_package_lifecycle() {
     codex_omd::package_controls::apply(&store, &preview.control).unwrap();
     assert_eq!(omd(&["mods", "enable", "directory_mod", "--yes"]).0, 0);
     let (_, output) = omd(&["mods", "list"]);
-    assert!(output.contains("cli_mod 1.0.0 project off (local)") && output.contains("directory_mod 1.0.0 user on (local)"), "{output}");
+    assert!(
+        output.contains("cli_mod 1.0.0 project off (local)")
+            && output.contains("directory_mod 1.0.0 user on (local)"),
+        "{output}"
+    );
 
-    assert_eq!(omd(&["mods", "quarantine", "directory_mod", "known", "bad"]).0, 0);
+    assert_eq!(
+        omd(&["mods", "quarantine", "directory_mod", "known", "bad"]).0,
+        0
+    );
     let listed = codex_omd::package_controls::list(&store, None).unwrap();
-    assert!(listed["packages"].as_array().unwrap().iter().any(|item| item["id"] == "directory_mod" && item["blocked"] == "known bad" && item["enabled"] == false));
+    assert!(
+        listed["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "directory_mod"
+                && item["blocked"] == "known bad"
+                && item["enabled"] == false)
+    );
     let (code, output) = omd(&["mods", "enable", "directory_mod", "--yes"]);
     assert!(code == 1 && output.contains("package_blocked"), "{output}");
     assert_eq!(omd(&["mods", "unblock", "directory_mod"]).0, 0);
     assert_eq!(omd(&["mods", "remove", "cli_mod", "--yes"]).0, 0);
-    assert!(omd(&["mods", "catalog"]).1.contains("package_index_unavailable"));
+    assert!(
+        omd(&["mods", "catalog"])
+            .1
+            .contains("package_index_unavailable")
+    );
 
     let indexed = mod_package(&root, "indexed_mod", "2.0.0", &["commands"], json!([]));
     let integrity = ModStore::inspect_package(&indexed).unwrap()["sha256"].clone();
@@ -843,29 +875,58 @@ fn command_line_and_directory_share_one_package_lifecycle() {
     let mut recalled = release.clone();
     recalled["version"] = json!("3.0.0");
     recalled["blocked"] = json!("recalled");
-    let preview = mod_package(&root, "preview_mod", "0.3.0-preview.1", &["commands"], json!([]));
+    let preview = mod_package(
+        &root,
+        "preview_mod",
+        "0.3.0-preview.1",
+        &["commands"],
+        json!([]),
+    );
     let preview_release = json!({"version": "0.3.0-preview.1", "source": {"kind": "local", "path": preview},
         "integrity": ModStore::inspect_package(&preview).unwrap()["sha256"]});
     std::fs::write(
         root.join("store/package-index.json"),
-        serde_json::to_vec(&json!({"schema": 1, "packages": {"indexed_mod": [release, recalled],
-            "preview_mod": [preview_release]}}))
+        serde_json::to_vec(
+            &json!({"schema": 1, "packages": {"indexed_mod": [release, recalled],
+            "preview_mod": [preview_release]}}),
+        )
         .unwrap(),
     )
     .unwrap();
     let (code, output) = omd(&["install", "preview_mod@0.3.0-preview.1", "--yes"]);
     assert_eq!(code, 0, "{output}");
-    let preview_update = codex_omd::package_controls::preview(&store, json!({"action": "update", "id": "preview_mod"}));
-    assert!(preview_update.is_ok(), "a prerelease updates to the newest index release");
+    let preview_update = codex_omd::package_controls::preview(
+        &store,
+        json!({"action": "update", "id": "preview_mod"}),
+    );
+    assert!(
+        preview_update.is_ok(),
+        "a prerelease updates to the newest index release"
+    );
     let (_, output) = omd(&["mods", "catalog", "fixture"]);
-    assert!(output.contains("indexed_mod@2.0.0  Indexed fixture"), "{output}");
+    assert!(
+        output.contains("indexed_mod@2.0.0  Indexed fixture"),
+        "{output}"
+    );
     let (code, output) = omd(&["install", "indexed_mod@3.0.0", "--yes"]);
-    assert!(code == 1 && output.contains("package_version_blocked: recalled"), "{output}");
+    assert!(
+        code == 1 && output.contains("package_version_blocked: recalled"),
+        "{output}"
+    );
     let (code, output) = omd(&["install", "indexed_mod", "--yes"]);
     assert_eq!(code, 0, "{output}");
-    assert_eq!(store.package_lock().unwrap().packages["indexed_mod"].version, "2.0.0");
+    assert_eq!(
+        store.package_lock().unwrap().packages["indexed_mod"].version,
+        "2.0.0"
+    );
     let events: serde_json::Value = serde_json::from_str(&omd(&["mods", "events"]).1).unwrap();
-    assert!(events.as_array().unwrap().iter().any(|event| event["event"] == "quarantine"));
+    assert!(
+        events
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["event"] == "quarantine")
+    );
 }
 
 type Routes = std::sync::Arc<std::sync::Mutex<BTreeMap<String, Vec<u8>>>>;
@@ -895,9 +956,9 @@ fn registry() -> (String, Routes) {
                 .to_owned();
             let routes = served.lock().unwrap();
             let authorized = routes.get("!token").is_none_or(|token| {
-                String::from_utf8_lossy(&request)
-                    .lines()
-                    .any(|line| line == format!("Authorization: Bearer {}", String::from_utf8_lossy(token)))
+                String::from_utf8_lossy(&request).lines().any(|line| {
+                    line == format!("Authorization: Bearer {}", String::from_utf8_lossy(token))
+                })
             });
             let (status, body) = match routes.get(&path).cloned() {
                 Some(_) if !authorized => ("401 Unauthorized", Vec::new()),
@@ -1063,9 +1124,20 @@ fn npm_packages_resolve_exact_verified_versions_and_reinstall_offline() {
     assert_eq!(plan.packages[0].version, "1.1.0");
     let lock = store.package_apply(install, &plan.confirmation).unwrap();
     assert!(!lock.packages["npm_mod"].enabled);
-    assert!(lock.packages["npm_mod"].path.starts_with(temp.path().canonicalize().unwrap().join("store/package-cache")));
+    assert!(
+        lock.packages["npm_mod"].path.starts_with(
+            temp.path()
+                .canonicalize()
+                .unwrap()
+                .join("store/package-cache")
+        )
+    );
     assert_eq!(
-        store.package_plan(npm_request(&origin, "", &["commands"])).unwrap().packages[0].version,
+        store
+            .package_plan(npm_request(&origin, "", &["commands"]))
+            .unwrap()
+            .packages[0]
+            .version,
         "2.0.0",
         "no selector follows the latest tag"
     );
@@ -1080,7 +1152,9 @@ fn npm_packages_resolve_exact_verified_versions_and_reinstall_offline() {
     let mut missing = npm_request(&origin, "2.0.0", &["commands"]);
     missing.offline = true;
     assert!(refusal(&store, missing).contains("npm_package_unavailable_offline_and_not_cached"));
-    assert!(refusal(&store, npm_request(&origin, "^1.0.0", &["commands"])).contains("npm_fetch_failed"));
+    assert!(
+        refusal(&store, npm_request(&origin, "^1.0.0", &["commands"])).contains("npm_fetch_failed")
+    );
 
     store.package_enable("npm_mod").unwrap();
     publish(
@@ -1100,9 +1174,14 @@ fn npm_packages_resolve_exact_verified_versions_and_reinstall_offline() {
     assert_eq!(plan.packages[0].version, "1.2.0");
     assert_eq!(plan.changes["packages"][0]["renewed_approval"], false);
     let lock = store.package_apply(update, &plan.confirmation).unwrap();
-    assert!(lock.packages["npm_mod"].enabled, "an unchanged grant stays on");
+    assert!(
+        lock.packages["npm_mod"].enabled,
+        "an unchanged grant stays on"
+    );
     let rollback = store.package_rollback_plan("npm_mod").unwrap();
-    let lock = store.package_rollback("npm_mod", &rollback.confirmation).unwrap();
+    let lock = store
+        .package_rollback("npm_mod", &rollback.confirmation)
+        .unwrap();
     assert_eq!(lock.packages["npm_mod"].version, "1.1.0");
 }
 
@@ -1117,13 +1196,20 @@ fn hostile_npm_archives_and_registry_substitution_are_refused() {
     let plan = store.package_plan(pinned.clone()).unwrap();
     pinned.source = plan.packages[0].source.clone();
 
-    routes
-        .lock()
-        .unwrap()
-        .insert("/tarballs/omd-npm-1.0.0.tgz".into(), npm_archive("1.0.0", &["commands", "exec"]));
-    assert!(refusal(&store, npm_request(&origin, "1.0.0", &["commands"])).contains("npm_tarball_integrity_failure"));
+    routes.lock().unwrap().insert(
+        "/tarballs/omd-npm-1.0.0.tgz".into(),
+        npm_archive("1.0.0", &["commands", "exec"]),
+    );
+    assert!(
+        refusal(&store, npm_request(&origin, "1.0.0", &["commands"]))
+            .contains("npm_tarball_integrity_failure")
+    );
 
-    publish(&origin, &routes, &[("1.0.0", npm_archive("1.0.0", &["commands", "exec"]))]);
+    publish(
+        &origin,
+        &routes,
+        &[("1.0.0", npm_archive("1.0.0", &["commands", "exec"]))],
+    );
     assert!(refusal(&store, pinned).contains("npm_integrity_changed"));
     assert!(
         refusal(&store, npm_request(&origin, "1.0.0", &["commands"]))
@@ -1141,18 +1227,32 @@ fn hostile_npm_archives_and_registry_substitution_are_refused() {
         publish(&origin, &routes, &[("1.0.0", tarball(&entries))]);
         refusal(&store, npm_request(&origin, "1.0.0", &["commands"]))
     };
-    assert!(entries(&files, &[("package/escape.ts", b'2', b"/etc/passwd")]).contains("npm_archive_link_rejected"));
-    assert!(entries(&files, &[("package/../escape.ts", b'0', b"x")]).contains("npm_archive_path_rejected"));
+    assert!(
+        entries(&files, &[("package/escape.ts", b'2', b"/etc/passwd")])
+            .contains("npm_archive_link_rejected")
+    );
+    assert!(
+        entries(&files, &[("package/../escape.ts", b'0', b"x")])
+            .contains("npm_archive_path_rejected")
+    );
     let bomb = vec![0; 17 * 1024 * 1024];
-    assert!(entries(&files, &[("package/bomb.ts", b'0', &bomb)]).contains("npm_archive_invalid: larger than"));
+    assert!(
+        entries(&files, &[("package/bomb.ts", b'0', &bomb)])
+            .contains("npm_archive_invalid: larger than")
+    );
     let mut seed = 1u64;
     let noise = (0..5 * 1024 * 1024)
         .map(|_| {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 56) as u8
         })
         .collect::<Vec<_>>();
-    assert!(entries(&files, &[("package/noise.ts", b'0', &noise)]).contains("npm_fetch_failed: larger than"));
+    assert!(
+        entries(&files, &[("package/noise.ts", b'0', &noise)])
+            .contains("npm_fetch_failed: larger than")
+    );
     files[0].1 = serde_json::to_vec(&json!({"name":"@fixture/omd-npm","version":"1.0.0",
         "dependencies":{"left-pad":"1.3.0"}}))
     .unwrap();
@@ -1182,7 +1282,11 @@ fn hostile_npm_archives_and_registry_substitution_are_refused() {
     assert!(
         std::fs::read_dir(temp.path().join("store"))
             .unwrap()
-            .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")),
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")),
         "refused archives leave no staging directory"
     );
 }
@@ -1197,7 +1301,11 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         let mut value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
         change(&mut value);
-        std::fs::write(package.join("mod.json"), serde_json::to_vec(&value).unwrap()).unwrap();
+        std::fs::write(
+            package.join("mod.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
     };
 
     let outside = root.join("outside");
@@ -1209,7 +1317,11 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
     manifest(&|value| value["assets"] = json!([]));
     std::fs::remove_file(package.join("main.ts")).unwrap();
     std::os::unix::fs::symlink(outside.join("credentials.json"), package.join("main.ts")).unwrap();
-    assert!(store.package_plan(request(&package, &["commands"])).is_err());
+    assert!(
+        store
+            .package_plan(request(&package, &["commands"]))
+            .is_err()
+    );
     std::fs::remove_file(package.join("main.ts")).unwrap();
     std::fs::write(package.join("main.ts"), "export default () => {}\n").unwrap();
 
@@ -1232,12 +1344,19 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["entrypoint"] = json!("main.ts");
         value["lifecycle"] = json!({"install":"install.ts"});
     });
-    std::fs::write(package.join("install.ts"), "export default () => { for (;;) {} }\n").unwrap();
+    std::fs::write(
+        package.join("install.ts"),
+        "export default () => { for (;;) {} }\n",
+    )
+    .unwrap();
     let mut looping = request(&package, &["commands"]);
     looping.trust.packages.get_mut("hostile").unwrap().lifecycle = vec!["install".into()];
     let plan = store.package_plan(looping.clone()).unwrap();
     assert!(store.package_apply(looping, &plan.confirmation).is_err());
-    assert!(store.package_lock().unwrap().packages.is_empty(), "a runaway script installs nothing");
+    assert!(
+        store.package_lock().unwrap().packages.is_empty(),
+        "a runaway script installs nothing"
+    );
     manifest(&|value| value["lifecycle"] = json!({}));
 
     let install = request(&package, &["commands"]);
@@ -1250,7 +1369,11 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
             .contains("package_plan_changed"),
         "a forged confirmation is refused"
     );
-    std::fs::write(package.join("main.ts"), "export default () => { /* swapped */ }\n").unwrap();
+    std::fs::write(
+        package.join("main.ts"),
+        "export default () => { /* swapped */ }\n",
+    )
+    .unwrap();
     assert!(
         store
             .package_apply(install.clone(), &plan.confirmation)
@@ -1264,7 +1387,12 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
     store.package_enable("hostile").unwrap();
     assert!(
         store
-            .trust(package.clone(), &"0".repeat(64), vec!["commands".into()], "user")
+            .trust(
+                package.clone(),
+                &"0".repeat(64),
+                vec!["commands".into()],
+                "user"
+            )
             .unwrap_err()
             .to_string()
             .contains("trust_digest_mismatch")
@@ -1274,16 +1402,29 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["version"] = json!("1.1.0");
         value["capabilities"] = json!(["commands", "exec"]);
     });
-    assert!(refusal(&store, request(&package, &["commands"])).contains("explicit_exact_capability_grant_required"));
+    assert!(
+        refusal(&store, request(&package, &["commands"]))
+            .contains("explicit_exact_capability_grant_required")
+    );
     let escalation = request(&package, &["commands", "exec"]);
     let plan = store.package_plan(escalation.clone()).unwrap();
     assert_eq!(plan.changes["packages"][0]["renewed_approval"], true);
-    assert_eq!(plan.changes["packages"][0]["grant"]["from"]["capabilities"], json!(["commands"]));
+    assert_eq!(
+        plan.changes["packages"][0]["grant"]["from"]["capabilities"],
+        json!(["commands"])
+    );
     let lock = store.package_apply(escalation, &plan.confirmation).unwrap();
-    assert!(!lock.packages["hostile"].enabled, "new authority is never enabled by an update");
+    assert!(
+        !lock.packages["hostile"].enabled,
+        "new authority is never enabled by an update"
+    );
 
     let cache = lock.history["hostile"][0].cache_path.clone();
-    std::fs::write(cache.join("main.ts"), "export default () => { /* tampered */ }\n").unwrap();
+    std::fs::write(
+        cache.join("main.ts"),
+        "export default () => { /* tampered */ }\n",
+    )
+    .unwrap();
     let rollback = store.package_rollback_plan("hostile").unwrap();
     assert!(
         store
@@ -1293,22 +1434,46 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
             .contains("cached_package_integrity_failure")
     );
 
-    store.package_quarantine("hostile", "exfiltrates tokens").unwrap();
-    assert!(store.package_enable("hostile").unwrap_err().to_string().contains("package_blocked"));
-    assert!(refusal(&store, request(&package, &["commands", "exec"])).contains("package_blocked: hostile 1.1.0: exfiltrates tokens"));
+    store
+        .package_quarantine("hostile", "exfiltrates tokens")
+        .unwrap();
+    assert!(
+        store
+            .package_enable("hostile")
+            .unwrap_err()
+            .to_string()
+            .contains("package_blocked")
+    );
+    assert!(
+        refusal(&store, request(&package, &["commands", "exec"]))
+            .contains("package_blocked: hostile 1.1.0: exfiltrates tokens")
+    );
     assert!(store.package_quarantine("hostile", "two\nlines").is_err());
     let blocked = store.package_lock().unwrap();
     assert!(!blocked.packages["hostile"].enabled);
-    assert!(root.join("hostile/main.ts").exists(), "quarantine keeps user data and sources");
+    assert!(
+        root.join("hostile/main.ts").exists(),
+        "quarantine keeps user data and sources"
+    );
     store.package_unblock("hostile").unwrap();
     store.package_enable("hostile").unwrap();
 
     store.revoke("hostile").unwrap();
     let lock = store.package_lock().unwrap();
-    assert!(!lock.packages["hostile"].enabled && lock.packages["hostile"].trust.capabilities.is_empty());
-    assert!(store.package_enable("hostile").unwrap_err().to_string().contains("capability_denied"));
+    assert!(
+        !lock.packages["hostile"].enabled && lock.packages["hostile"].trust.capabilities.is_empty()
+    );
+    assert!(
+        store
+            .package_enable("hostile")
+            .unwrap_err()
+            .to_string()
+            .contains("capability_denied")
+    );
     let uninstall = store.package_uninstall_plan("hostile").unwrap();
-    store.package_uninstall("hostile", &uninstall.confirmation).unwrap();
+    store
+        .package_uninstall("hostile", &uninstall.confirmation)
+        .unwrap();
 
     let leaked = ModInstallRequest {
         source: ModPackageSource::Repository {
@@ -1321,8 +1486,20 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
     };
     assert!(store.package_apply(leaked, "x").is_err());
     let events = store.security_events().unwrap();
-    let kinds = events.iter().map(|event| event["event"].as_str().unwrap()).collect::<Vec<_>>();
-    for kind in ["install", "enable", "update", "quarantine", "unblock", "revoke", "uninstall", "package_refused"] {
+    let kinds = events
+        .iter()
+        .map(|event| event["event"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for kind in [
+        "install",
+        "enable",
+        "update",
+        "quarantine",
+        "unblock",
+        "revoke",
+        "uninstall",
+        "package_refused",
+    ] {
         assert!(kinds.contains(&kind), "{kind} missing from {kinds:?}");
     }
     let text = serde_json::to_string(&events).unwrap();
@@ -1336,8 +1513,15 @@ fn private_npm_registries_use_npmrc_and_an_unreadable_lock_is_recoverable() {
     let root = temp.path().canonicalize().unwrap();
     let store = store(&temp);
     let (origin, routes) = registry();
-    publish(&origin, &routes, &[("1.0.0", npm_archive("1.0.0", &["commands"]))]);
-    routes.lock().unwrap().insert("!token".into(), b"s3cret".to_vec());
+    publish(
+        &origin,
+        &routes,
+        &[("1.0.0", npm_archive("1.0.0", &["commands"]))],
+    );
+    routes
+        .lock()
+        .unwrap()
+        .insert("!token".into(), b"s3cret".to_vec());
     let npmrc = root.join("npmrc");
     std::fs::write(
         &npmrc,
@@ -1363,19 +1547,50 @@ fn private_npm_registries_use_npmrc_and_an_unreadable_lock_is_recoverable() {
         )
     };
     let (code, output) = omd(&["install", "npm:@fixture/omd-npm@1.0.0", "--yes"], "wrong");
-    assert!(code == 1 && output.contains("npm_fetch_failed") && output.contains("401"), "{output}");
-    let (code, output) = omd(&["install", "npm:@fixture/omd-npm@1.0.0", "--yes"], "s3cret");
+    assert!(
+        code == 1 && output.contains("npm_fetch_failed") && output.contains("401"),
+        "{output}"
+    );
+    let (code, output) = omd(
+        &["install", "npm:@fixture/omd-npm@1.0.0", "--yes"],
+        "s3cret",
+    );
     assert_eq!(code, 0, "{output}");
     let lock = store.package_lock().unwrap();
-    assert!(matches!(&lock.packages["npm_mod"].source, ModPackageSource::Npm { registry, .. } if registry == &origin));
-    assert!(!serde_json::to_string(&store.security_events().unwrap()).unwrap().contains("s3cret"));
+    assert!(
+        matches!(&lock.packages["npm_mod"].source, ModPackageSource::Npm { registry, .. } if registry == &origin)
+    );
+    assert!(
+        !serde_json::to_string(&store.security_events().unwrap())
+            .unwrap()
+            .contains("s3cret")
+    );
 
-    std::fs::write(root.join("store/packages.lock.json"), br#"{"schema":1,"revision":1,"packages":{"npm_mod":{}}}"#).unwrap();
+    std::fs::write(
+        root.join("store/packages.lock.json"),
+        br#"{"schema":1,"revision":1,"packages":{"npm_mod":{}}}"#,
+    )
+    .unwrap();
     let (code, output) = omd(&["mods", "list"], "");
-    assert!(code == 1 && output.contains("package_lock_unreadable") && output.contains("omd mods reset-lock"), "{output}");
-    assert_eq!(omd(&["mods", "revoke", "npm_mod"], "").0, 0, "revoke works without a readable lock");
+    assert!(
+        code == 1
+            && output.contains("package_lock_unreadable")
+            && output.contains("omd mods reset-lock"),
+        "{output}"
+    );
+    assert_eq!(
+        omd(&["mods", "revoke", "npm_mod"], "").0,
+        0,
+        "revoke works without a readable lock"
+    );
     let (code, output) = omd(&["mods", "reset-lock"], "");
-    assert!(code == 0 && output.contains("packages.lock.json.corrupt"), "{output}");
+    assert!(
+        code == 0 && output.contains("packages.lock.json.corrupt"),
+        "{output}"
+    );
     let (code, output) = omd(&["mods", "list"], "");
-    assert!(code == 0 && output.contains("npm_mod 1.0.0 user off (selection)"), "{output}");
+    assert!(
+        code == 0 && output.contains("npm_mod 1.0.0 user off (selection)"),
+        "{output}"
+    );
 }

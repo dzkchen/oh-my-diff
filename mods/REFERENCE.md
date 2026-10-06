@@ -133,7 +133,11 @@ without an unrestricted child process.
   dropped across origins. `credential` names a granted profile whose token the
   host attaches as `Authorization: Bearer` only for the profile's enrolled
   origin; a first request to another origin fails with
-  `credential_origin_mismatch` and the mod never sees the token.
+  `credential_origin_mismatch` and the mod never sees the token. The entry
+  `owned` in `credentials` grants every secret the mod enrolled itself
+  (`credentials.request {kind: 'secret'}`), whose IDs aren't known when the
+  manifest is written; another mod's secret fails with
+  `credential_secret_not_owned`.
   `set-cookie` and authorization response headers read `[redacted]`.
   `http.open` returns the status and headers with a `handle`; `http.read
   {handle, max_bytes?, wait_ms?}` returns up to 64 KiB (`data` or
@@ -2222,7 +2226,9 @@ with `network: "none"`. Reads have a 10 s timeout and reject truncated output;
 the mod bounds status to 1,000 entries and 64 KiB, log to 50 commits, and each
 diff to 64 KiB. The mod disables pagers and the filesystem monitor for its
 commands, and external diffs and text conversion for diff reads. The host has no
-`git.*` operations or Git-specific capability.
+`git.*` operations or Git-specific capability. Its read-only GitHub pull request
+and CI status uses only `http.request` to `https://api.github.com` with an
+`owned` secret, timers and its own channel.
 
 Stage and unstage require an exact single-file scope and reject conflicts and
 renames. Stage additionally requires a regular file or tracked deletion.

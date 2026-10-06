@@ -64,9 +64,12 @@ struct IndexArguments {
 pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
     let arguments: IndexArguments = serde_json::from_value(arguments)
         .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
-    let path = arguments.index.or_else(|| store.package_index()).ok_or_else(|| {
-        failure("package_index_unavailable: install from npm:, git+ or a folder instead")
-    })?;
+    let path = arguments
+        .index
+        .or_else(|| store.package_index())
+        .ok_or_else(|| {
+            failure("package_index_unavailable: install from npm:, git+ or a folder instead")
+        })?;
     store.package_index_entries(&path, &arguments.query)
 }
 
@@ -226,7 +229,11 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             let source = match (&arguments.source, &arguments.reference) {
                 (Some(source), None) => source.clone(),
                 (None, Some(reference)) => ModPackageSource::parse(reference, index.clone())?,
-                _ => return Err(failure("package_source_required: give a source or a reference")),
+                _ => {
+                    return Err(failure(
+                        "package_source_required: give a source or a reference",
+                    ));
+                }
             };
             let source = match arguments.version.as_deref() {
                 Some(version) if !version.is_empty() => source.with_version(version)?,

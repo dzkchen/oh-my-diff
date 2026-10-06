@@ -528,9 +528,11 @@ impl Broker {
                 serde_json::to_value(self.profiles(&arguments)?.profile(id()?)?)?
             }
             "credentials.secret" => {
-                let secret = self
-                    .profiles(&arguments)?
-                    .secret(id()?, text(&arguments, "origin")?)?;
+                let secret = self.profiles(&arguments)?.secret(
+                    id()?,
+                    text(&arguments, "origin")?,
+                    arguments["owner"].as_str(),
+                )?;
                 json!({"token": secret.token, "account_id": secret.account_id})
             }
             "credentials.owned_secret" => self

@@ -76,9 +76,7 @@ impl ModHostCall {
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),
             "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-            | "packages.reload" => {
-                Ok("packages")
-            }
+            | "packages.reload" => Ok("packages"),
             "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),

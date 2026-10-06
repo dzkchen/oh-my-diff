@@ -406,7 +406,10 @@ impl ModStore {
     }
 
     fn security_event_bytes(&self) -> Result<Vec<u8>> {
-        match read(&self.root.join(SECURITY_EVENTS), SECURITY_EVENT_LIMIT as u64) {
+        match read(
+            &self.root.join(SECURITY_EVENTS),
+            SECURITY_EVENT_LIMIT as u64,
+        ) {
             Ok(bytes) => Ok(bytes),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(error) => Err(error),

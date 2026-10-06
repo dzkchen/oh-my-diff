@@ -4301,7 +4301,10 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     );
     let events = store.security_events().unwrap();
     assert_eq!(
-        events.iter().map(|event| event["event"].clone()).collect::<Vec<_>>(),
+        events
+            .iter()
+            .map(|event| event["event"].clone())
+            .collect::<Vec<_>>(),
         [json!("trust"), json!("revoke")]
     );
 }

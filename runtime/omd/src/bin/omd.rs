@@ -171,14 +171,20 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                         package["id"].as_str().unwrap_or("?"),
                         package["version"].as_str().unwrap_or("-"),
                         package["scope"].as_str().unwrap_or("-"),
-                        if package["enabled"] == true { "on" } else { "off" },
+                        if package["enabled"] == true {
+                            "on"
+                        } else {
+                            "off"
+                        },
                         package["source"]
                             .as_str()
                             .map_or(String::new(), |source| format!(" ({source})"))
                     )
                 })
                 .collect::<Vec<_>>();
-            Ok(json!({"display": if rows.is_empty() { "No mods installed.".to_owned() } else { rows.join("\n") }, "packages": listed["packages"]}))
+            Ok(
+                json!({"display": if rows.is_empty() { "No mods installed.".to_owned() } else { rows.join("\n") }, "packages": listed["packages"]}),
+            )
         }
         "catalog" => {
             let found = package_controls::index(&store, json!({"query": positional.join(" ")}))?;
@@ -194,7 +200,9 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                         package["description"].as_str().unwrap_or(""),
                         package["installed"]
                             .as_str()
-                            .map_or(String::new(), |installed| format!(" [installed {installed}]"))
+                            .map_or(String::new(), |installed| format!(
+                                " [installed {installed}]"
+                            ))
                     )
                 })
                 .collect::<Vec<_>>();
@@ -222,7 +230,9 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
         "unblock" => {
             let id = first()?;
             store.package_unblock(&id)?;
-            done(format!("Unblocked {id}. It stays off until `omd mods enable {id}`."))
+            done(format!(
+                "Unblocked {id}. It stays off until `omd mods enable {id}`."
+            ))
         }
         "revoke" => {
             let id = first()?;
@@ -290,7 +300,15 @@ fn describe(preview: &Value) -> String {
         Value::Null => "-".to_owned(),
         Value::String(value) => value.clone(),
         Value::Array(values) if values.is_empty() => "none".to_owned(),
-        Value::Array(values) => values.iter().map(|value| value.as_str().map_or_else(|| value.to_string(), str::to_owned)).collect::<Vec<_>>().join(", "),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
         value => value.to_string(),
     };
     let changes = &preview["changes"];
@@ -304,32 +322,69 @@ fn describe(preview: &Value) -> String {
         lines.push(format!(
             "- {} {}{}",
             text(&package["id"]),
-            if from.is_null() { String::new() } else { format!("{} -> ", text(from)) },
+            if from.is_null() {
+                String::new()
+            } else {
+                format!("{} -> ", text(from))
+            },
             text(&package["version"]["to"])
         ));
         lines.push(format!("  source: {}", package["source"]["to"]));
-        lines.push(format!("  integrity: {}", text(&package["integrity"]["to"])));
+        lines.push(format!(
+            "  integrity: {}",
+            text(&package["integrity"]["to"])
+        ));
         lines.push(format!("  license: {}", text(&package["license"]["to"])));
-        lines.push(format!("  capabilities: {}", text(&package["capabilities"]["to"])));
-        for exposure in package["authority"]["to"]["exposure"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "  capabilities: {}",
+            text(&package["capabilities"]["to"])
+        ));
+        for exposure in package["authority"]["to"]["exposure"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
             lines.push(format!("  authority: {}", text(exposure)));
         }
-        for (label, key) in [("dependencies", "dependencies"), ("install scripts", "lifecycle"), ("secret environment", "secret_environment")] {
-            if package[key]["to"].as_array().is_some_and(|values| !values.is_empty()) {
+        for (label, key) in [
+            ("dependencies", "dependencies"),
+            ("install scripts", "lifecycle"),
+            ("secret environment", "secret_environment"),
+        ] {
+            if package[key]["to"]
+                .as_array()
+                .is_some_and(|values| !values.is_empty())
+            {
                 lines.push(format!("  {label}: {}", text(&package[key]["to"])));
             }
         }
         if package["renewed_approval"] == true {
-            lines.push("  needs your approval: new or changed grant, authority or origin".to_owned());
+            lines.push(
+                "  needs your approval: new or changed grant, authority or origin".to_owned(),
+            );
         }
     }
     if let Some(removed) = changes["removed"].as_array() {
-        lines.push(format!("  removes {}; cache, state and local sources are kept", removed.iter().map(|item| text(&item["version"])).collect::<Vec<_>>().join(", ")));
+        lines.push(format!(
+            "  removes {}; cache, state and local sources are kept",
+            removed
+                .iter()
+                .map(|item| text(&item["version"]))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     if !changes["version"].is_null() {
-        lines.push(format!("  version: {} -> {}", text(&changes["version"]["from"]), text(&changes["version"]["to"])));
+        lines.push(format!(
+            "  version: {} -> {}",
+            text(&changes["version"]["from"]),
+            text(&changes["version"]["to"])
+        ));
     }
-    if preview["grants_added"].as_array().is_some_and(|grants| !grants.is_empty()) {
+    if preview["grants_added"]
+        .as_array()
+        .is_some_and(|grants| !grants.is_empty())
+    {
         lines.push(format!("  grants: {}", text(&preview["grants_added"])));
     }
     lines.join("\n")
@@ -337,7 +392,10 @@ fn describe(preview: &Value) -> String {
 
 fn confirm(summary: &str) -> io::Result<bool> {
     use std::io::{BufRead, Write};
-    let mut terminal = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+    let mut terminal = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")?;
     write!(terminal, "{summary}\nProceed? [y/N] ")?;
     terminal.flush()?;
     let mut answer = String::new();

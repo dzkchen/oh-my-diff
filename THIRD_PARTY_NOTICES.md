@@ -18,6 +18,8 @@ OMD first-party packages that port behavior from other projects credit them here
 | `omd_theme` powerline status line and prompt stash | [pi-powerline-footer](https://github.com/nicobailon/pi-powerline-footer) | Nico Bailon | 0.18.0 | MIT (declared in package metadata; no license text published) | Presets, segments, context warning thresholds, Nerd Font heuristics and the stash toggle reimplemented; no code copied |
 | `omd_layout` command palette | [@d3ara1n/pi-command-palette](https://github.com/d3ara1n/pi-extensions/tree/main/packages/pi-command-palette) | d3ara1n | 0.8.0 | MIT | Nested pages, root search across pages, built-in actions, editor-text restore, model and session pages and the Ctrl+Shift+P binding reimplemented over the OMD mod API; no code copied |
 | `omd_plan_panel` | [@juicesharp/rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) | juicesharp | 2.11.0 | MIT | Pinned panel, status glyphs, `done/total` heading, collapse key and completed-first overflow reimplemented over Codex's `update_plan`; no code copied |
+| `omd_git` GitHub pull request status | [cc-pr-tracker](https://github.com/sezaakgun/cc-pr-tracker/tree/514da1edb4877cdb812ae1a25f79aa81fb6aa6db) | Seza Akgün | 514da1e | MIT | Explicit PR watches, merge state, review decision, required-check buckets, quiet first load and unknown merge states reimplemented over the OMD mod API; no code copied |
+| `omd_git` GitHub CI status | [gh-ci-status](https://github.com/diegorv/claude-functions-hook/tree/11e1d052427e1bb9d38668d4779f343b0693c2b5/plugins/gh-ci-status) | Diego R. v. | 0.1.0 | None found (behavior reference only) | Adaptive polling and workflow-run rows independently reimplemented from public behavior; no code copied |
 
 ## pi-simplify
 
@@ -285,6 +287,32 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2026 juicesharp
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## cc-pr-tracker
+
+```text
+MIT License
+
+Copyright (c) 2026 Seza Akgün
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

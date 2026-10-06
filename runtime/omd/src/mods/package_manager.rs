@@ -52,13 +52,17 @@ impl NpmConfig {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".npmrc")));
         let text = path
-            .filter(|path| std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() <= 65_536))
+            .filter(|path| {
+                std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() <= 65_536)
+            })
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_default();
         let expand = |value: &str| {
             let mut expanded = value.trim().trim_matches('"').to_owned();
             while let Some(start) = expanded.find("${") {
-                let Some(length) = expanded[start..].find('}') else { break };
+                let Some(length) = expanded[start..].find('}') else {
+                    break;
+                };
                 let name = expanded[start + 2..start + length].to_owned();
                 let replacement = std::env::var(&name).unwrap_or_default();
                 expanded.replace_range(start..=start + length, &replacement);
@@ -67,16 +71,27 @@ impl NpmConfig {
         };
         let mut config = Self::default();
         for line in text.lines().map(str::trim) {
-            let Some((key, value)) = line.split_once('=').filter(|_| !line.starts_with(['#', ';'])) else {
+            let Some((key, value)) = line
+                .split_once('=')
+                .filter(|_| !line.starts_with(['#', ';']))
+            else {
                 continue;
             };
             let (key, value) = (key.trim(), expand(value));
             if key == "registry" {
                 config.registry = Some(value);
-            } else if let Some(scope) = key.strip_suffix(":registry").filter(|scope| scope.starts_with('@')) {
+            } else if let Some(scope) = key
+                .strip_suffix(":registry")
+                .filter(|scope| scope.starts_with('@'))
+            {
                 config.scopes.insert(scope.to_owned(), value);
-            } else if let Some(prefix) = key.strip_suffix(":_authToken").filter(|prefix| prefix.starts_with("//")) {
-                config.tokens.push((format!("{}/", prefix.trim_end_matches('/')), value));
+            } else if let Some(prefix) = key
+                .strip_suffix(":_authToken")
+                .filter(|prefix| prefix.starts_with("//"))
+            {
+                config
+                    .tokens
+                    .push((format!("{}/", prefix.trim_end_matches('/')), value));
             }
         }
         config
@@ -395,9 +410,8 @@ impl ModStore {
         for (id, releases) in read_index(index)?.packages {
             let mut releases = releases;
             releases.reverse();
-            releases.sort_by_key(|release| {
-                std::cmp::Reverse(SemanticVersion::parse(&release.version))
-            });
+            releases
+                .sort_by_key(|release| std::cmp::Reverse(SemanticVersion::parse(&release.version)));
             let Some(newest) = releases
                 .iter()
                 .find(|release| release.blocked.is_none())
@@ -613,7 +627,8 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        let event = json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
+        let event =
+            json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
         self.commit_package_transaction(lock, config, &lifecycle, &plan.action, event)
     }
 
@@ -660,7 +675,9 @@ impl ModStore {
     pub fn package_quarantine(&self, id: &str, reason: &str) -> Result<ModPackageLock> {
         let reason = reason.trim();
         if reason.is_empty() || reason.len() > 256 || reason.chars().any(char::is_control) {
-            return Err(failure("quarantine_reason_invalid: one line of 1 to 256 bytes"));
+            return Err(failure(
+                "quarantine_reason_invalid: one line of 1 to 256 bytes",
+            ));
         }
         self.package_disable_blocking(id, Some(reason))
     }
@@ -1373,7 +1390,10 @@ impl ModStore {
                     .filter(|release| release.blocked.is_none())
                     .max_by_key(|release| SemanticVersion::parse(&release.version))
                     .ok_or_else(|| {
-                        match candidates.filter_map(|release| release.blocked.as_deref()).next() {
+                        match candidates
+                            .filter_map(|release| release.blocked.as_deref())
+                            .next()
+                        {
                             Some(reason) => failure(format!("package_version_blocked: {reason}")),
                             None => failure("package_version_unavailable"),
                         }
@@ -1480,11 +1500,19 @@ impl ModStore {
             .ok_or_else(|| failure("npm_tarball_unavailable"))?;
         let expected = dist["integrity"]
             .as_str()
-            .and_then(|value| value.split_whitespace().find(|hash| hash.starts_with("sha512-")))
-            .ok_or_else(|| failure("npm_integrity_required: the registry lists no sha512 integrity"))?
+            .and_then(|value| {
+                value
+                    .split_whitespace()
+                    .find(|hash| hash.starts_with("sha512-"))
+            })
+            .ok_or_else(|| {
+                failure("npm_integrity_required: the registry lists no sha512 integrity")
+            })?
             .to_owned();
         if !pinned.is_empty() && pinned != expected {
-            return Err(failure("npm_integrity_changed: the registry now serves different content"));
+            return Err(failure(
+                "npm_integrity_changed: the registry now serves different content",
+            ));
         }
         let staging = self.root.join(format!(
             ".npm-{}.{}.tmp",
@@ -1505,7 +1533,11 @@ impl ModStore {
             if npm_integrity(&archive) != expected {
                 return Err(failure("npm_tarball_integrity_failure"));
             }
-            let archive_path = self.root.join(format!(".npm-{}.{}.tgz", &digest(expected.as_bytes())[..12], std::process::id()));
+            let archive_path = self.root.join(format!(
+                ".npm-{}.{}.tgz",
+                &digest(expected.as_bytes())[..12],
+                std::process::id()
+            ));
             std::fs::write(&archive_path, &archive)?;
             let files = npm_archive_files(&archive_path);
             let _ = std::fs::remove_file(&archive_path);
@@ -1527,13 +1559,15 @@ impl ModStore {
                     "npm_runtime_dependencies_unsupported: bundle dependencies into the mod entrypoint",
                 ));
             }
-            let mod_manifest = files
-                .get("mod.json")
-                .ok_or_else(|| failure("npm_mod_manifest_missing: publish mod.json in the package"))?;
+            let mod_manifest = files.get("mod.json").ok_or_else(|| {
+                failure("npm_mod_manifest_missing: publish mod.json in the package")
+            })?;
             let mod_package: ModPackage = serde_json::from_slice(mod_manifest)?;
             mod_package.validate()?;
             if mod_package.version != exact {
-                return Err(failure("npm_mod_version_mismatch: mod.json and package.json versions differ"));
+                return Err(failure(
+                    "npm_mod_version_mismatch: mod.json and package.json versions differ",
+                ));
             }
             for relative in std::iter::once("mod.json")
                 .chain(std::iter::once(mod_package.entrypoint.as_str()))
@@ -1637,8 +1671,8 @@ impl ModStore {
             .lifecycle
             .get(event)
             .ok_or_else(|| failure("lifecycle_script_missing"))?;
-        let source =
-            String::from_utf8(store::package_read(&package.path, script, 65_536)?).map_err(failure)?;
+        let source = String::from_utf8(store::package_read(&package.path, script, 65_536)?)
+            .map_err(failure)?;
         let node = self.configuration()?.node;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
@@ -1794,9 +1828,9 @@ fn release_matches(requirement: &str, version: &str) -> bool {
 fn version_selector(value: &str) -> bool {
     value.is_empty()
         || (value.len() <= 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+' | b'^')))
+            && value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+' | b'^')
+            }))
 }
 
 fn git_reference(value: &str) -> bool {
@@ -1832,7 +1866,9 @@ fn npm_name(value: &str) -> bool {
 
 fn npm_url(value: &str) -> bool {
     value.len() <= 2048
-        && !value.chars().any(|character| character.is_whitespace() || character.is_control())
+        && !value
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
         && (value.starts_with("https://")
             || ["http://127.0.0.1:", "http://localhost:", "http://[::1]:"]
                 .iter()
@@ -1893,14 +1929,27 @@ fn bounded_output(
 }
 
 fn npm_fetch(url: &str, limit: usize, accept: &str, token: Option<&str>) -> Result<Vec<u8>> {
-    if token.is_some_and(|token| token.chars().any(|character| character == '"' || character == '\\' || character.is_control())) {
+    if token.is_some_and(|token| {
+        token
+            .chars()
+            .any(|character| character == '"' || character == '\\' || character.is_control())
+    }) {
         return Err(failure("npm_token_invalid: check _authToken in .npmrc"));
     }
     let mut command = Command::new("/usr/bin/curl");
     command.env_clear().env("PATH", "/usr/bin:/bin").envs(
-        ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"]
-            .iter()
-            .filter_map(|name| Some((*name, std::env::var_os(name)?))),
+        [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ]
+        .iter()
+        .filter_map(|name| Some((*name, std::env::var_os(name)?))),
     );
     if token.is_some() {
         command.args(["--config", "-"]);
@@ -1945,8 +1994,13 @@ fn npm_archive_files(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
         "npm_archive_invalid",
     )?;
     let field = |bytes: &[u8]| {
-        String::from_utf8_lossy(&bytes[..bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len())])
-            .into_owned()
+        String::from_utf8_lossy(
+            &bytes[..bytes
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap_or(bytes.len())],
+        )
+        .into_owned()
     };
     let mut files = BTreeMap::new();
     let mut offset = 0;
@@ -1996,13 +2050,17 @@ fn npm_archive_files(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
             .split_once('/')
             .map(|(_, relative)| relative)
             .filter(|relative| {
-                relative.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+                relative
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..")
             })
             .ok_or_else(|| failure(format!("npm_archive_path_rejected: {name}")))?;
         if files.len() >= NPM_ARCHIVE_ENTRIES
             || files.insert(relative.to_owned(), data.to_vec()).is_some()
         {
-            return Err(failure("npm_archive_invalid: too many or duplicate entries"));
+            return Err(failure(
+                "npm_archive_invalid: too many or duplicate entries",
+            ));
         }
     }
     Ok(files)

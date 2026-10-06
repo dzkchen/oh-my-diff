@@ -1257,7 +1257,7 @@
       "source": "mods/first-party/omd_frecency"
     },
     "omd_git": {
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "source": "mods/first-party/omd_git"
     },
     "omd_graph_navigator": {

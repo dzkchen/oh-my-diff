@@ -288,11 +288,9 @@ fn run(args: &[String]) -> io::Result<Value> {
                 .package_unblock(id)
                 .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
         }
-        [command, root] if command == "security-events" => {
-            Ok(Value::Array(
-                ModStore::open(PathBuf::from(root).canonicalize()?)?.security_events()?,
-            ))
-        }
+        [command, root] if command == "security-events" => Ok(Value::Array(
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.security_events()?,
+        )),
         [command, root, packages] if command == "trust-all" => {
             let packages: Vec<Value> = serde_json::from_str(packages)?;
             let packages = packages
