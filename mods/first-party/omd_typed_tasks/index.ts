@@ -29,7 +29,7 @@ function shape(value: unknown, depth = 0): value is Shape {
   if (value.type !== 'array' && (value.items !== undefined || value.maxItems !== undefined)) return false;
   if (value.type !== 'string' && value.maxLength !== undefined) return false;
   if (value.properties !== undefined && (!object(value.properties) || Object.keys(value.properties).length > 32 || !Object.values(value.properties).every(item => shape(item, depth + 1)))) return false;
-  if (value.required !== undefined && (!Array.isArray(value.required) || value.required.length > 32 || !value.required.every(item => typeof item === 'string' && object(value.properties) && item in value.properties))) return false;
+  if (value.required !== undefined && (!Array.isArray(value.required) || value.required.length > 32 || !value.required.every(item => typeof item === 'string' && object(value.properties) && Object.hasOwn(value.properties, item)))) return false;
   if (value.items !== undefined && !shape(value.items, depth + 1)) return false;
   if (value.enum !== undefined && (!Array.isArray(value.enum) || value.enum.length > 32)) return false;
   if (value.additionalProperties !== undefined && typeof value.additionalProperties !== 'boolean') return false;
@@ -48,9 +48,9 @@ function matches(value: Json, schema: Shape, depth = 0): boolean {
   if (schema.type === 'array') return Array.isArray(value) && value.length <= (schema.maxItems ?? 128) && (!schema.items || value.every(item => matches(item, schema.items!, depth + 1)));
   if (!object(value)) return false;
   const properties = schema.properties ?? {};
-  if (schema.required?.some(key => !(key in value))) return false;
+  if (schema.required?.some(key => !Object.hasOwn(value, key))) return false;
   return Object.entries(value).every(([key, item]) => {
-    const property = properties[key];
+    const property = Object.hasOwn(properties, key) ? properties[key] : undefined;
     return property ? matches(item as Json, property, depth + 1) : schema.additionalProperties === true;
   });
 }
@@ -59,7 +59,7 @@ function parseResult(value: AgentResult, schema: Shape): Result {
   if (value.status !== 'completed') throw new Error(value.status === 'failed' ? `worker_failed: ${value.error}` : 'worker_still_running');
   let parsed: unknown;
   try { parsed = JSON.parse(value.text); } catch { throw new Error('malformed_worker_json'); }
-  if (!object(parsed) || Object.keys(parsed).some(key => key !== 'result' && key !== 'sources') || !('result' in parsed) || !matches(parsed.result as Json, schema)) throw new Error('worker_result_schema_mismatch');
+  if (!object(parsed) || Object.keys(parsed).some(key => key !== 'result' && key !== 'sources') || !Object.hasOwn(parsed, 'result') || !matches(parsed.result as Json, schema)) throw new Error('worker_result_schema_mismatch');
   if (!Array.isArray(parsed.sources) || parsed.sources.length < 1 || parsed.sources.length > 16 || !parsed.sources.every(source => object(source) && Object.keys(source).every(key => key === 'ref' || key === 'why') && bounded(source.ref, 512) && bounded(source.why, 256))) throw new Error('worker_sources_invalid');
   return parsed as Result;
 }

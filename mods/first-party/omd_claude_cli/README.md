@@ -15,6 +15,7 @@ What crosses the route:
 
 - Codex tools are presented to the CLI through an inert MCP inventory; only the OMD host executes them. Each model call admits exactly one upstream request, with no session persistence and no Agent SDK.
 - Codex tool search is offered too, so a Claude lead can load and call the deferred tools that OMD+ mods register.
+- Valid tool names such as `constructor` and `__proto__` retain their identity in request and response translation.
 - Images in prompts and tool output are forwarded. Thinking streams as reasoning summaries. Effort maps up to the CLI's highest level (`max`). The CLI drops replayed thinking from its history input, so earlier reasoning is not sent back.
 - The subscription's 5-hour and 7-day windows appear as `/status` limits. A rejected request names the limit and its reset time; a prompt over the window reports `context_length_exceeded`.
 - Each request starts a fresh CLI process. Offline measurement put the spawn and history replay at 0.2–0.4 s per request; live requests still hit the prompt cache. A warm session was not adopted because it would save little and weaken per-request admission.

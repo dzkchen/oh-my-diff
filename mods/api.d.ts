@@ -233,7 +233,7 @@ export type CompactionResult = { summary: string | null; history: HistoryItem[];
 /** One draft edit; `insert` goes at the cursor, `splice` replaces byte range `start..end`. */
 export type ComposerEdit = { kind: 'fill' | 'insert' | 'append'; text: string } | { kind: 'splice'; text: string; start: number; end: number };
 export type ComposerDraft = { text: string; cursor: number; selection: { start: number; end: number } | null; revision: number;
-  /** `label` is the placeholder in `text`; `resource` is an image resource bound to the reading mod, or null for unsupported media. */
+  /** `label` is the text placeholder; image resources keep mod/source/repository binding across config changes and forks; unsupported media is null. */
   attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null }[];
   suggestion: { owner: string; id: string } | null };
 export type ClassicHook = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'PermissionRequest' | 'PermissionDenied'

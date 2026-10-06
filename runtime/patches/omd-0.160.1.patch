@@ -35655,7 +35655,7 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..527487648
+index 000000000..c707a3e83
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,652 @@
@@ -35719,7 +35719,7 @@ index 000000000..527487648
 +    "events.cancel",
 +];
 +
-+type Timers = BTreeMap<(String, String), (String, tokio::task::JoinHandle<()>)>;
++type Timers = BTreeMap<(String, String, String), (String, tokio::task::JoinHandle<()>)>;
 +
 +#[derive(Default)]
 +pub(super) struct State {
@@ -36098,9 +36098,9 @@ index 000000000..527487648
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
 +        "workspace.watch" => delivery::watch(core, lead, caller, request.arguments),
 +        "workspace.unwatch" => delivery::unwatch(core, caller.id, &request.arguments),
-+        "events.publish" => delivery::publish(core, caller.id, request.arguments),
++        "events.publish" => delivery::publish(core, lead, caller.id, request.arguments),
 +        "events.schedule" => delivery::schedule(core, lead, caller, request.arguments),
-+        "events.cancel" => delivery::cancel(core, caller.id, &request.arguments),
++        "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
 +        "turns.activity" => activity::read(core, lead, request.arguments).await,
 +        "routes.select" => select_route(lead, caller.id, request.arguments),
 +        "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
@@ -37009,10 +37009,10 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..d9d188134
+index 000000000..853760fc4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,534 @@
+@@ -0,0 +1,549 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -37211,7 +37211,7 @@ index 000000000..d9d188134
 +                session,
 +                bytes,
 +            } => {
-+                let Some(lead) = core.expansion.lead(thread) else {
++                let Some(lead) = core.expansion.thread(thread) else {
 +                    continue;
 +                };
 +                let payload = match bytes {
@@ -37229,7 +37229,7 @@ index 000000000..d9d188134
 +                paths,
 +                include_ignored,
 +            } => {
-+                let Some(lead) = core.expansion.lead(thread) else {
++                let Some(lead) = core.expansion.thread(thread) else {
 +                    continue;
 +                };
 +                let changes =
@@ -37245,16 +37245,13 @@ index 000000000..d9d188134
 +                core.event(event, payload, current.as_ref()).await;
 +            }
 +            Pending::Timer { thread, owner, key } => {
-+                let Some(lead) = core.expansion.lead(thread) else {
++                let Some(lead) = core.expansion.thread(thread) else {
 +                    continue;
 +                };
 +                invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
 +            }
 +        }
 +    }
-+    let Some(lead) = current else {
-+        return budget == 0;
-+    };
 +    let ids = sync_bus(core);
 +    for id in ids {
 +        if budget == 0 {
@@ -37266,6 +37263,12 @@ index 000000000..d9d188134
 +            .unwrap_or_default();
 +        for event in events {
 +            budget -= 1;
++            let Some(lead) = ThreadId::from_string(&event.thread)
++                .ok()
++                .and_then(|thread| core.expansion.thread(thread))
++            else {
++                continue;
++            };
 +            let payload = json!({"publisher": event.publisher, "channel": event.channel,
 +                "data": event.data, "correlation": event.correlation,
 +                "sequence": event.sequence, "dropped": event.dropped});
@@ -37310,6 +37313,7 @@ index 000000000..d9d188134
 +
 +pub(in crate::mods) fn publish(
 +    core: &Core,
++    lead: &Lead,
 +    caller: &str,
 +    arguments: Value,
 +) -> Result<Value, String> {
@@ -37326,7 +37330,13 @@ index 000000000..d9d188134
 +    let delivery = codex_omd::event_bus::global()
 +        .lock()
 +        .map_err(|_| "event_bus_poisoned")?
-+        .publish(caller, &input.channel, input.data, input.correlation)
++        .publish(
++            caller,
++            &input.channel,
++            input.data,
++            input.correlation,
++            &lead.thread.to_string(),
++        )
 +        .map_err(|error| error.to_string())?;
 +    core.expansion.wake.notify_one();
 +    Ok(json!({"delivered": delivery.delivered, "dropped": delivery.dropped}))
@@ -37468,11 +37478,15 @@ index 000000000..d9d188134
 +        .lock()
 +        .map_err(|_| "timer_state_poisoned")?;
 +    timers.retain(|_, (_, task)| !task.is_finished());
-+    let slot = (caller.id.to_owned(), input.key.clone());
++    let slot = (
++        lead.thread.to_string(),
++        caller.id.to_owned(),
++        input.key.clone(),
++    );
 +    if !timers.contains_key(&slot)
 +        && timers
 +            .keys()
-+            .filter(|(owner, _)| owner == caller.id)
++            .filter(|(_, owner, _)| owner == caller.id)
 +            .count()
 +            >= lead.host.config.mod_limits.bounded().timers_per_mod
 +    {
@@ -37493,6 +37507,7 @@ index 000000000..d9d188134
 +
 +pub(in crate::mods) fn cancel(
 +    core: &Core,
++    lead: &Lead,
 +    caller: &str,
 +    arguments: &Value,
 +) -> Result<Value, String> {
@@ -37502,7 +37517,7 @@ index 000000000..d9d188134
 +        .timers
 +        .lock()
 +        .map_err(|_| "timer_state_poisoned")?
-+        .remove(&(caller.to_owned(), key.to_owned()));
++        .remove(&(lead.thread.to_string(), caller.to_owned(), key.to_owned()));
 +    if let Some((_, task)) = &removed {
 +        task.abort();
 +    }
@@ -37511,7 +37526,7 @@ index 000000000..d9d188134
 +
 +pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
 +    if let Ok(mut timers) = core.expansion.timers.lock() {
-+        timers.retain(|(owner, _), (source, task)| {
++        timers.retain(|(_, owner, _), (source, task)| {
 +            let keep = sources.get(owner) == Some(source);
 +            if !keep {
 +                task.abort();
@@ -38066,10 +38081,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..28c4f0465
+index 000000000..dbe0bd202
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2830 @@
+@@ -0,0 +1,3106 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -38181,6 +38196,7 @@ index 000000000..28c4f0465
 +        depth: 0,
 +        permission_profile: Arc::new(Mutex::new(PermissionProfile::default())),
 +    };
++    core.expansion.thread_started(&lead);
 +    core.expansion.refresh(&core.runtime.lock().unwrap());
 +    Some(Fixture {
 +        _dir: dir,
@@ -38577,7 +38593,13 @@ index 000000000..28c4f0465
 +    );
 +    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
 +    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
-+    delivery::publish(&fixture.core, "probe", json!({"channel": "go", "data": 1})).unwrap();
++    delivery::publish(
++        &fixture.core,
++        &fixture.lead,
++        "probe",
++        json!({"channel": "go", "data": 1}),
++    )
++    .unwrap();
 +    delivery::deliver(&fixture.core).await;
 +    let calls = invoker.0.lock().unwrap().clone();
 +    assert_eq!(
@@ -38636,11 +38658,24 @@ index 000000000..28c4f0465
 +    let core = &fixture.core;
 +    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
 +    for data in [json!(1), json!({"n": 2})] {
-+        let delivered =
-+            delivery::publish(core, "herald", json!({"channel": "ping", "data": data})).unwrap();
++        let delivered = delivery::publish(
++            core,
++            &fixture.lead,
++            "herald",
++            json!({"channel": "ping", "data": data}),
++        )
++        .unwrap();
 +        assert_eq!(delivered["delivered"], 1);
 +    }
-+    assert!(delivery::publish(core, "herald", json!({"channel": "Bad Name", "data": 1})).is_err());
++    assert!(
++        delivery::publish(
++            core,
++            &fixture.lead,
++            "herald",
++            json!({"channel": "Bad Name", "data": 1})
++        )
++        .is_err()
++    );
 +    let revision = || {
 +        codex_omd::ModViewSnapshot::read(&core.host.root.join("mod-view.json"))
 +            .map(|snapshot| snapshot.revision)
@@ -38680,18 +38715,274 @@ index 000000000..28c4f0465
 +        }
 +        false
 +    };
-+    delivery::publish(core, "crier", json!({"channel": "news", "data": "a"})).unwrap();
++    delivery::publish(
++        core,
++        &fixture.lead,
++        "crier",
++        json!({"channel": "news", "data": "a"}),
++    )
++    .unwrap();
 +    assert!(seen(json!(["a"])).await);
 +    codex_omd::event_bus::global()
 +        .lock()
 +        .unwrap()
-+        .publish("crier", "news", json!("b"), None)
++        .publish(
++            "crier",
++            "news",
++            json!("b"),
++            None,
++            &fixture.lead.thread.to_string(),
++        )
 +        .unwrap();
 +    codex_omd::client_surface::wake();
 +    assert!(seen(json!(["a", "b"])).await);
-+    let ignored =
-+        delivery::publish(core, "crier", json!({"channel": "other", "data": "c"})).unwrap();
++    let ignored = delivery::publish(
++        core,
++        &fixture.lead,
++        "crier",
++        json!({"channel": "other", "data": "c"}),
++    )
++    .unwrap();
 +    assert_eq!(ignored["delivered"], 0);
++}
++
++fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
++    let thread = ThreadId::new();
++    let session = first.host.open_session(thread, false).unwrap();
++    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
++        first.host.root.clone(),
++        first.host.repository.clone(),
++        None,
++        None,
++        thread.to_string(),
++    ));
++    let second = Lead {
++        host: first.host.clone(),
++        session,
++        thread,
++        owner: "lead".into(),
++        depth: 0,
++        permission_profile: Arc::new(Mutex::new(PermissionProfile::default())),
++    };
++    for lead in [first, &second] {
++        *lead.session.contract.lock().unwrap() =
++            crate::contract::SessionContract::resolve(&lead.host, &[]);
++        core.expansion.thread_started(lead);
++        core.expansion
++            .leads
++            .lock()
++            .unwrap()
++            .insert(lead.thread, LeadHandle::new(lead));
++    }
++    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&second));
++    core.expansion.core.set(Arc::downgrade(core)).unwrap();
++    second
++}
++
++async fn background_call(core: &Core, lead: &Lead, operation: &str, arguments: Value) -> Value {
++    let runtime = core.runtime.lock().unwrap();
++    let caller = Caller {
++        id: "observer",
++        source: "source",
++        grants: runtime.grants("observer"),
++        generation: runtime.generation(),
++        origin: Origin::Event,
++        record_changes: false,
++    };
++    drop(runtime);
++    dispatch(
++        core,
++        lead,
++        &caller,
++        ModHostCall {
++            operation: operation.into(),
++            arguments,
++        },
++        &Arc::new(AtomicBool::new(false)),
++    )
++    .await
++    .unwrap()
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn background_channels_use_the_publishing_thread_and_refuse_dead_origins() {
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["events", "store", "commands", "agents", "autonomous"],
++        manifest: json!({"state_scope": "thread", "subscriptions": {"channels": ["observer/news"]},
++            "autonomy": {"max_queued": 2, "max_turns": 1, "max_continuations": 1}}),
++        source: "export default function(api) { api.on('channel', e => { const seen = [e.data, api.host.call('task.status', {}).ledger.thread_id]; if (e.data === 'worker') seen.push(api.host.tryCall('turns.queued', {})); api.state.set(seen); }); api.command('seen', () => api.state.get()); }",
++    }]) else {
++        return;
++    };
++    let second = background_threads(&fixture.core, &fixture.lead);
++    for (lead, data) in [(&fixture.lead, "first"), (&second, "second")] {
++        background_call(
++            &fixture.core,
++            lead,
++            "events.publish",
++            json!({"channel": "news", "data": data}),
++        )
++        .await;
++    }
++    delivery::deliver(&fixture.core).await;
++    for (lead, data) in [(&fixture.lead, "first"), (&second, "second")] {
++        let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
++        assert_eq!(
++            command(&fixture.core, "observer", "seen"),
++            json!([data, lead.thread.to_string()])
++        );
++    }
++    let worker = Lead {
++        owner: "mod-observer-worker".into(),
++        depth: 1,
++        ..second
++    };
++    fixture.core.expansion.thread_started(&worker);
++    fixture
++        .core
++        .expansion
++        .leads
++        .lock()
++        .unwrap()
++        .remove(&worker.thread);
++    let recovered = fixture.core.expansion.thread(worker.thread).unwrap();
++    assert_eq!(
++        (recovered.owner.as_str(), recovered.depth),
++        ("mod-observer-worker", 1)
++    );
++    assert!(Arc::ptr_eq(
++        &recovered.permission_profile,
++        &worker.permission_profile
++    ));
++    background_call(
++        &fixture.core,
++        &worker,
++        "events.publish",
++        json!({"channel": "news", "data": "worker"}),
++    )
++    .await;
++    delivery::deliver(&fixture.core).await;
++    let worker_seen = {
++        let _thread = codex_omd::StateThread::enter(Some(worker.thread.to_string()));
++        command(&fixture.core, "observer", "seen")
++    };
++    assert_eq!(worker_seen[0], "worker");
++    assert_eq!(worker_seen[2]["ok"], false);
++    assert!(
++        worker_seen[2]["error"]
++            .as_str()
++            .unwrap()
++            .contains("turn_queue_lead_only")
++    );
++    fixture
++        .core
++        .expansion
++        .threads
++        .lock()
++        .unwrap()
++        .remove(&fixture.lead.thread);
++    fixture
++        .core
++        .expansion
++        .leads
++        .lock()
++        .unwrap()
++        .remove(&fixture.lead.thread);
++    background_call(
++        &fixture.core,
++        &fixture.lead,
++        "events.publish",
++        json!({"channel": "news", "data": "dead"}),
++    )
++    .await;
++    delivery::deliver(&fixture.core).await;
++    let _thread = codex_omd::StateThread::enter(Some(worker.thread.to_string()));
++    assert_eq!(command(&fixture.core, "observer", "seen"), worker_seen);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn background_timers_replace_and_cancel_only_in_the_calling_thread() {
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["events", "store", "commands"],
++        manifest: json!({"state_scope": "thread"}),
++        source: "export default function(api) { api.on('timer', e => api.state.set([...(api.state.get() ?? []), e.key])); api.command('seen', () => api.state.get()); }",
++    }]) else {
++        return;
++    };
++    let second = background_threads(&fixture.core, &fixture.lead);
++    for lead in [&fixture.lead, &second, &fixture.lead] {
++        background_call(
++            &fixture.core,
++            lead,
++            "events.schedule",
++            json!({"key": "hop", "delay_ms": 1000}),
++        )
++        .await;
++    }
++    assert_eq!(fixture.core.expansion.timers.lock().unwrap().len(), 2);
++    let cancelled = background_call(
++        &fixture.core,
++        &fixture.lead,
++        "events.cancel",
++        json!({"key": "hop"}),
++    )
++    .await;
++    assert_eq!(cancelled["cancelled"], true);
++    assert_eq!(
++        background_call(
++            &fixture.core,
++            &fixture.lead,
++            "events.cancel",
++            json!({"key": "hop"})
++        )
++        .await["cancelled"],
++        false
++    );
++    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
++    delivery::deliver(&fixture.core).await;
++    for (lead, expected) in [(&fixture.lead, Value::Null), (&second, json!(["hop"]))] {
++        let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
++        assert_eq!(command(&fixture.core, "observer", "seen"), expected);
++    }
++    let limit = fixture.lead.host.config.mod_limits.bounded().timers_per_mod;
++    for index in 0..limit {
++        let lead = if index % 2 == 0 {
++            &fixture.lead
++        } else {
++            &second
++        };
++        background_call(
++            &fixture.core,
++            lead,
++            "events.schedule",
++            json!({"key": format!("quota-{index}"), "delay_ms": 1000}),
++        )
++        .await;
++    }
++    let runtime = fixture.core.runtime.lock().unwrap();
++    let caller = Caller {
++        id: "observer",
++        source: "source",
++        grants: runtime.grants("observer"),
++        generation: runtime.generation(),
++        origin: Origin::Event,
++        record_changes: false,
++    };
++    drop(runtime);
++    assert_eq!(
++        delivery::schedule(
++            &fixture.core,
++            &second,
++            &caller,
++            json!({"key": "overflow", "delay_ms": 1000})
++        )
++        .unwrap_err(),
++        "timer_limit"
++    );
++    delivery::retain_sources(&fixture.core, &BTreeMap::new());
++    assert!(fixture.core.expansion.timers.lock().unwrap().is_empty());
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -56508,10 +56799,10 @@ index 000000000..9bd432289
 +}
 diff --git a/codex-rs/omd/src/event_bus.rs b/codex-rs/omd/src/event_bus.rs
 new file mode 100644
-index 000000000..6dc2c07ae
+index 000000000..1523cdb7c
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus.rs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,173 @@
 +use crate::app_routes::subscribed;
 +use serde_json::Value;
 +use std::collections::{BTreeMap, VecDeque};
@@ -56525,6 +56816,7 @@ index 000000000..6dc2c07ae
 +#[derive(Clone, Debug, PartialEq)]
 +pub struct ChannelEvent {
 +    pub publisher: String,
++    pub thread: String,
 +    pub channel: String,
 +    pub data: Value,
 +    pub correlation: Option<String>,
@@ -56609,6 +56901,7 @@ index 000000000..6dc2c07ae
 +        name: &str,
 +        data: Value,
 +        correlation: Option<String>,
++        thread: &str,
 +    ) -> io::Result<Delivery> {
 +        if !valid_name(name) {
 +            return Err(io::Error::other(format!("channel_name_invalid: {name}")));
@@ -56625,6 +56918,7 @@ index 000000000..6dc2c07ae
 +        *sequence += 1;
 +        let event = ChannelEvent {
 +            publisher: publisher.to_owned(),
++            thread: thread.to_owned(),
 +            channel: channel.clone(),
 +            data,
 +            correlation,
@@ -56684,10 +56978,10 @@ index 000000000..6dc2c07ae
 +mod tests;
 diff --git a/codex-rs/omd/src/event_bus_tests.rs b/codex-rs/omd/src/event_bus_tests.rs
 new file mode 100644
-index 000000000..9be412f12
+index 000000000..2f7615cc4
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus_tests.rs
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,136 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -56698,7 +56992,7 @@ index 000000000..9be412f12
 +    bus.subscribe("notify", vec!["runner/finished".to_owned()]);
 +    bus.subscribe("idle", vec!["other/*".to_owned()]);
 +    assert_eq!(
-+        bus.publish("runner", "started", json!({"n": 1}), None)
++        bus.publish("runner", "started", json!({"n": 1}), None, "thread-a")
 +            .unwrap(),
 +        Delivery {
 +            delivered: 1,
@@ -56710,7 +57004,8 @@ index 000000000..9be412f12
 +            "runner",
 +            "finished",
 +            json!({"n": 2}),
-+            Some("job-7".to_owned())
++            Some("job-7".to_owned()),
++            "thread-b"
 +        )
 +        .unwrap()
 +        .delivered,
@@ -56725,6 +57020,8 @@ index 000000000..9be412f12
 +        [("runner/started", 1), ("runner/finished", 1)]
 +    );
 +    let notify = bus.drain("notify", usize::MAX);
++    assert_eq!(graph[0].thread, "thread-a");
++    assert_eq!(notify[0].thread, "thread-b");
 +    assert_eq!(
 +        (
 +            notify[0].publisher.as_str(),
@@ -56740,17 +57037,29 @@ index 000000000..9be412f12
 +fn names_and_sizes_are_bounded() {
 +    let mut bus = EventBus::default();
 +    for name in ["", "Upper", "a/b", &"x".repeat(65)] {
-+        assert!(bus.publish("m", name, json!(null), None).is_err(), "{name}");
++        assert!(
++            bus.publish("m", name, json!(null), None, "thread").is_err(),
++            "{name}"
++        );
 +    }
 +    assert!(
-+        bus.publish("m", "big", json!("x".repeat(CHANNEL_EVENT_BYTES)), None)
++        bus.publish(
++            "m",
++            "big",
++            json!("x".repeat(CHANNEL_EVENT_BYTES)),
++            None,
++            "thread"
++        )
++        .is_err()
++    );
++    assert!(
++        bus.publish("m", "ok", json!(null), Some("c".repeat(257)), "thread")
 +            .is_err()
 +    );
 +    assert!(
-+        bus.publish("m", "ok", json!(null), Some("c".repeat(257)))
-+            .is_err()
++        bus.publish("m", "ok.v1-x_2", json!(null), None, "thread")
++            .is_ok()
 +    );
-+    assert!(bus.publish("m", "ok.v1-x_2", json!(null), None).is_ok());
 +}
 +
 +#[test]
@@ -56759,7 +57068,10 @@ index 000000000..9be412f12
 +    bus.subscribe("slow", vec!["p/*".to_owned()]);
 +    let mut dropped = 0;
 +    for n in 0..5 {
-+        dropped += bus.publish("p", "tick", json!(n), None).unwrap().dropped;
++        dropped += bus
++            .publish("p", "tick", json!(n), None, "thread")
++            .unwrap()
++            .dropped;
 +    }
 +    assert_eq!((dropped, bus.pending("slow")), (3, 2));
 +    let events = bus.drain("slow", usize::MAX);
@@ -56771,8 +57083,8 @@ index 000000000..9be412f12
 +        ),
 +        (json!(3), 3, 5)
 +    );
-+    bus.publish("p", "tick", json!(5), None).unwrap();
-+    bus.publish("p", "tick", json!(6), None).unwrap();
++    bus.publish("p", "tick", json!(5), None, "thread").unwrap();
++    bus.publish("p", "tick", json!(6), None, "thread").unwrap();
 +    assert_eq!(bus.drain("slow", 1)[0].data, json!(5));
 +    assert_eq!(bus.pending("slow"), 1);
 +    assert_eq!(bus.drain("slow", usize::MAX)[0].dropped, 0);
@@ -56783,13 +57095,25 @@ index 000000000..9be412f12
 +    let mut bus = EventBus::default();
 +    bus.subscribe("m", vec!["a/*".to_owned()]);
 +    bus.subscribe("m", vec!["b/*".to_owned()]);
-+    assert_eq!(bus.publish("a", "x", json!(1), None).unwrap().delivered, 0);
-+    assert_eq!(bus.publish("b", "x", json!(1), None).unwrap().delivered, 1);
++    assert_eq!(
++        bus.publish("a", "x", json!(1), None, "thread")
++            .unwrap()
++            .delivered,
++        0
++    );
++    assert_eq!(
++        bus.publish("b", "x", json!(1), None, "thread")
++            .unwrap()
++            .delivered,
++        1
++    );
 +    bus.subscribe("m", Vec::new());
 +    assert_eq!(
 +        (
 +            bus.pending("m"),
-+            bus.publish("b", "x", json!(1), None).unwrap().delivered
++            bus.publish("b", "x", json!(1), None, "thread")
++                .unwrap()
++                .delivered
 +        ),
 +        (0, 0)
 +    );
@@ -89661,10 +89985,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..d080cbe27
+index 000000000..f0697c729
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1651 @@
+@@ -0,0 +1,1747 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -89863,7 +90187,9 @@ index 000000000..d080cbe27
 +        let count = seen.entry(sha256.clone()).or_default();
 +        *count += 1;
 +        attachment["id"] = json!(format!("img-{}-{count}", &sha256[..12]));
-+        let (host, _) = crate::mod_surface::resource_binding(caller, thread)?;
++        let (mut host, _) = crate::mod_surface::resource_binding(caller, thread)?;
++        host.binding.thread = "package".into();
++        host.binding.generation = 0;
 +        let resources = host.resources();
 +        use base64::Engine;
 +        let record = resources
@@ -91197,6 +91523,100 @@ index 000000000..d080cbe27
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    #[serial_test::serial]
++    fn captured_images_survive_configuration_changes_and_forks_with_fresh_consent() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        let package = root.join("package");
++        let repository = root.join("repo");
++        std::fs::create_dir(&package).unwrap();
++        std::fs::create_dir(&repository).unwrap();
++        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "capture_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["composer"]})).unwrap()).unwrap();
++        std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
++        let store = codex_omd::ModStore::create(
++            root.join("store"),
++            std::path::PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++        )
++        .unwrap();
++        let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++        store
++            .trust(
++                package.clone(),
++                inspected["sha256"].as_str().unwrap(),
++                vec!["composer".into()],
++                "user",
++            )
++            .unwrap();
++        store.enable(&package, true).unwrap();
++        let runtime = codex_omd::ModHost::open(root.join("store")).unwrap();
++        std::fs::write(
++            root.join("store/mod-status.json"),
++            serde_json::to_vec(&runtime.status()).unwrap(),
++        )
++        .unwrap();
++        let _environment = crate::omd::tests::omd_environment(&root.join("store"));
++        crate::mod_runtime::synchronize_context(crate::mod_runtime::ModContext {
++            repository,
++            thread_id: None,
++            policy: codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted(),
++        });
++        let image = root.join("image.png");
++        let bytes = b"\x89PNG\r\n\x1a\nrest";
++        std::fs::write(&image, bytes).unwrap();
++        let mut draft =
++            json!({"attachments": [{"path": image, "label": "image", "owner": "user"}]});
++        draft_resources("capture_fixture", Some("thread-a"), &mut draft).unwrap();
++        let reference = draft["attachments"][0]["resource"].clone();
++        assert!(draft["attachments"][0].get("path").is_none());
++        std::fs::remove_file(&image).unwrap();
++        store.enable(&package, true).unwrap();
++        for thread in ["thread-a", "thread-b"] {
++            let path = materialize("capture_fixture", Some(thread), &reference).unwrap();
++            assert_eq!(std::fs::read(path).unwrap(), bytes);
++        }
++        let attachments = vec![serde_json::from_value(reference.clone()).unwrap()];
++        let digest = codex_omd::consents::digest("image prompt", &attachments);
++        codex_omd::consents::grant(
++            &root.join("store"),
++            "thread-a",
++            "capture_fixture",
++            &digest,
++            "original",
++        )
++        .unwrap();
++        assert!(
++            codex_omd::consents::consume(
++                &root.join("store"),
++                "thread-b",
++                "capture_fixture",
++                "original",
++                &digest,
++                "client"
++            )
++            .is_err()
++        );
++        codex_omd::consents::grant(
++            &root.join("store"),
++            "thread-b",
++            "capture_fixture",
++            &digest,
++            "retry",
++        )
++        .unwrap();
++        codex_omd::consents::consume(
++            &root.join("store"),
++            "thread-b",
++            "capture_fixture",
++            "retry",
++            &digest,
++            "client",
++        )
++        .unwrap();
++        store.enable(&package, false).unwrap();
++        assert!(materialize("capture_fixture", Some("thread-b"), &reference).is_err());
++    }
 +
 +    #[tokio::test]
 +    #[serial_test::serial]
@@ -98212,10 +98632,10 @@ index 000000000..87d85669a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..ff02a4263
+index 000000000..dcd3c7cab
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,840 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -99004,6 +99424,11 @@ index 000000000..ff02a4263
 +                .map_err(std::io::Error::other)
 +        }
 +        "events.publish" => {
++            let thread = scope
++                .thread
++                .map(str::to_owned)
++                .or_else(current_thread)
++                .ok_or_else(|| other("channel_thread_unavailable"))?;
 +            let channel = call.arguments["channel"]
 +                .as_str()
 +                .ok_or_else(|| other("channel_name_invalid"))?;
@@ -99011,7 +99436,13 @@ index 000000000..ff02a4263
 +            let delivery = codex_omd::event_bus::global()
 +                .lock()
 +                .map_err(|_| other("event_bus_poisoned"))?
-+                .publish(caller, channel, call.arguments["data"].clone(), correlation)?;
++                .publish(
++                    caller,
++                    channel,
++                    call.arguments["data"].clone(),
++                    correlation,
++                    &thread,
++                )?;
 +            codex_omd::client_surface::wake();
 +            Ok(json!({"delivered": delivery.delivered, "dropped": delivery.dropped}))
 +        }
@@ -99047,10 +99478,10 @@ index 000000000..ff02a4263
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..dae83d130
+index 000000000..2a0e8bbc4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,751 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -99688,6 +100119,64 @@ index 000000000..dae83d130
 +        unavailable.unwrap_err().to_string(),
 +        "turn_activity_unavailable"
 +    );
++}
++
++#[test]
++#[serial_test::serial]
++fn channel_publication_keeps_the_captured_thread_after_ui_switches() {
++    let dir = tempfile::tempdir().unwrap();
++    let paths = paths(dir.path());
++    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
++    let previous = state().take();
++    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
++    attach(&AppEventSender::new(tx), Some("new-ui-thread".into()));
++    let scope = crate::mod_runtime::CallScope {
++        thread: Some("captured-thread"),
++        ..scope(InvocationContext::User)
++    };
++    codex_omd::event_bus::global()
++        .lock()
++        .unwrap()
++        .subscribe("scope_observer", vec!["scope_owner/news".into()]);
++    let call = || codex_omd::ModHostCall {
++        operation: "events.publish".into(),
++        arguments: json!({"channel": "news", "data": 1}),
++    };
++    host_call(
++        &paths,
++        &policy,
++        grants(&["events"]),
++        "scope_owner",
++        call(),
++        &scope,
++    )
++    .unwrap();
++    let events = codex_omd::event_bus::global()
++        .lock()
++        .unwrap()
++        .drain("scope_observer", 1);
++    assert_eq!(events[0].thread, "captured-thread");
++    state().take();
++    let unavailable = host_call(
++        &paths,
++        &policy,
++        grants(&["events"]),
++        "scope_owner",
++        call(),
++        &crate::mod_runtime::CallScope {
++            thread: None,
++            ..scope
++        },
++    );
++    assert_eq!(
++        unavailable.unwrap_err().to_string(),
++        "channel_thread_unavailable"
++    );
++    codex_omd::event_bus::global()
++        .lock()
++        .unwrap()
++        .unsubscribe("scope_observer");
++    *state() = previous;
 +}
 +
 +#[test]

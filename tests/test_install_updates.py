@@ -7,6 +7,7 @@ import tempfile
 import time
 import types
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +82,83 @@ class UpdateSelection(unittest.TestCase):
         ordered = ["0.1.0-alpha.1", "0.1.0-alpha.2", "0.1.0-alpha.10", "0.1.0-beta", "0.1.0", "0.1.1", "0.10.0"]
         self.assertEqual(sorted(reversed(ordered), key=self.module.version_key), ordered)
         self.assertIsNone(self.module.version_key("v1.0"))
+
+    def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
+        for interrupted in (False, True):
+            for failed_name in self.module.LINKS:
+                with self.subTest(interrupted=interrupted, failed_name=failed_name), tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                    root = Path(temporary)
+                    bin_dir = root / "bin"
+                    bin_dir.mkdir()
+                    originals = {}
+                    for index, name in enumerate(self.module.LINKS):
+                        path = bin_dir / name
+                        if index == 5:
+                            originals[name] = None
+                            continue
+                        body = f"#!/bin/sh\nprintf '%s' 'original {name}'\n"
+                        if index % 2:
+                            target = root / f"original-{name}"
+                            target.write_text(body)
+                            target.chmod(0o755)
+                            path.symlink_to(target)
+                        else:
+                            path.write_text(body)
+                            path.chmod(0o755)
+                        originals[name] = (path.is_symlink(), os.readlink(path) if path.is_symlink() else path.read_text())
+                    args = types.SimpleNamespace(bin_dir=bin_dir, session=None, releases_url=None)
+                    generation = root / "releases" / ("1" * 32)
+                    real_link = self.module.atomic_symlink
+
+                    def link(path, target):
+                        real_link(path, target)
+                        if path == bin_dir / failed_name:
+                            raise OSError("launcher creation failed")
+
+                    def installed(*arguments, **keywords):
+                        command = arguments[0]
+                        installed_generation = Path(command[command.index("--prefix") + 1])
+                        installed_generation.mkdir()
+                        (installed_generation / "install.json").write_text('{"version":"0.2.0"}')
+
+                    with patch.object(self.module, "extract", return_value=root), patch.object(self.module, "run", side_effect=installed), \
+                            patch.object(self.module, "status", return_value={}), patch.object(self.module, "atomic_symlink", side_effect=link):
+                        if interrupted:
+                            generation.mkdir(parents=True)
+                            self.module.journaled(root, generation, None)
+                            with self.assertRaisesRegex(OSError, "launcher creation failed"):
+                                self.module.set_links(root, bin_dir)
+                        else:
+                            with self.assertRaisesRegex(OSError, "launcher creation failed"):
+                                self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
+                                                        "platform", {"path": "/usr/bin/true"}, "/usr/bin/true")
+                    if interrupted:
+                        self.module.recover(args, root, None)
+                    for name, original in originals.items():
+                        path = bin_dir / name
+                        if original is None:
+                            self.assertFalse(path.exists() or path.is_symlink())
+                        else:
+                            self.assertEqual((path.is_symlink(), os.readlink(path) if path.is_symlink() else path.read_text()), original)
+                            self.assertEqual(subprocess.run([path], capture_output=True, text=True, check=True).stdout, f"original {name}")
+                        self.assertFalse((bin_dir / f"{name}.before-omd").is_symlink())
+                        self.assertFalse((bin_dir / f"{name}.before-omd").exists())
+                    self.assertFalse((root / "current").is_symlink())
+                    self.assertFalse((root / "update/journal.json").exists())
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+            root = Path(temporary)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "codex").write_text("original codex")
+            args = types.SimpleNamespace(bin_dir=bin_dir)
+            self.module.journaled(root, None, None)
+            self.module.set_links(root, bin_dir)
+            with patch.object(self.module, "restore_displaced", side_effect=OSError("restore failed")):
+                self.module.abandon(root, None, None, bin_dir)
+            self.assertTrue((root / "update/journal.json").exists(), "failed cleanup keeps recovery pending")
+            self.module.recover(args, root, None)
+            self.assertEqual((bin_dir / "codex").read_text(), "original codex")
+            self.assertFalse((root / "update/journal.json").exists())
 
     def test_channel_pin_compatibility_and_failures(self):
         self.published = [release("0.3.0-beta.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.161.0"),

@@ -40,6 +40,11 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
   assert.equal(response.at(-1).response.usage.omd_cache_ttl_seconds, 3600);
   assert.deepEqual(response.at(-1).response.usage.omd_reported_cost, { usd: 0.042, basis: 'client_list_estimate' });
+  const names = ['constructor', 'toString', '__proto__'];
+  const prototypeTools = translateRequest({ ...prompt, tools: names.map(name => ({ type: 'function', name })) }, model);
+  assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
+  const returned = responseEvents({ id: 'names', model, usage: { input_tokens: 1, output_tokens: 1 }, content: names.map((name, index) => ({ type: 'tool_use', id: `name-${index}`, name: `mcp__omd__${name}`, input: {} })) }, {}, model, prototypeTools.reverse);
+  assert.deepEqual(returned.filter(event => event.type === 'response.output_item.done').map(event => event.item.name), names);
 });
 
 test('Claude mod folds mid-conversation developer messages into user frames', () => {

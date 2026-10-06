@@ -285,7 +285,10 @@ fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,
 `omd-package` or `omd-mod-author` already in the launcher directory and not
 managed by the installer is moved to `NAME.before-omd` and restored on
-uninstall. Rolling back restores the previous generation's binaries, launchers
+uninstall. A failed first installation restores those commands and removes new
+launchers. Recovery restores commands if installation stopped before activation;
+after activation it completes the active installation's launchers.
+Rolling back restores the previous generation's binaries, launchers
 and first-party mod sources but keeps the rest of the mod store; Phase 11 makes no promise that an
 older generation reads newer store data.
 If you explicitly added the

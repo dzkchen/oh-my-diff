@@ -58,7 +58,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "events.cancel",
 ];
 
-type Timers = BTreeMap<(String, String), (String, tokio::task::JoinHandle<()>)>;
+type Timers = BTreeMap<(String, String, String), (String, tokio::task::JoinHandle<()>)>;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -437,9 +437,9 @@ pub(super) async fn dispatch(
         "app.routes" => Ok(codex_omd::app_routes::routes()),
         "workspace.watch" => delivery::watch(core, lead, caller, request.arguments),
         "workspace.unwatch" => delivery::unwatch(core, caller.id, &request.arguments),
-        "events.publish" => delivery::publish(core, caller.id, request.arguments),
+        "events.publish" => delivery::publish(core, lead, caller.id, request.arguments),
         "events.schedule" => delivery::schedule(core, lead, caller, request.arguments),
-        "events.cancel" => delivery::cancel(core, caller.id, &request.arguments),
+        "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,

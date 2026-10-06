@@ -645,6 +645,27 @@ test('typed fanout stays bounded while workers run, and explicit cancellation ne
   assert.ok(!run.calls.some(call => call.operation === 'workspace.restore'));
 });
 
+test('typed schemas require own properties in results and schema declarations', () => {
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    const schema = { type: 'object', properties: { [name]: { type: 'string' } }, required: [name], additionalProperties: false };
+    const settings = { ...typedSettings, task_types: { read: { ...typedSettings.task_types.read, result_schema: schema } } };
+    for (const result of [{}, { [name]: 'owned' }]) {
+      const run = fixture({ 'agents.wait': () => ({ ...typedResult, text: JSON.stringify({ result, sources: [{ ref: 'source.ts:1', why: 'inspected' }] }) }) });
+      begin(run.host);
+      const call = (name, payload) => invoke(name, payload, hostCall => hostCall.operation === 'mods.service' ? run.state.get('task').value : run.host(hostCall),
+        { source: typedSource, capabilities: typedManifest.capabilities, settings, store: run.state, key: 'batch' });
+      call('run', { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect' }] });
+      if (Object.hasOwn(result, name)) {
+        call('advance', {});
+        assert.equal(call('advance', {}).value.status, 'completed');
+      }
+      else assert.throws(() => call('advance', {}), /worker_result_schema_mismatch/);
+    }
+    const invalid = { ...settings, task_types: { read: { ...settings.task_types.read, result_schema: { ...schema, properties: {} } } } };
+    assert.throws(() => invoke('status', {}, fixture().host, { source: typedSource, capabilities: typedManifest.capabilities, settings: invalid }), /task_type_invalid/);
+  }
+});
+
 test('typed malformed output, host refusal and vanished handles stay interrupted without respawning', () => {
   for (const kind of ['malformed', 'refused', 'missing']) {
     const run = fixture({ 'agents.wait': call => {

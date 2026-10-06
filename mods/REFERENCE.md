@@ -1210,7 +1210,8 @@ it without timings.
 
 `events.publish {channel, data, correlation?}` publishes under the caller's
 namespace; subscribers declare channel patterns and receive `channel` events
-(256 events / 1 MiB per subscriber). `process.start {notify: ['output','exit']}`
+(256 events / 1 MiB per subscriber) in the publishing thread. Events whose
+originating thread is gone are dropped. `process.start {notify: ['output','exit']}`
 delivers coalesced `process_event`s. `workspace.watch {paths, recursive?,
 debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
 with source `external` (16 watches per mod; protected paths are always
@@ -1223,7 +1224,8 @@ waiting for the next turn. `process_event` exits carry
 only the session; read the exit status with `process.status`.
 `events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
 `{key}` to the calling mod after 1 s to 24 h; scheduling a key again replaces
-it, `events.cancel {key}` stops it, 16 timers per mod. A timer never starts a
+it within that thread, `events.cancel {key}` stops only that thread's timer,
+16 timers per mod across all threads. A timer never starts a
 turn by itself; only `turns.queue` under an `autonomous` grant can.
 
 ### Credentials, secrets and routes (`credentials_v1`, `secrets_v1`)
@@ -1595,7 +1597,8 @@ therefore complete its own commands without owning `@` mention ranking.
 suggestion}`. `revision` advances whenever the draft's text or attachments
 change, whoever changed them. Each attachment has a stable `id`, its placeholder
 `label`, its `owner` (`user` or the mod that attached it) and an immutable image
-`resource` bound to the reading mod (PNG and JPEG up to 8 MiB; otherwise
+`resource` bound to the reading mod, its source hash and repository, with package
+lifetime across configuration revisions and thread forks (PNG and JPEG up to 8 MiB; otherwise
 `null`). `composer.write {revision, edit?, cursor?, selection?, attach?,
 detach?}` applies only to that revision and fails with `stale_revision`
 otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:

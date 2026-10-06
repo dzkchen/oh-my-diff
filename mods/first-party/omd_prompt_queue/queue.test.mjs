@@ -39,14 +39,14 @@ function host() {
         if (found.digest !== digest) return { error: 'consent_content_changed' };
         if (world.held) return { value: { status: 'not_submitted', reason: 'input_held' } };
         if ((args.mode === 'turn') === world.busy) return { value: { status: 'not_submitted', reason: world.busy ? 'busy' : 'no_active_turn' } };
-        found.client = args.client_id;
+        found.client = args.client_id ?? `client-${++world.serial}`;
         world.submitted.push(`${args.mode}:${args.text}`);
-        return { value: { status: args.mode === 'turn' ? 'started' : 'steered', client_id: args.client_id } };
+        return { value: { status: args.mode === 'turn' ? 'started' : 'steered', client_id: found.client } };
       }
       default: throw new Error(`unexpected host call ${operation}`);
     }
   };
-  world.deliver = () => { for (const found of world.consents.values()) if (found.client) found.delivered = true; };
+  world.deliver = client => { for (const found of world.consents.values()) if (found.client && (!client || found.client === client)) found.delivered = true; };
   return world;
 }
 
@@ -113,6 +113,121 @@ test('a prompt queued while idle is sent at once', () => {
   assert.equal(out.state.entries[0].status, 'sent');
 });
 
+test('unconfirmed sent prompts become recoverable from callbacks and explicit retry', () => {
+  for (const action of ['idle', 'turn_start', 'retry', 'resume']) {
+    const world = host();
+    const added = run(world, null, 'command', 'queue', 'add uncertain');
+    const out = action === 'retry' || action === 'resume'
+      ? run(world, added.state, 'command', 'queue', action === 'retry' ? 'retry 1' : 'resume')
+      : run(world, added.state, action, '', {});
+    assert.equal(out.state.entries[0].status, action === 'retry' ? 'queued' : 'failed', action);
+    assert.deepEqual(world.submitted, ['turn:uncertain'], 'uncertainty alone never resends');
+    const retried = action === 'retry' ? out : run(world, out.state, 'command', 'queue', 'retry 1');
+    assert.equal(retried.value.display, '#1 will be sent again.');
+    const sent = run(world, retried.state, 'idle', '', {});
+    assert.equal(sent.state.entries[0].status, 'sent');
+    assert.deepEqual(world.submitted, ['turn:uncertain', 'turn:uncertain']);
+    const unconfirmed = run(world, sent.state, 'idle', '', {});
+    world.deliver();
+    assert.equal(run(world, unconfirmed.state, 'turn_start', '', {}).state.entries.length, 0, 'late acknowledgement settles a failed delivery');
+  }
+});
+
+test('joining prompts preserves every attachment or refuses without changing either entry', () => {
+  for (const count of [4, 5]) {
+    const world = host();
+    world.busy = true;
+    let state = null;
+    for (let prompt = 0; prompt < 2; prompt++) {
+      world.draft = { text: `images ${prompt}`, revision: prompt + 1, attachments: Array.from({ length: count }, (_, index) => ({
+        resource: { reference: `image-${prompt}-${index}`, sha256: `digest-${prompt}-${index}` },
+      })) };
+      state = run(world, state, 'command', 'queue', 'capture').state;
+    }
+    const before = structuredClone(state);
+    const consents = [...world.consents.keys()];
+    const out = run(world, state, 'command', 'queue', 'join 1 2');
+    if (count === 5) {
+      assert.match(out.value.display, /Not joined:.*8 images/);
+      assert.deepEqual(out.state, before);
+      assert.deepEqual([...world.consents.keys()], consents);
+    } else {
+      assert.equal(out.value.display, 'Joined into #1.');
+      assert.deepEqual(out.state.entries[0].attachments, before.entries.flatMap(entry => entry.attachments));
+      assert.equal(out.state.entries.length, 1);
+    }
+  }
+});
+
+test('uncertain queue mutations reconcile both joined entries and refuse unavailable status', () => {
+  const world = host();
+  world.busy = true;
+  let state = null;
+  const queue = text => { const out = run(world, state, 'command', 'queue', text); state = out.state; return out.value.display; };
+  queue('add first');
+  queue('add second');
+  world.busy = false;
+  queue('send 2');
+  state = run(world, state, 'idle', '', {}).state;
+  const before = structuredClone(state);
+  const consents = [...world.consents.keys()];
+  const call = world.call;
+  world.call = request => request.operation === 'prompts.status' ? { error: 'status_unavailable' } : call(request);
+  assert.match(queue('retry 2'), /delivery status is unavailable/);
+  assert.match(queue('join 1 2'), /delivery status is unavailable/);
+  assert.deepEqual(state, before);
+  assert.deepEqual([...world.consents.keys()], consents);
+  world.call = call;
+  world.deliver();
+  assert.match(queue('join 1 2'), /#2 was delivered; entries were not joined/);
+  assert.equal(state.entries.length, 1);
+  assert.equal(state.entries[0].text, 'first');
+  state = run(world, state, 'idle', '', {}).state;
+  assert.deepEqual(world.submitted, ['turn:second', 'turn:first']);
+});
+
+test('queue reconciliation recovers a delivery accepted before the state checkpoint', () => {
+  for (const action of ['idle', 'retry 1', 'send 1', 'join 2 1']) {
+    const world = host();
+    world.busy = true;
+    let state = null;
+    for (const text of ['first', 'second']) state = run(world, state, 'command', 'queue', `add ${text}`).state;
+    world.consents.get(state.entries[0].consent).client = 'accepted-before-checkpoint';
+    world.submitted.push('turn:first');
+    world.busy = false;
+    if (action === 'idle') {
+      state = run(world, state, 'idle', '', {}).state;
+      assert.equal(state.entries[0].client_id, 'accepted-before-checkpoint');
+      assert.equal(state.entries[0].status, 'failed');
+      world.deliver();
+      state = run(world, state, 'idle', '', {}).state;
+      assert.deepEqual(world.submitted, ['turn:first', 'turn:second']);
+    } else {
+      world.deliver();
+      state = run(world, state, 'command', 'queue', action).state;
+      assert.deepEqual(world.submitted, ['turn:first']);
+    }
+    assert.equal(state.entries.length, 1, action);
+    assert.equal(state.entries[0].text, 'second', action);
+  }
+  const world = host();
+  world.busy = true;
+  let state = run(world, null, 'command', 'queue', 'add uncertain').state;
+  world.busy = false;
+  run(world, state, 'idle', '', {});
+  const oldClient = world.consents.get(state.entries[0].consent).client;
+  state = run(world, state, 'command', 'queue', 'retry 1').state;
+  world.busy = false;
+  state = run(world, state, 'idle', '', {}).state;
+  const newClient = state.entries[0].client_id;
+  assert.notEqual(newClient, oldClient, 'a retried submission has a fresh host delivery identity');
+  world.deliver(oldClient);
+  state = run(world, state, 'turn_start', '', {}).state;
+  assert.equal(state.entries.length, 1, 'a late old acknowledgement cannot settle the retry');
+  world.deliver(newClient);
+  assert.equal(run(world, state, 'turn_start', '', {}).state.entries.length, 0);
+});
+
 test('stale drafts, spent consents and forked threads never resend', () => {
   const world = host();
   let state = null;
@@ -135,12 +250,15 @@ test('stale drafts, spent consents and forked threads never resend', () => {
   assert.deepEqual(world.submitted, []);
 
   world.busy = true;
-  assert.equal(queue('add forked'), 'Queued as #1.');
+  const image = { reference: 'captured-image', sha256: 'captured-digest' };
+  world.draft = { text: 'forked', revision: 4, attachments: [{ resource: image }] };
+  assert.equal(queue('capture'), 'Queued as #1.');
   world.busy = false;
   world.consents.clear();
   state = run(world, state, 'idle', '', {}).state;
   assert.equal(state.entries[0].status, 'needs_consent');
   assert.equal(queue('retry 1'), '#1 will be sent again.');
+  assert.deepEqual(state.entries[0].attachments, [image], 'fork retry keeps captured images under fresh consent');
   state = run(world, state, 'idle', '', {}).state;
   assert.deepEqual(world.submitted, ['turn:forked']);
 });

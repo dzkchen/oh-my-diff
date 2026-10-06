@@ -292,6 +292,13 @@ def restore_displaced(bin_dir):
             os.rename(aside, bin_dir / name)
 
 
+def restore_links(root, bin_dir):
+    for name in LINKS:
+        if managed(root, bin_dir / name, name):
+            (bin_dir / name).unlink()
+    restore_displaced(bin_dir)
+
+
 def status(generation, upstream, bin_dir):
     details = receipt(generation)
     result = json.loads(package(generation, upstream, bin_dir, "status", "--json"))
@@ -379,6 +386,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 atomic_symlink(root / "current", current)
             else:
                 (root / "current").unlink()
+                restore_links(root, args.bin_dir)
+            discard(generation, Path(upstream["path"]), args.bin_dir)
             abandon(root, current, Path(upstream["path"]), args.bin_dir)
             raise
         (root / "update/journal.json").unlink(missing_ok=True)
@@ -414,6 +423,8 @@ def restore_store(generation, upstream, bin_dir):
 def abandon(root, generation, upstream, bin_dir):
     try:
         restore_store(generation, upstream, bin_dir)
+        if not generation:
+            restore_links(root, bin_dir)
     except (OSError, ValueError):
         return
     (root / "update/journal.json").unlink(missing_ok=True)
@@ -426,6 +437,8 @@ def recover(args, root, current):
     name = read_json(journal, {}).get("generation")
     upstream = Path(upstream_binary(args, current)["path"]) if current else None
     interrupted = root / "releases" / name if isinstance(name, str) and re.fullmatch(r"[0-9a-f]{32}", name) else None
+    if not current:
+        restore_links(root, args.bin_dir)
     if interrupted and interrupted != current and interrupted.is_dir():
         discard(interrupted, upstream or Path("/nonexistent/codex"), args.bin_dir)
     restore_store(current, upstream, args.bin_dir)
@@ -499,10 +512,7 @@ def uninstall(args, root, bin_dir, current):
     generations = [item for item in generations if (item / "receipt.json").is_file()]
     for generation in generations:
         status(generation, upstream, bin_dir)
-    for name in LINKS:
-        if managed(root, bin_dir / name, name):
-            (bin_dir / name).unlink()
-    restore_displaced(bin_dir)
+    restore_links(root, bin_dir)
     try:
         package(current, upstream, bin_dir, "uninstall")
     except BaseException:

@@ -109,6 +109,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         depth: 0,
         permission_profile: Arc::new(Mutex::new(PermissionProfile::default())),
     };
+    core.expansion.thread_started(&lead);
     core.expansion.refresh(&core.runtime.lock().unwrap());
     Some(Fixture {
         _dir: dir,
@@ -505,7 +506,13 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     );
     assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
     *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
-    delivery::publish(&fixture.core, "probe", json!({"channel": "go", "data": 1})).unwrap();
+    delivery::publish(
+        &fixture.core,
+        &fixture.lead,
+        "probe",
+        json!({"channel": "go", "data": 1}),
+    )
+    .unwrap();
     delivery::deliver(&fixture.core).await;
     let calls = invoker.0.lock().unwrap().clone();
     assert_eq!(
@@ -564,11 +571,24 @@ async fn channel_events_reach_subscribers_in_order() {
     let core = &fixture.core;
     *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
     for data in [json!(1), json!({"n": 2})] {
-        let delivered =
-            delivery::publish(core, "herald", json!({"channel": "ping", "data": data})).unwrap();
+        let delivered = delivery::publish(
+            core,
+            &fixture.lead,
+            "herald",
+            json!({"channel": "ping", "data": data}),
+        )
+        .unwrap();
         assert_eq!(delivered["delivered"], 1);
     }
-    assert!(delivery::publish(core, "herald", json!({"channel": "Bad Name", "data": 1})).is_err());
+    assert!(
+        delivery::publish(
+            core,
+            &fixture.lead,
+            "herald",
+            json!({"channel": "Bad Name", "data": 1})
+        )
+        .is_err()
+    );
     let revision = || {
         codex_omd::ModViewSnapshot::read(&core.host.root.join("mod-view.json"))
             .map(|snapshot| snapshot.revision)
@@ -608,18 +628,274 @@ async fn background_delivery_wakes_on_publish_and_client_wake() {
         }
         false
     };
-    delivery::publish(core, "crier", json!({"channel": "news", "data": "a"})).unwrap();
+    delivery::publish(
+        core,
+        &fixture.lead,
+        "crier",
+        json!({"channel": "news", "data": "a"}),
+    )
+    .unwrap();
     assert!(seen(json!(["a"])).await);
     codex_omd::event_bus::global()
         .lock()
         .unwrap()
-        .publish("crier", "news", json!("b"), None)
+        .publish(
+            "crier",
+            "news",
+            json!("b"),
+            None,
+            &fixture.lead.thread.to_string(),
+        )
         .unwrap();
     codex_omd::client_surface::wake();
     assert!(seen(json!(["a", "b"])).await);
-    let ignored =
-        delivery::publish(core, "crier", json!({"channel": "other", "data": "c"})).unwrap();
+    let ignored = delivery::publish(
+        core,
+        &fixture.lead,
+        "crier",
+        json!({"channel": "other", "data": "c"}),
+    )
+    .unwrap();
     assert_eq!(ignored["delivered"], 0);
+}
+
+fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
+    let thread = ThreadId::new();
+    let session = first.host.open_session(thread, false).unwrap();
+    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
+        first.host.root.clone(),
+        first.host.repository.clone(),
+        None,
+        None,
+        thread.to_string(),
+    ));
+    let second = Lead {
+        host: first.host.clone(),
+        session,
+        thread,
+        owner: "lead".into(),
+        depth: 0,
+        permission_profile: Arc::new(Mutex::new(PermissionProfile::default())),
+    };
+    for lead in [first, &second] {
+        *lead.session.contract.lock().unwrap() =
+            crate::contract::SessionContract::resolve(&lead.host, &[]);
+        core.expansion.thread_started(lead);
+        core.expansion
+            .leads
+            .lock()
+            .unwrap()
+            .insert(lead.thread, LeadHandle::new(lead));
+    }
+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&second));
+    core.expansion.core.set(Arc::downgrade(core)).unwrap();
+    second
+}
+
+async fn background_call(core: &Core, lead: &Lead, operation: &str, arguments: Value) -> Value {
+    let runtime = core.runtime.lock().unwrap();
+    let caller = Caller {
+        id: "observer",
+        source: "source",
+        grants: runtime.grants("observer"),
+        generation: runtime.generation(),
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    drop(runtime);
+    dispatch(
+        core,
+        lead,
+        &caller,
+        ModHostCall {
+            operation: operation.into(),
+            arguments,
+        },
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_channels_use_the_publishing_thread_and_refuse_dead_origins() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["events", "store", "commands", "agents", "autonomous"],
+        manifest: json!({"state_scope": "thread", "subscriptions": {"channels": ["observer/news"]},
+            "autonomy": {"max_queued": 2, "max_turns": 1, "max_continuations": 1}}),
+        source: "export default function(api) { api.on('channel', e => { const seen = [e.data, api.host.call('task.status', {}).ledger.thread_id]; if (e.data === 'worker') seen.push(api.host.tryCall('turns.queued', {})); api.state.set(seen); }); api.command('seen', () => api.state.get()); }",
+    }]) else {
+        return;
+    };
+    let second = background_threads(&fixture.core, &fixture.lead);
+    for (lead, data) in [(&fixture.lead, "first"), (&second, "second")] {
+        background_call(
+            &fixture.core,
+            lead,
+            "events.publish",
+            json!({"channel": "news", "data": data}),
+        )
+        .await;
+    }
+    delivery::deliver(&fixture.core).await;
+    for (lead, data) in [(&fixture.lead, "first"), (&second, "second")] {
+        let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
+        assert_eq!(
+            command(&fixture.core, "observer", "seen"),
+            json!([data, lead.thread.to_string()])
+        );
+    }
+    let worker = Lead {
+        owner: "mod-observer-worker".into(),
+        depth: 1,
+        ..second
+    };
+    fixture.core.expansion.thread_started(&worker);
+    fixture
+        .core
+        .expansion
+        .leads
+        .lock()
+        .unwrap()
+        .remove(&worker.thread);
+    let recovered = fixture.core.expansion.thread(worker.thread).unwrap();
+    assert_eq!(
+        (recovered.owner.as_str(), recovered.depth),
+        ("mod-observer-worker", 1)
+    );
+    assert!(Arc::ptr_eq(
+        &recovered.permission_profile,
+        &worker.permission_profile
+    ));
+    background_call(
+        &fixture.core,
+        &worker,
+        "events.publish",
+        json!({"channel": "news", "data": "worker"}),
+    )
+    .await;
+    delivery::deliver(&fixture.core).await;
+    let worker_seen = {
+        let _thread = codex_omd::StateThread::enter(Some(worker.thread.to_string()));
+        command(&fixture.core, "observer", "seen")
+    };
+    assert_eq!(worker_seen[0], "worker");
+    assert_eq!(worker_seen[2]["ok"], false);
+    assert!(
+        worker_seen[2]["error"]
+            .as_str()
+            .unwrap()
+            .contains("turn_queue_lead_only")
+    );
+    fixture
+        .core
+        .expansion
+        .threads
+        .lock()
+        .unwrap()
+        .remove(&fixture.lead.thread);
+    fixture
+        .core
+        .expansion
+        .leads
+        .lock()
+        .unwrap()
+        .remove(&fixture.lead.thread);
+    background_call(
+        &fixture.core,
+        &fixture.lead,
+        "events.publish",
+        json!({"channel": "news", "data": "dead"}),
+    )
+    .await;
+    delivery::deliver(&fixture.core).await;
+    let _thread = codex_omd::StateThread::enter(Some(worker.thread.to_string()));
+    assert_eq!(command(&fixture.core, "observer", "seen"), worker_seen);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_timers_replace_and_cancel_only_in_the_calling_thread() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["events", "store", "commands"],
+        manifest: json!({"state_scope": "thread"}),
+        source: "export default function(api) { api.on('timer', e => api.state.set([...(api.state.get() ?? []), e.key])); api.command('seen', () => api.state.get()); }",
+    }]) else {
+        return;
+    };
+    let second = background_threads(&fixture.core, &fixture.lead);
+    for lead in [&fixture.lead, &second, &fixture.lead] {
+        background_call(
+            &fixture.core,
+            lead,
+            "events.schedule",
+            json!({"key": "hop", "delay_ms": 1000}),
+        )
+        .await;
+    }
+    assert_eq!(fixture.core.expansion.timers.lock().unwrap().len(), 2);
+    let cancelled = background_call(
+        &fixture.core,
+        &fixture.lead,
+        "events.cancel",
+        json!({"key": "hop"}),
+    )
+    .await;
+    assert_eq!(cancelled["cancelled"], true);
+    assert_eq!(
+        background_call(
+            &fixture.core,
+            &fixture.lead,
+            "events.cancel",
+            json!({"key": "hop"})
+        )
+        .await["cancelled"],
+        false
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    delivery::deliver(&fixture.core).await;
+    for (lead, expected) in [(&fixture.lead, Value::Null), (&second, json!(["hop"]))] {
+        let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
+        assert_eq!(command(&fixture.core, "observer", "seen"), expected);
+    }
+    let limit = fixture.lead.host.config.mod_limits.bounded().timers_per_mod;
+    for index in 0..limit {
+        let lead = if index % 2 == 0 {
+            &fixture.lead
+        } else {
+            &second
+        };
+        background_call(
+            &fixture.core,
+            lead,
+            "events.schedule",
+            json!({"key": format!("quota-{index}"), "delay_ms": 1000}),
+        )
+        .await;
+    }
+    let runtime = fixture.core.runtime.lock().unwrap();
+    let caller = Caller {
+        id: "observer",
+        source: "source",
+        grants: runtime.grants("observer"),
+        generation: runtime.generation(),
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    drop(runtime);
+    assert_eq!(
+        delivery::schedule(
+            &fixture.core,
+            &second,
+            &caller,
+            json!({"key": "overflow", "delay_ms": 1000})
+        )
+        .unwrap_err(),
+        "timer_limit"
+    );
+    delivery::retain_sources(&fixture.core, &BTreeMap::new());
+    assert!(fixture.core.expansion.timers.lock().unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
