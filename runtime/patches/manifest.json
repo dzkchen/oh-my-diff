@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "985b2e9e05789bb7c9981d876b52aa434291b6297bde0683939d714d2f74f099"
+    "sha256": "d4c643d228f4a02178d33f21ee02a5bbc20168e7fcfe8a695474f5e5c66e6272"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -221,7 +221,7 @@
     },
     "codex-rs/app-server/src/request_processors/thread_processor.rs": {
       "before": "786c0549e5c1b57421e03472f3b8c3519090849fb8401163f3da5cc2c55b66be",
-      "after": "7008b7644dfdc017fd2b748cac4b587b7f429f7de9501d44c644bd911fddbddb"
+      "after": "b9ec8bf6ebe3c04b5d0f9606563c4da46701bdaba9a692cc8a11d1ffeaceb9fd"
     },
     "codex-rs/app-server/src/request_processors/thread_processor_tests.rs": {
       "before": "4bb0d95c8d7b8c6b941ae111a4b67aabe4b340edd09a3779d11dc2a94dbf519b",
@@ -409,7 +409,7 @@
     },
     "codex-rs/core/src/session/handlers.rs": {
       "before": "bb14e953f223cbfeb518fd3c241e5c3b0aa8cded6df271d5dc33d321bcb62b54",
-      "after": "9db1833fb83aad3770485ee566fd1e88d0d7babe076e956fc6fd0bdd808e361e"
+      "after": "2d4d7ae5e5a5b99a1132e154d7ce64e92cb6ed43451b801b9543a964387ab108"
     },
     "codex-rs/core/src/session/mcp.rs": {
       "before": "672284362e5693709ee4787d0e04efa5cdd78ae3dcebe1743d4dddd82530220a",
@@ -422,6 +422,10 @@
     "codex-rs/core/src/session/session.rs": {
       "before": "2da4c0288596269fbb6df6d9a04a389e8ce0184be77ee2bcce765521e63702a5",
       "after": "300cb0852a185da9ca3dbfa5402f78b3b129da7149ff0948b97c8caaff628a6f"
+    },
+    "codex-rs/core/src/session/tests.rs": {
+      "before": "c8860a61dadf86e974bb9b8c150dabfbe1935c440825512dec440f1460dab7d7",
+      "after": "d5823f03504615f2d17b633ee263cff6dd5062af57a4a0df76491bcb64a5decf"
     },
     "codex-rs/core/src/session/turn.rs": {
       "before": "8c27407110003a384cc7a9f85985d83ff824378f1feb22e7e5c19d927d77ca1d",
@@ -441,7 +445,7 @@
     },
     "codex-rs/core/src/tasks/mod.rs": {
       "before": "400b02b66b2fd829ee876d5094c0ae3ab5fb52536ce2d220f8b257e6ee6c41c5",
-      "after": "f744d0d5ff559610e512ccdb0e8075101a5c348a74f6d299b5786b77f69ef903"
+      "after": "3e5bc3239097019d3e5aa719648005c43ee825c3dea389237f17b275aaaccf33"
     },
     "codex-rs/core/src/thread_manager.rs": {
       "before": "1c356242684633729042aaac6350295b759a8fe1fc05eff28b78895f6ff2fa9d",

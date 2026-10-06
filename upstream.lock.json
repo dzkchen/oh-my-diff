@@ -17,7 +17,7 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.160.1.patch",
-      "sha256": "985b2e9e05789bb7c9981d876b52aa434291b6297bde0683939d714d2f74f099"
+      "sha256": "d4c643d228f4a02178d33f21ee02a5bbc20168e7fcfe8a695474f5e5c66e6272"
     }
   ],
   "compatibility_evidence": ".docs/audits/upstream-pin-0160-20261005.md"

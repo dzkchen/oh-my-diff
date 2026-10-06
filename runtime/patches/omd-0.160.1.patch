@@ -15637,7 +15637,7 @@ index b0fa49b4b..f01d40915 100644
      thread_manager: Arc<ThreadManager>,
      outgoing: Arc<OutgoingMessageSender>,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 289cb6395..8605dc5fd 100644
+index 289cb6395..049a2a30a 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -19,6 +19,10 @@ use codex_app_server_protocol::ThreadItemsListCursor;
@@ -15866,7 +15866,19 @@ index 289cb6395..8605dc5fd 100644
          let runtime_snapshot = ThreadRevertRuntimeSnapshot {
              config: thread.config().await.as_ref().clone(),
              settings: thread.restorable_thread_settings().await,
-@@ -2177,24 +2382,33 @@ impl ThreadRequestProcessor {
+@@ -2167,6 +2372,11 @@ impl ThreadRequestProcessor {
+         // Subscribe before shutdown so a pending idle unload either rejects this request or can
+         // no longer race the replacement runtime. The same listener then drains Core's shutdown
+         // events before we replace it.
++        let was_subscribed = self
++            .thread_state_manager
++            .subscribed_connection_ids(thread_id)
++            .await
++            .contains(&request_id.connection_id);
+         if matches!(
+             self.ensure_conversation_listener(
+                 thread_id,
+@@ -2177,24 +2387,38 @@ impl ThreadRequestProcessor {
              EnsureConversationListenerResult::ConnectionClosed
          ) {
              return Err(internal_error(format!(
@@ -15881,6 +15893,11 @@ index 289cb6395..8605dc5fd 100644
 +        let shutdown = if only_if_idle {
 +            let Some(shutdown) = wait_for_thread_shutdown_if_idle(thread).await else {
 +                thread_state.lock().await.take_shutdown_drain_waiter();
++                if !was_subscribed {
++                    self.thread_state_manager
++                        .unsubscribe_connection_from_thread(thread_id, request_id.connection_id)
++                        .await;
++                }
 +                return Err(rewrite_busy_error(thread_id));
 +            };
 +            shutdown
@@ -15904,7 +15921,7 @@ index 289cb6395..8605dc5fd 100644
                  )));
              }
          }
-@@ -2223,35 +2437,15 @@ impl ThreadRequestProcessor {
+@@ -2223,35 +2447,15 @@ impl ThreadRequestProcessor {
              .is_none()
          {
              return Err(internal_error(format!(
@@ -15943,7 +15960,7 @@ index 289cb6395..8605dc5fd 100644
      }
 
      async fn reload_paginated_thread(
-@@ -3600,6 +3794,12 @@ impl ThreadRequestProcessor {
+@@ -3600,6 +3804,12 @@ impl ThreadRequestProcessor {
          }
      }
 
@@ -15956,7 +15973,7 @@ index 289cb6395..8605dc5fd 100644
      pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
          self.thread_watch_manager.subscribe_running_turn_count()
      }
-@@ -4290,13 +4490,24 @@ impl ThreadRequestProcessor {
+@@ -4290,13 +4500,24 @@ impl ThreadRequestProcessor {
          } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
              && let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await
          {
@@ -15983,7 +16000,7 @@ index 289cb6395..8605dc5fd 100644
              Some((existing_thread_id, existing_thread, source_thread))
          } else {
              let source_thread = self
-@@ -4308,7 +4519,9 @@ impl ThreadRequestProcessor {
+@@ -4308,7 +4529,9 @@ impl ThreadRequestProcessor {
                  .await?;
              let existing_thread_id = source_thread.thread_id;
              match self.thread_manager.get_thread(existing_thread_id).await {
@@ -15994,7 +16011,7 @@ index 289cb6395..8605dc5fd 100644
                  Err(_) => {
                      return Ok(RunningThreadResumeResult::NotRunning(Some(Box::new(
                          source_thread,
-@@ -4318,12 +4531,13 @@ impl ThreadRequestProcessor {
+@@ -4318,12 +4541,13 @@ impl ThreadRequestProcessor {
          };
 
          if let Some((existing_thread_id, existing_thread, mut source_thread)) = running_thread {
@@ -16012,7 +16029,7 @@ index 289cb6395..8605dc5fd 100644
              if let (Some(requested_path), Some(active_path)) = (params.path.as_ref(), active_path)
                  && !path_utils::paths_match_after_normalization(requested_path, active_path)
              {
-@@ -4394,18 +4608,20 @@ impl ThreadRequestProcessor {
+@@ -4394,18 +4618,20 @@ impl ThreadRequestProcessor {
                  )
                  .await;
              }
@@ -16041,7 +16058,7 @@ index 289cb6395..8605dc5fd 100644
              }
              if paginated_resume && (include_turns || params.initial_turns_page.is_some()) {
                  self.thread_store
-@@ -4415,8 +4631,8 @@ impl ThreadRequestProcessor {
+@@ -4415,8 +4641,8 @@ impl ThreadRequestProcessor {
              }
              let history_items = if needs_history {
                  source_thread
@@ -16052,7 +16069,7 @@ index 289cb6395..8605dc5fd 100644
                      .map(|history| history.items)
                      .ok_or_else(|| {
                          internal_error(format!(
-@@ -4444,11 +4660,18 @@ impl ThreadRequestProcessor {
+@@ -4444,11 +4670,18 @@ impl ThreadRequestProcessor {
              )
              .await?;
 
@@ -16076,7 +16093,7 @@ index 289cb6395..8605dc5fd 100644
              thread_summary.session_id = existing_thread.startup_metadata().session_id.to_string();
              thread_summary.thread_source = config_snapshot.thread_source.clone().map(Into::into);
              apply_live_thread_settings(&mut thread_summary, &config_snapshot);
-@@ -4670,6 +4893,10 @@ impl ThreadRequestProcessor {
+@@ -4670,6 +4903,10 @@ impl ThreadRequestProcessor {
                  "session {thread_id} is archived. Run `codex unarchive {thread_id}` to unarchive it first."
              )));
          }
@@ -16087,7 +16104,7 @@ index 289cb6395..8605dc5fd 100644
 
          Ok(stored_thread)
      }
-@@ -6031,6 +6258,65 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
+@@ -6031,6 +6268,65 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
      }
  }
 
@@ -18795,7 +18812,7 @@ index 7f466edb3..0fc091a12 100644
 
  pub(crate) async fn request_mcp_tool_user_approval(
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 94c47023e..458f938ff 100644
+index 94c47023e..af4b1c119 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -308,7 +308,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
@@ -18807,14 +18824,12 @@ index 94c47023e..458f938ff 100644
          warn!("failed to shutdown code mode session: {err}");
      }
      sess.stop_mcp_prewarm_worker().await;
-@@ -627,6 +627,12 @@ pub(super) async fn submission_loop(
+@@ -627,6 +627,10 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
 +                Op::ShutdownIfIdle { reply } => {
-+                    let has_active_turn = sess.active_turn.lock().await.is_some();
-+                    let idle =
-+                        !has_active_turn && !sess.input_queue.has_pending_mailbox_items().await;
++                    let idle = !sess.has_active_turn_or_pending_mailbox().await;
 +                    reply.send(idle).is_ok() && idle && shutdown(&sess, sub.id.clone()).await
 +                }
                  Op::Review { review_request } => {
@@ -19159,6 +19174,61 @@ index 824cf589c..1a7943dc3 100644
              for contributor in extensions.thread_lifecycle_contributors() {
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index 13ebc6824..e3e08f20b 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -12593,6 +12593,50 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
+     );
+ }
+
++#[tokio::test]
++async fn start_task_keeps_mailbox_mail_pending_until_it_owns_the_active_turn_lock() {
++    let (sess, tc, _rx) = make_session_and_context_with_rx().await;
++    sess.input_queue
++        .enqueue_mailbox_communication(
++            InterAgentCommunication::new(
++                AgentPath::try_from("/root/worker").expect("worker path should parse"),
++                AgentPath::root(),
++                Vec::new(),
++                "queued child update".to_string(),
++                /*trigger_turn*/ false,
++            ),
++            Default::default(),
++        )
++        .await;
++
++    let active = sess.active_turn.lock().await;
++    let starter = tokio::spawn({
++        let sess = Arc::clone(&sess);
++        async move {
++            sess.start_task(
++                tc,
++                Vec::new(),
++                NeverEndingTask {
++                    kind: TaskKind::Regular,
++                    listen_to_cancellation_token: true,
++                },
++            )
++            .await;
++        }
++    });
++    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++    assert!(
++        sess.input_queue.has_pending_mailbox_items().await,
++        "an idle check must not see an empty mailbox before the turn is active"
++    );
++    drop(active);
++    starter.await.expect("start_task should finish");
++
++    assert!(!sess.input_queue.has_pending_mailbox_items().await);
++    assert!(sess.has_active_turn_or_pending_mailbox().await);
++    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
++}
++
+ #[tokio::test]
+ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
+     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
 index 5b335c2c0..3dbe0dfbc 100644
 --- a/codex-rs/core/src/session/turn.rs
@@ -19760,10 +19830,44 @@ index 6dd7938fb..65672d971 100644
      turn_context.session_telemetry.counter(
          "codex.skill.injected",
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 28a3b54b1..d4d3bd0d0 100644
+index 28a3b54b1..d31ac20e8 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -631,6 +631,13 @@ impl Session {
+@@ -311,13 +311,14 @@ impl Session {
+         let cancellation_token = CancellationToken::new();
+         let done = Arc::new(Notify::new());
+
+-        let (pending_items, _) = self.input_queue.drain_mailbox_input_items().await;
+-        let turn_state = {
++        let (pending_items, turn_state) = {
+             let mut active = self.active_turn.lock().await;
++            // Draining under the lock lets an idle check see either pending mail or the turn.
++            let (pending_items, _) = self.input_queue.drain_mailbox_input_items().await;
+             self.record_started_turn(&turn_context.sub_id).await;
+             let turn = active.get_or_insert_with(ActiveTurn::default);
+             debug_assert!(turn.task.is_none());
+-            Arc::clone(&turn.turn_state)
++            (pending_items, Arc::clone(&turn.turn_state))
+         };
+         turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
+         self.input_queue
+@@ -419,6 +420,15 @@ impl Session {
+         turn.task = Some(running_task);
+     }
+
++    #[expect(
++        clippy::await_holding_invalid_type,
++        reason = "the active turn and pending mailbox checks must be atomic with turn start"
++    )]
++    pub(crate) async fn has_active_turn_or_pending_mailbox(&self) -> bool {
++        let active = self.active_turn.lock().await;
++        active.is_some() || self.input_queue.has_pending_mailbox_items().await
++    }
++
+     /// Returns whether an extension has marked this thread as durably asleep.
+     pub(crate) fn has_outstanding_durable_sleep(&self) -> bool {
+         self.services
+@@ -631,6 +641,13 @@ impl Session {
          turn_context: Arc<TurnContext>,
          task_result: SessionTaskResult,
      ) {
