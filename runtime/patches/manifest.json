@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "d8e7637c4e7c34c678d8a4a55ed8716805e3860faabe74f772920ed743a65aa6"
+    "sha256": "bc82310b1b0b68da3a1627aaf7280d7b78182969199890890500424f5fccbda4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -489,7 +489,7 @@
     },
     "codex-rs/ext/omd/src/accounting.rs": {
       "before": null,
-      "after": "1ee01dcb81b1bf834a32baf9858f30775f1daa0cb65d58b5f42c7c5f78908a68"
+      "after": "84319c3f4e5ddc4c6bc6935deacddfec5f1d7dd6cfad6ad1095b3043da7ee784"
     },
     "codex-rs/ext/omd/src/accounting_tests.rs": {
       "before": null,
@@ -505,7 +505,7 @@
     },
     "codex-rs/ext/omd/src/credential_gateway.rs": {
       "before": null,
-      "after": "4695f8a0937d1eb36cf876ca71bc94f86576f7e5c839cc0d70559092ec3c86ab"
+      "after": "218033d0585ccd5ad46035676c53587508ac10fa501ef46749ea92ad6c17e2cc"
     },
     "codex-rs/ext/omd/src/credential_gateway_tests.rs": {
       "before": null,
@@ -537,7 +537,7 @@
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
-      "after": "6427827410a8e563a15d38cfb88cfddfa6a6dae254a8330aef9bbf56c03ed874"
+      "after": "3d620aa258e6f8774e99a10de51a9f135b1f6a02d96eb1ccd859aef4eaf806a8"
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
@@ -709,11 +709,11 @@
     },
     "codex-rs/omd/src/broker.rs": {
       "before": null,
-      "after": "ecfe9e13141633f44e3a8a9c7ce723673c5e0462a6ad6234c9e54121a551cd47"
+      "after": "73af82a6c93958ba1eee09861cb4affd6d27885e26d639673e4f7f3a60324195"
     },
     "codex-rs/omd/src/broker_tests.rs": {
       "before": null,
-      "after": "2c9877be7049370483578ff9a7f18ef877cb0606e1c32375a87cf7b4c377e7b6"
+      "after": "51f35118324557493a04961bf09af6fb35c3f258d3f771b9dc9a31aaa5216838"
     },
     "codex-rs/omd/src/builtins.rs": {
       "before": null,
@@ -749,11 +749,11 @@
     },
     "codex-rs/omd/src/credentials.rs": {
       "before": null,
-      "after": "f950009efec1cceca715bf42afc9fea3ad970f05c59ad086951b10c95f894e65"
+      "after": "474972a90042c175148295509e0e071446c8ed562fc834cc68df8b37aca6e16b"
     },
     "codex-rs/omd/src/credentials_tests.rs": {
       "before": null,
-      "after": "bd4c9b5813d976b3de12905b819ca950f9e6212e66fbccfafb9e4600e5abec86"
+      "after": "40729b3b241e17d7efbf34b5f3a9129d373b8c2e9014c03d8ade594df2882554"
     },
     "codex-rs/omd/src/data_store.rs": {
       "before": null,
@@ -805,7 +805,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "1ae8e49186953b15b3306e04a0b63c22262b15eeb66cb4d3286c138151f0481c"
+      "after": "233047a16961d83b55c9342b31e5c397bfc28ea8d2ff1b5bdf69db39f3125943"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,

@@ -33,9 +33,12 @@ click) unfolds it. Its panels follow the session status of `omd_workspace`.
 
 Read-only remote monitoring for up to 5 explicitly watched pull requests on
 github.com. `watch` without an argument finds the open pull request whose head
-repository is the current branch's push remote, including a fork's pull
+repository is the current branch's push remote (`branch.<name>.pushRemote`,
+`remote.pushDefault`, then its upstream remote), including a fork's pull
 request into its parent; `#N` uses the `upstream` or `origin` remote. The
-GitHub pane lists each watch; Enter on a row opens its details.
+GitHub pane lists each watch; Enter on a row opens its details. `unwatch`
+without a key stops the watch whose details are open, or the only watch; keys
+match case-insensitively.
 
 Each watch is bound to the repository owner and name, the pull request number
 and its current head SHA. One GraphQL query reads the state, draft flag, merge
@@ -52,11 +55,13 @@ since a required check that never reported is not in the rollup.
 
 Polling runs only while an open watch exists: every 30 s while a check or run
 is in progress or the merge state is unknown, every 5 minutes otherwise, and 10
-s after each turn for watches older than 30 s. Errors back off exponentially to
+s after each turn for watches older than 30 s that are not backing off from an
+error. Errors back off exponentially to
 15 minutes, `Retry-After` and exhausted rate limits pause every request, and a
 denied or missing pull request retries after 15 minutes. A merged or closed
 pull request stops polling. A missing, rejected or removed token stops polling
-until `/omd_git:github token` adds one. Results show the GitHub response time;
+until `/omd_git:github token` adds one, or asks again for an empty or rejected
+one. Results show the GitHub response time;
 cached, failed or token-less results are labelled stale or unknown.
 
 The token is a secret owned by this package and bound to

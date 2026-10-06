@@ -226,34 +226,28 @@ async fn send(
                 return Err(format!("credential_not_granted: {profile}"));
             }
             let store = core.host.root.clone();
-            let (profile, target, owner) = (profile.clone(), origin.clone(), caller.id.to_owned());
+            let (profile, target, owner, first) = (
+                profile.clone(),
+                origin.clone(),
+                caller.id.to_owned(),
+                hops.is_empty(),
+            );
             let secret = tokio::task::spawn_blocking(move || {
                 let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
                 let entry = profiles.profile(&profile)?;
-                if entry.kind == "secret" && entry.owner.as_deref() != Some(owner.as_str()) {
-                    return Err(std::io::Error::other(format!(
-                        "credential_secret_not_owned: {profile}"
-                    )));
-                }
                 if !listed && entry.kind != "secret" {
                     return Err(std::io::Error::other(format!(
                         "credential_not_granted: {profile}"
                     )));
                 }
-                if entry.destination() != Some(target.as_str()) {
+                if !first && entry.destination() != Some(target.as_str()) {
                     return Ok(None);
                 }
-                profiles.secret(&profile, &target).map(Some)
+                profiles.secret(&profile, &target, Some(&owner)).map(Some)
             })
             .await
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
-            if secret.is_none() && hops.is_empty() {
-                return Err(format!(
-                    "credential_origin_mismatch: {}",
-                    request.credential.as_deref().unwrap_or_default()
-                ));
-            }
             if let Some(secret) = secret {
                 let mut value =
                     reqwest::header::HeaderValue::from_str(&format!("Bearer {}", secret.token))
@@ -605,14 +599,11 @@ async fn mcp(
                 caller.id.to_owned(),
             );
             let secret = tokio::task::spawn_blocking(move || {
-                let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
-                let entry = profiles.profile(&profile)?;
-                if entry.kind == "secret" && entry.owner.as_deref() != Some(owner.as_str()) {
-                    return Err(std::io::Error::other(format!(
-                        "credential_secret_not_owned: {profile}"
-                    )));
-                }
-                profiles.secret(&profile, &origin)
+                codex_omd::credentials::CredentialProfiles::open(&store)?.secret(
+                    &profile,
+                    &origin,
+                    Some(&owner),
+                )
             })
             .await
             .map_err(|error| error.to_string())?

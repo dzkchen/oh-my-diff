@@ -506,13 +506,13 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
         exposure.push("approve.override: this mod may also approve commands your own execpolicy rules forbid.");
     }
     if granted("http") {
-        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles to requests for their enrolled origin; it never sees the tokens.");
+        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles, and with `owned` every secret this mod enrolls now or later, to requests for their enrolled origin; it never sees the tokens.");
     }
     if granted("fs.external") {
         exposure.push("fs.external: this mod may read, list and stat, and where write is set change, files under the fs_access roots outside the workspace; credential locations and protected paths stay refused.");
     }
     if granted("mcp") {
-        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, and their tools go through normal tool approvals.");
+        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, a URL server's credential profile (another mod's secret is refused) is sent to that origin, and their tools go through normal tool approvals.");
     }
     if granted("policy") {
         exposure.push("policy: this mod may refuse other mods at load and withhold the host namespaces listed in policy.namespaces from them; it cannot grant anything, change managed policy or judge itself, and disabling it in /omd restores the other mods.");

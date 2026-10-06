@@ -173,11 +173,11 @@
       "extension_type": "mod",
       "files": {
         "fingerprint.mjs": "ce25b9b6dfa18ab7a9eb06c39161ba522ef2772edec0599effaf4b0e128d5006",
-        "index.ts": "0ee3ba9aae35e6dcb254f9f6cd953c70f61f956151a666718ae7360f938ba50c",
+        "index.ts": "93a596ad33bea2d751c97650e3d604ce6474a3d529b4d5c94fe08af1d2921c50",
         "mod.json": "9e2525f2784917c498508215617f286b8f27702c1170f826a8b7852fd08f30af"
       },
       "id": "omd_git",
-      "package_sha256": "c42e55a3e0b6c271b7717c02adef8d76e3256ab23d0c57e7098c85e395da9e43",
+      "package_sha256": "4eea9b4cb974f46ef87cb759222f5d55499f2411a5034056401f327f400bb82c",
       "source": "mods/first-party/omd_git",
       "version": "0.2.0-preview.4"
     },

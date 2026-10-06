@@ -304,6 +304,7 @@ export default function activate(api: ModAPI) {
       const commit = node.commits?.nodes?.[0]?.commit;
       if (commit && commit.oid !== node.headRefOid || page.head && page.head !== node.headRefOid) { Object.assign(page, fresh()); continue; }
       page.head = node.headRefOid;
+      if (w.pr && w.pr.head !== node.headRefOid) Object.assign(w, { checks: null, runs: [], more: 0 });
       w.pr = { title: visible(String(node.title), 200), state: String(node.state), draft: !!node.isDraft, merge: String(node.mergeStateStatus ?? 'UNKNOWN'), review: String(node.reviewDecision ?? 'NONE'), updated: String(node.updatedAt), head: String(node.headRefOid), ref: visible(String(node.headRefName), 128), base: visible(String(node.baseRefName), 128) };
       w.at = answer.at;
       const contexts = commit?.statusCheckRollup?.contexts;
@@ -351,7 +352,7 @@ export default function activate(api: ModAPI) {
     const updates: (Watch & { from: string })[] = [];
     for (const original of [...open].sort((left, right) => left.next - right.next)) {
       if (used >= BYTE_BUDGET || until || access !== 'ready') break;
-      if (original.next > now && !(turn && now - (original.at ?? 0) >= 30_000)) continue;
+      if (original.next > now && !(turn && !original.error && now - (original.at ?? 0) >= 30_000)) continue;
       const w: Watch = JSON.parse(JSON.stringify(original));
       const failed = load(token, w);
       if (failed) {
@@ -380,7 +381,7 @@ export default function activate(api: ModAPI) {
     const was = bucket(before);
     const now = bucket(after);
     const review = before.pr.review !== after.pr.review && after.pr.review !== 'NONE';
-    if (!review && (was === now || now === 'pending' || now === 'unknown')) return;
+    if (!review && (was === now || !['passing', 'failing', 'merged', 'closed'].includes(now))) return;
     api.host.tryCall('terminal.notify', { title: trim(after.key, 120), body: trim(`${now}${review ? `, review ${after.pr.review.toLowerCase().replace(/_/g, ' ')}` : ''}: ${after.pr.title}`, 200) });
   };
   const details = (w: Watch, gh: Github) => {
@@ -653,6 +654,7 @@ export default function activate(api: ModAPI) {
     return { display: notice };
   }, { description: 'Restore the last discarded file if its expected content is unchanged' });
   api.command('dismiss', () => { const state = saved(); save({ ...state, preview: null, github: { ...state.github, view: null } }); return null; }, { description: 'Close the Git preview or pull request details' });
+  const find = (watches: Watch[], key: string) => watches.find(w => w.key.toLowerCase() === key.toLowerCase());
   const remote = (name: string): Result<string[]> => {
     const url = run(['remote', 'get-url', name], 1024);
     if (!url.ok) return url;
@@ -672,17 +674,17 @@ export default function activate(api: ModAPI) {
     const branch = run(['symbolic-ref', '--short', '-q', 'HEAD'], 1024);
     if (!branch.ok || !branch.value.trim()) return { ok: false, error: 'check out a branch to watch its pull request' };
     const local = branch.value.trim();
-    const pushed = run(['config', '--get', `branch.${local}.remote`], 1024);
-    const merge = run(['config', '--get', `branch.${local}.merge`], 1024);
-    const repo = remote(pushed.ok ? pushed.value.trim() : 'origin');
-    return repo.ok ? { ok: true, value: { owner: repo.value[0], repo: repo.value[1], number: 0, branch: merge.ok ? merge.value.trim().replace(/^refs\/heads\//, '') : local } } : repo;
+    const refs = run(['for-each-ref', '--format=%(push:remotename) %(upstream:remotename) %(upstream:remoteref)', `refs/heads/${local}`], 1024);
+    const [push, fetch, merge] = refs.ok ? refs.value.trim().split(' ') : [];
+    const repo = remote(push || 'origin');
+    return repo.ok ? { ok: true, value: { owner: repo.value[0], repo: repo.value[1], number: 0, branch: push === fetch && merge ? merge.replace(/^refs\/heads\//, '') : local } } : repo;
   };
   const watch = (value: string) => {
     const parsed = target(value);
     if (!parsed.ok) return { display: parsed.error };
     const state = saved();
     const key = parsed.value.number ? `${parsed.value.owner}/${parsed.value.repo}#${parsed.value.number}` : `${parsed.value.owner}/${parsed.value.repo}:${parsed.value.branch}`;
-    if (state.github.watches.some(w => w.key.toLowerCase() === key.toLowerCase())) return { display: `already watching ${key}` };
+    if (find(state.github.watches, key)) return { display: `already watching ${key}` };
     if (state.github.watches.length >= WATCH_LIMIT) return { display: `at most ${WATCH_LIMIT} pull requests can be watched; unwatch one first` };
     save({ ...state, github: { ...state.github, watches: [...state.github.watches, { ...parsed.value, key, added: Date.now(), pr: null, checks: null, runs: [], more: 0, page: null, incomplete: null, error: null, fail: 0, next: 0, at: null, final: false }] } });
     publish({ poll: true });
@@ -690,18 +692,20 @@ export default function activate(api: ModAPI) {
   };
   const unwatch = (value: string) => {
     const state = saved();
-    const key = value || state.github.view || state.github.watches[0]?.key;
-    const watches = state.github.watches.filter(w => w.key !== key);
-    if (watches.length === state.github.watches.length) return { display: 'not watching that pull request' };
-    save({ ...state, github: { ...state.github, watches, view: null } });
-    return { display: `stopped watching ${key}` };
+    const all = state.github.watches;
+    const key = value || state.github.view || (all.length === 1 ? all[0].key : '');
+    const gone = find(all, key);
+    if (!gone) return { display: key ? 'not watching that pull request' : 'usage: /omd_git:github unwatch KEY' };
+    save({ ...state, github: { ...state.github, watches: all.filter(w => w !== gone), view: null } });
+    return { display: `stopped watching ${gone.key}` };
   };
   api.command('inspect', value => {
     const state = saved();
     const key = String(value ?? '').trim();
     if (!key) return { display: state.github.watches.map(w => trim(summary(w, state.github), 200)).join('\n') || 'no watched pull requests; /omd_git:github watch adds one' };
-    if (!state.github.watches.some(w => w.key === key)) return { display: 'not watching that pull request' };
-    save({ ...state, github: { ...state.github, view: key } });
+    const shown = find(state.github.watches, key);
+    if (!shown) return { display: 'not watching that pull request' };
+    save({ ...state, github: { ...state.github, view: shown.key } });
     return null;
   }, { description: 'Show pull request and CI details, or list watched pull requests' });
   const token = (value: string) => {
@@ -712,9 +716,8 @@ export default function activate(api: ModAPI) {
       const removed = api.host.tryCall('credentials.request', { action: 'remove', profile: profile.id });
       return { display: !removed.ok ? removed.error : removed.value.status === 'completed' ? 'GitHub token removed; watches pause until a token is added' : 'kept the GitHub token' };
     }
-    if (profile) return { display: `GitHub token ${profile.id} is ${profile.status === 'ready' ? 'enrolled' : 'empty'}; /omd_git:github token remove deletes it` };
-    if (value) return { display: 'no GitHub token is enrolled' };
-    const enrolled = api.host.tryCall('credentials.request', { action: 'enroll', kind: 'secret', label: 'GitHub (omd_git)', origin: GH });
+    if (value || profile?.status === 'ready' && saved().github.token !== 'invalid') return { display: profile ? `GitHub token ${profile.id} is ${profile.status === 'ready' ? 'enrolled' : 'empty'}; /omd_git:github token remove deletes it` : 'no GitHub token is enrolled' };
+    const enrolled = api.host.tryCall('credentials.request', profile ? { action: 'refresh', profile: profile.id } : { action: 'enroll', kind: 'secret', label: 'GitHub (omd_git)', origin: GH });
     if (!enrolled.ok || enrolled.value.status !== 'completed') return { display: enrolled.ok ? 'GitHub token not added' : enrolled.error };
     publish({ poll: true });
     return { display: 'GitHub token added. Use a fine-grained token with read-only Metadata, Pull requests, Checks, Actions and Commit statuses access.' };
@@ -733,7 +736,7 @@ export default function activate(api: ModAPI) {
     for (const { from, ...update } of message.watches ?? []) {
       const index = watches.findIndex(w => w.key === from && w.added === update.added);
       if (index < 0) continue;
-      if (update.key !== from && watches.some(w => w.key.toLowerCase() === update.key.toLowerCase())) { watches.splice(index, 1); continue; }
+      if (update.key !== from && find(watches, update.key)) { watches.splice(index, 1); continue; }
       announce(watches[index], update);
       watches[index] = update;
     }

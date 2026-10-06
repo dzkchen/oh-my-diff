@@ -45,13 +45,14 @@ function pull({ head = HEAD, state = 'OPEN', contexts = nodes(3), size = 50, cur
       totalCount: contexts.length, pageInfo: { hasNextPage: next, endCursor: next ? String(start + size) : null }, nodes: slice } } } }] } } } } };
 }
 
-function github(respond, { token = 'p3', exec = {} } = {}) {
-  const world = { http: [], published: [], scheduled: [], notified: [], calls: [] };
+function github(respond, { token = 'p3', status = 'ready', exec = {} } = {}) {
+  const world = { http: [], published: [], scheduled: [], notified: [], requests: [], calls: [] };
   world.host = call => {
     const args = call.arguments;
     world.calls.push(call.operation);
     switch (call.operation) {
-      case 'credentials.list': return token ? [{ id: token, label: 'GitHub (omd_git)', kind: 'secret', provider: null, origin: 'https://api.github.com', status: 'ready', default: false }] : [];
+      case 'credentials.list': return token ? [{ id: token, label: 'GitHub (omd_git)', kind: 'secret', provider: null, origin: 'https://api.github.com', status, default: false }] : [];
+      case 'credentials.request': world.requests.push(args); return { status: 'completed', profile: null };
       case 'events.publish': world.published.push(args.data); return { delivered: 1, dropped: 0 };
       case 'events.schedule': world.scheduled.push(args); return args;
       case 'terminal.notify': world.notified.push(args); return { delivered: true, method: 'osc9' };
@@ -126,9 +127,10 @@ test('GitHub watch pages over 100 checks, binds required checks to the head and 
 
 test('A head change during pagination restarts on the new head instead of mixing results', () => {
   let head = HEAD;
+  let next = OTHER;
   const world = github(request => {
     if (!request.query) return { body: run(5000, { head }) };
-    if (request.variables.c) head = OTHER;
+    if (request.variables.c) head = next;
     return { body: pull({ head, contexts: nodes(150, { runs: 1 }), cursor: request.variables.c }) };
   });
   let state = world.command(null, 'github', 'watch octo/proj#42').state;
@@ -141,6 +143,10 @@ test('A head change during pagination restarts on the new head instead of mixing
   assert.equal(watch.checks.total, 150);
   assert.equal(watch.page, null);
   assert.deepEqual(watch.runs.map(item => [item.id, item.verified]), [[5000, true]]);
+  next = 'c'.repeat(40);
+  const [moved] = world.cycle(state, { time: NOW + 1_000_000 }).github.watches;
+  assert.equal(moved.pr.head, next);
+  assert.ok(moved.page && moved.checks === null && !moved.runs.length);
 });
 
 test('Rate limits back off with Retry-After, and revoked or missing tokens go quiet and stale', () => {
@@ -163,11 +169,18 @@ test('Rate limits back off with Retry-After, and revoked or missing tokens go qu
   const pane = view.sites.sidebar.components.at(-1);
   assert.match(pane.children[0].rows[0].label, /unknown stale/);
   assert.match(pane.children[1].text, /token rejected/);
+  world.command(state, 'github', 'token');
+  assert.deepEqual(world.requests, [{ action: 'refresh', profile: 'p3' }]);
+  const empty = github(() => assert.fail('no request'), { status: 'not_enrolled' });
+  empty.command(null, 'github', 'token');
+  assert.deepEqual(empty.requests, [{ action: 'refresh', profile: 'p3' }]);
   const denied = github(() => ({ status: 403, body: '{"message":"Resource not accessible by personal access token"}' }));
   state = denied.cycle(denied.command(null, 'github', 'watch octo/private#1').state);
   assert.match(state.github.watches[0].error, /not readable with this token/);
   assert.equal(state.github.watches[0].next, NOW + 900_000);
   assert.deepEqual(denied.scheduled, [{ key: 'github', delay_ms: 900_000 }]);
+  denied.cycle(state, { key: 'github_turn', time: NOW + 60_000 });
+  assert.equal(denied.http.length, 1);
   const missing = github(() => assert.fail('no request without a token'), { token: null });
   state = missing.cycle(missing.command(null, 'github', 'watch octo/proj#42').state);
   assert.equal(state.github.token, 'missing');
@@ -175,7 +188,10 @@ test('Rate limits back off with Retry-After, and revoked or missing tokens go qu
 });
 
 test('Branch watches resolve the fork pull request by head repository, not by branch name', () => {
-  const exec = { 'symbolic-ref --short -q HEAD': 'feature\n', 'config --get branch.feature.remote': 'origin\n', 'config --get branch.feature.merge': 'refs/heads/feature\n', 'remote get-url origin': 'git@github.com:me/proj.git\n' };
+  const refs = 'for-each-ref --format=%(push:remotename) %(upstream:remotename) %(upstream:remoteref) refs/heads/feature';
+  const exec = { 'symbolic-ref --short -q HEAD': 'feature\n', [refs]: 'origin origin refs/heads/feature\n', 'remote get-url origin': 'git@github.com:me/proj.git\n', 'remote get-url upstream': 'git@github.com:up/proj.git\n' };
+  const triangular = github(() => assert.fail('no request'), { exec: { ...exec, [refs]: 'origin upstream refs/heads/main\n', 'config --get branch.feature.remote': 'upstream\n', 'config --get branch.feature.merge': 'refs/heads/main\n' } });
+  assert.equal(triangular.command(null, 'github', 'watch').state.github.watches[0].key, 'me/proj:feature');
   const world = github(request => request.variables?.b
     ? { body: { data: { repository: { nameWithOwner: 'me/proj', pullRequests: { nodes: [] }, parent: { nameWithOwner: 'up/proj', pullRequests: { nodes: [{ number: 7, headRepository: { nameWithOwner: 'other/proj' } }, { number: 9, headRepository: { nameWithOwner: 'me/proj' } }] } } } } } }
     : request.query ? { body: pull({ contexts: [] }) } : assert.fail('no runs'), { exec });
@@ -192,11 +208,12 @@ test('Merged pull requests stop polling, idle sessions make no host calls, and u
   const world = github(request => request.query ? { body: pull({ state, contexts: [] }) } : assert.fail('no runs'));
   let saved = world.command(null, 'github', 'watch octo/proj#42').state;
   saved = world.command(saved, 'github', 'watch octo/proj#43').state;
+  assert.equal(world.command(saved, 'github', 'unwatch').value.display, 'usage: /omd_git:github unwatch KEY');
   for (const event of ['resume', 'turn_end']) saved = invoke(world.host, event, {}, saved).state ?? saved;
   assert.deepEqual(world.scheduled, [{ key: 'github', delay_ms: 1_000 }, { key: 'github_turn', delay_ms: 10_000 }]);
   const timer = invoke(world.host, 'timer', { key: 'github' }, saved);
   const result = world.published.at(-1);
-  saved = world.command(timer.state ?? saved, 'github', 'unwatch octo/proj#43').state;
+  saved = world.command(timer.state ?? saved, 'github', 'unwatch OCTO/proj#43').state;
   saved = invoke(world.host, 'channel', { publisher: 'omd_git', channel: 'omd_git/github', data: result, correlation: null, sequence: 1, dropped: 0 }, saved).state;
   assert.deepEqual(saved.github.watches.map(item => item.key), ['octo/proj#42']);
   state = 'MERGED';
@@ -216,7 +233,8 @@ test('Merged pull requests stop polling, idle sessions make no host calls, and u
 test('Opted-in notices fire on settled transitions and review changes, never on first load', () => {
   let failing = [];
   let review = 'REVIEW_REQUIRED';
-  const world = github(request => request.query ? { body: pull({ contexts: nodes(3, { failing, required: [0, 1], runs: 1 }), review }) } : { body: run(5000, { conclusion: failing.length ? 'failure' : 'success' }) });
+  let count = 3;
+  const world = github(request => request.query ? { body: pull({ contexts: nodes(count, { failing, required: [0, 1], runs: 1 }), review }) } : { body: run(5000, { conclusion: failing.length ? 'failure' : 'success' }) });
   const settings = { notices: true };
   let state = world.command(null, 'github', 'watch octo/proj#42').state;
   state = world.cycle(state, { settings });
@@ -227,6 +245,9 @@ test('Opted-in notices fire on settled transitions and review changes, never on 
   review = 'APPROVED';
   world.cycle(state, { time: NOW + 800_000 });
   assert.equal(world.notified.length, 1);
-  world.cycle(state, { settings, time: NOW + 800_000 });
+  state = world.cycle(state, { settings, time: NOW + 800_000 });
   assert.deepEqual(world.notified.at(-1), { title: 'octo/proj#42', body: 'failing, review approved: Add feature' });
+  count = 0;
+  world.cycle(state, { settings, time: NOW + 1_200_000 });
+  assert.equal(world.notified.length, 2);
 });

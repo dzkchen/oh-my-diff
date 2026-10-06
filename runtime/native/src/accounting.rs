@@ -171,7 +171,7 @@ fn inject_credential(
     let origin = codex_omd::credentials::url_origin(url)
         .ok_or_else(|| denied("request URL has no origin"))?;
     let secret = codex_omd::credentials::CredentialProfiles::open(root)
-        .and_then(|profiles| profiles.secret(profile, &origin))
+        .and_then(|profiles| profiles.secret(profile, &origin, None))
         .map_err(|error| denied(error.to_string()))?;
     let mut value = http::HeaderValue::from_str(&format!("Bearer {}", secret.token))
         .map_err(|_| denied("credential token is not a valid header"))?;

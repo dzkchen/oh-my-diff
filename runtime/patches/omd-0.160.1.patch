@@ -20886,7 +20886,7 @@ index 000000000..64d24f71a
 +codex-sandboxing = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..16b866c97
+index 000000000..16c232c6e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2234 @@
@@ -21063,7 +21063,7 @@ index 000000000..16b866c97
 +    let origin = codex_omd::credentials::url_origin(url)
 +        .ok_or_else(|| denied("request URL has no origin"))?;
 +    let secret = codex_omd::credentials::CredentialProfiles::open(root)
-+        .and_then(|profiles| profiles.secret(profile, &origin))
++        .and_then(|profiles| profiles.secret(profile, &origin, None))
 +        .map_err(|error| denied(error.to_string()))?;
 +    let mut value = http::HeaderValue::from_str(&format!("Bearer {}", secret.token))
 +        .map_err(|_| denied("credential token is not a valid header"))?;
@@ -25579,7 +25579,7 @@ index 000000000..cd27753e8
 +}
 diff --git a/codex-rs/ext/omd/src/credential_gateway.rs b/codex-rs/ext/omd/src/credential_gateway.rs
 new file mode 100644
-index 000000000..a341b9f56
+index 000000000..d9f7f4d32
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/credential_gateway.rs
 @@ -0,0 +1,388 @@
@@ -25852,7 +25852,7 @@ index 000000000..a341b9f56
 +            .map(str::to_owned)
 +            .ok_or_else(|| "credential_origin_missing".to_owned())?;
 +        let secret = profiles
-+            .secret(&profile, &origin)
++            .secret(&profile, &origin, None)
 +            .map_err(|error| error.to_string())?;
 +        Ok::<_, String>((origin, secret))
 +    })
@@ -31410,10 +31410,10 @@ index 000000000..dd03fd035
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
-index 000000000..7c2e6913a
+index 000000000..31453ba75
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/access.rs
-@@ -0,0 +1,729 @@
+@@ -0,0 +1,720 @@
 +use super::operations::Caller;
 +use super::*;
 +use base64::Engine;
@@ -31642,34 +31642,28 @@ index 000000000..7c2e6913a
 +                return Err(format!("credential_not_granted: {profile}"));
 +            }
 +            let store = core.host.root.clone();
-+            let (profile, target, owner) = (profile.clone(), origin.clone(), caller.id.to_owned());
++            let (profile, target, owner, first) = (
++                profile.clone(),
++                origin.clone(),
++                caller.id.to_owned(),
++                hops.is_empty(),
++            );
 +            let secret = tokio::task::spawn_blocking(move || {
 +                let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
 +                let entry = profiles.profile(&profile)?;
-+                if entry.kind == "secret" && entry.owner.as_deref() != Some(owner.as_str()) {
-+                    return Err(std::io::Error::other(format!(
-+                        "credential_secret_not_owned: {profile}"
-+                    )));
-+                }
 +                if !listed && entry.kind != "secret" {
 +                    return Err(std::io::Error::other(format!(
 +                        "credential_not_granted: {profile}"
 +                    )));
 +                }
-+                if entry.destination() != Some(target.as_str()) {
++                if !first && entry.destination() != Some(target.as_str()) {
 +                    return Ok(None);
 +                }
-+                profiles.secret(&profile, &target).map(Some)
++                profiles.secret(&profile, &target, Some(&owner)).map(Some)
 +            })
 +            .await
 +            .map_err(|error| error.to_string())?
 +            .map_err(|error| error.to_string())?;
-+            if secret.is_none() && hops.is_empty() {
-+                return Err(format!(
-+                    "credential_origin_mismatch: {}",
-+                    request.credential.as_deref().unwrap_or_default()
-+                ));
-+            }
 +            if let Some(secret) = secret {
 +                let mut value =
 +                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", secret.token))
@@ -32021,14 +32015,11 @@ index 000000000..7c2e6913a
 +                caller.id.to_owned(),
 +            );
 +            let secret = tokio::task::spawn_blocking(move || {
-+                let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
-+                let entry = profiles.profile(&profile)?;
-+                if entry.kind == "secret" && entry.owner.as_deref() != Some(owner.as_str()) {
-+                    return Err(std::io::Error::other(format!(
-+                        "credential_secret_not_owned: {profile}"
-+                    )));
-+                }
-+                profiles.secret(&profile, &origin)
++                codex_omd::credentials::CredentialProfiles::open(&store)?.secret(
++                    &profile,
++                    &origin,
++                    Some(&owner),
++                )
 +            })
 +            .await
 +            .map_err(|error| error.to_string())?
@@ -51683,10 +51674,10 @@ index 000000000..ba97c6052
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..b322f5720
+index 000000000..e24949659
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,904 @@
+@@ -0,0 +1,906 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -52217,9 +52208,11 @@ index 000000000..b322f5720
 +                serde_json::to_value(self.profiles(&arguments)?.profile(id()?)?)?
 +            }
 +            "credentials.secret" => {
-+                let secret = self
-+                    .profiles(&arguments)?
-+                    .secret(id()?, text(&arguments, "origin")?)?;
++                let secret = self.profiles(&arguments)?.secret(
++                    id()?,
++                    text(&arguments, "origin")?,
++                    arguments["owner"].as_str(),
++                )?;
 +                json!({"token": secret.token, "account_id": secret.account_id})
 +            }
 +            "credentials.owned_secret" => self
@@ -52593,10 +52586,10 @@ index 000000000..b322f5720
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..5971f0d54
+index 000000000..98d59194c
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,335 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -52818,18 +52811,34 @@ index 000000000..5971f0d54
 +        .unwrap();
 +    assert_eq!(
 +        profiles
-+            .secret(&key.id, "https://api.openai.com")
++            .secret(&key.id, "https://api.openai.com", None)
 +            .unwrap()
 +            .token,
 +        "sk-broker"
 +    );
 +    assert_eq!(profiles.public(&key).unwrap()["status"], "ready");
 +    assert!(!store.join("credentials").exists());
++    let site = profiles
++        .create_secret("site", "https://example.com", "vault")
++        .unwrap();
++    profiles.store_secret(&site.id, "hunter2").unwrap();
++    assert!(
++        profiles
++            .secret(&site.id, "https://example.com", Some("vault"))
++            .is_ok()
++    );
++    assert!(
++        profiles
++            .secret(&site.id, "https://example.com", Some("other"))
++            .unwrap_err()
++            .to_string()
++            .contains("credential_secret_not_owned")
++    );
 +    let empty = profiles.create("empty", "api_key", None, None).unwrap();
 +    gate.allow.store(false, Ordering::SeqCst);
 +    assert!(profiles.remove(&empty.id).unwrap());
 +    assert!(profiles.remove(&key.id).is_err());
-+    assert_eq!(gate.asked.lock().unwrap().len(), 3);
++    assert_eq!(gate.asked.lock().unwrap().len(), 4);
 +}
 +
 +#[test]
@@ -52845,7 +52854,7 @@ index 000000000..5971f0d54
 +        .unwrap();
 +    assert_eq!(
 +        profiles
-+            .secret(&key.id, "https://api.openai.com")
++            .secret(&key.id, "https://api.openai.com", None)
 +            .unwrap()
 +            .token,
 +        "sk-dummy"
@@ -55359,10 +55368,10 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..5acfda018
+index 000000000..374689a88
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,565 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
@@ -55821,21 +55830,31 @@ index 000000000..5acfda018
 +        if profile.kind != "secret" || profile.owner.as_deref() != Some(owner) {
 +            return Err(failure(format!("credential_secret_not_owned: {id}")));
 +        }
++        Ok(serde_json::json!({"id": profile.id, "label": profile.label,
++            "origin": profile.origin, "value": self.read_secret(id)?}))
++    }
++
++    fn read_secret(&self, id: &str) -> io::Result<String> {
 +        let path = self.home(id)?.join("secret");
 +        let metadata = fs::symlink_metadata(&path)
 +            .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;
 +        if !metadata.is_file() || metadata.len() > SECRET_BYTES as u64 {
 +            return Err(failure("credential_store_invalid"));
 +        }
-+        Ok(serde_json::json!({"id": profile.id, "label": profile.label,
-+            "origin": profile.origin, "value": fs::read_to_string(path)?}))
++        fs::read_to_string(path)
 +    }
 +
-+    /// Refuses unless `origin` is the profile's enrolled destination.
-+    pub fn secret(&self, id: &str, origin: &str) -> io::Result<CredentialSecret> {
++    /// Refuses unless `origin` is the profile's enrolled destination and, when a mod
++    /// (`owner`) asks for a `secret` profile, that mod owns it.
++    pub fn secret(
++        &self,
++        id: &str,
++        origin: &str,
++        owner: Option<&str>,
++    ) -> io::Result<CredentialSecret> {
 +        if let Some(value) = self.remote(
 +            "secret",
-+            serde_json::json!({"id": id, "origin": origin}),
++            serde_json::json!({"id": id, "origin": origin, "owner": owner}),
 +            false,
 +        ) {
 +            let value = value?;
@@ -55849,18 +55868,17 @@ index 000000000..5acfda018
 +            });
 +        }
 +        let profile = self.profile(id)?;
++        if profile.kind == "secret"
++            && owner.is_some_and(|owner| profile.owner.as_deref() != Some(owner))
++        {
++            return Err(failure(format!("credential_secret_not_owned: {id}")));
++        }
 +        if profile.destination() != Some(origin) {
 +            return Err(failure(format!("credential_origin_mismatch: {id}")));
 +        }
 +        if profile.kind == "secret" {
-+            let path = self.home(id)?.join("secret");
-+            let metadata = fs::symlink_metadata(&path)
-+                .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;
-+            if !metadata.is_file() || metadata.len() > SECRET_BYTES as u64 {
-+                return Err(failure("credential_store_invalid"));
-+            }
 +            return Ok(CredentialSecret {
-+                token: fs::read_to_string(path)?,
++                token: self.read_secret(id)?,
 +                account_id: None,
 +            });
 +        }
@@ -55921,10 +55939,10 @@ index 000000000..5acfda018
 +mod tests;
 diff --git a/codex-rs/omd/src/credentials_tests.rs b/codex-rs/omd/src/credentials_tests.rs
 new file mode 100644
-index 000000000..c9a3263b3
+index 000000000..01150ec4e
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials_tests.rs
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,215 @@
 +use super::*;
 +
 +fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
@@ -56036,7 +56054,7 @@ index 000000000..c9a3263b3
 +    let chat = profiles.create("chat", "chatgpt", None, None).unwrap();
 +    assert!(
 +        profiles
-+            .secret(&key.id, "https://api.openai.com")
++            .secret(&key.id, "https://api.openai.com", None)
 +            .unwrap_err()
 +            .to_string()
 +            .starts_with("credential_not_enrolled")
@@ -56044,7 +56062,9 @@ index 000000000..c9a3263b3
 +    profiles
 +        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-test"}"#)
 +        .unwrap();
-+    let secret = profiles.secret(&key.id, "https://api.openai.com").unwrap();
++    let secret = profiles
++        .secret(&key.id, "https://api.openai.com", None)
++        .unwrap();
 +    assert!(!format!("{secret:?}").contains("sk-test"));
 +    assert_eq!(
 +        (secret.token.as_str(), secret.account_id),
@@ -56052,7 +56072,7 @@ index 000000000..c9a3263b3
 +    );
 +    assert_eq!(
 +        profiles
-+            .secret(&key.id, "https://evil.example")
++            .secret(&key.id, "https://evil.example", None)
 +            .unwrap_err()
 +            .to_string(),
 +        "credential_origin_mismatch: p1"
@@ -56073,15 +56093,17 @@ index 000000000..c9a3263b3
 +    write(jwt(1));
 +    assert!(
 +        profiles
-+            .secret(&chat.id, "https://chatgpt.com")
++            .secret(&chat.id, "https://chatgpt.com", None)
 +            .unwrap_err()
 +            .to_string()
 +            .starts_with("credential_expired")
 +    );
 +    write(jwt(u64::MAX / 2));
-+    let secret = profiles.secret(&chat.id, "https://chatgpt.com").unwrap();
++    let secret = profiles
++        .secret(&chat.id, "https://chatgpt.com", None)
++        .unwrap();
 +    assert_eq!(secret.account_id.as_deref(), Some("acct"));
-+    assert!(profiles.secret("p99", "https://chatgpt.com").is_err());
++    assert!(profiles.secret("p99", "https://chatgpt.com", None).is_err());
 +}
 +
 +#[test]
@@ -56114,14 +56136,27 @@ index 000000000..c9a3263b3
 +        "hunter2"
 +    );
 +    assert!(profiles.owned_secret(&secret.id, "other").is_err());
++    for owner in [Some("vault"), None] {
++        assert_eq!(
++            profiles
++                .secret(&secret.id, "https://example.com:8443", owner)
++                .unwrap()
++                .token,
++            "hunter2"
++        );
++    }
 +    assert_eq!(
 +        profiles
-+            .secret(&secret.id, "https://example.com:8443")
-+            .unwrap()
-+            .token,
-+        "hunter2"
++            .secret(&secret.id, "https://example.com:8443", Some("other"))
++            .unwrap_err()
++            .to_string(),
++        format!("credential_secret_not_owned: {}", secret.id)
 +    );
-+    assert!(profiles.secret(&secret.id, "https://example.com").is_err());
++    assert!(
++        profiles
++            .secret(&secret.id, "https://example.com", Some("vault"))
++            .is_err()
++    );
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
@@ -60787,7 +60822,7 @@ index 000000000..afa32f4fe
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..2de64a352
+index 000000000..ab027e32d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,4850 @@
@@ -61299,13 +61334,13 @@ index 000000000..2de64a352
 +        exposure.push("approve.override: this mod may also approve commands your own execpolicy rules forbid.");
 +    }
 +    if granted("http") {
-+        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles to requests for their enrolled origin; it never sees the tokens.");
++        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles, and with `owned` every secret this mod enrolls now or later, to requests for their enrolled origin; it never sees the tokens.");
 +    }
 +    if granted("fs.external") {
 +        exposure.push("fs.external: this mod may read, list and stat, and where write is set change, files under the fs_access roots outside the workspace; credential locations and protected paths stay refused.");
 +    }
 +    if granted("mcp") {
-+        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, and their tools go through normal tool approvals.");
++        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, a URL server's credential profile (another mod's secret is refused) is sent to that origin, and their tools go through normal tool approvals.");
 +    }
 +    if granted("policy") {
 +        exposure.push("policy: this mod may refuse other mods at load and withhold the host namespaces listed in policy.namespaces from them; it cannot grant anything, change managed policy or judge itself, and disabling it in /omd restores the other mods.");
