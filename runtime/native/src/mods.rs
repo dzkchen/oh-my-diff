@@ -143,7 +143,7 @@ fn forward(
 
 struct TurnRecord {
     turn_id: String,
-    error: Option<String>,
+    error: Option<Value>,
     evidence: Option<evidence::Cursor>,
 }
 
@@ -169,7 +169,7 @@ struct Mods {
     worktrees: Mutex<BTreeMap<std::path::PathBuf, Arc<Host>>>,
     pending: Mutex<BTreeMap<String, PendingTool>>,
     answered: Mutex<BTreeMap<String, String>>,
-    child_errors: Mutex<BTreeMap<String, String>>,
+    child_errors: Mutex<BTreeMap<String, Value>>,
     /// Tool and outcome of each lead call until its batch settles or the next turn starts.
     settled: Mutex<BTreeMap<String, (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
@@ -263,11 +263,14 @@ impl Mods {
         thread_store: &codex_extension_api::ExtensionData,
         turn_store: &codex_extension_api::ExtensionData,
         outcome: &str,
+        error: Value,
     ) {
-        if let Some(record) =
-            self.inventory
-                .turn(thread_store.level_id(), turn_store.level_id(), outcome)
-        {
+        if let Some(record) = self.inventory.turn(
+            thread_store.level_id(),
+            turn_store.level_id(),
+            outcome,
+            error,
+        ) {
             inventory::notify(&self.runtime, &self.inventory, "turn", record);
         }
     }
@@ -988,10 +991,6 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         let mut filesystem = profile.file_system_sandbox_policy();
         filesystem
             .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-        crate::workspace_operations::protect_checkout_state(
-            &mut filesystem,
-            &self.host.repository,
-        )?;
         let protected = PermissionProfile::from_runtime_permissions(
             &filesystem,
             profile.network_sandbox_policy(),
@@ -1125,7 +1124,7 @@ impl TurnLifecycleContributor for Mods {
             if let Ok(mut errors) = self.child_errors.lock() {
                 errors.remove(input.thread_store.level_id());
             }
-            self.agent_turn(input.thread_store, input.turn_store, "aborted");
+            self.agent_turn(input.thread_store, input.turn_store, "aborted", Value::Null);
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1149,6 +1148,7 @@ impl TurnLifecycleContributor for Mods {
                     &lead,
                     "aborted",
                     Some(format!("{:?}", input.reason)),
+                    None,
                 );
                 self.event(
                     "turn_end",
@@ -1166,20 +1166,18 @@ impl TurnLifecycleContributor for Mods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             self.release_pending(thread_id(input.thread_store));
+            let failure =
+                agents::classify_error(&Some(input.error), &input.error_details.to_string());
             if let Some(thread) = thread_id(input.thread_store)
                 && lead_thread(input.thread_store)
                 && let Ok(mut turns) = self.turns.lock()
                 && let Some(turn) = turns.get_mut(&thread)
             {
-                turn.error = Some(format!("{:?}", input.error));
-            }
-            if !lead_thread(input.thread_store)
+                turn.error = Some(failure);
+            } else if !lead_thread(input.thread_store)
                 && let Ok(mut errors) = self.child_errors.lock()
             {
-                errors.insert(
-                    input.thread_store.level_id().to_owned(),
-                    format!("{:?}", input.error),
-                );
+                errors.insert(input.thread_store.level_id().to_owned(), failure);
             }
         })
     }
@@ -1203,6 +1201,7 @@ impl TurnLifecycleContributor for Mods {
                 } else {
                     "completed"
                 },
+                failed.unwrap_or(Value::Null),
             );
             let Some(lead) = input
                 .thread_store
@@ -1223,7 +1222,8 @@ impl TurnLifecycleContributor for Mods {
                 &self.core,
                 &lead,
                 payload["outcome"].as_str().unwrap_or("error"),
-                payload["error"].as_str().map(str::to_owned),
+                None,
+                payload.get("error").cloned(),
             );
             let private = match &turn.evidence {
                 Some(cursor) => match evidence::finish(
@@ -1689,14 +1689,18 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 return;
             };
             self.native_agent_started(thread, input.session_source, input.thread_store);
-            let Some(host) = self.host_for(input.config.cwd.as_path()) else {
-                self.views.diagnostic(
-                    &self.host,
-                    "session",
-                    Some(format!(
-                        "Mods are inactive for thread {thread}: its working directory is neither the launch repository nor one of its worktrees"
-                    )),
-                );
+            let host = self.host_for(input.config.cwd.as_path());
+            self.views.diagnostic(
+                &self.host,
+                "directory",
+                host.is_none().then(|| {
+                    format!(
+                        "Mods are off in {}: it is neither the launch project nor one of its worktrees",
+                        input.config.cwd.display()
+                    )
+                }),
+            );
+            let Some(host) = host else {
                 return;
             };
             if self

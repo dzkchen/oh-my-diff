@@ -9,9 +9,12 @@ use std::time::Duration;
 
 const AGENT_LIMIT: usize = 16;
 
-fn agent_failure(error: &codex_protocol::protocol::ErrorEvent) -> Value {
+pub(super) fn classify_error(
+    code: &Option<codex_protocol::protocol::CodexErrorInfo>,
+    message: &str,
+) -> Value {
     use codex_protocol::protocol::CodexErrorInfo as Kind;
-    let category = match &error.codex_error_info {
+    let category = match code {
         Some(
             Kind::HttpConnectionFailed { http_status_code }
             | Kind::ResponseStreamConnectionFailed { http_status_code }
@@ -32,16 +35,14 @@ fn agent_failure(error: &codex_protocol::protocol::ErrorEvent) -> Value {
             "invalid_request"
         }
         Some(Kind::Other) | None
-            if error
-                .message
-                .starts_with("stream disconnected before completion:") =>
+            if message.starts_with("stream disconnected before completion:") =>
         {
             "transport"
         }
         _ => "unknown",
     };
-    json!({"category":category,"code":error.codex_error_info,
-        "message":error.message.chars().take(1024).collect::<String>()})
+    json!({"category":category,"code":code,
+        "message":message.chars().take(1024).collect::<String>()})
 }
 
 fn strip_private(value: &mut Value) {
@@ -345,7 +346,7 @@ mod history_tests {
                 codex_error_info: code,
                 misalignment: None,
             };
-            let failure = agent_failure(&error);
+            let failure = classify_error(&error.codex_error_info, &error.message);
             assert_eq!(failure["category"], category);
             assert_eq!(
                 failure["code"],
@@ -361,7 +362,10 @@ mod history_tests {
             codex_error_info: Some(Kind::Other),
             misalignment: None,
         };
-        assert_eq!(agent_failure(&disconnected)["category"], "transport");
+        assert_eq!(
+            classify_error(&disconnected.codex_error_info, &disconnected.message)["category"],
+            "transport"
+        );
     }
 
     #[test]
@@ -2375,7 +2379,8 @@ impl Agents {
                     match event.msg {
                         EventMsg::TurnComplete(done) => {
                             if let Some(error) = done.error {
-                                let details = agent_failure(&error);
+                                let details =
+                                    classify_error(&error.codex_error_info, &error.message);
                                 if let Ok(mut failure) = failed.lock() {
                                     *failure = Some(details.clone());
                                 }
@@ -2436,11 +2441,12 @@ impl Agents {
                 let record = match &completed {
                     Ok(text) => {
                         core.inventory.answer(&thread, text);
-                        core.inventory.turn(&thread, "", "completed");
+                        core.inventory.turn(&thread, "", "completed", Value::Null);
                         core.inventory.end(&thread, "completed", None)
                     }
                     Err(error) => {
-                        core.inventory.turn(&thread, "", "error");
+                        core.inventory
+                            .turn(&thread, "", "error", payload["failure"].clone());
                         core.inventory.end(&thread, "failed", Some(error.clone()))
                     }
                 };

@@ -64,11 +64,17 @@ impl Inventory {
         });
     }
 
-    pub(super) fn turn(&self, thread: &str, turn_id: &str, outcome: &str) -> Option<Value> {
+    pub(super) fn turn(
+        &self,
+        thread: &str,
+        turn_id: &str,
+        outcome: &str,
+        error: Value,
+    ) -> Option<Value> {
         self.update(thread, |record| {
             record["turns"] = json!(record["turns"].as_u64().unwrap_or(0) + 1);
             record["last_turn"] = json!({"turn_id": turn_id, "outcome": outcome, "at_ms": now_ms(),
-                "answer": record["answer"]});
+                "answer": record["answer"], "error": error});
         })
     }
 

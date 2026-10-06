@@ -22,6 +22,7 @@ pub enum ActivityRecord {
         at: String,
         outcome: String,
         reason: Option<String>,
+        error: Option<Value>,
     },
     ToolStarted {
         turn_id: String,
@@ -157,10 +158,11 @@ impl TurnActivityLog {
                     at,
                     outcome,
                     reason,
+                    error,
                 } => {
                     let entry = ensure(&mut turns, &mut order, &turn_id);
-                    (entry.ended_at, entry.outcome, entry.reason) =
-                        (Some(at), Some(outcome), reason);
+                    (entry.ended_at, entry.outcome, entry.reason, entry.error) =
+                        (Some(at), Some(outcome), reason, error);
                 }
                 ActivityRecord::ToolStarted {
                     turn_id,
@@ -282,6 +284,7 @@ impl TurnActivityLog {
                     "ended_at": entry.ended_at,
                     "outcome": outcome,
                     "reason": entry.reason,
+                    "error": entry.error,
                     "unrecorded_end": unrecorded_end,
                     "tool_calls": tail(&entry.tools, ACTIVITY_TOOL_CALLS),
                     "processes": tail(&processes, ACTIVITY_PROCESSES),
@@ -300,6 +303,7 @@ struct Turn {
     ended_at: Option<String>,
     outcome: Option<String>,
     reason: Option<String>,
+    error: Option<Value>,
     paused: bool,
     tools: Vec<Value>,
     processes: Vec<Value>,

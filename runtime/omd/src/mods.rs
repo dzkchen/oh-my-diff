@@ -2808,7 +2808,7 @@ impl ModHost {
         Ok(host)
     }
 
-    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else `.omd/state`.
+    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
     pub fn set_checkout(&mut self, repository: &Path) {
         self.checkout = repository
             .ancestors()
@@ -2825,13 +2825,7 @@ impl ModHost {
                 };
                 git.canonicalize().ok()
             })
-            .map(|git| git.join("omd").join("state"))
-            .or_else(|| {
-                repository
-                    .canonicalize()
-                    .ok()
-                    .map(|directory| directory.join(".omd").join("state"))
-            });
+            .map(|git| git.join("omd").join("state"));
     }
 
     fn state_location(

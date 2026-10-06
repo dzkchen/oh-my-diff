@@ -319,11 +319,12 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
     std::fs::create_dir(&plain).unwrap();
     let mut outside = ModHost::open(root.join("second")).unwrap();
     outside.set_checkout(&plain);
-    assert_eq!(
-        invoke(&mut outside, "shared", "count", Value::Null).unwrap(),
-        json!(1)
+    let refused = invoke(&mut outside, "shared", "count", Value::Null).unwrap_err();
+    assert!(
+        refused.to_string().contains("state_checkout_unavailable"),
+        "{refused}"
     );
-    assert!(plain.join(".omd/state/shared.json").is_file());
+    assert!(!plain.join(".omd").exists());
     let cli = |cwd: &std::path::Path, args: &[&str]| {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
             .arg("command")

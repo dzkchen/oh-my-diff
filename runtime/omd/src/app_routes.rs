@@ -111,6 +111,13 @@ pub fn routes() -> Value {
     )
 }
 
+pub fn unscoped_directory(directory: &Path) -> bool {
+    directory.parent().is_none()
+        || std::env::var_os("HOME")
+            .and_then(|home| Path::new(&home).canonicalize().ok())
+            .is_some_and(|home| home == directory)
+}
+
 pub fn session_roots(repository: &Path) -> Vec<PathBuf> {
     let mut roots = vec![repository.to_path_buf()];
     let output = std::process::Command::new("git")

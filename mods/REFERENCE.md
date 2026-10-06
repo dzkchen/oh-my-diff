@@ -392,9 +392,11 @@ registration reads the state of the thread whose callback reloaded the mods
 (none at process start). `"checkout"` keeps one state per checkout, shared by
 every OMD process working there whatever its mod store: in
 `<git-dir>/omd/state/<mod>.json` for a Git checkout (a linked worktree has its
-own) and in `<directory>/.omd/state/<mod>.json` otherwise; the session sandbox
-keeps `.omd/state` read-only for agent commands and mod workspace writes, as
-Codex does for `.git`. `omd-mod command
+own), read-only to agent commands as Codex keeps `.git`. Outside Git, a
+projectless session, checkout state is unavailable
+(`state_checkout_unavailable`) and nothing is written to the directory. Mods
+never run with the home directory or filesystem root as the session directory:
+the host stays off with a notice in `/omd`. `omd-mod command
 STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. Thread and checkout
 state may be up to 192 KiB, but a callback result, including its state, stays
@@ -748,7 +750,9 @@ must include each complete call/output pair; evidence storage's 256 KiB limit
 still applies. This does not expose hidden reasoning.
 
 Failed `agents.result`/`agents.wait` and `agent_end` retain an optional
-`failure: {category, code, message}` from the host error. Categories are
+`failure: {category, code, message}` from the host error. The same object is
+`error` on an `error` outcome of `turn_end`, `turns.activity` turns and
+`agents.inventory` `last_turn`; `reason` names only an abort. Categories are
 `transport`, `rate_limit`, `authorization`, `sandbox`, `allowance`,
 `invalid_request` or `unknown`. Missing details are unknown, never evidence
 of an outage. The message is bounded to 1,024 characters; `code` preserves
@@ -880,7 +884,9 @@ the terminal's own path as a user message, `mode: 'turn'` starting a turn when
 the thread is idle and `'steer'` steering the running turn, under the thread's
 permissions, route and spending. It returns `{status: 'started' | 'steered',
 client_id}` or, without spending the consent, `{status: 'not_submitted',
-reason}` (`busy`, `no_active_turn`, `session_starting`); a spent, changed or
+reason}` (`busy`, `no_active_turn`, `session_starting`, or `input_held` while
+the terminal holds its own queued input after a disconnect, an unconfirmed
+submission, rate-limit recovery or an unavailable thread); a spent, changed or
 missing consent fails. `prompts.status {consent}` is `pending`, `missing`,
 `delivered` (the message with that `client_id` was committed to the thread,
 also when replayed on resume) or `unconfirmed` (spent, but no commit seen), so a

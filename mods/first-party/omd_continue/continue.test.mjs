@@ -23,7 +23,7 @@ function command(turns, text = '') {
   }
 }
 
-const turn = (outcome, extra = {}) => ({ turn_id: 't', started_at: 'a', ended_at: null, outcome, reason: null, unrecorded_end: false,
+const turn = (outcome, extra = {}) => ({ turn_id: 't', started_at: 'a', ended_at: null, outcome, reason: null, error: null, unrecorded_end: false,
   tool_calls: [], processes: [], files: [], truncated: false, ...extra });
 
 test('continue submits the fixed instruction with only host-observed interruption facts', () => {
@@ -32,6 +32,8 @@ test('continue submits the fixed instruction with only host-observed interruptio
   for (const turns of [[], [turn('completed')]]) assert.match(command(turns).display, /^No interrupted or failed turn/);
   assert.deepEqual(command([turn('completed')], ' check the build '), { submit: `${INSTRUCTION}\n\nNote: check the build` });
   assert.equal(command([turn('interrupted', { unrecorded_end: true })]).submit, `${INSTRUCTION}\n\nHost-observed interruption summary:\n- Last turn: interrupted`);
+  const failed = turn('error', { error: { category: 'transport', code: 'server_overloaded', message: 'Selected model is at capacity.' } });
+  assert.equal(command([failed]).submit, `${INSTRUCTION}\n\nHost-observed interruption summary:\n- Last turn: error (transport: Selected model is at capacity.)`);
   const aborted = turn('aborted', {
     reason: 'interrupted',
     tool_calls: [{ call_id: 'a', tool: 'apply_patch', started_at: 'a', finished_at: 'b', outcome: 'succeeded' }, { call_id: 'b', tool: 'exec_command', started_at: 'a', finished_at: null, outcome: null },
