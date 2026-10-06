@@ -296,3 +296,38 @@ test('failed branch diff cannot authorize integration', () => {
     assert.equal(git('rev-parse', 'HEAD', 'task/preview'), before);
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });
+
+test('integration refuses dirty submodule contents before preview and before committing', () => {
+  for (const phase of ['submodule', 'untracked-submodule', 'mixed', 'after-preview', 'clean-preview']) {
+    const { parent, repository, git, command, state } = fixture();
+    try {
+      const dependency = join(parent, 'dependency');
+      execFileSync('git', ['init', '--quiet', dependency]);
+      execFileSync('git', ['-C', dependency, 'config', 'user.email', 'fixture@example.com']);
+      execFileSync('git', ['-C', dependency, 'config', 'user.name', 'Fixture']);
+      writeFileSync(join(dependency, 'nested.txt'), 'original\n');
+      execFileSync('git', ['-C', dependency, 'add', '.']);
+      execFileSync('git', ['-C', dependency, 'commit', '--quiet', '-m', 'dependency']);
+      git('-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', dependency, 'nested');
+      git('commit', '--quiet', '-am', 'submodule');
+      command('task', 'submodule --branch task/submodule');
+      const path = `${repository}.worktrees/task-submodule`;
+      execFileSync('git', ['-C', path, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--quiet']);
+      if (!['submodule', 'untracked-submodule'].includes(phase)) writeFileSync(join(path, 'a.txt'), 'root change\n');
+      if (phase === 'clean-preview') execFileSync('git', ['-C', path, 'commit', '--quiet', '-am', 'task change']);
+      const before = git('rev-parse', 'HEAD', 'task/submodule');
+      const index = execFileSync('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-path', 'index'], { encoding: 'utf8' }).trim();
+      const indexBefore = readFileSync(index);
+      const previewed = ['after-preview', 'clean-preview'].includes(phase);
+      if (previewed) assert.equal(command('integrate', 'task/submodule'), null);
+      const nested = join(path, phase === 'untracked-submodule' ? 'nested/new.txt' : 'nested/nested.txt');
+      writeFileSync(nested, 'nested change\n');
+      const result = previewed ? command('merge') : command('integrate', 'task/submodule');
+      assert.match(result?.display ?? '', /submodule.*commit.*inside/i);
+      assert.equal(state().preview, null);
+      assert.equal(git('rev-parse', 'HEAD', 'task/submodule'), before);
+      assert.deepEqual(readFileSync(index), indexBefore);
+      assert.equal(readFileSync(nested, 'utf8'), 'nested change\n');
+    } finally { rmSync(parent, { recursive: true, force: true }); }
+  }
+});

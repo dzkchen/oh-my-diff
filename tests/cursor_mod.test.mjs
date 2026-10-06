@@ -2,12 +2,49 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { pendingSettlements, usageReport } from '../mods/first-party/omd_cursor/index.ts';
 import { Router } from '../mods/first-party/omd_cursor/transport.mjs';
+import { callback } from './mod_runner.mjs';
+
+test('Cursor applies delayed charges and drains billing batches after its polling window', async () => {
+  const source = await readFile(new URL('../mods/first-party/omd_cursor/index.ts', import.meta.url), 'utf8');
+  const manifest = JSON.parse(await readFile(new URL('../mods/first-party/omd_cursor/mod.json', import.meta.url), 'utf8'));
+  for (const count of [1, 217]) {
+    let state = { ours: true, applied: [], polls: 0, data: '/cursor', thread: 't' };
+    let elapsed = 0;
+    let delay = null;
+    const applied = [];
+    const log = Array.from({ length: count }, (_, index) => JSON.stringify({
+      kind: 'settlement', status: 'settled', thread: 't', request_id: `r${index}`,
+      cost: { charged_cents: 2.5 }, source: 'cursor_sdk.getUsage',
+    })).join('\n');
+    assert.ok(Buffer.byteLength(log) <= 32_768);
+    const host = call => {
+      if (call.operation === 'exec.run') return { exit_code: 0, stdout: elapsed >= 345_000 ? log : '' };
+      if (call.operation === 'ledger.settle') { applied.push(call.arguments); return { settled: true }; }
+      if (call.operation === 'events.schedule') { delay = call.arguments.delay_ms; return { scheduled: true }; }
+      throw new Error(`unexpected ${call.operation}`);
+    };
+    for (let poll = 0; poll < 60; poll++) {
+      delay = null;
+      const result = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities,
+        settings: {}, state, surface: { events: { start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', timer: 'events' }, state: 'store' },
+        event: poll ? 'timer' : 'turn_end', payload: poll ? { key: 'settle' } : null }, host, []);
+      assert.equal(result.error, undefined, result.error);
+      state = result.state;
+      if (delay === null) break;
+      elapsed += delay;
+    }
+    assert.deepEqual(applied.map(row => row.request_id), Array.from({ length: count }, (_, index) => `r${index}`));
+    assert.ok(applied.every(row => row.microusd === 25_000));
+    assert.ok(elapsed >= 360_000);
+    assert.equal(delay, null);
+  }
+});
 
 const model = 'cursor-auto';
 const token = 'local-fixture-token-without-account-access';
@@ -344,8 +381,18 @@ test('Cursor setup enrolls through the SDK login, hands the key to the broker an
     await mkdir(prefix);
     await mkdir(join(store, 'sources'), { recursive: true });
     await cp(new URL('../mods/first-party/omd_cursor', import.meta.url).pathname, join(store, 'sources/omd_cursor'), { recursive: true });
-    await mkdir(join(root, 'sdk'));
-    await writeFile(join(root, 'sdk/index.mjs'), sdk);
+    const sdkRoot = join(root, 'sdk');
+    const packageRoot = join(sdkRoot, 'node_modules/.pnpm/@cursor+sdk@1.0.35/node_modules/@cursor/sdk');
+    const dependency = join(sdkRoot, 'node_modules/.pnpm/fixture-dependency@1/node_modules/fixture-dependency');
+    const dependencyLink = join(packageRoot, '../../fixture-dependency');
+    const sdkEntry = join(packageRoot, 'dist/esm/index.js');
+    await mkdir(dirname(sdkEntry), { recursive: true });
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), '{"type":"module"}');
+    await writeFile(join(dependency, 'package.json'), '{"type":"module","main":"index.js"}');
+    await writeFile(join(dependency, 'index.js'), 'export const pinned = true;');
+    await symlink(relative(dirname(dependencyLink), dependency), dependencyLink);
+    await writeFile(sdkEntry, `import { pinned } from 'fixture-dependency';\nif (!pinned) throw new Error('dependency not pinned');\n${sdk}`);
     const manager = join(root, 'omd-mod');
     await writeFile(manager, `#!${process.execPath}
 import { appendFileSync, readFileSync } from 'node:fs';
@@ -355,7 +402,7 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     const recordPath = join(prefix, 'install.json');
     await writeFile(recordPath, JSON.stringify({ profile: 'full', prefix, store, packages: { omd_cursor: {} }, author: { node: process.execPath },
       manager: { installed_path: manager } }));
-    const setup = env => spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), 'setup', recordPath, join(root, 'sdk/index.mjs')],
+    const setup = env => spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), 'setup', recordPath, sdkEntry],
       { encoding: 'utf8', env: { ...process.env, ...env } });
     const denied = setup({ FIXTURE_DENY: '1' });
     assert.equal(denied.status, 1);
@@ -370,7 +417,6 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     assert.equal(result.account, 'dev@example.com');
     const host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
     const grant = host.services.find(service => service.id === 'cursor');
-    assert.match(grant.code_roots[join(root, 'sdk')], /^[a-f0-9]{64}$/);
     assert.deepEqual(grant.secrets, { OMD_CURSOR_LOCAL_TOKEN: 'cursor_local_token' });
     assert.deepEqual([grant.route.rates.provider_billed, grant.route.rates.included_subscription, grant.route.rates.reservation_microusd], [true, false, 0]);
     assert.deepEqual(Object.keys(host.secret_refs), ['cursor_local_token']);
@@ -387,5 +433,21 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     assert.equal(await readFile(join(store, 'host.json'), 'utf8'), before);
     assert.equal(setup({}).status, 0);
     assert.equal(JSON.parse(await readFile(join(store, 'host.json'), 'utf8')).services.filter(service => service.id === 'cursor').length, 1);
+    const snapshot = join(root, 'snapshot');
+    for (const path of Object.keys(grant.code_roots)) {
+      const destination = `${snapshot}${path}`;
+      await mkdir(dirname(destination), { recursive: true });
+      await cp(path, destination, { recursive: true, verbatimSymlinks: true });
+    }
+    await rm(sdkRoot, { recursive: true, force: true });
+    const route = JSON.parse(await readFile(result.provider.route, 'utf8'));
+    const previous = process.env.OMD_SERVICE_ROOT;
+    process.env.OMD_SERVICE_ROOT = snapshot;
+    try { await new Router({ ...route, data: join(root, 'data') }, 'fixture').ready(); }
+    finally {
+      if (previous === undefined) delete process.env.OMD_SERVICE_ROOT;
+      else process.env.OMD_SERVICE_ROOT = previous;
+    }
+    assert.match(grant.code_roots[sdkRoot], /^[a-f0-9]{64}$/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

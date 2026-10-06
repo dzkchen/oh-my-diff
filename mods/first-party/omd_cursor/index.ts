@@ -8,8 +8,7 @@ const LOG_TAIL_BYTES = 32_768;
 type Row = Record<string, any>;
 type State = { ours: boolean; applied: string[]; polls: number; data?: string | null; thread?: string | null };
 
-// The transport settles a run at 0, 15, 60 and 300 s after it ends; polling at turn end, 75 s and 330 s later reads each of those.
-const SETTLE_POLLS_MS = [75_000, 255_000];
+const SETTLE_POLLS = 6;
 
 function lines(text: string): Row[] {
   return text.split('\n').flatMap(line => { try { const row = JSON.parse(line); return row && typeof row === 'object' ? [row] : []; } catch { return []; } });
@@ -95,20 +94,23 @@ export default function activate(api: ModAPI): void {
     api.state.set(ours ? located(current) : current);
     if (ours) ensure();
   };
-  // Cursor prices a run minutes after it ends; each run's charge is applied to this session's ledger once, at turn end and at the two polls that follow it.
+  // Cursor prices a run minutes after it ends; poll through six minutes and drain ready charges in bounded batches.
   const settle = (poll: boolean) => {
     if (!state().ours) return;
     const current = located(state());
     if (!current.data || !current.thread) return;
     const log = read(`${current.data}/usage.jsonl`, true);
     const applied = [...current.applied];
-    for (const settlement of log ? pendingSettlements(log, current.thread, applied).slice(0, 8) : []) {
+    const pending = log ? pendingSettlements(log, current.thread, applied) : [];
+    for (const settlement of pending.slice(0, 8)) {
       const result = api.host.tryCall('ledger.settle', settlement);
       if (result.ok || result.error.includes('not_awaiting_settlement')) applied.push(settlement.request_id);
     }
-    const polls = poll ? current.polls + 1 : 0;
-    api.state.set({ ...current, applied: applied.slice(-200), polls });
-    if (polls < SETTLE_POLLS_MS.length) api.host.tryCall('events.schedule', { key: settleKey, delay_ms: SETTLE_POLLS_MS[polls] });
+    const polls = poll ? Math.min(current.polls + 1, SETTLE_POLLS) : 0;
+    const recent = log === null ? null : new Set(lines(log).filter(row => row.thread === current.thread).map(row => row.request_id));
+    api.state.set({ ...current, applied: recent ? applied.filter(id => recent.has(id)) : applied, polls });
+    if (polls < SETTLE_POLLS || pending.length > 8 && applied.length > current.applied.length)
+      api.host.tryCall('events.schedule', { key: settleKey, delay_ms: polls < SETTLE_POLLS ? 60_000 : 1_000 });
   };
   api.on('start', detect);
   api.on('resume', detect);

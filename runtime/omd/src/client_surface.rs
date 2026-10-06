@@ -1,6 +1,6 @@
 use crate::app_routes::InvocationContext;
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -97,13 +97,19 @@ pub struct CallLifetime {
     pub admission: Option<Value>,
     upstream_cancelled: Option<Arc<AtomicBool>>,
     cancelled: Arc<AtomicBool>,
+    phase: Arc<AtomicU8>,
     deadline: Arc<Mutex<Option<Instant>>>,
     pub binding: Option<Value>,
 }
 
+const QUEUED: u8 = 0;
+const EXECUTING: u8 = 1;
+const CANCELLED: u8 = 2;
+
 impl CallLifetime {
     pub fn active(&self) -> bool {
-        !self.cancelled.load(Ordering::Acquire)
+        self.phase.load(Ordering::Acquire) != CANCELLED
+            && !self.cancelled.load(Ordering::Acquire)
             && !self
                 .upstream_cancelled
                 .as_ref()
@@ -112,6 +118,22 @@ impl CallLifetime {
                 .deadline
                 .lock()
                 .is_ok_and(|deadline| deadline.is_none_or(|deadline| Instant::now() < deadline))
+    }
+
+    pub fn begin_execution(&self) -> Result<(), String> {
+        if !self.active() {
+            return Err("callback_cancelled_or_expired".into());
+        }
+        self.phase
+            .compare_exchange(QUEUED, EXECUTING, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| "callback_cancelled_or_executing".into())
+    }
+
+    fn cancel_queued(&self) -> bool {
+        self.phase
+            .compare_exchange(QUEUED, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 }
 
@@ -122,6 +144,7 @@ pub struct PendingReply {
 
 impl Drop for PendingReply {
     fn drop(&mut self) {
+        self.lifetime.cancel_queued();
         self.lifetime.cancelled.store(true, Ordering::Release);
     }
 }
@@ -357,10 +380,15 @@ pub fn wait(
             .map_err(|_| "client_surface_poisoned")? = Some(deadline);
     }
     loop {
-        if !active() {
+        if receiver.lifetime.phase.load(Ordering::Acquire) != EXECUTING
+            && !active()
+            && receiver.lifetime.cancel_queued()
+        {
             return Err("callback_cancelled".into());
         }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            && receiver.lifetime.cancel_queued()
+        {
             return Err(format!(
                 "callback_execution_budget: the client did not answer within {} ms",
                 crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS

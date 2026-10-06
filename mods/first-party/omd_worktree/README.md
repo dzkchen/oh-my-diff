@@ -41,6 +41,9 @@ preserves excluded staged entries, and merges the exact commit after rechecking
 the destination HEAD and status. Captured-tree commits use `git commit-tree` and
 do not run commit hooks. A conflict attempts merge abort and reports a recovery
 failure if abort fails.
+Dirty tracked or untracked content inside a submodule must be committed in
+that submodule first. Preview and commit both enforce this; a clean changed
+submodule commit can be captured as a gitlink.
 Task names are kept in the mod's user-scope store, so every session sees them;
 the roster, selection and preview belong to the session thread.
 Merge commits use the repository's Git identity or exported `GIT_AUTHOR_*` and

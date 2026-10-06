@@ -1782,7 +1782,11 @@ removed mod stays listed with `installed: false` until it stops.
 keeps it enabled. `apply` and `reload` run from user contexts; `apply` shows a
 native confirmation naming every new grant, dependencies as `id:capability`,
 and applies exactly the confirmed plan or refuses if the package, lock or
-selection changed. An update resolves dependencies through the index the
+selection changed.
+Once a confirmed package mutation starts, it returns its definitive result
+even if its writes reload or disable the calling mod. Queued calls still
+reject cancellation, changed source, originating generation or client context.
+An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
 failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`

@@ -20,11 +20,17 @@ const fit = (text: string, limit: number, lines = false) => {
 };
 const GIT = ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.quotepath=false'];
 const NEW_FILES = 8;
+const SUBMODULE_GUARD = `omd_status=$(git status --porcelain=v2 --ignore-submodules=none --untracked-files=no -- . "$@")
+  if printf '%s\\n' "$omd_status" | grep -Eq '^[12u] [^ ]+ S.(M.|.U) '; then
+    echo 'Submodule changes must be committed inside each submodule before integrating' >&2
+    exit 1
+  fi`;
 const SNAPSHOT = `!f() {
   set -eu
   omd_base=$1
   shift
   test "$(git rev-parse HEAD)" = "$omd_base"
+  ${SUBMODULE_GUARD}
   omd_index=$(git rev-parse --path-format=absolute --git-path index)
   omd_digest=$(git hash-object "$omd_index")
   omd_temp=$(mktemp -d)
@@ -43,6 +49,7 @@ const COMMIT = `!f() {
   omd_branch=$4
   omd_message=$5
   shift 5
+  ${SUBMODULE_GUARD}
   omd_index=$(git rev-parse --path-format=absolute --git-path index)
   omd_lock="$omd_index.lock"
   if ! (set -C; : > "$omd_lock") 2>/dev/null; then
@@ -77,6 +84,7 @@ const COMMIT = `!f() {
   cp "$omd_index" "$GIT_INDEX_FILE"
   git restore --staged --source="$omd_tree" -- . "$@"
   cp "$GIT_INDEX_FILE" "$omd_lock"
+  ${SUBMODULE_GUARD}
   omd_commit=$(git commit-tree "$omd_tree" -p "$omd_base" -m "$omd_message")
   git update-ref -m "$omd_message" "refs/heads/$omd_branch" "$omd_commit" "$omd_base"
   omd_advanced=true
@@ -85,6 +93,7 @@ const COMMIT = `!f() {
   printf '%s\\n' "$omd_commit"
 }; f`;
 const ROWS_BYTES = 8_192;
+const dirtySubmodules = (status: string) => status.split('\0').some(record => /^[12u] [^ ]+ S.(?:M.|.U) /.test(record));
 const bytes = (value: unknown) => [...JSON.stringify(value)].reduce((total, char) => {
   const code = char.codePointAt(0) ?? 0;
   return total + (code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4);
@@ -266,13 +275,15 @@ export default function activate(api: ModAPI) {
     const tree = find(state, target);
     if (!tree?.branch) return { display: 'usage: /omd_worktree:integrate PATH|BRANCH (a worktree on a branch)' };
     if (tree.current) return { display: 'Run this from the destination checkout, not from the task worktree' };
-    const status = ['status', '--porcelain=v1', '-z', '--untracked-files=no'];
+    const status = ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none'];
     const destination = git(status);
     if (!destination.ok || destination.out) return { display: destination.ok ? 'The destination checkout has uncommitted changes; commit or stash them yourself first' : destination.err };
     const excluded = setups().shared.map(item => `:(exclude,literal)${item.path}`);
-    const pending = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...excluded];
+    const pending = ['-C', tree.path, 'status', '--porcelain=v2', '-z', '--ignore-submodules=none', '--', '.', ...excluded];
     const source = git(pending);
-    if (!source.ok) return { display: source.err };
+    if (!source.ok || source.truncated) return { display: source.err || 'The task status is too large to review here; commit there first' };
+    if (dirtySubmodules(source.out))
+      return { display: 'Submodule changes must be committed inside each submodule before integrating' };
     const dirty = source.out.split('\0').filter(Boolean).length;
     if (!dirty && git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, 'HEAD']).ok) return { display: `${tree.branch} is already integrated` };
     const head = ['rev-parse', 'HEAD'];
@@ -302,7 +313,7 @@ export default function activate(api: ModAPI) {
     state.preview = { path: tree.path, branch: tree.branch, tip: tipped.out.trim(),
       summary: fit(`${dirty ? `Uncommitted changes in the task worktree (${dirty} paths${added.length ? `, ${added.length} new` : ''}) are committed as "${message}" first.\n` : ''}${log.out}${stat.out}`, 4_000, true),
       diff: diff.truncated || shown !== full ? `${fit(shown, 39_900, true)}\n… diff truncated; review the full change in the worktree` : shown,
-      guards: [guardOf(head, headed), guardOf(tip, tipped), guardOf(status, destination)],
+      guards: [guardOf(head, headed), guardOf(tip, tipped), guardOf(status, destination), ...(!dirty ? [guardOf(pending, source)] : [])],
       commit: local ? { message, tree: capturedTree, index: capturedIndex, paths: excluded } : null };
     state.open = true;
     save(state);
@@ -315,6 +326,13 @@ export default function activate(api: ModAPI) {
     const preview = state.preview;
     if (!preview) return { display: 'Open an integration preview first' };
     state.preview = null;
+    const pending = ['-C', preview.path, 'status', '--porcelain=v2', '-z', '--ignore-submodules=none', '--', '.', ...setups().shared.map(item => `:(exclude,literal)${item.path}`)];
+    const source = git(pending);
+    if (!source.ok || source.truncated || dirtySubmodules(source.out)) {
+      state.notice = source.err || (source.truncated ? 'The task status is too large to review here; commit there first' : 'Submodule changes must be committed inside each submodule before integrating');
+      save(state);
+      return { display: state.notice };
+    }
     let mergeTip = preview.tip;
     if (preview.commit) {
       const committed = git(['-C', preview.path, '-c', `alias.omd-reviewed-commit=${COMMIT}`, 'omd-reviewed-commit', preview.commit.index,

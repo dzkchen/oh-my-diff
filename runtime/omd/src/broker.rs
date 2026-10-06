@@ -134,8 +134,16 @@ impl Client {
             Some(password()?.ok_or_else(|| failure("authority_authorization_denied"))?)
         };
         let authorization = platform::Authorization::create()?;
-        self.send(&json!({"op": op, "arguments": arguments, "nonce": nonce,
+        self.send_authorized(&json!({"op": op, "arguments": arguments, "nonce": nonce,
             "authorization": authorization.external()?, "password": password}))
+    }
+
+    fn send_authorized(&mut self, request: &Value) -> io::Result<Value> {
+        let timeout = self.stream.get_ref().read_timeout()?;
+        self.stream.get_mut().set_read_timeout(None)?;
+        let result = self.send(request);
+        self.stream.get_mut().set_read_timeout(timeout)?;
+        result
     }
 }
 

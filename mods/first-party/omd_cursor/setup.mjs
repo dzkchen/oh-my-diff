@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { chmod, mkdir, readFile, readdir, readlink, realpath, stat, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
+import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SDK_VERSION, loadSdk, privateDirectory } from './transport.mjs';
 
@@ -112,7 +112,10 @@ async function setup(recordPath, sdkPath) {
   const directory = join(record.prefix, 'cursor');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const entry = await realpath(sdkPath || await install(directory));
-  const codeRoot = sdkPath ? dirname(entry) : await realpath(join(directory, 'sdk'));
+  let codeRoot = sdkPath ? dirname(entry) : await realpath(join(directory, 'sdk'));
+  if (sdkPath) for (let parent = dirname(entry); parent !== dirname(parent); parent = dirname(parent)) {
+    if (basename(parent) === 'node_modules') codeRoot = dirname(parent);
+  }
   for (const path of [record.prefix, record.store]) {
     const within = relative(codeRoot, await realpath(path));
     if (within === '' || (!isAbsolute(within) && within !== '..' && !within.startsWith('../'))) throw new Error('cursor_sdk_requires_separate_directory');

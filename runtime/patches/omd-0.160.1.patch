@@ -2371,10 +2371,10 @@ index 765fe5eda..e77e36031 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index e08a0fa5a..8b0497678 100644
+index e08a0fa5a..13680496e 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -504,7 +504,59 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -504,7 +504,64 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
@@ -2408,10 +2408,15 @@ index e08a0fa5a..8b0497678 100644
 +            let local = path
 +                .to_abs_path()
 +                .map_err(|_| std::io::Error::other("workspace_local_path_invalid"))?;
-+            paths.insert(local.canonicalize()?.to_path_buf());
++            paths.insert(canonical_workspace_path(&local).map_err(std::io::Error::other)?);
 +        }
 +    }
 +    Ok(paths)
++}
++
++fn canonical_workspace_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
++    path.canonicalize()
++        .map_err(|error| anyhow::anyhow!("Cannot initialize workspace {}: {error}", path.display()))
 +}
 +
  impl Session {
@@ -2434,7 +2439,7 @@ index e08a0fa5a..8b0497678 100644
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1436,6 +1488,100 @@ impl Session {
+@@ -1436,6 +1493,100 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -2535,7 +2540,7 @@ index e08a0fa5a..8b0497678 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -1886,6 +2032,20 @@ impl Session {
+@@ -1886,6 +2037,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -2556,7 +2561,7 @@ index e08a0fa5a..8b0497678 100644
 
              let previous_config = notify_config_contributors
                  .then(|| self.build_effective_session_config(&state.session_configuration));
-@@ -3841,6 +4001,7 @@ impl Session {
+@@ -3841,6 +4006,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -2564,7 +2569,7 @@ index e08a0fa5a..8b0497678 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3848,6 +4009,27 @@ impl Session {
+@@ -3848,6 +4014,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -2592,7 +2597,7 @@ index e08a0fa5a..8b0497678 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4274,6 +4456,10 @@ impl Session {
+@@ -4274,6 +4461,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -2603,7 +2608,7 @@ index e08a0fa5a..8b0497678 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4283,6 +4469,7 @@ impl Session {
+@@ -4283,6 +4474,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -2611,7 +2616,7 @@ index e08a0fa5a..8b0497678 100644
                  })
                  .await
              {
-@@ -4371,6 +4558,10 @@ impl Session {
+@@ -4371,6 +4563,10 @@ impl Session {
                  }
              }
          }
@@ -2622,7 +2627,7 @@ index e08a0fa5a..8b0497678 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4380,6 +4571,7 @@ impl Session {
+@@ -4380,6 +4576,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -2631,7 +2636,7 @@ index e08a0fa5a..8b0497678 100644
                  .await
              {
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 824cf589c..2e7bc6854 100644
+index 824cf589c..2e17e120f 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -58,6 +58,8 @@ type McpToolApprovalMetadataMap =
@@ -2643,7 +2648,7 @@ index 824cf589c..2e7bc6854 100644
      pub(crate) thread_id: ThreadId,
      pub(crate) installation_id: String,
      pub(super) tx_event: Sender<Event>,
-@@ -775,6 +777,22 @@ impl Session {
+@@ -775,6 +777,31 @@ impl Session {
          git_enrichment_policy: GitEnrichmentPolicy,
          windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
      ) -> anyhow::Result<Arc<Self>> {
@@ -2655,18 +2660,27 @@ index 824cf589c..2e7bc6854 100644
 +                &inherited.all_selections(),
 +            )?);
 +        }
-+        workspace_paths.insert(session_configuration.cwd().canonicalize()?.to_path_buf());
++        workspace_paths.insert(canonical_workspace_path(session_configuration.cwd())?);
 +        for root in &session_configuration.runtime_workspace_roots {
-+            workspace_paths.insert(root.canonicalize()?.to_path_buf());
++            workspace_paths.insert(canonical_workspace_path(root)?);
 +        }
 +        let workspace_leases = workspace_paths
 +            .into_iter()
-+            .map(|path| shared_workspace_lease(&path).map(|lease| (path, lease)))
-+            .collect::<std::io::Result<std::collections::BTreeMap<_, _>>>()?;
++            .map(|path| {
++                shared_workspace_lease(&path)
++                    .map_err(|error| {
++                        anyhow::anyhow!(
++                            "Cannot acquire workspace lease for {}: {error}",
++                            path.display()
++                        )
++                    })
++                    .map(|lease| (path, lease))
++            })
++            .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
          debug!(
              "Configuring session: model={}; provider={:?}",
              session_configuration
-@@ -997,6 +1015,12 @@ impl Session {
+@@ -997,6 +1024,12 @@ impl Session {
              thread_extension_init,
          );
          thread_extension_data.insert(crate::context::GuardianReviewEvidence::default());
@@ -2679,7 +2693,7 @@ index 824cf589c..2e7bc6854 100644
          // Kick off independent async setup tasks in parallel to reduce startup latency.
          //
          // - initialize thread persistence with new or resumed session info
-@@ -1648,6 +1672,9 @@ impl Session {
+@@ -1648,6 +1681,9 @@ impl Session {
                  extension_metrics::from_session_telemetry(session_telemetry.clone());
              let workspace_routing = thread_extension_data
                  .get_or_init(|| config.workspace_routing_context());
@@ -2689,7 +2703,7 @@ index 824cf589c..2e7bc6854 100644
              for contributor in extensions.thread_lifecycle_contributors() {
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
-@@ -1776,6 +1803,7 @@ impl Session {
+@@ -1776,6 +1812,7 @@ impl Session {
              };
              let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
              let sess = Arc::new(Session {
@@ -2719,10 +2733,41 @@ index c50b4b537..a13757a7e 100644
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 13ebc6824..6b5494166 100644
+index 13ebc6824..e2cf0c206 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -6730,6 +6730,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -6217,11 +6217,12 @@ async fn relative_cwd_update_without_environments_resolves_under_session_cwd() {
+
+ #[tokio::test]
+ async fn environment_settings_preserve_explicit_primary_cwd() {
+-    let (session, _turn_context) = make_session_and_context().await;
++    let (_workspace, session, _turn_context, _rx) = make_session_in_workspace_with_rx().await;
+     let (original_cwd, environment_cwd, environments) = {
+         let state = session.state.lock().await;
+         let original_cwd = state.session_configuration.cwd().clone();
+         let environment_cwd = original_cwd.join("environment");
++        std::fs::create_dir_all(environment_cwd.as_path()).expect("create environment dir");
+         let environments = vec![local(environment_cwd.clone())];
+         (original_cwd, environment_cwd, environments)
+     };
+@@ -6247,6 +6248,16 @@ async fn environment_settings_preserve_explicit_primary_cwd() {
+     );
+ }
+
++#[test]
++fn workspace_initialization_errors_identify_the_missing_workspace() {
++    let root = tempfile::tempdir().unwrap();
++    let missing = root.path().join("missing-workspace");
++    let error = canonical_workspace_path(&missing).unwrap_err();
++    let mapped = map_session_init_error(&error, root.path()).to_string();
++    assert!(mapped.contains(missing.to_str().unwrap()), "{mapped}");
++    assert!(!mapped.contains("Session storage missing"), "{mapped}");
++}
++
+ #[tokio::test]
+ async fn absolute_cwd_update_with_turn_environment_is_allowed() {
+     let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
+@@ -6730,6 +6741,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
      };
 
      let session = Session {
@@ -2730,7 +2775,33 @@ index 13ebc6824..6b5494166 100644
          thread_id,
          installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
          tx_event,
-@@ -9006,6 +9007,7 @@ where
+@@ -8004,10 +8016,11 @@ fn submission_dispatch_span_uses_debug_for_realtime_audio() {
+
+ #[tokio::test]
+ async fn turn_environments_set_primary_environment() {
+-    let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
++    let (_workspace, session, _turn_context, _rx) = make_session_in_workspace_with_rx().await;
+     let selected_cwd =
+         AbsolutePathBuf::try_from(session.get_config().await.cwd.as_path().join("selected"))
+             .expect("absolute path");
++    std::fs::create_dir_all(selected_cwd.as_path()).expect("create selected dir");
+
+     let (turn_context, _) = session
+         .new_turn_with_sub_id(
+@@ -8124,10 +8137,11 @@ async fn new_task_does_not_change_an_already_running_tasks_environments() {
+
+ #[tokio::test]
+ async fn task_turn_does_not_overlay_legacy_fallback_cwd_onto_stored_thread_environments() {
+-    let (session, _initial_turn, _rx) = make_session_and_context_with_rx().await;
++    let (_workspace, session, _initial_turn, _rx) = make_session_in_workspace_with_rx().await;
+     let session_cwd = session.get_config().await.cwd.clone();
+     let selected_cwd =
+         AbsolutePathBuf::try_from(session_cwd.as_path().join("selected")).expect("absolute path");
++    std::fs::create_dir_all(selected_cwd.as_path()).expect("create selected dir");
+     session
+         .update_settings(SessionSettingsUpdate {
+             environments: Some(TurnEnvironmentSelections::new(
+@@ -9006,6 +9020,7 @@ where
      };
 
      let session = Arc::new(Session {
@@ -2738,6 +2809,40 @@ index 13ebc6824..6b5494166 100644
          thread_id,
          installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
          tx_event,
+@@ -9120,6 +9135,33 @@ pub(crate) async fn make_session_and_context_with_rx() -> (
+     make_session_and_context_with_dynamic_tools_and_rx(Vec::new()).await
+ }
+
++async fn make_session_in_workspace_with_rx() -> (
++    tempfile::TempDir,
++    Arc<Session>,
++    Arc<TurnContext>,
++    async_channel::Receiver<Event>,
++) {
++    let workspace = tempfile::tempdir().unwrap();
++    let codex_home = workspace.path().join("codex-home");
++    let cwd = AbsolutePathBuf::try_from(workspace.path().join("project")).unwrap();
++    std::fs::create_dir(&codex_home).unwrap();
++    std::fs::create_dir(cwd.as_path()).unwrap();
++    let (session, turn, rx) = make_session_and_context_with_auth_config_home_and_rx(
++        CodexAuth::from_api_key("Test API Key"),
++        Vec::new(),
++        &codex_home,
++        |config| {
++            config.cwd = cwd.clone();
++            config.workspace_roots = vec![cwd];
++            config
++                .permissions
++                .set_workspace_roots(config.workspace_roots.clone());
++        },
++    )
++    .await;
++    (workspace, session, turn, rx)
++}
++
+ #[tokio::test]
+ async fn cancelled_step_capture_finishes_warning_delivery() {
+     struct WarningProvider {
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
 index 5b335c2c0..3dbe0dfbc 100644
 --- a/codex-rs/core/src/session/turn.rs
@@ -3298,6 +3403,50 @@ index e76b3e268..959d105ab 100644
 +        Some(requested(ModeKind::Default))
 +    );
 +}
+diff --git a/codex-rs/core/src/session/turn_tests.rs b/codex-rs/core/src/session/turn_tests.rs
+index f60ea8be7..a8e04be28 100644
+--- a/codex-rs/core/src/session/turn_tests.rs
++++ b/codex-rs/core/src/session/turn_tests.rs
+@@ -5,6 +5,8 @@ use codex_protocol::ResponseItemId;
+ use codex_protocol::items::AgentMessageContent;
+ use pretty_assertions::assert_eq;
+ use std::sync::Arc;
++use tracing::Subscriber;
++use tracing::callsite::Callsite;
+ use tracing_subscriber::prelude::*;
+
+ struct RewriteAgentMessageContributor;
+@@ -46,16 +48,20 @@ fn post_sampling_token_estimate_is_disabled_by_always_on_sinks() {
+         .with(feedback.logger_layer())
+         .with(tracing_subscriber::fmt::layer().with_filter(codex_state::log_db::default_filter()));
+
+-    tracing::subscriber::with_default(subscriber, || {
+-        tracing::callsite::rebuild_interest_cache();
+-        assert!(!tracing::event_enabled!(
+-            target: POST_SAMPLING_TOKEN_ESTIMATE_TARGET,
+-            tracing::Level::TRACE,
+-            turn_id,
+-            estimated_token_count,
+-            message
+-        ));
+-    });
++    let _other = tracing::Dispatch::new(
++        tracing_subscriber::registry().with(
++            tracing_subscriber::fmt::layer()
++                .with_filter(tracing_subscriber::filter::LevelFilter::TRACE),
++        ),
++    );
++    let callsite = tracing::callsite! {
++        name: "post sampling token estimate",
++        kind: tracing::metadata::Kind::EVENT,
++        target: POST_SAMPLING_TOKEN_ESTIMATE_TARGET,
++        level: tracing::Level::TRACE,
++        fields: turn_id, estimated_token_count, message
++    };
++    assert!(subscriber.register_callsite(callsite.metadata()).is_never());
+ }
+
+ #[tokio::test]
 diff --git a/codex-rs/core/src/skills.rs b/codex-rs/core/src/skills.rs
 index 6dd7938fb..65672d971 100644
 --- a/codex-rs/core/src/skills.rs
@@ -7051,6 +7200,90 @@ index 3645306c2..611714c93 100644
      pub tty: bool,
      pub sandbox_permissions: SandboxPermissions,
      pub additional_permissions: Option<AdditionalPermissionProfile>,
+diff --git a/codex-rs/core/src/unified_exec/mod_tests.rs b/codex-rs/core/src/unified_exec/mod_tests.rs
+index 6c09065f3..55f931efc 100644
+--- a/codex-rs/core/src/unified_exec/mod_tests.rs
++++ b/codex-rs/core/src/unified_exec/mod_tests.rs
+@@ -518,25 +518,64 @@ async fn unified_exec_pause_blocks_yield_timeout() -> anyhow::Result<()> {
+     let (session, turn) = test_session_and_turn().await;
+     let elicitation = session.services.elicitations.register();
+
+-    tokio::spawn(async move {
+-        tokio::time::sleep(Duration::from_secs(2)).await;
+-        drop(elicitation);
++    let mut execution = tokio::spawn({
++        let session = session.clone();
++        let turn = turn.clone();
++        async move {
++            exec_command(
++                &session,
++                &turn,
++                "sleep 1 && echo unified-exec-done",
++                /*yield_time_ms*/ 250,
++                /*workdir*/ None,
++            )
++            .await
++        }
+     });
+-
+-    let started = tokio::time::Instant::now();
+-    let response = exec_command(
+-        &session,
+-        &turn,
+-        "sleep 1 && echo unified-exec-done",
+-        /*yield_time_ms*/ 250,
+-        /*workdir*/ None,
+-    )
++    let process = tokio::time::timeout(Duration::from_secs(30), async {
++        loop {
++            if let Some(process) = session
++                .services
++                .unified_exec_manager
++                .process_store
++                .lock()
++                .await
++                .processes
++                .values()
++                .next()
++                .map(|entry| entry.process.clone())
++            {
++                break process;
++            }
++            tokio::time::sleep(Duration::from_millis(5)).await;
++        }
++    })
++    .await?;
++    tokio::time::timeout(Duration::from_secs(30), async {
++        process.cancellation_token().cancelled().await;
++        let output = process.output_handles();
++        loop {
++            let closed = output.output_closed_notify.notified();
++            tokio::pin!(closed);
++            closed.as_mut().enable();
++            if output
++                .output_closed
++                .load(std::sync::atomic::Ordering::Acquire)
++            {
++                break;
++            }
++            closed.await;
++        }
++    })
+     .await?;
+-
+     assert!(
+-        started.elapsed() >= Duration::from_secs(2),
+-        "pause should block the unified exec yield timeout"
++        tokio::time::timeout(Duration::from_millis(100), &mut execution)
++            .await
++            .is_err(),
++        "pause should block the unified exec yield timeout even after process exit"
+     );
++    drop(elicitation);
++    let response = tokio::time::timeout(Duration::from_secs(30), execution).await???;
+     assert!(
+         response
+             .truncated_output(DEFAULT_MAX_OUTPUT_TOKENS)
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
 index 3dc3e97d9..f357b5555 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
@@ -8415,19 +8648,21 @@ index 9d61157c4..1d511f153 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 37b5c788a..58c402c82 100644
+index 37b5c788a..144bc5e17 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
-@@ -230,6 +230,8 @@ mod link_hover;
+@@ -230,6 +230,10 @@ mod link_hover;
  mod loaded_threads;
  mod managed_worktree_creation;
  mod misalignment_policy;
 +mod mod_credentials;
 +mod mod_surface;
++#[cfg(test)]
++pub(crate) use mod_surface::apply_confirmed_package;
  mod model_defaults;
  mod new_session;
  mod turn_tips;
-@@ -922,6 +924,19 @@ impl App {
+@@ -922,6 +926,19 @@ impl App {
              event
          };
 
@@ -8447,7 +8682,7 @@ index 37b5c788a..58c402c82 100644
          self.cancel_primed_browsing_for_event(&event);
          let voice_toggle = |app: &Self, key: KeyEvent| {
              key.kind == KeyEventKind::Press
-@@ -934,7 +949,11 @@ impl App {
+@@ -934,7 +951,11 @@ impl App {
                  && app.keymap.chat.toggle_voice.is_pressed(key)
          };
          // Find consumes otherwise-unhandled keys; let enabled voice controls reach App.
@@ -8460,7 +8695,7 @@ index 37b5c788a..58c402c82 100644
              if voice_toggle(self, *key) && !self.transcript_view.owns_interaction_key(*key))
              && self.handle_owned_transcript_event(tui, app_server, &event)?
          {
-@@ -1017,6 +1036,7 @@ impl App {
+@@ -1017,6 +1038,7 @@ impl App {
 
          match &event {
              TuiEvent::FocusLost => {
@@ -8468,7 +8703,7 @@ index 37b5c788a..58c402c82 100644
                  self.chat_widget
                      .set_sparkle_terminal_focus(/*focused*/ false);
                  let now = Instant::now();
-@@ -1029,6 +1049,7 @@ impl App {
+@@ -1029,6 +1051,7 @@ impl App {
                  }
              }
              TuiEvent::FocusGained => {
@@ -8476,7 +8711,7 @@ index 37b5c788a..58c402c82 100644
                  self.recap.note_focus_gained();
              }
              _ => {}
-@@ -1050,6 +1071,10 @@ impl App {
+@@ -1050,6 +1073,10 @@ impl App {
                      // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                      // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                      let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
@@ -8487,7 +8722,7 @@ index 37b5c788a..58c402c82 100644
                      if self.backtrack.primed && !pasted.is_empty() {
                          if self.backtrack.overlay_preview_active {
                              self.cancel_transcript_browsing(tui);
-@@ -1153,7 +1178,74 @@ impl App {
+@@ -1153,7 +1180,74 @@ impl App {
          Ok(())
      }
 
@@ -8562,7 +8797,7 @@ index 37b5c788a..58c402c82 100644
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1183,20 +1275,30 @@ impl App {
+@@ -1183,20 +1277,30 @@ impl App {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
@@ -10315,17 +10550,90 @@ index 915b91463..74a1d9c86 100644
 -  GPT-5.6-Sol default · /tmp/project
 +  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
    esc latest                                           ⚠ 1 warning · f2 to view
+diff --git a/codex-rs/tui/src/app/test_support.rs b/codex-rs/tui/src/app/test_support.rs
+index 135c411dd..649777b64 100644
+--- a/codex-rs/tui/src/app/test_support.rs
++++ b/codex-rs/tui/src/app/test_support.rs
+@@ -11,6 +11,7 @@ use codex_models_manager::test_support::get_model_offline_for_tests;
+
+ pub(crate) async fn make_test_app() -> App {
+     let (mut chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
++    crate::chatwidget::tests::set_real_test_workspace(&mut chat_widget);
+     let test_codex_home = chat_widget.test_codex_home.take();
+     let config = chat_widget.config_ref().clone();
+     let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
+diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
+index 9c1af274f..e6bbb677a 100644
+--- a/codex-rs/tui/src/app/tests.rs
++++ b/codex-rs/tui/src/app/tests.rs
+@@ -5989,6 +5989,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
+
+ async fn make_test_app() -> Box<App> {
+     let (mut chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
++    crate::chatwidget::tests::set_real_test_workspace(&mut chat_widget);
+     let test_codex_home = chat_widget.test_codex_home.take();
+     let config = chat_widget.config_ref().clone();
+     let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
+@@ -6105,6 +6106,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+     tokio::sync::mpsc::UnboundedReceiver<Op>,
+ ) {
+     let (mut chat_widget, app_event_tx, rx, op_rx) = make_chatwidget_manual_with_sender().await;
++    crate::chatwidget::tests::set_real_test_workspace(&mut chat_widget);
+     let test_codex_home = chat_widget.test_codex_home.take();
+     let config = chat_widget.config_ref().clone();
+     let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
+diff --git a/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs b/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs
+index f4cb2064f..2932c6985 100644
+--- a/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs
++++ b/codex-rs/tui/src/app/tests/advanced_reasoning_tests.rs
+@@ -25,7 +25,7 @@ async fn fork_current_session_preserves_conversation_ultra() -> Result<()> {
+         model: "gpt-5.4".to_string(),
+         model_provider_id: app.config.model_provider_id.clone(),
+         reasoning_effort: Some(ReasoningEffortConfig::Ultra),
+-        ..test_thread_session(source_thread_id, test_path_buf("/tmp/project"))
++        ..test_thread_session(source_thread_id, app.config.cwd.to_path_buf())
+     });
+     let mut tui = crate::tui::test_support::make_test_tui()?;
+     let mut app_server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+diff --git a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
+index 5512cdb0e..ec33fb493 100644
+--- a/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
++++ b/codex-rs/tui/src/app/tests/background_task_defaults_tests.rs
+@@ -124,11 +124,16 @@ async fn command_center_new_keeps_startup_draft_visible_through_handoff() -> Res
+                 .collect::<Vec<_>>()
+                 .join("\n")
+         };
+-        snapshots.push(format!(
+-            "owned={owned}\nstartup:\n{}\nattached:\n{}",
+-            footer(&frame),
+-            footer(final_frame)
+-        ));
++        snapshots.push(
++            crate::chatwidget::tests::helpers::normalize_workspace_snapshot(
++                format!(
++                    "owned={owned}\nstartup:\n{}\nattached:\n{}",
++                    footer(&frame),
++                    footer(final_frame)
++                ),
++                app.chat_widget.config_ref().cwd.as_path(),
++            ),
++        );
+         tui.set_owned_screen(/*owned*/ false)?;
+         server.shutdown().await?;
+     }
 diff --git a/codex-rs/tui/src/app/tests/new_session_tests.rs b/codex-rs/tui/src/app/tests/new_session_tests.rs
-index e77967d79..88658ea48 100644
+index e77967d79..72dfafb4e 100644
 --- a/codex-rs/tui/src/app/tests/new_session_tests.rs
 +++ b/codex-rs/tui/src/app/tests/new_session_tests.rs
-@@ -175,12 +175,12 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
+@@ -175,12 +175,13 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
              ],
          );
          if explicit == "saved" {
 -            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80)
+-                .replace(&server_config.cwd.display().to_string(), "<PROJECT>");
 +            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 200)
-                 .replace(&server_config.cwd.display().to_string(), "<PROJECT>");
++                .replace(&server_config.cwd.display().to_string(), "<PROJECT>")
++                .replace("/tmp/project", "<PROJECT>");
              insta::assert_snapshot!(rendered, @r"
              › Ask Codex to do anything
 
@@ -10650,6 +10958,90 @@ index 22e27ed3f..3ed98010a 100644
              ");
          }
          let expected_cwd = if override_cwd {
+diff --git a/codex-rs/tui/src/app/thread_title_tests.rs b/codex-rs/tui/src/app/thread_title_tests.rs
+index e9b10fbb8..80a278235 100644
+--- a/codex-rs/tui/src/app/thread_title_tests.rs
++++ b/codex-rs/tui/src/app/thread_title_tests.rs
+@@ -296,7 +296,7 @@ async fn check_thread_title_generation(scenario: TitleScenario) -> color_eyre::R
+             .await?;
+         }
+         assert_eq!(app.chat_widget.thread_name(), None);
+-        assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++        assert!(render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+         assert_eq!(
+             app_server
+                 .thread_read(thread_id, /*include_turns*/ false)
+@@ -376,7 +376,7 @@ async fn check_thread_title_generation(scenario: TitleScenario) -> color_eyre::R
+                 };
+                 app.handle_event(&mut tui, &mut app_server, event).await?;
+                 assert!(app.pending_thread_titles.is_empty());
+-                let popup = render_bottom_popup(&app.chat_widget, /*width*/ 120);
++                let popup = render_bottom_popup(&app.chat_widget, /*width*/ 240);
+                 assert!(popup.contains("Keep this title"));
+                 assert!(!popup.contains('⠋'));
+                 if matches!(scenario, TitleScenario::ManualRename) {
+@@ -425,7 +425,7 @@ async fn check_thread_title_generation(scenario: TitleScenario) -> color_eyre::R
+     }
+     assert!(app.temporary_structured_requests.is_empty());
+     assert!(app.pending_thread_titles.is_empty());
+-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+
+     let request = response.single_request();
+     assert!(
+@@ -775,7 +775,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
+         ((thread_id, suggestion), CancellationToken::new()),
+     ]);
+     app.sync_thread_title_progress();
+-    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+
+     app.on_thread_title_started(
+         &app_server,
+@@ -786,7 +786,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
+         Err("startup failed".to_string()),
+         CancellationToken::new(),
+     );
+-    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+     app.on_thread_title_started(
+         &app_server,
+         thread_id,
+@@ -797,7 +797,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
+         CancellationToken::new(),
+     );
+     assert!(app.pending_thread_titles.is_empty());
+-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+
+     let mut tui = crate::tui::test_support::make_test_tui()?;
+     app.pending_thread_titles.insert(
+@@ -817,14 +817,14 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
+         &mut tui,
+         ratatui::layout::Size::new(/*width*/ 120, /*height*/ 30),
+     )?;
+-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+     app.select_agent_thread(&mut tui, &mut app_server, thread_id)
+         .await?;
+     app.render_chat_widget_frame(
+         &mut tui,
+         ratatui::layout::Size::new(/*width*/ 120, /*height*/ 30),
+     )?;
+-    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+     app.handle_event(
+         &mut tui,
+         &mut app_server,
+@@ -838,7 +838,7 @@ async fn thread_title_progress_clears_failed_requests_and_follows_thread_switche
+     )
+     .await?;
+     assert!(app.pending_thread_titles.is_empty());
+-    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 120).contains('⠋'));
++    assert!(!render_bottom_popup(&app.chat_widget, /*width*/ 240).contains('⠋'));
+     app_server.shutdown().await?;
+     Ok(())
+ }
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
 index ce30da4ad..eb667163a 100644
 --- a/codex-rs/tui/src/app_event.rs
@@ -13927,6 +14319,19 @@ index 616dd6df1..1f10ffb9e 100644
          let hyperlink_url = selections
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
+diff --git a/codex-rs/tui/src/chatwidget/tests.rs b/codex-rs/tui/src/chatwidget/tests.rs
+index 6d42ca5e5..b64045603 100644
+--- a/codex-rs/tui/src/chatwidget/tests.rs
++++ b/codex-rs/tui/src/chatwidget/tests.rs
+@@ -308,6 +308,8 @@ mod worktree_picker;
+ pub(crate) use helpers::make_chatwidget_manual_with_sender;
+ pub(crate) use helpers::set_chatgpt_auth;
+ pub(crate) use helpers::set_fast_mode_test_catalog;
++pub(crate) use helpers::set_real_test_workspace;
++pub(crate) use helpers::set_test_workspace;
+ pub(super) use helpers::*;
+
+ #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs b/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
 index 099806b8a..c63a9fe46 100644
 --- a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
@@ -13984,6 +14389,102 @@ index 099806b8a..c63a9fe46 100644
  #[tokio::test]
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
+diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
+index 6565e1e4d..ba9a462dd 100644
+--- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
++++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
+@@ -20,12 +20,32 @@ pub(super) async fn test_config() -> (tempfile::TempDir, Config) {
+     config.codex_home = codex_home.path().abs();
+     config.sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.path().abs());
+     config.log_dir = codex_home.path().join("log");
+-    config.cwd = PathBuf::from(test_path_display("/tmp/project")).abs();
++    let project = codex_home.path().join("project");
++    std::fs::create_dir(&project).expect("project dir");
++    set_test_workspace(&mut config, project);
+     config.config_layer_stack = ConfigLayerStack::default();
+     config.startup_warnings.clear();
+     (codex_home, config)
+ }
+
++pub(crate) fn set_test_workspace(config: &mut Config, cwd: PathBuf) {
++    config.cwd = cwd.abs();
++    config.workspace_roots = vec![config.cwd.clone()];
++    config
++        .permissions
++        .set_workspace_roots(config.workspace_roots.clone());
++}
++
++pub(crate) fn set_real_test_workspace(chat: &mut ChatWidget) {
++    let project = chat
++        .test_codex_home
++        .as_ref()
++        .unwrap()
++        .path()
++        .join("project");
++    set_test_workspace(&mut chat.config, project);
++}
++
+ pub(super) fn test_project_path() -> PathBuf {
+     PathBuf::from(test_path_display("/tmp/project"))
+ }
+@@ -67,6 +87,40 @@ pub(crate) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
+     }
+ }
+
++pub(crate) fn normalize_workspace_snapshot(
++    text: impl Into<String>,
++    cwd: &std::path::Path,
++) -> String {
++    let mut text = text.into();
++    if !cwd
++        .parent()
++        .and_then(std::path::Path::file_name)
++        .is_some_and(|name| name.to_string_lossy().starts_with("chatwidget-tests-"))
++    {
++        return text;
++    }
++    let expected = "/tmp/project";
++    for path in [
++        cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
++        cwd.to_path_buf(),
++    ] {
++        let path = path.to_string_lossy();
++        text = text.replace(path.as_ref(), expected);
++        for prefix in truncated_path_variants(&path).into_iter().rev() {
++            let length = prefix.chars().count();
++            let replacement: String = expected.chars().take(length).collect();
++            text = text.replace(
++                &format!("{prefix}…"),
++                &format!(
++                    "{replacement}{}",
++                    if length < expected.len() { "…" } else { "" }
++                ),
++            );
++        }
++    }
++    text
++}
++
+ /// Normalize command-center fixture paths without moving fixed pane separators.
+ /// Pad after each complete pane so group counts and destination hints keep their spacing.
+ pub(crate) fn normalize_agent_center_snapshot(text: impl AsRef<str>) -> String {
+@@ -219,6 +273,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
+     let app_event_tx = AppEventSender::new(tx_raw);
+     let (op_tx, op_rx) = unbounded_channel::<Op>();
+     let (codex_home, mut cfg) = test_config().await;
++    set_test_workspace(&mut cfg, test_project_path());
+     let resolved_model = model_override
+         .map(str::to_owned)
+         .unwrap_or_else(|| get_model_offline_for_tests(cfg.model.as_deref()));
+@@ -1362,7 +1417,7 @@ pub(crate) fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
+         lines.pop();
+     }
+
+-    lines.join("\n")
++    normalize_workspace_snapshot(lines.join("\n"), chat.config_ref().cwd.as_path())
+ }
+
+ pub(super) fn strip_osc8_for_snapshot(text: &str) -> String {
 diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
 index 6b1a40176..760a6c47a 100644
 --- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
@@ -16384,6 +16885,20 @@ index b9f6d4515..1438c3527 100644
      if matches!(
          effective_stdout_color_level(),
          StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256
+diff --git a/codex-rs/tui/src/temporary_structured_request_tests.rs b/codex-rs/tui/src/temporary_structured_request_tests.rs
+index 36915c4bc..3cf2802ed 100644
+--- a/codex-rs/tui/src/temporary_structured_request_tests.rs
++++ b/codex-rs/tui/src/temporary_structured_request_tests.rs
+@@ -155,6 +155,9 @@ async fn preserves_custom_permissions_and_disables_required_mcp_servers() -> col
+         ),
+     )?;
+     config.codex_home = codex_home.path().to_path_buf().abs();
++    let project = codex_home.path().join("project");
++    std::fs::create_dir(&project)?;
++    crate::chatwidget::tests::set_test_workspace(&mut config, project);
+     config.sqlite =
+         codex_state::SqliteConfig::new_for_testing(codex_home.path().to_path_buf().abs());
+
 diff --git a/codex-rs/tui/src/terminal_palette.rs b/codex-rs/tui/src/terminal_palette.rs
 index 7ff9b968f..76a37e016 100644
 --- a/codex-rs/tui/src/terminal_palette.rs
@@ -42180,7 +42695,7 @@ index 000000000..24a4f05ee
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..a78de256d
+index 000000000..d9206750e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
 @@ -0,0 +1,904 @@
@@ -42254,106 +42769,6 @@ index 000000000..a78de256d
 +    worker: String,
 +    _gateway: Option<crate::credential_gateway::Registration>,
 +    _snapshot: tempfile::TempDir,
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    fn session(root: &Path, name: &str) -> Session {
-+        let directory = root.join(name);
-+        std::fs::create_dir(&directory).unwrap();
-+        Session {
-+            task: Arc::new(
-+                Task::create(
-+                    codex_omd::Limits {
-+                        requests: 20,
-+                        exposure_microusd: 0,
-+                        seconds: 60,
-+                        concurrent_workers: 8,
-+                        max_depth: 2,
-+                    },
-+                    directory.join("ledger"),
-+                )
-+                .unwrap(),
-+            ),
-+            repository_identity: name.into(),
-+            evidence: directory.join("evidence"),
-+            scratch: directory.join("scratch"),
-+            contract: std::sync::Mutex::new(crate::contract::SessionContract::default()),
-+            contract_state: directory.join("contract.json"),
-+            processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
-+            data: DataScope::default(),
-+            access: AccessState::default(),
-+        }
-+    }
-+
-+    async fn insert(
-+        services: &Services,
-+        session: &Session,
-+        id: &str,
-+        owner: &str,
-+        generation: u64,
-+    ) -> (tokio::task::AbortHandle, PathBuf) {
-+        let worker = format!("{id}-{generation}");
-+        session
-+            .task
-+            .start_worker(
-+                worker.clone(),
-+                "lead".into(),
-+                1,
-+                codex_omd::WorkerLimits {
-+                    requests: 1,
-+                    exposure_microusd: 0,
-+                    seconds: 30,
-+                },
-+            )
-+            .unwrap();
-+        let job = tokio::spawn(std::future::pending::<Result<Value, String>>());
-+        let abort = job.abort_handle();
-+        let snapshot = tempfile::tempdir().unwrap();
-+        let path = snapshot.path().to_path_buf();
-+        services.records.lock().await.insert(
-+            id.into(),
-+            Service {
-+                mod_id: owner.into(),
-+                generation,
-+                route: None,
-+                job: Some(job),
-+                task: session.task.clone(),
-+                worker,
-+                _gateway: None,
-+                _snapshot: snapshot,
-+            },
-+        );
-+        (abort, path)
-+    }
-+
-+    #[tokio::test]
-+    async fn stale_and_disabled_services_stop_and_release_their_ids() {
-+        let root = tempfile::tempdir().unwrap();
-+        let first = session(root.path(), "first");
-+        let other = session(root.path(), "other");
-+        let services = Services::default();
-+        let (stale, stale_path) = insert(&services, &first, "stale", "enabled", 1).await;
-+        let (disabled, disabled_path) = insert(&services, &first, "disabled", "disabled", 2).await;
-+        let (current, _) = insert(&services, &first, "current", "enabled", 2).await;
-+        let (foreign, _) = insert(&services, &other, "foreign", "enabled", 2).await;
-+        let (foreign_stale, _) = insert(&services, &other, "foreign-stale", "enabled", 1).await;
-+        let owners = BTreeMap::from([("enabled".to_owned(), "hash".to_owned())]);
-+        services.cleanup_stale(2, &owners).await;
-+        assert!(stale.is_finished() && disabled.is_finished() && foreign_stale.is_finished());
-+        assert!(!stale_path.exists() && !disabled_path.exists());
-+        assert!(!current.is_finished() && !foreign.is_finished());
-+        assert!(!services.records.lock().await.contains_key("stale"));
-+        let (replacement, _) = insert(&services, &first, "stale", "enabled", 2).await;
-+        services.cleanup_stale(2, &owners).await;
-+        assert!(!replacement.is_finished());
-+        services.cleanup_session(&first).await;
-+        assert!(current.is_finished() && replacement.is_finished());
-+        assert!(!foreign.is_finished());
-+        services.cleanup_session(&other).await;
-+    }
 +}
 +
 +impl Drop for Service {
@@ -43087,6 +43502,106 @@ index 000000000..a78de256d
 +        return Err("service_response_limit_or_incomplete".into());
 +    }
 +    serde_json::from_slice(&line).map_err(|_| "service_response_invalid".into())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn session(root: &Path, name: &str) -> Session {
++        let directory = root.join(name);
++        std::fs::create_dir(&directory).unwrap();
++        Session {
++            task: Arc::new(
++                Task::create(
++                    codex_omd::Limits {
++                        requests: 20,
++                        exposure_microusd: 0,
++                        seconds: 60,
++                        concurrent_workers: 8,
++                        max_depth: 2,
++                    },
++                    directory.join("ledger"),
++                )
++                .unwrap(),
++            ),
++            repository_identity: name.into(),
++            evidence: directory.join("evidence"),
++            scratch: directory.join("scratch"),
++            contract: std::sync::Mutex::new(crate::contract::SessionContract::default()),
++            contract_state: directory.join("contract.json"),
++            processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
++            data: DataScope::default(),
++            access: AccessState::default(),
++        }
++    }
++
++    async fn insert(
++        services: &Services,
++        session: &Session,
++        id: &str,
++        owner: &str,
++        generation: u64,
++    ) -> (tokio::task::AbortHandle, PathBuf) {
++        let worker = format!("{id}-{generation}");
++        session
++            .task
++            .start_worker(
++                worker.clone(),
++                "lead".into(),
++                1,
++                codex_omd::WorkerLimits {
++                    requests: 1,
++                    exposure_microusd: 0,
++                    seconds: 30,
++                },
++            )
++            .unwrap();
++        let job = tokio::spawn(std::future::pending::<Result<Value, String>>());
++        let abort = job.abort_handle();
++        let snapshot = tempfile::tempdir().unwrap();
++        let path = snapshot.path().to_path_buf();
++        services.records.lock().await.insert(
++            id.into(),
++            Service {
++                mod_id: owner.into(),
++                generation,
++                route: None,
++                job: Some(job),
++                task: session.task.clone(),
++                worker,
++                _gateway: None,
++                _snapshot: snapshot,
++            },
++        );
++        (abort, path)
++    }
++
++    #[tokio::test]
++    async fn stale_and_disabled_services_stop_and_release_their_ids() {
++        let root = tempfile::tempdir().unwrap();
++        let first = session(root.path(), "first");
++        let other = session(root.path(), "other");
++        let services = Services::default();
++        let (stale, stale_path) = insert(&services, &first, "stale", "enabled", 1).await;
++        let (disabled, disabled_path) = insert(&services, &first, "disabled", "disabled", 2).await;
++        let (current, _) = insert(&services, &first, "current", "enabled", 2).await;
++        let (foreign, _) = insert(&services, &other, "foreign", "enabled", 2).await;
++        let (foreign_stale, _) = insert(&services, &other, "foreign-stale", "enabled", 1).await;
++        let owners = BTreeMap::from([("enabled".to_owned(), "hash".to_owned())]);
++        services.cleanup_stale(2, &owners).await;
++        assert!(stale.is_finished() && disabled.is_finished() && foreign_stale.is_finished());
++        assert!(!stale_path.exists() && !disabled_path.exists());
++        assert!(!current.is_finished() && !foreign.is_finished());
++        assert!(!services.records.lock().await.contains_key("stale"));
++        let (replacement, _) = insert(&services, &first, "stale", "enabled", 2).await;
++        services.cleanup_stale(2, &owners).await;
++        assert!(!replacement.is_finished());
++        services.cleanup_session(&first).await;
++        assert!(current.is_finished() && replacement.is_finished());
++        assert!(!foreign.is_finished());
++        services.cleanup_session(&other).await;
++    }
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
@@ -50976,10 +51491,10 @@ index 000000000..ba97c6052
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..a8146c5c9
+index 000000000..b322f5720
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,896 @@
+@@ -0,0 +1,904 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -51116,8 +51631,16 @@ index 000000000..a8146c5c9
 +            Some(password()?.ok_or_else(|| failure("authority_authorization_denied"))?)
 +        };
 +        let authorization = platform::Authorization::create()?;
-+        self.send(&json!({"op": op, "arguments": arguments, "nonce": nonce,
++        self.send_authorized(&json!({"op": op, "arguments": arguments, "nonce": nonce,
 +            "authorization": authorization.external()?, "password": password}))
++    }
++
++    fn send_authorized(&mut self, request: &Value) -> io::Result<Value> {
++        let timeout = self.stream.get_ref().read_timeout()?;
++        self.stream.get_mut().set_read_timeout(None)?;
++        let result = self.send(request);
++        self.stream.get_mut().set_read_timeout(timeout)?;
++        result
 +    }
 +}
 +
@@ -51878,10 +52401,10 @@ index 000000000..a8146c5c9
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..b1bdefdd2
+index 000000000..5971f0d54
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,319 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -51891,6 +52414,7 @@ index 000000000..b1bdefdd2
 +    refuse_peer: bool,
 +    allow: AtomicBool,
 +    asked: Mutex<Vec<String>>,
++    delay: std::time::Duration,
 +}
 +
 +impl Gate for TestGate {
@@ -51909,8 +52433,45 @@ index 000000000..b1bdefdd2
 +        _authorization: &str,
 +        _password: Option<&str>,
 +    ) -> bool {
++        std::thread::sleep(self.delay);
 +        self.asked.lock().unwrap().push(right.to_owned());
 +        self.allow.load(Ordering::SeqCst)
++    }
++}
++
++#[test]
++fn authorization_wait_outlives_the_transport_read_timeout() {
++    for allowed in [true, false] {
++        let gate = Arc::new(TestGate {
++            allow: AtomicBool::new(allowed),
++            delay: std::time::Duration::from_millis(80),
++            ..Default::default()
++        });
++        let (_temp, socket, store) = serve(gate);
++        let mut client = Client::at(&socket).unwrap();
++        let timeout = std::time::Duration::from_millis(20);
++        let arguments = json!({"store": store, "generation": 0, "grants": ["a"]});
++        let nonce = client
++            .call(
++                "challenge",
++                json!({"sha256": request_digest("grants.put", &arguments).unwrap()}),
++            )
++            .unwrap();
++        client
++            .stream
++            .get_mut()
++            .set_read_timeout(Some(timeout))
++            .unwrap();
++        let result = client.send_authorized(&json!({"op": "grants.put", "arguments": arguments, "nonce": nonce, "authorization": "token"}));
++        assert_eq!(
++            client.stream.get_ref().read_timeout().unwrap(),
++            Some(timeout)
++        );
++        if allowed {
++            assert_eq!(result.unwrap()["generation"], 1);
++        } else {
++            assert_eq!(error(result), "authority_authorization_denied");
++        }
 +    }
 +}
 +
@@ -52422,13 +52983,13 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..0e502d888
+index 000000000..ad7015f88
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,620 @@
+@@ -0,0 +1,648 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
-+use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 +use std::sync::{Arc, Mutex};
 +use std::time::{Duration, Instant};
@@ -52525,13 +53086,19 @@ index 000000000..0e502d888
 +    pub admission: Option<Value>,
 +    upstream_cancelled: Option<Arc<AtomicBool>>,
 +    cancelled: Arc<AtomicBool>,
++    phase: Arc<AtomicU8>,
 +    deadline: Arc<Mutex<Option<Instant>>>,
 +    pub binding: Option<Value>,
 +}
 +
++const QUEUED: u8 = 0;
++const EXECUTING: u8 = 1;
++const CANCELLED: u8 = 2;
++
 +impl CallLifetime {
 +    pub fn active(&self) -> bool {
-+        !self.cancelled.load(Ordering::Acquire)
++        self.phase.load(Ordering::Acquire) != CANCELLED
++            && !self.cancelled.load(Ordering::Acquire)
 +            && !self
 +                .upstream_cancelled
 +                .as_ref()
@@ -52540,6 +53107,22 @@ index 000000000..0e502d888
 +                .deadline
 +                .lock()
 +                .is_ok_and(|deadline| deadline.is_none_or(|deadline| Instant::now() < deadline))
++    }
++
++    pub fn begin_execution(&self) -> Result<(), String> {
++        if !self.active() {
++            return Err("callback_cancelled_or_expired".into());
++        }
++        self.phase
++            .compare_exchange(QUEUED, EXECUTING, Ordering::AcqRel, Ordering::Acquire)
++            .map(|_| ())
++            .map_err(|_| "callback_cancelled_or_executing".into())
++    }
++
++    fn cancel_queued(&self) -> bool {
++        self.phase
++            .compare_exchange(QUEUED, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
++            .is_ok()
 +    }
 +}
 +
@@ -52550,6 +53133,7 @@ index 000000000..0e502d888
 +
 +impl Drop for PendingReply {
 +    fn drop(&mut self) {
++        self.lifetime.cancel_queued();
 +        self.lifetime.cancelled.store(true, Ordering::Release);
 +    }
 +}
@@ -52785,10 +53369,15 @@ index 000000000..0e502d888
 +            .map_err(|_| "client_surface_poisoned")? = Some(deadline);
 +    }
 +    loop {
-+        if !active() {
++        if receiver.lifetime.phase.load(Ordering::Acquire) != EXECUTING
++            && !active()
++            && receiver.lifetime.cancel_queued()
++        {
 +            return Err("callback_cancelled".into());
 +        }
-+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
++        if deadline.is_some_and(|deadline| Instant::now() >= deadline)
++            && receiver.lifetime.cancel_queued()
++        {
 +            return Err(format!(
 +                "callback_execution_budget: the client did not answer within {} ms",
 +                crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
@@ -53048,10 +53637,10 @@ index 000000000..0e502d888
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..b58976c27
+index 000000000..8b6298abf
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,349 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -53069,10 +53658,12 @@ index 000000000..b58976c27
 +    assert!(lifetime.active());
 +    drop(pending);
 +    assert!(!lifetime.active());
++    assert!(lifetime.begin_execution().is_err());
 +    assert!(reply.send(Ok(Value::Null)).is_err());
 +    let expired = CallLifetime::default();
 +    *expired.deadline.lock().unwrap() = Some(Instant::now());
 +    assert!(!expired.active());
++    assert!(expired.begin_execution().is_err());
 +    let cancelled = Arc::new(AtomicBool::new(false));
 +    let admitted = CallLifetime {
 +        upstream_cancelled: Some(cancelled.clone()),
@@ -53081,6 +53672,7 @@ index 000000000..b58976c27
 +    assert!(admitted.active());
 +    cancelled.store(true, Ordering::Release);
 +    assert!(!admitted.active());
++    assert!(admitted.begin_execution().is_err());
 +}
 +
 +impl ClientSurface for Echo {
@@ -88898,10 +89490,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..80178a1d8
+index 000000000..d080cbe27
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1642 @@
+@@ -0,0 +1,1651 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -89641,14 +90233,24 @@ index 000000000..80178a1d8
 +    Ok(json!({"key": key, "effective": effective}))
 +}
 +
-+fn apply_package(confirmed: Option<Confirmed>) -> Result<Value, String> {
++fn apply_package(call: &SurfaceCall, confirmed: Option<Confirmed>) -> Result<Value, String> {
 +    let Some(Confirmed::Package(control)) = confirmed else {
 +        return Err("package_confirmation_missing".into());
 +    };
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
 +    let store = codex_omd::ModStore::open(paths.store.ok_or("mod store is not configured")?)
 +        .map_err(|error| error.to_string())?;
++    crate::mod_surface::validate_call(call)?;
++    call.lifetime.begin_execution()?;
 +    codex_omd::package_controls::apply(&store, &control).map_err(|error| error.to_string())
++}
++
++#[cfg(test)]
++pub(crate) fn apply_confirmed_package(
++    call: &SurfaceCall,
++    control: codex_omd::package_controls::PackageControl,
++) -> Result<Value, String> {
++    apply_package(call, Some(Confirmed::Package(Box::new(control))))
 +}
 +
 +impl App {
@@ -90143,8 +90745,7 @@ index 000000000..80178a1d8
 +            }
 +            "packages.apply" => {
 +                tokio::task::spawn_blocking(move || {
-+                    let result =
-+                        crate::mod_surface::validate_call(&call).and_then(|()| apply_package(held));
++                    let result = apply_package(&call, held);
 +                    let _ = call.reply.send(result);
 +                });
 +                return;
@@ -97439,10 +98040,10 @@ index 000000000..87d85669a
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..4a3de4f88
+index 000000000..ff02a4263
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,830 @@
+@@ -0,0 +1,829 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -97572,8 +98173,7 @@ index 000000000..4a3de4f88
 +    }
 +    let binding = call_binding(&call.caller);
 +    if let Some(admitted) = &call.lifetime.admission
-+        && (admitted["source"] != binding["source"]
-+            || admitted["generation"] != binding["generation"])
++        && admitted["source"] != binding["source"]
 +    {
 +        return Err("client_surface_admission_changed".into());
 +    }
@@ -98275,15 +98875,147 @@ index 000000000..4a3de4f88
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..ffd81a082
+index 000000000..dae83d130
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,693 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
 +
 +struct Echo;
++
++fn surface_package() -> (tempfile::TempDir, codex_omd::ModStore, String) {
++    let directory = tempfile::tempdir().unwrap();
++    let root = directory.path().canonicalize().unwrap();
++    let package = root.join("package");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "surface_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["packages"]})).unwrap()).unwrap();
++    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
++    let store = codex_omd::ModStore::create(
++        root.join("store"),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    let source = inspected["sha256"].as_str().unwrap().to_owned();
++    store
++        .trust(package.clone(), &source, vec!["packages".into()], "user")
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let runtime = codex_omd::ModHost::open(root.join("store")).unwrap();
++    std::fs::write(
++        root.join("store/mod-status.json"),
++        serde_json::to_vec(&runtime.status()).unwrap(),
++    )
++    .unwrap();
++    (directory, store, source)
++}
++
++#[test]
++#[serial_test::serial]
++fn client_surface_accepts_independent_reload_generations() {
++    let (directory, _store, source) = surface_package();
++    let _environment =
++        crate::omd::tests::omd_environment(&directory.path().canonicalize().unwrap().join("store"));
++    let previous = state().take();
++    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++    let sender = AppEventSender::new(tx);
++    attach(&sender, Some("surface-thread".into()));
++    let binding = call_binding("surface_fixture");
++    assert_eq!(binding["source"], source);
++    let native_generation = binding["generation"].as_u64().unwrap() + 10;
++    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
++    let pending = codex_omd::client_surface::with_admission(
++        &source,
++        native_generation,
++        Some(cancelled.clone()),
++        || {
++            codex_omd::client_surface::submit(
++                "surface_fixture",
++                "composer.read",
++                json!({}),
++                InvocationContext::User,
++                Some("surface-thread"),
++                None,
++            )
++            .unwrap()
++        },
++    );
++    let AppEvent::ModSurfaceCall(mut call, _) = rx.try_recv().unwrap() else {
++        panic!("queued surface call")
++    };
++    assert!(validate_call(&call).is_ok());
++    call.lifetime.admission.as_mut().unwrap()["source"] = json!("replaced");
++    assert_eq!(
++        validate_call(&call).unwrap_err(),
++        "client_surface_admission_changed"
++    );
++    call.lifetime.admission.as_mut().unwrap()["source"] = json!(source);
++    cancelled.store(true, std::sync::atomic::Ordering::Release);
++    assert!(validate_call(&call).is_err());
++    cancelled.store(false, std::sync::atomic::Ordering::Release);
++    attach(&sender, Some("another-thread".into()));
++    attach(&sender, Some("surface-thread".into()));
++    assert!(validate_call(&call).is_err());
++    drop(pending);
++    *state() = previous;
++}
++
++#[test]
++#[serial_test::serial]
++fn client_surface_acknowledges_committed_package_toggle_after_reload() {
++    let (directory, store, source) = surface_package();
++    let store_path = directory.path().canonicalize().unwrap().join("store");
++    let _environment = crate::omd::tests::omd_environment(&store_path);
++    let previous = state().take();
++    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++    let sender = AppEventSender::new(tx);
++    attach(&sender, Some("surface-thread".into()));
++    let binding = call_binding("surface_fixture");
++    let generation = binding["generation"].as_u64().unwrap();
++    let mut runtime = codex_omd::ModHost::open(store_path).unwrap();
++    let native_generation = runtime.generation();
++    let preview = codex_omd::package_controls::preview(
++        &store,
++        json!({"action": "disable", "id": "surface_fixture"}),
++    )
++    .unwrap();
++    let pending = codex_omd::client_surface::with_admission(&source, generation, None, || {
++        codex_omd::client_surface::submit(
++            "surface_fixture",
++            "packages.apply",
++            json!({"action": "disable", "id": "surface_fixture"}),
++            InvocationContext::User,
++            Some("surface-thread"),
++            Some("Disable selected package".into()),
++        )
++        .unwrap()
++    });
++    let AppEvent::ModSurfaceCall(call, _) = rx.try_recv().unwrap() else {
++        panic!("queued surface call")
++    };
++    let committed = crate::app::apply_confirmed_package(&call, preview.control).unwrap();
++    runtime.reload().unwrap();
++    assert_ne!(runtime.generation(), native_generation);
++    assert!(runtime.grants("surface_fixture").is_none());
++    assert_eq!(
++        codex_omd::package_controls::list(&store, None).unwrap()["packages"][0]["enabled"],
++        false
++    );
++    let (release, receive) = std::sync::mpsc::channel();
++    let reply = std::thread::spawn(move || {
++        receive.recv().unwrap();
++        call.reply.send(Ok(committed)).unwrap();
++    });
++    let waiter =
++        std::thread::spawn(move || codex_omd::client_surface::wait(pending, &|| false, None));
++    release.send(()).unwrap();
++    let result = waiter.join().unwrap();
++    let _ = reply.join();
++    assert_eq!(result.unwrap()["status"], "applied");
++    *state() = previous;
++}
 +
 +#[test]
 +#[serial_test::serial]

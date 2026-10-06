@@ -15,10 +15,12 @@ fn dropping_a_pending_reply_revokes_queued_effects() {
     assert!(lifetime.active());
     drop(pending);
     assert!(!lifetime.active());
+    assert!(lifetime.begin_execution().is_err());
     assert!(reply.send(Ok(Value::Null)).is_err());
     let expired = CallLifetime::default();
     *expired.deadline.lock().unwrap() = Some(Instant::now());
     assert!(!expired.active());
+    assert!(expired.begin_execution().is_err());
     let cancelled = Arc::new(AtomicBool::new(false));
     let admitted = CallLifetime {
         upstream_cancelled: Some(cancelled.clone()),
@@ -27,6 +29,7 @@ fn dropping_a_pending_reply_revokes_queued_effects() {
     assert!(admitted.active());
     cancelled.store(true, Ordering::Release);
     assert!(!admitted.active());
+    assert!(admitted.begin_execution().is_err());
 }
 
 impl ClientSurface for Echo {

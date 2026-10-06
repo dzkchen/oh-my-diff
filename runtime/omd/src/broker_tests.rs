@@ -7,6 +7,7 @@ struct TestGate {
     refuse_peer: bool,
     allow: AtomicBool,
     asked: Mutex<Vec<String>>,
+    delay: std::time::Duration,
 }
 
 impl Gate for TestGate {
@@ -25,8 +26,45 @@ impl Gate for TestGate {
         _authorization: &str,
         _password: Option<&str>,
     ) -> bool {
+        std::thread::sleep(self.delay);
         self.asked.lock().unwrap().push(right.to_owned());
         self.allow.load(Ordering::SeqCst)
+    }
+}
+
+#[test]
+fn authorization_wait_outlives_the_transport_read_timeout() {
+    for allowed in [true, false] {
+        let gate = Arc::new(TestGate {
+            allow: AtomicBool::new(allowed),
+            delay: std::time::Duration::from_millis(80),
+            ..Default::default()
+        });
+        let (_temp, socket, store) = serve(gate);
+        let mut client = Client::at(&socket).unwrap();
+        let timeout = std::time::Duration::from_millis(20);
+        let arguments = json!({"store": store, "generation": 0, "grants": ["a"]});
+        let nonce = client
+            .call(
+                "challenge",
+                json!({"sha256": request_digest("grants.put", &arguments).unwrap()}),
+            )
+            .unwrap();
+        client
+            .stream
+            .get_mut()
+            .set_read_timeout(Some(timeout))
+            .unwrap();
+        let result = client.send_authorized(&json!({"op": "grants.put", "arguments": arguments, "nonce": nonce, "authorization": "token"}));
+        assert_eq!(
+            client.stream.get_ref().read_timeout().unwrap(),
+            Some(timeout)
+        );
+        if allowed {
+            assert_eq!(result.unwrap()["generation"], 1);
+        } else {
+            assert_eq!(error(result), "authority_authorization_denied");
+        }
     }
 }
 

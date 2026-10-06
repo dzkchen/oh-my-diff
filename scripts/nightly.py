@@ -27,7 +27,7 @@ def drift(*paths):
 STEPS = [
     ("setup", ["python3", "scripts/batch_tree.py", "setup", BATCH]),
     ("patch sync", ["python3", "scripts/batch_tree.py", "sync", BATCH]),
-    ("patch matches main", drift("runtime", "upstream.lock.json")),
+    ("patch matches checkout", drift("runtime", "upstream.lock.json")),
     ("cargo test omd, extension, tui", cargo("test", "test", *CRATES)),
     ("cargo test core lib", cargo("core", "test", "-p", "codex-core", "--lib")),
     ("clippy omd paths", cargo("clippy", "clippy", *CRATES, "--tests")),
@@ -35,7 +35,7 @@ STEPS = [
     ("native ownership", ["mise", "run", "native:ownership"]),
     ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--build"]),
     ("locks", ["python3", "scripts/batch_tree.py", "locks", BATCH]),
-    ("locks match main", drift(".", ":(exclude)runtime/lean-release.lock.json")),
+    ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
     ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
     ("mods typecheck", ["mise", "run", "mods:check"]),
     ("mods tests", ["mise", "run", "mods:test"]),
@@ -74,7 +74,7 @@ def summarize(results, previous_failed):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build the committed main branch in a scratch worktree and run the broad checks batches skip")
+    parser = argparse.ArgumentParser(description="Build a committed ref in a scratch worktree and run the broad checks batches skip")
     parser.add_argument("--ref", default="main")
     args = parser.parse_args()
     previous_file = WORK / "last.json"
@@ -98,7 +98,7 @@ def main():
     failed, skipped, new, fixed = summary["failed"], summary["skipped"], summary["new"], summary["fixed"]
     unrun = [name for name in summary["unresolved"] if name in skipped]
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# OMD nightly: {stamp}, main at `{commit}`", "",
+    lines = [f"# OMD nightly: {stamp}, {args.ref} at `{commit}`", "",
              f"{len(results) - len(failed)}/{len(STEPS)} steps passed."
              + (f" New failures: {', '.join(new)}." if new else "") + (f" Fixed since last run: {', '.join(fixed)}." if fixed else "")
              + (f" Skipped: {', '.join(skipped)}." if skipped else "") + (f" Still failing from the last run, not rerun: {', '.join(unrun)}." if unrun else ""), "",
