@@ -369,9 +369,17 @@ export class Router {
     this.seen.set(agentId, seen);
     const total = (rows, key) => rows.reduce((sum, run) => sum + (run.cost?.[key] ?? 0), 0);
     let done = false;
+    // Once settled, an agent that can no longer be resumed is dropped so the long-lived sidecar does not keep it.
+    const release = () => {
+      if (this.state.agents[agentId] || this.busy(agentId)) return;
+      this.agents.delete(agentId);
+      this.seen.delete(agentId);
+      this.charged.delete(agentId);
+    };
     SETTLE_MS.forEach((delay, index) => setTimeout(async () => {
       if (index === 0) await this.refreshPlan();
       if (done) return;
+      if (index === SETTLE_MS.length - 1) done = true;
       try {
         const report = await agent.getUsage();
         const fresh = (report?.runs ?? []).filter(run => !seen.has(run.runId));
@@ -391,6 +399,7 @@ export class Router {
           this.notice = `Cursor charged ${cost.charged_cents.toFixed(2)}¢ beyond included usage for a run on agent ${agentId} (raw ${cost.raw_cents.toFixed(2)}¢); see /cursor usage.`;
         }
       } catch {}
+      if (done) release();
     }, delay).unref?.());
   }
 }
