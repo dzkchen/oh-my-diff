@@ -28891,10 +28891,34 @@ index 3981e7808..c2ca34adf 100644
 -  status line stays visible
 +  Oh My Diff · upstream-style direct · hooks off · status line stays visible
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index 36c873351..cb6559fb3 100644
+index 36c873351..6f7017997 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
-@@ -222,7 +222,7 @@ impl ChatWidget {
+@@ -12,6 +12,23 @@ use ratatui::text::Span;
+ use ratatui::widgets::Block;
+ use std::cell::Cell;
+
++struct FooterNotes(Vec<crate::terminal_hyperlinks::HyperlinkLine>);
++
++impl Renderable for FooterNotes {
++    fn render(&self, area: Rect, buf: &mut Buffer) {
++        ratatui::widgets::Widget::render(
++            HyperlinkParagraph::new(&self.0, Style::default()),
++            area,
++            buf,
++        );
++    }
++
++    fn desired_height(&self, width: u16) -> u16 {
++        u16::try_from(HyperlinkParagraph::new(&self.0, Style::default()).line_count(width))
++            .unwrap_or(u16::MAX)
++    }
++}
++
+ struct ExternalWriterNotice {
+     command_center_available: bool,
+     agents_navigation_key_available: bool,
+@@ -222,7 +239,7 @@ impl ChatWidget {
          composer_gap: Option<&'a crate::bottom_pane::ComposerGap>,
          working_tip: Option<&'a crate::turn_tip::TurnTip>,
      ) -> RenderableItem<'a> {
@@ -28903,19 +28927,21 @@ index 36c873351..cb6559fb3 100644
              RenderableItem::Owned(Box::new(
                  Paragraph::new("Forking conversation…".dim()).inset(Insets::tlbr(
                      /*top*/ 1, /*left*/ 2, /*bottom*/ 1, /*right*/ 2,
-@@ -255,7 +255,18 @@ impl ChatWidget {
+@@ -255,7 +272,20 @@ impl ChatWidget {
                      command_popup_placement,
                      footer,
                  })
 +        };
-+        let notes = crate::mod_ui::footer_lines(self.last_rendered_width.get().unwrap_or(80));
-+        if notes.is_empty() || self.bottom_pane.has_active_view() || self.external_writer_view {
++        let notes = FooterNotes(crate::mod_ui::footer_hyperlink_lines(
++            self.last_rendered_width.get().unwrap_or(80),
++        ));
++        if notes.0.is_empty() || self.bottom_pane.has_active_view() || self.external_writer_view {
 +            return bottom;
          }
 +        let mut flex = FlexRenderable::new();
 +        flex.push(
 +            0,
-+            RenderableItem::Owned(Box::new(Paragraph::new(notes))).inset(Insets::tlbr(1, 0, 0, 0)),
++            RenderableItem::Owned(Box::new(notes)).inset(Insets::tlbr(1, 0, 0, 0)),
 +        );
 +        flex.push(0, bottom);
 +        RenderableItem::Owned(Box::new(flex))
@@ -28923,7 +28949,7 @@ index 36c873351..cb6559fb3 100644
 
      /// Returns compact live-history lines using the current rich or raw presentation.
 diff --git a/codex-rs/tui/src/chatwidget/rendering_tests.rs b/codex-rs/tui/src/chatwidget/rendering_tests.rs
-index 624d58765..bf7adb1ca 100644
+index 624d58765..bf1b8e9a2 100644
 --- a/codex-rs/tui/src/chatwidget/rendering_tests.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering_tests.rs
 @@ -133,9 +133,10 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
@@ -28962,6 +28988,37 @@ index 624d58765..bf7adb1ca 100644
      ");
 
      widget.local_settings.tui.animations = false;
+@@ -230,6 +231,30 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
+     }
+ }
+
++#[tokio::test]
++#[serial_test::serial]
++async fn above_composer_links_are_marked_in_the_rendered_footer() {
++    let (widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot {
++        view: codex_omd::ModView::parse(serde_json::json!({"sites": {"above_composer": {"components": [
++            {"type":"line","id":"ref","label":"Ref","spans":[{"text":"see "},{"text":"docs","link":"https://example.com/docs"}]}
++        ]}}}))
++        .unwrap(),
++        ..codex_omd::ModViewSnapshot::default()
++    });
++    let frame = render_frame(&widget, /*width*/ 80);
++    let marked = frame
++        .content
++        .iter()
++        .filter(|cell| {
++            cell.symbol()
++                .starts_with("\x1b]8;;https://example.com/docs\x07")
++        })
++        .count();
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    assert_eq!(marked, 4);
++}
++
+ #[tokio::test]
+ async fn external_writer_view_shows_notice_instead_of_composer() {
+     let (mut widget, _sender, _events, _operations) = make_chatwidget_manual_with_sender().await;
 diff --git a/codex-rs/tui/src/chatwidget/skills.rs b/codex-rs/tui/src/chatwidget/skills.rs
 index dc718a712..b7781c3c6 100644
 --- a/codex-rs/tui/src/chatwidget/skills.rs
@@ -111238,10 +111295,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..df6f7ab17
+index 000000000..fdbd513d9
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1738 @@
+@@ -0,0 +1,1743 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -112625,9 +112682,14 @@ index 000000000..df6f7ab17
 +                    codex_omd::model_request::queue_section(thread, &call.caller, text)?;
 +                }
 +                match call_id {
-+                    Some(call_id) if tui.is_owned_screen() => {
-+                        crate::mod_render::tool_notice(call_id, kind, text, &call.caller);
-+                    }
++                    Some(call_id)
++                        if tui.is_owned_screen()
++                            && crate::mod_render::tool_notice(
++                                call_id,
++                                kind,
++                                text,
++                                &call.caller,
++                            ) => {}
 +                    Some(call_id) => {
 +                        self.chat_widget
 +                            .add_to_history(crate::history_cell::new_mod_notice(
@@ -117802,10 +117864,10 @@ index 000000000..b43029f5b
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..be74e8ed0
+index 000000000..814471ce1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,266 @@
 +use codex_omd::ModColor;
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
@@ -117906,6 +117968,9 @@ index 000000000..be74e8ed0
 +
 +    /// Applies at most one queued update per frame interval; returns the wait for the next one.
 +    fn advance(&mut self, now: Instant) -> Option<Duration> {
++        if self.queue.is_empty() {
++            return None;
++        }
 +        let due = self.applied.map_or(Duration::ZERO, |applied| {
 +            FRAME.saturating_sub(now - applied)
 +        });
@@ -117992,7 +118057,13 @@ index 000000000..be74e8ed0
 +            }
 +        })
 +        .or_insert_with(|| Raster::new(caller, width, height));
-+    if raster.queue.len() >= QUEUE_UPDATES || raster.queued_bytes + bytes > QUEUE_BYTES {
++    let full = |raster: &Raster| {
++        raster.queue.len() >= QUEUE_UPDATES || raster.queued_bytes + bytes > QUEUE_BYTES
++    };
++    if full(raster) {
++        raster.advance(now);
++    }
++    if full(raster) {
 +        let wait = raster.applied.map_or(FRAME, |applied| {
 +            FRAME
 +                .saturating_sub(now - applied)
@@ -118013,6 +118084,7 @@ index 000000000..be74e8ed0
 +    id: &str,
 +    alt: &str,
 +    width: u16,
++    size: (u16, u16),
 +    no_color: bool,
 +    prefix: &str,
 +    now: Instant,
@@ -118025,10 +118097,11 @@ index 000000000..be74e8ed0
 +    if raster.frames == 0 {
 +        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], next);
 +    }
-+    let visible = usize::from(width.min(raster.width));
++    let visible = usize::from(width.min(raster.width).min(size.0));
 +    let rows = raster
 +        .cells
 +        .chunks(usize::from(raster.width))
++        .take(usize::from(size.1))
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
 +            spans.extend(row.iter().take(visible).map(|cell| {
@@ -118063,10 +118136,10 @@ index 000000000..be74e8ed0
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..2e633cf22
+index 000000000..978001e0a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,193 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -118108,20 +118181,21 @@ index 000000000..2e633cf22
 +        .expect("queued");
 +        assert_eq!(reply["frame_ms"], 33);
 +    }
-+    let (rows, next) = super::rows(key, "chart", 10, false, "", start);
++    let (rows, next) = super::rows(key, "chart", 10, (4, 2), false, "", start);
 +    assert_eq!(text(&rows), vec![" aa ", "    "]);
 +    assert_eq!(next, Some(FRAME));
 +    let (rows, next) = super::rows(
 +        key,
 +        "chart",
 +        10,
++        (4, 2),
 +        false,
 +        "",
 +        start + Duration::from_millis(5),
 +    );
 +    assert_eq!(text(&rows), vec![" aa ", "    "]);
 +    assert_eq!(next, Some(Duration::from_millis(28)));
-+    let (rows, next) = super::rows(key, "chart", 3, false, "", start + FRAME);
++    let (rows, next) = super::rows(key, "chart", 3, (4, 2), false, "", start + FRAME);
 +    assert_eq!(
 +        text(&rows),
 +        vec![" bb", "   "],
@@ -118168,6 +118242,8 @@ index 000000000..2e633cf22
 +            Err("terminal_blit_invalid".into())
 +        );
 +    }
++    blit_at("raster-refuse", "owner", cell.clone(), now).expect("queued");
++    super::rows("raster-refuse", "chart", 10, (4, 2), false, "", now);
 +    for _ in 0..QUEUE_UPDATES {
 +        blit_at("raster-refuse", "owner", cell.clone(), now).expect("queued");
 +    }
@@ -118179,10 +118255,62 @@ index 000000000..2e633cf22
 +
 +#[test]
 +#[serial_test::serial]
++fn undrawn_rasters_drain_their_queue_under_the_frame_budget() {
++    let now = Instant::now();
++    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
++    let status =
++        |at| blit_at("raster-undrawn", "owner", cell.clone(), at).expect("reply")["status"].clone();
++    for _ in 0..QUEUE_UPDATES {
++        assert_eq!(status(now), Value::Null);
++    }
++    assert_eq!(status(now), Value::Null, "the first update is due at once");
++    assert_eq!(status(now), "backpressure");
++    assert_eq!(
++        status(now + FRAME),
++        Value::Null,
++        "one update drains per frame"
++    );
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn drawn_rasters_clip_to_the_current_component_size_and_idle_without_a_redraw() {
++    let now = Instant::now();
++    blit_at(
++        "raster-resize",
++        "owner",
++        json!({"rect": {"x": 0, "y": 0, "width": 4, "height": 2},
++            "cells": ["a", "b", "c", "d", "e", "f", "g", "h"]}),
++        now,
++    )
++    .expect("queued");
++    let (rows, next) = super::rows("raster-resize", "chart", 10, (2, 1), false, "", now);
++    assert_eq!(
++        text(&rows),
++        vec!["ab"],
++        "a resized component clips the stored canvas"
++    );
++    assert_eq!(next, None);
++    let (_, next) = super::rows(
++        "raster-resize",
++        "chart",
++        10,
++        (2, 1),
++        false,
++        "",
++        now + Duration::from_millis(5),
++    );
++    assert_eq!(next, None, "an empty queue needs no further frame");
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
 +fn rasters_show_alt_text_until_drawn_and_drop_with_their_component() {
 +    let now = Instant::now();
 +    assert_eq!(
-+        text(&super::rows("raster-alt", "load chart", 10, false, "  ", now).0),
++        text(&super::rows("raster-alt", "load chart", 10, (4, 2), false, "  ", now).0),
 +        vec!["  [load chart]"]
 +    );
 +    blit_at(
@@ -118192,7 +118320,7 @@ index 000000000..2e633cf22
 +        now,
 +    )
 +    .expect("queued");
-+    let (rows, _) = super::rows("raster-alt", "load chart", 10, true, "", now);
++    let (rows, _) = super::rows("raster-alt", "load chart", 10, (4, 2), true, "", now);
 +    assert_eq!(text(&rows)[0], "#   ");
 +    assert_eq!(
 +        rows[0].spans[1].style,
@@ -118201,16 +118329,16 @@ index 000000000..2e633cf22
 +    );
 +    retain(&BTreeSet::new());
 +    assert_eq!(
-+        text(&super::rows("raster-alt", "load chart", 10, false, "", now).0),
++        text(&super::rows("raster-alt", "load chart", 10, (4, 2), false, "", now).0),
 +        vec!["[load chart]"]
 +    );
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..b37f5b748
+index 000000000..db8f63e96
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,593 @@
+@@ -0,0 +1,624 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -118328,6 +118456,8 @@ index 000000000..b37f5b748
 +static EPOCH: AtomicU64 = AtomicU64::new(0);
 +static FRAMES: Mutex<Option<crate::tui::FrameRequester>> = Mutex::new(None);
 +static TOOL_NOTICES: Mutex<VecDeque<ToolNotice>> = Mutex::new(VecDeque::new());
++static DRAWN_CALLS: Mutex<std::collections::BTreeSet<String>> =
++    Mutex::new(std::collections::BTreeSet::new());
 +
 +struct ToolNotice {
 +    call_id: String,
@@ -118336,8 +118466,15 @@ index 000000000..b37f5b748
 +    owner: String,
 +}
 +
-+/// Attaches a mod notice beneath the transcript cell of one tool call.
-+pub(crate) fn tool_notice(call_id: &str, kind: &str, text: &str, owner: &str) {
++/// Attaches a mod notice beneath the drawn transcript cell of one tool call; false, storing nothing, when no drawn cell claims the call.
++pub(crate) fn tool_notice(call_id: &str, kind: &str, text: &str, owner: &str) -> bool {
++    if !DRAWN_CALLS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .contains(call_id)
++    {
++        return false;
++    }
 +    let mut notices = TOOL_NOTICES
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -118352,15 +118489,10 @@ index 000000000..b37f5b748
 +    });
 +    EPOCH.fetch_add(1, Ordering::Relaxed);
 +    schedule_frame(Duration::ZERO);
++    true
 +}
 +
 +pub(crate) fn tool_notice_lines(target: &RenderTarget) -> Vec<HyperlinkLine> {
-+    let notices = TOOL_NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    if notices.is_empty() {
-+        return Vec::new();
-+    }
 +    let calls = target.props["calls"]
 +        .as_array()
 +        .into_iter()
@@ -118368,6 +118500,21 @@ index 000000000..b37f5b748
 +        .filter_map(|call| call["call_id"].as_str())
 +        .chain([target.id.as_str()])
 +        .collect::<Vec<_>>();
++    if target.component.starts_with("tool_") || target.component == "command_output" {
++        let mut drawn = DRAWN_CALLS
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if drawn.len() >= DONE_LIMIT {
++            drawn.clear();
++        }
++        drawn.extend(calls.iter().map(|call| (*call).to_owned()));
++    }
++    let notices = TOOL_NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if notices.is_empty() {
++        return Vec::new();
++    }
 +    notices
 +        .iter()
 +        .filter(|notice| calls.contains(&notice.call_id.as_str()))
@@ -118436,6 +118583,18 @@ index 000000000..b37f5b748
 +        // A busy runtime leaves the flag as it was and asks again on the next refresh.
 +        None => engine(|engine| engine.revision = None),
 +    }
++}
++
++/// Ids of the components the latest hook trees draw, whose images and documents must outlive a view sync.
++pub(crate) fn component_ids() -> std::collections::BTreeSet<String> {
++    engine(|engine| {
++        engine
++            .latest
++            .values()
++            .flatten()
++            .flat_map(|rendered| codex_omd::component_ids_of(&rendered.tree))
++            .collect()
++    })
 +}
 +
 +/// State a TUI-side callback wrote may change what hooks draw, so finished renders are asked again.
@@ -118806,10 +118965,10 @@ index 000000000..b37f5b748
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 000000000..90de603d0
+index 000000000..3dcaec12a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,130 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -118898,6 +119057,47 @@ index 000000000..90de603d0
 +        Some(1)
 +    );
 +    assert_eq!(texts(&composed)[1], " ab    ");
++}
++
++#[test]
++#[serial_test::serial]
++fn view_syncs_keep_the_documents_hook_trees_draw() {
++    let hooked = tree(json!([
++        {"type":"document","id":"hook-doc","label":"Doc","lines":[[{"text":"a"}],[{"text":"b"}]],"height":2}
++    ]));
++    compose_lines(&hooked, 40, None, Vec::new());
++    let document = || {
++        crate::mod_components::handle("hook-doc", crate::mod_document::DocumentKey::Activate)
++            .is_some()
++    };
++    engine(|engine| {
++        engine.latest.insert(
++            ("tool_call".to_owned(), "call".to_owned()),
++            Some(Rendered {
++                props: json!({}),
++                tree: hooked,
++            }),
++        );
++    });
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    assert!(document());
++    engine(|engine| engine.latest.clear());
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    assert!(!document());
++}
++
++#[test]
++#[serial_test::serial]
++fn tool_notices_report_whether_a_drawn_cell_claims_the_call() {
++    let target = |id: &str| RenderTarget::new("tool_call", id, false, json!({}));
++    assert!(!tool_notice("call_unseen", "info", "x", "checks"));
++    assert!(
++        tool_notice_lines(&target("call_unseen")).is_empty(),
++        "a refused notice is not stored for a cell drawn later"
++    );
++    tool_notice_lines(&target("call_seen"));
++    assert!(tool_notice("call_seen", "info", "x", "checks"));
++    assert_eq!(tool_notice_lines(&target("call_seen")).len(), 1);
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
@@ -121534,10 +121734,11 @@ index 000000000..7d4eeda5f
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..023cb7816
+index 000000000..d63e96d04
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3603 @@
+@@ -0,0 +1,3699 @@
++use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
@@ -121642,7 +121843,6 @@ index 000000000..023cb7816
 +    id: String,
 +    area: Rect,
 +    top: u16,
-+    indent: u16,
 +    layer: u16,
 +}
 +
@@ -121671,6 +121871,8 @@ index 000000000..023cb7816
 +    checked: BTreeMap<String, BTreeSet<String>>,
 +    hotkeys: Vec<(String, String)>,
 +    autofocus: Vec<String>,
++    /// Controls that held focus when their overlay's anchor vanished.
++    parked: BTreeSet<String>,
 +    regions: Vec<Region>,
 +    layers: Vec<(Rect, u16)>,
 +    layer: u16,
@@ -121685,7 +121887,13 @@ index 000000000..023cb7816
 +    links: Vec<TerminalHyperlink>,
 +    line: Line<'static>,
 +    target: Option<ComponentTarget>,
-+    regions: Vec<(String, u16, u16)>,
++    /// Boxes holding this row: id, the box's indent, this row's offset in it, and whether it takes the pointer.
++    regions: Vec<(String, u16, u16, bool)>,
++    indent: u16,
++}
++
++fn cells(indent: usize) -> u16 {
++    u16::try_from(indent).unwrap_or(u16::MAX)
 +}
 +
 +fn span_line(
@@ -121775,6 +121983,7 @@ index 000000000..023cb7816
 +    checked: BTreeMap::new(),
 +    hotkeys: Vec::new(),
 +    autofocus: Vec::new(),
++    parked: BTreeSet::new(),
 +    regions: Vec::new(),
 +    layers: Vec::new(),
 +    layer: 0,
@@ -122100,6 +122309,7 @@ index 000000000..023cb7816
 +    interaction.seeds.retain(|id, _| ids.contains(id));
 +    interaction.echoes.retain(|id, _| ids.contains(id));
 +    interaction.hovered.retain(|id, _| ids.contains(id));
++    interaction.parked.retain(|id| ids.contains(id));
 +    if interaction
 +        .captured
 +        .as_ref()
@@ -122107,7 +122317,11 @@ index 000000000..023cb7816
 +    {
 +        interaction.captured = None;
 +    }
-+    crate::mod_components::retain(&ids);
++    crate::mod_components::retain(
++        &ids.union(&crate::mod_render::component_ids())
++            .cloned()
++            .collect(),
++    );
 +    if interaction
 +        .focused
 +        .as_ref()
@@ -122666,10 +122880,12 @@ index 000000000..023cb7816
 +                        id.to_owned(),
 +                        indent,
 +                        u16::try_from(row).unwrap_or(u16::MAX),
++                        true,
 +                    )]
 +                } else {
 +                    Vec::new()
 +                },
++                indent,
 +            }),
 +    );
 +}
@@ -122701,15 +122917,14 @@ index 000000000..023cb7816
 +                        line: Line::from(format!("{prefix}{title}")).bold(),
 +                        target: None,
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +                rows.extend(component_rows(children, width, interaction, indent + 1));
-+                if *pointer {
-+                    let indent = u16::try_from(indent).unwrap_or(u16::MAX);
-+                    for (offset, row) in rows[start..].iter_mut().enumerate() {
-+                        let offset = u16::try_from(offset).unwrap_or(u16::MAX);
-+                        row.regions.insert(0, (id.clone(), indent, offset));
-+                    }
++                for (offset, row) in rows[start..].iter_mut().enumerate() {
++                    let offset = u16::try_from(offset).unwrap_or(u16::MAX);
++                    row.regions
++                        .insert(0, (id.clone(), cells(indent), offset, *pointer));
 +                }
 +            }
 +            ModComponent::Text {
@@ -122726,6 +122941,7 @@ index 000000000..023cb7816
 +                        line: Line::from(format!("{prefix}{text}")).patch_style(tone_style(*tone)),
 +                        target: None,
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -122738,6 +122954,7 @@ index 000000000..023cb7816
 +                    line,
 +                    target: None,
 +                    regions: Vec::new(),
++                    indent: cells(indent),
 +                });
 +            }
 +            ModComponent::Button {
@@ -122753,6 +122970,7 @@ index 000000000..023cb7816
 +                line: Line::from(format!("{prefix}[ {text} ]")),
 +                target: Some(ComponentTarget::Button(action.clone())),
 +                regions: Vec::new(),
++                indent: cells(indent),
 +            }),
 +            ModComponent::Input {
 +                id,
@@ -122785,6 +123003,7 @@ index 000000000..023cb7816
 +                    line: Line::from(format!("{prefix}{label}: {shown}")),
 +                    target: Some(ComponentTarget::Input(action.clone())),
 +                    regions: Vec::new(),
++                    indent: cells(indent),
 +                });
 +            }
 +            ModComponent::Select {
@@ -122818,6 +123037,7 @@ index 000000000..023cb7816
 +                            .collect(),
 +                    }),
 +                    regions: Vec::new(),
++                    indent: cells(indent),
 +                });
 +            }
 +            ModComponent::Multiselect {
@@ -122847,6 +123067,7 @@ index 000000000..023cb7816
 +                    line: Line::from(format!("{prefix}{label}:")),
 +                    target: None,
 +                    regions: Vec::new(),
++                    indent: cells(indent),
 +                });
 +                for (index, option) in options.iter().enumerate() {
 +                    let mark = if checked.contains(&option.value) {
@@ -122870,6 +123091,7 @@ index 000000000..023cb7816
 +                            index,
 +                        }),
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -122891,6 +123113,7 @@ index 000000000..023cb7816
 +                        line: line.line,
 +                        target: None,
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -122908,6 +123131,7 @@ index 000000000..023cb7816
 +                        line: Line::from(format!("{prefix}{language}")).dim(),
 +                        target: None,
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +                for line in text.lines() {
@@ -122918,6 +123142,7 @@ index 000000000..023cb7816
 +                        line: Line::from(format!("{prefix}{line}")).cyan(),
 +                        target: None,
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -122959,6 +123184,7 @@ index 000000000..023cb7816
 +                    .bold(),
 +                    target: Some(ComponentTarget::Pane),
 +                    regions: Vec::new(),
++                    indent: cells(indent),
 +                });
 +                if !*collapsed {
 +                    let nested = component_rows(children, width, interaction, indent + 1);
@@ -122978,6 +123204,7 @@ index 000000000..023cb7816
 +                    line: Line::from(format!("{prefix}{title}")).bold(),
 +                    target: None,
 +                    regions: Vec::new(),
++                    indent: cells(indent),
 +                });
 +                rows.extend(component_rows(children, width, interaction, indent));
 +            }
@@ -122998,6 +123225,7 @@ index 000000000..023cb7816
 +                        line: Line::from(format!("{prefix}{label}: (empty)")).dim(),
 +                        target: None,
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                    continue;
 +                }
@@ -123040,6 +123268,7 @@ index 000000000..023cb7816
 +                            index,
 +                        }),
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -123083,6 +123312,7 @@ index 000000000..023cb7816
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -123115,6 +123345,7 @@ index 000000000..023cb7816
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -123138,6 +123369,7 @@ index 000000000..023cb7816
 +                        line,
 +                        target: Some(ComponentTarget::Terminal(session.clone())),
 +                        regions: Vec::new(),
++                        indent: cells(indent),
 +                    });
 +                }
 +            }
@@ -123164,13 +123396,15 @@ index 000000000..023cb7816
 +                id,
 +                label,
 +                alt,
++                width: columns,
++                height: rows_high,
 +                pointer,
-+                ..
 +            } => {
 +                let (lines, next) = crate::mod_raster::rows(
 +                    id,
 +                    alt,
 +                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
++                    (*columns, *rows_high),
 +                    crate::mod_client::facts().no_color,
 +                    &prefix,
 +                    std::time::Instant::now(),
@@ -123222,6 +123456,7 @@ index 000000000..023cb7816
 +                    line: Line::from(""),
 +                    target: None,
 +                    regions: Vec::new(),
++                    indent: 0,
 +                });
 +            }
 +        }
@@ -123230,8 +123465,24 @@ index 000000000..023cb7816
 +        rows
 +    };
 +    let focused_row = interaction.focused.as_ref().and_then(|focused| {
-+        rows.iter()
-+            .position(|row| row.target.is_some() && row.id.as_ref() == Some(focused))
++        let cursor = interaction.selected.get(focused).copied();
++        let mut own = rows
++            .iter()
++            .enumerate()
++            .filter(|(_, row)| row.target.is_some() && row.id.as_ref() == Some(focused));
++        let first = own.next();
++        std::iter::once(first)
++            .flatten()
++            .chain(own)
++            .find(|(_, row)| match &row.target {
++                Some(
++                    ComponentTarget::Multiselect { index, .. }
++                    | ComponentTarget::ListRow { index, .. },
++                ) => Some(*index) == cursor,
++                _ => true,
++            })
++            .or(first)
++            .map(|(row, _)| row)
 +    });
 +    let scroll = focused_row.map_or(0, |row| (row + 1).saturating_sub(usize::from(inner.height)));
 +    let lines = rows
@@ -123256,15 +123507,36 @@ index 000000000..023cb7816
 +    interaction: &mut Interaction,
 +) {
 +    for (index, row) in rows.into_iter().enumerate() {
-+        let area = index
++        let row_top = index
 +            .checked_sub(scroll)
 +            .and_then(|offset| u16::try_from(offset).ok())
 +            .filter(|offset| *offset < inner.height)
-+            .map(|offset| Rect::new(inner.x, inner.y + offset, inner.width, 1));
-+        for (id, indent, top) in row.regions {
-+            let Some(area) = area else {
++            .map(|offset| inner.y + offset);
++        let area = row_top.map(|y| Rect::new(inner.x, y, inner.width, 1));
++        let beside = |indent: u16, width: u16| {
++            let room = inner.width.saturating_sub(indent);
++            row_top.map(|y| Rect::new(inner.x + indent, y, width.clamp(1, room.max(1)), 1))
++        };
++        let own = beside(
++            row.indent,
++            u16::try_from(row.line.width())
++                .unwrap_or(u16::MAX)
++                .saturating_sub(row.indent),
++        );
++        for (id, indent, top, pointer) in row.regions {
++            let Some(area) = beside(indent, u16::MAX)
++                .map(|held| own.filter(|_| row.id.as_ref() == Some(&id)).unwrap_or(held))
++            else {
 +                continue;
 +            };
++            interaction
++                .anchors
++                .entry(id.clone())
++                .and_modify(|anchor| *anchor = anchor.union(area))
++                .or_insert(area);
++            if !pointer {
++                continue;
++            }
 +            let layer = interaction.layer;
 +            match interaction
 +                .regions
@@ -123276,12 +123548,11 @@ index 000000000..023cb7816
 +                    id,
 +                    area,
 +                    top,
-+                    indent,
 +                    layer,
 +                }),
 +            }
 +        }
-+        if let (Some(id), Some(area)) = (&row.id, area) {
++        if let (Some(id), Some(area)) = (&row.id, own) {
 +            interaction
 +                .anchors
 +                .entry(id.clone())
@@ -123541,14 +123812,28 @@ index 000000000..023cb7816
 +        .collect::<Vec<_>>();
 +    overlays.sort_by_key(|(overlay, _)| overlay.z);
 +    for (index, (overlay, site)) in overlays.into_iter().enumerate() {
++        let ids = codex_omd::component_ids_of(&site.components);
 +        let Some(area) = overlay_area(screen, overlay, &interaction.anchors) else {
-+            if interaction.focused.as_ref().is_some_and(|focused| {
-+                codex_omd::component_ids_of(&site.components).contains(focused)
-+            }) {
-+                interaction.focused = None;
++            if let Some(held) = interaction
++                .focused
++                .take_if(|focused| ids.contains(&*focused))
++            {
++                interaction.parked.insert(held);
 +            }
 +            continue;
 +        };
++        let parked = interaction
++            .parked
++            .iter()
++            .filter(|id| ids.contains(*id))
++            .cloned()
++            .collect::<Vec<_>>();
++        if interaction.focused.is_none() {
++            interaction.focused = parked.first().cloned();
++        }
++        for id in parked {
++            interaction.parked.remove(&id);
++        }
 +        interaction.layer = u16::try_from(index + 1).unwrap_or(DIALOG_LAYER - 1);
 +        interaction.layers.push((area, interaction.layer));
 +        Clear.render(area, buffer);
@@ -123959,7 +124244,7 @@ index 000000000..023cb7816
 +    highlight_focus(buffer, &interaction);
 +}
 +
-+pub(crate) fn footer_lines(width: u16) -> Vec<Line<'static>> {
++pub(crate) fn footer_hyperlink_lines(width: u16) -> Vec<HyperlinkLine> {
 +    let snapshot = snapshot();
 +    let style = panel_style(&snapshot.view);
 +    let mut lines = if let Some(site) = site(&snapshot.view, "above_composer") {
@@ -123968,12 +124253,15 @@ index 000000000..023cb7816
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
 +        component_rows(&site.components, width, &mut interaction, 0)
 +            .into_iter()
-+            .map(|row| row.line.patch_style(style))
++            .map(|row| HyperlinkLine {
++                hyperlinks: row.links,
++                ..HyperlinkLine::new(row.line.patch_style(style))
++            })
 +            .collect()
 +    } else if let Some(footer) = &snapshot.view.footer {
 +        panel_lines(footer)
 +            .into_iter()
-+            .map(|line| line.patch_style(style))
++            .map(|line| HyperlinkLine::new(line.patch_style(style)))
 +            .collect()
 +    } else {
 +        Vec::new()
@@ -123984,7 +124272,7 @@ index 000000000..023cb7816
 +            .map(|notice| {
 +                let mut spans = crate::history_cell::notice_spans(notice.kind, &notice.text);
 +                spans.push(format!(" ({})", notice.owner).dark_gray());
-+                Line::from(spans)
++                HyperlinkLine::new(Line::from(spans))
 +            }),
 +    );
 +    lines
@@ -124620,7 +124908,7 @@ index 000000000..023cb7816
 +    action: &str,
 +    button: Option<MouseButton>,
 +) -> serde_json::Value {
-+    let column = i32::from(event.column) - i32::from(region.area.x) - i32::from(region.indent);
++    let column = i32::from(event.column) - i32::from(region.area.x);
 +    let row = i32::from(event.row) - i32::from(region.area.y) + i32::from(region.top);
 +    serde_json::json!({"component": region.id, "kind": "pointer", "pointer": {
 +        "column": column, "row": row, "half": crate::mod_client::last_half(),
@@ -124893,10 +125181,18 @@ index 000000000..023cb7816
 +    if before.focused != after.focused {
 +        let (from, to) = (before.focused.clone(), after.focused.clone());
 +        let mut target = to.clone();
++        let mut asked = BTreeSet::new();
 +        for id in [&from, &to].into_iter().flatten() {
 +            let Some(owner) = owner(id) else {
 +                continue;
 +            };
++            if !asked.insert(owner.clone()) {
++                continue;
++            }
++            let id = target
++                .as_ref()
++                .filter(|target| component_owner(target).as_deref() == Some(owner.as_str()))
++                .unwrap_or(id);
 +            match ask(
 +                &owner,
 +                "focus",
@@ -125143,10 +125439,10 @@ index 000000000..023cb7816
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..c93b4720b
+index 000000000..d4933ece9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1707 @@
+@@ -0,0 +1,1911 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -126399,12 +126695,19 @@ index 000000000..c93b4720b
 +#[test]
 +#[serial_test::serial]
 +fn autofocus_in_an_overlay_without_a_drawn_anchor_is_released() {
-+    let snapshot = snapshot(serde_json::json!({"sites":{
-+        "sidebar":{"components":[{"type":"text","id":"body","label":"Body","text":"x"}]},
-+        "fixture/tip":{"overlay":{"anchor":{"component":"gone"},"width":20,"height":3},"components":[
-+            {"type":"input","id":"tip_query","label":"Query","autofocus":true,"action":{"command":"fixture:search"}}
-+        ]}
-+    },"sidebar_width":30}));
++    let view = |anchor: &str| {
++        snapshot(serde_json::json!({"sites":{
++            "sidebar":{"components":[
++                {"type":"text","id":anchor,"label":"Body","text":"x"},
++                {"type":"input","id":"other","label":"Other","action":{"command":"fixture:other"}}
++            ]},
++            "fixture/tip":{"overlay":{"anchor":{"component":"gone"},"width":20,"height":3},"components":[
++                {"type":"input","id":"tip_query","label":"Query","autofocus":true,"action":{"command":"fixture:search"}},
++                {"type":"input","id":"tip_note","label":"Note","action":{"command":"fixture:note"}}
++            ]}
++        },"sidebar_width":30}))
++    };
++    let (snapshot, anchored) = (view("body"), view("gone"));
 +    let area = Rect::new(0, 0, 80, 24);
 +    preview(ModViewSnapshot::default());
 +    sync_interaction(&ModView::default());
@@ -126419,6 +126722,48 @@ index 000000000..c93b4720b
 +    assert_eq!(focused().as_deref(), Some("tip_query"));
 +    render(area, area, &mut Buffer::empty(area), &snapshot);
 +    assert_eq!(focused(), None);
++    let set = |id: Option<&str>| {
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused = id.map(str::to_owned);
++    };
++    let draw = |view: &ModViewSnapshot| {
++        sync_interaction(&view.view);
++        render(area, area, &mut Buffer::empty(area), view);
++    };
++    draw(&anchored);
++    assert_eq!(
++        focused().as_deref(),
++        Some("tip_query"),
++        "the returning anchor restores focus nobody has taken"
++    );
++    set(Some("tip_note"));
++    draw(&snapshot);
++    assert_eq!(focused(), None);
++    draw(&anchored);
++    assert_eq!(
++        focused().as_deref(),
++        Some("tip_note"),
++        "the control that held focus returns, not the autofocus one"
++    );
++    set(Some("tip_query"));
++    draw(&snapshot);
++    assert_eq!(focused(), None);
++    set(Some("other"));
++    draw(&anchored);
++    assert_eq!(
++        focused().as_deref(),
++        Some("other"),
++        "focus the user moved is not taken back"
++    );
++    set(None);
++    draw(&anchored);
++    assert_eq!(
++        focused(),
++        None,
++        "a restore is spent once the anchor is back"
++    );
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -126449,6 +126794,141 @@ index 000000000..c93b4720b
 +            {"type":"line","id":"bad","label":"Bad","spans":[{"text":"x","link":"javascript:alert(1)"}]}]}}}))
 +        .is_err()
 +    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn above_composer_rows_carry_their_links_into_the_footer() {
++    preview(snapshot(
++        serde_json::json!({"sites":{"above_composer":{"components":[
++            {"type":"line","id":"ref","label":"Ref","spans":[{"text":"see "},{"text":"docs","link":"https://example.com/docs"}]},
++            {"type":"markdown","id":"notes","label":"Notes","text":"[site](https://example.org/)"}
++        ]}}}),
++    ));
++    let lines = footer_hyperlink_lines(80);
++    let area = Rect::new(0, 0, 80, 2);
++    let mut buffer = Buffer::empty(area);
++    crate::terminal_hyperlinks::HyperlinkParagraph::new(&lines, Style::default())
++        .render(area, &mut buffer);
++    let linked = |destination: &str| {
++        area.positions()
++            .filter(|position| {
++                buffer[*position]
++                    .symbol()
++                    .starts_with(&format!("\x1b]8;;{destination}\x07"))
++            })
++            .count()
++    };
++    assert_eq!(linked("https://example.com/docs"), 4);
++    let site = &lines[1];
++    assert_eq!(
++        site.line
++            .to_string()
++            .matches("https://example.org/")
++            .count(),
++        1
++    );
++    assert_eq!(
++        site.hyperlinks.len(),
++        2,
++        "the label and the shown destination are separate links"
++    );
++    assert!(site.hyperlinks[0].columns.end <= site.hyperlinks[1].columns.start);
++    assert_eq!(
++        linked("https://example.org/"),
++        4 + "https://example.org/".len()
++    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn sidebar_scrolls_to_the_cursor_row_of_a_long_multiselect() {
++    let options = (0..12)
++        .map(|index| serde_json::json!({"value": format!("v{index}"), "label": format!("Option {index}")}))
++        .collect::<Vec<_>>();
++    let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"multiselect","id":"files","label":"Files","value":[],"action":{"command":"fixture:pick"},"options":options}
++    ]}},"sidebar_width":30}));
++    let area = Rect::new(0, 0, 80, 8);
++    sync_interaction(&snapshot.view);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    assert!(focus("files"));
++    for _ in 0..11 {
++        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
++    }
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    assert!(rows(&buffer, area).contains("Option 11"));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn nested_pointer_regions_and_anchors_start_at_their_own_indent_and_width() {
++    let mut view = snapshot(
++        serde_json::json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
++            {"type":"text","id":"intro","label":"Intro","text":"hello"},
++            {"type":"box","id":"frame","label":"Frame","title":"Frame","children":[
++                {"type":"text","id":"inner","label":"Inner","text":"nested"},
++                {"type":"raster","id":"nested_chart","label":"Chart","alt":"cpu chart","width":6,"height":2,"pointer":true}
++            ]}
++        ]}}}),
++    );
++    view.component_owners = [("nested_chart".to_owned(), "demo".to_owned())]
++        .into_iter()
++        .collect();
++    crate::mod_raster::blit(
++        "demo",
++        Some("demo".into()),
++        Some((6, 2)),
++        &serde_json::json!({"key":"nested_chart","rect":{"x":0,"y":0,"width":6,"height":2},
++            "cells":["a","b","c","d","e","f","g","h","i","j","k","l"]}),
++        std::time::Instant::now(),
++    )
++    .expect("queued");
++    let area = Rect::new(0, 0, 80, 24);
++    preview(view.clone());
++    render(area, area, &mut Buffer::empty(area), &view);
++    let (left, anchors, region) = {
++        let interaction = INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        (
++            interaction.anchors["intro"].x,
++            interaction.anchors.clone(),
++            interaction
++                .regions
++                .iter()
++                .find(|region| region.id == "nested_chart")
++                .cloned()
++                .expect("chart region"),
++        )
++    };
++    assert_eq!(anchors["inner"].x, left + 1);
++    assert_eq!(anchors["frame"].x, left);
++    assert_eq!(
++        anchors["frame"].union(anchors["nested_chart"]),
++        anchors["frame"],
++        "a box anchors all its rows"
++    );
++    assert!(anchors["frame"].y < anchors["inner"].y);
++    assert_eq!((region.area.x, region.area.width), (left + 1, 6));
++    let (x, y) = (region.area.x, region.area.y);
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, x + 2, y + 1),
++        (
++            true,
++            events(&[("nested_chart", "enter 2 1"), ("nested_chart", "move 2 1")])
++        )
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Down(MouseButton::Left), x + 6, y),
++        (false, events(&[("nested_chart", "leave 6 0")])),
++        "clicks past a narrow raster pass through"
++    );
++    crate::mod_raster::retain(&BTreeSet::new());
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -126510,9 +126990,9 @@ index 000000000..c93b4720b
 +    );
 +    assert_eq!(texts(NoticePlacement::Toast), ["two"]);
 +    assert!(
-+        footer_lines(80)
++        footer_hyperlink_lines(80)
 +            .iter()
-+            .any(|line| line.to_string().contains("two (checks)"))
++            .any(|line| line.line.to_string().contains("two (checks)"))
 +    );
 +    assert!(!clear_notice("other", "run"));
 +    assert!(clear_notice("checks", "run"));
@@ -126548,7 +127028,18 @@ index 000000000..c93b4720b
 +
 +#[test]
 +fn tool_notices_attach_to_their_call_and_tool_groups() {
-+    crate::mod_render::tool_notice("call_4ej_notice", "warning", "slow test", "checks");
++    crate::mod_render::tool_notice_lines(&crate::mod_render::RenderTarget::new(
++        "tool_call",
++        "call_4ej_notice",
++        false,
++        serde_json::json!({}),
++    ));
++    assert!(crate::mod_render::tool_notice(
++        "call_4ej_notice",
++        "warning",
++        "slow test",
++        "checks"
++    ));
 +    let lines = |target: crate::mod_render::RenderTarget| {
 +        crate::mod_render::tool_notice_lines(&target)
 +            .into_iter()
@@ -126599,8 +127090,12 @@ index 000000000..c93b4720b
 +        interaction.scroll.insert("log".to_owned(), scroll);
 +        observe(&interaction)
 +    };
++    let focus_asks = std::cell::Cell::new(0);
 +    let ask = |owner: &str, change: serde_json::Value| {
 +        assert_eq!(owner, "wizard");
++        if change["kind"] == "focus" {
++            focus_asks.set(focus_asks.get() + 1);
++        }
 +        match (change["kind"].as_str().unwrap(), change["to"].clone()) {
 +            ("focus", to) if to == "other" => Err("component_change_denied: finish".to_owned()),
 +            ("focus", to) if to == "skip" => Ok(serde_json::json!({"focus": "name"})),
@@ -126625,6 +127120,11 @@ index 000000000..c93b4720b
 +    assert_eq!(moved("skip", 0), ("name".to_owned(), 0));
 +    assert_eq!(moved("next", 0), ("next".to_owned(), 0));
 +    assert_eq!(moved("next", 9), ("next".to_owned(), 5));
++    assert_eq!(
++        focus_asks.get(),
++        4,
++        "an owner of both ends is asked once per focus change"
++    );
 +    preview(ModViewSnapshot::default());
 +}
 +
