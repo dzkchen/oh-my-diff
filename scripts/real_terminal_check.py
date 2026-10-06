@@ -250,7 +250,7 @@ def main():
     finally:
         if not args.keep_open:
             terminal.close()
-        server.shutdown()
+            server.shutdown()
     finish(results, base)
 
 

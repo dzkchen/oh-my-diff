@@ -26,7 +26,7 @@ const time = async (name, run) => {
 async function until(label, check, ms = 20000) {
   const deadline = Date.now() + ms;
   for (;;) {
-    const value = check();
+    const value = await check();
     if (value) return value;
     if (Date.now() > deadline) {
       const seen = watched.map(state => ({ name: state.name, roster: state.roster.map(entry => entry.name), revision: state.view()?.revision,
@@ -122,12 +122,13 @@ async function headless() {
   assert.equal(owners.external_clients, 'external_client');
   say({ step: 'view', epoch: desk.view().epoch, revision: desk.view().revision, bytes: JSON.stringify(desk.view()).length });
 
+  const badge = await until('badge', () => component(desk.view(), 'external_badge'));
+  await until('text client view complete', () => ['desk_kinds', 'desk_note', 'external_badge', 'external_meter'].every(id => component(text.view(), id)));
   const textMissing = components(text.view()).map(({ component: item }) => unsupported(item, TEXT, TEXT_DRAWN)).filter(Boolean);
   const guiMissing = components(desk.view()).map(({ component: item }) => unsupported(item, GUI, GUI_DRAWN)).filter(Boolean);
   assert.deepEqual(textMissing.map(error => error.component).sort(), ['desk_kinds', 'desk_note', 'external_badge', 'external_meter']);
   assert.match(textMissing.find(error => error.component === 'external_meter').message, /^unsupported_element: raster 'external_meter': this renderer does not draw it; drawing its fallback "Eight-step color meter"$/);
   assert.deepEqual(guiMissing, []);
-  const badge = await until('badge', () => component(desk.view(), 'external_badge'));
   assert.equal(unsupported(badge, TEXT, [...TEXT_DRAWN, 'image']).fallback, 'Badge reading "external"');
   say({ step: 'unsupported', text: textMissing.map(error => error.message) });
 
@@ -302,8 +303,8 @@ async function coattach() {
   const desk = client('approval desk gui', GUI, (method, params, self) => self.answer?.(method, params));
   await time('attach_ms', () => desk.ready);
   let data = [];
-  await until('the TUI thread is loaded', () => {
-    desk.session.request('thread/loaded/list', {}).then(listed => (data = listed.data));
+  await until('the TUI thread is loaded', async () => {
+    data = (await desk.session.request('thread/loaded/list', {}).catch(() => ({ data: [] }))).data;
     return data.length === 1;
   });
   await desk.session.request('thread/resume', { threadId: data[0] });
