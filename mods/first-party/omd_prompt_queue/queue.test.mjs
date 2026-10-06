@@ -37,6 +37,7 @@ function host() {
         if (!found) return { error: 'consent_missing' };
         if (found.client) return { error: 'consent_spent' };
         if (found.digest !== digest) return { error: 'consent_content_changed' };
+        if (world.held) return { value: { status: 'not_submitted', reason: 'input_held' } };
         if ((args.mode === 'turn') === world.busy) return { value: { status: 'not_submitted', reason: world.busy ? 'busy' : 'no_active_turn' } };
         found.client = args.client_id;
         world.submitted.push(`${args.mode}:${args.text}`);
@@ -81,7 +82,10 @@ test('queued prompts are consented, edited, joined and sent once as the user', (
 
   fire('idle');
   assert.deepEqual(world.submitted, [], 'a busy thread keeps the queue');
-  world.busy = false;
+  [world.busy, world.held] = [false, true];
+  fire('idle');
+  assert.deepEqual([world.submitted, state.entries.map(entry => entry.status)], [[], ['queued', 'queued']], 'held reconnect input keeps the queue');
+  world.held = false;
   fire('idle');
   fire('idle');
   assert.deepEqual(world.submitted, ['turn:run the tests\n\ndocs'], 'a sent entry is not submitted twice');

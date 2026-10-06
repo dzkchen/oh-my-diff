@@ -673,7 +673,7 @@ async fn turn_activity_records_only_while_a_mod_reads_it() {
     );
     assert_eq!(turn["processes"][1]["running"], true);
     assert_eq!(turn["files"][0]["path"], "a.txt");
-    activity::turn_ended(core, lead, "completed", None);
+    activity::turn_ended(core, lead, "completed", None, None);
     let turns = activity::read(core, lead, Value::Null).await.unwrap();
     assert_eq!(turns["turns"][0]["outcome"], "completed");
 
@@ -2169,7 +2169,21 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         .core
         .inventory
         .answer(&child.to_string(), "looks fine");
-    mods.agent_turn(&child_store, &turn_store, "completed");
+    mods.on_turn_error(codex_extension_api::TurnErrorInput {
+        turn_id: "child-turn",
+        error: codex_protocol::protocol::CodexErrorInfo::ServerOverloaded,
+        error_details: &codex_protocol::error::CodexErrorDetails::ServerOverloaded,
+        session_store: &session_store,
+        thread_store: &child_store,
+        turn_store: &turn_store,
+    })
+    .await;
+    mods.on_turn_stop(codex_extension_api::TurnStopInput {
+        session_store: &session_store,
+        thread_store: &child_store,
+        turn_store: &turn_store,
+    })
+    .await;
     mods.on_thread_stop(ThreadStopInput {
         session_store: &session_store,
         thread_store: &child_store,
@@ -2199,8 +2213,13 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         .unwrap();
     assert_eq!(record["origin"], "model");
     assert_eq!(record["definition"]["name"], "reviewer/review");
-    assert_eq!(record["status"], "completed");
+    assert_eq!(record["status"], "failed");
     assert_eq!(record["turns"], 1);
+    assert_eq!(
+        record["last_turn"]["error"],
+        json!({"category": "transport", "code": "server_overloaded",
+            "message": "Selected model is at capacity. Please try a different model."})
+    );
     assert_eq!(record["answer"], "looks fine");
     assert_eq!(record["usage"]["microusd"], 7);
     assert_eq!(record["usage"]["basis"], "settled");

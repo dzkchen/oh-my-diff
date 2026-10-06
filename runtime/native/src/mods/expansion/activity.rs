@@ -74,12 +74,19 @@ pub(in crate::mods) async fn turn_started(core: &Arc<Core>, lead: &Lead, turn_id
     });
 }
 
-pub(in crate::mods) fn turn_ended(core: &Core, lead: &Lead, outcome: &str, reason: Option<String>) {
+pub(in crate::mods) fn turn_ended(
+    core: &Core,
+    lead: &Lead,
+    outcome: &str,
+    reason: Option<String>,
+    error: Option<Value>,
+) {
     record(core, lead, |turn| ActivityRecord::TurnEnded {
         turn_id: turn.to_owned(),
         at: now(),
         outcome: outcome.to_owned(),
         reason,
+        error,
     });
     if let Ok(mut running) = core.expansion.running.lock() {
         running.remove(&lead.thread.to_string());

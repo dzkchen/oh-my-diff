@@ -91,7 +91,7 @@ export type AgentDefinition = { name: string; description: string; instructions:
 export type AgentRecord = { agent_id: string | null; thread_id: string; parent: { thread_id: string | null; agent_id: string | null }; origin: 'model' | 'mod' | 'native';
   owner: string | null; definition: { name: string; owner: string; source_sha256: string } | null; role: string | null; route?: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled'; started_at_ms: number; ended_at_ms: number | null; duration_ms: number | null; turns: number;
-  last_turn: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; at_ms: number; answer: string | null } | null; answer: string | null;
+  last_turn: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; at_ms: number; answer: string | null; error: AgentFailure | null } | null; answer: string | null;
   usage: { requests: number | null; input_tokens: number; output_tokens: number; cached_tokens: number; microusd: number | null; basis: 'unknown' | 'settled' | 'partial'; source: 'accounting' | 'engine' | null }; reason: string | null };
 export type AgentSpawnRequest = { origin: 'model' | 'mod'; caller: string; thread_id: string | null; agent_id: string | null; definition: string | null; prompt: string; model: string | null; effort: ReasoningEffort | null; cwd: string | null; tools: string[] | null };
 export type PeerAddress = { session: string; package: string };
@@ -248,7 +248,7 @@ export type HistoryEdit = { drop?: number[]; replace?: { index: number; text: st
 export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback'; sandbox?: 'none' } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
 export type TurnActivity = {
   turn_id: string; started_at: string | null; ended_at: string | null;
-  outcome: 'completed' | 'aborted' | 'error' | 'interrupted' | 'running' | 'unknown'; reason: string | null; unrecorded_end: boolean;
+  outcome: 'completed' | 'aborted' | 'error' | 'interrupted' | 'running' | 'unknown'; reason: string | null; error: AgentFailure | null; unrecorded_end: boolean;
   tool_calls: { call_id: string; tool: string; started_at: string; finished_at: string | null; outcome: string | null; output_replaced?: { mod: string; original_sha256: string; replacement_sha256: string } }[];
   processes: { id: string; kind: 'exec' | 'managed'; command: string; running: boolean | null; exit_code: number | null }[];
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
@@ -388,7 +388,7 @@ export interface Events {
   workspace_change: { input: { repository: string; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external'; call_id: string | null; watch_id?: string; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
   workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null> }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
-  turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: string; evidence?: ResourceRef }; output: void };
+  turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: AgentFailure; evidence?: ResourceRef }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto'; outcome: 'compacted' | 'replaced' | 'skipped' | 'deferred' | 'failed'; by: string | null; provider_call: boolean }; output: void };
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string; failure?: AgentFailure | null; text?: string; sha256?: string }; output: void };

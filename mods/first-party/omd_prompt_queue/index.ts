@@ -52,7 +52,7 @@ export default function activate(api: ModAPI) {
       return;
     }
     if (sent.value.status === 'not_submitted') {
-      if (sent.value.reason !== 'busy') Object.assign(entry, { status: 'failed', reason: sent.value.reason });
+      if (sent.value.reason !== 'busy' && sent.value.reason !== 'input_held') Object.assign(entry, { status: 'failed', reason: sent.value.reason });
       return;
     }
     Object.assign(entry, { status: 'sent', client_id: sent.value.client_id, reason: null });

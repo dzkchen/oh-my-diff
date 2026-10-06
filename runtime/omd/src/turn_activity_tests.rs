@@ -77,6 +77,7 @@ fn completed_turn_reports_tools_processes_and_files() {
             at: s("4"),
             outcome: s("completed"),
             reason: None,
+            error: None,
         },
     ] {
         log.append(&record).unwrap();
@@ -167,6 +168,7 @@ fn selection_by_turn_and_last_n_keeps_order() {
             at: s("y"),
             outcome: s("completed"),
             reason: None,
+            error: None,
         })
         .unwrap();
     }
@@ -232,6 +234,7 @@ fn corrupt_lines_are_skipped() {
         at: s("1"),
         outcome: s("aborted"),
         reason: Some(s("interrupted by user")),
+        error: None,
     })
     .unwrap();
     let turn = &read(&log, None, 1, None)["turns"][0];

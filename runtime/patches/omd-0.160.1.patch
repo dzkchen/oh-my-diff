@@ -8109,10 +8109,10 @@ index c57920741..9836705ad 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index da28bf2ca..400f2895f 100644
+index da28bf2ca..45af19dd2 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -382,6 +382,78 @@ impl App {
+@@ -382,6 +382,76 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -8130,13 +8130,11 @@ index da28bf2ca..400f2895f 100644
 +                managed,
 +                enabled,
 +            } => {
-+                let paths = crate::omd::mod_paths();
++                let root = crate::omd::store_root();
 +                let tx = self.app_event_tx.clone();
 +                std::thread::spawn(move || {
 +                    let result = (|| {
-+                        let root = paths
-+                            .and_then(|paths| paths.store)
-+                            .ok_or("mod store is not configured")?;
++                        let root = root.ok_or("mod store is not configured")?;
 +                        let store = codex_omd::ModStore::open(root).map_err(|e| e.to_string())?;
 +                        if managed {
 +                            if enabled {
@@ -8191,7 +8189,7 @@ index da28bf2ca..400f2895f 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -1581,8 +1653,27 @@ impl App {
+@@ -1581,8 +1651,27 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -10401,6 +10399,34 @@ index bb14fbe53..f33c7ca92 100644
                  if self.sparkle.draft.get() == SparkleDraft::Command {
                      self.sparkle.draft.set(SparkleDraft::Untouched);
                      self.sparkle.command_input.borrow_mut().clear();
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
+index 369bca172..bd45e8a11 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
+@@ -89,6 +89,23 @@ fn passive_activity_keeps_shortcuts_only_when_the_complete_hint_fits() {
+     );
+ }
+
++#[test]
++fn plan_cycle_hint_survives_the_omd_status_prefix() {
++    let mut composer = composer();
++    composer.set_collaboration_modes_enabled(/*enabled*/ true);
++    composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++    for status in [
++        "Oh My Diff · 9 mods on · queue 1 · plan 2/5 · gpt-5 high · ~/project",
++        "Oh My Diff · 0 mods on · gpt-5 high · ~/project",
++        "Oh My Diff · upstream-style direct · hooks off · gpt-5 high · ~/project",
++    ] {
++        composer.set_status_line(Some(Line::from(status)));
++        let (text, _) = render(&composer, /*width*/ 120, /*footer*/ None);
++        let row = text.lines().find(|line| line.contains(status)).unwrap();
++        assert!(row.ends_with("Plan mode (shift+tab to cycle)"), "{text}");
++    }
++}
++
+ #[test]
+ fn fullscreen_plan_indicator_keeps_the_cycle_hint_when_it_fits() {
+     let mut composer = composer();
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
 index 51760df39..5ab509019 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
@@ -11102,7 +11128,7 @@ index 00c2c2adf..a2d537064 100644
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 7fafd6dd4..569cfe690 100644
+index 7fafd6dd4..238a2a7e2 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -308,6 +308,7 @@ mod interaction;
@@ -11160,7 +11186,7 @@ index 7fafd6dd4..569cfe690 100644
 +        if let (Some(client_id), Some(thread), Some(root)) = (
 +            client_id,
 +            self.thread_id,
-+            crate::omd::mod_paths().and_then(|paths| paths.store),
++            crate::omd::store_root(),
 +        ) {
 +            let _ = codex_omd::consents::delivered(&root, &thread.to_string(), client_id, turn_id);
 +        }
@@ -11230,7 +11256,7 @@ index 017c9fb06..20b50af23 100644
          let startup_only = self
              .transcript
 diff --git a/codex-rs/tui/src/chatwidget/input_flow.rs b/codex-rs/tui/src/chatwidget/input_flow.rs
-index b4d45daf1..b214edf78 100644
+index b4d45daf1..684e14b42 100644
 --- a/codex-rs/tui/src/chatwidget/input_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/input_flow.rs
 @@ -36,6 +36,7 @@ impl ChatWidget {
@@ -11267,6 +11293,29 @@ index b4d45daf1..b214edf78 100644
              }
              InputResult::ParentOwnedInputBlocked => {
                  self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
+@@ -232,14 +240,18 @@ impl ChatWidget {
+         }
+     }
+
++    pub(crate) fn queued_input_held(&self) -> bool {
++        self.input_queue.suppress_queue_autosend
++            || self.input_queue.rate_limit_recovery_pending
++            || self.input_queue.recovered_queue
++            || self.input_queue.has_unconfirmed_messages()
++    }
++
+     /// If idle and there are queued inputs, submit exactly one to start the next turn.
+     pub(crate) fn maybe_send_next_queued_input(&mut self) -> bool {
+         if !self.is_session_configured()
+             || self.has_misalignment_policy_violation()
+-            || self.input_queue.suppress_queue_autosend
+-            || self.input_queue.rate_limit_recovery_pending
+-            || self.input_queue.recovered_queue
+-            || self.input_queue.has_unconfirmed_messages()
++            || self.queued_input_held()
+         {
+             return false;
+         }
 diff --git a/codex-rs/tui/src/chatwidget/input_restore.rs b/codex-rs/tui/src/chatwidget/input_restore.rs
 index e1a798b52..5144f600c 100644
 --- a/codex-rs/tui/src/chatwidget/input_restore.rs
@@ -13054,6 +13103,63 @@ index 616dd6df1..1f10ffb9e 100644
          let hyperlink_url = selections
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
+diff --git a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs b/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
+index 099806b8a..c63a9fe46 100644
+--- a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
++++ b/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
+@@ -2446,6 +2446,52 @@ async fn reconnect_resumes_unsent_input_and_reconciles_confirmed_submissions() {
+     }
+ }
+
++#[tokio::test]
++async fn mod_prompts_wait_for_input_held_across_reconnect() {
++    for confirmed in [false, true] {
++        let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++        chat.thread_id = Some(ThreadId::new());
++        chat.submit_user_message("first message".into());
++        let client_id = chat
++            .input_queue
++            .pending_user_message_client_id
++            .clone()
++            .unwrap();
++        chat.queue_user_message("follow-up".into());
++        chat.pause_for_disconnect();
++        assert_eq!(
++            chat.mod_submit_prompt("mod prompt".into(), Vec::new(), "mod-1".into(), false),
++            Err("input_held".into())
++        );
++        let mut input = chat.capture_thread_input_state();
++        input.as_mut().unwrap().reconnect_pending = true;
++        let (mut restored, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
++        restored.thread_id = Some(ThreadId::new());
++        let ids = if confirmed { vec![client_id] } else { vec![] };
++        restored.restore_reconnected_input(input, &ids);
++        assert_eq!(restored.maybe_send_next_queued_input(), confirmed);
++        if confirmed {
++            assert_matches!(next_submit_op(&mut ops), Op::UserTurn { items, .. }
++                if items == vec![UserInput::Text { text: "follow-up".into(), text_elements: Vec::new() }]);
++            assert_eq!(
++                restored.mod_submit_prompt("mod prompt".into(), Vec::new(), "mod-1".into(), false),
++                Err("busy".into())
++            );
++            assert!(!restored.has_queued_follow_up_messages());
++        } else {
++            assert_eq!(
++                restored.mod_submit_prompt("mod prompt".into(), Vec::new(), "mod-1".into(), false),
++                Err("input_held".into())
++            );
++            assert_eq!(
++                restored.queued_user_message_texts(),
++                vec!["first message", "follow-up"]
++            );
++        }
++        assert_no_submit_op(&mut ops);
++    }
++}
++
+ #[tokio::test]
+ async fn reconnect_keeps_queue_paused_after_pending_compact() {
+     let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
 index 6b1a40176..760a6c47a 100644
 --- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
@@ -25292,10 +25398,10 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..79b0239b6
+index 000000000..f7d2cc0f0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,692 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -25441,10 +25547,19 @@ index 000000000..79b0239b6
 +    let repository = std::env::current_dir()
 +        .and_then(|path| path.canonicalize())
 +        .map_err(|error| error.to_string())?;
-+    if !root.is_absolute()
-+        || root.canonicalize().map_err(|error| error.to_string())? != root
-+        || root.starts_with(&repository)
-+    {
++    if !root.is_absolute() || root.canonicalize().map_err(|error| error.to_string())? != root {
++        return Err("the mod store must be canonical and outside the repository".into());
++    }
++    if codex_omd::app_routes::unscoped_directory(&repository) {
++        return inactive(
++            &root,
++            format!(
++                "{} is the home or filesystem root; start Oh My Diff in a project directory",
++                repository.display()
++            ),
++        );
++    }
++    if root.starts_with(&repository) {
 +        return Err("the mod store must be canonical and outside the repository".into());
 +    }
 +    let stamp = host_config_stamp(&root);
@@ -26967,10 +27082,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..5c5064c05
+index 000000000..73b1a5862
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2331 @@
+@@ -0,0 +1,2335 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -27116,7 +27231,7 @@ index 000000000..5c5064c05
 +
 +struct TurnRecord {
 +    turn_id: String,
-+    error: Option<String>,
++    error: Option<Value>,
 +    evidence: Option<evidence::Cursor>,
 +}
 +
@@ -27142,7 +27257,7 @@ index 000000000..5c5064c05
 +    worktrees: Mutex<BTreeMap<std::path::PathBuf, Arc<Host>>>,
 +    pending: Mutex<BTreeMap<String, PendingTool>>,
 +    answered: Mutex<BTreeMap<String, String>>,
-+    child_errors: Mutex<BTreeMap<String, String>>,
++    child_errors: Mutex<BTreeMap<String, Value>>,
 +    /// Tool and outcome of each lead call until its batch settles or the next turn starts.
 +    settled: Mutex<BTreeMap<String, (String, String)>>,
 +    /// Secret fields of each pending elicitation, redacted from its result.
@@ -27236,11 +27351,14 @@ index 000000000..5c5064c05
 +        thread_store: &codex_extension_api::ExtensionData,
 +        turn_store: &codex_extension_api::ExtensionData,
 +        outcome: &str,
++        error: Value,
 +    ) {
-+        if let Some(record) =
-+            self.inventory
-+                .turn(thread_store.level_id(), turn_store.level_id(), outcome)
-+        {
++        if let Some(record) = self.inventory.turn(
++            thread_store.level_id(),
++            turn_store.level_id(),
++            outcome,
++            error,
++        ) {
 +            inventory::notify(&self.runtime, &self.inventory, "turn", record);
 +        }
 +    }
@@ -27961,10 +28079,6 @@ index 000000000..5c5064c05
 +        let mut filesystem = profile.file_system_sandbox_policy();
 +        filesystem
 +            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-+        crate::workspace_operations::protect_checkout_state(
-+            &mut filesystem,
-+            &self.host.repository,
-+        )?;
 +        let protected = PermissionProfile::from_runtime_permissions(
 +            &filesystem,
 +            profile.network_sandbox_policy(),
@@ -28098,7 +28212,7 @@ index 000000000..5c5064c05
 +            if let Ok(mut errors) = self.child_errors.lock() {
 +                errors.remove(input.thread_store.level_id());
 +            }
-+            self.agent_turn(input.thread_store, input.turn_store, "aborted");
++            self.agent_turn(input.thread_store, input.turn_store, "aborted", Value::Null);
 +            let Some(lead) = input
 +                .thread_store
 +                .get::<Lead>()
@@ -28122,6 +28236,7 @@ index 000000000..5c5064c05
 +                    &lead,
 +                    "aborted",
 +                    Some(format!("{:?}", input.reason)),
++                    None,
 +                );
 +                self.event(
 +                    "turn_end",
@@ -28139,20 +28254,18 @@ index 000000000..5c5064c05
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
 +            self.release_pending(thread_id(input.thread_store));
++            let failure =
++                agents::classify_error(&Some(input.error), &input.error_details.to_string());
 +            if let Some(thread) = thread_id(input.thread_store)
 +                && lead_thread(input.thread_store)
 +                && let Ok(mut turns) = self.turns.lock()
 +                && let Some(turn) = turns.get_mut(&thread)
 +            {
-+                turn.error = Some(format!("{:?}", input.error));
-+            }
-+            if !lead_thread(input.thread_store)
++                turn.error = Some(failure);
++            } else if !lead_thread(input.thread_store)
 +                && let Ok(mut errors) = self.child_errors.lock()
 +            {
-+                errors.insert(
-+                    input.thread_store.level_id().to_owned(),
-+                    format!("{:?}", input.error),
-+                );
++                errors.insert(input.thread_store.level_id().to_owned(), failure);
 +            }
 +        })
 +    }
@@ -28176,6 +28289,7 @@ index 000000000..5c5064c05
 +                } else {
 +                    "completed"
 +                },
++                failed.unwrap_or(Value::Null),
 +            );
 +            let Some(lead) = input
 +                .thread_store
@@ -28196,7 +28310,8 @@ index 000000000..5c5064c05
 +                &self.core,
 +                &lead,
 +                payload["outcome"].as_str().unwrap_or("error"),
-+                payload["error"].as_str().map(str::to_owned),
++                None,
++                payload.get("error").cloned(),
 +            );
 +            let private = match &turn.evidence {
 +                Some(cursor) => match evidence::finish(
@@ -28662,14 +28777,18 @@ index 000000000..5c5064c05
 +                return;
 +            };
 +            self.native_agent_started(thread, input.session_source, input.thread_store);
-+            let Some(host) = self.host_for(input.config.cwd.as_path()) else {
-+                self.views.diagnostic(
-+                    &self.host,
-+                    "session",
-+                    Some(format!(
-+                        "Mods are inactive for thread {thread}: its working directory is neither the launch repository nor one of its worktrees"
-+                    )),
-+                );
++            let host = self.host_for(input.config.cwd.as_path());
++            self.views.diagnostic(
++                &self.host,
++                "directory",
++                host.is_none().then(|| {
++                    format!(
++                        "Mods are off in {}: it is neither the launch project nor one of its worktrees",
++                        input.config.cwd.display()
++                    )
++                }),
++            );
++            let Some(host) = host else {
 +                return;
 +            };
 +            if self
@@ -30019,10 +30138,10 @@ index 000000000..eef4f9215
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..92145d405
+index 000000000..fd797ca44
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2489 @@
+@@ -0,0 +1,2495 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -30034,9 +30153,12 @@ index 000000000..92145d405
 +
 +const AGENT_LIMIT: usize = 16;
 +
-+fn agent_failure(error: &codex_protocol::protocol::ErrorEvent) -> Value {
++pub(super) fn classify_error(
++    code: &Option<codex_protocol::protocol::CodexErrorInfo>,
++    message: &str,
++) -> Value {
 +    use codex_protocol::protocol::CodexErrorInfo as Kind;
-+    let category = match &error.codex_error_info {
++    let category = match code {
 +        Some(
 +            Kind::HttpConnectionFailed { http_status_code }
 +            | Kind::ResponseStreamConnectionFailed { http_status_code }
@@ -30057,16 +30179,14 @@ index 000000000..92145d405
 +            "invalid_request"
 +        }
 +        Some(Kind::Other) | None
-+            if error
-+                .message
-+                .starts_with("stream disconnected before completion:") =>
++            if message.starts_with("stream disconnected before completion:") =>
 +        {
 +            "transport"
 +        }
 +        _ => "unknown",
 +    };
-+    json!({"category":category,"code":error.codex_error_info,
-+        "message":error.message.chars().take(1024).collect::<String>()})
++    json!({"category":category,"code":code,
++        "message":message.chars().take(1024).collect::<String>()})
 +}
 +
 +fn strip_private(value: &mut Value) {
@@ -30370,7 +30490,7 @@ index 000000000..92145d405
 +                codex_error_info: code,
 +                misalignment: None,
 +            };
-+            let failure = agent_failure(&error);
++            let failure = classify_error(&error.codex_error_info, &error.message);
 +            assert_eq!(failure["category"], category);
 +            assert_eq!(
 +                failure["code"],
@@ -30386,7 +30506,10 @@ index 000000000..92145d405
 +            codex_error_info: Some(Kind::Other),
 +            misalignment: None,
 +        };
-+        assert_eq!(agent_failure(&disconnected)["category"], "transport");
++        assert_eq!(
++            classify_error(&disconnected.codex_error_info, &disconnected.message)["category"],
++            "transport"
++        );
 +    }
 +
 +    #[test]
@@ -32400,7 +32523,8 @@ index 000000000..92145d405
 +                    match event.msg {
 +                        EventMsg::TurnComplete(done) => {
 +                            if let Some(error) = done.error {
-+                                let details = agent_failure(&error);
++                                let details =
++                                    classify_error(&error.codex_error_info, &error.message);
 +                                if let Ok(mut failure) = failed.lock() {
 +                                    *failure = Some(details.clone());
 +                                }
@@ -32461,11 +32585,12 @@ index 000000000..92145d405
 +                let record = match &completed {
 +                    Ok(text) => {
 +                        core.inventory.answer(&thread, text);
-+                        core.inventory.turn(&thread, "", "completed");
++                        core.inventory.turn(&thread, "", "completed", Value::Null);
 +                        core.inventory.end(&thread, "completed", None)
 +                    }
 +                    Err(error) => {
-+                        core.inventory.turn(&thread, "", "error");
++                        core.inventory
++                            .turn(&thread, "", "error", payload["failure"].clone());
 +                        core.inventory.end(&thread, "failed", Some(error.clone()))
 +                    }
 +                };
@@ -34166,10 +34291,10 @@ index 000000000..2117d7f83
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/expansion/activity.rs b/codex-rs/ext/omd/src/mods/expansion/activity.rs
 new file mode 100644
-index 000000000..acc3f399b
+index 000000000..ff8e400cc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/activity.rs
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,369 @@
 +use super::*;
 +use codex_omd::turn_activity::ActivityRecord;
 +use codex_omd::turn_activity::TurnActivityLog;
@@ -34246,12 +34371,19 @@ index 000000000..acc3f399b
 +    });
 +}
 +
-+pub(in crate::mods) fn turn_ended(core: &Core, lead: &Lead, outcome: &str, reason: Option<String>) {
++pub(in crate::mods) fn turn_ended(
++    core: &Core,
++    lead: &Lead,
++    outcome: &str,
++    reason: Option<String>,
++    error: Option<Value>,
++) {
 +    record(core, lead, |turn| ActivityRecord::TurnEnded {
 +        turn_id: turn.to_owned(),
 +        at: now(),
 +        outcome: outcome.to_owned(),
 +        reason,
++        error,
 +    });
 +    if let Ok(mut running) = core.expansion.running.lock() {
 +        running.remove(&lead.thread.to_string());
@@ -35912,10 +36044,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..2313e2219
+index 000000000..01cb22a44
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,2793 @@
+@@ -0,0 +1,2812 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -36591,7 +36723,7 @@ index 000000000..2313e2219
 +    );
 +    assert_eq!(turn["processes"][1]["running"], true);
 +    assert_eq!(turn["files"][0]["path"], "a.txt");
-+    activity::turn_ended(core, lead, "completed", None);
++    activity::turn_ended(core, lead, "completed", None, None);
 +    let turns = activity::read(core, lead, Value::Null).await.unwrap();
 +    assert_eq!(turns["turns"][0]["outcome"], "completed");
 +
@@ -38087,7 +38219,21 @@ index 000000000..2313e2219
 +        .core
 +        .inventory
 +        .answer(&child.to_string(), "looks fine");
-+    mods.agent_turn(&child_store, &turn_store, "completed");
++    mods.on_turn_error(codex_extension_api::TurnErrorInput {
++        turn_id: "child-turn",
++        error: codex_protocol::protocol::CodexErrorInfo::ServerOverloaded,
++        error_details: &codex_protocol::error::CodexErrorDetails::ServerOverloaded,
++        session_store: &session_store,
++        thread_store: &child_store,
++        turn_store: &turn_store,
++    })
++    .await;
++    mods.on_turn_stop(codex_extension_api::TurnStopInput {
++        session_store: &session_store,
++        thread_store: &child_store,
++        turn_store: &turn_store,
++    })
++    .await;
 +    mods.on_thread_stop(ThreadStopInput {
 +        session_store: &session_store,
 +        thread_store: &child_store,
@@ -38117,8 +38263,13 @@ index 000000000..2313e2219
 +        .unwrap();
 +    assert_eq!(record["origin"], "model");
 +    assert_eq!(record["definition"]["name"], "reviewer/review");
-+    assert_eq!(record["status"], "completed");
++    assert_eq!(record["status"], "failed");
 +    assert_eq!(record["turns"], 1);
++    assert_eq!(
++        record["last_turn"]["error"],
++        json!({"category": "transport", "code": "server_overloaded",
++            "message": "Selected model is at capacity. Please try a different model."})
++    );
 +    assert_eq!(record["answer"], "looks fine");
 +    assert_eq!(record["usage"]["microusd"], 7);
 +    assert_eq!(record["usage"]["basis"], "settled");
@@ -38899,10 +39050,10 @@ index 000000000..873f9843e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 000000000..59cc48b0b
+index 000000000..874a6b63b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,200 @@
 +use super::*;
 +use std::collections::BTreeSet;
 +
@@ -38969,11 +39120,17 @@ index 000000000..59cc48b0b
 +        });
 +    }
 +
-+    pub(super) fn turn(&self, thread: &str, turn_id: &str, outcome: &str) -> Option<Value> {
++    pub(super) fn turn(
++        &self,
++        thread: &str,
++        turn_id: &str,
++        outcome: &str,
++        error: Value,
++    ) -> Option<Value> {
 +        self.update(thread, |record| {
 +            record["turns"] = json!(record["turns"].as_u64().unwrap_or(0) + 1);
 +            record["last_turn"] = json!({"turn_id": turn_id, "outcome": outcome, "at_ms": now_ms(),
-+                "answer": record["answer"]});
++                "answer": record["answer"], "error": error});
 +        })
 +    }
 +
@@ -42265,14 +42422,11 @@ index 000000000..b4a612f7e
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 000000000..a1b512684
+index 000000000..b7ae7f80f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,700 @@
+@@ -0,0 +1,657 @@
 +use codex_file_system::FileSystemSandboxContext;
-+use codex_protocol::permissions::FileSystemAccessMode;
-+use codex_protocol::permissions::FileSystemPath;
-+use codex_protocol::permissions::FileSystemSandboxEntry;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 +use codex_protocol::permissions::ReadDenyMatcher;
@@ -42734,54 +42888,14 @@ index 000000000..a1b512684
 +    }
 +}
 +
-+/// Keeps host-written checkout state under `<repository>/.omd/state` read-only for the session.
-+pub(crate) fn protect_checkout_state(
-+    policy: &mut FileSystemSandboxPolicy,
-+    repository: &std::path::Path,
-+) -> Result<(), String> {
-+    let path = AbsolutePathBuf::from_absolute_path_checked(repository.join(".omd").join("state"))
-+        .map_err(|error| error.to_string())?;
-+    std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-+    policy.entries.push(FileSystemSandboxEntry::new(
-+        FileSystemPath::Path { path: path.into() },
-+        FileSystemAccessMode::Read,
-+    ));
-+    Ok(())
-+}
-+
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
 +    use codex_protocol::models::PermissionProfile;
++    use codex_protocol::permissions::FileSystemAccessMode;
++    use codex_protocol::permissions::FileSystemPath;
++    use codex_protocol::permissions::FileSystemSandboxEntry;
 +    use codex_protocol::permissions::NetworkSandboxPolicy;
-+
-+    #[test]
-+    fn checkout_state_stays_read_only_inside_a_writable_repository() {
-+        let temp = tempfile::tempdir().unwrap();
-+        let root = temp.path().canonicalize().unwrap();
-+        let cwd =
-+            PathUri::from_abs_path(&AbsolutePathBuf::from_absolute_path_checked(&root).unwrap());
-+        let mut policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
-+            FileSystemPath::Path { path: cwd.clone() },
-+            FileSystemAccessMode::Write,
-+        )]);
-+        protect_checkout_state(&mut policy, &root).unwrap();
-+        let profile =
-+            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
-+        codex_protocol::intersect_effective_permission_profiles(&profile, &profile, &root).unwrap();
-+        let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
-+        let authority = WorkspaceAuthority {
-+            repository: root.clone(),
-+            session_root: None,
-+            session_database: None,
-+            policy,
-+            context,
-+        };
-+        assert!(authority.writable(&root.join("src/app.rs")));
-+        assert!(authority.readable(&root.join(".omd/state/board.json")));
-+        assert!(!authority.writable(&root.join(".omd/state/board.json")));
-+        assert!(authority.writable(&root.join(".omd/session-1/scratch")));
-+    }
 +
 +    #[test]
 +    fn local_snapshot_authority_keeps_temporary_metadata_and_read_denials() {
@@ -46739,10 +46853,10 @@ index 000000000..3d46afc9e
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 000000000..80949c88d
+index 000000000..0b25b668f
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,490 @@
+@@ -0,0 +1,497 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -46854,6 +46968,13 @@ index 000000000..80949c88d
 +            })
 +            .collect(),
 +    )
++}
++
++pub fn unscoped_directory(directory: &Path) -> bool {
++    directory.parent().is_none()
++        || std::env::var_os("HOME")
++            .and_then(|home| Path::new(&home).canonicalize().ok())
++            .is_some_and(|home| home == directory)
 +}
 +
 +pub fn session_roots(repository: &Path) -> Vec<PathBuf> {
@@ -57639,10 +57760,10 @@ index 000000000..afa32f4fe
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..0f31b5e59
+index 000000000..05bb7fb95
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4815 @@
+@@ -0,0 +1,4809 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -60468,7 +60589,7 @@ index 000000000..0f31b5e59
 +        Ok(host)
 +    }
 +
-+    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else `.omd/state`.
++    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
 +    pub fn set_checkout(&mut self, repository: &Path) {
 +        self.checkout = repository
 +            .ancestors()
@@ -60485,13 +60606,7 @@ index 000000000..0f31b5e59
 +                };
 +                git.canonicalize().ok()
 +            })
-+            .map(|git| git.join("omd").join("state"))
-+            .or_else(|| {
-+                repository
-+                    .canonicalize()
-+                    .ok()
-+                    .map(|directory| directory.join(".omd").join("state"))
-+            });
++            .map(|git| git.join("omd").join("state"));
 +    }
 +
 +    fn state_location(
@@ -73982,10 +74097,10 @@ index 000000000..36487c71c
 +}
 diff --git a/codex-rs/omd/src/turn_activity.rs b/codex-rs/omd/src/turn_activity.rs
 new file mode 100644
-index 000000000..3df385934
+index 000000000..f23078b18
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity.rs
-@@ -0,0 +1,361 @@
+@@ -0,0 +1,365 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -74010,6 +74125,7 @@ index 000000000..3df385934
 +        at: String,
 +        outcome: String,
 +        reason: Option<String>,
++        error: Option<Value>,
 +    },
 +    ToolStarted {
 +        turn_id: String,
@@ -74145,10 +74261,11 @@ index 000000000..3df385934
 +                    at,
 +                    outcome,
 +                    reason,
++                    error,
 +                } => {
 +                    let entry = ensure(&mut turns, &mut order, &turn_id);
-+                    (entry.ended_at, entry.outcome, entry.reason) =
-+                        (Some(at), Some(outcome), reason);
++                    (entry.ended_at, entry.outcome, entry.reason, entry.error) =
++                        (Some(at), Some(outcome), reason, error);
 +                }
 +                ActivityRecord::ToolStarted {
 +                    turn_id,
@@ -74270,6 +74387,7 @@ index 000000000..3df385934
 +                    "ended_at": entry.ended_at,
 +                    "outcome": outcome,
 +                    "reason": entry.reason,
++                    "error": entry.error,
 +                    "unrecorded_end": unrecorded_end,
 +                    "tool_calls": tail(&entry.tools, ACTIVITY_TOOL_CALLS),
 +                    "processes": tail(&processes, ACTIVITY_PROCESSES),
@@ -74288,6 +74406,7 @@ index 000000000..3df385934
 +    ended_at: Option<String>,
 +    outcome: Option<String>,
 +    reason: Option<String>,
++    error: Option<Value>,
 +    paused: bool,
 +    tools: Vec<Value>,
 +    processes: Vec<Value>,
@@ -74349,10 +74468,10 @@ index 000000000..3df385934
 +mod tests;
 diff --git a/codex-rs/omd/src/turn_activity_tests.rs b/codex-rs/omd/src/turn_activity_tests.rs
 new file mode 100644
-index 000000000..245780f6f
+index 000000000..3b46b792a
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity_tests.rs
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +use ActivityRecord::*;
 +
@@ -74432,6 +74551,7 @@ index 000000000..245780f6f
 +            at: s("4"),
 +            outcome: s("completed"),
 +            reason: None,
++            error: None,
 +        },
 +    ] {
 +        log.append(&record).unwrap();
@@ -74522,6 +74642,7 @@ index 000000000..245780f6f
 +            at: s("y"),
 +            outcome: s("completed"),
 +            reason: None,
++            error: None,
 +        })
 +        .unwrap();
 +    }
@@ -74587,6 +74708,7 @@ index 000000000..245780f6f
 +        at: s("1"),
 +        outcome: s("aborted"),
 +        reason: Some(s("interrupted by user")),
++        error: None,
 +    })
 +    .unwrap();
 +    let turn = &read(&log, None, 1, None)["turns"][0];
@@ -79106,10 +79228,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..e9569c834
+index 000000000..2fbc6d254
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4232 @@
+@@ -0,0 +1,4233 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -79431,11 +79553,12 @@ index 000000000..e9569c834
 +    std::fs::create_dir(&plain).unwrap();
 +    let mut outside = ModHost::open(root.join("second")).unwrap();
 +    outside.set_checkout(&plain);
-+    assert_eq!(
-+        invoke(&mut outside, "shared", "count", Value::Null).unwrap(),
-+        json!(1)
++    let refused = invoke(&mut outside, "shared", "count", Value::Null).unwrap_err();
++    assert!(
++        refused.to_string().contains("state_checkout_unavailable"),
++        "{refused}"
 +    );
-+    assert!(plain.join(".omd/state/shared.json").is_file());
++    assert!(!plain.join(".omd").exists());
 +    let cli = |cwd: &std::path::Path, args: &[&str]| {
 +        let output = std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
 +            .arg("command")
@@ -86136,7 +86259,7 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..0cb2967b9
+index 000000000..44e6580df
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
 @@ -0,0 +1,1536 @@
@@ -86892,7 +87015,7 @@ index 000000000..0cb2967b9
 +    pub(super) fn forward_mod_notification(&self, notification: &ServerNotification) {
 +        match notification {
 +            ServerNotification::ThreadDeleted(deleted) => {
-+                if let Some(store) = crate::omd::mod_paths().and_then(|paths| paths.store) {
++                if let Some(store) = crate::omd::store_root() {
 +                    let _ = codex_omd::data_store::remove_thread_data(&store, &deleted.thread_id);
 +                }
 +            }
@@ -88516,10 +88639,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..5f32e9ad9
+index 000000000..4712ca304
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,602 @@
+@@ -0,0 +1,605 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -89068,9 +89191,12 @@ index 000000000..5f32e9ad9
 +        if !self.is_session_configured() {
 +            return Some("session_starting");
 +        }
-+        match (steer, self.turn_lifecycle.agent_turn_running) {
-+            (false, true) => Some("busy"),
-+            (true, false) => Some("no_active_turn"),
++        if self.queued_input_held() {
++            return Some("input_held");
++        }
++        match steer {
++            false if self.is_user_turn_pending_or_running() => Some("busy"),
++            true if !self.turn_lifecycle.agent_turn_running => Some("no_active_turn"),
 +            _ => None,
 +        }
 +    }
@@ -89124,10 +89250,10 @@ index 000000000..5f32e9ad9
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..f4f112266
+index 000000000..0e9f76493
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,242 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -89272,7 +89398,12 @@ index 000000000..f4f112266
 +            ..Default::default()
 +        });
 +        let runtime = crate::omd::mod_status();
-+        if let Some(root) = crate::omd::mod_paths().and_then(|paths| paths.store) {
++        if let Some(root) = crate::omd::store_root() {
++            if crate::omd::mod_paths().is_none() {
++                lines.push(Line::from(
++                    "Mods are off in this directory: they never run in the home or filesystem root",
++                ));
++            }
 +            if let Some(error) = runtime
 +                .as_ref()
 +                .and_then(|runtime| runtime["activation_error"].as_str())
@@ -89343,7 +89474,7 @@ index 000000000..f4f112266
 +    }
 +
 +    pub(crate) fn open_omd_all_mods(&mut self) {
-+        let Some(root) = crate::omd::mod_paths().and_then(|paths| paths.store) else {
++        let Some(root) = crate::omd::store_root() else {
 +            return;
 +        };
 +        let (items, header) = match mod_entries(root) {
@@ -92531,10 +92662,10 @@ index 000000000..90de603d0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..20b976035
+index 000000000..f12cdc75b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1238 @@
+@@ -0,0 +1,1246 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -93144,11 +93275,9 @@ index 000000000..20b976035
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    if host.is_none() {
-+        let runtime = match crate::omd::mod_paths() {
-+            Some(paths) => ModHost::open_in(store, |_| Ok(()), &paths.repository),
-+            None => ModHost::open(store),
-+        }
-+        .map_err(|e| e.to_string())?;
++        let paths = crate::omd::mod_paths().ok_or("mods are off in this directory")?;
++        let runtime =
++            ModHost::open_in(store, |_| Ok(()), &paths.repository).map_err(|e| e.to_string())?;
 +        *host = Some(Arc::new(Mutex::new(runtime)));
 +    }
 +    host.clone()
@@ -93161,6 +93290,16 @@ index 000000000..20b976035
 +}
 +
 +fn reload(runtime: &mut ModHost) {
++    static CHECKOUT: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
++    if let Some(paths) = crate::omd::mod_paths() {
++        let mut checkout = CHECKOUT
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if checkout.as_ref() != Some(&paths.repository) {
++            runtime.set_checkout(&paths.repository);
++            *checkout = Some(paths.repository);
++        }
++    }
 +    runtime.turn_boundary();
 +    let owners = runtime
 +        .owners()
@@ -99056,10 +99195,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..6980e9110
+index 000000000..cf4cf48ed
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,647 @@
+@@ -0,0 +1,669 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -99099,25 +99238,22 @@ index 000000000..6980e9110
 +pub(crate) fn mod_snapshot() -> (bool, codex_omd::ModViewSnapshot) {
 +    type Cached = (PathBuf, [Option<FileStamp>; 2], codex_omd::ModViewSnapshot);
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
-+    let Some(paths) = mod_paths() else {
++    let Some(root) = store_root() else {
 +        return (false, codex_omd::ModViewSnapshot::default());
 +    };
-+    let (view, status) = (
-+        paths.evidence.join("mod-view.json"),
-+        paths.evidence.join("mod-status.json"),
-+    );
++    let (view, status) = (root.join("mod-view.json"), root.join("mod-status.json"));
 +    let stamps = [file_stamp(&view), file_stamp(&status)];
 +    let mut cache = CACHE
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    if let Some((evidence, cached, snapshot)) = cache.as_ref()
-+        && *evidence == paths.evidence
++    if let Some((cached_root, cached, snapshot)) = cache.as_ref()
++        && *cached_root == root
 +        && *cached == stamps
 +    {
 +        return (true, snapshot.clone());
 +    }
 +    let snapshot = read_mod_snapshot(&view, &status);
-+    *cache = Some((paths.evidence, stamps, snapshot.clone()));
++    *cache = Some((root, stamps, snapshot.clone()));
 +    (true, snapshot)
 +}
 +
@@ -99181,20 +99317,26 @@ index 000000000..6980e9110
 +}
 +
 +pub(crate) fn mod_paths_for(repository: &Path) -> Option<ModPaths> {
-+    if !is_active() {
-+        return None;
-+    }
-+    let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV)?);
-+    if !root.is_absolute() || root.canonicalize().ok()? != root {
++    let root = store_root()?;
++    let repository = repository.canonicalize().ok()?;
++    if codex_omd::app_routes::unscoped_directory(&repository) {
 +        return None;
 +    }
 +    let protected = host_protected_paths(&root);
 +    Some(ModPaths {
 +        evidence: root.clone(),
-+        repository: repository.canonicalize().ok()?,
++        repository,
 +        store: Some(root),
 +        protected,
 +    })
++}
++
++pub(crate) fn store_root() -> Option<PathBuf> {
++    if !is_active() {
++        return None;
++    }
++    let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV)?);
++    (root.is_absolute() && root.canonicalize().ok()? == root).then_some(root)
 +}
 +
 +/// The store plus `host.json` protected and secret paths, re-read only when the file changes.
@@ -99241,8 +99383,7 @@ index 000000000..6980e9110
 +}
 +
 +pub(crate) fn mod_status() -> Option<Value> {
-+    let paths = mod_paths()?;
-+    serde_json::from_slice(&bounded_read(&paths.evidence.join("mod-status.json"), 262_144).ok()?)
++    serde_json::from_slice(&bounded_read(&store_root()?.join("mod-status.json"), 262_144).ok()?)
 +        .ok()
 +}
 +
@@ -99253,7 +99394,7 @@ index 000000000..6980e9110
 +        codex_omd::BuiltinSnapshot,
 +    );
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
-+    let root = mod_paths().map(|paths| paths.evidence);
++    let root = store_root();
 +    let mut cache = CACHE
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -99474,6 +99615,9 @@ index 000000000..6980e9110
 +            _ if mod_status().is_some_and(|status| status["activation_error"].is_string()) => {
 +                "Oh My Diff · mods inactive · see /omd".to_string()
 +            }
++            Err(_) if store_root().is_some() => {
++                "Oh My Diff · mods off in this directory · see /omd".to_string()
++            }
 +            Ok(snapshot) if mod_status().is_some() => format!(
 +                "Oh My Diff · {} mod{} on{}{}",
 +                snapshot.active_mods,
@@ -99690,6 +99834,23 @@ index 000000000..6980e9110
 +        let _direct = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
 +        assert!(!command_hidden("plan"));
 +        assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Plan));
++    }
++
++    #[test]
++    #[serial]
++    fn mods_stay_off_in_the_home_directory_with_a_notice() {
++        let root = TempDir::new().unwrap();
++        let store = store_fixture(&root);
++        let _omd = omd_environment(&store);
++        assert!(mod_paths().is_some());
++        let _home = EnvGuard::set("HOME", store.to_str());
++        assert!(mod_paths().is_none());
++        assert!(!terminal_active());
++        assert!(mod_status().is_some());
++        assert_eq!(
++            compact_status(),
++            "Oh My Diff · mods off in this directory · see /omd"
++        );
 +    }
 +
 +    #[test]

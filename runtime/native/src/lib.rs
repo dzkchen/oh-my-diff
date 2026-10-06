@@ -143,10 +143,19 @@ pub fn install(
     let repository = std::env::current_dir()
         .and_then(|path| path.canonicalize())
         .map_err(|error| error.to_string())?;
-    if !root.is_absolute()
-        || root.canonicalize().map_err(|error| error.to_string())? != root
-        || root.starts_with(&repository)
-    {
+    if !root.is_absolute() || root.canonicalize().map_err(|error| error.to_string())? != root {
+        return Err("the mod store must be canonical and outside the repository".into());
+    }
+    if codex_omd::app_routes::unscoped_directory(&repository) {
+        return inactive(
+            &root,
+            format!(
+                "{} is the home or filesystem root; start Oh My Diff in a project directory",
+                repository.display()
+            ),
+        );
+    }
+    if root.starts_with(&repository) {
         return Err("the mod store must be canonical and outside the repository".into());
     }
     let stamp = host_config_stamp(&root);

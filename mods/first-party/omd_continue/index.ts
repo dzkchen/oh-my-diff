@@ -10,7 +10,8 @@ function list(values: string[]): string {
 
 function summary(turn: TurnActivity): string {
   const clip = (text: string) => text.replace(/\s+/g, ' ').slice(0, 120);
-  const lines = [`- Last turn: ${turn.outcome}${turn.reason ? ` (${clip(turn.reason)})` : ''}`];
+  const detail = turn.error ? `${turn.error.category}: ${turn.error.message}` : turn.reason;
+  const lines = [`- Last turn: ${turn.outcome}${detail ? ` (${clip(detail)})` : ''}`];
   const unfinished = turn.tool_calls.filter(call => call.finished_at === null || call.outcome === 'aborted')
     .map(call => `${call.tool} (${call.outcome ?? 'no recorded result'})`);
   const running = turn.processes.filter(item => item.running === true).map(item => `${item.kind} ${clip(item.command)}`);

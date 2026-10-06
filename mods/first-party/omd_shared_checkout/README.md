@@ -69,9 +69,9 @@ are not conflict-free and nothing is snapshot-isolated.
 The registry is checkout-scoped mod state (`state_scope: "checkout"`), kept in
 the checkout's Git directory, so every OMD session working in that checkout
 coordinates whatever its mod store or profile; a linked worktree has its own
-registry, and a directory outside Git keeps it in `.omd/state/`, which agent
-commands cannot write. Paths are relative to the checkout root (the Git top
-level, or the launch directory), whichever subdirectory a session runs in.
+registry, and outside Git the registry is unavailable, so the mod's callbacks
+fail with `state_checkout_unavailable`. Paths are relative to the Git top level,
+whichever subdirectory a session runs in.
 Each session keeps its own permissions and allowances.
 
 Capabilities: `commands`, `terminal`, `store` (the registry and the thread
