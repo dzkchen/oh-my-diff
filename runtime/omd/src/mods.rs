@@ -399,6 +399,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "prompts.revoke",
     "builtins.invoke",
     "packages.list",
+    "packages.index",
     "packages.preview",
     "packages.apply",
     "packages.reload",
@@ -2696,6 +2697,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
         | "composer.read"
         | "prompts.status"
         | "packages.list"
+        | "packages.index"
         | "packages.preview"
         | "exec.output_page"
         | "terminal.image_sample" => true,
@@ -3082,6 +3084,23 @@ impl ModHost {
         self.node = config.node;
         self.loaded = next;
         self.order = order;
+        let denied = rejected
+            .iter()
+            .filter(|rejection| {
+                !self.rejected.iter().any(|previous| {
+                    previous.path == rejection.path && previous.reason == rejection.reason
+                })
+            })
+            .map(|rejection| json!({"path": rejection.path, "mod": rejection.id,
+                "scope": rejection.scope, "reason": rejection.reason.split(':').next()}))
+            .collect::<Vec<_>>();
+        if !denied.is_empty()
+            && let Ok(_guard) = self.store.lock()
+        {
+            let _ = self
+                .store
+                .record_security_event("load_denied", json!({"selections": denied}));
+        }
         self.rejected = rejected;
         self.admit();
         self.configuration_sha256 = hash;

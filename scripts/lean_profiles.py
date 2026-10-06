@@ -579,11 +579,21 @@ def install(args):
         sources = store / "sources"
         sources.mkdir(exist_ok=True)
         trusted, enabled = [], []
-        for identifier in profile_packages(args.profile):
+        curated = {entry["id"]: entry for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
+                   if entry["extension_type"] == "mod" and entry["support_status"] in ("reviewed_candidate", "supported")}
+        catalog = {}
+        for identifier in PACKAGES:
             package = packages[identifier]
             for name in package["files"]:
                 (prefix / "sources" / identifier / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / package["source"] / name, prefix / "sources" / identifier / name)
+            if identifier in curated:
+                catalog[identifier] = [{"version": package["version"], "integrity": package["package_sha256"],
+                                        "source": {"kind": "local", "path": str(prefix / "sources" / identifier)},
+                                        "description": curated[identifier]["capability"],
+                                        "support": curated[identifier]["support_status"]}]
+            if identifier not in profile_packages(args.profile):
+                continue
             installed[identifier] = {"version": package["version"], "sha256": package["package_sha256"],
                                      "files": package["files"], "capabilities": package["capabilities"]}
             target = sources / identifier
@@ -593,6 +603,7 @@ def install(args):
                                 "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
+        (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
         if trusted:
             invoke(installed_manager, "trust-all", store, json.dumps(trusted))
         for target in enabled:
