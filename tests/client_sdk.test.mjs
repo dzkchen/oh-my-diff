@@ -97,8 +97,10 @@ test('ws client initializes with the experimental API, tracks views, serializes 
     host.push({ id: 'other', method: 'item/tool/requestUserInput', params: {} });
     const answer = await until(() => host.seen.find(message => message.id === 'surface' && !message.method));
     assert.deepEqual(answer.result, { status: 'accepted', operation: 'terminal.prompt' });
-    const refused = await until(() => host.seen.find(message => message.id === 'other' && !message.method));
-    assert.equal(refused.error.code, -32601);
+    assert.equal(host.seen.some(message => message.id === 'other' && !message.method), false, 'a request the client does not handle stays unanswered');
+
+    await session.event('rows', { kind: 'focus' });
+    assert.deepEqual(host.seen.findLast(message => message.method === 'omd/client/event').params, { epoch: '1', component: 'rows', event: { kind: 'focus' } });
   } finally {
     session.close();
     host.server.close();
@@ -164,4 +166,51 @@ test('unsupported names the element, the reason and its fallback', () => {
   assert.equal(unsupported(raster, gui, ['raster']).message, "unsupported_element: raster 'meter': a raster needs the 'cells' format; drawing its fallback \"A meter\"");
   const missing = unsupported({ type: 'input', id: 'note', label: 'Note' }, renderer, ['text']);
   assert.deepEqual([missing.code, missing.component, missing.fallback], ['unsupported_element', 'note', 'Note']);
+});
+
+test('server requests are answered only through onServerRequest, and undefined leaves them to the terminal', async () => {
+  const host = fakeHost();
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer, reconnect: false, onView() {}, onRoster() {}, onMirrored() {},
+    onServerRequest: method => (method === 'item/commandExecution/requestApproval' ? { decision: 'accept' } : undefined),
+  });
+  try {
+    host.push({ id: 'input', method: 'item/tool/requestUserInput', params: {} });
+    host.push({ id: 'approval', method: 'item/commandExecution/requestApproval', params: {} });
+    const answer = await until(() => host.seen.find(message => message.id === 'approval' && !message.method));
+    assert.deepEqual(answer.result, { decision: 'accept' });
+    assert.equal(host.seen.some(message => message.id === 'input' && !message.method), false);
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('close during a reconnect ends the session instead of reattaching', async () => {
+  const host = fakeHost();
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let closes = 0;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onClose: () => { closes += 1; } });
+  host.server.once('upgrade', () => session.close());
+  for (const socket of host.sockets) socket.destroy();
+  await until(() => closes);
+  await new Promise(resolve => setTimeout(resolve, 600));
+  assert.equal(closes, 1);
+  assert.equal(host.seen.some(message => message.epoch === '2' && message.method === 'omd/client/attach'), false);
+  host.server.close();
+});
+
+test('stdio client survives a child that closes its stdin', async () => {
+  const script = `process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { for (const line of chunk.split('\\n').filter(Boolean)) {
+    const message = JSON.parse(line);
+    if (message.id !== undefined) process.stdout.write(JSON.stringify({ id: message.id, result: { epoch: '1' } }) + '\\n');
+    if (message.method === 'omd/client/attach') { setTimeout(() => require('fs').closeSync(0), 100); setTimeout(() => {}, 5000); }
+  } });`;
+  let closed = false;
+  const session = await connect({ url: 'stdio', command: ['node', '-e', script], name: 'sdk-test', renderer, reconnect: false, onView() {}, onRoster() {}, onMirrored() {}, onClose: () => { closed = true; } });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  await session.request('thread/list', {}).catch(() => {});
+  await until(() => closed);
 });

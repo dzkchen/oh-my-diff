@@ -139,9 +139,11 @@ fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, 
         .ok_or_else(|| format!("view_stale: {component}"))
 }
 
-/// The published view, or `(0, 0, null)` before the host publishes its first one.
+/// The published view, or `(0, 0, null)` while mods are inactive or before the host publishes its first one.
 pub fn view() -> Result<(u64, u64, Value), String> {
-    let core = core()?;
+    let Ok(core) = core() else {
+        return Ok((0, 0, Value::Null));
+    };
     if !core.host.root.join("mod-view.json").exists() {
         return Ok((0, 0, Value::Null));
     }
@@ -152,37 +154,78 @@ pub fn view() -> Result<(u64, u64, Value), String> {
 
 const EVENT_BYTES: usize = 64 * 1024;
 
-/// A client's event: one of the kinds clients send, with that kind's fields, under 64 KiB.
-fn event_payload(event: Value) -> Result<serde_json::Map<String, Value>, String> {
+const POINTER_ACTIONS: &[&str] = &[
+    "down",
+    "up",
+    "scroll_up",
+    "scroll_down",
+    "move",
+    "drag",
+    "enter",
+    "leave",
+];
+const POINTER_BUTTONS: &[&str] = &["left", "right", "middle"];
+
+fn pointer(pointer: &Value) -> Option<Value> {
+    (pointer["column"].is_u64()
+        && pointer["row"].is_u64()
+        && pointer["action"]
+            .as_str()
+            .is_some_and(|action| POINTER_ACTIONS.contains(&action))
+        && pointer.get("button").is_some_and(|button| {
+            button.is_null()
+                || button
+                    .as_str()
+                    .is_some_and(|b| POINTER_BUTTONS.contains(&b))
+        })
+        && (pointer["half"].is_null() || matches!(pointer["half"].as_u64(), Some(0 | 1))))
+    .then(|| {
+        json!({"column": pointer["column"], "row": pointer["row"], "half": pointer["half"],
+            "action": pointer["action"], "button": pointer["button"]})
+    })
+}
+
+/// A client's event rebuilt from its kind's fields only, under 64 KiB; `origin`, `events`, `anchor` and the like stay the host's.
+fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String> {
     let invalid = |reason: &str| format!("component_event_invalid: {reason}");
     if event.to_string().len() > EVENT_BYTES {
         return Err(invalid("event exceeds 64 KiB"));
     }
-    let fields = match event["kind"].as_str() {
-        Some("change") => {
-            event["value"].is_string()
-                || event["values"]
-                    .as_array()
-                    .is_some_and(|values| values.iter().all(Value::is_string))
-        }
-        Some("pointer") => event["pointer"]["column"].is_u64() && event["pointer"]["row"].is_u64(),
-        Some("scroll") => event["offset"].is_number(),
-        Some("key") => event["key"].is_string(),
-        Some("focus") => true,
+    let kind = event["kind"].as_str().unwrap_or_default();
+    let fields: Option<Vec<(&str, Value)>> = match kind {
+        "change" if event["value"].is_string() => Some(vec![("value", event["value"].clone())]),
+        "change" => event["values"]
+            .as_array()
+            .filter(|values| values.iter().all(Value::is_string))
+            .map(|_| vec![("values", event["values"].clone())]),
+        "pointer" => pointer(&event["pointer"]).map(|pointer| vec![("pointer", pointer)]),
+        "scroll" => event["offset"]
+            .is_number()
+            .then(|| vec![("offset", event["offset"].clone())]),
+        "key" => (event["key"].is_string()
+            && (event["text"].is_null() || event["text"].is_string()))
+        .then(|| {
+            vec![
+                ("key", event["key"].clone()),
+                ("text", event["text"].clone()),
+            ]
+        }),
+        "focus" => Some(Vec::new()),
         _ => {
             return Err(invalid(
                 "kind must be change, pointer, focus, scroll or key",
             ));
         }
     };
-    match event {
-        Value::Object(payload) if fields => Ok(payload),
-        _ => Err(invalid("event is missing its kind's fields")),
-    }
+    let fields = fields.ok_or_else(|| invalid("event is missing its kind's fields"))?;
+    Ok(std::iter::once(("kind", Value::from(kind)))
+        .chain(fields)
+        .map(|(name, value)| (name.to_owned(), value))
+        .collect())
 }
 
 pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
-    let mut payload = event_payload(event)?;
+    let mut payload = event_payload(&event)?;
     let core = core()?;
     let owner = owner(&snapshot(&core)?, component)?.to_owned();
     payload.insert("component".into(), component.into());
@@ -438,81 +481,39 @@ fn recovery_entries(selections: &Value, status: &Value) -> Vec<Value> {
 }
 
 pub fn recovery_apply(action: &str, target: &str) -> Result<Value, String> {
-    let (_, store) = store()?;
-    let failed = |error: std::io::Error| error.to_string();
     match action {
-        "enable" | "disable" => {
-            let enabled = action == "enable";
-            let status = store.selection_status().map_err(failed)?;
-            let selection = status["selections"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|selection| selection["id"] == target)
-                .ok_or_else(|| format!("mod_not_found: {target}"))?;
-            match (selection["managed"] == true, selection["path"].as_str()) {
-                (true, _) if enabled => store.package_enable(target).map(drop),
-                (true, _) => store.package_disable(target).map(drop),
-                (false, Some(path)) => store.enable(std::path::Path::new(path), enabled),
-                (false, None) => return Err(format!("mod_not_found: {target}")),
-            }
-            .map_err(failed)?;
+        "enable" | "disable" | "reset" => {
+            return Err(codex_omd::client_surface::needs_terminal_error(&format!(
+                "omd/recovery/apply {action}"
+            )));
         }
-        "reload" => store.reload().map_err(failed)?,
-        "reset" => drop(store.reset(target).map_err(failed)?),
+        "reload" => {}
         _ => return Err(format!("recovery_action_invalid: {action}")),
     }
+    let (_, store) = store()?;
+    store.reload().map_err(|error| error.to_string())?;
     if let Ok(core) = core() {
+        let lead = core.expansion.current();
+        if let Some(lead) = &lead {
+            let _ = lead.host.refresh_session(&lead.session);
+        }
         if let Ok(mut runtime) = core.runtime.lock() {
             runtime.turn_boundary();
+            if let Some(lead) = &lead {
+                refresh_contract(&runtime, &lead.session);
+            }
         }
         republish(&core);
     }
     Ok(json!({"action": action, "target": target, "status": "applied"}))
 }
 
-fn flatten<'a>(components: &'a [ModComponent], into: &mut Vec<&'a ModComponent>) {
-    for component in components {
-        into.push(component);
-        if let ModComponent::Box { children, .. }
-        | ModComponent::Pane { children, .. }
-        | ModComponent::Dialog { children, .. } = component
-        {
-            flatten(children, into);
-        }
-    }
-}
-
 fn components(view: &ModView) -> Vec<&ModComponent> {
     let mut all = Vec::new();
-    for site in view.sites.values() {
-        flatten(&site.components, &mut all);
+    for component in view.sites.values().flat_map(|site| &site.components) {
+        component.descendants(&mut all);
     }
     all
-}
-
-fn id_of(component: &ModComponent) -> Option<&str> {
-    use ModComponent as C;
-    match component {
-        C::Box { id, .. }
-        | C::Line { id, .. }
-        | C::Text { id, .. }
-        | C::Button { id, .. }
-        | C::Input { id, .. }
-        | C::Select { id, .. }
-        | C::Multiselect { id, .. }
-        | C::Markdown { id, .. }
-        | C::Code { id, .. }
-        | C::Pane { id, .. }
-        | C::Dialog { id, .. }
-        | C::List { id, .. }
-        | C::Document { id, .. }
-        | C::Terminal { id, .. }
-        | C::Image { id, .. }
-        | C::Raster { id, .. }
-        | C::Diff { id, .. } => Some(id),
-        C::Slot | C::Native { .. } => None,
-    }
 }
 
 /// The command a Space/Enter on `component` runs, with `row` or `value` checked against the view's own options.
@@ -526,7 +527,7 @@ fn resolve_action(
     let invalid = || format!("action_value_invalid: {component}");
     let target = components(view)
         .into_iter()
-        .find(|candidate| id_of(candidate) == Some(component))
+        .find(|candidate| candidate.id() == Some(component))
         .ok_or_else(|| format!("view_stale: {component}"))?;
     let text = || {
         value

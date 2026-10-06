@@ -124,6 +124,7 @@ async function stdio(command, onText, onClose) {
     }
   });
   child.on('exit', onClose);
+  child.stdin.on('error', () => child.kill());
   return { send: text => child.stdin.write(`${text}\n`), close: () => child.stdin.end() };
 }
 
@@ -208,14 +209,16 @@ class Session {
 
   serve({ id, method, params }) {
     const { onSurfaceCall, onServerRequest } = this.options;
-    const handler = method === 'omd/surface/call' ? onSurfaceCall : onServerRequest && (value => onServerRequest(method, value));
+    const surface = method === 'omd/surface/call';
     const reply = message => this.link?.send(JSON.stringify({ id, ...message }));
+    if (!surface && !onServerRequest) return;
     Promise.resolve()
       .then(() => {
-        if (!handler) throw Object.assign(new Error(`unhandled server request: ${method}`), { code: -32601 });
-        return handler(params);
+        if (!surface) return onServerRequest(method, params);
+        if (!onSurfaceCall) throw Object.assign(new Error(`unhandled surface call: ${params?.operation}`), { code: -32601 });
+        return onSurfaceCall(params);
       })
-      .then(result => reply({ result: result ?? null }),
+      .then(result => (surface || result !== undefined) && reply({ result: result ?? null }),
         error => reply({ error: { code: Number.isInteger(error?.code) ? error.code : -32000, message: String(error?.message ?? error) } }));
   }
 
@@ -247,6 +250,11 @@ class Session {
       if (this.closed) break;
       try {
         await this.open();
+        if (this.closed) {
+          this.generation++;
+          this.link.close();
+          break;
+        }
         if (this.attached) await this.attach(this.attached);
         if (this.attached && Object.keys(this.updated).length) await this.call('omd/client/update', this.updated);
         for (const params of this.resumed.values()) await this.call('thread/resume', params);
@@ -293,7 +301,7 @@ class Session {
   }
 
   event(component, event) {
-    return this.call('omd/client/event', { epoch: this.epoch, revision: this.revision, component, event });
+    return this.call('omd/client/event', { epoch: this.epoch, component, event });
   }
 
   action({ component, row, value }) {

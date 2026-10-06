@@ -309,9 +309,6 @@ pub fn submit(
         .map(|(_, surface)| surface.clone())
         .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
     let (reply, receiver) = sync_channel(1);
-    let mirrored = MIRRORED_OPERATIONS
-        .contains(&operation)
-        .then(|| arguments.clone());
     surface.submit(SurfaceCall {
         caller: caller.to_owned(),
         operation: operation.to_owned(),
@@ -322,13 +319,6 @@ pub fn submit(
         confirm,
         reply,
     })?;
-    if let Some(arguments) = mirrored {
-        notify(Observed::Mirrored {
-            caller: caller.to_owned(),
-            operation: operation.to_owned(),
-            arguments,
-        });
-    }
     Ok(receiver)
 }
 
@@ -589,13 +579,24 @@ pub fn call(
 ) -> Result<Value, String> {
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
-    wait(
+    let mirrored = MIRRORED_OPERATIONS
+        .contains(&operation)
+        .then(|| arguments.clone());
+    let answer = wait(
         submit(
             caller, operation, arguments, context, remote, thread, confirm,
         )?,
         active,
         deadline,
-    )
+    )?;
+    if let Some(arguments) = mirrored {
+        notify(Observed::Mirrored {
+            caller: caller.to_owned(),
+            operation: operation.to_owned(),
+            arguments,
+        });
+    }
+    Ok(answer)
 }
 
 /// The caller's scoped resource store, bound to its active package from `mod-status.json`.

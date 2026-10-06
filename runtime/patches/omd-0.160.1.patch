@@ -34191,10 +34191,10 @@ index 000000000..b2d90184a
 +export type ThreadRewrittenNotification = { threadId: string, revision: string, };
 diff --git a/codex-rs/app-server-protocol/src/protocol/v2/omd.rs b/codex-rs/app-server-protocol/src/protocol/v2/omd.rs
 new file mode 100644
-index 000000000..f822876b8
+index 000000000..ae95d2c71
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/src/protocol/v2/omd.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,317 @@
 +use crate::JsonSchema;
 +use crate::TS;
 +use serde::Deserialize;
@@ -34356,8 +34356,6 @@ index 000000000..f822876b8
 +pub struct OmdClientEventParams {
 +    /// Opaque host epoch; empty until the host publishes its first view.
 +    pub epoch: String,
-+    #[ts(type = "number")]
-+    pub revision: u64,
 +    pub component: String,
 +    /// `{kind: "change" | "pointer" | "focus" | "scroll" | "key", ...}`.
 +    pub event: JsonValue,
@@ -34627,10 +34625,10 @@ index 000000000..aef1c863b
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 000000000..8979c1cea
+index 000000000..07104240c
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,680 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -34728,7 +34726,20 @@ index 000000000..8979c1cea
 +    token: String,
 +    bound: Option<(u64, u64)>,
 +    retired: std::collections::VecDeque<(String, &'static str)>,
-+    pushed: Option<(u64, u64, Value, Value)>,
++    pushed: Option<PushedKey>,
++}
++
++/// What a redraw changes besides the revision: progress, activity and diagnostics.
++type PushedKey = (u64, u64, Value, Value, Value);
++
++fn pushed_key(epoch: u64, revision: u64, snapshot: &Value) -> PushedKey {
++    (
++        epoch,
++        revision,
++        snapshot["progress"].clone(),
++        snapshot["activity"].clone(),
++        snapshot["diagnostics"].clone(),
++    )
 +}
 +
 +const RETIRED_TOKENS: usize = 8;
@@ -35051,12 +35062,7 @@ index 000000000..8979c1cea
 +        let Ok((epoch, revision, snapshot)) = blocking(clients::view).await else {
 +            return;
 +        };
-+        let pushed = (
-+            epoch,
-+            revision,
-+            snapshot["progress"].clone(),
-+            snapshot["activity"].clone(),
-+        );
++        let pushed = pushed_key(epoch, revision, &snapshot);
 +        if !force && view.pushed.as_ref() == Some(&pushed) {
 +            return;
 +        }
@@ -35305,10 +35311,10 @@ index 000000000..8979c1cea
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_clients_tests.rs b/codex-rs/app-server/src/omd_clients_tests.rs
 new file mode 100644
-index 000000000..6c00a4222
+index 000000000..8254d89c3
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients_tests.rs
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,171 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingEnvelope;
 +use crate::transport::OutgoingMessage;
@@ -35440,6 +35446,16 @@ index 000000000..6c00a4222
 +            .starts_with("action_unknown:")
 +    );
 +    assert_eq!(current.len(), 32);
++}
++
++#[test]
++fn diagnostic_only_changes_are_pushed() {
++    let snapshot =
++        |diagnostics: Value| json!({"progress": null, "activity": [], "diagnostics": diagnostics});
++    assert_ne!(
++        pushed_key(1, 1, &snapshot(json!([]))),
++        pushed_key(1, 1, &snapshot(json!(["terminal: invalid view"])))
++    );
 +}
 +
 +#[tokio::test]
@@ -35915,7 +35931,7 @@ index 000000000..d2b3b9967
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/omd_clients.rs b/codex-rs/app-server/tests/suite/v2/omd_clients.rs
 new file mode 100644
-index 000000000..8455c37bd
+index 000000000..509b2ca78
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/omd_clients.rs
 @@ -0,0 +1,185 @@
@@ -36059,7 +36075,7 @@ index 000000000..8455c37bd
 +            &mut desk,
 +            30,
 +            "omd/client/event",
-+            json!({"epoch": view.epoch, "revision": view.revision, "component": "gone",
++            json!({"epoch": view.epoch, "component": "gone",
 +                "event": {"kind": "change", "value": "x"}}),
 +        )
 +        .await?;
@@ -43451,10 +43467,10 @@ index 000000000..30c6356a8
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..b6f462a29
+index 000000000..ce275c965
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,687 @@
+@@ -0,0 +1,688 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -43596,9 +43612,11 @@ index 000000000..b6f462a29
 +        .ok_or_else(|| format!("view_stale: {component}"))
 +}
 +
-+/// The published view, or `(0, 0, null)` before the host publishes its first one.
++/// The published view, or `(0, 0, null)` while mods are inactive or before the host publishes its first one.
 +pub fn view() -> Result<(u64, u64, Value), String> {
-+    let core = core()?;
++    let Ok(core) = core() else {
++        return Ok((0, 0, Value::Null));
++    };
 +    if !core.host.root.join("mod-view.json").exists() {
 +        return Ok((0, 0, Value::Null));
 +    }
@@ -43609,37 +43627,78 @@ index 000000000..b6f462a29
 +
 +const EVENT_BYTES: usize = 64 * 1024;
 +
-+/// A client's event: one of the kinds clients send, with that kind's fields, under 64 KiB.
-+fn event_payload(event: Value) -> Result<serde_json::Map<String, Value>, String> {
++const POINTER_ACTIONS: &[&str] = &[
++    "down",
++    "up",
++    "scroll_up",
++    "scroll_down",
++    "move",
++    "drag",
++    "enter",
++    "leave",
++];
++const POINTER_BUTTONS: &[&str] = &["left", "right", "middle"];
++
++fn pointer(pointer: &Value) -> Option<Value> {
++    (pointer["column"].is_u64()
++        && pointer["row"].is_u64()
++        && pointer["action"]
++            .as_str()
++            .is_some_and(|action| POINTER_ACTIONS.contains(&action))
++        && pointer.get("button").is_some_and(|button| {
++            button.is_null()
++                || button
++                    .as_str()
++                    .is_some_and(|b| POINTER_BUTTONS.contains(&b))
++        })
++        && (pointer["half"].is_null() || matches!(pointer["half"].as_u64(), Some(0 | 1))))
++    .then(|| {
++        json!({"column": pointer["column"], "row": pointer["row"], "half": pointer["half"],
++            "action": pointer["action"], "button": pointer["button"]})
++    })
++}
++
++/// A client's event rebuilt from its kind's fields only, under 64 KiB; `origin`, `events`, `anchor` and the like stay the host's.
++fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String> {
 +    let invalid = |reason: &str| format!("component_event_invalid: {reason}");
 +    if event.to_string().len() > EVENT_BYTES {
 +        return Err(invalid("event exceeds 64 KiB"));
 +    }
-+    let fields = match event["kind"].as_str() {
-+        Some("change") => {
-+            event["value"].is_string()
-+                || event["values"]
-+                    .as_array()
-+                    .is_some_and(|values| values.iter().all(Value::is_string))
-+        }
-+        Some("pointer") => event["pointer"]["column"].is_u64() && event["pointer"]["row"].is_u64(),
-+        Some("scroll") => event["offset"].is_number(),
-+        Some("key") => event["key"].is_string(),
-+        Some("focus") => true,
++    let kind = event["kind"].as_str().unwrap_or_default();
++    let fields: Option<Vec<(&str, Value)>> = match kind {
++        "change" if event["value"].is_string() => Some(vec![("value", event["value"].clone())]),
++        "change" => event["values"]
++            .as_array()
++            .filter(|values| values.iter().all(Value::is_string))
++            .map(|_| vec![("values", event["values"].clone())]),
++        "pointer" => pointer(&event["pointer"]).map(|pointer| vec![("pointer", pointer)]),
++        "scroll" => event["offset"]
++            .is_number()
++            .then(|| vec![("offset", event["offset"].clone())]),
++        "key" => (event["key"].is_string()
++            && (event["text"].is_null() || event["text"].is_string()))
++        .then(|| {
++            vec![
++                ("key", event["key"].clone()),
++                ("text", event["text"].clone()),
++            ]
++        }),
++        "focus" => Some(Vec::new()),
 +        _ => {
 +            return Err(invalid(
 +                "kind must be change, pointer, focus, scroll or key",
 +            ));
 +        }
 +    };
-+    match event {
-+        Value::Object(payload) if fields => Ok(payload),
-+        _ => Err(invalid("event is missing its kind's fields")),
-+    }
++    let fields = fields.ok_or_else(|| invalid("event is missing its kind's fields"))?;
++    Ok(std::iter::once(("kind", Value::from(kind)))
++        .chain(fields)
++        .map(|(name, value)| (name.to_owned(), value))
++        .collect())
 +}
 +
 +pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
-+    let mut payload = event_payload(event)?;
++    let mut payload = event_payload(&event)?;
 +    let core = core()?;
 +    let owner = owner(&snapshot(&core)?, component)?.to_owned();
 +    payload.insert("component".into(), component.into());
@@ -43895,81 +43954,39 @@ index 000000000..b6f462a29
 +}
 +
 +pub fn recovery_apply(action: &str, target: &str) -> Result<Value, String> {
-+    let (_, store) = store()?;
-+    let failed = |error: std::io::Error| error.to_string();
 +    match action {
-+        "enable" | "disable" => {
-+            let enabled = action == "enable";
-+            let status = store.selection_status().map_err(failed)?;
-+            let selection = status["selections"]
-+                .as_array()
-+                .into_iter()
-+                .flatten()
-+                .find(|selection| selection["id"] == target)
-+                .ok_or_else(|| format!("mod_not_found: {target}"))?;
-+            match (selection["managed"] == true, selection["path"].as_str()) {
-+                (true, _) if enabled => store.package_enable(target).map(drop),
-+                (true, _) => store.package_disable(target).map(drop),
-+                (false, Some(path)) => store.enable(std::path::Path::new(path), enabled),
-+                (false, None) => return Err(format!("mod_not_found: {target}")),
-+            }
-+            .map_err(failed)?;
++        "enable" | "disable" | "reset" => {
++            return Err(codex_omd::client_surface::needs_terminal_error(&format!(
++                "omd/recovery/apply {action}"
++            )));
 +        }
-+        "reload" => store.reload().map_err(failed)?,
-+        "reset" => drop(store.reset(target).map_err(failed)?),
++        "reload" => {}
 +        _ => return Err(format!("recovery_action_invalid: {action}")),
 +    }
++    let (_, store) = store()?;
++    store.reload().map_err(|error| error.to_string())?;
 +    if let Ok(core) = core() {
++        let lead = core.expansion.current();
++        if let Some(lead) = &lead {
++            let _ = lead.host.refresh_session(&lead.session);
++        }
 +        if let Ok(mut runtime) = core.runtime.lock() {
 +            runtime.turn_boundary();
++            if let Some(lead) = &lead {
++                refresh_contract(&runtime, &lead.session);
++            }
 +        }
 +        republish(&core);
 +    }
 +    Ok(json!({"action": action, "target": target, "status": "applied"}))
 +}
 +
-+fn flatten<'a>(components: &'a [ModComponent], into: &mut Vec<&'a ModComponent>) {
-+    for component in components {
-+        into.push(component);
-+        if let ModComponent::Box { children, .. }
-+        | ModComponent::Pane { children, .. }
-+        | ModComponent::Dialog { children, .. } = component
-+        {
-+            flatten(children, into);
-+        }
-+    }
-+}
-+
 +fn components(view: &ModView) -> Vec<&ModComponent> {
 +    let mut all = Vec::new();
-+    for site in view.sites.values() {
-+        flatten(&site.components, &mut all);
++    for component in view.sites.values().flat_map(|site| &site.components) {
++        component.descendants(&mut all);
 +    }
 +    all
-+}
-+
-+fn id_of(component: &ModComponent) -> Option<&str> {
-+    use ModComponent as C;
-+    match component {
-+        C::Box { id, .. }
-+        | C::Line { id, .. }
-+        | C::Text { id, .. }
-+        | C::Button { id, .. }
-+        | C::Input { id, .. }
-+        | C::Select { id, .. }
-+        | C::Multiselect { id, .. }
-+        | C::Markdown { id, .. }
-+        | C::Code { id, .. }
-+        | C::Pane { id, .. }
-+        | C::Dialog { id, .. }
-+        | C::List { id, .. }
-+        | C::Document { id, .. }
-+        | C::Terminal { id, .. }
-+        | C::Image { id, .. }
-+        | C::Raster { id, .. }
-+        | C::Diff { id, .. } => Some(id),
-+        C::Slot | C::Native { .. } => None,
-+    }
 +}
 +
 +/// The command a Space/Enter on `component` runs, with `row` or `value` checked against the view's own options.
@@ -43983,7 +44000,7 @@ index 000000000..b6f462a29
 +    let invalid = || format!("action_value_invalid: {component}");
 +    let target = components(view)
 +        .into_iter()
-+        .find(|candidate| id_of(candidate) == Some(component))
++        .find(|candidate| candidate.id() == Some(component))
 +        .ok_or_else(|| format!("view_stale: {component}"))?;
 +    let text = || {
 +        value
@@ -44144,10 +44161,10 @@ index 000000000..b6f462a29
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 000000000..b43a12040
+index 000000000..af0454409
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,227 @@
 +use super::*;
 +
 +fn snapshot() -> ModViewSnapshot {
@@ -44264,25 +44281,76 @@ index 000000000..b43a12040
 +fn client_events_need_a_known_kind_its_fields_and_a_bounded_size() {
 +    for event in [
 +        json!({"kind": "change", "value": "x"}),
-+        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "down"}}),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "down", "button": "left"}}),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "half": 1, "action": "move", "button": null}}),
 +        json!({"kind": "scroll", "offset": -3}),
 +        json!({"kind": "key", "key": "Enter"}),
 +        json!({"kind": "focus"}),
 +    ] {
-+        assert!(event_payload(event.clone()).is_ok(), "{event}");
++        assert!(event_payload(&event).is_ok(), "{event}");
 +    }
 +    for event in [
 +        json!({"kind": "open"}),
 +        json!({"kind": "change"}),
 +        json!({"kind": "pointer", "pointer": {"column": -1, "row": 0}}),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2}}),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "click", "button": null}}),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "action": "down", "button": "back"}}),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "half": 2, "action": "down", "button": null}}),
 +        json!({"kind": "change", "value": "x".repeat(EVENT_BYTES)}),
 +        json!("change"),
 +    ] {
 +        assert!(
-+            event_payload(event.clone())
++            event_payload(&event)
 +                .unwrap_err()
 +                .starts_with("component_event_invalid:"),
 +            "{event}"
++        );
++    }
++}
++
++#[test]
++fn client_events_keep_only_their_kinds_fields() {
++    let forged = |kind: &str, fields: Value| {
++        let mut event = json!({"kind": kind, "origin": "user", "events": [1], "anchor": "a",
++            "range": {"start": 0}, "index": 3, "component": "other", "client": "forged"});
++        event
++            .as_object_mut()
++            .unwrap()
++            .extend(fields.as_object().unwrap().clone());
++        Value::Object(event_payload(&event).unwrap())
++    };
++    assert_eq!(
++        forged("change", json!({"value": "x"})),
++        json!({"kind": "change", "value": "x"})
++    );
++    assert_eq!(forged("focus", json!({})), json!({"kind": "focus"}));
++    assert_eq!(
++        forged("key", json!({"key": "Enter"})),
++        json!({"kind": "key", "key": "Enter", "text": null})
++    );
++    assert_eq!(
++        forged(
++            "pointer",
++            json!({"pointer": {"column": 1, "row": 2, "action": "down", "button": "left", "extra": 1}})
++        ),
++        json!({"kind": "pointer", "pointer": {"column": 1, "row": 2, "half": null,
++            "action": "down", "button": "left"}})
++    );
++}
++
++#[test]
++fn clients_see_a_null_view_while_mods_are_inactive() {
++    assert_eq!(view(), Ok((0, 0, Value::Null)));
++}
++
++#[test]
++fn clients_cannot_enable_disable_or_reset_mods() {
++    for action in ["enable", "disable", "reset"] {
++        let refused = recovery_apply(action, "alpha").unwrap_err();
++        assert!(
++            refused.starts_with("client_surface_operation_unavailable:"),
++            "{refused}"
 +        );
 +    }
 +}
@@ -72541,10 +72609,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..a18a793fa
+index 000000000..37d334e83
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,712 @@
+@@ -0,0 +1,713 @@
 +use crate::app_routes::InvocationContext;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -72856,9 +72924,6 @@ index 000000000..a18a793fa
 +        .map(|(_, surface)| surface.clone())
 +        .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
 +    let (reply, receiver) = sync_channel(1);
-+    let mirrored = MIRRORED_OPERATIONS
-+        .contains(&operation)
-+        .then(|| arguments.clone());
 +    surface.submit(SurfaceCall {
 +        caller: caller.to_owned(),
 +        operation: operation.to_owned(),
@@ -72869,13 +72934,6 @@ index 000000000..a18a793fa
 +        confirm,
 +        reply,
 +    })?;
-+    if let Some(arguments) = mirrored {
-+        notify(Observed::Mirrored {
-+            caller: caller.to_owned(),
-+            operation: operation.to_owned(),
-+            arguments,
-+        });
-+    }
 +    Ok(receiver)
 +}
 +
@@ -73136,13 +73194,24 @@ index 000000000..a18a793fa
 +) -> Result<Value, String> {
 +    let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
 +        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
-+    wait(
++    let mirrored = MIRRORED_OPERATIONS
++        .contains(&operation)
++        .then(|| arguments.clone());
++    let answer = wait(
 +        submit(
 +            caller, operation, arguments, context, remote, thread, confirm,
 +        )?,
 +        active,
 +        deadline,
-+    )
++    )?;
++    if let Some(arguments) = mirrored {
++        notify(Observed::Mirrored {
++            caller: caller.to_owned(),
++            operation: operation.to_owned(),
++            arguments,
++        });
++    }
++    Ok(answer)
 +}
 +
 +/// The caller's scoped resource store, bound to its active package from `mod-status.json`.
@@ -73259,10 +73328,10 @@ index 000000000..a18a793fa
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..b9d133e5b
+index 000000000..3e6b47e2f
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,422 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -73290,6 +73359,16 @@ index 000000000..b9d133e5b
 +            .send(Ok(
 +                json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }}),
 +            ))
++            .map_err(|error| error.to_string())
++    }
++}
++
++struct Reject;
++
++impl ClientSurface for Reject {
++    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
++        call.reply
++            .send(Err("terminal_blit_not_owned".into()))
 +            .map_err(|error| error.to_string())
 +    }
 +}
@@ -73466,6 +73545,33 @@ index 000000000..b9d133e5b
 +    drop(wake_registration);
 +    wake();
 +    assert_eq!(woken.load(Ordering::SeqCst), 1);
++}
++
++#[test]
++fn rejected_mirrored_operations_are_not_mirrored() {
++    let _serial = hub_test();
++    let registration = register(Arc::new(Reject));
++    let mirrored = Arc::new(AtomicUsize::new(0));
++    let counter = mirrored.clone();
++    let observer = register_observer(Arc::new(move |observed| {
++        if matches!(observed, Observed::Mirrored { .. }) {
++            counter.fetch_add(1, Ordering::SeqCst);
++        }
++    }));
++    let blit = call(
++        "m",
++        "terminal.blit",
++        json!({"key": "r"}),
++        InvocationContext::Event,
++        false,
++        None,
++        None,
++        &|| true,
++    );
++    assert_eq!(blit, Err("terminal_blit_not_owned".into()));
++    assert_eq!(mirrored.load(Ordering::SeqCst), 0);
++    drop(observer);
++    drop(registration);
 +}
 +
 +#[test]
@@ -91569,10 +91675,10 @@ index 000000000..4cf6e15c3
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..1251c23c0
+index 000000000..9e0cb9da8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2059 @@
+@@ -0,0 +1,2074 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -92277,6 +92383,42 @@ index 000000000..1251c23c0
 +}
 +
 +impl ModComponent {
++    pub fn id(&self) -> Option<&str> {
++        match self {
++            Self::Box { id, .. }
++            | Self::Line { id, .. }
++            | Self::Text { id, .. }
++            | Self::Button { id, .. }
++            | Self::Input { id, .. }
++            | Self::Select { id, .. }
++            | Self::Multiselect { id, .. }
++            | Self::Markdown { id, .. }
++            | Self::Code { id, .. }
++            | Self::Pane { id, .. }
++            | Self::Dialog { id, .. }
++            | Self::List { id, .. }
++            | Self::Document { id, .. }
++            | Self::Terminal { id, .. }
++            | Self::Image { id, .. }
++            | Self::Raster { id, .. }
++            | Self::Diff { id, .. } => Some(id),
++            Self::Slot | Self::Native { .. } => None,
++        }
++    }
++
++    /// Pushes this component and every descendant, parents first.
++    pub fn descendants<'a>(&'a self, into: &mut Vec<&'a ModComponent>) {
++        into.push(self);
++        if let Self::Box { children, .. }
++        | Self::Pane { children, .. }
++        | Self::Dialog { children, .. } = self
++        {
++            for child in children {
++                child.descendants(into);
++            }
++        }
++    }
++
 +    pub fn fits(&self, width: u16) -> bool {
 +        match self {
 +            Self::Box {
@@ -93137,33 +93279,12 @@ index 000000000..1251c23c0
 +}
 +
 +fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
-+    match component {
-+        ModComponent::Box { id, children, .. }
-+        | ModComponent::Pane { id, children, .. }
-+        | ModComponent::Dialog { id, children, .. } => {
-+            ids.insert(id.clone());
-+            for child in children {
-+                component_ids(child, ids);
-+            }
-+        }
-+        ModComponent::Text { id, .. }
-+        | ModComponent::Line { id, .. }
-+        | ModComponent::Button { id, .. }
-+        | ModComponent::Input { id, .. }
-+        | ModComponent::Select { id, .. }
-+        | ModComponent::Multiselect { id, .. }
-+        | ModComponent::Markdown { id, .. }
-+        | ModComponent::Code { id, .. }
-+        | ModComponent::List { id, .. }
-+        | ModComponent::Document { id, .. }
-+        | ModComponent::Diff { id, .. }
-+        | ModComponent::Terminal { id, .. }
-+        | ModComponent::Image { id, .. }
-+        | ModComponent::Raster { id, .. } => {
-+            ids.insert(id.clone());
-+        }
-+        ModComponent::Slot | ModComponent::Native { .. } => {}
-+    }
++    let mut all = Vec::new();
++    component.descendants(&mut all);
++    ids.extend(
++        all.into_iter()
++            .filter_map(|found| found.id().map(str::to_owned)),
++    );
 +}
 +
 +fn valid_focus_targets(

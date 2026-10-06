@@ -436,8 +436,8 @@ export interface Events {
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'open' | 'close';
-    origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number;
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
+    origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };

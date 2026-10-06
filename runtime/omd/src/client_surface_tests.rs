@@ -29,6 +29,16 @@ impl ClientSurface for Password {
     }
 }
 
+struct Reject;
+
+impl ClientSurface for Reject {
+    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
+        call.reply
+            .send(Err("terminal_blit_not_owned".into()))
+            .map_err(|error| error.to_string())
+    }
+}
+
 struct Silent;
 
 impl ClientSurface for Silent {
@@ -201,6 +211,33 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     drop(wake_registration);
     wake();
     assert_eq!(woken.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn rejected_mirrored_operations_are_not_mirrored() {
+    let _serial = hub_test();
+    let registration = register(Arc::new(Reject));
+    let mirrored = Arc::new(AtomicUsize::new(0));
+    let counter = mirrored.clone();
+    let observer = register_observer(Arc::new(move |observed| {
+        if matches!(observed, Observed::Mirrored { .. }) {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    let blit = call(
+        "m",
+        "terminal.blit",
+        json!({"key": "r"}),
+        InvocationContext::Event,
+        false,
+        None,
+        None,
+        &|| true,
+    );
+    assert_eq!(blit, Err("terminal_blit_not_owned".into()));
+    assert_eq!(mirrored.load(Ordering::SeqCst), 0);
+    drop(observer);
+    drop(registration);
 }
 
 #[test]

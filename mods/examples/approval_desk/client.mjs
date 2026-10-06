@@ -23,7 +23,7 @@ const session = await connect({
   onRoster: roster => log('roster', { clients: roster.map(client => client.name) }),
   onMirrored: ({ operation, arguments: args }) => log('mirrored', { operation, text: args?.text ?? null }),
   onServerRequest: (method, params) => {
-    if (!APPROVALS.includes(method)) throw Object.assign(new Error(`approval desk does not handle ${method}`), { code: -32601 });
+    if (!APPROVALS.includes(method)) return undefined;
     log('approval', { method, threadId: params.threadId, itemId: params.itemId, command: params.command ?? null, decision });
     return { decision };
   },
