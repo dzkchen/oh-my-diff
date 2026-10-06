@@ -42,7 +42,7 @@ export default function activate(api: ModAPI) {
   };
   const save = (state: Saved) => api.state.set(state);
   const gitArgs = (argv: string[]) => ['--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'core.fsmonitor=false', ...argv];
-  type Read = { text: string; guard: ExecGuard };
+  type Read = { text: string; program: string; guard: ExecGuard };
   const read = (argv: string[], limit = 65_536): Result<Read> => {
     const result = api.host.tryCall('exec.run', {
       program: 'git', argv: gitArgs(argv),
@@ -54,7 +54,7 @@ export default function activate(api: ModAPI) {
     if (output.timed_out) return { ok: false, error: 'Git command timed out' };
     if (output.exit_code !== 0) return { ok: false, error: visible(output.stderr.trim().split('\n')[0]?.slice(0, 200) || 'Git command failed') };
     if (!/^[0-9a-f]{64}$/.test(output.stdout_sha256) || !/^[0-9a-f]{64}$/.test(output.program.sha256)) return { ok: false, error: 'Git fingerprint unavailable' };
-    return { ok: true, value: { text: output.stdout, guard: { program: 'git', sha256: output.program.sha256, argv: gitArgs(argv), env: { GIT_OPTIONAL_LOCKS: '0' }, stdout_sha256: output.stdout_sha256 } } };
+    return { ok: true, value: { text: output.stdout, program: output.program.path, guard: { program: 'git', sha256: output.program.sha256, argv: gitArgs(argv), env: { GIT_OPTIONAL_LOCKS: '0' }, stdout_sha256: output.stdout_sha256 } } };
   };
   const run = (argv: string[], limit = 65_536): Result<string> => {
     const result = read(argv, limit);
@@ -297,12 +297,16 @@ export default function activate(api: ModAPI) {
     const indexed = index?.ok ? index.value.text.split('\0').find(record => record.slice(record.indexOf('\t') + 1) === entry.path) : null;
     const blob = indexed && /^100(?:644|755) ([0-9a-f]{40,64}) 0\t/.exec(indexed)?.[1];
     if (tracked && !blob) return { display: 'discard requires a regular file in the index' };
-    const restored = blob ? read(['cat-file', '--filters', `--path=${entry.path}`, blob]) : null;
+    const restored = blob && index?.ok ? api.host.tryCall('exec.run', {
+      program: 'node', argv: ['--input-type=module', '-', index.value.program, index.value.guard.sha256!, ...gitArgs(['cat-file', '--filters', `--path=${entry.path}`, blob])],
+      stdin: api.assets.read('fingerprint.mjs').text, timeout_ms: 10_000, max_output_bytes: 65_536, write: false, network: 'none',
+    }) : null;
     if (restored && !restored.ok) return { display: restored.error };
+    if (restored?.ok && (restored.value.exit_code !== 0 || restored.value.timed_out || restored.value.stdout_truncated || restored.value.stderr_truncated || !/^[0-9a-f]{64}\n$/.test(restored.value.stdout))) return { display: restored.value.stderr.trim().slice(0, 200) || 'Git file fingerprint unavailable' };
     const content = tracked ? read(['hash-object', '--no-filters', '--', entry.path], 256) : null;
     if (content && (!content.ok || !/^[0-9a-f]{40,64}\n$/.test(content.value.text))) return { display: content.ok ? 'Git file fingerprint unavailable' : content.error };
     const lines = [`  ${trim(entry.path, width - 4)}`, '', ...(change?.ok ? [visible(change.value.text.slice(0, 8_000)), ''] : []), 'The current file will be backed up outside this repository before the change.', 'Confirmation refuses a changed file or Git status.'];
-    save({ ...state, preview: { kind: 'discard', tracked, target: entry.path, from: state.head?.oid ?? null, destination: null, ...(restored?.ok ? { restoreHash: restored.value.guard.stdout_sha256 } : {}), status: state.status, lines, guards: tracked && index?.ok && content?.ok ? [...state.guards, index.value.guard, content.value.guard] : state.guards, paths: [entry.path], expected: { [entry.path]: file.sha256 } } });
+    save({ ...state, preview: { kind: 'discard', tracked, target: entry.path, from: state.head?.oid ?? null, destination: null, ...(restored?.ok ? { restoreHash: restored.value.stdout.trim() } : {}), status: state.status, lines, guards: tracked && index?.ok && content?.ok ? [...state.guards, index.value.guard, content.value.guard] : state.guards, paths: [entry.path], expected: { [entry.path]: file.sha256 } } });
     return null;
   };
   api.command('act', value => {

@@ -8884,7 +8884,7 @@ index 81e00f856..57a23c8df 100644
                      .await;
                  self.repaint_agents_overview();
 diff --git a/codex-rs/tui/src/app/empty_state_animation_tests.rs b/codex-rs/tui/src/app/empty_state_animation_tests.rs
-index 6647d1bd0..200144ecd 100644
+index 6647d1bd0..81af3507c 100644
 --- a/codex-rs/tui/src/app/empty_state_animation_tests.rs
 +++ b/codex-rs/tui/src/app/empty_state_animation_tests.rs
 @@ -37,6 +37,154 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
@@ -9067,7 +9067,25 @@ index 6647d1bd0..200144ecd 100644
  async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -269,6 +419,7 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
+@@ -216,10 +366,13 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
+     );
+     insta::assert_snapshot!(
+         "fresh_thread_header",
+-        format!(
+-            "enabled:\n{}\n---\ndisabled:\n{}",
+-            text(after),
+-            text(&before)
++        crate::chatwidget::tests::helpers::normalize_workspace_snapshot(
++            format!(
++                "enabled:\n{}\n---\ndisabled:\n{}",
++                text(after),
++                text(&before)
++            ),
++            app.chat_widget.config_ref().cwd.as_path(),
+         )
+     );
+     // Editing, clearing, and resizing must never choose another phrase.
+@@ -269,6 +422,7 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
  }
 
  #[tokio::test]
@@ -9075,7 +9093,7 @@ index 6647d1bd0..200144ecd 100644
  async fn submitting_a_draft_keeps_greeting_and_dismisses_logo_even_after_clear() -> Result<()> {
      let (mut app, _events, _ops) = crate::app::tests::make_test_app_with_channels().await;
      app.local_settings.tui.animations = true;
-@@ -322,6 +473,7 @@ async fn submitting_a_draft_keeps_greeting_and_dismisses_logo_even_after_clear()
+@@ -322,6 +476,7 @@ async fn submitting_a_draft_keeps_greeting_and_dismisses_logo_even_after_clear()
  }
 
  #[tokio::test]
@@ -10563,10 +10581,30 @@ index 135c411dd..649777b64 100644
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 9c1af274f..e6bbb677a 100644
+index 9c1af274f..91a13c50a 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
-@@ -5989,6 +5989,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
+@@ -120,6 +120,7 @@ use codex_utils_absolute_path::test_support::PathExt;
+
+ use crate::chatwidget::ChatWidgetInit;
+ use crate::chatwidget::create_initial_user_message;
++use crate::chatwidget::tests::helpers::normalize_workspace_snapshot;
+ use crate::chatwidget::tests::helpers::render_bottom_popup;
+ use crate::chatwidget::tests::helpers::set_active_cell;
+ use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
+@@ -4258,7 +4259,10 @@ async fn active_thread_file_change_approval_recovers_buffered_changes() {
+     let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 100);
+     let destination = app.chat_widget.config_ref().cwd.join("visible-target.md");
+     assert!(rendered.contains("Description: Apply proposed file edits"));
+-    assert!(rendered.contains(&format!("Destination: {}", destination.display())));
++    assert!(rendered.contains(&normalize_workspace_snapshot(
++        format!("Destination: {}", destination.display()),
++        app.chat_widget.config_ref().cwd.as_path(),
++    )));
+ }
+
+ #[tokio::test]
+@@ -5989,6 +5993,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
 
  async fn make_test_app() -> Box<App> {
      let (mut chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
@@ -10574,7 +10612,7 @@ index 9c1af274f..e6bbb677a 100644
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -6105,6 +6106,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+@@ -6105,6 +6110,7 @@ pub(super) async fn make_test_app_with_channels() -> (
      tokio::sync::mpsc::UnboundedReceiver<Op>,
  ) {
      let (mut chat_widget, app_event_tx, rx, op_rx) = make_chatwidget_manual_with_sender().await;
@@ -10621,6 +10659,19 @@ index 5512cdb0e..ec33fb493 100644
          tui.set_owned_screen(/*owned*/ false)?;
          server.shutdown().await?;
      }
+diff --git a/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs b/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
+index 457f5970b..85fc0edfc 100644
+--- a/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
++++ b/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
+@@ -100,7 +100,7 @@ async fn reconnect_daemon_command_center_after_socket_replacement_without_a_conv
+                 "id": id.to_string(), "sessionId": id.to_string(), "preview": name, "name": name,
+                 "ephemeral": false, "modelProvider": "test-provider", "createdAt": 1,
+                 "updatedAt": chrono::Utc::now().timestamp() - 120, "status": status,
+-                "cwd": app.config.cwd, "cliVersion": "0.0.0", "source": "cli", "turns": []
++                "cwd": test_path_buf("/tmp/project"), "cliVersion": "0.0.0", "source": "cli", "turns": []
+             }))?)
+         };
+         let child_thread = make_thread(child, "Cached child", ThreadStatus::NotLoaded)?;
 diff --git a/codex-rs/tui/src/app/tests/new_session_tests.rs b/codex-rs/tui/src/app/tests/new_session_tests.rs
 index e77967d79..72dfafb4e 100644
 --- a/codex-rs/tui/src/app/tests/new_session_tests.rs
@@ -10958,6 +11009,24 @@ index 22e27ed3f..3ed98010a 100644
              ");
          }
          let expected_cwd = if override_cwd {
+diff --git a/codex-rs/tui/src/app/tests/startup_frame_tests.rs b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
+index c836d543e..1119967a8 100644
+--- a/codex-rs/tui/src/app/tests/startup_frame_tests.rs
++++ b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
+@@ -70,7 +70,12 @@ async fn owned_startup_hides_tip_in_transcript() -> Result<()> {
+     }
+     insta::assert_snapshot!(
+         "startup_tip_in_transcript",
+-        normalize_snapshot_paths(normalize_agent_center_snapshot(snapshots.join("\n\n"))),
++        normalize_snapshot_paths(normalize_agent_center_snapshot(
++            normalize_workspace_snapshot(
++                snapshots.join("\n\n"),
++                app.chat_widget.config_ref().cwd.as_path(),
++            )
++        )),
+     );
+     // The source remains available to terminal scrollback in both presentation modes.
+     for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
 diff --git a/codex-rs/tui/src/app/thread_title_tests.rs b/codex-rs/tui/src/app/thread_title_tests.rs
 index e9b10fbb8..80a278235 100644
 --- a/codex-rs/tui/src/app/thread_title_tests.rs
@@ -14388,7 +14457,7 @@ index 099806b8a..c63a9fe46 100644
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-index 6565e1e4d..ba9a462dd 100644
+index 6565e1e4d..e4fed0648 100644
 --- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
 @@ -20,12 +20,32 @@ pub(super) async fn test_config() -> (tempfile::TempDir, Config) {
@@ -14425,7 +14494,7 @@ index 6565e1e4d..ba9a462dd 100644
  pub(super) fn test_project_path() -> PathBuf {
      PathBuf::from(test_path_display("/tmp/project"))
  }
-@@ -67,6 +87,40 @@ pub(crate) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
+@@ -67,6 +87,69 @@ pub(crate) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
      }
  }
 
@@ -14442,16 +14511,45 @@ index 6565e1e4d..ba9a462dd 100644
 +        return text;
 +    }
 +    let expected = "/tmp/project";
++    let replace_path = |text: &mut String, from: &str, to: &str| {
++        let mut normalized = String::with_capacity(text.len());
++        let mut start = 0;
++        for (offset, _) in text.match_indices(from) {
++            if text[..offset].chars().next_back().is_some_and(|character| {
++                character.is_alphanumeric()
++                    || "/._-~".contains(character)
++                    || character == std::path::MAIN_SEPARATOR
++            }) {
++                continue;
++            }
++            normalized.push_str(&text[start..offset]);
++            normalized.push_str(to);
++            start = offset + from.len();
++        }
++        normalized.push_str(&text[start..]);
++        *text = normalized;
++    };
 +    for path in [
 +        cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
 +        cwd.to_path_buf(),
 +    ] {
 +        let path = path.to_string_lossy();
-+        text = text.replace(path.as_ref(), expected);
++        replace_path(&mut text, path.as_ref(), expected);
++        for width in 1..path.chars().count() {
++            let truncated = crate::text_formatting::center_truncate_path(&path, width);
++            if truncated.contains('…') {
++                replace_path(
++                    &mut text,
++                    &truncated,
++                    &crate::text_formatting::center_truncate_path(expected, width),
++                );
++            }
++        }
 +        for prefix in truncated_path_variants(&path).into_iter().rev() {
 +            let length = prefix.chars().count();
 +            let replacement: String = expected.chars().take(length).collect();
-+            text = text.replace(
++            replace_path(
++                &mut text,
 +                &format!("{prefix}…"),
 +                &format!(
 +                    "{replacement}{}",
@@ -14466,7 +14564,7 @@ index 6565e1e4d..ba9a462dd 100644
  /// Normalize command-center fixture paths without moving fixed pane separators.
  /// Pad after each complete pane so group counts and destination hints keep their spacing.
  pub(crate) fn normalize_agent_center_snapshot(text: impl AsRef<str>) -> String {
-@@ -219,6 +273,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
+@@ -219,6 +302,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
      let app_event_tx = AppEventSender::new(tx_raw);
      let (op_tx, op_rx) = unbounded_channel::<Op>();
      let (codex_home, mut cfg) = test_config().await;
@@ -14474,7 +14572,7 @@ index 6565e1e4d..ba9a462dd 100644
      let resolved_model = model_override
          .map(str::to_owned)
          .unwrap_or_else(|| get_model_offline_for_tests(cfg.model.as_deref()));
-@@ -1362,7 +1417,7 @@ pub(crate) fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
+@@ -1362,7 +1446,7 @@ pub(crate) fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
          lines.pop();
      }
 
@@ -15806,6 +15904,38 @@ index ee6694b35..b94feefc0 100644
 +        );
 +    }
  }
+diff --git a/codex-rs/tui/src/pets/mod.rs b/codex-rs/tui/src/pets/mod.rs
+index f12313ff4..84fa7f63c 100644
+--- a/codex-rs/tui/src/pets/mod.rs
++++ b/codex-rs/tui/src/pets/mod.rs
+@@ -276,6 +276,7 @@ fn clear_sixel_area(writer: &mut impl Write, area: SixelClearArea) -> std::io::R
+
+ #[cfg(test)]
+ mod tests {
++    use base64::Engine as _;
+     use std::error::Error as _;
+     use std::io;
+     use std::path::PathBuf;
+@@ -349,6 +350,9 @@ mod tests {
+         let dir = tempfile::tempdir().unwrap();
+         let frame = dir.path().join("frame.png");
+         std::fs::write(&frame, b"png").unwrap();
++        let canonical = frame.canonicalize().unwrap();
++        let payload = base64::engine::general_purpose::STANDARD
++            .encode(canonical.to_string_lossy().as_bytes());
+         let request = AmbientPetDraw {
+             frame,
+             protocol: ImageProtocol::KittyLocalFile,
+@@ -369,7 +373,8 @@ mod tests {
+         assert!(output.contains("a=d,d=I,i=49374,q=2;"));
+         assert!(output.contains("\x1b[4;3H"));
+         assert!(output.contains("a=T,t=f,f=100,c=4,r=2,q=2,i=49374;"));
+-        assert!(!output.contains("cG5n"));
++        assert!(output.contains(&format!("a=T,t=f,f=100,c=4,r=2,q=2,i=49374;{payload}")));
++        assert!(!output.contains("a=T,t=d"));
+         assert!(output.contains("\x1b8"));
+     }
+
 diff --git a/codex-rs/tui/src/render/highlight.rs b/codex-rs/tui/src/render/highlight.rs
 index 41b1d239c..d8b580109 100644
 --- a/codex-rs/tui/src/render/highlight.rs
@@ -20012,7 +20142,7 @@ index 000000000..aaf3e7942
 +}
 diff --git a/codex-rs/core/tests/suite/compact_intercept.rs b/codex-rs/core/tests/suite/compact_intercept.rs
 new file mode 100644
-index 000000000..a54c70f09
+index 000000000..0756cf944
 --- /dev/null
 +++ b/codex-rs/core/tests/suite/compact_intercept.rs
 @@ -0,0 +1,303 @@
@@ -20075,7 +20205,7 @@ index 000000000..a54c70f09
 +        &'a self,
 +        input: CompactionInterceptInput<'a>,
 +    ) -> ExtensionFuture<'a, CompactionPlan> {
-+        self.offers.lock().unwrap().push(json!({
++        self.offers.lock().expect("offers lock").push(json!({
 +            "trigger": input.trigger, "reason": input.reason, "phase": input.phase,
 +            "implementation": input.implementation, "hard": input.hard,
 +            "prompt": input.summary_prompt.is_some(), "items": input.history.len()}));
@@ -20109,7 +20239,7 @@ index 000000000..a54c70f09
 +        &'a self,
 +        input: CompactionLifecycleInput<'a>,
 +    ) -> ExtensionFuture<'a, ()> {
-+        self.ends.lock().unwrap().push((
++        self.ends.lock().expect("ends lock").push((
 +            input.outcome.unwrap_or_default().to_string(),
 +            input.by.map(str::to_owned),
 +            input.provider_call,
@@ -20321,10 +20451,10 @@ index 000000000..a54c70f09
 +}
 diff --git a/codex-rs/core/tests/suite/lifecycle_seams.rs b/codex-rs/core/tests/suite/lifecycle_seams.rs
 new file mode 100644
-index 000000000..b5df294bc
+index 000000000..e2562f30c
 --- /dev/null
 +++ b/codex-rs/core/tests/suite/lifecycle_seams.rs
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,120 @@
 +//! Batch settlement and failure continuation offered to extension contributors.
 +
 +use codex_core::TurnInputRequest;
@@ -20360,7 +20490,10 @@ index 000000000..b5df294bc
 +
 +impl TurnLifecycleContributor for Recorder {
 +    fn on_tool_batch_end<'a>(&'a self, input: ToolBatchEndInput<'a>) -> ExtensionFuture<'a, ()> {
-+        self.batches.lock().unwrap().push(input.call_ids.to_vec());
++        self.batches
++            .lock()
++            .expect("batches lock")
++            .push(input.call_ids.to_vec());
 +        Box::pin(std::future::ready(()))
 +    }
 +
@@ -20369,7 +20502,10 @@ index 000000000..b5df294bc
 +        input: TurnContinueInput<'a>,
 +    ) -> ExtensionFuture<'a, Option<TurnContinuation>> {
 +        let continuation = input.error.map(|error| {
-+            self.failures.lock().unwrap().push(error.to_owned());
++            self.failures
++                .lock()
++                .expect("failures lock")
++                .push(error.to_owned());
 +            TurnContinuation {
 +                source: "recorder".into(),
 +                prompt: "TRY_AGAIN".into(),

@@ -2,7 +2,9 @@
 import argparse
 import datetime
 import json
+import os
 import re
+import resource
 import shutil
 import subprocess
 import time
@@ -28,8 +30,8 @@ STEPS = [
     ("setup", ["python3", "scripts/batch_tree.py", "setup", BATCH]),
     ("patch sync", ["python3", "scripts/batch_tree.py", "sync", BATCH]),
     ("patch matches checkout", drift("runtime", "upstream.lock.json")),
-    ("cargo test omd, extension, tui", cargo("test", "test", *CRATES)),
-    ("cargo test core lib", cargo("core", "test", "-p", "codex-core", "--lib")),
+    ("cargo test omd, extension, tui", cargo("test", "test", *CRATES, "--", "--test-threads=1")),
+    ("cargo test core lib", cargo("core", "test", "-p", "codex-core", "--lib", "--", "--test-threads=1")),
     ("clippy omd paths", cargo("clippy", "clippy", *CRATES, "--tests")),
     ("rustfmt", cargo("fmt", "fmt", "-p", "codex-omd", "-p", "codex-omd-extension", "--", "--check")),
     ("native ownership", ["mise", "run", "native:ownership"]),
@@ -45,11 +47,20 @@ STEPS = [
 ]
 
 
+def prepare_resources():
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = 8192 if hard == resource.RLIM_INFINITY else min(8192, hard)
+    if soft != resource.RLIM_INFINITY and soft < target:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        soft = target
+    print(f"Nightly open-file limit: {soft}; Rust tests run serially with TMPDIR=/private/tmp/")
+
+
 def run(name, argv):
     log = WORK / "logs" / (re.sub(r"\W+", "-", name) + ".log")
     started = time.monotonic()
     with log.open("w") as output:
-        status = subprocess.run(argv, cwd=REPO, stdout=output, stderr=subprocess.STDOUT).returncode
+        status = subprocess.run(argv, cwd=REPO, env=os.environ | {"TMPDIR": "/private/tmp/"}, stdout=output, stderr=subprocess.STDOUT).returncode
     text = log.read_text(errors="replace")
     if name == "clippy omd paths":
         cargo_log = WORK / "logs" / "clippy.cargo.log"
@@ -77,6 +88,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build a committed ref in a scratch worktree and run the broad checks batches skip")
     parser.add_argument("--ref", default="main")
     args = parser.parse_args()
+    prepare_resources()
     previous_file = WORK / "last.json"
     previous = json.loads(previous_file.read_text()) if previous_file.is_file() else {}
     subprocess.run(["git", "worktree", "remove", "--force", REPO], cwd=ROOT, capture_output=True)

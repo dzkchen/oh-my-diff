@@ -5,8 +5,9 @@ actions. Every write runs real `git` with guards that refuse a changed status,
 HEAD, index or file, and discards keep a backup outside the repository.
 Tracked-file recovery requires the anticipated index content after Git's worktree
 filters, computed before discard. Intervening edits or changed filter output make
-recovery refuse the write; the backup remains available. Discard is refused when
-that content cannot be fingerprinted within the bounded Git preview.
+recovery refuse the write; the backup remains available. Node streams the filtered
+index content into SHA-256, so file size does not consume the Git preview limit.
+Discard is refused if the filter or fingerprint command fails.
 
 The sidebar shows the Changes panel open and folds the commit graph and the
 file, commit and branch Actions; Tab reaches a panel title and Enter (or a

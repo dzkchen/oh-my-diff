@@ -120,7 +120,7 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         self.module.tick(args, self.root, self.current)
         self.assertEqual(staged, ["0.2.0"])
-        self.assertEqual(json.loads((self.root / "update/ready.json").read_text()), {"version": "0.2.0"})
+        self.assertEqual(json.loads((self.root / "update/ready.json").read_text()), {"version": "0.2.0", "automatic": True})
         replaced = self.root / "releases" / ("1" * 32)
         replaced.mkdir()
         self.module.atomic_symlink(self.root / "current", replaced)
@@ -136,6 +136,61 @@ class UpdateSelection(unittest.TestCase):
         self.module.settled(self.root, "0.2.0", held=None)
         self.assertEqual({key: self.module.state(self.root)[key] for key in ("installed", "available", "held")},
                          {"installed": "0.2.0", "available": None, "held": None})
+
+    def test_offline_checks_do_not_reuse_a_release_excluded_by_current_policy(self):
+        for changes in ({"pin": "0.1.0"}, {"channel": "stable"}):
+            with self.subTest(changes=changes):
+                self.published = [release("0.2.0-beta.1", prerelease=True)]
+                self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
+                self.published = OSError("offline")
+                self.assertIsNone(self.check(**changes)["available"])
+
+    def test_launch_rechecks_staged_release_policy_and_compatibility(self):
+        applied = []
+        self.module.stage = lambda *arguments: None
+        self.module.mod_request = lambda *arguments: None
+        self.module.apply = lambda args, root, current, available: applied.append(available["version"])
+        args = types.SimpleNamespace(session=os.getpid())
+        for changes in ({"auto": "off"}, {"pin": "0.1.0"}, {"auto": "off", "pin": "0.1.0"}, {"channel": "stable"},
+                        {"incompatible": True}, {"user_mods": True}, {"held": True}, {"failed": True}, {}):
+            with self.subTest(changes=changes):
+                self.settings = {"auto": "on", "channel": "beta"}
+                self.write_settings()
+                beta = "channel" in changes
+                version = "0.2.0-beta.1" if beta else "0.2.0"
+                self.published = [release(version, prerelease=beta)]
+                self.module.save(self.root, held=None, failed=None)
+                self.module.tick(args, self.root, self.current)
+                self.assertTrue((self.root / "update/ready.json").is_file())
+                self.settings.update({key: value for key, value in changes.items() if key in self.settings or key == "pin"})
+                self.write_settings()
+                self.module.upstream_binary = (lambda *arguments: self.upstream(args, self.current, "0.161")) if changes.get("incompatible") else self.upstream
+                self.module.user_mods = lambda *arguments: ["custom"] if changes.get("user_mods") else []
+                for key in ("held", "failed"):
+                    if changes.get(key):
+                        self.module.save(self.root, **{key: {"version": version}})
+                applied.clear()
+                self.module.launch(args, self.root, self.current)
+                self.assertEqual(applied, [] if changes else [version])
+                if changes:
+                    self.assertFalse((self.root / "update/ready.json").exists())
+                    self.assertIsNone(self.module.state(self.root)["pending"])
+                self.module.upstream_binary = self.upstream
+                self.module.user_mods = lambda *arguments: []
+
+    def test_launch_preserves_explicit_updates_with_auto_disabled(self):
+        self.published = [release("0.2.0")]
+        available = self.check(auto="off")["available"]
+        self.module.stage = lambda *arguments: None
+        applied = []
+        self.module.apply = lambda args, root, current, available: applied.append(available["version"])
+        args = types.SimpleNamespace(session=os.getpid())
+        for request in (None, {"id": "manual-request", "version": "0.2.0"}):
+            with self.subTest(request=request):
+                self.module.mod_request = lambda *arguments: request
+                self.module.deferred(self.root, available)
+                self.module.launch(args, self.root, self.current)
+        self.assertEqual(applied, ["0.2.0", "0.2.0"])
 
     def test_node_falls_back_to_mise_when_the_recorded_node_is_too_old(self):
         module = installer()

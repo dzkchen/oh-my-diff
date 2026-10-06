@@ -1,4 +1,6 @@
 import importlib.util
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +13,35 @@ spec.loader.exec_module(nightly)
 
 
 class SummarizeTests(unittest.TestCase):
+    def test_launchd_limits_are_raised_for_children_without_exceeding_the_hard_limit(self):
+        for hard, target in ((nightly.resource.RLIM_INFINITY, 8192), (1024, 1024)):
+            with self.subTest(hard=hard), mock.patch.object(nightly.resource, "getrlimit", return_value=(256, hard)), \
+                 mock.patch.object(nightly.resource, "setrlimit") as changed, mock.patch("builtins.print"):
+                nightly.prepare_resources()
+                changed.assert_called_once_with(nightly.resource.RLIMIT_NOFILE, (target, hard))
+        with mock.patch.object(nightly.resource, "getrlimit", return_value=(16384, 16384)), \
+             mock.patch.object(nightly.resource, "setrlimit") as changed, mock.patch("builtins.print"):
+            nightly.prepare_resources()
+            changed.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(nightly, "WORK", Path(directory)), \
+             mock.patch.object(nightly.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as child:
+            (Path(directory) / "logs").mkdir()
+            nightly.run("fixture", ["true"])
+            self.assertEqual(child.call_args.kwargs["env"]["TMPDIR"], "/private/tmp/")
+        before = nightly.resource.getrlimit(nightly.resource.RLIMIT_NOFILE)
+        code = (
+            "import resource, subprocess, sys; from scripts import nightly; "
+            "soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE); "
+            "resource.setrlimit(resource.RLIMIT_NOFILE, (min(256, hard) if hard != resource.RLIM_INFINITY else 256, hard)); "
+            "nightly.prepare_resources(); "
+            "print(subprocess.check_output([sys.executable, '-c', "
+            "'import resource; print(resource.getrlimit(resource.RLIMIT_NOFILE)[0])'], text=True).strip())"
+        )
+        result = subprocess.run([sys.executable, "-c", code], cwd=nightly.ROOT, capture_output=True, text=True, check=True)
+        expected = 8192 if before[1] == nightly.resource.RLIM_INFINITY else min(8192, before[1])
+        self.assertEqual(int(result.stdout.splitlines()[-1]), expected)
+        self.assertEqual(nightly.resource.getrlimit(nightly.resource.RLIMIT_NOFILE), before)
+
     def test_report_names_the_selected_ref(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

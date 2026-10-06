@@ -689,16 +689,27 @@ def probe(args, root, current):
     return result
 
 
-def recorded_check(root, version, result):
+def eligible(settings, available, installed):
+    if not available or not version_key(available.get("version")):
+        return False
+    pin = str(settings.get("pin") or "").strip()
+    return (available["version"] == pin != installed if pin else
+            (settings["channel"] == "beta" or not available.get("prerelease"))
+            and version_key(available["version"]) > version_key(installed))
+
+
+def recorded_check(root, version, result, settings):
     if "available" not in result:
         saved = state(root)
-        result = result | {"available": newer(saved.get("available"), version), "blocked": saved.get("blocked")}
+        cached = saved.get("available")
+        result = result | {"available": cached if eligible(settings, cached, version) else None, "blocked": saved.get("blocked")}
     save(root, schema=1, installed=version, checked_at=int(time.time()), command="omd update", **result)
     return state(root)
 
 
 def check(args, root, current):
-    return recorded_check(root, installation(root, current)[1]["version"], probe(args, root, current))
+    _, record, store = installation(root, current)
+    return recorded_check(root, record["version"], probe(args, root, current), policy(store))
 
 
 def newer(known, version):
@@ -742,8 +753,8 @@ def stage(root, available):
     return archive
 
 
-def pend(root, available):
-    write_json(update_dir(root) / "ready.json", {"version": available["version"]})
+def pend(root, available, automatic=False):
+    write_json(update_dir(root) / "ready.json", {"version": available["version"], "automatic": automatic})
     save(root, pending={"version": available["version"]})
 
 
@@ -847,7 +858,7 @@ def tick(args, root, current):
 
         def checked():
             stamp(root / "update/next", time.time() + CADENCES.get(settings["cadence"], CADENCES["daily"]))
-            return recorded_check(root, record["version"], result) if result else None
+            return recorded_check(root, record["version"], result, policy(store)) if result else None
         saved = committed(root, current, checked)
         available = (saved or {}).get("available")
         if (settings["auto"] != "on" or not available or available["user_mods"]
@@ -859,7 +870,7 @@ def tick(args, root, current):
             committed(root, current, lambda: save(root, failed={"version": available["version"], "error": text(str(error), 300),
                                                                 "at": int(time.time())}))
             return
-        committed(root, current, lambda: pend(root, available))
+        committed(root, current, lambda: pend(root, available, automatic=True))
 
 
 def mod_request(record, store):
@@ -877,28 +888,39 @@ def launch(args, root, current):
     _, record, store = installation(root, current)
     saved = state(root)
     available = saved.get("available") or {}
-    ready = read_json(root / "update/ready.json", {}).get("version")
+    pending = read_json(root / "update/ready.json", {})
+    ready = pending.get("version")
     request = mod_request(record, store)
     requested = None
     if request and request["id"] != saved.get("request_done"):
         save(root, request_done=request["id"])
         requested = request.get("version")
-    if not available.get("version") or available["version"] not in (ready, requested):
+    automatic = pending.get("automatic", True) and requested != available.get("version")
+    settings = policy(store)
+    allowed = eligible(settings, available, record["version"])
+    if allowed:
+        allowed = (not blockers(args, current, available["manifest"], record)
+                   and (not automatic or settings["auto"] == "on"
+                        and available["version"] not in ((saved.get("failed") or {}).get("version"),
+                                                          (saved.get("held") or {}).get("version"))
+                        and not user_mods(record, store, available["manifest"]["mod_api"])))
+    if not allowed or available["version"] not in (ready, requested):
         (root / "update/ready.json").unlink(missing_ok=True)
+        save(root, pending=None)
         if requested:
             print(f"Oh My Diff {requested} was not installed because it is no longer the newest release for your settings; "
                   "open /update or run omd update.", file=sys.stderr)
         return
     ready = available["version"]
     if sessions(root, args.session):
-        pend(root, available)
+        pend(root, available, automatic=automatic)
         print(f"Oh My Diff {ready} is ready and installs when OMD starts while no other session is open.", file=sys.stderr)
         return
     print(f"Updating Oh My Diff {record['version']} to {ready}…", file=sys.stderr)
     try:
         apply(args, root, current, available)
     except SessionsOpen:
-        pend(root, available)
+        pend(root, available, automatic=automatic)
         print("Another OMD session opened; the update waits for the next start.", file=sys.stderr)
         return
     except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
