@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "id": "omd_privacy",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "Redacts secrets and optional PII from every provider-bound request with stable opaque placeholders and gates reads of sensitive paths",
+  "license": "MIT",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_privacy"
+  },
+  "capabilities": [
+    "approvals",
+    "commands",
+    "middleware",
+    "request_policy",
+    "store"
+  ],
+  "environment": ["crypto"],
+  "hook_budget_ms": 2000,
+  "settings_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "secrets": {
+        "type": "array",
+        "default": ["private_key", "aws_access_key", "github_token", "gitlab_token", "slack_token", "stripe_key", "ai_api_key",
+          "google_api_key", "npm_token", "jwt", "bearer_token", "url_credentials", "assigned_secret"]
+      },
+      "pii": {"type": "array", "default": []},
+      "scopes": {"type": "array", "default": ["prompt", "context", "tools", "replies"]},
+      "paths": {"type": "string", "enum": ["ask", "deny", "off"], "default": "ask"},
+      "sensitive_paths": {
+        "type": "array",
+        "default": [".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".ssh/",
+          ".gnupg/", ".aws/credentials", ".docker/config.json", ".kube/config", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials"]
+      },
+      "exempt": {"type": "array", "default": ["path:.env.example", "path:.env.sample", "path:.env.template", "path:*.pub"]},
+      "unscanned": {"type": "string", "enum": ["allow", "deny"], "default": "allow"}
+    }
+  },
+  "compatibility": {
+    "required_features": [
+      "approval_v1",
+      "final_request_policy_v1",
+      "store_v1"
+    ]
+  }
+}
