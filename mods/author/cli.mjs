@@ -322,8 +322,10 @@ function runScenario(directory, file) {
 }
 
 function runTests(directory) {
-  if (existsSync(join(directory, 'mod.test.json'))) runScenario(directory, 'mod.test.json');
+  const scenario = existsSync(join(directory, 'mod.test.json'));
   const files = readdirSync(directory).filter(name => /\.test\.(ts|mjs)$/.test(name));
+  if (!scenario && !files.length) fail('no_tests: add mod.test.json or a *.test.ts file');
+  if (scenario) runScenario(directory, 'mod.test.json');
   if (files.length) command(node, ['--test', ...files], { cwd: directory });
 }
 

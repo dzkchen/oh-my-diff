@@ -36,8 +36,6 @@ pub struct ManagedPackage {
     #[serde(default)]
     pub dependencies: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lifecycle: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_environment: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: BTreeMap<String, Value>,
@@ -315,7 +313,11 @@ impl ManagedPackage {
     pub fn applies(&self, user: &str, project: Option<&Path>) -> bool {
         self.assigned(user)
             && self.projects.as_ref().is_none_or(|projects| {
-                project.is_some_and(|project| projects.iter().any(|root| project.starts_with(root)))
+                project.is_some_and(|project| {
+                    projects.iter().any(|root| {
+                        project.starts_with(root.canonicalize().as_deref().unwrap_or(root))
+                    })
+                })
             })
     }
 }
@@ -338,6 +340,9 @@ pub struct DeployedPackage {
     pub version: String,
     pub sha256: String,
     pub path: PathBuf,
+    /// The sha256 of each direct dependency.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
 }
 
 impl Managed {
@@ -364,7 +369,8 @@ impl Managed {
     }
 
     /// Each target loads when deployed; otherwise the first applicable deployed entry keeps running
-    /// until the next sync. Content the policy no longer lists never loads.
+    /// until the next sync. The deployed dependencies of running entries load with them under their
+    /// own policy entry. Content the policy no longer lists never loads.
     pub(super) fn selections(
         &self,
         deployment: &ManagedDeployment,
@@ -372,7 +378,21 @@ impl Managed {
         project: Option<&Path>,
     ) -> (Vec<ModSelection>, Vec<ModRejection>) {
         let (mut selections, mut pending) = (Vec::new(), Vec::new());
-        for target in self.targets(user, project) {
+        let selection = |package: &ManagedPackage, deployed: &DeployedPackage| ModSelection {
+            path: deployed.path.clone(),
+            sha256: deployed.sha256.clone(),
+            enabled: true,
+            capabilities: package.capabilities.clone(),
+            settings: package.settings.clone(),
+            scope: MANAGED_SCOPE.to_owned(),
+            secret_environment: package.secret_environment.clone(),
+            expires_at: None,
+            tier: package.tier,
+        };
+        let targets = self.targets(user, project);
+        let mut loading: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
+        let mut dependencies = Vec::new();
+        for target in targets {
             let chosen = self
                 .policy
                 .packages
@@ -396,17 +416,24 @@ impl Managed {
                 });
             }
             if let Some((package, deployed)) = chosen {
-                selections.push(ModSelection {
-                    path: deployed.path.clone(),
-                    sha256: deployed.sha256.clone(),
-                    enabled: true,
-                    capabilities: package.capabilities.clone(),
-                    settings: package.settings.clone(),
-                    scope: MANAGED_SCOPE.to_owned(),
-                    secret_environment: package.secret_environment.clone(),
-                    expires_at: None,
-                    tier: package.tier,
-                });
+                selections.push(selection(package, deployed));
+                dependencies.extend(&deployed.dependencies);
+            }
+        }
+        while let Some(sha256) = dependencies.pop() {
+            let Some((package, deployed)) = self.policy.packages.iter().find_map(|package| {
+                let deployed = deployment.packages.iter().find(|deployed| {
+                    deployed.id == package.id
+                        && deployed.sha256 == package.sha256
+                        && deployed.sha256 == *sha256
+                })?;
+                Some((package, deployed))
+            }) else {
+                continue;
+            };
+            if loading.insert(&package.id) {
+                selections.push(selection(package, deployed));
+                dependencies.extend(&deployed.dependencies);
             }
         }
         (selections, pending)

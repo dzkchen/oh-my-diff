@@ -67,6 +67,12 @@ impl State {
         codex_omd::tool_schema::validate(schema, arguments)
             .map_err(|reason| format!("tool_arguments_invalid: {tool}: {reason}"))
     }
+
+    pub(in crate::mods) fn forget_inventory(&self, thread: ThreadId) {
+        if let Ok(mut inventories) = self.inventories.lock() {
+            inventories.remove(&thread);
+        }
+    }
 }
 
 /// Turns the composed tool list into hide, defer and re-describe decisions against the original.

@@ -1925,6 +1925,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if lead.owner != "lead" {
                 return;
             }
+            self.expansion.forget_inventory(lead.thread);
             self.agents.cleanup_session(&lead.session).await;
             self.agents.cleanup_snapshots(lead.thread);
             self.services.cleanup_session(&lead.session).await;
@@ -2104,6 +2105,15 @@ impl ToolLifecycleContributor for Mods {
                             "continuation_retry_unavailable: this turn has no tool dispatch",
                         )
                     })?;
+                    core.expansion
+                        .validate_call(
+                            thread_id,
+                            effective["tool"].as_str().unwrap_or_default(),
+                            &effective["arguments"],
+                            effective["tool"] != spawn_before["tool"]
+                                || effective["arguments"] != spawn_before["arguments"],
+                        )
+                        .map_err(std::io::Error::other)?;
                     retries += 1;
                     let call_id = format!("{base_call}:retry{retries}");
                     if let Ok(mut invoked) = core.expansion.invoked.lock() {
@@ -2172,14 +2182,18 @@ impl ToolLifecycleContributor for Mods {
                 executor,
             ));
             if let Ok(effective) = reached_at_executor.await {
-                if !spawn {
-                    self.expansion.validate_call(
+                if !spawn
+                    && let Err(error) = self.expansion.validate_call(
                         thread_id,
                         effective["tool"].as_str().unwrap_or_default(),
                         &effective["arguments"],
                         effective["tool"] != payload["tool"]
                             || effective["arguments"] != payload["arguments"],
-                    )?;
+                    )
+                {
+                    let _ = result.send(Err(error.clone()));
+                    let _ = chain.await;
+                    return Err(error);
                 }
                 if let Ok(mut pending) = self.pending.lock() {
                     pending.insert(

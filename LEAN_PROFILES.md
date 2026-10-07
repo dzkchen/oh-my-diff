@@ -357,7 +357,9 @@ With the broker deployed, an administrator can keep the policy in the broker ins
 around these commands: an MDM profile or configuration-management run installs OMD and
 the policy file as root, then runs `omd mods sync --store STORE` as each user (for example
 from a launch agent) against the organization's own folders, Git hosts, npm registry or
-mirrored catalog; no hosted fleet service or provider secret is involved. Mods the policy
+mirrored catalog; no hosted fleet service or provider secret is involved. Until that sync
+deploys a policy package, every surface the package could intercept fails closed, so
+run it right after installing the policy. Mods the policy
 deploys can't be turned off in `/mods` or `/omd`; disabling or resetting user mods there
 leaves them running. Policy fields, refusals and recovery are in
 [mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).

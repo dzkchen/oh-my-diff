@@ -2373,8 +2373,9 @@ wrote is never trusted automatically.
 Noninteractive: `omd-mod-author watch DIR STORE --once` does one inspect,
 approve and reload and exits, which suits a build step against a scratch store;
 `omd-mod-author test DIR` (or `pnpm test`) is the CI check and needs no store,
-since it builds a throwaway store for every run. Neither starts a provider
-request.
+since it builds a throwaway store for every run; it fails (`no_tests`) when the
+project has neither `mod.test.json` nor a `*.test.ts` or `*.test.mjs` file.
+Neither starts a provider request.
 
 ### JSX/TSX
 
@@ -2966,19 +2967,21 @@ These refusals apply at every reload, so revoking takes effect immediately, and
 authority itself.
 
 Each `packages` entry pins a package's exact content (`sha256`) and its grant
-(`capabilities`, `dependencies`, `lifecycle`, `secret_environment`); the policy
-is the grant, so a managed package needs no broker grant or user prompt.
-`users` lists account names, `percent` (1–100) admits a stable share of accounts
-per package ID, and `projects` lists folders the session's repository must be
-inside. For each ID the first entry that applies is the target and later entries
-are fallbacks, so a rollout lists the new content first and the current content
-after it. Managed selections take precedence over project and user ones
+(`capabilities`, `dependencies`, `secret_environment`); the policy is the grant,
+so a managed package needs no broker grant or user prompt. A policy can't grant
+install scripts. `users` lists account names, `percent` (1–100) admits a stable
+share of accounts per package ID, and `projects` lists folders the session's
+repository must be inside, compared after resolving symlinks. For each ID
+the first entry that applies is the target and later entries are fallbacks, so
+a rollout lists the new content first and the current content after it. Managed
+selections take precedence over project and user ones
 (`shadowed_by_managed_scope`), `/omd` and `omd-mod disable` refuse them
 (`managed_by_policy`) and `tier` places their interceptors: `prepend` outside
-every other mod, `append` inside. A handler that answers without `next`, other
-than with a deny, is invalid when a required interceptor of a managed package
-sits beneath it, so other mods can skip optional transforms but never a managed
-guard.
+every other mod, `append` inside. Only the policy grants the managed scope and
+tiers: a `mods.json` selection that claims either is refused
+(`unsupported_scope`). A handler that answers without `next`, other than with a
+deny, is invalid when a required interceptor of a managed package sits beneath
+it, so other mods can skip optional transforms but never a managed guard.
 
 `omd-mod package-sync STORE` deploys the policy unattended for the account that
 owns the store, typically from the organization's own launch agent or
@@ -2995,17 +2998,26 @@ refused. Only when every entry verifies does sync record a new generation in
 previous generation stays active. `--offline` uses the cache and local sources
 only, and `--rollback` makes the previous generation active again. At load, a
 target that is deployed runs; otherwise a deployed fallback keeps running and
-`managed_pending_sync` is reported; content the policy no longer lists never
-runs, so removing an entry or changing its pin revokes it at once and an
-administrator's `policy rollback` with an unchanged cache restores the previous
-generation offline.
+`managed_pending_sync` is reported. The deployed dependencies of a running entry
+load with it under their own policy entry, even when that entry doesn't target
+the account or project. Content the policy no longer lists never runs, so
+removing an entry or changing its pin revokes it at once and an administrator's
+`policy rollback` with an unchanged cache restores the previous generation
+offline. A target with nothing running (not deployed yet, a reset or unreadable
+`managed.json`, stale content or a package that never inspected) fails every
+interception surface its policy `capabilities` reach closed with
+`intercept_required_failed: ID: REASON` until `package-sync` deploys it, so
+tool calls stay blocked between installing a policy and its first sync; a
+broken `mods.json` then drops only user and project mods.
 
 `omd-mod policy show` prints the effective policy and its origin,
 `policy check FILE` validates one, and `policy explain STORE [PROJECT_DIR]`
 lists the account, each target and whether it is deployed, the deployment
 generation, and every selection with its scope, tier, effective state,
 refusal and the origin of each setting (`managed`, `user` or `default`).
-`status.managed` and `selection-status` report the same.
+`status.managed` and `selection-status` report the same; `status.managed.unserved`
+lists the targets failing closed and why, and an unreadable deployment record
+appears as `managed_error` instead of failing the view.
 
 Recovery stays local and offline. `/omd`, `omd-package mod disable` and
 `omd-mod reset STORE mods.json` recover user and project mods; managed packages
@@ -3013,7 +3025,8 @@ keep running while the policy lists them. Running the upstream `codex` recovers
 from every customization. When a managed package fails, its required
 interceptors fail closed (`intercept_required_failed`) until an administrator
 changes or rolls back the policy; `omd-mod reset STORE managed.json` then
-`package-sync` repairs an unreadable deployment record.
+`package-sync` repairs an unreadable deployment record, and until that sync the
+policy's targets fail closed as above.
 
 
 ## Plugin components and shell commands

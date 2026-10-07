@@ -28,6 +28,16 @@ test('author packaging preserves custom entrypoints, assets and lifecycle script
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('author test fails when a project has no tests', () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-test-'));
+  try {
+    writeFileSync(join(root, 'mod.tests.ts'), '');
+    const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, 'test', root], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /no_tests/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 const guardSource = (field) => `import type { ModAPI } from '@oh-my-diff/mod-api';
 
 export default function activate(api: ModAPI) {

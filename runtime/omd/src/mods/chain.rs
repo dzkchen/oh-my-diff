@@ -1326,10 +1326,12 @@ pub(super) fn intercept(
     } else {
         OPTIONAL_WAIT
     };
-    let links = match access
-        .bounded(wait)
-        .with(|runtime| Ok(runtime.links(surface)))
-    {
+    let links = match access.bounded(wait).with(|runtime| match runtime.unserved_on(surface) {
+        Some((id, _, reason)) => Err(failure(format!(
+            "intercept_required_failed: {id}: {reason}"
+        ))),
+        None => Ok(runtime.links(surface)),
+    }) {
         Err(error) if !required && error.to_string().starts_with("mod_runtime_busy") => Vec::new(),
         links => links?,
     };
@@ -1615,8 +1617,19 @@ impl ModHost {
         })
     }
 
-    /// `Some(true)` when a required interceptor, including a faulted mod's, selects `surface`.
+    /// An applicable managed target that isn't running but whose grant reaches `surface`.
+    fn unserved_on(&self, surface: &str) -> Option<&(String, Vec<String>, String)> {
+        self.unserved
+            .iter()
+            .find(|(_, capabilities, _)| selects("*", surface, capabilities))
+    }
+
+    /// `Some(true)` when a required interceptor, including a faulted mod's, or a managed target
+    /// that isn't running selects `surface`.
     pub fn intercepts(&self, surface: &str) -> Option<bool> {
+        if self.unserved_on(surface).is_some() {
+            return Some(true);
+        }
         self.loaded
             .values()
             .flat_map(|loaded| {

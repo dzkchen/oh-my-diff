@@ -52313,10 +52313,10 @@ index 000000000..e53f1c1fc
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..b5dcaae93
+index 000000000..dba75c69d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2360 @@
+@@ -0,0 +1,2374 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -54244,6 +54244,7 @@ index 000000000..b5dcaae93
 +            if lead.owner != "lead" {
 +                return;
 +            }
++            self.expansion.forget_inventory(lead.thread);
 +            self.agents.cleanup_session(&lead.session).await;
 +            self.agents.cleanup_snapshots(lead.thread);
 +            self.services.cleanup_session(&lead.session).await;
@@ -54423,6 +54424,15 @@ index 000000000..b5dcaae93
 +                            "continuation_retry_unavailable: this turn has no tool dispatch",
 +                        )
 +                    })?;
++                    core.expansion
++                        .validate_call(
++                            thread_id,
++                            effective["tool"].as_str().unwrap_or_default(),
++                            &effective["arguments"],
++                            effective["tool"] != spawn_before["tool"]
++                                || effective["arguments"] != spawn_before["arguments"],
++                        )
++                        .map_err(std::io::Error::other)?;
 +                    retries += 1;
 +                    let call_id = format!("{base_call}:retry{retries}");
 +                    if let Ok(mut invoked) = core.expansion.invoked.lock() {
@@ -54491,14 +54501,18 @@ index 000000000..b5dcaae93
 +                executor,
 +            ));
 +            if let Ok(effective) = reached_at_executor.await {
-+                if !spawn {
-+                    self.expansion.validate_call(
++                if !spawn
++                    && let Err(error) = self.expansion.validate_call(
 +                        thread_id,
 +                        effective["tool"].as_str().unwrap_or_default(),
 +                        &effective["arguments"],
 +                        effective["tool"] != payload["tool"]
 +                            || effective["arguments"] != payload["arguments"],
-+                    )?;
++                    )
++                {
++                    let _ = result.send(Err(error.clone()));
++                    let _ = chain.await;
++                    return Err(error);
 +                }
 +                if let Ok(mut pending) = self.pending.lock() {
 +                    pending.insert(
@@ -61310,10 +61324,10 @@ index 000000000..b0a2320cb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
 new file mode 100644
-index 000000000..db8592b76
+index 000000000..b5db98f82
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,204 @@
 +use super::*;
 +use codex_extension_api::ToolInventoryEntry;
 +use codex_extension_api::ToolSpecAdjustment;
@@ -61382,6 +61396,12 @@ index 000000000..db8592b76
 +        }
 +        codex_omd::tool_schema::validate(schema, arguments)
 +            .map_err(|reason| format!("tool_arguments_invalid: {tool}: {reason}"))
++    }
++
++    pub(in crate::mods) fn forget_inventory(&self, thread: ThreadId) {
++        if let Ok(mut inventories) = self.inventories.lock() {
++            inventories.remove(&thread);
++        }
 +    }
 +}
 +
@@ -61514,10 +61534,10 @@ index 000000000..db8592b76
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..3d49633b4
+index 000000000..b9592f377
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3255 @@
+@@ -0,0 +1,3354 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -63145,6 +63165,105 @@ index 000000000..3d49633b4
 +    );
 +    assert_eq!(validate("patch", json!("anything"), true), Ok(()));
 +    assert_eq!(validate("unknown", json!(1), true), Ok(()));
++    mods.on_thread_stop(ThreadStopInput {
++        session_store: &ExtensionData::new("session".to_owned()),
++        thread_store: &thread_store,
++    })
++    .await;
++    assert!(
++        tool_specs::list(&fixture.core, &fixture.lead)
++            .unwrap_err()
++            .starts_with("tools_unavailable"),
++        "a closed thread drops its tool snapshot"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn invalid_rewritten_tool_arguments_settle_the_chain_with_their_cause() {
++    use codex_extension_api::ToolInventoryEntry;
++    use codex_extension_api::ToolInventoryView;
++    use codex_extension_api::ToolSpecContributor;
++    let Some(fixture) = fixture(&[Package {
++        id: "rewrite",
++        capabilities: &["interception"],
++        manifest: Value::Null,
++        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'run' } }, (e, next) => next({ ...e, arguments: { cmd: 1 } }));\n  api.intercept('tool', { match: { tool: 'again' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { cmd: 2 } });\n  });\n}\n",
++    }]) else {
++        return;
++    };
++    let mods = mods(&fixture.core);
++    let (session_store, thread_store, turn_store) = (
++        ExtensionData::new("session".to_owned()),
++        ExtensionData::new("thread".to_owned()),
++        ExtensionData::new("turn".to_owned()),
++    );
++    thread_store.insert(fixture.lead.clone());
++    let invoker = Arc::new(RecordingInvoker::default());
++    thread_store
++        .get_or_init(codex_extension_api::ToolInvokerSlot::default)
++        .set("turn-1", invoker.clone());
++    let schema =
++        json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
++    let tools = ["run", "again"].map(|name| ToolInventoryEntry {
++        name: name.to_owned(),
++        kind: "builtin",
++        server: None,
++        description: "d".into(),
++        freeform: false,
++        parameters: schema.clone(),
++        effective: Some(ToolInventoryView {
++            description: "d".into(),
++            parameters: schema.clone(),
++            deferred: false,
++        }),
++    });
++    mods.observe_tool_inventory(&thread_store, &tools);
++    let payload = codex_tools::ToolPayload::Function {
++        arguments: r#"{"cmd":"ls"}"#.to_owned(),
++    };
++    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
++        session_store: &session_store,
++        thread_store: &thread_store,
++        turn_store: &turn_store,
++        turn_id: "turn-1",
++        root_turn_id: None,
++        call_id,
++        originating_item_id: None,
++        tool_name: tool,
++        mcp_tool: None,
++        permissions: Box::pin(async { None }),
++        payload: &payload,
++        conversation_history: Arc::new(NoHistory),
++        source: codex_extension_api::ToolCallSource::Direct,
++    };
++    static RUN: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("run"));
++    static AGAIN: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("again"));
++    let error = mods.intercept_tool(start("call-1", &RUN)).await.unwrap_err();
++    assert!(error.starts_with("tool_arguments_invalid: run"), "{error}");
++    let chains = || fixture.core.runtime.lock().unwrap().status()["chains"].to_string();
++    assert!(chains().contains("tool_arguments_invalid"), "{}", chains());
++    assert!(!chains().contains("callback_cancelled"), "{}", chains());
++
++    assert_eq!(
++        mods.intercept_tool(start("call-2", &AGAIN)).await.unwrap(),
++        ToolInterception::Continue(None)
++    );
++    mods.replace_tool_output(codex_extension_api::ToolOutputInput {
++        session_store: &session_store,
++        thread_store: &thread_store,
++        turn_store: &turn_store,
++        turn_id: "turn-1",
++        call_id: "call-2",
++        tool_name: &AGAIN,
++        arguments: Some(r#"{"cmd":"ls"}"#),
++        success: false,
++        text: "first attempt failed",
++    })
++    .await;
++    assert!(invoker.0.lock().unwrap().is_empty(), "an invalid retry is never dispatched");
++    assert!(chains().contains("tool_arguments_invalid: again"), "{}", chains());
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -74311,10 +74430,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..7cea0e7e0
+index 000000000..ec5e156e1
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,545 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -74490,9 +74609,12 @@ index 000000000..7cea0e7e0
 +        }
 +        ("explain", [root, project @ ..]) if project.len() <= 1 => {
 +            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
-+            let project = project.first().map(PathBuf::from);
++            let project = project
++                .first()
++                .map(|project| PathBuf::from(project).canonicalize())
++                .transpose()?;
 +            let user = store.managed_user();
-+            let deployment = store.managed_deployment()?;
++            let deployment = store.managed_deployment().unwrap_or_default();
 +            let targets = match store.managed() {
 +                Ok(Some(managed)) => managed
 +                    .targets(&user, project.as_deref())
@@ -86464,10 +86586,10 @@ index 000000000..6ac817168
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..5c7e3d1c1
+index 000000000..df21e19a4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4999 @@
+@@ -0,0 +1,5083 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -88815,6 +88937,11 @@ index 000000000..5c7e3d1c1
 +const BROKER_REFRESH: Duration = Duration::from_secs(2);
 +
 +type Brokered = Option<(u64, BTreeSet<String>)>;
++type Authority = (
++    Brokered,
++    Option<Managed>,
++    std::result::Result<policy::ManagedDeployment, String>,
++);
 +
 +impl Loaded {
 +    fn fault(&mut self, error: String) {
@@ -88877,10 +89004,11 @@ index 000000000..5c7e3d1c1
 +    chains: Vec<Value>,
 +    access: Vec<Value>,
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
-+    brokered: Option<(Instant, String, Brokered, Option<Managed>)>,
++    brokered: Option<(Instant, String, Authority)>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    policies: Vec<PathBuf>,
 +    managed: Option<Managed>,
++    unserved: Vec<(String, Vec<String>, String)>,
 +    project: Option<PathBuf>,
 +}
 +
@@ -89324,6 +89452,7 @@ index 000000000..5c7e3d1c1
 +            required_surfaces: Arc::default(),
 +            policies: Vec::new(),
 +            managed: None,
++            unserved: Vec::new(),
 +            project: None,
 +        };
 +        if let Some(repository) = repository {
@@ -89387,8 +89516,8 @@ index 000000000..5c7e3d1c1
 +
 +    pub fn reload(&mut self) -> Result<bool> {
 +        let path = self.store.root.join("mods.json");
-+        let bytes = store::read(&path, 65_536)?;
-+        let sha256 = digest(&bytes);
++        let bytes = store::read(&path, 65_536);
++        let sha256 = digest(bytes.as_deref().unwrap_or_default());
 +        let (brokered, managed, deployment) = match self.authority(&sha256) {
 +            Ok(authority) => authority,
 +            Err(error) => {
@@ -89403,6 +89532,10 @@ index 000000000..5c7e3d1c1
 +                return Err(error);
 +            }
 +        };
++        let (deployment, unreadable) = match deployment {
++            Ok(deployment) => (deployment, None),
++            Err(error) => (policy::ManagedDeployment::default(), Some(error)),
++        };
 +        let hash = format!(
 +            "{sha256}:{}:{}:{}:{}",
 +            brokered.as_ref().map_or(0, |(generation, _)| *generation),
@@ -89413,27 +89546,63 @@ index 000000000..5c7e3d1c1
 +        if hash == self.configuration_sha256 {
 +            return Ok(false);
 +        }
-+        let config = ModConfiguration::parse(&bytes, &path)?;
-+        if config.schema != 1 || !config.node.is_absolute() {
-+            return Err(failure("invalid_mod_configuration"));
-+        }
++        let configured = bytes
++            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
++            .and_then(|config| match config.schema != 1 || !config.node.is_absolute() {
++                true => Err(failure("invalid_mod_configuration")),
++                false => Ok(config),
++            });
 +        let mut rejected = Vec::new();
++        let config = match configured {
++            Ok(config) => config,
++            Err(error) if managed.is_some() => {
++                // Administrator policy still loads when the user's configuration is broken.
++                rejected.push(ModRejection {
++                    path: path.clone(),
++                    id: None,
++                    scope: user_scope(),
++                    reason: format!("invalid_mod_configuration: {error}"),
++                });
++                ModConfiguration {
++                    schema: 1,
++                    revision: 0,
++                    node: Some(self.node.clone())
++                        .filter(|node| node.is_file())
++                        .or_else(node_on_path)
++                        .unwrap_or_default(),
++                    mods: Vec::new(),
++                }
++            }
++            Err(error) => return Err(error),
++        };
 +        let mut selections = Vec::new();
 +        let mut packaged = BTreeMap::new();
++        let user = self.store.managed_user();
 +        if let Some(managed) = &managed {
-+            let user = self.store.managed_user();
++            if let Some(reason) = unreadable {
++                rejected.push(ModRejection {
++                    path: self.store.root.join("managed.json"),
++                    id: None,
++                    scope: MANAGED_SCOPE.to_owned(),
++                    reason,
++                });
++            }
 +            let (administered, pending) =
 +                managed.selections(&deployment, &user, self.project.as_deref());
 +            selections = administered;
-+            rejected = pending;
++            rejected.extend(pending);
 +            packaged = self
 +                .store
-+                .read_package_lock()?
-+                .packages
-+                .into_values()
-+                .map(|package| (package.path, policy::source_reference(&package.source)))
-+                .collect();
++                .read_package_lock()
++                .map(|lock| {
++                    lock.packages
++                        .into_values()
++                        .map(|package| (package.path, policy::source_reference(&package.source)))
++                        .collect()
++                })
++                .unwrap_or_default();
 +        }
++        let administered = selections.len();
 +        selections.extend(config.mods.iter().cloned());
 +        self.managed = managed;
 +        self.policies = selections
@@ -89445,7 +89614,7 @@ index 000000000..5c7e3d1c1
 +        let initial = self.configuration_sha256.is_empty();
 +        let retained = self.loaded.len();
 +        self.loaded.retain(|_, loaded| {
-+            selections.iter().any(|m| {
++            selections.iter().enumerate().any(|(index, m)| {
 +                m.enabled
 +                    && m.path == loaded.selection.path
 +                    && m.scope == loaded.selection.scope
@@ -89454,7 +89623,7 @@ index 000000000..5c7e3d1c1
 +                        .capabilities
 +                        .iter()
 +                        .all(|cap| m.capabilities.contains(cap))
-+                    && (m.scope == MANAGED_SCOPE
++                    && (index < administered
 +                        || brokered
 +                            .as_ref()
 +                            .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m)))))
@@ -89466,6 +89635,7 @@ index 000000000..5c7e3d1c1
 +        }
 +        let selected = Self::select(
 +            &selections,
++            administered,
 +            initial,
 +            brokered.as_ref().map(|(_, grants)| grants),
 +            self.managed.as_ref().map(|managed| &managed.policy),
@@ -89636,6 +89806,7 @@ index 000000000..5c7e3d1c1
 +        }
 +        self.rejected = rejected;
 +        self.admit();
++        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
 +        self.generation += 1;
 +        self.dynamic_tools.clear();
@@ -89664,35 +89835,61 @@ index 000000000..5c7e3d1c1
 +        }
 +    }
 +
-+    /// Re-asks the broker and policy source when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
-+    fn authority(
-+        &mut self,
-+        digest: &str,
-+    ) -> Result<(Brokered, Option<Managed>, policy::ManagedDeployment)> {
-+        let (grants, managed) = match &self.brokered {
-+            Some((at, cached, grants, managed))
-+                if cached == digest && at.elapsed() < BROKER_REFRESH =>
-+            {
-+                (grants.clone(), managed.clone())
-+            }
-+            _ => {
-+                self.brokered = None;
-+                let grants = store::brokered_grants(&self.store.root)?;
-+                let managed = self.store.managed()?;
-+                self.brokered = Some((
-+                    Instant::now(),
-+                    digest.to_owned(),
-+                    grants.clone(),
-+                    managed.clone(),
-+                ));
-+                (grants, managed)
-+            }
++    /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
++    fn unserved_targets(&self, user: &str) -> Vec<(String, Vec<String>, String)> {
++        let Some(managed) = &self.managed else {
++            return Vec::new();
 +        };
++        managed
++            .targets(user, self.project.as_deref())
++            .into_iter()
++            .filter(|target| {
++                !self.loaded.get(&target.id).is_some_and(|loaded| {
++                    loaded.selection.scope == MANAGED_SCOPE
++                        && (loaded.error.is_none()
++                            || loaded.registrations != Registrations::default())
++                })
++            })
++            .map(|target| {
++                let reason = self
++                    .rejected
++                    .iter()
++                    .find(|rejection| {
++                        rejection.scope == MANAGED_SCOPE
++                            && rejection.id.as_ref() == Some(&target.id)
++                    })
++                    .map(|rejection| rejection.reason.clone())
++                    .or_else(|| self.loaded.get(&target.id)?.error.clone())
++                    .unwrap_or_else(|| {
++                        format!("managed_not_running: {}; see omd-mod policy explain", target.id)
++                    });
++                (target.id.clone(), target.capabilities.clone(), reason)
++            })
++            .collect()
++    }
++
++    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json`
++    /// changes or the last answer is older than `BROKER_REFRESH`.
++    fn authority(&mut self, digest: &str) -> Result<Authority> {
++        if let Some((at, cached, authority)) = &self.brokered
++            && cached == digest
++            && at.elapsed() < BROKER_REFRESH
++        {
++            return Ok(authority.clone());
++        }
++        self.brokered = None;
++        let grants = store::brokered_grants(&self.store.root)?;
++        let managed = self.store.managed()?;
 +        let deployment = match managed {
-+            Some(_) => self.store.managed_deployment()?,
-+            None => policy::ManagedDeployment::default(),
++            Some(_) => self
++                .store
++                .managed_deployment()
++                .map_err(|error| error.to_string()),
++            None => Ok(policy::ManagedDeployment::default()),
 +        };
-+        Ok((grants, managed, deployment))
++        let authority = (grants, managed, deployment);
++        self.brokered = Some((Instant::now(), digest.to_owned(), authority.clone()));
++        Ok(authority)
 +    }
 +
 +    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated hosts.
@@ -89732,9 +89929,11 @@ index 000000000..5c7e3d1c1
 +            .collect()
 +    }
 +
-+    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence.
++    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence;
++    /// the first `administered` selections come from the policy.
 +    fn select(
 +        selections: &[ModSelection],
++        administered: usize,
 +        initial: bool,
 +        grants: Option<&BTreeSet<String>>,
 +        managed: Option<&ManagedPolicy>,
@@ -89747,11 +89946,16 @@ index 000000000..5c7e3d1c1
 +            _ => 0,
 +        };
 +        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
-+        for selection in selections.iter().filter(|m| m.enabled) {
-+            let administered = selection.scope == MANAGED_SCOPE;
++        for (index, selection) in selections.iter().enumerate().filter(|(_, m)| m.enabled) {
++            let administered = index < administered;
 +            let loaded = (|| {
-+                if !administered && !MOD_SCOPES.contains(&selection.scope.as_str()) {
-+                    return Err(failure(format!("unsupported_scope: {}", selection.scope)));
++                if !administered
++                    && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
++                {
++                    return Err(failure(format!(
++                        "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
++                        selection.scope
++                    )));
 +                }
 +                if !administered
 +                    && grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
@@ -91451,7 +91655,9 @@ index 000000000..5c7e3d1c1
 +        status["access"] = json!(self.access);
 +        status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
 +        status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
-+            "origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy})));
++            "origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy,
++            "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
++                .collect::<Vec<_>>()})));
 +        status
 +    }
 +}
@@ -92673,10 +92879,10 @@ index 000000000..e1499cf79
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..fb481f817
+index 000000000..ef37ddefe
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1816 @@
+@@ -0,0 +1,1829 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -94005,10 +94211,12 @@ index 000000000..fb481f817
 +    } else {
 +        OPTIONAL_WAIT
 +    };
-+    let links = match access
-+        .bounded(wait)
-+        .with(|runtime| Ok(runtime.links(surface)))
-+    {
++    let links = match access.bounded(wait).with(|runtime| match runtime.unserved_on(surface) {
++        Some((id, _, reason)) => Err(failure(format!(
++            "intercept_required_failed: {id}: {reason}"
++        ))),
++        None => Ok(runtime.links(surface)),
++    }) {
 +        Err(error) if !required && error.to_string().starts_with("mod_runtime_busy") => Vec::new(),
 +        links => links?,
 +    };
@@ -94294,8 +94502,19 @@ index 000000000..fb481f817
 +        })
 +    }
 +
-+    /// `Some(true)` when a required interceptor, including a faulted mod's, selects `surface`.
++    /// An applicable managed target that isn't running but whose grant reaches `surface`.
++    fn unserved_on(&self, surface: &str) -> Option<&(String, Vec<String>, String)> {
++        self.unserved
++            .iter()
++            .find(|(_, capabilities, _)| selects("*", surface, capabilities))
++    }
++
++    /// `Some(true)` when a required interceptor, including a faulted mod's, or a managed target
++    /// that isn't running selects `surface`.
 +    pub fn intercepts(&self, surface: &str) -> Option<bool> {
++        if self.unserved_on(surface).is_some() {
++            return Some(true);
++        }
 +        self.loaded
 +            .values()
 +            .flat_map(|loaded| {
@@ -94580,10 +94799,10 @@ index 000000000..4973a2bbb
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..68257190b
+index 000000000..490f8c3f7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2457 @@
+@@ -0,0 +1,2478 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -95662,6 +95881,7 @@ index 000000000..68257190b
 +                serde_json::to_string(&failures)?
 +            )));
 +        }
++        deployed.sort_by(|a, b| (&a.id, &a.sha256).cmp(&(&b.id, &b.sha256)));
 +        if deployed == current.packages && managed.sha256 == current.policy_sha256 {
 +            return Ok(json!({"generation": current.generation, "changed": false, "packages": deployed}));
 +        }
@@ -95707,7 +95927,8 @@ index 000000000..68257190b
 +        Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
 +    }
 +
-+    /// The pinned content from the cache, else from the source or the first mirror that verifies.
++    /// The pinned content from the cache, else from the source or the first mirror that verifies,
++    /// with its dependencies, which only the resolver finds.
 +    fn deploy(
 +        &self,
 +        entry: &policy::ManagedPackage,
@@ -95723,18 +95944,17 @@ index 000000000..68257190b
 +        if let Ok(path) = cached.canonicalize()
 +            && let Ok((package, _, sha256)) = store::package(&path)
 +            && sha256 == entry.sha256
++            && package.dependencies.is_empty()
 +        {
 +            if !package.lifecycle.is_empty() {
-+                return Err(failure(format!(
-+                    "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
-+                    entry.id
-+                )));
++                return Err(lifecycle_refused(&entry.id));
 +            }
 +            return Ok(vec![policy::DeployedPackage {
 +                id: package.id,
 +                version: package.version,
 +                sha256,
 +                path,
++                dependencies: Vec::new(),
 +            }]);
 +        }
 +        let mut errors = Vec::new();
@@ -95786,7 +96006,7 @@ index 000000000..68257190b
 +        let grant = |package: &policy::ManagedPackage| ModPackageGrant {
 +            capabilities: package.capabilities.clone(),
 +            dependencies: package.dependencies,
-+            lifecycle: package.lifecycle.clone(),
++            lifecycle: Vec::new(),
 +            secret_environment: package.secret_environment.clone(),
 +        };
 +        let mut packages: BTreeMap<String, ModPackageGrant> = managed
@@ -95806,7 +96026,17 @@ index 000000000..68257190b
 +            trust: ModPackageTrust { packages },
 +            settings: BTreeMap::from([(entry.id.clone(), entry.settings.clone())]),
 +        };
-+        let plan = self.package_plan_locked(request, false, true)?;
++        let plan = self
++            .package_plan_locked(request, false, true)
++            .map_err(|error| {
++                match error
++                    .to_string()
++                    .strip_prefix("explicit_exact_lifecycle_trust_required: ")
++                {
++                    Some(id) => lifecycle_refused(id),
++                    None => error,
++                }
++            })?;
 +        if !plan
 +            .packages
 +            .iter()
@@ -95831,17 +96061,21 @@ index 000000000..68257190b
 +                        locked.id, locked.integrity
 +                    )));
 +                }
-+                if !locked.lifecycle.is_empty() {
-+                    return Err(failure(format!(
-+                        "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
-+                        locked.id
-+                    )));
-+                }
 +                Ok(policy::DeployedPackage {
 +                    id: locked.id.clone(),
 +                    version: locked.version.clone(),
 +                    sha256: locked.integrity.clone(),
 +                    path: locked.cache_path.clone(),
++                    dependencies: locked
++                        .dependencies
++                        .iter()
++                        .filter_map(|dependency| {
++                            plan.packages
++                                .iter()
++                                .find(|resolved| resolved.id == dependency.id)
++                                .map(|resolved| resolved.integrity.clone())
++                        })
++                        .collect(),
 +                })
 +            })
 +            .collect()
@@ -96530,6 +96764,12 @@ index 000000000..68257190b
 +        );
 +        Ok(())
 +    }
++}
++
++fn lifecycle_refused(id: &str) -> std::io::Error {
++    failure(format!(
++        "managed_lifecycle_requires_approval: {id} runs install scripts; install it interactively"
++    ))
 +}
 +
 +fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {
@@ -97294,10 +97534,10 @@ index 000000000..0446ee122
 +}
 diff --git a/codex-rs/omd/src/mods/policy.rs b/codex-rs/omd/src/mods/policy.rs
 new file mode 100644
-index 000000000..adfeafea0
+index 000000000..dfbdaf3a8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/policy.rs
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,457 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -97335,8 +97575,6 @@ index 000000000..adfeafea0
 +    pub capabilities: Vec<String>,
 +    #[serde(default)]
 +    pub dependencies: bool,
-+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-+    pub lifecycle: Vec<String>,
 +    #[serde(default, skip_serializing_if = "Vec::is_empty")]
 +    pub secret_environment: Vec<String>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -97615,7 +97853,11 @@ index 000000000..adfeafea0
 +    pub fn applies(&self, user: &str, project: Option<&Path>) -> bool {
 +        self.assigned(user)
 +            && self.projects.as_ref().is_none_or(|projects| {
-+                project.is_some_and(|project| projects.iter().any(|root| project.starts_with(root)))
++                project.is_some_and(|project| {
++                    projects.iter().any(|root| {
++                        project.starts_with(root.canonicalize().as_deref().unwrap_or(root))
++                    })
++                })
 +            })
 +    }
 +}
@@ -97638,6 +97880,9 @@ index 000000000..adfeafea0
 +    pub version: String,
 +    pub sha256: String,
 +    pub path: PathBuf,
++    /// The sha256 of each direct dependency.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub dependencies: Vec<String>,
 +}
 +
 +impl Managed {
@@ -97664,7 +97909,8 @@ index 000000000..adfeafea0
 +    }
 +
 +    /// Each target loads when deployed; otherwise the first applicable deployed entry keeps running
-+    /// until the next sync. Content the policy no longer lists never loads.
++    /// until the next sync. The deployed dependencies of running entries load with them under their
++    /// own policy entry. Content the policy no longer lists never loads.
 +    pub(super) fn selections(
 +        &self,
 +        deployment: &ManagedDeployment,
@@ -97672,7 +97918,21 @@ index 000000000..adfeafea0
 +        project: Option<&Path>,
 +    ) -> (Vec<ModSelection>, Vec<ModRejection>) {
 +        let (mut selections, mut pending) = (Vec::new(), Vec::new());
-+        for target in self.targets(user, project) {
++        let selection = |package: &ManagedPackage, deployed: &DeployedPackage| ModSelection {
++            path: deployed.path.clone(),
++            sha256: deployed.sha256.clone(),
++            enabled: true,
++            capabilities: package.capabilities.clone(),
++            settings: package.settings.clone(),
++            scope: MANAGED_SCOPE.to_owned(),
++            secret_environment: package.secret_environment.clone(),
++            expires_at: None,
++            tier: package.tier,
++        };
++        let targets = self.targets(user, project);
++        let mut loading: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
++        let mut dependencies = Vec::new();
++        for target in targets {
 +            let chosen = self
 +                .policy
 +                .packages
@@ -97696,17 +97956,24 @@ index 000000000..adfeafea0
 +                });
 +            }
 +            if let Some((package, deployed)) = chosen {
-+                selections.push(ModSelection {
-+                    path: deployed.path.clone(),
-+                    sha256: deployed.sha256.clone(),
-+                    enabled: true,
-+                    capabilities: package.capabilities.clone(),
-+                    settings: package.settings.clone(),
-+                    scope: MANAGED_SCOPE.to_owned(),
-+                    secret_environment: package.secret_environment.clone(),
-+                    expires_at: None,
-+                    tier: package.tier,
-+                });
++                selections.push(selection(package, deployed));
++                dependencies.extend(&deployed.dependencies);
++            }
++        }
++        while let Some(sha256) = dependencies.pop() {
++            let Some((package, deployed)) = self.policy.packages.iter().find_map(|package| {
++                let deployed = deployment.packages.iter().find(|deployed| {
++                    deployed.id == package.id
++                        && deployed.sha256 == package.sha256
++                        && deployed.sha256 == *sha256
++                })?;
++                Some((package, deployed))
++            }) else {
++                continue;
++            };
++            if loading.insert(&package.id) {
++                selections.push(selection(package, deployed));
++                dependencies.extend(&deployed.dependencies);
 +            }
 +        }
 +        (selections, pending)
@@ -99270,10 +99537,10 @@ index 000000000..67ab2eb55
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..ab84c4e4e
+index 000000000..66f8aa6d6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,969 @@
+@@ -0,0 +1,976 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -99735,25 +100002,28 @@ index 000000000..ab84c4e4e
 +    pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
 +        let configuration = self.configuration()?;
 +        let lock = self.package_lock()?;
-+        let (managed, managed_error) = match self.managed() {
++        let (managed, mut managed_error) = match self.managed() {
 +            Ok(managed) => (managed, None),
 +            Err(error) => (None, Some(error.to_string())),
 +        };
 +        let mut entries = configuration.mods.clone();
 +        let mut pending = Vec::new();
++        let mut administered = 0;
 +        if let Some(managed) = &managed {
-+            let (administered, unsynced) = managed.selections(
-+                &self.managed_deployment()?,
-+                &self.managed_user(),
-+                project,
-+            );
-+            entries.splice(0..0, administered);
++            let deployment = self.managed_deployment().unwrap_or_else(|error| {
++                managed_error = Some(error.to_string());
++                Default::default()
++            });
++            let (selections, unsynced) =
++                managed.selections(&deployment, &self.managed_user(), project);
++            administered = selections.len();
++            entries.splice(0..0, selections);
 +            pending = unsynced;
 +        }
 +        let mut selections: Vec<Value> = Vec::new();
 +        let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-+        for selection in &entries {
-+            let administered = selection.scope == super::MANAGED_SCOPE;
++        for (index, selection) in entries.iter().enumerate() {
++            let administered = index < administered;
 +            let inspected = package(&selection.path);
 +            let mut settings_origin = BTreeMap::new();
 +            let (mut id, error, environment) = match inspected {
@@ -99779,9 +100049,13 @@ index 000000000..ab84c4e4e
 +                    let error = if integrity != selection.sha256 {
 +                        Some("source_changed: inspect and trust the new digest".to_owned())
 +                    } else if !administered
-+                        && !super::MOD_SCOPES.contains(&selection.scope.as_str())
++                        && (!super::MOD_SCOPES.contains(&selection.scope.as_str())
++                            || selection.tier.is_some())
 +                    {
-+                        Some(format!("unsupported_scope: {}", selection.scope))
++                        Some(format!(
++                            "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
++                            selection.scope
++                        ))
 +                    } else if let Some(refusal) = managed.as_ref().filter(|_| !administered).and_then(
 +                        |managed| {
 +                            managed.policy.refusal(
@@ -111336,10 +111610,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 000000000..58e50c324
+index 000000000..c8bcc6f80
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,676 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
@@ -111716,6 +111990,135 @@ index 000000000..58e50c324
 +}
 +
 +#[test]
++fn user_selections_cannot_claim_the_managed_scope_or_a_tier() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (spoof, spoof_sha) = admin.package("spoof", "spoof", PREFIX, &["interception"]);
++    trust(&store, &spoof, &spoof_sha, &["interception"], "user");
++    let (tiered, tiered_sha) = admin.package("tiered", "tiered", TRANSFORM, &["interception"]);
++    trust(&store, &tiered, &tiered_sha, &["interception"], "user");
++    let path = admin.root.join("store-alice/mods.json");
++    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++    for selection in config["mods"].as_array_mut().unwrap() {
++        match selection["path"] == json!(spoof) {
++            true => selection["scope"] = json!("managed"),
++            false => selection["tier"] = json!("prepend"),
++        }
++    }
++    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
++    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    assert!(active(&host).is_empty());
++    let status = host.status();
++    for path in [&spoof, &tiered] {
++        let reason = status["rejected"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|rejection| rejection["path"] == json!(path))
++            .and_then(|rejection| rejection["reason"].as_str())
++            .unwrap_or_default();
++        assert!(reason.starts_with("unsupported_scope"), "{reason}");
++    }
++    for row in store.selection_status().unwrap()["selections"].as_array().unwrap() {
++        assert!(row["error"].as_str().unwrap().starts_with("unsupported_scope"), "{row}");
++    }
++}
++
++#[test]
++fn managed_targets_that_are_not_running_fail_their_surfaces_closed() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    let (plain, plain_sha) = admin.package("plain", "plain", TRANSFORM, &["interception"]);
++    trust(&store, &plain, &plain_sha, &["interception"], "user");
++    let (wide, wide_sha) = admin.package("wide", "wide", COMMAND, &["commands"]);
++    admin.write_policy(json!({"schema": 1, "packages": [
++        entry("guard", &guard, &guard_sha, json!({})),
++        entry("wide", &wide, &wide_sha, json!({"capabilities": ["commands"]}))]}));
++    let refused = |host: ModHost| {
++        let runtime = Mutex::new(host);
++        let mut calls = Vec::new();
++        let error = tool(&runtime, "exec", &mut calls).unwrap_err().to_string();
++        assert!(calls.is_empty(), "{calls:?}");
++        error
++    };
++    let pending = refused(admin.host("alice"));
++    assert!(pending.starts_with("intercept_required_failed: guard: managed_pending_sync"), "{pending}");
++    assert_eq!(admin.host("alice").intercepts("command"), Some(true));
++
++    store.package_sync(false).unwrap();
++    let runtime = Mutex::new(admin.host("alice"));
++    assert!(tool(&runtime, "exec", &mut Vec::new()).is_ok());
++    store.reset("managed.json").unwrap();
++    let reset = refused(admin.host("alice"));
++    assert!(reset.starts_with("intercept_required_failed: guard: managed_pending_sync"), "{reset}");
++    std::fs::write(admin.root.join("store-alice/managed.json"), "{").unwrap();
++    let corrupt = refused(admin.host("alice"));
++    assert!(corrupt.starts_with("intercept_required_failed: guard"), "{corrupt}");
++    let status = store.selection_status().unwrap();
++    assert!(status["managed_error"].as_str().unwrap().starts_with("managed_deployment_unreadable"), "{status}");
++
++    store.reset("managed.json").unwrap();
++    store.package_sync(false).unwrap();
++    let mut host = admin.host("alice");
++    std::fs::write(admin.root.join("store-alice/mods.json"), "{").unwrap();
++    host.reload().unwrap();
++    assert_eq!(active(&host), ["guard@1.0.0", "wide@1.0.0"], "a broken mods.json drops only user mods");
++    let runtime = Mutex::new(host);
++    let mut calls = Vec::new();
++    assert_eq!(tool(&runtime, "exec", &mut calls).unwrap().result["output"], "ran G");
++}
++
++#[test]
++fn managed_dependencies_load_with_their_target_and_resync_unchanged() {
++    let admin = Admin::new();
++    let (library, library_sha) = admin.package("alpha", "alpha", COMMAND, &["commands"]);
++    std::fs::create_dir(admin.root.join("catalog")).unwrap();
++    let index = admin.root.join("catalog/index.json");
++    let index_bytes = serde_json::to_vec(&json!({"schema": 1, "packages": {"alpha": [{"version": "1.0.0",
++        "source": {"kind": "local", "path": library}, "integrity": library_sha}]}}))
++    .unwrap();
++    std::fs::write(&index, &index_bytes).unwrap();
++    let index_sha = format!("{:x}", sha2::Sha256::digest(&index_bytes));
++    let (app, app_sha) = admin.versioned(
++        "zeta",
++        "zeta",
++        "1.0.0",
++        TRANSFORM,
++        &["interception"],
++        json!({"dependencies": [{"id": "alpha", "version": "1.0.0"}]}),
++    );
++    admin.administer(
++        json!({"schema": 1, "index": {"sha256": index_sha, "locations": [index]}, "packages": [
++            entry("zeta", &app, &app_sha, json!({"dependencies": true})),
++            entry("alpha", &library, &library_sha, json!({"capabilities": ["commands"], "users": ["bob"]}))]}),
++        "alice",
++    );
++    assert_eq!(deployed(&admin.store("alice")), ["alpha@1.0.0", "zeta@1.0.0"]);
++    assert_eq!(active(&admin.host("alice")), ["alpha@1.0.0", "zeta@1.0.0"], "the dependency loads with its target");
++    let again = admin.store("alice").package_sync(false).unwrap();
++    assert_eq!((again["generation"].clone(), again["changed"].clone()), (json!(1), json!(false)));
++}
++
++#[test]
++fn project_entries_match_the_resolved_project_through_symlinks() {
++    let admin = Admin::new();
++    let (scoped, scoped_sha) = admin.package("scoped", "scoped", TRANSFORM, &["interception"]);
++    std::fs::create_dir(admin.root.join("repo")).unwrap();
++    std::os::unix::fs::symlink(admin.root.join("repo"), admin.root.join("link")).unwrap();
++    admin.administer(
++        json!({"schema": 1, "packages": [
++            entry("scoped", &scoped, &scoped_sha, json!({"projects": [admin.root.join("link")]}))]}),
++        "alice",
++    );
++    let mut host = admin.host("alice");
++    assert!(active(&host).is_empty());
++    host.set_checkout(&admin.root.join("repo"));
++    host.reload().unwrap();
++    assert_eq!(active(&host), ["scoped@1.0.0"]);
++}
++
++#[test]
 +fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly() {
 +    let admin = Admin::new();
 +    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
@@ -111819,15 +112222,17 @@ index 000000000..58e50c324
 +    assert!(active(&admin.host("alice")).contains(&"guard@1.0.0".to_owned()));
 +
 +    let mut with_script = policy.clone();
-+    with_script["packages"].as_array_mut().unwrap().push(entry(
-+        "scripted",
-+        &scripted,
-+        &scripted_sha,
-+        json!({"lifecycle": ["install"]}),
-+    ));
-+    admin.write_policy(with_script);
++    with_script["packages"]
++        .as_array_mut()
++        .unwrap()
++        .push(entry("scripted", &scripted, &scripted_sha, json!({})));
++    admin.write_policy(with_script.clone());
 +    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
 +    assert!(error.contains("managed_lifecycle_requires_approval"), "{error}");
++    with_script["packages"][1]["lifecycle"] = json!(["install"]);
++    admin.write_policy(with_script);
++    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
++    assert!(error.starts_with("managed_policy_invalid"), "policy can't grant install scripts: {error}");
 +
 +    admin.write_policy(policy);
 +    std::fs::write(guard.join("index.ts"), TRANSFORM).unwrap();

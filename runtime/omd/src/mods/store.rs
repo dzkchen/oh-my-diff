@@ -459,25 +459,28 @@ impl ModStore {
     pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
-        let (managed, managed_error) = match self.managed() {
+        let (managed, mut managed_error) = match self.managed() {
             Ok(managed) => (managed, None),
             Err(error) => (None, Some(error.to_string())),
         };
         let mut entries = configuration.mods.clone();
         let mut pending = Vec::new();
+        let mut administered = 0;
         if let Some(managed) = &managed {
-            let (administered, unsynced) = managed.selections(
-                &self.managed_deployment()?,
-                &self.managed_user(),
-                project,
-            );
-            entries.splice(0..0, administered);
+            let deployment = self.managed_deployment().unwrap_or_else(|error| {
+                managed_error = Some(error.to_string());
+                Default::default()
+            });
+            let (selections, unsynced) =
+                managed.selections(&deployment, &self.managed_user(), project);
+            administered = selections.len();
+            entries.splice(0..0, selections);
             pending = unsynced;
         }
         let mut selections: Vec<Value> = Vec::new();
         let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-        for selection in &entries {
-            let administered = selection.scope == super::MANAGED_SCOPE;
+        for (index, selection) in entries.iter().enumerate() {
+            let administered = index < administered;
             let inspected = package(&selection.path);
             let mut settings_origin = BTreeMap::new();
             let (mut id, error, environment) = match inspected {
@@ -503,9 +506,13 @@ impl ModStore {
                     let error = if integrity != selection.sha256 {
                         Some("source_changed: inspect and trust the new digest".to_owned())
                     } else if !administered
-                        && !super::MOD_SCOPES.contains(&selection.scope.as_str())
+                        && (!super::MOD_SCOPES.contains(&selection.scope.as_str())
+                            || selection.tier.is_some())
                     {
-                        Some(format!("unsupported_scope: {}", selection.scope))
+                        Some(format!(
+                            "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
+                            selection.scope
+                        ))
                     } else if let Some(refusal) = managed.as_ref().filter(|_| !administered).and_then(
                         |managed| {
                             managed.policy.refusal(

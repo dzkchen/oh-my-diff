@@ -1625,6 +1625,105 @@ async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates
     );
     assert_eq!(validate("patch", json!("anything"), true), Ok(()));
     assert_eq!(validate("unknown", json!(1), true), Ok(()));
+    mods.on_thread_stop(ThreadStopInput {
+        session_store: &ExtensionData::new("session".to_owned()),
+        thread_store: &thread_store,
+    })
+    .await;
+    assert!(
+        tool_specs::list(&fixture.core, &fixture.lead)
+            .unwrap_err()
+            .starts_with("tools_unavailable"),
+        "a closed thread drops its tool snapshot"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_rewritten_tool_arguments_settle_the_chain_with_their_cause() {
+    use codex_extension_api::ToolInventoryEntry;
+    use codex_extension_api::ToolInventoryView;
+    use codex_extension_api::ToolSpecContributor;
+    let Some(fixture) = fixture(&[Package {
+        id: "rewrite",
+        capabilities: &["interception"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'run' } }, (e, next) => next({ ...e, arguments: { cmd: 1 } }));\n  api.intercept('tool', { match: { tool: 'again' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { cmd: 2 } });\n  });\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let invoker = Arc::new(RecordingInvoker::default());
+    thread_store
+        .get_or_init(codex_extension_api::ToolInvokerSlot::default)
+        .set("turn-1", invoker.clone());
+    let schema =
+        json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
+    let tools = ["run", "again"].map(|name| ToolInventoryEntry {
+        name: name.to_owned(),
+        kind: "builtin",
+        server: None,
+        description: "d".into(),
+        freeform: false,
+        parameters: schema.clone(),
+        effective: Some(ToolInventoryView {
+            description: "d".into(),
+            parameters: schema.clone(),
+            deferred: false,
+        }),
+    });
+    mods.observe_tool_inventory(&thread_store, &tools);
+    let payload = codex_tools::ToolPayload::Function {
+        arguments: r#"{"cmd":"ls"}"#.to_owned(),
+    };
+    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        root_turn_id: None,
+        call_id,
+        originating_item_id: None,
+        tool_name: tool,
+        mcp_tool: None,
+        permissions: Box::pin(async { None }),
+        payload: &payload,
+        conversation_history: Arc::new(NoHistory),
+        source: codex_extension_api::ToolCallSource::Direct,
+    };
+    static RUN: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("run"));
+    static AGAIN: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("again"));
+    let error = mods.intercept_tool(start("call-1", &RUN)).await.unwrap_err();
+    assert!(error.starts_with("tool_arguments_invalid: run"), "{error}");
+    let chains = || fixture.core.runtime.lock().unwrap().status()["chains"].to_string();
+    assert!(chains().contains("tool_arguments_invalid"), "{}", chains());
+    assert!(!chains().contains("callback_cancelled"), "{}", chains());
+
+    assert_eq!(
+        mods.intercept_tool(start("call-2", &AGAIN)).await.unwrap(),
+        ToolInterception::Continue(None)
+    );
+    mods.replace_tool_output(codex_extension_api::ToolOutputInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        call_id: "call-2",
+        tool_name: &AGAIN,
+        arguments: Some(r#"{"cmd":"ls"}"#),
+        success: false,
+        text: "first attempt failed",
+    })
+    .await;
+    assert!(invoker.0.lock().unwrap().is_empty(), "an invalid retry is never dispatched");
+    assert!(chains().contains("tool_arguments_invalid: again"), "{}", chains());
 }
 
 #[tokio::test(flavor = "multi_thread")]

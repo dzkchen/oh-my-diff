@@ -1076,6 +1076,7 @@ impl ModStore {
                 serde_json::to_string(&failures)?
             )));
         }
+        deployed.sort_by(|a, b| (&a.id, &a.sha256).cmp(&(&b.id, &b.sha256)));
         if deployed == current.packages && managed.sha256 == current.policy_sha256 {
             return Ok(json!({"generation": current.generation, "changed": false, "packages": deployed}));
         }
@@ -1121,7 +1122,8 @@ impl ModStore {
         Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
     }
 
-    /// The pinned content from the cache, else from the source or the first mirror that verifies.
+    /// The pinned content from the cache, else from the source or the first mirror that verifies,
+    /// with its dependencies, which only the resolver finds.
     fn deploy(
         &self,
         entry: &policy::ManagedPackage,
@@ -1137,18 +1139,17 @@ impl ModStore {
         if let Ok(path) = cached.canonicalize()
             && let Ok((package, _, sha256)) = store::package(&path)
             && sha256 == entry.sha256
+            && package.dependencies.is_empty()
         {
             if !package.lifecycle.is_empty() {
-                return Err(failure(format!(
-                    "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
-                    entry.id
-                )));
+                return Err(lifecycle_refused(&entry.id));
             }
             return Ok(vec![policy::DeployedPackage {
                 id: package.id,
                 version: package.version,
                 sha256,
                 path,
+                dependencies: Vec::new(),
             }]);
         }
         let mut errors = Vec::new();
@@ -1200,7 +1201,7 @@ impl ModStore {
         let grant = |package: &policy::ManagedPackage| ModPackageGrant {
             capabilities: package.capabilities.clone(),
             dependencies: package.dependencies,
-            lifecycle: package.lifecycle.clone(),
+            lifecycle: Vec::new(),
             secret_environment: package.secret_environment.clone(),
         };
         let mut packages: BTreeMap<String, ModPackageGrant> = managed
@@ -1220,7 +1221,17 @@ impl ModStore {
             trust: ModPackageTrust { packages },
             settings: BTreeMap::from([(entry.id.clone(), entry.settings.clone())]),
         };
-        let plan = self.package_plan_locked(request, false, true)?;
+        let plan = self
+            .package_plan_locked(request, false, true)
+            .map_err(|error| {
+                match error
+                    .to_string()
+                    .strip_prefix("explicit_exact_lifecycle_trust_required: ")
+                {
+                    Some(id) => lifecycle_refused(id),
+                    None => error,
+                }
+            })?;
         if !plan
             .packages
             .iter()
@@ -1245,17 +1256,21 @@ impl ModStore {
                         locked.id, locked.integrity
                     )));
                 }
-                if !locked.lifecycle.is_empty() {
-                    return Err(failure(format!(
-                        "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
-                        locked.id
-                    )));
-                }
                 Ok(policy::DeployedPackage {
                     id: locked.id.clone(),
                     version: locked.version.clone(),
                     sha256: locked.integrity.clone(),
                     path: locked.cache_path.clone(),
+                    dependencies: locked
+                        .dependencies
+                        .iter()
+                        .filter_map(|dependency| {
+                            plan.packages
+                                .iter()
+                                .find(|resolved| resolved.id == dependency.id)
+                                .map(|resolved| resolved.integrity.clone())
+                        })
+                        .collect(),
                 })
             })
             .collect()
@@ -1944,6 +1959,12 @@ impl ModStore {
         );
         Ok(())
     }
+}
+
+fn lifecycle_refused(id: &str) -> std::io::Error {
+    failure(format!(
+        "managed_lifecycle_requires_approval: {id} runs install scripts; install it interactively"
+    ))
 }
 
 fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {

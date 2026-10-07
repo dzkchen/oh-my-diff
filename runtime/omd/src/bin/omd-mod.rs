@@ -173,9 +173,12 @@ fn policy(action: &str, rest: &[String]) -> io::Result<Value> {
         }
         ("explain", [root, project @ ..]) if project.len() <= 1 => {
             let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
-            let project = project.first().map(PathBuf::from);
+            let project = project
+                .first()
+                .map(|project| PathBuf::from(project).canonicalize())
+                .transpose()?;
             let user = store.managed_user();
-            let deployment = store.managed_deployment()?;
+            let deployment = store.managed_deployment().unwrap_or_default();
             let targets = match store.managed() {
                 Ok(Some(managed)) => managed
                     .targets(&user, project.as_deref())
