@@ -51,7 +51,7 @@ export interface Session {
   action(params: { component: string; row?: number; value?: unknown }): Promise<{ status: 'completed'; outcome: unknown; actionToken: string }>;
   render(slot: string, props: unknown): Promise<{ original: unknown; effective: unknown; tree: unknown; answeredBy: string | null }>;
   resource(reference: string): Promise<{ mediaType: string; data: string; sha256: string }>;
-  /** Reads the recovery state; `reload` applies. `enable`, `disable` and `reset` need the terminal (`/omd`) or `omd-mod` and are refused for clients. */
+  /** Reads the recovery state; `reload` applies. `enable`, `disable` and `reset` need the terminal (`/omd`) or `omd-mod` and are refused for clients, so the read's `resettable` is informational. */
   recovery(apply?: { action: 'enable' | 'disable' | 'reload' | 'reset'; target: string }): Promise<unknown>;
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
   close(): void;

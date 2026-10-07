@@ -17699,17 +17699,37 @@ index f5ac49533..e7c99033c 100644
                  &self.client.request_contributors,
                  &self.client.state.thread_id.to_string(),
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 316af05c0..ba9a7a60d 100644
+index 316af05c0..f3182b5b2 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -277,6 +277,12 @@ impl CodexThread {
+@@ -277,6 +277,32 @@ impl CodexThread {
          self.io.shutdown_and_wait().await
      }
 
 +    /// Shuts the thread down and waits for it only if no turn is active and no mailbox input is
 +    /// pending. Returns whether it shut down; on `false` the thread keeps running untouched.
 +    pub async fn shutdown_if_idle(&self) -> CodexResult<bool> {
-+        self.io.shutdown_if_idle_and_wait().await
++        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
++        loop {
++            if self.io.shutdown_if_idle_and_wait().await? {
++                return Ok(true);
++            }
++            // A finished turn reports completion before it clears the active turn.
++            let running = self
++                .session
++                .active_turn
++                .lock()
++                .await
++                .as_ref()
++                .is_some_and(|turn| turn.task.is_some());
++            if running
++                || self.session.input_queue.has_pending_mailbox_items().await
++                || tokio::time::Instant::now() >= deadline
++            {
++                return Ok(false);
++            }
++            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
++        }
 +    }
 +
      /// Wait until the underlying session loop has terminated.
@@ -19175,10 +19195,10 @@ index 824cf589c..1a7943dc3 100644
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 13ebc6824..a80a2274d 100644
+index 13ebc6824..c5edc2aba 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -12593,6 +12593,51 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
+@@ -12593,6 +12593,107 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
      );
  }
 
@@ -19225,6 +19245,62 @@ index 13ebc6824..a80a2274d 100644
 +    assert!(!sess.input_queue.has_pending_mailbox_items().await);
 +    assert!(sess.has_active_turn_or_pending_mailbox().await);
 +    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
++}
++
++#[tokio::test]
++async fn shutdown_if_idle_waits_for_a_finished_turn_to_clear() {
++    let (sess, tc, rx_event) = make_session_and_context_with_rx().await;
++    *sess.active_turn.lock().await = Some(ActiveTurn::default());
++    let (tx_sub, rx_sub) = async_channel::bounded(/*cap*/ 4);
++    let session_loop = tokio::spawn(submission_loop(
++        Arc::clone(&sess),
++        sess.get_config().await,
++        rx_sub,
++    ));
++    let thread = crate::codex_thread::CodexThread::new(
++        Arc::clone(&sess),
++        SessionIo {
++            tx_sub,
++            rx_event,
++            agent_status: tokio::sync::watch::channel(AgentStatus::PendingInit).1,
++            session_loop_termination: session_loop_termination_from_handle(session_loop),
++        },
++        crate::thread_startup_metadata::ThreadStartupMetadata::from(
++            &codex_protocol::protocol::SessionConfiguredEvent {
++                session_id: sess.session_id(),
++                thread_id: sess.thread_id(),
++                forked_from_id: None,
++                parent_thread_id: None,
++                thread_source: None,
++                thread_name: None,
++                model: "test".to_string(),
++                model_provider_id: "test".to_string(),
++                service_tier: None,
++                approval_policy: AskForApproval::Never,
++                approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
++                permission_profile: tc.permission_profile(),
++                active_permission_profile: None,
++                cwd: tc.config.cwd.clone(),
++                reasoning_effort: None,
++                initial_messages: None,
++                network_proxy: None,
++                rollout_path: None,
++            },
++        ),
++        /*rollout_path*/ None,
++        codex_protocol::protocol::SessionSource::Cli,
++    );
++    // The turn has sent its completion and only its bookkeeping is left.
++    let clearing = tokio::spawn({
++        let sess = Arc::clone(&sess);
++        async move {
++            tokio::time::sleep(StdDuration::from_millis(50)).await;
++            *sess.active_turn.lock().await = None;
++        }
++    });
++
++    assert!(thread.shutdown_if_idle().await.expect("shutdown_if_idle"));
++    clearing.await.expect("clear the finished turn");
 +}
 +
  #[tokio::test]
@@ -23203,10 +23279,10 @@ index 50f965cd5..f6e68f9f4 100644
  #[path = "managed_threads_tests.rs"]
  mod managed_threads;
 diff --git a/codex-rs/core/tests/suite/pending_input.rs b/codex-rs/core/tests/suite/pending_input.rs
-index 0df8b4a20..8fb1782e6 100644
+index 0df8b4a20..02c6ddcb1 100644
 --- a/codex-rs/core/tests/suite/pending_input.rs
 +++ b/codex-rs/core/tests/suite/pending_input.rs
-@@ -2018,6 +2018,63 @@ async fn interrupt_if_no_pending_input_checks_turn_and_queue(
+@@ -2018,6 +2018,55 @@ async fn interrupt_if_no_pending_input_checks_turn_and_queue(
      Ok(())
  }
 
@@ -23240,15 +23316,7 @@ index 0df8b4a20..8fb1782e6 100644
 +        matches!(event, EventMsg::TurnComplete(_))
 +    })
 +    .await;
-+    // The terminal event is delivered just before the active turn is cleared.
-+    while !tokio::time::timeout(
-+        std::time::Duration::from_secs(/*secs*/ 10),
-+        codex.shutdown_if_idle(),
-+    )
-+    .await??
-+    {
-+        tokio::task::yield_now().await;
-+    }
++    assert!(codex.shutdown_if_idle().await?);
 +    wait_for_event(&codex, |event| matches!(event, EventMsg::ShutdownComplete)).await;
 +    server.shutdown().await;
 +    Ok(())

@@ -248,10 +248,13 @@ async function headless() {
   assert.ok(fixture?.failing, `the broken mod is failing: ${JSON.stringify(fixture)}`);
   assert.ok(component(reconnected.view(), 'desk_log') && component(reconnected.view(), 'external_clients'), 'other mods keep drawing');
   const heldToken = (await reconnected.session.read()).actionToken;
-  await reconnected.session.recovery({ action: 'disable', target: 'approval_desk' });
+  await rejects(reconnected.session.recovery({ action: 'disable', target: 'approval_desk' }), 'client_surface_operation_unavailable');
+  await ask('disable_desk');
+  await reconnected.session.recovery({ action: 'reload', target: 'approval_desk' });
   await until('disabled mod left the view', () => !component(reconnected.view(), 'desk_log'), 15000);
   await rejects(reconnected.session.request('omd/action', { actionToken: heldToken, component: 'desk_log', row: 0 }), 'action_stale');
-  await reconnected.session.recovery({ action: 'enable', target: 'approval_desk' });
+  await ask('enable_desk');
+  await reconnected.session.recovery({ action: 'reload', target: 'approval_desk' });
   await until('re-enabled mod drew', () => component(reconnected.view(), 'desk_log'), 15000);
   await ask('change_source');
   await reconnected.session.recovery({ action: 'reload', target: 'approval_desk' });

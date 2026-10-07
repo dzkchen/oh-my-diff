@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.160.1.patch",
-    "sha256": "f3f5292156d5a3b9cb8bbb94f844bee759737a715eb53040dbb0518f12e2933c"
+    "sha256": "482d2ffb92c5b8b8d640ff70aa3f86606297ac5e9420c6929d6aabfe88767886"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -349,7 +349,7 @@
     },
     "codex-rs/core/src/codex_thread.rs": {
       "before": "1d3c5b62bd86aba13362d73aadb2221bbb5362619f690c311ac69d4b31e29aa0",
-      "after": "8aafab6c85094586800a9ab3418058d5acb7111cb97b5bba430517ddecd32642"
+      "after": "5d464c28a105af445c2a0d6f16f697a915c1160c7da651c86f933de6079b7f0e"
     },
     "codex-rs/core/src/compact.rs": {
       "before": "715756709185c29499c328617a7907a7fc8ede9e89fe55b4dbddfe9c15e22080",
@@ -425,7 +425,7 @@
     },
     "codex-rs/core/src/session/tests.rs": {
       "before": "c8860a61dadf86e974bb9b8c150dabfbe1935c440825512dec440f1460dab7d7",
-      "after": "74d748e1389c9a151b10fa92387e214634a378ba26aeedbfe1b0c0255a73a635"
+      "after": "2508cc8dff60669113e74ea56473791fa2d1228c6c0687d4ac35ae6c4670ad7e"
     },
     "codex-rs/core/src/session/turn.rs": {
       "before": "8c27407110003a384cc7a9f85985d83ff824378f1feb22e7e5c19d927d77ca1d",
@@ -645,7 +645,7 @@
     },
     "codex-rs/core/tests/suite/pending_input.rs": {
       "before": "b3260a2f70ae5e1cdac3b4330a66a064bc686c6fe7f4b981f2aea10813a21d5a",
-      "after": "b4a96df3ca386479d7bb271f11bfda55b7fc73f8a1cf0a7c97c2b55397a71ab0"
+      "after": "629574ecedb8bd7b97b14a4ab8c894361b871a62acf35ad996e4849f8711dc68"
     },
     "codex-rs/exec-server/README.md": {
       "before": "2ffd3eeba52c376c1e4fd146a81999306fe5152d7d72852917441b728b2ee592",

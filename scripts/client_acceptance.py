@@ -127,6 +127,8 @@ def main():
     def headless(need):
         if need == "change_source":
             (mods / "approval_desk/index.ts").write_text(desk_source.replace("label: 'Approvals'", "label: 'Approvals v2'"))
+        elif need in ("disable_desk", "enable_desk"):
+            call([manager, need.removesuffix("_desk"), store, mods / "approval_desk"], ROOT)
         elif need == "trust_source":
             store_with(manager, store, [mods / "approval_desk"], init=False)
         elif need == "restart_host":
