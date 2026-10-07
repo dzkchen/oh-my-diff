@@ -376,8 +376,8 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
             launch(profile, profile=expected, exercise=not diagnostic_only,
                    status=None if diagnostic_only else "Oh My Diff",
                    status_selector="platform_only" if profile == "platform" else "full",
-                   live_mods=() if diagnostic_only else (("omd_logo", "omd_mods") if profile == "platform" else
-                       ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace")),
+                   live_mods=() if diagnostic_only else (("omd_logo", "omd_mods", "omd_update") if profile == "platform" else
+                       ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace")),
                    startup_seconds=30 if diagnostic_only else 10)
             if diagnostic_only:
                 call(command + ["uninstall"], env)
@@ -477,7 +477,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                     "profile": expected, "greeting": "THEME GREETING PROBE", "backdrop": "THEMEPROBE",
                 })
                 call(command + ["mod", "disable", "omd_theme"], env)
-                for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods"):
+                for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update"):
                     call(command + ["mod", "disable", identifier], env)
                 launch("full_zero_first_party", logo=False, greeting=None)
             call(command + ["activate", "direct"], env)

@@ -162,7 +162,7 @@ export type TerminalOverlay = {
 export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[]; overlay?: TerminalOverlay };
 export type TerminalWelcome = { show_while_composing?: boolean };
 /** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
-export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed' };
+export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed'; surface?: 'inline' | 'fullscreen' };
 export interface TerminalTheme {
   accent?: ThemeColor; user_message_background?: ThemeColor; syntax?: string; success?: ThemeColor; attention?: ThemeColor; failure?: ThemeColor;
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';
@@ -253,7 +253,7 @@ export type CompactionResult = { summary: string | null; history: HistoryItem[];
 /** One draft edit; `insert` goes at the cursor, `splice` replaces byte range `start..end`. */
 export type ComposerEdit = { kind: 'fill' | 'insert' | 'append'; text: string } | { kind: 'splice'; text: string; start: number; end: number };
 export type ComposerDraft = { text: string; cursor: number; selection: { start: number; end: number } | null; revision: number;
-  /** `label` is the placeholder in `text`; `resource` is an image resource bound to the reading mod, or null for unsupported media. */
+  /** `label` is the text placeholder; image resources keep mod/source/repository binding across config changes and forks; unsupported media is null. */
   attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null }[];
   suggestion: { owner: string; id: string } | null };
 export type ClassicHook = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'PermissionRequest' | 'PermissionDenied'
@@ -274,13 +274,14 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'selection'; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
-export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string };
-export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; index?: string; scope?: 'user' | 'project' };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
+export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string } | { kind: 'npm'; package: string; version?: string; registry?: string; integrity?: string };
+export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; scope?: 'user' | 'project' };
+export type PackageCatalogEntry = { id: string; latest: string; description: string; support: string | null; versions: { version: string; blocked: string | null }[]; installed: string | null };
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
 export interface HostOperations {
-  'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] }; sandbox?: 'none' }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
+  'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] }; exclusive_workspace?: string; sandbox?: 'none' }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
   'exec.output_page': { arguments: { artifact: ResourceRef; cursor?: number; max_bytes?: number }; result: { text: string; cursor: number | null; bytes: number; sha256: string } };
   'workspace.read': { arguments: { paths: string[]; root?: string }; result: { files: Record<string, { text: string; sha256: string } | null> } };
   'workspace.list': { arguments: { path?: string; recursive?: boolean; include_ignored?: boolean; max_entries?: number; root?: string }; result: { entries: ({ path: string } & FileStat)[]; truncated: boolean } };
@@ -377,7 +378,8 @@ export interface HostOperations {
   'prompts.revoke': { arguments: { consent: string }; result: { revoked: number } };
   'builtins.invoke': { arguments: { action: KeymapAction }; result: { invoked: boolean } };
   'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
-  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; conflicts: string[] } };
+  'packages.index': { arguments: { index?: string; query?: string }; result: { index: string; packages: PackageCatalogEntry[] } };
+  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
   'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };

@@ -27,6 +27,10 @@ omd-package profiles [--model work] [codex args]   # launch with the profiles pr
 
 How it works:
 
+Provider tool names use distinct aliases of at most 64 characters, including names
+that collide after namespace flattening or truncation. Tool history and returned
+calls map back to the original namespace and name.
+
 - Credentials are enrolled, refreshed and removed by the host's native flows (`credentials.request`); the mod never sees a token. Each profile is a `host.json` lead route on the `omd_profiles` provider that names its credential, so the host puts that account's token on each request.
 - Setup writes the route, a Codex catalog entry (the bundled entry when the upstream model is a Codex model, otherwise `--window` is required) and the router table. The host rereads `host.json` routes, so a profile added while a session runs can be selected there with `/profile use`; the `/model` list shows new profiles after the next launch.
 - `/profile use` (or the Profiles list in the compact `/model` picker) records the switch in the state of the thread you are viewing (the mod's state is per thread), and that thread's next turn calls `routes.select` for it before its first request: the thread, attachments and tool history stay. A refused switch shows `profile switch failed` in the status line and its reason in `/profile`. Each turn on a profiles thread restarts the router if it stopped (host workers live at most `worker_limits.seconds`, 30 minutes by default; setup no longer raises that limit).

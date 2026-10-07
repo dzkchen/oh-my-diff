@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Reports working, blocked and idle states and the session resume command to the Herdr pane that runs OMD, and releases the pane on exit",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_herdr"},
   "capabilities": ["exec", "unix_sockets", "threads", "lifecycle", "store", "commands"],
   "exec_environment": ["HERDR_ENV", "HERDR_PANE_ID", "HERDR_BIN_PATH", "HERDR_SOCKET_PATH"],

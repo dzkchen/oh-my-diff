@@ -12,6 +12,15 @@ Setup installs `@cursor/sdk@1.0.35` with pnpm into `<prefix>/cursor/sdk` (the SD
 
 How a turn runs:
 
+Setup pins the SDK dependency tree in the service grant. Launch copies verified
+dependencies and the admitted package helpers into a private sandbox snapshot;
+the transport loads the SDK only from that snapshot. Changing installed code
+cannot change an already admitted helper. Changed SDK dependencies require setup
+again. A custom SDK entrypoint must live in a dedicated directory separate from
+the installation prefix and mod store.
+For an installed SDK entry, setup pins the dedicated installation root above
+its outermost `node_modules`, including package metadata and dependencies.
+
 - The SDK runs locally (no cloud agent and no repository upload). Cursor's built-in tools, ambient `.cursor` settings, rules and MCP servers are turned off. The agent works in an empty private directory, so it reaches your repository only through OMD tools.
 - Every Codex tool in the request, including deferred tools loaded through `tool_search`, is offered to Cursor as an SDK custom tool. When Cursor calls one, the transport parks the run and returns the call to Codex. Codex then executes it under OMD's sandbox, approvals and mods. The next request returns the output and the same run continues. Parallel calls are handed to Codex together. Tools loaded mid-turn are called through `omd_call`. Hosted web search is not offered.
 - Cursor keeps its own system prompt and context. Codex's base instructions are not sent. A new agent receives the developer context (permissions, environment) and the transcript. A thread's follow-up resumes the same Cursor agent from its local store (`/private/tmp/omd-cursor-<uid>`, lost on reboot), including after a transport restart. A forked thread, a concurrent request or an unknown history starts a new agent seeded with the transcript; tool exchanges are replayed only as text. Codex reasoning effort maps to the model's reasoning parameter when it has one. A model change applies to the next run.
@@ -28,6 +37,10 @@ Accounting:
 - When Cursor refuses a request for plan usage or rate limits, the turn fails as `rate_limit_exceeded`. OMD never falls back to another route or a paid API key.
 
 `/cursor` (doctor) shows the SDK version, account, key expiry, discovered models and posture.
+
+Each callback applies at most eight ready settlements. A remaining ready batch
+continues at one-second intervals after the six-minute window while charges
+are being applied; failed settlements remain in the log for a later turn.
 
 Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login and delayed charges. Pinned Codex 0.160.1 accepts the catalog and executes a relayed `exec_command` call (`OMD_TEST_CODEX`). An offline OMD-mode session ran the full path: broker-held enrollment, provider registration, a relayed tool call, provider-reported ledger entries and a `ledger.settle` charge. Not verified: a real Cursor account. Subscription support stays unclaimed until an authorized account-backed run.
 

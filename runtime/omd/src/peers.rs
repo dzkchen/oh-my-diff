@@ -4,7 +4,6 @@ use crate::broker;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -100,7 +99,8 @@ pub struct Peers {
     session: String,
     repository: PathBuf,
     _lock: fs::File,
-    seen: Mutex<BTreeSet<String>>,
+    /// Message ids already taken, until they expire; a replay after that is refused as expired.
+    seen: Mutex<BTreeMap<String, u64>>,
     sent: Mutex<BTreeMap<String, Sent>>,
 }
 
@@ -195,7 +195,7 @@ impl Peers {
             session: session.to_owned(),
             repository: repository.to_owned(),
             _lock: lock,
-            seen: Mutex::new(BTreeSet::new()),
+            seen: Mutex::new(BTreeMap::new()),
             sent: Mutex::new(BTreeMap::new()),
         })
     }
@@ -263,6 +263,7 @@ impl Peers {
     }
 
     /// Writes a sealed message into the recipient's inbox and returns its receipt.
+    #[allow(clippy::too_many_arguments)]
     pub fn send(
         &self,
         seal: &dyn Seal,
@@ -335,26 +336,31 @@ impl Peers {
     /// Takes verified, unexpired, first-seen messages; expired ones get a receipt, replays are dropped.
     pub fn receive(&self, seal: &dyn Seal) -> io::Result<Vec<Inbound>> {
         let inbox = self.root.join("inbox").join(&self.session);
-        let (messages, _) = drain(&inbox, |envelope| {
-            let Some(message) = opened(seal, "message", envelope)? else {
-                return Ok(None);
-            };
-            if message["to"]["session"] != self.session.as_str() {
-                return Ok(None);
-            }
-            let id = message["id"].as_str().unwrap_or_default().to_owned();
-            if !self.seen.lock().is_ok_and(|mut seen| seen.insert(id)) {
-                return Ok(None);
-            }
-            if message["expires_at_ms"]
-                .as_u64()
-                .is_none_or(|at| at < now_ms())
-            {
-                self.receipt(seal, &message, "expired", None)?;
-                return Ok(None);
-            }
-            Ok(Some(Inbound { message }))
-        })?;
+        let now = now_ms();
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.retain(|_, expires_at_ms| *expires_at_ms >= now);
+        }
+        let (messages, _) =
+            drain(&inbox, |envelope| {
+                let Some(message) = opened(seal, "message", envelope)? else {
+                    return Ok(None);
+                };
+                if message["to"]["session"] != self.session.as_str() {
+                    return Ok(None);
+                }
+                let id = message["id"].as_str().unwrap_or_default().to_owned();
+                let expires_at_ms = message["expires_at_ms"].as_u64();
+                if !self.seen.lock().is_ok_and(|mut seen| {
+                    seen.insert(id, expires_at_ms.unwrap_or_default()).is_none()
+                }) {
+                    return Ok(None);
+                }
+                if expires_at_ms.is_none_or(|at| at < now_ms()) {
+                    self.receipt(seal, &message, "expired", None)?;
+                    return Ok(None);
+                }
+                Ok(Some(Inbound { message }))
+            })?;
         Ok(messages)
     }
 

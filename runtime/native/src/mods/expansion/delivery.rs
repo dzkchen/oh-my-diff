@@ -196,7 +196,7 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
                 session,
                 bytes,
             } => {
-                let Some(lead) = core.expansion.lead(thread) else {
+                let Some(lead) = core.expansion.thread(thread) else {
                     continue;
                 };
                 let payload = match bytes {
@@ -214,7 +214,7 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
                 paths,
                 include_ignored,
             } => {
-                let Some(lead) = core.expansion.lead(thread) else {
+                let Some(lead) = core.expansion.thread(thread) else {
                     continue;
                 };
                 let changes =
@@ -230,16 +230,13 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
                 core.event(event, payload, current.as_ref()).await;
             }
             Pending::Timer { thread, owner, key } => {
-                let Some(lead) = core.expansion.lead(thread) else {
+                let Some(lead) = core.expansion.thread(thread) else {
                     continue;
                 };
                 invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
             }
         }
     }
-    let Some(lead) = current else {
-        return budget == 0;
-    };
     let ids = sync_bus(core);
     for id in ids {
         if budget == 0 {
@@ -251,6 +248,12 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
             .unwrap_or_default();
         for event in events {
             budget -= 1;
+            let Some(lead) = ThreadId::from_string(&event.thread)
+                .ok()
+                .and_then(|thread| core.expansion.thread(thread))
+            else {
+                continue;
+            };
             let payload = json!({"publisher": event.publisher, "channel": event.channel,
                 "data": event.data, "correlation": event.correlation,
                 "sequence": event.sequence, "dropped": event.dropped});
@@ -295,6 +298,7 @@ fn sync_bus(core: &Core) -> Vec<String> {
 
 pub(in crate::mods) fn publish(
     core: &Core,
+    lead: &Lead,
     caller: &str,
     arguments: Value,
 ) -> Result<Value, String> {
@@ -311,7 +315,13 @@ pub(in crate::mods) fn publish(
     let delivery = codex_omd::event_bus::global()
         .lock()
         .map_err(|_| "event_bus_poisoned")?
-        .publish(caller, &input.channel, input.data, input.correlation)
+        .publish(
+            caller,
+            &input.channel,
+            input.data,
+            input.correlation,
+            &lead.thread.to_string(),
+        )
         .map_err(|error| error.to_string())?;
     core.expansion.wake.notify_one();
     Ok(json!({"delivered": delivery.delivered, "dropped": delivery.dropped}))
@@ -453,11 +463,15 @@ pub(in crate::mods) fn schedule(
         .lock()
         .map_err(|_| "timer_state_poisoned")?;
     timers.retain(|_, (_, task)| !task.is_finished());
-    let slot = (caller.id.to_owned(), input.key.clone());
+    let slot = (
+        lead.thread.to_string(),
+        caller.id.to_owned(),
+        input.key.clone(),
+    );
     if !timers.contains_key(&slot)
         && timers
             .keys()
-            .filter(|(owner, _)| owner == caller.id)
+            .filter(|(_, owner, _)| owner == caller.id)
             .count()
             >= lead.host.config.mod_limits.bounded().timers_per_mod
     {
@@ -478,6 +492,7 @@ pub(in crate::mods) fn schedule(
 
 pub(in crate::mods) fn cancel(
     core: &Core,
+    lead: &Lead,
     caller: &str,
     arguments: &Value,
 ) -> Result<Value, String> {
@@ -487,7 +502,7 @@ pub(in crate::mods) fn cancel(
         .timers
         .lock()
         .map_err(|_| "timer_state_poisoned")?
-        .remove(&(caller.to_owned(), key.to_owned()));
+        .remove(&(lead.thread.to_string(), caller.to_owned(), key.to_owned()));
     if let Some((_, task)) = &removed {
         task.abort();
     }
@@ -496,7 +511,7 @@ pub(in crate::mods) fn cancel(
 
 pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
     if let Ok(mut timers) = core.expansion.timers.lock() {
-        timers.retain(|(owner, _), (source, task)| {
+        timers.retain(|(_, owner, _), (source, task)| {
             let keep = sources.get(owner) == Some(source);
             if !keep {
                 task.abort();

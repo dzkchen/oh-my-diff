@@ -408,6 +408,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "prompts.revoke",
     "builtins.invoke",
     "packages.list",
+    "packages.index",
     "packages.preview",
     "packages.apply",
     "packages.reload",
@@ -520,13 +521,13 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
         exposure.push("approve.override: this mod may also approve commands your own execpolicy rules forbid.");
     }
     if granted("http") {
-        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles to requests for their enrolled origin; it never sees the tokens.");
+        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles, and with `owned` every secret this mod enrolls now or later, to requests for their enrolled origin; it never sees the tokens.");
     }
     if granted("fs.external") {
         exposure.push("fs.external: this mod may read, list and stat, and where write is set change, files under the fs_access roots outside the workspace; credential locations and protected paths stay refused.");
     }
     if granted("mcp") {
-        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, and their tools go through normal tool approvals.");
+        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, a URL server's credential profile (another mod's secret is refused) is sent to that origin, and their tools go through normal tool approvals.");
     }
     if granted("policy") {
         exposure.push("policy: this mod may refuse other mods at load and withhold the host namespaces listed in policy.namespaces from them; it cannot grant anything, change managed policy or judge itself, and disabling it in /omd restores the other mods.");
@@ -1055,9 +1056,9 @@ fn source_use(
             capabilities.insert("request_policy".to_owned());
         }
     }
-    if [".state.get(", ".state.set(", ".atom(", ".member("]
+    if [".state.get", ".state.set", ".atom", ".member"]
         .iter()
-        .any(|call| source.contains(call))
+        .any(|call| source.contains(&format!("{call}(")) || source.contains(&format!("{call}<")))
     {
         capabilities.insert("store".to_owned());
     }
@@ -1067,6 +1068,7 @@ fn source_use(
         (".session(", "inventory"),
         (".fs.", "fs.read"),
         (".classify(", "agents"),
+        (".classify<", "agents"),
         (".rateLimits(", "account"),
     ] {
         if source.contains(call) {
@@ -2357,6 +2359,7 @@ impl ModTelemetry {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModGrants {
+    pub surface_authority: crate::client_surface::Authority,
     pub api: String,
     pub source_sha256: String,
     pub capabilities: Vec<String>,
@@ -2507,6 +2510,16 @@ fn hostless(event: &str, payload: &Value) -> bool {
             )
 }
 
+/// Interceptors the engine runs synchronously while a model request is built, sent or streamed; a sleep there would stall that request's worker.
+fn request_path(event: &str, payload: &Value) -> Option<&'static str> {
+    if event != "intercept" {
+        return None;
+    }
+    ["model_request", "model_send", "response_stream"]
+        .into_iter()
+        .find(|surface| payload["surface"] == *surface)
+}
+
 /// `time.sleep` waits outside the runtime lock and wakes early when the callback is cancelled.
 fn sleep(
     access: &mut Access<'_>,
@@ -2585,6 +2598,11 @@ fn invoke(
                     if hostless(event, &payload) {
                         return Err(failure(format!(
                             "host_operation_unavailable: time.sleep is not available during {event}"
+                        )));
+                    }
+                    if let Some(surface) = request_path(event, &payload) {
+                        return Err(failure(format!(
+                            "time_sleep_unavailable: {surface} runs on the request path"
                         )));
                     }
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
@@ -2698,6 +2716,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
         | "composer.read"
         | "prompts.status"
         | "packages.list"
+        | "packages.index"
         | "packages.preview"
         | "exec.output_page"
         | "terminal.image_sample" => true,
@@ -2863,7 +2882,7 @@ impl ModHost {
                         .join("threads")
                         .join(thread)
                         .join(".state"),
-                    name,
+                    ModStore::state_name(&package.id, scope),
                 ),
                 None => store::StateLocation::Unavailable("state_thread_unavailable"),
             },
@@ -3084,6 +3103,25 @@ impl ModHost {
         self.node = config.node;
         self.loaded = next;
         self.order = order;
+        let denied = rejected
+            .iter()
+            .filter(|rejection| {
+                !self.rejected.iter().any(|previous| {
+                    previous.path == rejection.path && previous.reason == rejection.reason
+                })
+            })
+            .map(|rejection| {
+                json!({"path": rejection.path, "mod": rejection.id,
+                "scope": rejection.scope, "reason": rejection.reason.split(':').next()})
+            })
+            .collect::<Vec<_>>();
+        if !denied.is_empty()
+            && let Ok(_guard) = self.store.lock()
+        {
+            let _ = self
+                .store
+                .record_security_event("load_denied", json!({"selections": denied}));
+        }
         self.rejected = rejected;
         self.admit();
         self.configuration_sha256 = hash;
@@ -4513,6 +4551,39 @@ impl ModHost {
             .collect()
     }
 
+    pub fn launch_sources(
+        &self,
+        id: &str,
+        generation: u64,
+    ) -> io::Result<(PathBuf, BTreeMap<PathBuf, Vec<u8>>)> {
+        if generation != self.generation {
+            return Err(failure("service_generation_changed"));
+        }
+        let loaded = self
+            .active()
+            .find(|(owner, _)| owner.as_str() == id)
+            .map(|(_, loaded)| loaded)
+            .ok_or_else(|| failure("host_caller_inactive"))?;
+        if !loaded.selection.authority_current() {
+            return Err(failure("service_authority_changed"));
+        }
+        let root = loaded.selection.path.canonicalize()?;
+        if root != loaded.selection.path {
+            return Err(failure("service_source_path_changed"));
+        }
+        let mut files = BTreeMap::from([(
+            root.join(&loaded.package.entrypoint),
+            loaded.source.as_bytes().to_vec(),
+        )]);
+        for (name, value) in &loaded.assets {
+            let text = value["text"]
+                .as_str()
+                .ok_or_else(|| failure("service_asset_unavailable"))?;
+            files.insert(root.join(name), text.as_bytes().to_vec());
+        }
+        Ok((root, files))
+    }
+
     /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
     pub fn record_access(&mut self, receipt: Value) {
         self.access.push(receipt);
@@ -4525,6 +4596,12 @@ impl ModHost {
         self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| {
             let current = m.selection.authority_current();
             ModGrants {
+                surface_authority: crate::client_surface::Authority {
+                    epoch: crate::client_surface::epoch(),
+                    admission: crate::client_surface::admission(),
+                    configuration: self.configuration_sha256.clone(),
+                    source: m.selection.sha256.clone(),
+                },
                 api: m.package.api.clone(),
                 source_sha256: m.selection.sha256.clone(),
                 capabilities: m

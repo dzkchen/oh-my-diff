@@ -1,8 +1,8 @@
 # Managed browser bundle
 
 Oh My Diff pins one Apple Silicon browser stack in `browser.lock.json`: Node
-24.21.0, pnpm 11.14.0, `@playwright/mcp` 0.0.81, its exact Playwright dependency,
-and Chromium headless-shell revision 1244. The lock includes the official Node
+24.21.0, pnpm 11.14.0, `@playwright/mcp` 0.0.83, its exact Playwright dependency,
+and Chromium headless-shell revision 1247. The lock includes the official Node
 archive URL and hash; `pnpm-lock.yaml` freezes the complete JavaScript graph.
 
 The same managed Node runtime carries the optional application bridge host and
@@ -50,8 +50,9 @@ uninstall. Selecting retained upstream does not register the managed browser.
 
 ## Updates and removal
 
-Updates build or unpack a replacement, verify it, atomically exchange it, and
-restore the prior verified tree if post-swap verification fails:
+Updates build and verify a replacement, journal activation, and restore the prior
+verified tree if activation fails. Rerunning the update reconciles an interrupted
+activation before checking the installed bundle:
 
 ```sh
 python3 scripts/browser_bundle.py update /absolute/browser-bundle

@@ -6,6 +6,7 @@ type Change = { section: keyof Sections; name: string; value: string | Spec | nu
 type Proposal = { changes: Change[]; reason: string; evidence: string[] };
 type Harness = { version: number; pending: Proposal | null; log: { version: number; kind: 'refine' | 'rollback'; reason: string; evidence: string[] }[] };
 type Kept = { sha256: string; chars: number; sources: string[] };
+type KeptIndex = Kept & { key: string };
 type Mirror = { base: Sections; thread: string | null; version: number; sections: Sections; vars: Record<string, Kept> };
 
 const SECTIONS = ['notes', 'memories', 'skills', 'agents'] as const;
@@ -237,24 +238,36 @@ export default function activate(api: ModAPI) {
     if (typeof value.name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(value.name) || typeof value.value !== 'string' || value.value.length > 32_768
       || !strings(value.sources ?? [], 8, 200)) throw new Error('keep_invalid: identifier name, string value up to 32 KiB and up to 8 sources');
     const sources = [...new Set((value.sources ?? []) as string[])].slice(0, 8);
+    if (encodeURIComponent(value.value).replace(/%[0-9A-F]{2}|./g, 'x').length > 32_768) throw new Error('keep_limit: value exceeds 32 KiB');
     const registry = api.host.call('store.get', { key: 'vars', scope: 'thread' });
-    const vars = { ...(registry?.value as unknown as Record<string, Kept> | undefined ?? {}) };
+    const vars = { ...(registry?.value as unknown as Record<string, KeptIndex> | undefined ?? {}) };
     if (!vars[value.name] && Object.keys(vars).length >= 32) throw new Error('keep_limit: 32 variables');
     const kept = { sha256: await sha256(value.value), chars: value.value.length, sources };
-    const previous = api.host.call('store.get', { key: `var.${value.name}`, scope: 'thread' });
-    api.host.call('store.put', { key: `var.${value.name}`, value: value.value, expected_revision: previous?.revision ?? null, scope: 'thread' });
-    api.host.call('store.put', { key: 'vars', value: { ...vars, [value.name]: kept } as unknown as Json, expected_revision: registry?.revision ?? null, scope: 'thread' });
+    const envelope = { value: value.value, ...kept };
+    const encoded = JSON.stringify(envelope);
+    if (encodeURIComponent(encoded).replace(/%[0-9A-F]{2}|./g, 'x').length > 65_536) throw new Error('keep_limit: serialized value and provenance exceed 64 KiB');
+    const key = `var.${await sha256(encoded)}`;
+    const previous = api.host.call('store.get', { key, scope: 'thread' });
+    if (!previous) api.host.call('store.put', { key, value: envelope, expected_revision: null, scope: 'thread' });
+    else if (JSON.stringify(previous.value) !== encoded) throw new Error('variable_digest_mismatch');
+    api.host.call('store.put', { key: 'vars', value: { ...vars, [value.name]: { ...kept, key } } as unknown as Json, expected_revision: registry?.revision ?? null, scope: 'thread' });
     publish({ vars: { ...vars, [value.name]: kept } });
     return kept;
   });
 
-  tool({ name: 'vars', description: 'List kept context variables, or return one by name.', parameters: schema({ name: { type: 'string' } }) }, (value): Json => {
-    const vars = (api.host.call('store.get', { key: 'vars', scope: 'thread' })?.value ?? {}) as unknown as Record<string, Kept>;
-    if (value.name === undefined) return { vars: vars as unknown as Json };
+  tool({ name: 'vars', description: 'List kept context variables, or return one by name.', parameters: schema({ name: { type: 'string' } }) }, async (value): Promise<Json> => {
+    const vars = (api.host.call('store.get', { key: 'vars', scope: 'thread' })?.value ?? {}) as unknown as Record<string, KeptIndex>;
+    if (value.name === undefined) return { vars: Object.fromEntries(Object.entries(vars).map(([name, { sha256, chars, sources }]) => [name, { sha256, chars, sources }])) };
     const name = String(value.name);
-    const stored = vars[name] && api.host.call('store.get', { key: `var.${name}`, scope: 'thread' });
+    const indexed = vars[name];
+    const stored = indexed && api.host.call('store.get', { key: indexed.key, scope: 'thread' });
     if (!stored) throw new Error(`unknown_variable: ${name}`);
-    return { value: stored.value, ...vars[name] };
+    const envelope = stored.value as unknown as Kept & { value: string };
+    if (!object(envelope) || typeof envelope.value !== 'string' || `var.${await sha256(JSON.stringify(envelope))}` !== indexed.key
+      || await sha256(envelope.value) !== indexed.sha256 || envelope.sha256 !== indexed.sha256
+      || envelope.chars !== envelope.value.length || envelope.chars !== indexed.chars
+      || JSON.stringify(envelope.sources) !== JSON.stringify(indexed.sources)) throw new Error(`variable_provenance_invalid: ${name}`);
+    return envelope as unknown as Json;
   });
 
   const route = (requested: unknown, role: 'worker') => {

@@ -70,6 +70,19 @@ pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+pub(super) fn package_read(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>> {
+    let path = root.join(relative);
+    if !path
+        .parent()
+        .ok_or_else(|| failure("package_path_escape"))?
+        .canonicalize()?
+        .starts_with(root)
+    {
+        return Err(failure(format!("package_path_escape: {relative}")));
+    }
+    read(&path, limit)
+}
+
 pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
     let (package, source, hash, _) = package_with_assets(path)?;
     Ok((package, source, hash))
@@ -84,7 +97,7 @@ pub(super) fn package_with_assets(
     let manifest = read(&path.join("mod.json"), 8192)?;
     let package: ModPackage = serde_json::from_slice(&manifest)?;
     package.validate()?;
-    let source = read(&path.join(&package.entrypoint), 65_536)?;
+    let source = package_read(path, &package.entrypoint, 65_536)?;
     let mut bytes = manifest;
     bytes.push(0);
     bytes.extend_from_slice(package.entrypoint.as_bytes());
@@ -96,11 +109,11 @@ pub(super) fn package_with_assets(
         bytes.push(0);
         bytes.extend_from_slice(script.as_bytes());
         bytes.push(0);
-        bytes.extend_from_slice(&read(&path.join(script), 65_536)?);
+        bytes.extend_from_slice(&package_read(path, script, 65_536)?);
     }
     let mut assets = BTreeMap::new();
     for asset in &package.assets {
-        let content = read(&path.join(asset), 65_536)?;
+        let content = package_read(path, asset, 65_536)?;
         bytes.push(0);
         bytes.extend_from_slice(asset.as_bytes());
         bytes.push(0);
@@ -122,6 +135,8 @@ pub struct ModStore {
 }
 
 pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
+const SECURITY_EVENTS: &str = "security-events.jsonl";
+const SECURITY_EVENT_LIMIT: usize = 65_536;
 
 #[derive(Clone, Debug)]
 pub(super) enum StateLocation {
@@ -225,9 +240,10 @@ impl ModStore {
         Ok(store)
     }
 
-    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected.
+    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset
+    /// `packages.lock.json` leaves its packages as plain trusted selections.
     pub fn reset(&self, name: &str) -> Result<PathBuf> {
-        if !matches!(name, "mods.json" | "host.json") {
+        if !matches!(name, "mods.json" | "host.json" | "packages.lock.json") {
             return Err(failure("store_file_not_resettable"));
         }
         let path = self.root.join(name);
@@ -355,6 +371,49 @@ impl ModStore {
     pub fn configuration(&self) -> Result<ModConfiguration> {
         let path = self.root.join("mods.json");
         ModConfiguration::parse(&read(&path, 65_536)?, &path)
+    }
+
+    pub(super) fn record_security_event(&self, event: &str, detail: Value) -> Result<()> {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(failure)?
+            .as_secs();
+        let mut entry = json!({"at": at, "event": event});
+        if let (Some(entry), Value::Object(detail)) = (entry.as_object_mut(), detail) {
+            entry.extend(detail);
+        }
+        let mut line = serde_json::to_vec(&entry)?;
+        line.push(b'\n');
+        let mut bytes = self.security_event_bytes()?;
+        if bytes.len() + line.len() > SECURITY_EVENT_LIMIT {
+            let start = bytes.len() / 2;
+            let keep = bytes[start..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| start + offset + 1);
+            bytes.drain(..keep);
+        }
+        bytes.extend_from_slice(&line);
+        self.write_staged(SECURITY_EVENTS, &bytes, || Ok(()))
+    }
+
+    pub fn security_events(&self) -> Result<Vec<Value>> {
+        self.security_event_bytes()?
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).map_err(Into::into))
+            .collect()
+    }
+
+    fn security_event_bytes(&self) -> Result<Vec<u8>> {
+        match read(
+            &self.root.join(SECURITY_EVENTS),
+            SECURITY_EVENT_LIMIT as u64,
+        ) {
+            Ok(bytes) => Ok(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn selection_status(&self) -> Result<Value> {
@@ -550,32 +609,63 @@ impl ModStore {
             .filter(|selection| trusted.contains(&selection.path))
             .map(|selection| grant(&json!(selection)))
             .collect();
-        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)
+        let event = json!({"selections": config.mods.iter()
+            .filter(|selection| trusted.contains(&selection.path))
+            .map(|selection| json!({"path": selection.path, "sha256": selection.sha256,
+                "capabilities": selection.capabilities, "scope": selection.scope,
+                "expires_at": selection.expires_at}))
+            .collect::<Vec<_>>()});
+        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)?;
+        let _ = self.record_security_event("trust", event);
+        Ok(())
     }
 
-    pub fn revoke_authority(&self, path: &Path) -> Result<()> {
+    /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
+    pub fn revoke(&self, target: &str) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
+        let mut lock = self.read_package_lock().unwrap_or_default();
+        let managed = lock.packages.get_mut(target).map(|package| {
+            package.enabled = false;
+            package.trust = Default::default();
+            (package.path.clone(), package.scope.clone())
+        });
         let mut config = self.configuration()?;
-        let selection = config
-            .mods
-            .iter_mut()
-            .find(|m| m.path == path)
-            .ok_or_else(|| failure("package_not_trusted"))?;
-        selection.expires_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(failure)?
-                .as_secs(),
-        );
-        let renewed = BTreeSet::from([grant(&json!(selection))]);
+        let mut revoked = Vec::new();
+        for selection in &mut config.mods {
+            if managed
+                .as_ref()
+                .is_some_and(|(path, scope)| &selection.path == path && &selection.scope == scope)
+                || selection.path == Path::new(target)
+                || package(&selection.path).is_ok_and(|(manifest, _, _)| manifest.id == target)
+            {
+                selection.enabled = false;
+                selection.capabilities.clear();
+                selection.secret_environment.clear();
+                selection.expires_at = None;
+                revoked.push(json!({"path": selection.path, "scope": selection.scope}));
+            }
+        }
+        if revoked.is_empty() {
+            return Err(failure("package_not_trusted"));
+        }
         config.revision = config
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        let value = serde_json::to_value(config)?;
-        self.write_granting("mods.json", &value, &renewed)
-            .or_else(|_| self.write("mods.json", &value))
+        let event = json!({"mod": target, "selections": revoked});
+        if managed.is_some() {
+            lock.revision = lock
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| failure("revision_overflow"))?;
+            self.commit_package_transaction(lock, config, &[], "revoke", event)?;
+            Ok(())
+        } else {
+            self.write("mods.json", &serde_json::to_value(config)?)?;
+            let _ = self.record_security_event("revoke", event);
+            Ok(())
+        }
     }
 
     pub fn enable(&self, path: &Path, enabled: bool) -> Result<()> {
@@ -603,6 +693,13 @@ impl ModStore {
             let (manifest, _, hash) = package(path)?;
             if hash != selection.sha256 {
                 return Err(failure("source_changed: inspect and trust the new digest"));
+            }
+            if manifest
+                .capabilities
+                .iter()
+                .any(|capability| !selection.capabilities.contains(capability))
+            {
+                return Err(failure("capability_denied: trust the package again"));
             }
             self.check_service_providers(&manifest, path)?;
         }

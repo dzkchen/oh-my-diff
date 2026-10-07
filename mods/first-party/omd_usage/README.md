@@ -49,9 +49,10 @@ request category drilldown; both apply from the next turn. Settings:
   separately, and unknown subscription overage is said so.
 - **Quota.** `account/rateLimits/read` at start and `account/rateLimits/updated`
   give each reported window (its own duration, used share, reset time and
-  extra-usage credits). Readings carry no route, so they belong to the lead's
-  latest provider and credential profile; readings before the first lead
-  response are bound to the account of that response. Identical repeated
+  extra-usage credits). These readings belong to the signed-in Codex account
+  and are labeled accordingly. The endpoint provides no account-to-route binding,
+  so current-route quota is unavailable. Changing the lead provider never relabels
+  Codex quota as that provider's quota. Account changes clear old readings. Identical repeated
   readings only refresh their observation time. A projection at reset needs two
   readings in the current period spanning at least 5 minutes or a tenth of the
   window; otherwise it says the data is insufficient. After the reset time

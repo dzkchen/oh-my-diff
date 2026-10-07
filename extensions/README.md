@@ -56,7 +56,8 @@ the versioned cache directory.
 | `omd_typed_tasks` | mod | Bounded workers with typed results | OMD+, installed inactive |
 | `omd_logo` | mod | Oh My Diff terminal logo and launch status | Both profiles, active by default |
 | `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | OMD+, active by default |
-| `omd_git` | mod | Git sidebar with confirmed source-control actions | OMD+, installed inactive |
+| `omd_update` | mod | Update notices and `/update` controls | Both profiles, active by default |
+| `omd_git` | mod | Git sidebar with confirmed source-control actions and read-only GitHub PR and CI status | OMD+, installed inactive |
 | `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | OMD+, inactive candidate |
 | `omd-review-policy` | plugin with skills and hook | Review cadence and final review prompts | OMD+, inactive candidate |
 | `omd-application-bridges` | plugin with hook | Application diagnostics | OMD+, inactive source candidate |
@@ -66,9 +67,8 @@ Each reviewed row records an extension type, capability, exact tested host
 versions and compatibility conditions, source, license, maintainer, evidence,
 and support status. A plugin may contain skills or hooks; its `components` list
 names those types without suggesting they can be installed independently.
-`undeclared` and `UNLICENSED` report the current source truth. They are
-release blockers for distribution or transfer until the owner publishes an
-appropriate license. Check the latest lock and manifest at installation time;
+The license is the manifest's declaration, or `undeclared` when it has none.
+Check the latest lock and manifest at installation time;
 the index is descriptive and never grants trust or overrides native checks.
 
 ## Install without the index
@@ -77,13 +77,13 @@ Mods can be installed from an absolute local source directory or a Git
 repository at a full 40-hex commit using the native `omd-mod` manager. This
 works even if these JSON files are unavailable. `omd-mod inspect PACKAGE`
 shows the exact manifest and digest. For a managed package, use
-`omd-mod package-plan STORE REQUEST_JSON` with a `local` or `repository` source,
+`omd-mod package-plan STORE REQUEST_JSON` with a `local`, `repository` or `npm` source,
 review every dependency, capability, license, lifecycle action, setting and
 activation change, then use `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION`
 with the printed confirmation. The manager checks package schema, host/API
 compatibility, integrity, service contracts, dependency graph and individual
-trust grants before changing the lock. Choose `"activate":false` for a new
-package unless its specific use is intended now. A source may also be installed
+trust grants before changing the lock. Installing never turns a package on;
+run `omd mods enable ID` once its use is intended. A source may also be installed
 from an exact entry in a local schema-1 package index; such an index is a
 convenience, not a required service. See [mod commands](../mods/REFERENCE.md)
 and [compatibility](../mods/COMPATIBILITY.md).

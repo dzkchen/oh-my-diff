@@ -6,8 +6,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::io;
-use std::io::Read;
-use std::io::Seek;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -48,26 +46,35 @@ fn with<T>(
     }
     let directory = root.join("consents");
     fs::create_dir_all(&directory)?;
-    let mut file = fs::OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(directory.join(format!("{thread}.json")))?;
+        .open(directory.join(format!("{thread}.lock")))?;
     file.lock()?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
-    let mut consents: Vec<Consent> = if text.is_empty() {
-        Vec::new()
-    } else {
-        serde_json::from_str(&text)?
-    };
+    let path = directory.join(format!("{thread}.json"));
+    let mut consents = read(&path)?;
+    let before = consents.clone();
     let result = change(&mut consents)?;
-    file.set_len(0)?;
-    file.rewind()?;
-    file.write_all(&serde_json::to_vec(&consents)?)?;
+    if consents != before {
+        let bytes = serde_json::to_vec(&consents)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(path).map_err(|error| error.error)?;
+        fs::File::open(directory)?.sync_all()?;
+    }
     Ok(result)
+}
+
+fn read(path: &Path) -> io::Result<Vec<Consent>> {
+    match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
 }
 
 pub fn grant(root: &Path, thread: &str, owner: &str, sha256: &str, id: &str) -> io::Result<()> {
@@ -147,12 +154,12 @@ pub fn delivered(root: &Path, thread: &str, client_id: &str, turn_id: &str) -> i
 }
 
 pub fn status(root: &Path, thread: &str, owner: &str, id: &str) -> io::Result<Option<Consent>> {
-    with(root, thread, |consents| {
-        Ok(consents
-            .iter()
-            .find(|consent| consent.id == id && consent.owner == owner)
-            .cloned())
-    })
+    if !token(thread) {
+        return Err(io::Error::other("consent_thread_invalid"));
+    }
+    Ok(read(&root.join("consents").join(format!("{thread}.json")))?
+        .into_iter()
+        .find(|consent| consent.id == id && consent.owner == owner))
 }
 
 /// Keeps only the consents `keep` accepts and returns how many were dropped.

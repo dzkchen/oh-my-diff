@@ -42,6 +42,30 @@ fn granted_subscription_route_records_usage_without_a_settled_cash_charge() {
     assert_eq!(capture.raw_usage_attempts, 1);
 }
 
+#[test]
+fn cost_summary_totals_every_attempt_but_keeps_only_the_newest() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    task.authorize_route("vendor", "model-a").unwrap();
+    for charge in [3, 4, 5] {
+        let admitted = task.admit("lead", "vendor", "model-a", 20).unwrap();
+        task.dispatch(&admitted, || Ok(())).unwrap();
+        task.settle(&admitted, json!({"input_tokens": 1}), charge)
+            .unwrap();
+    }
+    let full = task.cost_capture().unwrap();
+    let (summary, observed) = task.cost_summary(2).unwrap();
+    assert_eq!(observed, 0);
+    assert!(summary.observed.is_empty());
+    assert_eq!(summary.attempts, full.attempts[1..]);
+    assert_eq!(summary.settled_task_charge_microusd, 12);
+    assert_eq!(
+        summary.settled_task_charge_microusd,
+        full.settled_task_charge_microusd
+    );
+    assert_eq!(summary.raw_usage_attempts, 3);
+}
+
 fn worker() -> WorkerLimits {
     WorkerLimits {
         requests: 2,

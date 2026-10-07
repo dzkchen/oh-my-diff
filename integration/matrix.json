@@ -191,8 +191,8 @@
         "rust:omd/tests/packages.rs::stale_plans_and_interrupted_transactions_preserve_the_previous_lock",
         "rust:omd/tests/packages.rs::repository_revision_is_immutable_and_cached_for_offline_reuse"
       ],
-      "limitations": "Local sources, immutable repository revisions and versioned packages only; there is no external registry publication or install path.",
-      "removal": "`omd-mod` disable and uninstall restore the previous lock, preserve edited sources and explicit settings, and leave no activated state."
+      "limitations": "Local folders, Git repositories (a branch or tag locks to its commit), curated-index releases and npm packages from public or npmrc-configured private registries (sha512-verified, no runtime dependencies, npm install scripts never run). Installing never enables a mod, and granted permissions still run with that authority.",
+      "removal": "`omd-mod` disable, uninstall, revoke and package-quarantine work without any control mod; disable and uninstall restore the previous lock and preserve edited sources and explicit settings, and quarantine blocks the installed version while keeping its data."
     },
     {
       "id": "omd_coordination",
@@ -434,9 +434,9 @@
       "versions": {
         "node": "24.21.0",
         "pnpm": "11.14.0",
-        "@playwright/mcp": "0.0.81",
-        "playwright": "1.64.0-alpha-2026-09-14",
-        "chromium": "154.0.8037.0"
+        "@playwright/mcp": "0.0.83",
+        "playwright": "1.64.0-alpha-1790635538000",
+        "chromium": "155.0.8059.12"
       },
       "status": "supported",
       "fixtures": [
@@ -1149,11 +1149,13 @@
       "label": "OMD Core",
       "first_party_installed": [
         "omd_logo",
-        "omd_mods"
+        "omd_mods",
+        "omd_update"
       ],
       "first_party_default_active": [
         "omd_logo",
-        "omd_mods"
+        "omd_mods",
+        "omd_update"
       ],
       "plugin_sources": []
     },
@@ -1200,6 +1202,7 @@
         "omd_task_tools",
         "omd_theme",
         "omd_typed_tasks",
+        "omd_update",
         "omd_usage",
         "omd_workflow",
         "omd_workspace",
@@ -1210,6 +1213,7 @@
         "omd_logo",
         "omd_model_picker",
         "omd_mods",
+        "omd_update",
         "omd_workspace"
       ],
       "plugin_sources": [
@@ -1260,7 +1264,7 @@
       "source": "mods/first-party/omd_frecency"
     },
     "omd_git": {
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "source": "mods/first-party/omd_git"
     },
     "omd_graph_navigator": {
@@ -1386,6 +1390,10 @@
     "omd_typed_tasks": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_typed_tasks"
+    },
+    "omd_update": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_update"
     },
     "omd_usage": {
       "version": "0.1.0-preview.1",

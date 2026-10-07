@@ -40,11 +40,37 @@ struct Arguments {
     #[serde(default)]
     source: Option<ModPackageSource>,
     #[serde(default)]
+    reference: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
     index: Option<PathBuf>,
     #[serde(default = "user")]
     scope: String,
     #[serde(default)]
     expected_generation: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexArguments {
+    #[serde(default)]
+    index: Option<PathBuf>,
+    #[serde(default)]
+    query: String,
+}
+
+/// Searches the requested or the store's curated package index.
+pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
+    let arguments: IndexArguments = serde_json::from_value(arguments)
+        .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
+    let path = arguments
+        .index
+        .or_else(|| store.package_index())
+        .ok_or_else(|| {
+            failure("package_index_unavailable: install from npm:, git+ or a folder instead")
+        })?;
+    store.package_index_entries(&path, &arguments.query)
 }
 
 fn user() -> String {
@@ -64,6 +90,7 @@ fn source_kind(source: &ModPackageSource) -> &'static str {
         ModPackageSource::Local { .. } => "local",
         ModPackageSource::Repository { .. } => "repository",
         ModPackageSource::Package { .. } => "package",
+        ModPackageSource::Npm { .. } => "npm",
     }
 }
 
@@ -125,6 +152,7 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
                 "scope": selection["scope"],
                 "path": selection["path"],
                 "source": locked.map_or("selection", |package| source_kind(&package.source)),
+                "blocked": locked.and_then(|package| lock.blocked_reason(&package.id, &package.version, &package.integrity)),
                 "installed": true,
                 "enabled": enabled,
                 "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
@@ -197,17 +225,21 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
     };
     let (id, request, plan, selection, added) = match arguments.action.as_str() {
         "install" => {
-            let source = arguments
-                .source
-                .clone()
-                .ok_or_else(|| failure("package_source_required"))?;
-            let (request, plan) = requested(
-                store,
-                source,
-                arguments.index.clone(),
-                arguments.scope.clone(),
-                false,
-            )?;
+            let index = arguments.index.clone().or_else(|| store.package_index());
+            let source = match (&arguments.source, &arguments.reference) {
+                (Some(source), None) => source.clone(),
+                (None, Some(reference)) => ModPackageSource::parse(reference, index.clone())?,
+                _ => {
+                    return Err(failure(
+                        "package_source_required: give a source or a reference",
+                    ));
+                }
+            };
+            let source = match arguments.version.as_deref() {
+                Some(version) if !version.is_empty() => source.with_version(version)?,
+                _ => source,
+            };
+            let (request, plan) = requested(store, source, index, arguments.scope.clone())?;
             (plan.root.clone(), Some(request), Some(plan), None, None)
         }
         "update" => {
@@ -228,10 +260,9 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             });
             let (request, plan) = requested(
                 store,
-                package.source.clone(),
+                package.source.updatable(),
                 index,
                 package.scope.clone(),
-                package.enabled,
             )
             .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
             (package.id, Some(request), Some(plan), None, None)
@@ -398,7 +429,6 @@ fn requested(
     source: ModPackageSource,
     index: Option<PathBuf>,
     scope: String,
-    activate: bool,
 ) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
     let mut request = ModInstallRequest {
         action: None,
@@ -406,7 +436,6 @@ fn requested(
         source,
         index,
         scope,
-        activate,
         trust: ModPackageTrust::default(),
         settings: BTreeMap::new(),
     };

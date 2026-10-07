@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "checkout",
   "description": "Coordinates sessions sharing one checkout: read-only by default, explicit path reservations, handoffs, serialized Git writes and worktree recommendations",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_shared_checkout"},
   "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "middleware", "approvals", "builtins"],
   "subscriptions": {"channels": ["omd_shared_checkout/*"]},

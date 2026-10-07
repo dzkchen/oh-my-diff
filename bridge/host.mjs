@@ -181,6 +181,7 @@ class Bridge {
 
   poll(body, request) {
     const instance = this.instance(body, request);
+    instance.commands = instance.commands.filter(command => this.pending.has(command.request_id));
     return {commands: instance.commands.splice(0, 8)};
   }
 
@@ -224,6 +225,7 @@ class Bridge {
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
+        instance.commands = instance.commands.filter(command => command.request_id !== requestId);
         reject(new Error("state request timed out"));
       }, bounded);
       this.pending.set(requestId, {instanceId, name, resolve, reject, timer});

@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Escalates a failed step to one bounded read-only advisory call with the exact failing evidence",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"

@@ -5,7 +5,11 @@ import { join } from 'node:path';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const directory = mkdtempSync(join(tmpdir(), 'omd-runner-'));
-process.on('exit', () => rmSync(directory, { recursive: true, force: true }));
+const watchdogs = new Set();
+process.on('exit', () => {
+  for (const watchdog of watchdogs) disarm(watchdog);
+  rmSync(directory, { recursive: true, force: true });
+});
 const spares = [];
 let slots = 0;
 
@@ -18,10 +22,25 @@ function boot() {
   return { child, input: openSync(`${slot}.in`, 'w'), output: openSync(`${slot}.out`, 'r'), buffer: Buffer.alloc(0) };
 }
 
-function take() {
+function take(request) {
   const worker = spares.shift() ?? boot();
   while (spares.length < 2) spares.push(boot());
+  const ms = 2 * (request.hook_budget_ms ?? 1000) + 3000;
+  worker.deadline = Date.now() + ms;
+  worker.watchdog = spawn('sh', ['-c', 'sleep "$1"; kill -9 "$0"', String(worker.child.pid), String(ms / 1000)], { stdio: 'ignore', detached: true });
+  worker.watchdog.unref();
+  watchdogs.add(worker.watchdog);
   return worker;
+}
+
+function disarm(watchdog) {
+  watchdogs.delete(watchdog);
+  try { process.kill(-watchdog.pid, 'SIGKILL'); } catch {}
+}
+
+function expired(worker, text) {
+  if (text === null && Date.now() >= worker.deadline) throw new Error('runner_timed_out');
+  return text;
 }
 
 function line(worker) {
@@ -44,16 +63,17 @@ function line(worker) {
 }
 
 function close(worker) {
+  disarm(worker.watchdog);
   closeSync(worker.input);
   closeSync(worker.output);
   worker.child.kill();
 }
 
 export function runnerSync(request) {
-  const worker = take();
+  const worker = take(request);
   try {
     writeSync(worker.input, JSON.stringify(request) + '\n');
-    const stdout = line(worker) ?? '';
+    const stdout = expired(worker, line(worker)) ?? '';
     let status = 0;
     try { status = 'error' in JSON.parse(stdout) ? 1 : 0; } catch { status = 1; }
     return { stdout, stderr: '', status, error: undefined };
@@ -63,11 +83,11 @@ export function runnerSync(request) {
 }
 
 export function callback(request, host, receipts, { capture = error => !error.crash } = {}) {
-  const worker = take();
+  const worker = take(request);
   try {
     writeSync(worker.input, JSON.stringify({ ...request, receipts, interactive: true }) + '\n');
     for (;;) {
-      const text = line(worker);
+      const text = expired(worker, line(worker));
       if (text === null) throw new Error('runner_exited_without_result');
       const frame = JSON.parse(text);
       if (!('call' in frame)) return frame;

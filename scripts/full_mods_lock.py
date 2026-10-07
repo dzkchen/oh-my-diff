@@ -15,7 +15,7 @@ PACKAGES = ("omd_advisor", "omd_checks", "omd_claude_cli", "omd_continue", "omd_
             "omd_guideline_governance", "omd_herdr", "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_lsp_view", "omd_mcp", "omd_model_picker",
             "omd_frecency", "omd_mods", "omd_muse", "omd_notes", "omd_panes", "omd_plan_panel", "omd_plan_removal", "omd_preview", "omd_profiles", "omd_programmable_context", "omd_project_pi_prompts",
             "omd_reactive_rules", "omd_repository_analysis", "omd_research", "omd_source_knowledge", "omd_task_tools",
-            "omd_theme", "omd_typed_tasks", "omd_layout", "omd_worktree", "omd_editor", "omd_shared_checkout", "omd_mini", "omd_usage", "omd_prompt_queue")
+            "omd_theme", "omd_typed_tasks", "omd_layout", "omd_worktree", "omd_editor", "omd_shared_checkout", "omd_mini", "omd_usage", "omd_prompt_queue", "omd_update")
 
 
 def source_files(identifier):

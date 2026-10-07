@@ -7,6 +7,7 @@ struct TestGate {
     refuse_peer: bool,
     allow: AtomicBool,
     asked: Mutex<Vec<String>>,
+    delay: std::time::Duration,
 }
 
 impl Gate for TestGate {
@@ -25,8 +26,45 @@ impl Gate for TestGate {
         _authorization: &str,
         _password: Option<&str>,
     ) -> bool {
+        std::thread::sleep(self.delay);
         self.asked.lock().unwrap().push(right.to_owned());
         self.allow.load(Ordering::SeqCst)
+    }
+}
+
+#[test]
+fn authorization_wait_outlives_the_transport_read_timeout() {
+    for allowed in [true, false] {
+        let gate = Arc::new(TestGate {
+            allow: AtomicBool::new(allowed),
+            delay: std::time::Duration::from_millis(80),
+            ..Default::default()
+        });
+        let (_temp, socket, store) = serve(gate);
+        let mut client = Client::at(&socket).unwrap();
+        let timeout = std::time::Duration::from_millis(20);
+        let arguments = json!({"store": store, "generation": 0, "grants": ["a"]});
+        let nonce = client
+            .call(
+                "challenge",
+                json!({"sha256": request_digest("grants.put", &arguments).unwrap()}),
+            )
+            .unwrap();
+        client
+            .stream
+            .get_mut()
+            .set_read_timeout(Some(timeout))
+            .unwrap();
+        let result = client.send_authorized(&json!({"op": "grants.put", "arguments": arguments, "nonce": nonce, "authorization": "token"}));
+        assert_eq!(
+            client.stream.get_ref().read_timeout().unwrap(),
+            Some(timeout)
+        );
+        if allowed {
+            assert_eq!(result.unwrap()["generation"], 1);
+        } else {
+            assert_eq!(error(result), "authority_authorization_denied");
+        }
     }
 }
 
@@ -181,18 +219,34 @@ fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
         .unwrap();
     assert_eq!(
         profiles
-            .secret(&key.id, "https://api.openai.com")
+            .secret(&key.id, "https://api.openai.com", None)
             .unwrap()
             .token,
         "sk-broker"
     );
     assert_eq!(profiles.public(&key).unwrap()["status"], "ready");
     assert!(!store.join("credentials").exists());
+    let site = profiles
+        .create_secret("site", "https://example.com", "vault")
+        .unwrap();
+    profiles.store_secret(&site.id, "hunter2").unwrap();
+    assert!(
+        profiles
+            .secret(&site.id, "https://example.com", Some("vault"))
+            .is_ok()
+    );
+    assert!(
+        profiles
+            .secret(&site.id, "https://example.com", Some("other"))
+            .unwrap_err()
+            .to_string()
+            .contains("credential_secret_not_owned")
+    );
     let empty = profiles.create("empty", "api_key", None, None).unwrap();
     gate.allow.store(false, Ordering::SeqCst);
     assert!(profiles.remove(&empty.id).unwrap());
     assert!(profiles.remove(&key.id).is_err());
-    assert_eq!(gate.asked.lock().unwrap().len(), 3);
+    assert_eq!(gate.asked.lock().unwrap().len(), 4);
 }
 
 #[test]
@@ -208,7 +262,7 @@ fn deployed_broker_holds_credentials_and_detects_ledger_tampering() {
         .unwrap();
     assert_eq!(
         profiles
-            .secret(&key.id, "https://api.openai.com")
+            .secret(&key.id, "https://api.openai.com", None)
             .unwrap()
             .token,
         "sk-dummy"

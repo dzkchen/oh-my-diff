@@ -76,7 +76,10 @@ class BridgeClient:
                 response = {"value": handler()}
             except Exception as error:
                 response = {"error": str(error)}
-            self._post("/v1/state", self._body({"request_id": command["request_id"], **response}))
+            try:
+                self._post("/v1/state", self._body({"request_id": command["request_id"], **response}))
+            except Exception:
+                continue
 
     def start_polling(self, interval_seconds=0.1):
         if self.thread:

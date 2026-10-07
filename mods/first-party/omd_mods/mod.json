@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "The /mods screen: turn mods on or off, change their settings and install new ones",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party/omd_mods"

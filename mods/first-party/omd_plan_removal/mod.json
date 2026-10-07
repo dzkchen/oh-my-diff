@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Removes /plan and plan mode for users who never want them",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_removal"},
   "capabilities": ["builtins"],
   "compatibility": {"required_features": ["builtins_v1"]}

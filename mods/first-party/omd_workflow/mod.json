@@ -5,7 +5,8 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Workflow contracts: checkpoints, reviewed contributions, exact-candidate checks and completion gates",
-  "license": "Apache-2.0",
+  "license": "MIT",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_workflow" },
   "capabilities": [
     "agents",
     "commands",

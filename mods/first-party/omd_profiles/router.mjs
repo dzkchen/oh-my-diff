@@ -33,12 +33,17 @@ const textOf = content => parts(content).map(part => part.type === 'text' ? part
 // Codex sends namespaced and freeform tools; both providers take flat JSON-schema functions, so names are mapped both ways.
 export function toolTable(body) {
   const tools = [];
-  const reverse = {};
+  const reverse = Object.create(null);
   const add = (spec, namespace = '') => {
     if (spec?.type === 'namespace') return (spec.tools ?? []).forEach(child => add(child, spec.name === 'functions' ? '' : spec.name));
     if (!['function', 'custom'].includes(spec?.type) || typeof spec.name !== 'string') return;
-    const name = (namespace ? `${namespace}__${spec.name}` : spec.name).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
-    if (reverse[name]) return;
+    const base = (namespace ? `${namespace}__${spec.name}` : spec.name).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+    let name = base;
+    for (let serial = 1; Object.hasOwn(reverse, name); serial++) {
+      if (reverse[name].namespace === namespace && reverse[name].name === spec.name && reverse[name].kind === spec.type) return;
+      const suffix = `_${serial}`;
+      name = `${base.slice(0, 64 - suffix.length)}${suffix}`;
+    }
     reverse[name] = { namespace, name: spec.name, kind: spec.type };
     const schema = spec.type === 'custom' ? { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] }
       : plain(spec.parameters) ? spec.parameters : { type: 'object', properties: {} };

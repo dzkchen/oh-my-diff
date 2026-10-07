@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Edit workspace files in buffers with syntax colors, Git gutter markers, find, undo and fingerprint-checked saves",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_editor"},
   "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "fs.write", "composer"],
   "subscriptions": {"channels": ["omd_editor/*"]},

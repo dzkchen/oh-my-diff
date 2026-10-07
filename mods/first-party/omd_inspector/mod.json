@@ -5,7 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "/inspect shows the session mode, install profile, active mods, workflow contract, limits and ledger",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
   "capabilities": ["agents", "commands", "contracts", "store", "terminal", "events"],
   "subscriptions": { "channels": ["omd_inspector/refresh"] },

@@ -41,6 +41,7 @@ function packageJson(name) {
     version: '0.1.0',
     private: true,
     type: 'module',
+    files: ['mod.json', 'index.ts'],
     scripts: {
       check: 'omd-mod-author check .',
       test: 'omd-mod-author test .',
@@ -249,7 +250,8 @@ function compileJsx(directory) {
 
 function checkProject(directory) {
   compileJsx(directory);
-  stripTypeScriptTypes(readFileSync(join(directory, 'index.ts'), 'utf8'));
+  const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
+  stripTypeScriptTypes(readFileSync(join(directory, manifest.entrypoint ?? 'index.ts'), 'utf8'));
   if (!existsSync(join(directory, 'node_modules/.bin/tsc'))) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;
@@ -314,21 +316,30 @@ async function packageProject(directory) {
   const target = join(directory, 'dist', name);
   if (existsSync(target)) fail(`package_target_exists: ${target}`);
   mkdirSync(target, { recursive: true });
-  cpSync(join(directory, 'mod.json'), join(target, 'mod.json'));
-  cpSync(join(directory, 'index.ts'), join(target, 'index.ts'));
-  const transformed = stripTypeScriptTypes(readFileSync(join(directory, 'index.ts'), 'utf8'), { mode: 'transform', sourceMap: true, sourceUrl: 'index.ts' });
+  const entrypoint = inspected.manifest.entrypoint ?? 'index.ts';
+  for (const path of new Set(['mod.json', entrypoint, ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})])) {
+    mkdirSync(dirname(join(target, path)), { recursive: true });
+    cpSync(join(directory, path), join(target, path));
+  }
+  const transformed = stripTypeScriptTypes(readFileSync(join(directory, entrypoint), 'utf8'), { mode: 'transform', sourceMap: true, sourceUrl: entrypoint });
   const marker = '\n//# sourceMappingURL=data:application/json;base64,';
   const [javascript, encoded] = transformed.split(marker);
+  if (existsSync(join(target, 'index.js')) || existsSync(join(target, 'index.js.map')) || existsSync(join(target, 'package-report.json'))) fail('package_generated_file_conflict');
   await writeFile(join(target, 'index.js'), `${javascript}\n//# sourceMappingURL=index.js.map\n`);
   await writeFile(join(target, 'index.js.map'), Buffer.from(encoded.trim(), 'base64'));
-  await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: inspected.sha256, source_map: 'index.js.map', manifest: inspected.manifest });
-  process.stdout.write(`${JSON.stringify({ package: target, sha256: inspected.sha256, source_map: join(target, 'index.js.map') }, null, 2)}\n`);
+  const packaged = engineJson(['inspect', target]);
+  if (packaged.sha256 !== inspected.sha256) fail('package_integrity_changed');
+  await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: packaged.sha256, source_map: 'index.js.map', manifest: packaged.manifest });
+  process.stdout.write(`${JSON.stringify({ package: target, sha256: packaged.sha256, source_map: join(target, 'index.js.map') }, null, 2)}\n`);
 }
 
 function watchProject(directory, store, once) {
+  let files = new Set(['mod.json']);
   const reload = () => {
     compileJsx(directory);
     const inspected = trustPackage(store, directory);
+    files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
+    if (existsSync(join(directory, 'index.tsx'))) files.add('index.tsx');
     const result = engineJson(['reload', store]);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);
   };
@@ -343,8 +354,8 @@ function watchProject(directory, store, once) {
     }
   };
   let pending;
-  const watcher = watch(directory, { recursive: false }, (_event, filename) => {
-    if (!['mod.json', existsSync(join(directory, 'index.tsx')) ? 'index.tsx' : 'index.ts'].includes(String(filename))) return;
+  const watcher = watch(directory, { recursive: true }, (_event, filename) => {
+    if (!files.has(String(filename).replaceAll('\\', '/'))) return;
     clearTimeout(pending);
     pending = setTimeout(tryReload, 100);
   });

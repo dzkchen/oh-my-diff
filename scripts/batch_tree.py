@@ -250,12 +250,13 @@ def locks(args):
     steps = [[script, "--write"] for script in GENERATORS]
     output = batch_dir(args.batch) / "artifacts" if args.batch else None
     if output and output.is_dir():
-        pack_sdk(output)
         steps.append(["lean_release_lock.py", "--artifact-dir", output, "--write"])
     else:
         print("lean_release_lock.py: skipped; pass a batch with artifacts (batch_tree.py artifacts)")
     failed = False
     for script, *options in steps:
+        if script == "lean_release_lock.py":
+            pack_sdk(output)
         result = subprocess.run([sys.executable, ROOT / "scripts" / script, *map(str, options)], cwd=ROOT,
                                 capture_output=True, text=True)
         failed |= result.returncode != 0

@@ -55,7 +55,7 @@ export function translateRequest(request: Row, model: string | undefined): Row {
   if (request.previous_response_id || request.conversation) throw new Error('remote_conversation_unsupported');
   if (request.instructions !== undefined && typeof request.instructions !== 'string') throw new Error('instructions_must_be_text');
   if (!Array.isArray(request.input)) throw new Error('request_input_must_be_array');
-  const reverse: Record<string, Tool> = {};
+  const reverse: Record<string, Tool> = Object.create(null);
   const manifest: Row[] = [];
   const tools: Row[] = [];
   const addTool = (spec: Row, namespace = '') => {

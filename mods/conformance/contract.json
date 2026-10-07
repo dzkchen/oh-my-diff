@@ -1464,7 +1464,7 @@
       "id": "coordination.packages",
       "group": "coordination",
       "decision": "Package controls",
-      "observe": "`packages.list` (every store selection with the session's effective, pending and failed state) and `packages.preview`",
+      "observe": "`packages.list` (every store selection with the session's effective, pending, failed and quarantined state), `packages.index` (curated index search) and `packages.preview`",
       "alter": "`packages.apply` installs, updates, removes, rolls back, enables, disables or re-trusts an edited selection after a native confirmation; `packages.reload` revalidates every selection; `settings.write` saves schema-checked settings for the caller, or with `packages` for another mod, and redraws at once",
       "replace": null,
       "timing": "user contexts; changes apply at the next boundary",
@@ -1479,6 +1479,7 @@
         "replacements": [],
         "operations": [
           "packages.list",
+          "packages.index",
           "packages.preview",
           "packages.apply",
           "packages.reload",

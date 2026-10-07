@@ -6,10 +6,40 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toolTable, chatRequest, anthropicRequest, Emitter } from './router.mjs';
 
 const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+
+test('provider tool aliases preserve colliding names and round-trip their original identities', () => {
+  const namespace = 'mcp_namespace_'.repeat(6);
+  const specs = [
+    { type: 'function', namespace, name: 'first' }, { type: 'custom', namespace, name: 'second' },
+    { type: 'function', name: 'a.b' }, { type: 'function', name: 'a_b' },
+    { type: 'function', name: 'constructor' }, { type: 'function', name: '__proto__' },
+  ];
+  const body = { tools: specs, input: specs.map((spec, index) => ({ type: spec.type === 'custom' ? 'custom_tool_call' : 'function_call',
+    namespace: spec.namespace, name: spec.name, call_id: `c${index}`, arguments: '{}', input: 'patch' })) };
+  const table = toolTable(body);
+  assert.equal(table.tools.length, specs.length);
+  assert.equal(new Set(table.tools.map(tool => tool.name)).size, specs.length);
+  assert.ok(table.tools.every(tool => /^[A-Za-z0-9_-]{1,64}$/.test(tool.name)));
+  for (const request of [chatRequest(body, {}), anthropicRequest(body, {})]) {
+    const names = request.tools.map(tool => tool.function?.name ?? tool.name);
+    assert.deepEqual(names, table.tools.map(tool => tool.name));
+    const calls = request.messages.flatMap(message => message.tool_calls?.map(call => call.function.name)
+      ?? (Array.isArray(message.content) ? message.content.filter(part => part.type === 'tool_use').map(part => part.name) : []));
+    assert.deepEqual(calls, names);
+  }
+  const events = [];
+  const emitter = new Emitter(event => events.push(event), table.reverse, 'response');
+  table.tools.forEach((tool, index) => emitter.call(index, { id: `c${index}`, name: tool.name, args: specs[index].type === 'custom' ? '{"input":"patch"}' : '{}' }));
+  emitter.finish({});
+  const calls = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
+  assert.deepEqual(calls.map(call => [call.namespace ?? '', call.name, call.type]),
+    specs.map(spec => [spec.namespace ?? '', spec.name, spec.type === 'custom' ? 'custom_tool_call' : 'function_call']));
+});
 
 test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {
   const seen = {};

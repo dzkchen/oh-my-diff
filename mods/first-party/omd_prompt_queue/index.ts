@@ -1,15 +1,16 @@
 import type { Json, ModAPI, ResourceRef } from '../../api.d.ts';
 
 type Status = 'queued' | 'sent' | 'failed' | 'needs_consent';
-type Entry = { id: string; text: string; attachments: ResourceRef[]; consent: string | null; status: Status; client_id: string | null; reason: string | null; attempts: number };
-type Queue = { entries: Entry[]; paused: string | null; serial: number };
+type Entry = { text: string; attachments: ResourceRef[]; consent: string | null; status: Status; client_id: string | null; reason: string | null };
+type Queue = { entries: Entry[]; paused: string | null };
 
 const LIMIT = 32;
 const USAGE = 'usage: /queue [add TEXT | edit N TEXT | move N M | remove N | join N M | send N | retry N | pause | resume]; Alt+q queues the draft';
 
 export default function activate(api: ModAPI) {
-  const load = (): Queue => ({ entries: [], paused: null, serial: 0, ...(api.state.get() as Partial<Queue> | null) });
+  const load = (): Queue => ({ entries: [], paused: null, ...(api.state.get() as Partial<Queue> | null) });
   const save = (queue: Queue) => api.state.set(queue as unknown as Json);
+  const unsettled = (entry: Entry) => entry.status === 'sent' || entry.status === 'failed' && entry.client_id !== null;
   const consent = (text: string, attachments: ResourceRef[]) => api.host.tryCall('prompts.consent', { text, attachments });
   const revoke = (entry: Entry) => { if (entry.consent) api.host.tryCall('prompts.revoke', { consent: entry.consent }); };
   const pick = (queue: Queue, value: string | undefined) => {
@@ -23,29 +24,27 @@ export default function activate(api: ModAPI) {
     : 'The prompt queue is empty.';
 
   // A consented entry: the host keeps the consent, the queue keeps the content it covers.
-  const grant = (queue: Queue, text: string, attachments: ResourceRef[], previous?: Entry): Entry | string => {
+  const grant = (text: string, attachments: ResourceRef[], previous?: Entry): Entry | string => {
     const granted = consent(text, attachments);
     if (!granted.ok) return granted.error;
     if (previous) revoke(previous);
-    queue.serial += 1;
-    return { id: previous?.id ?? `q${queue.serial}`, text, attachments, consent: granted.value.consent, status: 'queued', client_id: null, reason: null, attempts: previous?.attempts ?? 0 };
+    return { text, attachments, consent: granted.value.consent, status: 'queued', client_id: null, reason: null };
   };
 
   // Settles an entry the host may have submitted; a delivered one leaves the queue.
   const reconcile = (queue: Queue, entry: Entry) => {
-    if (!entry.consent) return;
+    if (!entry.consent) return false;
     const found = api.host.tryCall('prompts.status', { consent: entry.consent });
-    if (!found.ok) return;
+    if (!found.ok) return false;
     const state = found.value.state;
     if (state === 'delivered') queue.entries = queue.entries.filter(item => item !== entry);
     else if (state === 'missing') Object.assign(entry, { status: 'needs_consent', consent: null, reason: 'not consented in this thread; /queue retry' });
-    else if (state === 'unconfirmed' && entry.status !== 'sent') Object.assign(entry, { status: 'failed', reason: 'delivery unconfirmed; /queue retry to send again' });
+    else if (found.value.state === 'unconfirmed') Object.assign(entry, { status: 'failed', client_id: found.value.client_id, reason: 'delivery unconfirmed; /queue retry to send again' });
+    return true;
   };
 
   const submit = (queue: Queue, entry: Entry, mode: 'turn' | 'steer') => {
-    entry.attempts += 1;
-    const client = `${entry.id}-${entry.attempts}`;
-    const sent = api.host.tryCall('prompts.submit', { consent: entry.consent ?? '', text: entry.text, attachments: entry.attachments, mode, client_id: client });
+    const sent = api.host.tryCall('prompts.submit', { consent: entry.consent ?? '', text: entry.text, attachments: entry.attachments, mode });
     if (!sent.ok) {
       if (/consent_spent/.test(sent.error)) return reconcile(queue, entry);
       Object.assign(entry, { status: /consent_(missing|content_changed)/.test(sent.error) ? 'needs_consent' : 'failed', reason: sent.error.slice(0, 120) });
@@ -60,23 +59,23 @@ export default function activate(api: ModAPI) {
 
   const drain = () => {
     const queue = load();
-    for (const entry of queue.entries.filter(item => item.status === 'sent')) reconcile(queue, entry);
+    for (const entry of queue.entries.filter(unsettled)) reconcile(queue, entry);
     const head = queue.entries.find(item => item.status === 'queued');
-    if (!queue.paused && head && !queue.entries.some(item => item.status === 'sent')) submit(queue, head, 'turn');
+    if (!queue.paused && head && !queue.entries.some(unsettled)) submit(queue, head, 'turn');
     save(queue);
   };
 
   api.on('idle', drain);
   api.on('turn_start', () => {
     const queue = load();
-    for (const entry of queue.entries.filter(item => item.status === 'sent')) reconcile(queue, entry);
+    for (const entry of queue.entries.filter(unsettled)) reconcile(queue, entry);
     save(queue);
   });
   api.on('turn_end', event => {
     if (event.outcome !== 'aborted') return;
     const queue = load();
     if (!queue.entries.length) return;
-    for (const entry of queue.entries.filter(item => item.status === 'sent')) {
+    for (const entry of queue.entries.filter(unsettled)) {
       reconcile(queue, entry);
       if (entry.status === 'sent') Object.assign(entry, { status: 'failed', reason: 'turn stopped before delivery was confirmed; /queue retry' });
     }
@@ -110,7 +109,7 @@ export default function activate(api: ModAPI) {
         clear = draft.value.revision;
       }
       if (!text) return { display: `Nothing to queue. ${USAGE}` };
-      const entry = grant(queue, text, attachments);
+      const entry = grant(text, attachments);
       if (typeof entry === 'string') return { display: `Not queued: ${entry}` };
       if (clear !== null) {
         const cleared = api.host.tryCall('composer.write', { revision: clear, edit: { kind: 'fill', text: '' } });
@@ -145,19 +144,31 @@ export default function activate(api: ModAPI) {
       queue.entries.splice(target, 0, ...queue.entries.splice(index, 1));
       return done(`Moved #${index + 1} to #${target + 1}.`);
     }
-    if (entry.status === 'sent') return { display: `#${index + 1} was sent; it leaves the queue once delivered.` };
+    if (entry.consent) {
+      if (!reconcile(queue, entry)) return done(`#${index + 1} delivery status is unavailable; try again.`);
+      if (!queue.entries.includes(entry)) return done(`#${index + 1} was delivered.`);
+      if (entry.status === 'sent') return done(`#${index + 1} was sent; it leaves the queue once delivered.`);
+    }
     if (verb === 'edit' || verb === 'retry') {
       const text = verb === 'edit' ? rest(2) : entry.text;
       if (!text) return { display: USAGE };
-      const updated = grant(queue, text, entry.attachments, entry);
+      const updated = grant(text, entry.attachments, entry);
       if (typeof updated === 'string') return { display: `Not changed: ${updated}` };
       queue.entries[index] = updated;
       return done(`#${index + 1} ${verb === 'edit' ? 'updated' : 'will be sent again'}.`);
     }
     if (verb === 'join') {
       const other = pick(queue, second);
-      if (other < 0 || other === index || queue.entries[other].status === 'sent') return { display: USAGE };
-      const joined = grant(queue, `${entry.text}\n\n${queue.entries[other].text}`, [...entry.attachments, ...queue.entries[other].attachments].slice(0, 8), entry);
+      if (other < 0 || other === index) return { display: USAGE };
+      const companion = queue.entries[other];
+      if (companion.consent) {
+        if (!reconcile(queue, companion)) return done(`#${other + 1} delivery status is unavailable; try again.`);
+        if (!queue.entries.includes(companion)) return done(`#${other + 1} was delivered; entries were not joined.`);
+        if (companion.status === 'sent') return done(USAGE);
+      }
+      const attachments = [...entry.attachments, ...queue.entries[other].attachments];
+      if (attachments.length > 8) return { display: 'Not joined: a prompt holds at most 8 images; both entries were kept.' };
+      const joined = grant(`${entry.text}\n\n${queue.entries[other].text}`, attachments, entry);
       if (typeof joined === 'string') return { display: `Not joined: ${joined}` };
       revoke(queue.entries[other]);
       queue.entries[index] = joined;

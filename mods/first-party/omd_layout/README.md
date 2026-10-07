@@ -31,6 +31,8 @@ composer draft for the session you leave and restores it when you return to it
 through the list, unless the composer already holds text. The status line counts
 working, waiting and unread sessions.
 
+The current session's publication status is retained separately from search results and the 30-row roster. Filtering it out does not stop its five-minute heartbeat or lifecycle updates.
+
 **Briefs.** The agent keeps a brief of its session with the `brief` tool
 (`mod_omd_layout_brief`): current work, next step, up to 12 remaining tasks, up
 to 6 questions or decisions for you and an optional estimate it declares;

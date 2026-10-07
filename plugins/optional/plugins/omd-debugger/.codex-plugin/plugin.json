@@ -19,7 +19,7 @@
       "Debug this reproducible Python failure with the OMD debugger"
     ]
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "python",
     "debugpy",

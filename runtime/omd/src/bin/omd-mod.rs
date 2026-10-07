@@ -130,7 +130,7 @@ fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Res
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json |credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
         )
     };
     match args {
@@ -268,13 +268,29 @@ fn run(args: &[String]) -> io::Result<Value> {
                 "exposure": exposure,
             }))
         }
-        [command, root, path] if command == "revoke" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .revoke_authority(&PathBuf::from(path).canonicalize()?)?;
+        [command, root, target] if command == "revoke" => {
+            let target = match PathBuf::from(target).canonicalize() {
+                Ok(path) if target.contains('/') => path.display().to_string(),
+                _ => target.clone(),
+            };
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.revoke(&target)?;
             Ok(Value::String(
-                "os and approve authority revoked; running processes stop at the next turn boundary; trust again to renew".into(),
+                "disabled and every grant dropped; owned work stops at the next reload; trust or install again to renew".into(),
             ))
         }
+        [command, root, id, reason @ ..] if command == "package-quarantine" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_quarantine(id, &reason.join(" "))
+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+        }
+        [command, root, id] if command == "package-unblock" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_unblock(id)
+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+        }
+        [command, root] if command == "security-events" => Ok(Value::Array(
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.security_events()?,
+        )),
         [command, root, packages] if command == "trust-all" => {
             let packages: Vec<Value> = serde_json::from_str(packages)?;
             let packages = packages

@@ -9,6 +9,7 @@ mod evidence;
 mod expansion;
 mod intercept;
 mod inventory;
+mod launch_snapshot;
 mod operations;
 mod peering;
 mod roles;
@@ -175,7 +176,7 @@ struct Mods {
     /// Tool and outcome of each lead call until its batch settles or the next turn starts.
     settled: Mutex<BTreeMap<String, (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
-    elicitations: Mutex<BTreeMap<String, Vec<String>>>,
+    elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
 }
 
 /// A tool chain waiting at its native executor for the call's result.
@@ -439,7 +440,7 @@ pub(super) fn install(
         answered: Mutex::new(BTreeMap::new()),
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
-        elicitations: Mutex::new(BTreeMap::new()),
+        elicitations: Mutex::default(),
     });
     intercept::install_dispatcher(&extension.core);
     clients::install(&extension.core);
@@ -466,12 +467,14 @@ fn publish(
     ledger: Value,
     active: impl Fn() -> bool,
 ) {
-    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
-        "presentation": views.current_presentation(),
+    let mut input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
+        "presentation": codex_omd::client_surface::presented(views.current_presentation()),
         "client": codex_omd::client_surface::client(),
         "clients": codex_omd::client_surface::clients()});
+    let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
     let rendered_ms = codex_omd::ModViewSnapshot::clock();
     let mut terminal = runtime.terminal_view(input.clone(), active);
+    input["pty_scope"] = pty_scope;
     let status = runtime.status();
     let mut errors = status["mods"]
         .as_array()
@@ -635,6 +638,7 @@ impl Core {
             expansion::retain_sources(self, sources);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_stale(*generation);
+                self.services.cleanup_stale(*generation, sources).await;
                 access::release_servers(lead, *generation, None).await;
             }
         }
@@ -1914,6 +1918,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if let Ok(mut accounts) = self.host.accounts.0.lock() {
                 accounts.remove(&lead.thread.to_string());
             }
+            self.host.accounts.forget_thread(&lead.thread.to_string());
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
             }

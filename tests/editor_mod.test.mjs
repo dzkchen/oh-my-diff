@@ -211,6 +211,16 @@ test('editor buffers edit with undo, find, Git markers and composer quotes, then
   assert.deepEqual(view().value, { status: ['edit: 1 unsaved'] });
 });
 
+test('editor rejects unknown close choices without changing dirty buffers', () => {
+  const fx = fixture();
+  fx.edit('notes.txt');
+  fx.keys({ key: null, text: 'unsaved ' });
+  const before = JSON.stringify(fx.state);
+  const result = fx.edit('close typo');
+  assert.equal(JSON.stringify(fx.state), before);
+  assert.match(result.display, /save.*discard.*cancel/);
+});
+
 test('editor refuses to overwrite intervening edits and recovers buffers after reloads, denials and restarts', () => {
   const fx = fixture();
   const { repository, calls, host, edit, keys, event, sync, view, key, text, buffer } = fx;

@@ -2,7 +2,9 @@
 import argparse
 import datetime
 import json
+import os
 import re
+import resource
 import shutil
 import subprocess
 import time
@@ -27,15 +29,15 @@ def drift(*paths):
 STEPS = [
     ("setup", ["python3", "scripts/batch_tree.py", "setup", BATCH]),
     ("patch sync", ["python3", "scripts/batch_tree.py", "sync", BATCH]),
-    ("patch matches main", drift("runtime", "upstream.lock.json")),
-    ("cargo test omd, extension, tui", cargo("test", "test", *CRATES)),
-    ("cargo test core lib", cargo("core", "test", "-p", "codex-core", "--lib")),
+    ("patch matches checkout", drift("runtime", "upstream.lock.json")),
+    ("cargo test omd, extension, tui", cargo("test", "test", *CRATES, "--", "--test-threads=1")),
+    ("cargo test core lib", cargo("core", "test", "-p", "codex-core", "--lib", "--", "--test-threads=1")),
     ("clippy omd paths", cargo("clippy", "clippy", *CRATES, "--tests")),
     ("rustfmt", cargo("fmt", "fmt", "-p", "codex-omd", "-p", "codex-omd-extension", "--", "--check")),
     ("native ownership", ["mise", "run", "native:ownership"]),
     ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--build"]),
     ("locks", ["python3", "scripts/batch_tree.py", "locks", BATCH]),
-    ("locks match main", drift(".", ":(exclude)runtime/lean-release.lock.json")),
+    ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
     ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
     ("mods typecheck", ["mise", "run", "mods:check"]),
     ("mods tests", ["mise", "run", "mods:test"]),
@@ -46,11 +48,20 @@ STEPS = [
 ]
 
 
+def prepare_resources():
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = 8192 if hard == resource.RLIM_INFINITY else min(8192, hard)
+    if soft != resource.RLIM_INFINITY and soft < target:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        soft = target
+    print(f"Nightly open-file limit: {soft}; Rust tests run serially with TMPDIR=/private/tmp/")
+
+
 def run(name, argv):
     log = WORK / "logs" / (re.sub(r"\W+", "-", name) + ".log")
     started = time.monotonic()
     with log.open("w") as output:
-        status = subprocess.run(argv, cwd=REPO, stdout=output, stderr=subprocess.STDOUT).returncode
+        status = subprocess.run(argv, cwd=REPO, env=os.environ | {"TMPDIR": "/private/tmp/"}, stdout=output, stderr=subprocess.STDOUT).returncode
     text = log.read_text(errors="replace")
     if name == "clippy omd paths":
         cargo_log = WORK / "logs" / "clippy.cargo.log"
@@ -61,10 +72,24 @@ def run(name, argv):
     return {"name": name, "status": status, "seconds": round(time.monotonic() - started), "log": str(log), "tail": tail}
 
 
+def summarize(results, previous_failed):
+    ran = [result["name"] for result in results]
+    failed = [result["name"] for result in results if result["status"]]
+    skipped = [name for name, _ in STEPS if name not in ran]
+    return {
+        "failed": failed,
+        "skipped": skipped,
+        "new": [name for name in failed if name not in previous_failed],
+        "fixed": [name for name in previous_failed if name in ran and name not in failed],
+        "unresolved": failed + [name for name in previous_failed if name in skipped],
+    }
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Build the committed main branch in a scratch worktree and run the broad checks batches skip")
+    parser = argparse.ArgumentParser(description="Build a committed ref in a scratch worktree and run the broad checks batches skip")
     parser.add_argument("--ref", default="main")
     args = parser.parse_args()
+    prepare_resources()
     previous_file = WORK / "last.json"
     previous = json.loads(previous_file.read_text()) if previous_file.is_file() else {}
     subprocess.run(["git", "worktree", "remove", "--force", REPO], cwd=ROOT, capture_output=True)
@@ -82,15 +107,17 @@ def main():
     finally:
         subprocess.run(["python3", "scripts/batch_tree.py", "clean", BATCH, "--keep-warm", "--tree"], cwd=REPO, capture_output=True)
         subprocess.run(["git", "worktree", "remove", "--force", REPO], cwd=ROOT, capture_output=True)
-    failed = [result["name"] for result in results if result["status"]]
-    new = [name for name in failed if name not in previous.get("failed", [])]
-    fixed = [name for name in previous.get("failed", []) if name not in failed]
+    summary = summarize(results, previous.get("failed", []))
+    failed, skipped, new, fixed = summary["failed"], summary["skipped"], summary["new"], summary["fixed"]
+    unrun = [name for name in summary["unresolved"] if name in skipped]
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# OMD nightly: {stamp}, main at `{commit}`", "",
-             f"{len(results) - len(failed)}/{len(results)} steps passed."
-             + (f" New failures: {', '.join(new)}." if new else "") + (f" Fixed since last run: {', '.join(fixed)}." if fixed else ""), "",
+    lines = [f"# OMD nightly: {stamp}, {args.ref} at `{commit}`", "",
+             f"{len(results) - len(failed)}/{len(STEPS)} steps passed."
+             + (f" New failures: {', '.join(new)}." if new else "") + (f" Fixed since last run: {', '.join(fixed)}." if fixed else "")
+             + (f" Skipped: {', '.join(skipped)}." if skipped else "") + (f" Still failing from the last run, not rerun: {', '.join(unrun)}." if unrun else ""), "",
              "| Step | Result | Time | Log |", "| --- | --- | --- | --- |"]
     lines += [f"| {result['name']} | {'pass' if not result['status'] else 'FAIL'} | {result['seconds']} s | `{result['log']}` |" for result in results]
+    lines += [f"| {name} | skipped | | |" for name in skipped]
     for result in results:
         if result["status"]:
             lines += ["", f"## {result['name']}", "", "```", *result["tail"], "```"]
@@ -98,9 +125,9 @@ def main():
     (WORK / "report.md").write_text(report)
     if (ROOT / ".docs").is_dir():
         (ROOT / ".docs/nightly.md").write_text(report)
-    previous_file.write_text(json.dumps({"commit": commit, "failed": failed}))
-    summary = f"{len(results) - len(failed)}/{len(results)} passed" + (f", new failures: {len(new)}" if new else "")
-    subprocess.run(["osascript", "-e", f'display notification "{summary}" with title "OMD nightly"'], capture_output=True)
+    previous_file.write_text(json.dumps({"commit": commit, "failed": summary["unresolved"]}))
+    notice = f"{len(results) - len(failed)}/{len(STEPS)} passed" + (f", new failures: {len(new)}" if new else "") + (f", skipped: {len(skipped)}" if skipped else "")
+    subprocess.run(["osascript", "-e", f'display notification "{notice}" with title "OMD nightly"'], capture_output=True)
     print(report)
     return 1 if failed else 0
 

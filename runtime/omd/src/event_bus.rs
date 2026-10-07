@@ -11,6 +11,7 @@ pub const CHANNEL_EVENT_BYTES: usize = 64 * 1024;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelEvent {
     pub publisher: String,
+    pub thread: String,
     pub channel: String,
     pub data: Value,
     pub correlation: Option<String>,
@@ -95,6 +96,7 @@ impl EventBus {
         name: &str,
         data: Value,
         correlation: Option<String>,
+        thread: &str,
     ) -> io::Result<Delivery> {
         if !valid_name(name) {
             return Err(io::Error::other(format!("channel_name_invalid: {name}")));
@@ -111,6 +113,7 @@ impl EventBus {
         *sequence += 1;
         let event = ChannelEvent {
             publisher: publisher.to_owned(),
+            thread: thread.to_owned(),
             channel: channel.clone(),
             data,
             correlation,

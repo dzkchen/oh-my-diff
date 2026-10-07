@@ -87,8 +87,14 @@ impl Client {
     }
 
     pub fn at(path: &Path) -> io::Result<Self> {
-        let stream =
-            UnixStream::connect(path).map_err(|_| failure("authority_broker_unavailable"))?;
+        let timeout = std::time::Duration::from_secs(30);
+        let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+        socket
+            .connect_timeout(&socket2::SockAddr::unix(path)?, timeout)
+            .map_err(|_| failure("authority_broker_unavailable"))?;
+        socket.set_read_timeout(Some(timeout))?;
+        socket.set_write_timeout(Some(timeout))?;
+        let stream: UnixStream = socket.into();
         Ok(Self {
             stream: BufReader::new(stream),
         })
@@ -128,8 +134,16 @@ impl Client {
             Some(password()?.ok_or_else(|| failure("authority_authorization_denied"))?)
         };
         let authorization = platform::Authorization::create()?;
-        self.send(&json!({"op": op, "arguments": arguments, "nonce": nonce,
+        self.send_authorized(&json!({"op": op, "arguments": arguments, "nonce": nonce,
             "authorization": authorization.external()?, "password": password}))
+    }
+
+    fn send_authorized(&mut self, request: &Value) -> io::Result<Value> {
+        let timeout = self.stream.get_ref().read_timeout()?;
+        self.stream.get_mut().set_read_timeout(None)?;
+        let result = self.send(request);
+        self.stream.get_mut().set_read_timeout(timeout)?;
+        result
     }
 }
 
@@ -515,9 +529,11 @@ impl Broker {
                 serde_json::to_value(self.profiles(&arguments)?.profile(id()?)?)?
             }
             "credentials.secret" => {
-                let secret = self
-                    .profiles(&arguments)?
-                    .secret(id()?, text(&arguments, "origin")?)?;
+                let secret = self.profiles(&arguments)?.secret(
+                    id()?,
+                    text(&arguments, "origin")?,
+                    arguments["owner"].as_str(),
+                )?;
                 json!({"token": secret.token, "account_id": secret.account_id})
             }
             "credentials.owned_secret" => self

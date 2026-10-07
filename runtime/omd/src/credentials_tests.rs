@@ -109,7 +109,7 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     let chat = profiles.create("chat", "chatgpt", None, None).unwrap();
     assert!(
         profiles
-            .secret(&key.id, "https://api.openai.com")
+            .secret(&key.id, "https://api.openai.com", None)
             .unwrap_err()
             .to_string()
             .starts_with("credential_not_enrolled")
@@ -117,7 +117,9 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     profiles
         .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-test"}"#)
         .unwrap();
-    let secret = profiles.secret(&key.id, "https://api.openai.com").unwrap();
+    let secret = profiles
+        .secret(&key.id, "https://api.openai.com", None)
+        .unwrap();
     assert!(!format!("{secret:?}").contains("sk-test"));
     assert_eq!(
         (secret.token.as_str(), secret.account_id),
@@ -125,7 +127,7 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     );
     assert_eq!(
         profiles
-            .secret(&key.id, "https://evil.example")
+            .secret(&key.id, "https://evil.example", None)
             .unwrap_err()
             .to_string(),
         "credential_origin_mismatch: p1"
@@ -146,15 +148,17 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     write(jwt(1));
     assert!(
         profiles
-            .secret(&chat.id, "https://chatgpt.com")
+            .secret(&chat.id, "https://chatgpt.com", None)
             .unwrap_err()
             .to_string()
             .starts_with("credential_expired")
     );
     write(jwt(u64::MAX / 2));
-    let secret = profiles.secret(&chat.id, "https://chatgpt.com").unwrap();
+    let secret = profiles
+        .secret(&chat.id, "https://chatgpt.com", None)
+        .unwrap();
     assert_eq!(secret.account_id.as_deref(), Some("acct"));
-    assert!(profiles.secret("p99", "https://chatgpt.com").is_err());
+    assert!(profiles.secret("p99", "https://chatgpt.com", None).is_err());
 }
 
 #[test]
@@ -187,9 +191,25 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
         "hunter2"
     );
     assert!(profiles.owned_secret(&secret.id, "other").is_err());
+    for owner in [Some("vault"), None] {
+        assert_eq!(
+            profiles
+                .secret(&secret.id, "https://example.com:8443", owner)
+                .unwrap()
+                .token,
+            "hunter2"
+        );
+    }
+    assert_eq!(
+        profiles
+            .secret(&secret.id, "https://example.com:8443", Some("other"))
+            .unwrap_err()
+            .to_string(),
+        format!("credential_secret_not_owned: {}", secret.id)
+    );
     assert!(
         profiles
-            .secret(&secret.id, "https://example.com:8443")
+            .secret(&secret.id, "https://example.com", Some("vault"))
             .is_err()
     );
 }

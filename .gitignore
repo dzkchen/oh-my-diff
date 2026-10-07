@@ -11,6 +11,10 @@ __pycache__/
 /.omd-tmp/
 /.docs/
 /.pnpm-store/
+/node_modules/
+/package.json
+/pnpm-lock.yaml
+/pnpm-workspace.yaml
 /mods/node_modules/
 /mods/first-party/*/node_modules/
 /mods/exercise/*/node_modules/

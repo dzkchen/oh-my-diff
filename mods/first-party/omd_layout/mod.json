@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Workspace layout: project-grouped session list, agent-written session briefs, find, quick open, jump and command palettes over panes, Git and worktrees",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_layout"},
   "capabilities": ["commands", "terminal", "lifecycle", "store", "sessions", "threads", "model", "inventory", "builtins", "composer", "exec", "fs.read", "events", "services", "tools"],
   "subscriptions": {"app": ["thread/status/changed", "thread/name/updated", "thread/tokenUsage/updated", "turn/completed", "error"]},

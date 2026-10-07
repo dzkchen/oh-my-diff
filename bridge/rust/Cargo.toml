@@ -3,8 +3,8 @@ name = "omd-bridge-client"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-license = "Apache-2.0"
+license = "MIT"
 
 [dependencies]
-serde = { version = "=1.0.228", features = ["derive"] }
-serde_json = "=1.0.149"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"

@@ -129,14 +129,297 @@ fn store(args: &[String]) -> io::Result<Value> {
     )
 }
 
+const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
+
+const APPROVAL_REQUIRED: &str = "package_approval_required";
+
+fn mods(action: &str, args: &[String]) -> io::Result<Value> {
+    use codex_omd::package_controls;
+    let usage = || io::Error::other(MODS_USAGE);
+    let mut positional = Vec::new();
+    let mut scope = "user".to_owned();
+    let mut version = None;
+    let mut yes = false;
+    let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
+    let mut remaining = args.iter();
+    while let Some(argument) = remaining.next() {
+        match argument.as_str() {
+            "--yes" => yes = true,
+            "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
+            "--version" => version = Some(remaining.next().ok_or_else(usage)?.clone()),
+            "--store" => root = Some(PathBuf::from(remaining.next().ok_or_else(usage)?)),
+            flag if flag.starts_with("--") => return Err(usage()),
+            _ => positional.push(argument.clone()),
+        }
+    }
+    let store = codex_omd::ModStore::open(
+        root.ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
+            .canonicalize()?,
+    )?;
+    let first = || positional.first().cloned().ok_or_else(usage);
+    let done = |display: String| Ok(json!({"display": display}));
+    match action {
+        "list" => {
+            let listed = package_controls::list(&store, None)?;
+            let rows = listed["packages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|package| {
+                    format!(
+                        "{} {} {} {}{}",
+                        package["id"].as_str().unwrap_or("?"),
+                        package["version"].as_str().unwrap_or("-"),
+                        package["scope"].as_str().unwrap_or("-"),
+                        if package["enabled"] == true {
+                            "on"
+                        } else {
+                            "off"
+                        },
+                        package["source"]
+                            .as_str()
+                            .map_or(String::new(), |source| format!(" ({source})"))
+                    )
+                })
+                .collect::<Vec<_>>();
+            Ok(
+                json!({"display": if rows.is_empty() { "No mods installed.".to_owned() } else { rows.join("\n") }, "packages": listed["packages"]}),
+            )
+        }
+        "catalog" => {
+            let found = package_controls::index(&store, json!({"query": positional.join(" ")}))?;
+            let rows = found["packages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|package| {
+                    format!(
+                        "{}@{}  {}{}",
+                        package["id"].as_str().unwrap_or("?"),
+                        package["latest"].as_str().unwrap_or("?"),
+                        package["description"].as_str().unwrap_or(""),
+                        package["installed"]
+                            .as_str()
+                            .map_or(String::new(), |installed| format!(
+                                " [installed {installed}]"
+                            ))
+                    )
+                })
+                .collect::<Vec<_>>();
+            done(if rows.is_empty() {
+                "No catalog mods match.".to_owned()
+            } else {
+                rows.join("\n")
+            })
+        }
+        "events" => Ok(Value::Array(store.security_events()?)),
+        "reset-lock" => {
+            let aside = store.reset("packages.lock.json")?;
+            done(format!(
+                "Moved the package lock to {}. Installed mods keep running as trusted selections; reinstall one to manage it as a package again.",
+                aside.display()
+            ))
+        }
+        "quarantine" => {
+            let id = first()?;
+            store.package_quarantine(&id, &positional[1..].join(" "))?;
+            done(format!(
+                "Quarantined {id}: it is off and this version cannot be enabled, reinstalled or rolled back to. Its data is kept; `omd mods unblock {id}` lifts the block."
+            ))
+        }
+        "unblock" => {
+            let id = first()?;
+            store.package_unblock(&id)?;
+            done(format!(
+                "Unblocked {id}. It stays off until `omd mods enable {id}`."
+            ))
+        }
+        "revoke" => {
+            let id = first()?;
+            store.revoke(&id)?;
+            done(format!(
+                "Revoked {id}: it is off and its grant is dropped. Install or trust it again to restore it."
+            ))
+        }
+        "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
+            let target = first()?;
+            let mut arguments = json!({"action": if action == "inspect" { "install" } else { action }, "scope": scope});
+            if matches!(action, "install" | "inspect") {
+                arguments["reference"] = json!(folder_reference(&target)?);
+                arguments["version"] = json!(version);
+            } else {
+                arguments["id"] = json!(target);
+            }
+            let preview = package_controls::preview(&store, arguments)?;
+            let summary = describe(&preview.public);
+            if action == "inspect" {
+                return Ok(json!({"display": summary, "preview": preview.public}));
+            }
+            if action != "disable" && !yes {
+                if !io::IsTerminal::is_terminal(&io::stdin()) {
+                    return Err(io::Error::other(format!(
+                        "{APPROVAL_REQUIRED}: review `omd mods inspect` or run interactively, then pass --yes\n{summary}"
+                    )));
+                }
+                if !confirm(&summary)? {
+                    return Err(io::Error::other(format!("{APPROVAL_REQUIRED}: declined")));
+                }
+            }
+            package_controls::apply(&store, &preview.control)?;
+            let id = &preview.control.id;
+            done(match action {
+                "install" => format!(
+                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}` to turn it on."
+                ),
+                "update" => format!(
+                    "Updated {id}. A changed grant, authority or origin leaves it off until `omd mods enable {id}`."
+                ),
+                "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
+                "rollback" => format!("Rolled {id} back to its previous version."),
+                _ => format!("{id} is {}d.", action),
+            })
+        }
+        _ => Err(usage()),
+    }
+}
+
+fn folder_reference(reference: &str) -> io::Result<String> {
+    let path = if let Some(rest) = reference.strip_prefix("~/") {
+        PathBuf::from(std::env::var_os("HOME").ok_or_else(|| io::Error::other("home_unavailable"))?)
+            .join(rest)
+    } else if reference == "." || reference.starts_with("./") || reference.starts_with("../") {
+        PathBuf::from(reference)
+    } else {
+        return Ok(reference.to_owned());
+    };
+    Ok(path.canonicalize()?.display().to_string())
+}
+
+fn describe(preview: &Value) -> String {
+    let text = |value: &Value| match value {
+        Value::Null => "-".to_owned(),
+        Value::String(value) => value.clone(),
+        Value::Array(values) if values.is_empty() => "none".to_owned(),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        value => value.to_string(),
+    };
+    let changes = &preview["changes"];
+    let mut lines = vec![format!(
+        "{} {}",
+        text(&preview["action"]),
+        text(&preview["id"])
+    )];
+    for package in changes["packages"].as_array().into_iter().flatten() {
+        let from = &package["version"]["from"];
+        lines.push(format!(
+            "- {} {}{}",
+            text(&package["id"]),
+            if from.is_null() {
+                String::new()
+            } else {
+                format!("{} -> ", text(from))
+            },
+            text(&package["version"]["to"])
+        ));
+        lines.push(format!("  source: {}", package["source"]["to"]));
+        lines.push(format!(
+            "  integrity: {}",
+            text(&package["integrity"]["to"])
+        ));
+        lines.push(format!("  license: {}", text(&package["license"]["to"])));
+        lines.push(format!(
+            "  capabilities: {}",
+            text(&package["capabilities"]["to"])
+        ));
+        for exposure in package["authority"]["to"]["exposure"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            lines.push(format!("  authority: {}", text(exposure)));
+        }
+        for (label, key) in [
+            ("dependencies", "dependencies"),
+            ("install scripts", "lifecycle"),
+            ("secret environment", "secret_environment"),
+        ] {
+            if package[key]["to"]
+                .as_array()
+                .is_some_and(|values| !values.is_empty())
+            {
+                lines.push(format!("  {label}: {}", text(&package[key]["to"])));
+            }
+        }
+        if package["renewed_approval"] == true {
+            lines.push(
+                "  needs your approval: new or changed grant, authority or origin".to_owned(),
+            );
+        }
+    }
+    if let Some(removed) = changes["removed"].as_array() {
+        lines.push(format!(
+            "  removes {}; cache, state and local sources are kept",
+            removed
+                .iter()
+                .map(|item| text(&item["version"]))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !changes["version"].is_null() {
+        lines.push(format!(
+            "  version: {} -> {}",
+            text(&changes["version"]["from"]),
+            text(&changes["version"]["to"])
+        ));
+    }
+    if preview["grants_added"]
+        .as_array()
+        .is_some_and(|grants| !grants.is_empty())
+    {
+        lines.push(format!("  grants: {}", text(&preview["grants_added"])));
+    }
+    lines.join("\n")
+}
+
+fn confirm(summary: &str) -> io::Result<bool> {
+    use std::io::{BufRead, Write};
+    let mut terminal = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")?;
+    write!(terminal, "{summary}\nProceed? [y/N] ")?;
+    terminal.flush()?;
+    let mut answer = String::new();
+    io::BufReader::new(terminal).read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
 fn run(args: Vec<String>) -> io::Result<Value> {
     if args.is_empty() || args[0] == "--help" {
         return Ok(
-            json!({"usage":"omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]","commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code."}),
+            json!({"usage":format!("omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user] | {MODS_USAGE}"),"commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code. `omd install` and `omd mods` manage mod packages; `omd update` updates OMD itself."}),
         );
     }
     if args[0] == "store" {
         return store(&args[1..]);
+    }
+    if args[0] == "install" {
+        return mods("install", &args[1..]);
+    }
+    if args[0] == "mods" {
+        let (action, rest) = args[1..]
+            .split_first()
+            .ok_or_else(|| io::Error::other(MODS_USAGE))?;
+        return mods(action, rest);
     }
     if args.len() > 128 || args.iter().map(String::len).sum::<usize>() > 8192 {
         return Err(io::Error::other("command_argument_limit"));
@@ -313,7 +596,11 @@ fn main() {
         }
         Err(error) => {
             eprintln!("{error}");
-            std::process::exit(1);
+            std::process::exit(if error.to_string().starts_with(APPROVAL_REQUIRED) {
+                2
+            } else {
+                1
+            });
         }
     }
 }

@@ -844,6 +844,8 @@ impl Host<'_> {
             #[serde(default)]
             required_access: Option<RequiredAccess>,
             #[serde(default)]
+            exclusive_workspace: Option<String>,
+            #[serde(default)]
             sandbox: Option<String>,
         }
         #[derive(Deserialize)]
@@ -977,6 +979,17 @@ impl Host<'_> {
             return Err("exec_cwd_unavailable".into());
         }
         let guarded_started = Instant::now();
+        let _workspace_lease = if let Some(path) = input.exclusive_workspace {
+            let path = Path::new(&path)
+                .canonicalize()
+                .map_err(|_| "workspace_ownership_unavailable")?;
+            if !input.write || unrestricted.is_some() || !self.authority.writable(&path) {
+                return Err("workspace_exclusive_access_denied".into());
+            }
+            Some(crate::workspace_lease::exclusive(&path).map_err(|error| error.to_string())?)
+        } else {
+            None
+        };
         let guard_count = input.guards.len();
         for guard in input.guards {
             let remaining = timeout.saturating_sub(guarded_started.elapsed());

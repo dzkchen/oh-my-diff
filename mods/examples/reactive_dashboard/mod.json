@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "license": "Apache-2.0",
+  "license": "MIT",
+  "subscriptions": { "channels": ["reactive_dashboard/stream"] },
   "capabilities": [
     "terminal",
     "commands",

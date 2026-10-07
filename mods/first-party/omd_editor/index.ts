@@ -618,6 +618,7 @@ export default function activate(api: ModAPI) {
         write(root, buffer, buffer.sha);
         return done();
       case 'close': {
+        if (argument && !['save', 'discard', 'cancel'].includes(argument)) return { display: 'editor: close expects save, discard or cancel' };
         const choice = argument || (dirty(buffer) ? '' : 'discard');
         if (!choice) {
           root.closing = true;

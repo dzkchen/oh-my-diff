@@ -1,15 +1,45 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
-import { chmod, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, readlink, realpath, stat, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SDK_VERSION, loadSdk, privateDirectory } from './transport.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const WINDOW = 200_000;
+
+async function codeDigest(root) {
+  const rows = [];
+  const pending = [root];
+  let entries = 0;
+  let bytes = 0;
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (++entries > 8192) throw new Error('cursor_sdk_source_limit');
+      const path = join(directory, entry.name);
+      const name = relative(root, path);
+      if (entry.isSymbolicLink()) {
+        const target = await readlink(path);
+        const destination = relative(root, await realpath(path));
+        if (isAbsolute(target) || destination === '..' || destination.startsWith('../')) throw new Error('cursor_sdk_dependency_escape');
+        rows.push([name, 'link', target]);
+      } else if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile()) {
+        const size = (await stat(path)).size;
+        bytes += size;
+        if (size > 64 * 1024 * 1024 || bytes > 128 * 1024 * 1024) throw new Error('cursor_sdk_source_limit');
+        rows.push([name, 'file', sha(await readFile(path))]);
+      }
+      else throw new Error('cursor_sdk_dependency_type_invalid');
+    }
+  }
+  rows.sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0])));
+  return sha(JSON.stringify(rows));
+}
 
 async function unusedPort() {
   const server = createServer();
@@ -79,9 +109,17 @@ async function setup(recordPath, sdkPath) {
   if (record.profile !== 'full' || !record.packages?.omd_cursor) throw new Error('omd_plus_cursor_mod_required');
   const mod = await realpath(join(record.store, 'sources', 'omd_cursor'));
   if (mod !== source) throw new Error('setup_must_run_from_installed_mod');
-  const directory = join(record.prefix, 'cursor');
+  const directory = join(record.store, 'routes', 'cursor');
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const entry = sdkPath ? await realpath(sdkPath) : await install(directory);
+  const entry = await realpath(sdkPath || await install(directory));
+  let codeRoot = sdkPath ? dirname(entry) : await realpath(join(directory, 'sdk'));
+  if (sdkPath) for (let parent = dirname(entry); parent !== dirname(parent); parent = dirname(parent)) {
+    if (basename(parent) === 'node_modules') codeRoot = dirname(parent);
+  }
+  for (const path of [record.prefix, record.store]) {
+    const within = relative(codeRoot, await realpath(path));
+    if (within === '' || (!isAbsolute(within) && within !== '..' && !within.startsWith('../'))) throw new Error('cursor_sdk_requires_separate_directory');
+  }
   const sdk = await loadSdk(entry);
   const credential = await enroll(sdk);
   const discovered = models(await sdk.Cursor.models.list({ apiKey: credential.apiKey }));
@@ -123,7 +161,7 @@ async function setup(recordPath, sdkPath) {
     id: 'cursor', mod_id: 'omd_cursor', program: node, program_sha256: sha(await readFile(node)),
     arguments: [join(mod, 'transport.mjs'), 'serve', routePath],
     secrets: { OMD_CURSOR_LOCAL_TOKEN: 'cursor_local_token' },
-    network: true, read_paths: readPaths,
+    network: true, read_paths: readPaths, code_roots: { [codeRoot]: await codeDigest(codeRoot) },
     route: { name: 'cursor', roles: ['lead'], provider: 'omd_cursor', model: fallback.slug, reasoning_effort: 'medium',
       responses_url: `${url}/responses`, rates: { input_microusd_per_million: 0, cached_microusd_per_million: 0,
         output_microusd_per_million: 0, reservation_microusd: 0, max_output_tokens: 128000, input_token_ceiling: WINDOW,

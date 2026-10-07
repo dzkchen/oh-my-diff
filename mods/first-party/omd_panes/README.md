@@ -57,8 +57,9 @@ and find.
 
 **Layout.** The layout is a tree of splits persisted per session in the
 thread-scoped store, so resuming a session restores its panes and forking
-copies them; a new session starts from the current layout. Keyboard and mouse
-resizes are both saved. The host allows at most 12 layout cells nested four
+copies them; a new session starts with the conversation pane. The mod's viewer
+positions and pending Undo backup also use thread-scoped state. Keyboard and
+mouse resizes are both saved. The host allows at most 12 layout cells nested four
 deep (the conversation counts twice) and each mod panel once; a split beyond
 that is refused. Codex's transcript, composer, approvals and `/omd` recovery
 stay in the conversation pane, which cannot be closed. Terminals narrower than
@@ -90,7 +91,9 @@ with `notes: true` a button turns the selected lines into a note in `omd_notes`.
 **Shells and commands.** Shell panes run in the session sandbox after the
 host's confirmation, write the workspace when `shell_write` is true (the
 default), and start in the chosen directory, which each pane keeps. `run CMD`
-starts a program instead of a shell. Shells do not survive a restart; the menu's
+starts a program instead of a shell. Shells stop on a thread or permission-context
+change and on mod reload; restoring a layout revalidates its transient shell handles.
+Shells do not survive a restart; the menu's
 restart action starts them again. The host allows four terminal panes per mod
 unless `host.json` raises `mod_limits.pty_panes_per_mod`.
 

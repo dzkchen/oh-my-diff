@@ -20,6 +20,7 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
+RELEASE_MANIFEST = "omd-release.json"
 
 
 def run(*arguments, cwd=None, env=None):
@@ -88,8 +89,13 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
                 info.mtime = 0
                 with path.open("rb") as source:
                     archive.addfile(info, source)
-    return {"archive": str(destination), "sha256": support.digest(destination),
-            "bytes": destination.stat().st_size, "files": len(files)}
+    packed = {"archive": str(destination), "sha256": support.digest(destination),
+              "bytes": destination.stat().st_size, "files": len(files)}
+    support.atomic_text(destination.with_name(RELEASE_MANIFEST), json.dumps(
+        {"schema": 1, "version": record["version"], "target": record["target"], "upstream_tag": record["upstream_tag"],
+         "mod_api": record["mod_api"], "node": record["node"], "archive": destination.name,
+         "sha256": packed["sha256"], "bytes": packed["bytes"]}, indent=2, sort_keys=True) + "\n")
+    return {**packed, "manifest": str(destination.with_name(RELEASE_MANIFEST))}
 
 
 def checked_extract(archive_path, expected, destination):
@@ -138,6 +144,8 @@ def install_archive(args):
                    "--store", args.store]
         if args.attach_store:
             command.append("--attach-store")
+        if getattr(args, "previous", None):
+            command += ["--previous", args.previous]
         environment = os.environ.copy()
         environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
         run(*command, cwd=payload, env=environment)
@@ -157,7 +165,7 @@ def source_build(args):
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
         run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
-            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
+            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
             "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker",
             cwd=checkout / "codex-rs", env=environment)
         artifacts = Path(temporary) / "artifacts"
@@ -185,6 +193,7 @@ def main():
     install = commands.add_parser("install")
     install.add_argument("--archive", type=Path, required=True)
     install.add_argument("--sha256", required=True)
+    install.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     source = commands.add_parser("source-install")
     source.add_argument("--repository", required=True)
     source.add_argument("--target-dir", type=Path)

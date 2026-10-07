@@ -26,6 +26,7 @@ pub mod sessions;
 pub mod turn_activity;
 pub mod watch_filter;
 mod workspace;
+pub mod workspace_lease;
 
 pub use admission::Admission;
 pub use admission::Attempt;

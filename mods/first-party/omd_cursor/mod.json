@@ -6,7 +6,7 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Experimental: Cursor models through your Cursor subscription and the official Cursor SDK as a Codex provider that uses only OMD tools",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_cursor"},
   "capabilities": ["commands", "lifecycle", "model", "exec", "config", "store", "credentials", "inventory", "events"],
   "assets": ["models.json", "setup.mjs", "transport.mjs"],

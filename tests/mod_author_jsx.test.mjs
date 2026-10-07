@@ -24,6 +24,7 @@ function project(source, { typescript = true, typecheck = false } = {}) {
     }));
   }
   writeFileSync(join(directory, 'package.json'), JSON.stringify({ type: 'module' }));
+  writeFileSync(join(directory, 'mod.json'), JSON.stringify({ id: 'jsx_fixture', version: '0.1.0', description: 'JSX fixture', capabilities: ['terminal'] }));
   writeFileSync(join(directory, 'index.tsx'), source);
   return directory;
 }

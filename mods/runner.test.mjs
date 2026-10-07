@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../tests/mod_runner.mjs';
+import { callback, runnerSync } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
@@ -21,6 +21,10 @@ function run(source, extra = {}) {
 test('typed module context callback', () => {
   const reply = run('export default (api: any) => api.on("context", () => ({text:"hello"}))', { capabilities: ['context'], event: 'context' });
   assert.deepEqual(reply.value, { text: 'hello' });
+});
+test('the test harness kills an interactive callback that never returns', () => {
+  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', surface: currentSurface, hook_budget_ms: 50 };
+  assert.throws(() => callback(request, () => null, []), /runner_timed_out/);
 });
 test('package text assets are read only and limited to the selected package', () => {
   const source = 'export default api => api.command("asset", () => api.assets.read("worker.mjs"))';

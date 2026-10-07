@@ -31,11 +31,12 @@ class ModAuthorSurfaceUpgradeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
             (source / "mod.json").write_text(json.dumps(manifest))
-            with patch.object(mod_author_surface_upgrade, "call", side_effect=[{"confirmation": "confirmed"}, {"packages": [{}]}]) as call:
+            with patch.object(mod_author_surface_upgrade, "call", side_effect=[{"confirmation": "confirmed"}, {}, {"packages": [{}]}]) as call:
                 result = mod_author_surface_upgrade.install(source / "store", source)
         request = json.loads(call.call_args_list[0].args[2])
         self.assertEqual(request["trust"]["packages"][manifest["id"]]["capabilities"], manifest["capabilities"])
         self.assertEqual(call.call_args_list[1].args[-1], "confirmed")
+        self.assertEqual(call.call_args_list[2].args, ("package-enable", source / "store", manifest["id"]))
         self.assertEqual(len(result["lock"]["packages"]), 1)
 
 
