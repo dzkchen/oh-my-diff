@@ -600,8 +600,8 @@ transport retry resends the bytes that passed. A synthetic answer sends nothing
 and skips it.
 
 The input is one page: `request_id`, `attempt`, `scope`, `provider`,
-`route`, `model`, `page` and `pages` (1-based), `cached`, `segments` and
-`opaque`. `segments` are the non-empty string leaves of `instructions`,
+`route`, `model`, `page` and `pages` (1-based), `cached`, `segments`,
+`opaque` and `opaque_total`. `segments` are the non-empty string leaves of `instructions`,
 `input`, `tools` and `text`, except structural fields (`type`, `id`,
 `call_id`, `status`, `role`, `name`, `namespace`, `detail`, item metadata):
 `{id, kind, role, editable, text, bytes, sha256}`, where `id` is the JSON
@@ -613,8 +613,8 @@ pointer (`/input/3/content/0/text`), `kind` is the content kind
 arrives in pieces of up to 80 KiB, each with `offset` (where the piece starts in the whole text)
 and up to 1 KiB of read-only `before` and `after` context, so a match across a
 boundary is visible from both pieces. `opaque` names values that are not
-scanned: encrypted reasoning and compaction, images, audio and files (up to
-256). More than 128 pages refuses the request (`final_request_too_large`).
+scanned: images, audio and files first, then encrypted reasoning and
+compaction, up to 256 in all; `opaque_total` counts every one. More than 128 pages refuses the request (`final_request_too_large`).
 
 `next` resolves to `{edits}` from the policies beneath. A handler calls `next`
 and returns `{edits}` keeping all of those plus its own, or returns `{deny}`

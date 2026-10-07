@@ -561,6 +561,25 @@
       "source": "mods/first-party/omd_preview",
       "version": "0.1.0-preview.3"
     },
+    "omd_privacy": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "approvals",
+        "commands",
+        "middleware",
+        "request_policy",
+        "store"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "d72791c05a12f95cb12dee18f71beb0d69f344393e25d002f2b432066def3e7f",
+        "mod.json": "5f92cc6a137c98da77e6dd5f867f4478b44ec0b0560772770026e581d5558c68"
+      },
+      "id": "omd_privacy",
+      "package_sha256": "bc31132601944917d9b8a3f38531487383e25f482db219317380ff72092dbe6e",
+      "source": "mods/first-party/omd_privacy",
+      "version": "0.1.0-preview.1"
+    },
     "omd_profiles": {
       "api": "0.2.0-experimental.5",
       "capabilities": [

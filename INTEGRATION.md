@@ -36,7 +36,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | Profile | Selector | Installed mod sources | Fresh-install default selection | Inactive plugin sources |
 | --- | --- | --- | --- | --- |
 | OMD Core | `platform` | omd_logo, omd_mods, omd_update | omd_logo, omd_mods, omd_update | none |
-| OMD+ | `full` | omd_advisor, omd_checks, omd_claude_cli, omd_continue, omd_coordination, omd_cursor, omd_editor, omd_frecency, omd_git, omd_graph_navigator, omd_guideline_governance, omd_herdr, omd_inspector, omd_layout, omd_logo, omd_lsp_sync, omd_lsp_view, omd_mcp, omd_mini, omd_model_picker, omd_mods, omd_muse, omd_notes, omd_panes, omd_plan_panel, omd_plan_removal, omd_preview, omd_profiles, omd_programmable_context, omd_project_pi_prompts, omd_prompt_queue, omd_reactive_rules, omd_recovery, omd_repository_analysis, omd_research, omd_shared_checkout, omd_source_knowledge, omd_task_tools, omd_theme, omd_typed_tasks, omd_update, omd_usage, omd_workflow, omd_workspace, omd_worktree | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_update, omd_workspace | omd-anchored-edit, omd-application-bridges, omd-artifact-reading, omd-browser, omd-curated-memory, omd-debugger, omd-guidance-hooks, omd-procedures, omd-review-policy, omd-session-review |
+| OMD+ | `full` | omd_advisor, omd_checks, omd_claude_cli, omd_continue, omd_coordination, omd_cursor, omd_editor, omd_frecency, omd_git, omd_graph_navigator, omd_guideline_governance, omd_herdr, omd_inspector, omd_layout, omd_logo, omd_lsp_sync, omd_lsp_view, omd_mcp, omd_mini, omd_model_picker, omd_mods, omd_muse, omd_notes, omd_panes, omd_plan_panel, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_programmable_context, omd_project_pi_prompts, omd_prompt_queue, omd_reactive_rules, omd_recovery, omd_repository_analysis, omd_research, omd_shared_checkout, omd_source_knowledge, omd_task_tools, omd_theme, omd_typed_tasks, omd_update, omd_usage, omd_workflow, omd_workspace, omd_worktree | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_update, omd_workspace | omd-anchored-edit, omd-application-bridges, omd-artifact-reading, omd-browser, omd-curated-memory, omd-debugger, omd-guidance-hooks, omd-procedures, omd-review-policy, omd-session-review |
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
@@ -67,6 +67,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_plan_panel` | 0.1.0-preview.1 | `mods/first-party/omd_plan_panel` |
 | `omd_plan_removal` | 0.1.0-preview.1 | `mods/first-party/omd_plan_removal` |
 | `omd_preview` | 0.1.0-preview.3 | `mods/first-party/omd_preview` |
+| `omd_privacy` | 0.1.0-preview.1 | `mods/first-party/omd_privacy` |
 | `omd_profiles` | 0.1.0-preview.2 | `mods/first-party/omd_profiles` |
 | `omd_programmable_context` | 0.1.0-preview.1 | `mods/first-party/omd_programmable_context` |
 | `omd_project_pi_prompts` | 0.1.0-preview.2 | `mods/first-party/omd_project_pi_prompts` |

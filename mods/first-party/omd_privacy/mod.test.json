@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "intercept",
+      "surface": "model_send",
+      "payload": {
+        "request_id": "fixture",
+        "attempt": 1,
+        "scope": {"thread_id": "fixture-thread", "agent_id": null, "kind": "main"},
+        "provider": "fixture",
+        "route": "lead",
+        "model": "lead",
+        "page": 1,
+        "pages": 1,
+        "cached": 0,
+        "segments": [
+          {"id": "/input/0/content/0/text", "kind": "user.text", "role": "user", "editable": true,
+            "text": "deploy_password: \"fixture-42-value\"", "bytes": 35, "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+        ],
+        "opaque": []
+      },
+      "core": [{"value": {"edits": []}}]
+    },
+    {"type": "reload"},
+    {
+      "type": "intercept",
+      "surface": "model_send",
+      "payload": {
+        "request_id": "fixture-retry",
+        "attempt": 2,
+        "scope": {"thread_id": "fixture-thread", "agent_id": null, "kind": "main"},
+        "provider": "fixture",
+        "route": "lead",
+        "model": "lead",
+        "page": 1,
+        "pages": 1,
+        "cached": 0,
+        "segments": [
+          {"id": "/input/2/content/0/text", "kind": "user.text", "role": "user", "editable": true,
+            "text": "again deploy_password: \"fixture-42-value\"", "bytes": 41, "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+        ],
+        "opaque": []
+      },
+      "core": [{"value": {"edits": []}}]
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_privacy",
+      "event": "command",
+      "name": "privacy",
+      "payload": null,
+      "expect": {
+        "display": "Model-bound privacy policy on every provider request; while enabled, requests are refused if it is unavailable, fails or times out.\nSecret rules: private_key, aws_access_key, github_token, gitlab_token, slack_token, stripe_key, ai_api_key, google_api_key, npm_token, jwt, bearer_token, url_credentials, assigned_secret\nPII rules: off\nScopes: prompt, context, tools, replies\nSensitive paths: ask (20 patterns)\nUnscanned images, audio and files: allow\nExemptions: 0 fingerprints, 0 domains, 4 paths\nTerminal display: unchanged; the screen, transcript, rollout and resume data keep the originals.\nRedacted: assigned_secret 2 · denied 0 · last: redacted 1 (main)\nPlaceholders: 1 known"
+      }
+    },
+    {
+      "type": "event",
+      "event": "approval",
+      "payload": {
+        "id": "fixture-approval",
+        "kind": "exec",
+        "thread_id": "fixture-thread",
+        "turn_id": null,
+        "agent_id": null,
+        "host_decision": "skip",
+        "policy": "on-request",
+        "details": {"command": ["bash", "-lc", "cat .env"], "cwd": "/repo"},
+        "assessment": false
+      },
+      "expect": [
+        {"mod": "omd_privacy", "value": {"ask": "omd_privacy: this command names a sensitive path (.env), so its output would reach the model"}}
+      ]
+    },
+    {
+      "type": "intercept",
+      "surface": "model_send",
+      "cancelled": true,
+      "payload": {
+        "request_id": "fixture-cancelled",
+        "attempt": 1,
+        "scope": {"thread_id": "fixture-thread", "agent_id": null, "kind": "main"},
+        "provider": "fixture",
+        "route": "lead",
+        "model": "lead",
+        "page": 1,
+        "pages": 1,
+        "cached": 0,
+        "segments": [],
+        "opaque": []
+      },
+      "core": [{"value": {"edits": []}}],
+      "expect_error": "callback_cancelled"
+    },
+    {
+      "type": "intercept",
+      "surface": "model_send",
+      "payload": {
+        "request_id": "fixture-failed",
+        "attempt": 1,
+        "scope": {"thread_id": null, "agent_id": null, "kind": "internal"},
+        "provider": null,
+        "route": null,
+        "model": null,
+        "page": 1,
+        "pages": 1,
+        "cached": 0,
+        "segments": [],
+        "opaque": []
+      },
+      "core": [{"error": "inner_policy_failed"}],
+      "expect_error": "intercept_required_failed: omd_privacy: Error: inner_policy_failed"
+    }
+  ]
+}

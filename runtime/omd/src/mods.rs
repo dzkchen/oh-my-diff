@@ -4803,7 +4803,7 @@ impl ModHost {
             ),
             (
                 "intercept.model_send",
-                json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only"}),
+                json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only","opaque_total":"observe_only"}),
             ),
             (
                 "intercept.agent_offers",

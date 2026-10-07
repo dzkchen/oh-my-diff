@@ -244,8 +244,8 @@ fn final_request() -> Value {
 #[test]
 fn send_segment_refs_borrow_the_text_and_render_the_published_shape() {
     let request = final_request();
-    let (refs, _) = send_segment_refs(&request);
-    let (segments, _) = send_segments(&request);
+    let (refs, _, _) = send_segment_refs(&request);
+    let (segments, _, _) = send_segments(&request);
     assert_eq!(refs.len(), segments.len());
     let text = request["instructions"].as_str().unwrap();
     assert!(
@@ -261,7 +261,7 @@ fn send_segment_refs_borrow_the_text_and_render_the_published_shape() {
 
 #[test]
 fn send_segments_cover_every_text_leaf_and_name_opaque_values() {
-    let (segments, opaque) = send_segments(&final_request());
+    let (segments, opaque, total) = send_segments(&final_request());
     let view = segments
         .iter()
         .map(|segment| {
@@ -301,6 +301,23 @@ fn send_segments_cover_every_text_leaf_and_name_opaque_values() {
             json!({"id": "/input/2/encrypted_content", "kind": "encrypted_content"}),
         ]
     );
+    assert_eq!(total, 2);
+}
+
+#[test]
+fn send_opaque_lists_unscanned_media_before_capped_encrypted_content() {
+    let mut input = vec![
+        json!({"type": "reasoning", "summary": [], "encrypted_content": "x"});
+        SEND_OPAQUE + 10
+    ];
+    input.push(json!({"type": "message", "role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AA"}]}));
+    let (_, opaque, total) = send_segments(&json!({"input": input}));
+    assert_eq!((opaque.len(), total), (SEND_OPAQUE, SEND_OPAQUE + 11));
+    assert_eq!(
+        opaque[0],
+        json!({"id": format!("/input/{}/content/0/image_url", SEND_OPAQUE + 10), "kind": "image_url"})
+    );
+    assert_eq!(opaque[1]["id"], "/input/0/encrypted_content");
 }
 
 #[test]

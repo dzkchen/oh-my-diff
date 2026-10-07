@@ -627,6 +627,12 @@
       "why_mod": "Owns the user prompt queue: thread-scoped entries, capture from the draft, edit/reorder/join/send commands, idle draining through host consents and pause on a stopped turn; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_privacy",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns secret and PII detection, sensitive-path rules, reviewed exemptions and salted placeholders as a required model_send policy and approval middleware over the generic final-request stage; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_usage",
       "extension_type": "mod",
       "role": "candidate",

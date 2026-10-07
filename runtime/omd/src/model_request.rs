@@ -768,14 +768,19 @@ impl SendSegment<'_> {
     }
 }
 
-/// Every provider-bound text leaf of a Responses request in request order, and the opaque values it carries.
-pub fn send_segments(request: &Value) -> (Vec<Value>, Vec<Value>) {
-    let (segments, opaque) = send_segment_refs(request);
-    (segments.iter().map(SendSegment::to_json).collect(), opaque)
+/// Every provider-bound text leaf of a Responses request in request order, the opaque values it carries
+/// (unscanned media before encrypted content, capped) and their total count.
+pub fn send_segments(request: &Value) -> (Vec<Value>, Vec<Value>, usize) {
+    let (segments, opaque, total) = send_segment_refs(request);
+    (
+        segments.iter().map(SendSegment::to_json).collect(),
+        opaque,
+        total,
+    )
 }
 
 /// `send_segments` without copying text, so callers can build JSON only for the segments they forward.
-pub fn send_segment_refs(request: &Value) -> (Vec<SendSegment<'_>>, Vec<Value>) {
+pub fn send_segment_refs(request: &Value) -> (Vec<SendSegment<'_>>, Vec<Value>, usize) {
     let mut texts = Vec::new();
     let mut opaque = Vec::new();
     for field in SEND_FIELDS {
@@ -798,12 +803,14 @@ pub fn send_segment_refs(request: &Value) -> (Vec<SendSegment<'_>>, Vec<Value>) 
             }
         })
         .collect();
+    let total = opaque.len();
+    opaque.sort_by_key(|(_, kind)| kind == "encrypted_content");
     let opaque = opaque
         .into_iter()
         .take(SEND_OPAQUE)
         .map(|(id, kind)| json!({"id": id, "kind": kind}))
         .collect();
-    (segments, opaque)
+    (segments, opaque, total)
 }
 
 fn classify(request: &Value, id: &str) -> (String, String, bool) {

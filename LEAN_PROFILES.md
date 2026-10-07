@@ -75,7 +75,7 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod, the `omd_mods` control screen and the `omd_update` notices, all enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs forty-five first-party candidate mods. A fresh OMD+ store enables
+`--profile full` installs forty-six first-party candidate mods. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
@@ -153,6 +153,11 @@ theme's status-line segments ([details](mods/first-party/omd_usage/README.md)).
 `omd-package mod enable omd_prompt_queue` adds `/queue` and Alt+q: prompts you
 capture are kept per thread, can be edited, reordered and joined, and are sent
 as you, in order, when the session is idle ([details](mods/first-party/omd_prompt_queue/README.md)).
+
+`omd-package mod enable omd_privacy` turns on a fail-closed final-request policy:
+secrets and the PII rules you select become stable opaque placeholders in every
+provider-bound request, and shell reads of sensitive paths ask first; `/privacy`
+shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 
 Git mutations also need an explicit permission-profile grant for the repository's
 Git metadata and affected files. Codex's default `.git` protection is respected;
