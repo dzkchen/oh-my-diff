@@ -82,6 +82,19 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_minefield",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in seeded Minefield with keyboard and pointer play, safe opening, pause and atomic per-thread saves and best records",
+      "source": "mods/first-party/omd_minefield",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, store_thread_v1, terminal_input_v1, terminal_render_sites_v1, events_v1, timers_v1, package_controls_v1; Node 24.18.0",
+      "tested_versions": ["Codex 0.160.1", "OMD 0.1.0", "mod API 0.2.0-experimental.5", "Node 24.18.0"],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_privacy",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",

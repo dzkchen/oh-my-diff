@@ -24,6 +24,7 @@ OMD first-party packages that port behavior from other projects credit them here
 | `omd_git` GitHub CI status | [gh-ci-status](https://github.com/diegorv/claude-functions-hook/tree/11e1d052427e1bb9d38668d4779f343b0693c2b5/plugins/gh-ci-status) | Diego R. v. | 0.1.0 | None found (behavior reference only) | Adaptive polling and workflow-run rows independently reimplemented from public behavior; no code copied |
 | `omd_privacy` secret rules and placeholders | [secret-redactor](https://github.com/ray-amjad/awesome-claude-code-function-hooks/tree/12b5fea27a4bd1b88cd9c9b6abc1efc0756c6625/plugins/secret-redactor) | ray-amjad | 12b5fea | MIT | Local secret and path rules, scoped redaction counts, allowlists and stable placeholders reimplemented over the OMD mod API; no code copied |
 | `omd_privacy` PII, scopes and session placeholders | [Honmoon](https://github.com/pleaseai/honmoon/tree/e722aca593fa8bd2262f8f6451d27e47cc1cd054/packages/claude-plugin) | pleaseai | e722aca | Apache-2.0 | Optional PII, explicit scopes, session-salted placeholders and secret-free logs reimplemented over the OMD mod API; no code copied |
+| `omd_minefield` | [reporails/arcade](https://github.com/reporails/arcade) | Reporails | Inspected 2026-10-07 | MIT | Seeded Minefield behavior independently implemented over the OMD mod API; no code or assets copied |
 
 ## pi-simplify
 

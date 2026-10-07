@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_minefield",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Opt-in seeded Minefield: safe opening, keyboard and pointer play, paused resume and atomic per-thread best records",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_minefield"},
+  "capabilities": ["terminal", "commands", "store", "lifecycle", "events", "packages"],
+  "subscriptions": {"channels": ["omd_minefield/play"]},
+  "compatibility": {"required_features": ["state_scopes_v1", "store_thread_v1", "terminal_render_sites_v1", "terminal_input_v1", "events_v1", "timers_v1", "package_controls_v1"]}
+}

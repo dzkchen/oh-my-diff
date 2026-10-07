@@ -627,6 +627,12 @@
       "why_mod": "Owns the user prompt queue: thread-scoped entries, capture from the draft, edit/reorder/join/send commands, idle draining through host consents and pause on a stopped turn; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_minefield",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns seeded Minefield rules, interactive terminal cells, focus, active timers and atomic per-thread board and record persistence; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_privacy",
       "extension_type": "mod",
       "role": "candidate",

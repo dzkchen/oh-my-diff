@@ -143,7 +143,8 @@ class Host:
             _, error = self.run("settings", location, target, json.dumps(settings), check=False)
             if error:
                 found.append(f"scenario settings {mod}: {error}")
-        output, error = self.run("test", location, file, check=False, timeout=300)
+        thread = [scenario["thread_id"]] if scenario.get("thread_id") else []
+        output, error = self.run("test", location, file, *thread, check=False, timeout=300)
         if error:
             return found + [f"scenario: {error}"]
         return found + [f"scenario step {index}: {json.dumps(step['error'])[:300]}"
