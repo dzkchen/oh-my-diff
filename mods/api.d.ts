@@ -41,7 +41,7 @@ export type FinalRequestEdit = { segment: string; start: number; end: number; te
 export type FinalRequestPage = {
   request_id: string; attempt: number; scope: { thread_id: string | null; agent_id: string | null; kind: 'main' | 'subagent' | 'internal' };
   provider: string | null; route: string | null; model: string | null; page: number; pages: number; cached: number;
-  segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[];
+  segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[]; opaque_total: number;
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
 /** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
