@@ -342,6 +342,26 @@ To protect credentials, grants and evidence from same-user processes on macOS, d
 
 While the broker is deployed, installing a package adds its binaries to the pins, and `install.sh` upgrades and rollbacks re-pin exactly the active and previous installations; each asks for sudo once. `install.sh uninstall` and `omd-package uninstall` refuse while the broker is deployed; pruning an older installation uses `omd-package uninstall --keep-broker`. The protection boundary is described in [mods/REFERENCE.md](mods/REFERENCE.md#protected-authority-macos).
 
+Organizations restrict and deploy mods with an administrator policy, on either profile:
+
+```sh
+/path/to/omd-bin/omd-package policy install policy.json  # sudo; root-owned policy file, keeps the previous one
+/path/to/omd-bin/omd-package policy rollback             # sudo; swap back to the previous file
+/path/to/omd-bin/omd-package policy remove               # sudo
+/path/to/omd-bin/omd-package policy explain              # targets, deployment generation and each mod's scope and refusal
+/path/to/omd-bin/omd mods sync [--offline|--rollback]    # deploy the policy's packages to this account's store
+```
+
+With the broker deployed, an administrator can keep the policy in the broker instead
+(`omd-mod policy set FILE`, one administrator dialog). Existing deployment tools fit
+around these commands: an MDM profile or configuration-management run installs OMD and
+the policy file as root, then runs `omd mods sync --store STORE` as each user (for example
+from a launch agent) against the organization's own folders, Git hosts, npm registry or
+mirrored catalog; no hosted fleet service or provider secret is involved. Mods the policy
+deploys can't be turned off in `/mods` or `/omd`; disabling or resetting user mods there
+leaves them running. Policy fields, refusals and recovery are in
+[mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).
+
 The installer refuses removal if its
 launcher changed, no upstream Codex `0.160.x` remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is

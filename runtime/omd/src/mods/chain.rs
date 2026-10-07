@@ -42,6 +42,7 @@ struct Link {
     id: String,
     index: usize,
     required: bool,
+    guard: bool,
     catch: bool,
     location: String,
     matcher: Value,
@@ -892,6 +893,7 @@ impl Chain {
         }
         let last = |attempts: &Attempts| attempts.last.clone().and_then(std::result::Result::ok);
         let required_beneath = self.links[k + 1..].iter().any(|link| link.required);
+        let guarded_beneath = self.links[k + 1..].iter().any(|link| link.guard);
         let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str, executed: bool| {
             reply.and_then(|reply| {
                 let result = reply.get("result").cloned().unwrap_or(Value::Null);
@@ -903,6 +905,13 @@ impl Chain {
                     executed,
                     required_beneath,
                 )?;
+                let denied = result.as_object().is_some_and(|object| object.len() == 1)
+                    && result["deny"].is_string();
+                if guarded_beneath && !matches!(attempts.last, Some(Ok(_))) && !denied {
+                    return Err(failure(format!(
+                        "invalid_interceptor_result: {surface}: a managed required guard beneath cannot be skipped"
+                    )));
+                }
                 Ok(result)
             })
         };
@@ -1552,7 +1561,7 @@ impl ModHost {
         let unavailable = self.policies.iter().find_map(|path| {
             let shadowed = |rejection: &ModRejection| {
                 (&rejection.path == path
-                    && rejection.reason.starts_with("shadowed_by_project_scope"))
+                    && rejection.reason.starts_with("shadowed_by_"))
                 .then(|| self.loaded.get(rejection.id.as_deref()?))
                 .flatten()
             };
@@ -1630,7 +1639,8 @@ impl ModHost {
             .any(|link| link.matcher.is_null() || may_match(&link.matcher, input))
     }
 
-    /// Ordinary links wrap required ones; a faulted mod's required links stay and fail closed.
+    /// Managed prepend, ordinary and managed append tiers; in each, ordinary links wrap required
+    /// ones and a faulted mod's required links stay and fail closed.
     fn links(&self, surface: &str) -> Vec<Link> {
         let order = order(&self.loaded).unwrap_or_default();
         let faulted = self
@@ -1639,25 +1649,39 @@ impl ModHost {
             .filter(|(_, loaded)| loaded.error.is_some())
             .map(|(id, _)| id.clone());
         let required_order = order.iter().cloned().chain(faulted).collect::<Vec<_>>();
+        let tier = |loaded: &Loaded| match (loaded.selection.scope == MANAGED_SCOPE)
+            .then_some(loaded.selection.tier)
+            .flatten()
+        {
+            Some(ManagedTier::Prepend) => 0,
+            None => 1,
+            Some(ManagedTier::Append) => 2,
+        };
         let mut links = Vec::new();
-        for (required, order) in [(false, &order), (true, &required_order)] {
-            for id in order {
-                let Some(loaded) = self.loaded.get(id) else {
-                    continue;
-                };
-                for (index, interceptor) in loaded.registrations.interceptors.iter().enumerate() {
-                    if interceptor.required == required
-                        && granted(loaded, &interceptor.pattern, surface)
+        for position in 0..3 {
+            for (required, order) in [(false, &order), (true, &required_order)] {
+                for id in order {
+                    let Some(loaded) = self.loaded.get(id).filter(|loaded| tier(loaded) == position)
+                    else {
+                        continue;
+                    };
+                    for (index, interceptor) in
+                        loaded.registrations.interceptors.iter().enumerate()
                     {
-                        links.push(Link {
-                            id: id.clone(),
-                            index,
-                            required,
-                            catch: interceptor.catch,
-                            location: interceptor.location.clone(),
-                            matcher: interceptor.matcher.clone(),
-                            generation: self.generation,
-                        });
+                        if interceptor.required == required
+                            && granted(loaded, &interceptor.pattern, surface)
+                        {
+                            links.push(Link {
+                                id: id.clone(),
+                                index,
+                                required,
+                                guard: required && loaded.selection.scope == MANAGED_SCOPE,
+                                catch: interceptor.catch,
+                                location: interceptor.location.clone(),
+                                matcher: interceptor.matcher.clone(),
+                                generation: self.generation,
+                            });
+                        }
                     }
                 }
             }

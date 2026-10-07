@@ -79,6 +79,19 @@ export type ModelResponse = {
 };
 
 export type ToolSpec = { name: string; label?: string; description: string; parameters: { type: 'object'; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean }; task_scoped?: boolean };
+/** Original argument types by tool name; a store's generated `tool-types.d.ts` fills it from the host's actual tool inventory. */
+export interface ToolArguments {}
+/** A tool call: any tool until `ToolArguments` lists the inventory, then exactly one of its tools. */
+export type ToolCall = keyof ToolArguments extends never
+  ? { tool: string; arguments: Json }
+  : { [T in keyof ToolArguments]: { tool: T; arguments: ToolArguments[T] } }[keyof ToolArguments];
+/** `effective` is null when a `tool_specs` interceptor hid the tool; `deferred` tools are reachable through tool search. */
+export type ToolInventoryEntry = {
+  name: string; kind: 'builtin' | 'mcp' | 'extension' | 'dynamic'; server: string | null;
+  original: { description: string; parameters: Json | null; freeform: boolean };
+  effective: { description: string; parameters: Json | null; deferred: boolean } | null;
+};
+export type ToolInventory = { thread_id: string; tools: ToolInventoryEntry[] };
 export type VirtualReadRequest = { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number };
 export type VirtualReadResponse = { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean };
 export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; handle: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean };
@@ -351,8 +364,9 @@ export interface HostOperations {
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
   'tools.undefine': { arguments: { name: string }; result: { removed: boolean } };
-  'tools.invoke': { arguments: { tool: string; arguments: Json }; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
-  'tools.check': { arguments: { tool: string; arguments: Json }; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
+  'tools.list': { arguments: null; result: ToolInventory };
+  'tools.invoke': { arguments: ToolCall; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
+  'tools.check': { arguments: ToolCall; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -463,10 +477,10 @@ export type HttpResponse = { status: number; url: string; headers: Record<string
 export type CommandRow = { command: string; description: string; owner: string | null; hidden: boolean; args_hint: string | null; immediate: boolean; protected: boolean };
 export type ConfigRow = { key: string; label: string; value: Json; source: string; version: string | null; scope: 'codex' | 'mod'; editable: boolean; managed: boolean; secret: boolean; hidden: boolean; type?: string; enum?: Json[] | null };
 export type AdmissionPackage = { id: string; version: string; sha256: string; source: string; scope: string; capabilities: string[]; dependencies: { id: string; version: string }[]; requires: string[]; services: Json; registrations: Json; source_use: Json };
-export type ToolSpecEntry = { name: string; description: string; parameters: Json; deferred: boolean };
+export type ToolSpecEntry = { name: string; description: string; parameters: Json | null; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
+  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };

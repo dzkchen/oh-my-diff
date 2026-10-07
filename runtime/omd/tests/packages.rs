@@ -272,7 +272,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
     store.package_enable("fixture").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);
-    assert_eq!(status["selections"][0]["managed"], true);
+    assert_eq!(status["selections"][0]["packaged"], true);
     assert_eq!(status["selections"][0]["settings_keys"], json!(["mode"]));
     store.package_disable("fixture").unwrap();
     assert_eq!(

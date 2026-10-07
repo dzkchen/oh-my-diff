@@ -492,7 +492,7 @@ impl Broker {
                     .enrolled(text(arguments, "id")?)?
                     .then_some(GRANT_RIGHT)
             }
-            "policy.put" => Some(POLICY_RIGHT),
+            "policy.put" | "policy.rollback" => Some(POLICY_RIGHT),
             _ => None,
         })
     }
@@ -605,9 +605,33 @@ impl Broker {
                 {
                     return Err(failure("authority_request_invalid"));
                 }
-                let path = self.root.join("policy.json");
-                let mut policy = read_json(&path, json!({}))?;
+                let (path, kept) = (
+                    self.root.join("policy.json"),
+                    self.root.join("policy-previous.json"),
+                );
+                let (mut policy, mut previous) =
+                    (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
+                previous[key] = policy[key].clone();
                 policy[key] = arguments["value"].clone();
+                write_private(&kept, &previous)?;
+                write_private(&path, &policy)?;
+                Value::Null
+            }
+            "policy.rollback" => {
+                let key = text(&arguments, "key")?;
+                let (path, kept) = (
+                    self.root.join("policy.json"),
+                    self.root.join("policy-previous.json"),
+                );
+                let (mut policy, mut previous) =
+                    (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
+                if previous.get(key).is_none() {
+                    return Err(failure("authority_policy_previous_missing"));
+                }
+                let restored = previous[key].take();
+                previous[key] = policy[key].take();
+                policy[key] = restored;
+                write_private(&kept, &previous)?;
                 write_private(&path, &policy)?;
                 Value::Null
             }
@@ -666,12 +690,6 @@ impl Broker {
 mod platform {
     use super::failure;
     use base64::Engine;
-    use core_foundation::base::TCFType;
-    use core_foundation::data::CFData;
-    use security_framework::os::macos::code_signing::Flags;
-    use security_framework::os::macos::code_signing::GuestAttributes;
-    use security_framework::os::macos::code_signing::SecCode;
-    use security_framework::os::macos::code_signing::SecRequirement;
     use security_framework_sys::authorization as sys;
     use std::io;
     use std::os::fd::AsRawFd;
@@ -717,19 +735,35 @@ mod platform {
         if status != 0 || length as usize != token.len() {
             return Err(failure("authority_peer_unverified"));
         }
-        let token = CFData::from_buffer(&token);
-        let mut attributes = GuestAttributes::new();
-        attributes.set_audit_token(token.as_concrete_TypeRef());
-        let requirement: SecRequirement = pins
-            .iter()
-            .map(|pin| format!("cdhash H\"{pin}\""))
-            .collect::<Vec<_>>()
-            .join(" or ")
-            .parse()
-            .map_err(|_| failure("authority_pins_invalid"))?;
-        SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE)
-            .and_then(|code| code.check_validity(Flags::NONE, &requirement))
-            .map_err(|_| failure("authority_peer_unverified"))
+        // The kernel's view of the running peer, so its executable need not be readable by the broker.
+        let pid = u32::from_ne_bytes([token[20], token[21], token[22], token[23]]) as libc::pid_t;
+        let (mut flags, mut cdhash) = (0u32, [0u8; 20]);
+        let known = unsafe {
+            csops_audittoken(pid, CS_OPS_STATUS, (&raw mut flags).cast(), 4, token.as_mut_ptr())
+                == 0
+                && csops_audittoken(pid, CS_OPS_CDHASH, cdhash.as_mut_ptr().cast(), 20, token.as_mut_ptr())
+                    == 0
+        };
+        let cdhash = cdhash.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        if known && flags & CS_VALID != 0 && pins.contains(&cdhash.as_str()) {
+            Ok(())
+        } else {
+            Err(failure("authority_peer_unverified"))
+        }
+    }
+
+    const CS_OPS_STATUS: libc::c_uint = 0;
+    const CS_OPS_CDHASH: libc::c_uint = 5;
+    const CS_VALID: u32 = 0x1;
+
+    unsafe extern "C" {
+        fn csops_audittoken(
+            pid: libc::pid_t,
+            ops: libc::c_uint,
+            useraddr: *mut libc::c_void,
+            usersize: libc::size_t,
+            token: *mut u8,
+        ) -> libc::c_int;
     }
 
     unsafe extern "C" {

@@ -195,6 +195,24 @@
       "removal": "`omd-mod` disable, uninstall, revoke and package-quarantine work without any control mod; disable and uninstall restore the previous lock and preserve edited sources and explicit settings, and quarantine blocks the installed version while keeping its data."
     },
     {
+      "id": "managed_policy",
+      "area": "host",
+      "name": "Administrator policy and managed deployment",
+      "owner": "OMD mod host (runtime/omd/src/mods/policy.rs, package_manager.rs)",
+      "version": "policy schema 1",
+      "status": "supported",
+      "fixtures": [
+        "rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped",
+        "rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance",
+        "rust:omd/tests/managed.rs::tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads",
+        "rust:omd/tests/managed.rs::managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly",
+        "rust:omd/tests/managed.rs::managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation",
+        "rust:omd/tests/managed.rs::managed_policy_refuses_user_installs_outside_allowed_sources_and_versions"
+      ],
+      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/lean_profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
+      "removal": "An administrator clears or rolls back the policy (`omd-mod policy clear|rollback`, `omd-package policy remove|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running."
+    },
+    {
       "id": "omd_coordination",
       "area": "first_party_mod",
       "name": "omd_coordination",
@@ -1037,6 +1055,23 @@
         "script:tests/coordination_mod.test.mjs",
         "rust:omd/tests/generic_host.rs::finding_receipt_replay_requires_explicit_independent_resolution"
       ]
+    },
+    {
+      "id": "managed_packages_beside_user_mods",
+      "components": [
+        "managed_policy",
+        "mod_package_lifecycle",
+        "omd_host"
+      ],
+      "boundaries": [
+        "duplicate_tools",
+        "shared_state_store"
+      ],
+      "result": "Administrator-managed packages deployed per account run beside user and project mods: a same-ID user or project copy is shadowed, refused user mods unload at once, user answers cannot skip a managed required guard, and resetting user mods leaves managed packages running.",
+      "evidence": [
+        "rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped",
+        "rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance"
+      ]
     }
   ],
   "regression": [
@@ -1224,6 +1259,7 @@
         "omd-curated-memory",
         "omd-debugger",
         "omd-guidance-hooks",
+        "omd-mod-authoring",
         "omd-procedures",
         "omd-review-policy",
         "omd-session-review"

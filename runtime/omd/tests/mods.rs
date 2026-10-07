@@ -4464,6 +4464,48 @@ fn offline_multiselect_interactions_send_checked_values_in_option_order() {
 }
 
 #[test]
+fn offline_scenarios_mock_environment_pointer_clients_and_pending_waits() {
+    let source = "export default api => { api.command('env', () => api.host.call('environment.read', {names: ['MODE', 'API_TOKEN']})); api.command('clock', () => Date.now()); api.command('last', () => api.state.get()); api.on('component_event', event => api.state.set(event)); api.on('terminal', input => ({title: `clients:${input.clients.length}`, sites: {dialog: {components: [{type: 'box', id: 'canvas', label: 'Canvas', pointer: true}, {type: 'box', id: 'plain', label: 'Plain'}]}}})); }";
+    let (temp, _, _) = fixture(source, &["commands", "terminal", "exec", "store"]);
+    let pointer = |action: &str| json!({"column": 2, "row": -1, "half": null, "action": action, "button": "left"});
+    let steps = |scenario: Value| host(&temp).offline_test(scenario);
+    let result = steps(json!({"schema": 1, "virtual_time_ms": 1000, "environment": {"MODE": "ci"}, "steps": [
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "env", "payload": null,
+            "expect": {"values": {"MODE": {"set": true, "value": "ci"}, "API_TOKEN": {"set": false}}}},
+        {"type": "wait_until", "every_ms": 1000, "max_ms": 5000, "until": 3000,
+            "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "clock", "payload": null},
+            "expect": {"waited_ms": 2000, "value": 3000}},
+        {"type": "client_attach", "name": "web", "renderer": {"kind": "gui", "pointer": "pixel"},
+            "expect": {"id": "client-1", "clients": [{"id": "client-1", "name": "web", "renderer": {"kind": "gui", "formats": [], "pointer": "pixel", "reduced_motion": false},
+                "viewport": null, "focused": false, "attached_ms": 3000}]}},
+        {"type": "terminal_mount", "mod": "fixture", "payload": {"event": "draw"}},
+        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "client": "client-1", "payload": {"event": "draw"}, "pointer": pointer("down")},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "last", "payload": null,
+            "expect": {"component": "canvas", "kind": "pointer", "pointer": pointer("down"), "client": "client-1"}},
+        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "payload": {"event": "draw"}, "pointer": pointer("up")},
+        {"type": "invoke", "mod": "fixture", "event": "command", "name": "last", "payload": null,
+            "expect": {"component": "canvas", "kind": "pointer", "pointer": pointer("up"), "origin": "user"}},
+        {"type": "client_detach", "id": "client-1", "expect": {"clients": []}},
+        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "client": "client-1", "payload": {"event": "draw"}, "pointer": pointer("up"), "expect_error": "offline_client_not_attached"},
+        {"type": "terminal_interact", "mod": "fixture", "component": "plain", "payload": {"event": "draw"}, "pointer": pointer("up"), "expect_error": "offline_terminal_component_not_pointer"},
+        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "payload": {"event": "draw"}, "pointer": {"column": 0, "row": 0, "action": "tap"}, "expect_error": "offline_terminal_pointer_invalid"},
+        {"type": "wait_until", "max_ms": 2000, "until": 0,
+            "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "clock", "payload": null},
+            "expect_error": "offline_wait_timeout"}
+    ]}))
+    .unwrap();
+    assert_eq!(result["steps"][3]["value"]["title"], "clients:1");
+    let secret =
+        steps(json!({"schema": 1, "environment": {"API_TOKEN": "x"}, "steps": []})).unwrap_err();
+    assert!(
+        secret
+            .to_string()
+            .contains("offline_environment_secret_name: API_TOKEN"),
+        "{secret}"
+    );
+}
+
+#[test]
 fn omd_mod_reset_moves_only_resettable_store_files_aside() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap().join("store");

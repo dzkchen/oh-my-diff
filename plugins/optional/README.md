@@ -50,4 +50,6 @@ Public release and other platform/version support remain separate qualification 
 
 The same optional marketplace offers [anchored edits](plugins/omd-anchored-edit/README.md), [past-session review](plugins/omd-session-review/README.md), [local curated memory](plugins/omd-curated-memory/README.md), and [promoted workflow procedures](plugins/omd-procedures/README.md). Each uses a separately inspected/trusted API 0.2 component. Installation does not activate a component.
 
+The skill-only [mod authoring guide](plugins/omd-mod-authoring/README.md) has no component: it walks an agent through writing a mod in a scratch directory and leaves approval to the user.
+
 The [browser plugin](plugins/omd-browser/README.md) has no mod component: its MCP server stays inert until the user writes its configuration, and Codex prompts before each tool call. Local memory has no third-party backend connection.

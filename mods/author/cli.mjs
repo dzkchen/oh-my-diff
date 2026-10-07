@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -284,11 +284,10 @@ function copyDeclarations(store, directory) {
   mkdirSync(target, { recursive: true });
   cpSync(declarations.active_host, join(target, 'active-host.d.ts'));
   cpSync(declarations.installed_contracts, join(target, 'installed-contracts.d.ts'));
+  if (declarations.tool_types) cpSync(declarations.tool_types, join(target, 'tool-types.d.ts'));
 }
 
-function runScenario(directory, file) {
-  const scenarioPath = resolve(directory, file);
-  const scenario = JSON.parse(readFileSync(scenarioPath, 'utf8'));
+export function runScenarioObject(directory, scenario, afterRun) {
   const packages = [...(scenario.packages || []).map(path => resolve(directory, path)), directory];
   for (const packagePath of packages) compileJsx(packagePath);
   const temporary = mkdtempSync(join(tmpdir(), 'omd-mod-author-'));
@@ -303,13 +302,29 @@ function runScenario(directory, file) {
       const path = installed.get(id) || fail(`settings_for_uninstalled_mod: ${id}`);
       engineJson(['settings', store, path, JSON.stringify(settings)]);
     }
+    const scenarioPath = join(temporary, 'scenario.json');
+    writeFileSync(scenarioPath, JSON.stringify(scenario));
     const result = engineJson(['test', store, scenarioPath]);
-    copyDeclarations(store, directory);
-    checkProject(directory);
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    afterRun?.(store);
+    return result;
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+function runScenario(directory, file) {
+  const scenario = JSON.parse(readFileSync(resolve(directory, file), 'utf8'));
+  const result = runScenarioObject(directory, scenario, store => {
+    copyDeclarations(store, directory);
+    checkProject(directory);
+  });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function runTests(directory) {
+  if (existsSync(join(directory, 'mod.test.json'))) runScenario(directory, 'mod.test.json');
+  const files = readdirSync(directory).filter(name => /\.test\.(ts|mjs)$/.test(name));
+  if (files.length) command(node, ['--test', ...files], { cwd: directory });
 }
 
 async function packageProject(directory) {
@@ -344,6 +359,7 @@ function watchProject(directory, store, once) {
     files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
     if (existsSync(join(directory, 'index.tsx'))) files.add('index.tsx');
     const result = engineJson(['reload', store]);
+    copyDeclarations(store, directory);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);
   };
   reload();
@@ -373,7 +389,7 @@ async function main() {
     case 'example': return copyExample(directory, nameOrStore);
     case 'examples': return copyExamples(directory);
     case 'check': return checkProject(directory);
-    case 'test': return runScenario(directory, 'mod.test.json');
+    case 'test': return runTests(directory);
     case 'run': return runScenario(directory, 'mod.test.json');
     case 'debug': return runScenario(directory, 'debug.test.json');
     case 'package': return packageProject(directory);
@@ -386,4 +402,4 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

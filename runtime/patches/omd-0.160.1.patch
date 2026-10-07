@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index c14cdb126..e161c3801 100644
+index c14cdb126..dafda0b8f 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2113,6 +2113,8 @@ dependencies = [
@@ -43,7 +43,7 @@ index c14cdb126..e161c3801 100644
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4155,6 +4161,66 @@ dependencies = [
+@@ -4155,6 +4161,65 @@ dependencies = [
   "wiremock",
  ]
 
@@ -52,7 +52,6 @@ index c14cdb126..e161c3801 100644
 +version = "0.1.0"
 +dependencies = [
 + "base64 0.22.1",
-+ "core-foundation 0.10.1",
 + "ignore",
 + "libc",
 + "quick-xml 0.41.0",
@@ -110,7 +109,7 @@ index c14cdb126..e161c3801 100644
  [[package]]
  name = "codex-otel"
  version = "0.160.1"
-@@ -4699,6 +4765,7 @@ dependencies = [
+@@ -4699,6 +4764,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -118,7 +117,7 @@ index c14cdb126..e161c3801 100644
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -4774,6 +4841,8 @@ dependencies = [
+@@ -4774,6 +4840,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -127,7 +126,7 @@ index c14cdb126..e161c3801 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4795,6 +4864,7 @@ dependencies = [
+@@ -4795,6 +4863,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -21666,11 +21665,39 @@ index 1c9d2c22f..33aad3eae 100644
      let mut orchestrator = ToolOrchestrator::new();
      let mut runtime = ApplyPatchRuntime::new();
      let result = orchestrator
+diff --git a/codex-rs/core/src/tools/handlers/dynamic.rs b/codex-rs/core/src/tools/handlers/dynamic.rs
+index f2b7860d0..bae5599a0 100644
+--- a/codex-rs/core/src/tools/handlers/dynamic.rs
++++ b/codex-rs/core/src/tools/handlers/dynamic.rs
+@@ -165,7 +165,11 @@ impl DynamicToolHandler {
+     }
+ }
+
+-impl CoreToolRuntime for DynamicToolHandler {}
++impl CoreToolRuntime for DynamicToolHandler {
++    fn tool_kind(&self) -> &'static str {
++        "dynamic"
++    }
++}
+
+ #[expect(
+     clippy::await_holding_invalid_type,
 diff --git a/codex-rs/core/src/tools/handlers/extension_tools.rs b/codex-rs/core/src/tools/handlers/extension_tools.rs
-index 927e9b3d8..56d3ffae4 100644
+index 927e9b3d8..559d993c3 100644
 --- a/codex-rs/core/src/tools/handlers/extension_tools.rs
 +++ b/codex-rs/core/src/tools/handlers/extension_tools.rs
-@@ -492,6 +492,7 @@ mod tests {
+@@ -71,6 +71,10 @@ impl ToolExecutor<ToolInvocation> for ExtensionToolAdapter {
+ }
+
+ impl CoreToolRuntime for ExtensionToolAdapter {
++    fn tool_kind(&self) -> &'static str {
++        "extension"
++    }
++
+     fn is_builtin_control_tool(&self) -> bool {
+         let tool_name = self.0.tool_name();
+         if tool_name.is_default_namespace() {
+@@ -492,6 +496,7 @@ mod tests {
              source: ToolCallSource::CodeMode {
                  cell_id: "cell-1".to_string(),
                  runtime_tool_call_id: "nested-call-1".to_string(),
@@ -23058,7 +23085,7 @@ index 0a7afc54c..9305cbd20 100644
          records: Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>,
          finish_started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index 7d88650f5..954a0f18c 100644
+index 7d88650f5..24f845395 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -13,7 +13,6 @@ use crate::memory_usage::shell_script_for_invocation;
@@ -23118,10 +23145,14 @@ index 7d88650f5..954a0f18c 100644
  /// Typed runtime contract for locally executed tools.
  ///
  /// Implementers provide the shared `ToolExecutor` behavior plus optional
-@@ -83,6 +118,15 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
+@@ -83,6 +118,19 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
          None
      }
 
++    fn tool_kind(&self) -> &'static str {
++        "builtin"
++    }
++
 +    /// Computes the host's approval requirement for a call without running it; `None` means the
 +    /// tool has no approval step.
 +    fn assess<'a>(
@@ -23134,7 +23165,7 @@ index 7d88650f5..954a0f18c 100644
      fn matches_kind(&self, payload: &ToolPayload) -> bool {
          matches!(
              payload,
-@@ -520,26 +564,33 @@ impl ToolRegistry {
+@@ -520,26 +568,33 @@ impl ToolRegistry {
          Some(tool.exposure != ToolExposure::Hidden && tool.runtime.supports_parallel_tool_calls())
      }
 
@@ -23181,7 +23212,7 @@ index 7d88650f5..954a0f18c 100644
          {
              let mut active = invocation.session.active_turn.lock().await;
              if let Some(active_turn) = active.as_mut() {
-@@ -548,6 +599,56 @@ impl ToolRegistry {
+@@ -548,6 +603,56 @@ impl ToolRegistry {
              }
          }
 
@@ -23238,7 +23269,7 @@ index 7d88650f5..954a0f18c 100644
          let dispatch_trace = ToolDispatchTrace::start(&invocation);
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
-@@ -621,6 +722,7 @@ impl ToolRegistry {
+@@ -621,6 +726,7 @@ impl ToolRegistry {
                          &invocation,
                          call_state.as_deref(),
                          ToolCallOutcome::Blocked,
@@ -23246,7 +23277,7 @@ index 7d88650f5..954a0f18c 100644
                      )
                      .await;
                      return Err(err);
-@@ -643,6 +745,7 @@ impl ToolRegistry {
+@@ -643,6 +749,7 @@ impl ToolRegistry {
                              ToolCallOutcome::Failed {
                                  handler_executed: false,
                              },
@@ -23254,7 +23285,7 @@ index 7d88650f5..954a0f18c 100644
                          )
                          .await;
                          return Err(err);
-@@ -747,13 +850,19 @@ impl ToolRegistry {
+@@ -747,13 +854,19 @@ impl ToolRegistry {
                  handler_executed: true,
              },
          };
@@ -23277,7 +23308,7 @@ index 7d88650f5..954a0f18c 100644
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -771,6 +880,31 @@ impl ToolRegistry {
+@@ -771,6 +884,31 @@ impl ToolRegistry {
                          });
                      }
                  }
@@ -23309,7 +23340,7 @@ index 7d88650f5..954a0f18c 100644
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -781,6 +915,13 @@ impl ToolRegistry {
+@@ -781,6 +919,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -23323,7 +23354,7 @@ index 7d88650f5..954a0f18c 100644
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -792,12 +933,13 @@ async fn notify_tool_finish_if_unclaimed(
+@@ -792,12 +937,13 @@ async fn notify_tool_finish_if_unclaimed(
      invocation: &ToolInvocation,
      call_state: Option<&ToolCallState>,
      outcome: ToolCallOutcome,
@@ -23877,10 +23908,10 @@ index bb1474feb..d6af9f409 100644
                      expose_spawn_agent_model_overrides: true,
                      multi_agent_version: turn_context.multi_agent_version,
 diff --git a/codex-rs/core/src/tools/spec_plan_tests.rs b/codex-rs/core/src/tools/spec_plan_tests.rs
-index 151855840..3e701ec0b 100644
+index 151855840..a4b7d588e 100644
 --- a/codex-rs/core/src/tools/spec_plan_tests.rs
 +++ b/codex-rs/core/src/tools/spec_plan_tests.rs
-@@ -3409,3 +3409,151 @@ async fn hosted_web_search_and_standalone_image_generation_follow_runtime_gates(
+@@ -3409,3 +3409,234 @@ async fn hosted_web_search_and_standalone_image_generation_follow_runtime_gates(
      bedrock_with_standalone_web_search.assert_visible_contains(&["web_search"]);
      bedrock_with_standalone_web_search.assert_visible_lacks(&["web"]);
  }
@@ -23960,6 +23991,89 @@ index 151855840..3e701ec0b 100644
 +            .values()
 +            .any(|exposure| *exposure == ToolExposure::Deferred)
 +    );
++}
++
++#[derive(Default)]
++struct InventoryObserver(std::sync::Mutex<Vec<codex_extension_api::ToolInventoryEntry>>);
++
++impl codex_extension_api::ToolSpecContributor for InventoryObserver {
++    fn adjust_tool_specs(
++        &self,
++        _thread_store: &codex_extension_api::ExtensionData,
++        _specs: &[codex_extension_api::ToolSpecView],
++    ) -> Option<codex_extension_api::ToolSpecAdjustment> {
++        Some(codex_extension_api::ToolSpecAdjustment {
++            hide: vec!["mcp__srv__hidden".into()],
++            defer: vec!["mcp__srv__lookup".into()],
++            describe: [(
++                "mcp__srv__lookup".to_owned(),
++                (Some("changed".to_owned()), None),
++            )]
++            .into(),
++        })
++    }
++
++    fn observing(&self, _thread_store: &codex_extension_api::ExtensionData) -> bool {
++        true
++    }
++
++    fn observe_tool_inventory(
++        &self,
++        _thread_store: &codex_extension_api::ExtensionData,
++        inventory: &[codex_extension_api::ToolInventoryEntry],
++    ) {
++        *self.0.lock().unwrap() = inventory.to_vec();
++    }
++}
++
++#[tokio::test]
++async fn spec_contributors_observe_original_and_effective_tools_with_hidden_and_deferred_state() {
++    let (mut session, mut turn) = make_session_and_context().await;
++    update_turn_settings_for_test(&mut turn, |settings| {
++        Arc::make_mut(&mut settings.model_info).supports_search_tool = true;
++    });
++    let observer = Arc::new(InventoryObserver::default());
++    let mut extensions = codex_extension_api::ExtensionRegistryBuilder::new();
++    extensions.tool_spec_contributor(observer.clone());
++    session.services.extensions = Arc::new(extensions.build());
++    let mcp = codex_mcp::McpBinding::empty(mcp_config_for_test(&turn.config));
++    let mut registry = build_core_tool_registry(
++        &turn,
++        turn.model_info(),
++        &turn.initial_environments,
++        &mcp,
++        /*tool_suggest_candidates*/ None,
++        /*wait_for_environment_tool_config*/ None,
++    );
++    for (name, exposure) in [
++        ("lookup", ToolExposure::Direct),
++        ("hidden", ToolExposure::Direct),
++        ("late", ToolExposure::Deferred),
++    ] {
++        let tool = mcp_runtime("srv", "mcp__srv__", name, exposure);
++        registry.register_external_with_exposure(tool.runtime, tool.exposure);
++    }
++    crate::tools::spec_adjust::plan(&session, &mut registry, /*search_available*/ true);
++    let inventory = observer.0.lock().unwrap().clone();
++    let find = |name: &str| inventory.iter().find(|tool| tool.name == name).unwrap();
++    let lookup = find("mcp__srv__lookup");
++    assert_eq!(
++        (lookup.kind, lookup.server.as_deref()),
++        ("mcp", Some("srv"))
++    );
++    assert_eq!(lookup.description, "lookup test tool");
++    let effective = lookup.effective.as_ref().unwrap();
++    assert_eq!(
++        (effective.description.as_str(), effective.deferred),
++        ("changed", true)
++    );
++    assert_eq!(find("mcp__srv__hidden").effective, None);
++    assert!(find("mcp__srv__late").effective.as_ref().unwrap().deferred);
++    let builtin = inventory
++        .iter()
++        .find(|tool| tool.server.is_none() && tool.kind == "builtin")
++        .unwrap();
++    assert!(!builtin.effective.as_ref().unwrap().deferred);
 +}
 +
 +struct OfferedRole;
@@ -24632,7 +24746,7 @@ index d93373861..857e8752e 100644
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index bb2b162ce..ba361d0f5 100644
+index bb2b162ce..3b9b7648a 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -24865,7 +24979,7 @@ index bb2b162ce..ba361d0f5 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -415,6 +561,119 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -415,6 +561,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -24910,6 +25024,25 @@ index bb2b162ce..ba361d0f5 100644
 +    pub describe: std::collections::BTreeMap<String, (Option<String>, Option<serde_json::Value>)>,
 +}
 +
++#[derive(Clone, Debug, PartialEq)]
++pub struct ToolInventoryView {
++    pub description: String,
++    pub parameters: serde_json::Value,
++    pub deferred: bool,
++}
++
++/// One registered tool with its original spec; `effective` is `None` when an adjustment hid it.
++#[derive(Clone, Debug, PartialEq)]
++pub struct ToolInventoryEntry {
++    pub name: String,
++    pub kind: &'static str,
++    pub server: Option<String>,
++    pub description: String,
++    pub parameters: serde_json::Value,
++    pub freeform: bool,
++    pub effective: Option<ToolInventoryView>,
++}
++
 +/// Adjusts which tools the model sees and how they are described.
 +pub trait ToolSpecContributor: Send + Sync {
 +    fn adjusting(&self, _thread_store: &ExtensionData) -> bool {
@@ -24921,6 +25054,17 @@ index bb2b162ce..ba361d0f5 100644
 +        thread_store: &ExtensionData,
 +        specs: &[ToolSpecView],
 +    ) -> Option<ToolSpecAdjustment>;
++
++    fn observing(&self, _thread_store: &ExtensionData) -> bool {
++        false
++    }
++
++    fn observe_tool_inventory(
++        &self,
++        _thread_store: &ExtensionData,
++        _inventory: &[ToolInventoryEntry],
++    ) {
++    }
 +}
 +
 +/// A sub-agent role that no configuration file defines.
@@ -25264,7 +25408,7 @@ index 7361c20c5..ecefc84a5 100644
 +    pub thread_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index c8436c8fe..747f74a20 100644
+index c8436c8fe..321b131dc 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -7,6 +7,8 @@ mod tool_policy;
@@ -25338,7 +25482,7 @@ index c8436c8fe..747f74a20 100644
  pub use contributors::ThreadIdleCause;
  pub use contributors::ThreadIdleInput;
  pub use contributors::ThreadLifecycleContributor;
-@@ -79,16 +107,33 @@ pub use contributors::ThreadResumeInput;
+@@ -79,16 +107,35 @@ pub use contributors::ThreadResumeInput;
  pub use contributors::ThreadStartInput;
  pub use contributors::ThreadStopInput;
  pub use contributors::TokenUsageContributor;
@@ -25354,6 +25498,8 @@ index c8436c8fe..747f74a20 100644
  pub use contributors::ToolContributor;
  pub use contributors::ToolFinishInput;
 +pub use contributors::ToolInterception;
++pub use contributors::ToolInventoryEntry;
++pub use contributors::ToolInventoryView;
  pub use contributors::ToolLifecycleContributor;
  pub use contributors::ToolLifecycleFuture;
 +pub use contributors::ToolOutputContributor;
@@ -25372,7 +25518,7 @@ index c8436c8fe..747f74a20 100644
  pub use contributors::TurnErrorInput;
  pub use contributors::TurnInputContext;
  pub use contributors::TurnInputContributor;
-@@ -98,8 +143,11 @@ pub use contributors::TurnLifecycleContributor;
+@@ -98,8 +145,11 @@ pub use contributors::TurnLifecycleContributor;
  pub use contributors::TurnStartInput;
  pub use contributors::TurnStartPhase;
  pub use contributors::TurnStopInput;
@@ -41735,10 +41881,12 @@ index 000000000..d5ae42d44
 +}
 diff --git a/codex-rs/core/src/tools/spec_adjust.rs b/codex-rs/core/src/tools/spec_adjust.rs
 new file mode 100644
-index 000000000..6547e8872
+index 000000000..918cad28d
 --- /dev/null
 +++ b/codex-rs/core/src/tools/spec_adjust.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,268 @@
++use codex_extension_api::ToolInventoryEntry;
++use codex_extension_api::ToolInventoryView;
 +use codex_extension_api::ToolSpecAdjustment;
 +use codex_extension_api::ToolSpecView;
 +use codex_tools::JsonSchema;
@@ -41877,23 +42025,26 @@ index 000000000..6547e8872
 +    search_available: bool,
 +) -> Vec<ToolSpecAdjustment> {
 +    let thread_store = &session.services.thread_extension_data;
-+    let contributors = session
-+        .services
-+        .extensions
-+        .tool_spec_contributors()
++    let all = session.services.extensions.tool_spec_contributors();
++    let observers = all
++        .iter()
++        .filter(|contributor| contributor.observing(thread_store))
++        .collect::<Vec<_>>();
++    let contributors = all
 +        .iter()
 +        .filter(|contributor| contributor.adjusting(thread_store))
 +        .collect::<Vec<_>>();
-+    if contributors.is_empty() {
++    if contributors.is_empty() && observers.is_empty() {
 +        return Vec::new();
 +    }
 +    let mut specs = registry
 +        .entries()
 +        .filter(|tool| {
-+            matches!(
-+                tool.exposure,
-+                ToolExposure::Direct | ToolExposure::DirectModelOnly
-+            )
++            !contributors.is_empty()
++                && matches!(
++                    tool.exposure,
++                    ToolExposure::Direct | ToolExposure::DirectModelOnly
++                )
 +        })
 +        .map(|tool| {
 +            tool.runtime
@@ -41936,7 +42087,56 @@ index 000000000..6547e8872
 +            exposure => exposure,
 +        };
 +    }
++    if !observers.is_empty() {
++        let inventory = inventory(registry, &adjustments);
++        for observer in observers {
++            observer.observe_tool_inventory(thread_store, &inventory);
++        }
++    }
 +    adjustments
++}
++
++fn inventory(
++    registry: &ToolRegistry,
++    adjustments: &[ToolSpecAdjustment],
++) -> Vec<ToolInventoryEntry> {
++    registry
++        .entries()
++        .filter(|tool| {
++            tool.exposure.is_deferred()
++                || matches!(
++                    tool.exposure,
++                    ToolExposure::Direct | ToolExposure::DirectModelOnly
++                )
++        })
++        .filter_map(|tool| {
++            let spec = tool.runtime.spec();
++            let original = views(std::slice::from_ref(&spec)).into_iter().next()?;
++            let adjusted = adjustments
++                .iter()
++                .fold(vec![spec], |specs, adjustment| adjust(&specs, adjustment));
++            Some(ToolInventoryEntry {
++                kind: if tool.runtime.mcp_server_name().is_some() {
++                    "mcp"
++                } else {
++                    tool.runtime.tool_kind()
++                },
++                server: tool.runtime.mcp_server_name().map(str::to_owned),
++                freeform: original.parameters.is_null(),
++                effective: views(&adjusted)
++                    .into_iter()
++                    .next()
++                    .map(|view| ToolInventoryView {
++                        description: view.description,
++                        parameters: view.parameters,
++                        deferred: tool.exposure.is_deferred(),
++                    }),
++                name: original.name,
++                description: original.description,
++                parameters: original.parameters,
++            })
++        })
++        .collect()
 +}
 +
 +pub(crate) fn apply(router: &mut ToolRouter, adjustments: &[ToolSpecAdjustment]) {
@@ -46356,7 +46556,7 @@ index 000000000..cc15c2256
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..7ebec7d20
+index 000000000..8ae041f67
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
 @@ -0,0 +1,696 @@
@@ -46830,7 +47030,7 @@ index 000000000..7ebec7d20
 +                });
 +            let error = failure.or(selection["error"].as_str());
 +            json!({"id": selection["id"], "path": selection["path"], "scope": selection["scope"],
-+                "enabled": selection["selected"] == true, "managed": selection["managed"] == true,
++                "enabled": selection["selected"] == true, "packaged": selection["packaged"] == true,
 +                "failing": failure.is_some(), "error": error})
 +        })
 +        .collect()
@@ -52113,10 +52313,10 @@ index 000000000..e53f1c1fc
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..6b7b4ede2
+index 000000000..b5dcaae93
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2343 @@
+@@ -0,0 +1,2360 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -54178,9 +54378,17 @@ index 000000000..6b7b4ede2
 +            .map_err(|e| e.to_string())??;
 +            let Some(required) = intercepting else {
 +                self.cleanup_failed(Some(&lead)).await;
++                if !spawn {
++                    self.expansion.validate_call(
++                        lead.thread,
++                        &original_tool.to_string(),
++                        &arguments,
++                        false,
++                    )?;
++                }
 +                return Ok(ToolInterception::Continue(None));
 +            };
-+            let lead_thread_id = lead.thread.to_string();
++            let (thread_id, lead_thread_id) = (lead.thread, lead.thread.to_string());
 +            let cancelled = Arc::new(AtomicBool::new(false));
 +            let cancellation = Cancellation(cancelled.clone());
 +            let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -54283,6 +54491,15 @@ index 000000000..6b7b4ede2
 +                executor,
 +            ));
 +            if let Ok(effective) = reached_at_executor.await {
++                if !spawn {
++                    self.expansion.validate_call(
++                        thread_id,
++                        effective["tool"].as_str().unwrap_or_default(),
++                        &effective["arguments"],
++                        effective["tool"] != payload["tool"]
++                            || effective["arguments"] != payload["arguments"],
++                    )?;
++                }
 +                if let Ok(mut pending) = self.pending.lock() {
 +                    pending.insert(
 +                        input.call_id.to_owned(),
@@ -58759,10 +58976,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..04870e738
+index 000000000..373d30e3e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,680 @@
+@@ -0,0 +1,683 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -58816,6 +59033,7 @@ index 000000000..04870e738
 +    "packages.preview",
 +    "packages.reload",
 +    "settings.write",
++    "tools.list",
 +    "tools.define",
 +    "tools.undefine",
 +    "tools.invoke",
@@ -58834,6 +59052,7 @@ index 000000000..04870e738
 +    approval_result: AtomicBool,
 +    tool_specs: AtomicBool,
 +    tool_specs_required: AtomicBool,
++    inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
 +    tool_batch: AtomicBool,
 +    gates: Mutex<std::collections::VecDeque<(String, String)>>,
 +    current: Mutex<Option<LeadHandle>>,
@@ -59223,6 +59442,7 @@ index 000000000..04870e738
 +        "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
 +        "turns.activity" => activity::read(core, lead, request.arguments).await,
 +        "routes.select" => select_route(lead, caller.id, request.arguments),
++        "tools.list" => tool_specs::list(core, lead),
 +        "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
 +        "tools.define" | "tools.undefine" => {
 +            let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
@@ -61090,17 +61310,80 @@ index 000000000..b0a2320cb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
 new file mode 100644
-index 000000000..6c5794a52
+index 000000000..db8592b76
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,198 @@
 +use super::*;
++use codex_extension_api::ToolInventoryEntry;
 +use codex_extension_api::ToolSpecAdjustment;
 +use codex_extension_api::ToolSpecContributor;
 +use codex_extension_api::ToolSpecView;
 +
 +const SPEC_TOOLS: usize = 512;
 +const PARAMETER_BYTES: usize = 16 * 1024;
++
++fn bounded_description(text: &str) -> String {
++    text.chars().take(4096).collect()
++}
++
++fn bounded_parameters(parameters: &Value) -> Value {
++    if parameters.to_string().len() <= PARAMETER_BYTES {
++        parameters.clone()
++    } else {
++        Value::Null
++    }
++}
++
++fn inventory_entry(tool: &ToolInventoryEntry) -> Value {
++    json!({"name": tool.name, "kind": tool.kind, "server": tool.server,
++        "original": {"description": bounded_description(&tool.description),
++            "parameters": bounded_parameters(&tool.parameters), "freeform": tool.freeform},
++        "effective": tool.effective.as_ref().map(|view| json!({
++            "description": bounded_description(&view.description),
++            "parameters": bounded_parameters(&view.parameters), "deferred": view.deferred}))})
++}
++
++pub(super) fn list(core: &Core, lead: &Lead) -> Result<Value, String> {
++    core.expansion
++        .inventories
++        .lock()
++        .map_err(|_| "tool_inventory_poisoned")?
++        .get(&lead.thread)
++        .cloned()
++        .ok_or_else(|| "tools_unavailable: this thread has not built its tools".into())
++}
++
++impl State {
++    pub(in crate::mods) fn validate_call(
++        &self,
++        thread: ThreadId,
++        tool: &str,
++        arguments: &Value,
++        rewritten: bool,
++    ) -> Result<(), String> {
++        let inventories = self
++            .inventories
++            .lock()
++            .map_err(|_| "tool_inventory_poisoned")?;
++        let Some(entry) = inventories
++            .get(&thread)
++            .and_then(|inventory| inventory["tools"].as_array())
++            .and_then(|tools| tools.iter().find(|entry| entry["name"] == tool))
++        else {
++            return Ok(());
++        };
++        let schema = &entry["original"]["parameters"];
++        if schema.is_null()
++            || entry["original"]["freeform"] == true
++            || !rewritten && entry["effective"]["parameters"] == *schema
++        {
++            return Ok(());
++        }
++        codex_omd::tool_schema::validate(schema, arguments)
++            .map_err(|reason| format!("tool_arguments_invalid: {tool}: {reason}"))
++    }
++}
 +
 +/// Turns the composed tool list into hide, defer and re-describe decisions against the original.
 +pub(super) fn adjustment(original: &[Value], tools: &Value) -> ToolSpecAdjustment {
@@ -61134,6 +61417,29 @@ index 000000000..6c5794a52
 +    fn adjusting(&self, thread_store: &ExtensionData) -> bool {
 +        self.expansion.tool_specs.load(Ordering::Acquire) && lead_thread(thread_store)
 +            || thread_store.get::<roles::AgentTools>().is_some()
++    }
++
++    fn observing(&self, thread_store: &ExtensionData) -> bool {
++        lead_thread(thread_store)
++    }
++
++    fn observe_tool_inventory(
++        &self,
++        thread_store: &ExtensionData,
++        inventory: &[ToolInventoryEntry],
++    ) {
++        let Some(lead) = thread_store.get::<Lead>() else {
++            return;
++        };
++        let snapshot = json!({"thread_id": lead.thread.to_string(),
++            "tools": inventory.iter().take(SPEC_TOOLS).map(inventory_entry).collect::<Vec<_>>()});
++        let Ok(mut inventories) = self.expansion.inventories.lock() else {
++            return;
++        };
++        if inventories.get(&lead.thread) != Some(&snapshot) {
++            let _ = codex_omd::tool_schema::write_inventory(&lead.host.root, &snapshot);
++            inventories.insert(lead.thread, snapshot);
++        }
 +    }
 +
 +    fn adjust_tool_specs(
@@ -61170,13 +61476,8 @@ index 000000000..6c5794a52
 +            .iter()
 +            .take(SPEC_TOOLS)
 +            .map(|spec| {
-+                let parameters = if spec.parameters.to_string().len() <= PARAMETER_BYTES {
-+                    spec.parameters.clone()
-+                } else {
-+                    Value::Null
-+                };
-+                json!({"name": spec.name, "description": spec.description.chars().take(4096).collect::<String>(),
-+                    "parameters": parameters, "deferred": false})
++                json!({"name": spec.name, "description": bounded_description(&spec.description),
++                    "parameters": bounded_parameters(&spec.parameters), "deferred": false})
 +            })
 +            .collect::<Vec<_>>();
 +        let payload = json!({"thread_id": lead.thread.to_string(), "route": route, "tools": tools});
@@ -61213,10 +61514,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..9f7140c42
+index 000000000..3d49633b4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3184 @@
+@@ -0,0 +1,3255 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -62773,6 +63074,77 @@ index 000000000..9f7140c42
 +    assert!(
 +        !adjustment.describe.contains_key("forged") && !adjustment.hide.contains(&"forged".into())
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments() {
++    use codex_extension_api::ToolInventoryEntry;
++    use codex_extension_api::ToolInventoryView;
++    use codex_extension_api::ToolSpecContributor;
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mods = mods(&fixture.core);
++    let thread_store = ExtensionData::new("thread".to_owned());
++    assert!(!mods.observing(&thread_store));
++    thread_store.insert(fixture.lead.clone());
++    assert!(mods.observing(&thread_store));
++    let schema =
++        json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
++    let entry =
++        |name: &str, parameters: &Value, effective: Option<(&Value, bool)>| ToolInventoryEntry {
++            name: name.to_owned(),
++            kind: "builtin",
++            server: None,
++            description: "d".into(),
++            freeform: parameters.is_null(),
++            parameters: parameters.clone(),
++            effective: effective.map(|(parameters, deferred)| ToolInventoryView {
++                description: "d".into(),
++                parameters: parameters.clone(),
++                deferred,
++            }),
++        };
++    let replaced = json!({"type": "object"});
++    let tools = [
++        entry("run", &schema, Some((&schema, false))),
++        entry("hidden", &schema, None),
++        entry("later", &schema, Some((&schema, true))),
++        entry("patch", &Value::Null, Some((&Value::Null, false))),
++        entry("loose", &schema, Some((&replaced, false))),
++    ];
++    mods.observe_tool_inventory(&thread_store, &tools);
++    let listed = tool_specs::list(&fixture.core, &fixture.lead).unwrap();
++    assert_eq!(listed["thread_id"], fixture.lead.thread.to_string());
++    assert_eq!(listed["tools"][1]["effective"], Value::Null);
++    assert_eq!(listed["tools"][2]["effective"]["deferred"], true);
++    assert_eq!(listed["tools"][3]["original"]["freeform"], true);
++    let stored = fixture.lead.host.root.join("tool-inventory.json");
++    assert_eq!(
++        std::fs::read(&stored).unwrap(),
++        serde_json::to_vec(&listed).unwrap()
++    );
++    std::fs::write(&stored, "sentinel").unwrap();
++    mods.observe_tool_inventory(&thread_store, &tools);
++    assert_eq!(std::fs::read(&stored).unwrap(), b"sentinel");
++    let validate = |tool: &str, arguments: Value, rewritten: bool| {
++        fixture
++            .core
++            .expansion
++            .validate_call(fixture.lead.thread, tool, &arguments, rewritten)
++    };
++    assert_eq!(validate("run", json!({"cmd": "ls"}), true), Ok(()));
++    assert_eq!(
++        validate("run", json!({"cmd": 1}), true),
++        Err("tool_arguments_invalid: run: /cmd: expected string, got number".into())
++    );
++    assert_eq!(validate("run", json!({"cmd": 1}), false), Ok(()));
++    assert_eq!(
++        validate("loose", json!({}), false),
++        Err("tool_arguments_invalid: loose: /cmd: required".into())
++    );
++    assert_eq!(validate("patch", json!("anything"), true), Ok(()));
++    assert_eq!(validate("unknown", json!(1), true), Ok(()));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -64990,10 +65362,10 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..b34778deb
+index 000000000..1d93c3432
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,661 @@
+@@ -0,0 +1,663 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -65056,6 +65428,7 @@ index 000000000..b34778deb
 +                        | "store.list"
 +                        | "routes.list"
 +                        | "session.info"
++                        | "tools.list"
 +                        | "task.status"
 +                        | "contract.status"
 +                        | "workspace.fingerprint"
@@ -65069,6 +65442,7 @@ index 000000000..b34778deb
 +                        | "model.complete"
 +                        | "model.fork"
 +                        | "session.info"
++                        | "tools.list"
 +                        | "turns.activity"
 +                        | "events.publish"
 +                        | "credentials.list"
@@ -69405,10 +69779,10 @@ index 000000000..718e22cef
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 000000000..18621e721
+index 000000000..aa9e9937b
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,23 @@
 +[package]
 +name = "codex-omd"
 +version = "0.1.0"
@@ -69427,10 +69801,9 @@ index 000000000..18621e721
 +toml = "=0.9.11"
 +quick-xml = "=0.41.0"
 +tempfile = "=3.27.0"
++libc = "=0.2.186"
 +
 +[target.'cfg(target_os = "macos")'.dependencies]
-+core-foundation = "=0.10.1"
-+libc = "=0.2.186"
 +security-framework = "=3.5.1"
 +security-framework-sys = "=2.15.0"
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
@@ -73938,13 +74311,17 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..1971f6ca5
+index 000000000..7cea0e7e0
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,542 @@
++use codex_omd::MANAGED_POLICY_FILE;
++use codex_omd::MANAGED_POLICY_KEY;
++use codex_omd::Managed;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
++use codex_omd::load_managed;
 +use serde_json::Value;
 +use serde_json::json;
 +use sha2::Digest;
@@ -74071,10 +74448,82 @@ index 000000000..1971f6ca5
 +    }))
 +}
 +
++fn policy(action: &str, rest: &[String]) -> io::Result<Value> {
++    let summary = |managed: Option<Managed>| {
++        json!(managed.map(|managed| json!({"origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy})))
++    };
++    let broker = |op: &str, value: Value| {
++        if !codex_omd::broker::deployed() {
++            return Err(io::Error::other(format!(
++                "policy_requires_broker: without the OS-separated broker, install the root-owned {MANAGED_POLICY_FILE} with omd-package policy install FILE"
++            )));
++        }
++        codex_omd::broker::authorized(op, value)
++    };
++    let file = |path: &str| -> io::Result<Managed> {
++        codex_omd::managed(
++            serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?,
++            path.to_owned(),
++        )
++    };
++    match (action, rest) {
++        ("show", []) => Ok(summary(load_managed()?)),
++        ("check", [path]) => Ok(summary(Some(file(path)?))),
++        ("set", [path]) => {
++            let managed = file(path)?;
++            broker(
++                "policy.put",
++                json!({"key": MANAGED_POLICY_KEY, "value": managed.policy}),
++            )?;
++            Ok(summary(load_managed()?))
++        }
++        ("clear", []) => {
++            broker(
++                "policy.put",
++                json!({"key": MANAGED_POLICY_KEY, "value": null}),
++            )?;
++            Ok(summary(load_managed()?))
++        }
++        ("rollback", []) => {
++            broker("policy.rollback", json!({"key": MANAGED_POLICY_KEY}))?;
++            Ok(summary(load_managed()?))
++        }
++        ("explain", [root, project @ ..]) if project.len() <= 1 => {
++            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let project = project.first().map(PathBuf::from);
++            let user = store.managed_user();
++            let deployment = store.managed_deployment()?;
++            let targets = match store.managed() {
++                Ok(Some(managed)) => managed
++                    .targets(&user, project.as_deref())
++                    .into_iter()
++                    .map(|target| {
++                        json!({"id": target.id, "version": target.version, "sha256": target.sha256,
++                            "source": target.source, "tier": target.tier,
++                            "deployed": deployment.packages.iter().any(|deployed|
++                                deployed.id == target.id && deployed.sha256 == target.sha256)})
++                    })
++                    .collect(),
++                _ => Vec::new(),
++            };
++            let mut status = store.selection_status_in(project.as_deref())?;
++            status["user"] = json!(user);
++            status["targets"] = json!(targets);
++            status["deployment"] = json!({"generation": deployment.generation,
++                "policy_sha256": deployment.policy_sha256, "packages": deployment.packages,
++                "previous_generation": deployment.previous.map(|previous| previous.generation)});
++            Ok(status)
++        }
++        _ => Err(io::Error::other(
++            "usage: omd-mod policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR]",
++        )),
++    }
++}
++
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
++            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +        )
 +    };
 +    match args {
@@ -74323,6 +74772,18 @@ index 000000000..1971f6ca5
 +        [command, root] if command == "selection-status" => {
 +            ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
 +        }
++        [command, action, rest @ ..] if command == "policy" => policy(action, rest),
++        [command, root, flags @ ..] if command == "package-sync" && flags.len() <= 1 => {
++            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            match flags {
++                [] => store.package_sync(false),
++                [flag] if flag == "--offline" => store.package_sync(true),
++                [flag] if flag == "--rollback" => store.package_sync_rollback(),
++                _ => Err(io::Error::other(
++                    "usage: omd-mod package-sync STORE [--offline|--rollback]",
++                )),
++            }
++        }
 +        [command, root] if command == "report" => {
 +            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
 +            Ok(
@@ -74342,7 +74803,8 @@ index 000000000..1971f6ca5
 +            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
 +            Ok(
 +                serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
-+                "installed_contracts":status["installed_contract_types"]}),
++                "installed_contracts":status["installed_contract_types"],
++                "tool_types":status["tool_types"]}),
 +            )
 +        }
 +        [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
@@ -74397,10 +74859,10 @@ index 000000000..1971f6ca5
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 000000000..b39ee8669
+index 000000000..dea9ce493
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,700 @@
+@@ -0,0 +1,712 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -74532,7 +74994,7 @@ index 000000000..b39ee8669
 +    )
 +}
 +
-+const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
++const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock | sync [--offline|--rollback] (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
 +
 +const APPROVAL_REQUIRED: &str = "package_approval_required";
 +
@@ -74543,11 +75005,14 @@ index 000000000..b39ee8669
 +    let mut scope = "user".to_owned();
 +    let mut version = None;
 +    let mut yes = false;
++    let (mut offline, mut rollback) = (false, false);
 +    let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
 +    let mut remaining = args.iter();
 +    while let Some(argument) = remaining.next() {
 +        match argument.as_str() {
 +            "--yes" => yes = true,
++            "--offline" => offline = true,
++            "--rollback" => rollback = true,
 +            "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
 +            "--version" => version = Some(remaining.next().ok_or_else(usage)?.clone()),
 +            "--store" => root = Some(PathBuf::from(remaining.next().ok_or_else(usage)?)),
@@ -74616,6 +75081,15 @@ index 000000000..b39ee8669
 +            })
 +        }
 +        "events" => Ok(Value::Array(store.security_events()?)),
++        "sync" => {
++            let synced = match rollback {
++                true => store.package_sync_rollback()?,
++                false => store.package_sync(offline)?,
++            };
++            Ok(json!({"display": format!("Managed deployment generation {} is active{}.",
++                synced["generation"], if synced["changed"] == true { "" } else { " and current" }),
++                "sync": synced}))
++        }
 +        "reset-lock" => {
 +            let aside = store.reset("packages.lock.json")?;
 +            done(format!(
@@ -75771,10 +76245,10 @@ index 000000000..a8f5a2022
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..e00a7a159
+index 000000000..4fab7a30f
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,907 @@
+@@ -0,0 +1,941 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -76269,7 +76743,7 @@ index 000000000..e00a7a159
 +                    .enrolled(text(arguments, "id")?)?
 +                    .then_some(GRANT_RIGHT)
 +            }
-+            "policy.put" => Some(POLICY_RIGHT),
++            "policy.put" | "policy.rollback" => Some(POLICY_RIGHT),
 +            _ => None,
 +        })
 +    }
@@ -76382,9 +76856,33 @@ index 000000000..e00a7a159
 +                {
 +                    return Err(failure("authority_request_invalid"));
 +                }
-+                let path = self.root.join("policy.json");
-+                let mut policy = read_json(&path, json!({}))?;
++                let (path, kept) = (
++                    self.root.join("policy.json"),
++                    self.root.join("policy-previous.json"),
++                );
++                let (mut policy, mut previous) =
++                    (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
++                previous[key] = policy[key].clone();
 +                policy[key] = arguments["value"].clone();
++                write_private(&kept, &previous)?;
++                write_private(&path, &policy)?;
++                Value::Null
++            }
++            "policy.rollback" => {
++                let key = text(&arguments, "key")?;
++                let (path, kept) = (
++                    self.root.join("policy.json"),
++                    self.root.join("policy-previous.json"),
++                );
++                let (mut policy, mut previous) =
++                    (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
++                if previous.get(key).is_none() {
++                    return Err(failure("authority_policy_previous_missing"));
++                }
++                let restored = previous[key].take();
++                previous[key] = policy[key].take();
++                policy[key] = restored;
++                write_private(&kept, &previous)?;
 +                write_private(&path, &policy)?;
 +                Value::Null
 +            }
@@ -76443,12 +76941,6 @@ index 000000000..e00a7a159
 +mod platform {
 +    use super::failure;
 +    use base64::Engine;
-+    use core_foundation::base::TCFType;
-+    use core_foundation::data::CFData;
-+    use security_framework::os::macos::code_signing::Flags;
-+    use security_framework::os::macos::code_signing::GuestAttributes;
-+    use security_framework::os::macos::code_signing::SecCode;
-+    use security_framework::os::macos::code_signing::SecRequirement;
 +    use security_framework_sys::authorization as sys;
 +    use std::io;
 +    use std::os::fd::AsRawFd;
@@ -76494,19 +76986,35 @@ index 000000000..e00a7a159
 +        if status != 0 || length as usize != token.len() {
 +            return Err(failure("authority_peer_unverified"));
 +        }
-+        let token = CFData::from_buffer(&token);
-+        let mut attributes = GuestAttributes::new();
-+        attributes.set_audit_token(token.as_concrete_TypeRef());
-+        let requirement: SecRequirement = pins
-+            .iter()
-+            .map(|pin| format!("cdhash H\"{pin}\""))
-+            .collect::<Vec<_>>()
-+            .join(" or ")
-+            .parse()
-+            .map_err(|_| failure("authority_pins_invalid"))?;
-+        SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE)
-+            .and_then(|code| code.check_validity(Flags::NONE, &requirement))
-+            .map_err(|_| failure("authority_peer_unverified"))
++        // The kernel's view of the running peer, so its executable need not be readable by the broker.
++        let pid = u32::from_ne_bytes([token[20], token[21], token[22], token[23]]) as libc::pid_t;
++        let (mut flags, mut cdhash) = (0u32, [0u8; 20]);
++        let known = unsafe {
++            csops_audittoken(pid, CS_OPS_STATUS, (&raw mut flags).cast(), 4, token.as_mut_ptr())
++                == 0
++                && csops_audittoken(pid, CS_OPS_CDHASH, cdhash.as_mut_ptr().cast(), 20, token.as_mut_ptr())
++                    == 0
++        };
++        let cdhash = cdhash.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
++        if known && flags & CS_VALID != 0 && pins.contains(&cdhash.as_str()) {
++            Ok(())
++        } else {
++            Err(failure("authority_peer_unverified"))
++        }
++    }
++
++    const CS_OPS_STATUS: libc::c_uint = 0;
++    const CS_OPS_CDHASH: libc::c_uint = 5;
++    const CS_VALID: u32 = 0x1;
++
++    unsafe extern "C" {
++        fn csops_audittoken(
++            pid: libc::pid_t,
++            ops: libc::c_uint,
++            useraddr: *mut libc::c_void,
++            usersize: libc::size_t,
++            token: *mut u8,
++        ) -> libc::c_int;
 +    }
 +
 +    unsafe extern "C" {
@@ -76684,10 +77192,10 @@ index 000000000..e00a7a159
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..98d59194c
+index 000000000..843648fa4
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,415 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -76841,9 +77349,32 @@ index 000000000..98d59194c
 +        .authorized("policy.put", json!({"key": "k", "value": 1}))
 +        .unwrap();
 +    assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
++    client
++        .authorized("policy.put", json!({"key": "k", "value": 2}))
++        .unwrap();
++    assert_eq!(
++        error(client.call("policy.rollback", json!({"key": "k"}))),
++        "authority_challenge_invalid"
++    );
++    client
++        .authorized("policy.rollback", json!({"key": "k"}))
++        .unwrap();
++    assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
++    assert_eq!(
++        error(client.authorized("policy.rollback", json!({"key": "other"}))),
++        "authority_policy_previous_missing"
++    );
 +    assert_eq!(
 +        *gate.asked.lock().unwrap(),
-+        [GRANT_RIGHT, GRANT_RIGHT, GRANT_RIGHT, POLICY_RIGHT]
++        [
++            GRANT_RIGHT,
++            GRANT_RIGHT,
++            GRANT_RIGHT,
++            POLICY_RIGHT,
++            POLICY_RIGHT,
++            POLICY_RIGHT,
++            POLICY_RIGHT
++        ]
 +    );
 +}
 +
@@ -77022,6 +77553,63 @@ index 000000000..98d59194c
 +        client.call("peer.seal", json!({"sha256": digest})).unwrap(),
 +        tag
 +    );
++}
++
++/// The connecting side of `peers_are_verified_by_kernel_cdhash_…`; idle unless that test runs it.
++#[test]
++fn peer_client() {
++    let Some(socket) = std::env::var_os("OMD_BROKER_PEER_SOCKET") else {
++        return;
++    };
++    let _stream = UnixStream::connect(socket).unwrap();
++    let _ = io::stdin().read_to_end(&mut Vec::new());
++}
++
++#[cfg(target_os = "macos")]
++#[test]
++fn peers_are_verified_by_kernel_cdhash_even_when_their_executable_is_unreadable() {
++    let temp = tempfile::tempdir().unwrap();
++    let folder = temp.path().join("private");
++    fs::create_dir(&folder).unwrap();
++    let binary = folder.join("peer");
++    fs::copy(std::env::current_exe().unwrap(), &binary).unwrap();
++    let signature = std::process::Command::new("/usr/bin/codesign")
++        .args(["-d", "--verbose=4"])
++        .arg(&binary)
++        .output()
++        .unwrap();
++    let cdhash = String::from_utf8_lossy(&signature.stderr)
++        .lines()
++        .find_map(|line| line.strip_prefix("CDHash=").map(str::to_owned))
++        .unwrap();
++    let socket = temp.path().join("peer.sock");
++    let listener = UnixListener::bind(&socket).unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let mut child = std::process::Command::new(&binary)
++        .args(["--exact", "broker::tests::peer_client", "--test-threads=1"])
++        .env("OMD_BROKER_PEER_SOCKET", &socket)
++        .stdin(std::process::Stdio::piped())
++        .stdout(std::process::Stdio::null())
++        .spawn()
++        .unwrap();
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
++    let ours = loop {
++        match listener.accept() {
++            Ok((stream, _)) => break stream,
++            Err(_) if std::time::Instant::now() < deadline => {
++                std::thread::sleep(std::time::Duration::from_millis(20))
++            }
++            Err(error) => panic!("peer never connected: {error}"),
++        }
++    };
++    fs::set_permissions(&folder, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
++    let pinned = platform::verify_peer(&ours, &[cdhash.as_str()]);
++    let other = platform::verify_peer(&ours, &["0".repeat(40).as_str()]);
++    fs::set_permissions(&folder, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
++    child.kill().unwrap();
++    child.wait().unwrap();
++    assert!(pinned.is_ok(), "{pinned:?}");
++    assert_eq!(other.unwrap_err().to_string(), "authority_peer_unverified");
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
@@ -83778,10 +84366,10 @@ index 000000000..84e30c368
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..f9f30dfaa
+index 000000000..34b057ae8
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,227 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -83807,6 +84395,7 @@ index 000000000..f9f30dfaa
 +pub mod resource_data;
 +pub mod scoped_data;
 +pub mod sessions;
++pub mod tool_schema;
 +pub mod turn_activity;
 +pub mod watch_filter;
 +mod workspace;
@@ -83911,6 +84500,15 @@ index 000000000..f9f30dfaa
 +pub use mods::ModCommand;
 +pub use mods::ModCommandAction;
 +pub use mods::ModCommandOutcome;
++pub use mods::MANAGED_POLICY_FILE;
++pub use mods::MANAGED_POLICY_KEY;
++pub use mods::MANAGED_SCOPE;
++pub use mods::Managed;
++pub use mods::ManagedPolicy;
++pub use mods::ManagedTier;
++pub use mods::load_managed;
++pub use mods::load_managed_from;
++pub use mods::managed;
 +pub use mods::ModComponent;
 +pub use mods::ModComponentAction;
 +pub use mods::ModConfiguration;
@@ -85866,10 +86464,10 @@ index 000000000..6ac817168
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..9708b715c
+index 000000000..5c7e3d1c1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4891 @@
+@@ -0,0 +1,4999 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -85936,6 +86534,16 @@ index 000000000..9708b715c
 +mod outcome;
 +pub use outcome::ModCommandOutcome;
 +mod package_manager;
++mod policy;
++pub use policy::MANAGED_POLICY_FILE;
++pub use policy::MANAGED_POLICY_KEY;
++pub use policy::MANAGED_SCOPE;
++pub use policy::Managed;
++pub use policy::ManagedPolicy;
++pub use policy::ManagedTier;
++pub use policy::load_managed;
++pub use policy::load_managed_from;
++pub use policy::managed;
 +mod process;
 +pub use bridge::ModHostCall;
 +mod resources;
@@ -86297,6 +86905,7 @@ index 000000000..9708b715c
 +    "session.info",
 +    "ledger.settle",
 +    "time.sleep",
++    "tools.list",
 +    "tools.define",
 +    "tools.invoke",
 +    "tools.check",
@@ -87968,6 +88577,8 @@ index 000000000..9708b715c
 +    pub secret_environment: Vec<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub expires_at: Option<u64>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub tier: Option<ManagedTier>,
 +}
 +
 +impl ModSelection {
@@ -88266,9 +88877,11 @@ index 000000000..9708b715c
 +    chains: Vec<Value>,
 +    access: Vec<Value>,
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
-+    brokered: Option<(Instant, String, Brokered)>,
++    brokered: Option<(Instant, String, Brokered, Option<Managed>)>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    policies: Vec<PathBuf>,
++    managed: Option<Managed>,
++    project: Option<PathBuf>,
 +}
 +
 +enum Access<'a> {
@@ -88710,6 +89323,8 @@ index 000000000..9708b715c
 +            brokered: None,
 +            required_surfaces: Arc::default(),
 +            policies: Vec::new(),
++            managed: None,
++            project: None,
 +        };
 +        if let Some(repository) = repository {
 +            host.set_checkout(repository);
@@ -88720,6 +89335,7 @@ index 000000000..9708b715c
 +
 +    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
 +    pub fn set_checkout(&mut self, repository: &Path) {
++        self.project = repository.canonicalize().ok();
 +        self.checkout = repository
 +            .ancestors()
 +            .find_map(|directory| {
@@ -88773,8 +89389,8 @@ index 000000000..9708b715c
 +        let path = self.store.root.join("mods.json");
 +        let bytes = store::read(&path, 65_536)?;
 +        let sha256 = digest(&bytes);
-+        let brokered = match self.brokered_grants(&sha256) {
-+            Ok(brokered) => brokered,
++        let (brokered, managed, deployment) = match self.authority(&sha256) {
++            Ok(authority) => authority,
 +            Err(error) => {
 +                if !self.loaded.is_empty() {
 +                    self.loaded.clear();
@@ -88788,8 +89404,11 @@ index 000000000..9708b715c
 +            }
 +        };
 +        let hash = format!(
-+            "{sha256}:{}",
-+            brokered.as_ref().map_or(0, |(generation, _)| *generation)
++            "{sha256}:{}:{}:{}:{}",
++            brokered.as_ref().map_or(0, |(generation, _)| *generation),
++            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
++            deployment.generation,
++            self.project.as_deref().unwrap_or(Path::new("")).display()
 +        );
 +        if hash == self.configuration_sha256 {
 +            return Ok(false);
@@ -88798,8 +89417,26 @@ index 000000000..9708b715c
 +        if config.schema != 1 || !config.node.is_absolute() {
 +            return Err(failure("invalid_mod_configuration"));
 +        }
-+        self.policies = config
-+            .mods
++        let mut rejected = Vec::new();
++        let mut selections = Vec::new();
++        let mut packaged = BTreeMap::new();
++        if let Some(managed) = &managed {
++            let user = self.store.managed_user();
++            let (administered, pending) =
++                managed.selections(&deployment, &user, self.project.as_deref());
++            selections = administered;
++            rejected = pending;
++            packaged = self
++                .store
++                .read_package_lock()?
++                .packages
++                .into_values()
++                .map(|package| (package.path, policy::source_reference(&package.source)))
++                .collect();
++        }
++        selections.extend(config.mods.iter().cloned());
++        self.managed = managed;
++        self.policies = selections
 +            .iter()
 +            .filter(|m| m.enabled && m.capabilities.iter().any(|c| c == "request_policy"))
 +            .map(|m| m.path.clone())
@@ -88808,28 +89445,31 @@ index 000000000..9708b715c
 +        let initial = self.configuration_sha256.is_empty();
 +        let retained = self.loaded.len();
 +        self.loaded.retain(|_, loaded| {
-+            config.mods.iter().any(|m| {
++            selections.iter().any(|m| {
 +                m.enabled
 +                    && m.path == loaded.selection.path
++                    && m.scope == loaded.selection.scope
 +                    && loaded
 +                        .package
 +                        .capabilities
 +                        .iter()
 +                        .all(|cap| m.capabilities.contains(cap))
-+                    && brokered
-+                        .as_ref()
-+                        .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m))))
++                    && (m.scope == MANAGED_SCOPE
++                        || brokered
++                            .as_ref()
++                            .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m)))))
 +            })
 +        });
 +        if self.loaded.len() != retained {
 +            self.generation += 1;
 +            self.dynamic_tools.clear();
 +        }
-+        let mut rejected = Vec::new();
 +        let selected = Self::select(
-+            &config,
++            &selections,
 +            initial,
 +            brokered.as_ref().map(|(_, grants)| grants),
++            self.managed.as_ref().map(|managed| &managed.policy),
++            &packaged,
 +            &mut rejected,
 +        )?;
 +        let adapters = Self::adapters(&selected);
@@ -89024,18 +89664,42 @@ index 000000000..9708b715c
 +        }
 +    }
 +
-+    /// Re-asks the broker when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
-+    fn brokered_grants(&mut self, digest: &str) -> Result<Brokered> {
-+        if let Some((at, cached, grants)) = &self.brokered
-+            && cached == digest
-+            && at.elapsed() < BROKER_REFRESH
-+        {
-+            return Ok(grants.clone());
-+        }
++    /// Re-asks the broker and policy source when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
++    fn authority(
++        &mut self,
++        digest: &str,
++    ) -> Result<(Brokered, Option<Managed>, policy::ManagedDeployment)> {
++        let (grants, managed) = match &self.brokered {
++            Some((at, cached, grants, managed))
++                if cached == digest && at.elapsed() < BROKER_REFRESH =>
++            {
++                (grants.clone(), managed.clone())
++            }
++            _ => {
++                self.brokered = None;
++                let grants = store::brokered_grants(&self.store.root)?;
++                let managed = self.store.managed()?;
++                self.brokered = Some((
++                    Instant::now(),
++                    digest.to_owned(),
++                    grants.clone(),
++                    managed.clone(),
++                ));
++                (grants, managed)
++            }
++        };
++        let deployment = match managed {
++            Some(_) => self.store.managed_deployment()?,
++            None => policy::ManagedDeployment::default(),
++        };
++        Ok((grants, managed, deployment))
++    }
++
++    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated hosts.
++    pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) -> Result<bool> {
++        self.store.set_managed_policy(file, owner, user);
 +        self.brokered = None;
-+        let grants = store::brokered_grants(&self.store.root)?;
-+        self.brokered = Some((Instant::now(), digest.to_owned(), grants.clone()));
-+        Ok(grants)
++        self.reload()
 +    }
 +
 +    fn adapters(
@@ -89068,20 +89732,30 @@ index 000000000..9708b715c
 +            .collect()
 +    }
 +
-+    /// Trusted, enabled selections keyed by mod ID after scope precedence.
++    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence.
 +    fn select(
-+        config: &ModConfiguration,
++        selections: &[ModSelection],
 +        initial: bool,
 +        grants: Option<&BTreeSet<String>>,
++        managed: Option<&ManagedPolicy>,
++        packaged: &BTreeMap<PathBuf, String>,
 +        rejected: &mut Vec<ModRejection>,
 +    ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
++        let rank = |scope: &str| match scope {
++            MANAGED_SCOPE => 2,
++            "project" => 1,
++            _ => 0,
++        };
 +        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
-+        for selection in config.mods.iter().filter(|m| m.enabled) {
++        for selection in selections.iter().filter(|m| m.enabled) {
++            let administered = selection.scope == MANAGED_SCOPE;
 +            let loaded = (|| {
-+                if !MOD_SCOPES.contains(&selection.scope.as_str()) {
++                if !administered && !MOD_SCOPES.contains(&selection.scope.as_str()) {
 +                    return Err(failure(format!("unsupported_scope: {}", selection.scope)));
 +                }
-+                if grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection)))) {
++                if !administered
++                    && grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
++                {
 +                    return Err(failure(format!(
 +                        "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
 +                        selection.path.display()
@@ -89089,10 +89763,17 @@ index 000000000..9708b715c
 +                }
 +                let (package, source, hash) = store::package(&selection.path)?;
 +                if hash != selection.sha256 {
-+                    return Err(failure(format!(
-+                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-+                        package.id
-+                    )));
++                    return Err(failure(if administered {
++                        format!(
++                            "managed_content_stale: {} differs from the administrator-pinned sha256; run omd-mod package-sync",
++                            package.id
++                        )
++                    } else {
++                        format!(
++                            "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
++                            package.id
++                        )
++                    }));
 +                }
 +                let granted: BTreeSet<_> = selection.capabilities.iter().collect();
 +                if package.capabilities.iter().any(|c| !granted.contains(c))
@@ -89115,25 +89796,46 @@ index 000000000..9708b715c
 +                }
 +            };
 +            let id = package.id.clone();
++            // Policy refusals apply on every reload: the user cannot repair them.
++            if !administered
++                && let Some(reason) = managed.and_then(|policy| {
++                    policy.refusal(
++                        &id,
++                        &package.capabilities,
++                        packaged.get(&selection.path).map(String::as_str),
++                    )
++                })
++            {
++                rejected.push(ModRejection {
++                    path: selection.path.clone(),
++                    id: Some(id),
++                    scope: selection.scope.clone(),
++                    reason,
++                });
++                continue;
++            }
 +            let Some((previous, ..)) = selected.get(&id) else {
 +                selected.insert(id, (selection.clone(), package, source));
 +                continue;
 +            };
 +            if previous.scope != selection.scope {
-+                let (loser, winner) = match selection.scope.as_str() {
-+                    "project" => {
-+                        let (previous, ..) = selected
-+                            .insert(id.clone(), (selection.clone(), package, source))
-+                            .expect("checked above");
-+                        (previous, selection.path.clone())
-+                    }
-+                    _ => (selection.clone(), previous.path.clone()),
++                let (loser, winner) = if rank(&selection.scope) > rank(&previous.scope) {
++                    let (previous, ..) = selected
++                        .insert(id.clone(), (selection.clone(), package, source))
++                        .expect("checked above");
++                    (previous, selection.clone())
++                } else {
++                    (selection.clone(), previous.clone())
 +                };
 +                rejected.push(ModRejection {
 +                    path: loser.path,
 +                    id: Some(id),
 +                    scope: loser.scope,
-+                    reason: format!("shadowed_by_project_scope: {}", winner.display()),
++                    reason: format!(
++                        "shadowed_by_{}_scope: {}",
++                        winner.scope,
++                        winner.path.display()
++                    ),
 +                });
 +                continue;
 +            }
@@ -90635,7 +91337,8 @@ index 000000000..9708b715c
 +            literal(MOD_HOST_OPERATIONS),
 +        );
 +        self.store
-+            .write_bytes("active-host.d.ts", output.as_bytes())
++            .write_bytes("active-host.d.ts", output.as_bytes())?;
++        crate::tool_schema::write_types(&self.store.root)
 +    }
 +
 +    pub fn field_policies() -> Value {
@@ -90746,6 +91449,9 @@ index 000000000..9708b715c
 +                    "exposure": authority_exposure(&m.package.capabilities)});
 +                status }).collect::<Vec<_>>()});
 +        status["access"] = json!(self.access);
++        status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
++        status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
++            "origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy})));
 +        status
 +    }
 +}
@@ -90763,10 +91469,10 @@ index 000000000..9708b715c
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..35e9f492b
+index 000000000..c40de7d97
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,852 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -90776,7 +91482,21 @@ index 000000000..35e9f492b
 +    calls: Vec<Value>,
 +    now_ms: u64,
 +    timers: BTreeMap<(String, String), u64>,
++    environment: Option<BTreeMap<String, String>>,
++    clients: Vec<Value>,
++    attached: u64,
 +}
++
++const POINTER_ACTIONS: [&str; 8] = [
++    "down",
++    "up",
++    "scroll_up",
++    "scroll_down",
++    "move",
++    "drag",
++    "enter",
++    "leave",
++];
 +
 +impl OfflineHost {
 +    fn from_scenario(scenario: &Value, now_ms: u64) -> Result<Self> {
@@ -90784,6 +91504,27 @@ index 000000000..35e9f492b
 +            now_ms,
 +            ..Self::default()
 +        };
++        if let Some(environment) = scenario.get("environment") {
++            let mut values = BTreeMap::new();
++            for (name, value) in environment
++                .as_object()
++                .ok_or_else(|| failure("offline_environment_must_be_an_object"))?
++            {
++                if crate::host::secret_like(name) {
++                    return Err(failure(format!("offline_environment_secret_name: {name}")));
++                }
++                let value = value.as_str().filter(|value| value.len() <= 4096);
++                values.insert(
++                    name.clone(),
++                    value
++                        .ok_or_else(|| {
++                            failure(format!("offline_environment_value_invalid: {name}"))
++                        })?
++                        .to_owned(),
++                );
++            }
++            host.environment = Some(values);
++        }
 +        let Some(operations) = scenario.get("host_operations") else {
 +            return Ok(host);
 +        };
@@ -90815,6 +91556,28 @@ index 000000000..35e9f492b
 +            .as_str()
 +            .unwrap_or_default()
 +            .to_owned();
++        if call.operation == "environment.read"
++            && let Some(environment) = &self.environment
++        {
++            let names = call.arguments["names"]
++                .as_array()
++                .filter(|names| (1..=16).contains(&names.len()))
++                .ok_or_else(|| failure("environment_names_invalid"))?;
++            let values = names
++                .iter()
++                .filter_map(Value::as_str)
++                .map(|name| {
++                    let value = environment.get(name);
++                    let entry = if crate::host::secret_like(name) {
++                        json!({"set": value.is_some()})
++                    } else {
++                        json!({"set": value.is_some(), "value": value})
++                    };
++                    (name.to_owned(), entry)
++                })
++                .collect::<serde_json::Map<_, _>>();
++            return Ok(json!({"values": values}));
++        }
 +        match call.operation.as_str() {
 +            "events.schedule" => {
 +                let delay = call.arguments["delay_ms"]
@@ -90944,57 +91707,39 @@ index 000000000..35e9f492b
 +        if steps.len() > 256 {
 +            return Err(failure("offline_step_limit"));
 +        }
-+        let mut outputs = Vec::new();
-+        for (index, step) in steps.iter().enumerate() {
-+            let kind = step
-+                .get("type")
-+                .and_then(Value::as_str)
-+                .ok_or_else(|| failure("offline_step_type_required"))?;
-+            let cancelled = step
-+                .get("cancelled")
-+                .and_then(Value::as_bool)
-+                .unwrap_or(false);
-+            self.virtual_time_ms = Some(now_ms);
-+            host.now_ms = now_ms;
-+            let result = self.offline_step(kind, step, !cancelled, &mut host, &mut now_ms);
-+            let output = match result {
-+                Ok(value) => {
-+                    if let Some(expected) = step.get("expect")
-+                        && &value != expected
-+                    {
-+                        self.virtual_time_ms = None;
-+                        return Err(failure(format!(
-+                            "offline_expectation_failed at step {index}: expected {expected}, got {value}"
-+                        )));
-+                    }
-+                    if step.get("expect_error").is_some() {
-+                        self.virtual_time_ms = None;
-+                        return Err(failure(format!(
-+                            "offline_expected_error_missing at step {index}"
-+                        )));
-+                    }
-+                    json!({"index":index,"type":kind,"at_ms":now_ms,"value":value})
-+                }
-+                Err(error) => {
-+                    let text = error.to_string();
-+                    let Some(expected) = step.get("expect_error").and_then(Value::as_str) else {
-+                        self.virtual_time_ms = None;
-+                        return Err(failure(format!(
-+                            "offline_step_failed at step {index}: {text}"
-+                        )));
-+                    };
-+                    if !text.contains(expected) {
-+                        self.virtual_time_ms = None;
-+                        return Err(failure(format!(
-+                            "offline_error_mismatch at step {index}: expected {expected}, got {text}"
-+                        )));
-+                    }
-+                    json!({"index":index,"type":kind,"at_ms":now_ms,"error":text})
-+                }
-+            };
-+            outputs.push(output);
++        let mut tiers = BTreeMap::new();
++        for (id, tier) in scenario
++            .get("tiers")
++            .map(|tiers| {
++                tiers
++                    .as_object()
++                    .ok_or_else(|| failure("offline_tiers_must_be_an_object"))
++            })
++            .transpose()?
++            .into_iter()
++            .flatten()
++        {
++            let tier: ManagedTier = serde_json::from_value(tier.clone())
++                .map_err(|_| failure(format!("offline_tier_invalid: {id}")))?;
++            let loaded = self
++                .loaded
++                .get(id)
++                .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
++            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
++        }
++        let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
++        for (id, (_, selection)) in tiers {
++            if let Some(loaded) = self
++                .loaded
++                .get_mut(&id)
++                .filter(|loaded| loaded.selection.scope == MANAGED_SCOPE)
++            {
++                loaded.selection.scope = selection.scope;
++                loaded.selection.tier = selection.tier;
++            }
 +        }
 +        self.virtual_time_ms = None;
++        let outputs = result?;
 +        let remaining = host
 +            .replies
 +            .iter()
@@ -91006,6 +91751,69 @@ index 000000000..35e9f492b
 +            "steps":outputs,"host_calls":host.calls,"unused_mock_replies":remaining,
 +            "status":self.status()}),
 +        )
++    }
++
++    /// Runs the steps with `tiers` mods simulated as administrator-managed packages in that tier.
++    fn offline_steps(
++        &mut self,
++        steps: &[Value],
++        tiers: &BTreeMap<String, (ManagedTier, ModSelection)>,
++        host: &mut OfflineHost,
++        now_ms: &mut u64,
++    ) -> Result<Vec<Value>> {
++        let mut outputs = Vec::new();
++        for (index, step) in steps.iter().enumerate() {
++            for (id, (tier, _)) in tiers {
++                if let Some(loaded) = self.loaded.get_mut(id) {
++                    loaded.selection.scope = MANAGED_SCOPE.to_owned();
++                    loaded.selection.tier = Some(*tier);
++                }
++            }
++            let kind = step
++                .get("type")
++                .and_then(Value::as_str)
++                .ok_or_else(|| failure("offline_step_type_required"))?;
++            let cancelled = step
++                .get("cancelled")
++                .and_then(Value::as_bool)
++                .unwrap_or(false);
++            self.virtual_time_ms = Some(*now_ms);
++            host.now_ms = *now_ms;
++            let result = self.offline_step(kind, step, !cancelled, host, now_ms);
++            let output = match result {
++                Ok(value) => {
++                    if let Some(expected) = step.get("expect")
++                        && &value != expected
++                    {
++                        return Err(failure(format!(
++                            "offline_expectation_failed at step {index}: expected {expected}, got {value}"
++                        )));
++                    }
++                    if step.get("expect_error").is_some() {
++                        return Err(failure(format!(
++                            "offline_expected_error_missing at step {index}"
++                        )));
++                    }
++                    json!({"index":index,"type":kind,"at_ms":*now_ms,"value":value})
++                }
++                Err(error) => {
++                    let text = error.to_string();
++                    let Some(expected) = step.get("expect_error").and_then(Value::as_str) else {
++                        return Err(failure(format!(
++                            "offline_step_failed at step {index}: {text}"
++                        )));
++                    };
++                    if !text.contains(expected) {
++                        return Err(failure(format!(
++                            "offline_error_mismatch at step {index}: expected {expected}, got {text}"
++                        )));
++                    }
++                    json!({"index":index,"type":kind,"at_ms":*now_ms,"error":text})
++                }
++            };
++            outputs.push(output);
++        }
++        Ok(outputs)
 +    }
 +
 +    fn offline_step(
@@ -91061,6 +91869,69 @@ index 000000000..35e9f492b
 +                    value["timers"] = json!(fired);
 +                }
 +                Ok(value)
++            }
++            "wait_until" => {
++                let check = step
++                    .get("check")
++                    .ok_or_else(|| failure("offline_wait_check_required"))?;
++                let until = step
++                    .get("until")
++                    .ok_or_else(|| failure("offline_wait_until_required"))?;
++                let every_ms = step.get("every_ms").and_then(Value::as_u64).unwrap_or(1000);
++                let max_ms = step
++                    .get("max_ms")
++                    .and_then(Value::as_u64)
++                    .ok_or_else(|| failure("offline_wait_max_ms_required"))?;
++                if every_ms == 0 || max_ms / every_ms > 256 {
++                    return Err(failure("offline_wait_limit"));
++                }
++                let start = *now_ms;
++                loop {
++                    self.virtual_time_ms = Some(*now_ms);
++                    host.now_ms = *now_ms;
++                    let value = self.offline_step(
++                        required_string(check, "type")?,
++                        check,
++                        active,
++                        host,
++                        now_ms,
++                    )?;
++                    if &value == until {
++                        return Ok(json!({"waited_ms": *now_ms - start, "value": value}));
++                    }
++                    if *now_ms - start >= max_ms {
++                        return Err(failure(format!(
++                            "offline_wait_timeout: {until} not reached in {max_ms} ms, last {value}"
++                        )));
++                    }
++                    let delta = every_ms.min(max_ms - (*now_ms - start));
++                    self.offline_step("advance_time", &json!({"ms": delta}), active, host, now_ms)?;
++                }
++            }
++            "client_attach" => {
++                host.attached += 1;
++                let mut renderer = json!({"kind": "gui", "formats": [], "pointer": "none", "reduced_motion": false});
++                if let (Some(renderer), Some(given)) = (
++                    renderer.as_object_mut(),
++                    step.get("renderer").and_then(Value::as_object),
++                ) {
++                    renderer.extend(given.clone());
++                }
++                let id = format!("client-{}", host.attached);
++                host.clients.push(json!({"id": id, "name": required_string(step, "name")?,
++                    "renderer": renderer,
++                    "viewport": step.get("viewport").cloned().unwrap_or(Value::Null),
++                    "focused": step["focused"].as_bool().unwrap_or(false), "attached_ms": *now_ms}));
++                Ok(json!({"id": id, "clients": host.clients}))
++            }
++            "client_detach" => {
++                let id = required_string(step, "id")?;
++                let before = host.clients.len();
++                host.clients.retain(|client| client["id"] != id);
++                if host.clients.len() == before {
++                    return Err(failure("offline_client_not_attached"));
++                }
++                Ok(json!({"clients": host.clients}))
 +            }
 +            "status" => Ok(self.status()),
 +            "reload" => {
@@ -91167,6 +92038,12 @@ index 000000000..35e9f492b
 +            }
 +            "terminal_mount" | "terminal_interact" => {
 +                let id = required_string(step, "mod")?;
++                let mut payload = payload;
++                if let Some(input) = payload.as_object_mut() {
++                    input
++                        .entry("clients")
++                        .or_insert_with(|| json!(host.clients));
++                }
 +                let view = self.invoke_scoped_with(
 +                    id,
 +                    self.generation,
@@ -91179,6 +92056,57 @@ index 000000000..35e9f492b
 +                let parsed = ModView::parse(view.clone())?;
 +                if kind == "terminal_mount" {
 +                    return Ok(view);
++                }
++                if let Some(pointer) = step.get("pointer") {
++                    let component = required_string(step, "component")?;
++                    let mounted = parsed
++                        .sites
++                        .values()
++                        .find_map(|site| terminal_component(&site.components, component))
++                        .ok_or_else(|| failure("offline_terminal_component_not_mounted"))?;
++                    if !matches!(
++                        mounted,
++                        ModComponent::Box { pointer: true, .. }
++                            | ModComponent::Image { pointer: true, .. }
++                            | ModComponent::Raster { pointer: true, .. }
++                    ) {
++                        return Err(failure("offline_terminal_component_not_pointer"));
++                    }
++                    let valid = pointer["column"].is_i64()
++                        && pointer["row"].is_i64()
++                        && pointer["action"]
++                            .as_str()
++                            .is_some_and(|action| POINTER_ACTIONS.contains(&action))
++                        && (pointer["half"].is_null()
++                            || matches!(pointer["half"].as_u64(), Some(0 | 1)))
++                        && (pointer["button"].is_null()
++                            || matches!(
++                                pointer["button"].as_str(),
++                                Some("left" | "right" | "middle")
++                            ));
++                    if !valid {
++                        return Err(failure("offline_terminal_pointer_invalid"));
++                    }
++                    let mut event = json!({"component": component, "kind": "pointer",
++                        "pointer": {"column": pointer["column"], "row": pointer["row"], "half": pointer["half"],
++                            "action": pointer["action"], "button": pointer["button"]}});
++                    match step.get("client").and_then(Value::as_str) {
++                        Some(client) if host.clients.iter().any(|entry| entry["id"] == client) => {
++                            event["client"] = json!(client);
++                        }
++                        Some(_) => return Err(failure("offline_client_not_attached")),
++                        None => event["origin"] = json!("user"),
++                    }
++                    let result = self.invoke_scoped_with(
++                        id,
++                        self.generation,
++                        "component_event",
++                        "",
++                        event.clone(),
++                        || active,
++                        |caller, call| host.call(caller, call),
++                    )?;
++                    return Ok(json!({"event": event, "result": result}));
 +                }
 +                let action = if let Some(component) = step.get("component").and_then(Value::as_str)
 +                {
@@ -91399,7 +92327,7 @@ index 000000000..35e9f492b
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..d28718157
+index 000000000..e1499cf79
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,340 @@
@@ -91453,7 +92381,7 @@ index 000000000..d28718157
 +                .and_then(crate::app_routes::route)
 +                .map(|route| route.class.as_str())
 +                .ok_or_else(|| failure("app_method_unrouted")),
-+            "app.routes" | "session.info" => Ok("inventory"),
++            "app.routes" | "session.info" | "tools.list" => Ok("inventory"),
 +            "time.sleep" => Ok("events"),
 +            "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
 +            "events.publish" | "events.schedule" | "events.cancel" => Ok("events"),
@@ -91745,10 +92673,10 @@ index 000000000..d28718157
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..91c3ee63b
+index 000000000..fb481f817
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1792 @@
+@@ -0,0 +1,1816 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -91793,6 +92721,7 @@ index 000000000..91c3ee63b
 +    id: String,
 +    index: usize,
 +    required: bool,
++    guard: bool,
 +    catch: bool,
 +    location: String,
 +    matcher: Value,
@@ -92643,6 +93572,7 @@ index 000000000..91c3ee63b
 +        }
 +        let last = |attempts: &Attempts| attempts.last.clone().and_then(std::result::Result::ok);
 +        let required_beneath = self.links[k + 1..].iter().any(|link| link.required);
++        let guarded_beneath = self.links[k + 1..].iter().any(|link| link.guard);
 +        let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str, executed: bool| {
 +            reply.and_then(|reply| {
 +                let result = reply.get("result").cloned().unwrap_or(Value::Null);
@@ -92654,6 +93584,13 @@ index 000000000..91c3ee63b
 +                    executed,
 +                    required_beneath,
 +                )?;
++                let denied = result.as_object().is_some_and(|object| object.len() == 1)
++                    && result["deny"].is_string();
++                if guarded_beneath && !matches!(attempts.last, Some(Ok(_))) && !denied {
++                    return Err(failure(format!(
++                        "invalid_interceptor_result: {surface}: a managed required guard beneath cannot be skipped"
++                    )));
++                }
 +                Ok(result)
 +            })
 +        };
@@ -93303,7 +94240,7 @@ index 000000000..91c3ee63b
 +        let unavailable = self.policies.iter().find_map(|path| {
 +            let shadowed = |rejection: &ModRejection| {
 +                (&rejection.path == path
-+                    && rejection.reason.starts_with("shadowed_by_project_scope"))
++                    && rejection.reason.starts_with("shadowed_by_"))
 +                .then(|| self.loaded.get(rejection.id.as_deref()?))
 +                .flatten()
 +            };
@@ -93381,7 +94318,8 @@ index 000000000..91c3ee63b
 +            .any(|link| link.matcher.is_null() || may_match(&link.matcher, input))
 +    }
 +
-+    /// Ordinary links wrap required ones; a faulted mod's required links stay and fail closed.
++    /// Managed prepend, ordinary and managed append tiers; in each, ordinary links wrap required
++    /// ones and a faulted mod's required links stay and fail closed.
 +    fn links(&self, surface: &str) -> Vec<Link> {
 +        let order = order(&self.loaded).unwrap_or_default();
 +        let faulted = self
@@ -93390,25 +94328,39 @@ index 000000000..91c3ee63b
 +            .filter(|(_, loaded)| loaded.error.is_some())
 +            .map(|(id, _)| id.clone());
 +        let required_order = order.iter().cloned().chain(faulted).collect::<Vec<_>>();
++        let tier = |loaded: &Loaded| match (loaded.selection.scope == MANAGED_SCOPE)
++            .then_some(loaded.selection.tier)
++            .flatten()
++        {
++            Some(ManagedTier::Prepend) => 0,
++            None => 1,
++            Some(ManagedTier::Append) => 2,
++        };
 +        let mut links = Vec::new();
-+        for (required, order) in [(false, &order), (true, &required_order)] {
-+            for id in order {
-+                let Some(loaded) = self.loaded.get(id) else {
-+                    continue;
-+                };
-+                for (index, interceptor) in loaded.registrations.interceptors.iter().enumerate() {
-+                    if interceptor.required == required
-+                        && granted(loaded, &interceptor.pattern, surface)
++        for position in 0..3 {
++            for (required, order) in [(false, &order), (true, &required_order)] {
++                for id in order {
++                    let Some(loaded) = self.loaded.get(id).filter(|loaded| tier(loaded) == position)
++                    else {
++                        continue;
++                    };
++                    for (index, interceptor) in
++                        loaded.registrations.interceptors.iter().enumerate()
 +                    {
-+                        links.push(Link {
-+                            id: id.clone(),
-+                            index,
-+                            required,
-+                            catch: interceptor.catch,
-+                            location: interceptor.location.clone(),
-+                            matcher: interceptor.matcher.clone(),
-+                            generation: self.generation,
-+                        });
++                        if interceptor.required == required
++                            && granted(loaded, &interceptor.pattern, surface)
++                        {
++                            links.push(Link {
++                                id: id.clone(),
++                                index,
++                                required,
++                                guard: required && loaded.selection.scope == MANAGED_SCOPE,
++                                catch: interceptor.catch,
++                                location: interceptor.location.clone(),
++                                matcher: interceptor.matcher.clone(),
++                                generation: self.generation,
++                            });
++                        }
 +                    }
 +                }
 +            }
@@ -93628,10 +94580,10 @@ index 000000000..4973a2bbb
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..8527b1056
+index 000000000..68257190b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2204 @@
+@@ -0,0 +1,2457 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -94088,25 +95040,31 @@ index 000000000..8527b1056
 +        }
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
-+        self.package_plan_locked(request, false)
++        self.package_plan_locked(request, false, false)
 +    }
 +
 +    pub fn package_requirements(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
-+        self.package_plan_locked(request, true)
++        self.package_plan_locked(request, true, false)
 +    }
 +
++    /// A `deployment` plan resolves administrator packages: the user's blocks and policy refusals do not apply.
 +    fn package_plan_locked(
 +        &self,
 +        request: ModInstallRequest,
 +        inspect: bool,
++        deployment: bool,
 +    ) -> Result<ModPackagePlan> {
 +        if !MOD_SCOPES.contains(&request.scope.as_str()) {
 +            return Err(failure("unsupported_scope: user or project"));
 +        }
 +        let existing = self.read_package_lock()?;
 +        let config = self.configuration()?;
++        let managed = match deployment || inspect {
++            true => None,
++            false => self.managed()?,
++        };
 +        let mut resolved = BTreeMap::new();
 +        let mut visiting = Vec::new();
 +        let root = self.resolve_requested(
@@ -94126,13 +95084,24 @@ index 000000000..8527b1056
 +                    &resolved.locked.id,
 +                    &resolved.locked.version,
 +                    &resolved.locked.integrity,
-+                ) {
++                ) && !deployment
++                {
 +                    return Err(failure(format!(
 +                        "package_blocked: {} {}: {reason}",
 +                        resolved.locked.id, resolved.locked.version
 +                    )));
 +                }
 +                let previous = existing.packages.get(&resolved.package.id);
++                if let Some(reason) = managed.as_ref().and_then(|managed| {
++                    managed.policy.install_refusal(
++                        &resolved.locked.id,
++                        &resolved.locked.capabilities,
++                        &policy::source_reference(&resolved.locked.source),
++                        previous.is_some_and(|locked| locked.integrity != resolved.locked.integrity),
++                    )
++                }) {
++                    return Err(failure(reason));
++                }
 +                let settings = request
 +                    .settings
 +                    .get(&resolved.package.id)
@@ -94199,7 +95168,7 @@ index 000000000..8527b1056
 +        request: ModInstallRequest,
 +        confirmation: &str,
 +    ) -> Result<ModPackageLock> {
-+        let plan = self.package_plan_locked(request, false)?;
++        let plan = self.package_plan_locked(request, false, false)?;
 +        if plan.confirmation != confirmation {
 +            return Err(failure("package_plan_changed: preview again"));
 +        }
@@ -94244,6 +95213,7 @@ index 000000000..8527b1056
 +                scope: package.scope.clone(),
 +                secret_environment: package.trust.secret_environment.clone(),
 +                expires_at: None,
++                tier: None,
 +            };
 +            if let Some(selection) = selection {
 +                config.mods[selection] = next;
@@ -94490,6 +95460,14 @@ index 000000000..8527b1056
 +    }
 +
 +    fn package_rollback_plan_locked(&self, id: &str) -> Result<ModPackagePlan> {
++        if self
++            .managed()?
++            .is_some_and(|managed| managed.policy.updates == policy::ManagedUpdates::Managed)
++        {
++            return Err(failure(format!(
++                "managed_updates_denied: administrator policy manages package versions; {id} stays as installed"
++            )));
++        }
 +        let lock = self.read_package_lock()?;
 +        let current = lock
 +            .packages
@@ -94568,6 +95546,7 @@ index 000000000..8527b1056
 +            scope: previous.scope,
 +            secret_environment: previous.trust.secret_environment,
 +            expires_at: None,
++            tier: None,
 +        };
 +        config.revision = config
 +            .revision
@@ -94640,6 +95619,232 @@ index 000000000..8527b1056
 +        self.write("packages.lock.json", &transaction["old_lock"])?;
 +        std::fs::remove_file(path)?;
 +        std::fs::File::open(&self.root)?.sync_all()
++    }
++
++    /// Installs every package administrator policy assigns to this account and records a new
++    /// deployment generation only when all of them verify; otherwise the active generation stays.
++    pub fn package_sync(&self, offline: bool) -> Result<Value> {
++        let managed = self
++            .managed()?
++            .ok_or_else(|| failure("managed_policy_absent: no administrator policy applies"))?;
++        let user = self.managed_user();
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let current = self.managed_deployment()?;
++        let index = managed
++            .policy
++            .index
++            .as_ref()
++            .map(policy::ManagedIndex::location)
++            .transpose()
++            .map_err(|error| error.to_string());
++        let mut deployed: Vec<policy::DeployedPackage> = Vec::new();
++        let mut failures = BTreeMap::new();
++        for entry in managed.deployable(&user) {
++            match self.deploy(entry, &managed, &index, offline) {
++                Ok(packages) => {
++                    for package in packages {
++                        if !deployed.contains(&package) {
++                            deployed.push(package);
++                        }
++                    }
++                }
++                Err(error) => {
++                    failures.insert(format!("{} {}", entry.id, entry.sha256), error.to_string());
++                }
++            }
++        }
++        if !failures.is_empty() {
++            let _ = self.record_security_event("managed_sync_refused", json!({"failures": failures}));
++            return Err(failure(format!(
++                "managed_sync_incomplete: generation {} stays active: {}",
++                current.generation,
++                serde_json::to_string(&failures)?
++            )));
++        }
++        if deployed == current.packages && managed.sha256 == current.policy_sha256 {
++            return Ok(json!({"generation": current.generation, "changed": false, "packages": deployed}));
++        }
++        self.deploy_generation(current, managed.sha256, deployed)
++    }
++
++    /// Makes the previous deployment generation active again; policy still decides what loads.
++    pub fn package_sync_rollback(&self) -> Result<Value> {
++        let _guard = self.lock()?;
++        let current = self.managed_deployment()?;
++        let previous = current
++            .previous
++            .clone()
++            .ok_or_else(|| failure("managed_rollback_unavailable: no previous generation"))?;
++        self.deploy_generation(current, previous.policy_sha256, previous.packages)
++    }
++
++    fn deploy_generation(
++        &self,
++        current: policy::ManagedDeployment,
++        policy_sha256: String,
++        packages: Vec<policy::DeployedPackage>,
++    ) -> Result<Value> {
++        let next = policy::ManagedDeployment {
++            generation: current.generation + 1,
++            policy_sha256,
++            packages,
++            previous: Some(Box::new(policy::ManagedDeployment {
++                previous: None,
++                ..current
++            })),
++        };
++        self.write("managed.json", &serde_json::to_value(&next)?)?;
++        let packages = next
++            .packages
++            .iter()
++            .map(|package| json!({"id": package.id, "version": package.version, "sha256": package.sha256}))
++            .collect::<Vec<_>>();
++        let _ = self.record_security_event(
++            "managed_deploy",
++            json!({"generation": next.generation, "packages": packages}),
++        );
++        Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
++    }
++
++    /// The pinned content from the cache, else from the source or the first mirror that verifies.
++    fn deploy(
++        &self,
++        entry: &policy::ManagedPackage,
++        managed: &policy::Managed,
++        index: &std::result::Result<Option<PathBuf>, String>,
++        offline: bool,
++    ) -> Result<Vec<policy::DeployedPackage>> {
++        let cached = self
++            .root
++            .join("package-cache")
++            .join(&entry.id)
++            .join(&entry.sha256);
++        if let Ok(path) = cached.canonicalize()
++            && let Ok((package, _, sha256)) = store::package(&path)
++            && sha256 == entry.sha256
++        {
++            if !package.lifecycle.is_empty() {
++                return Err(failure(format!(
++                    "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
++                    entry.id
++                )));
++            }
++            return Ok(vec![policy::DeployedPackage {
++                id: package.id,
++                version: package.version,
++                sha256,
++                path,
++            }]);
++        }
++        let mut errors = Vec::new();
++        for reference in std::iter::once(&entry.source).chain(&entry.mirrors) {
++            let indexed = !(reference.starts_with('/')
++                || reference.starts_with("npm:")
++                || reference.starts_with("git+"));
++            let attempt = match index {
++                Err(error) if indexed => Err(failure(error)),
++                index => self.deploy_from(
++                    reference,
++                    entry,
++                    managed,
++                    index.clone().ok().flatten(),
++                    offline,
++                ),
++            };
++            match attempt {
++                Ok(packages) => return Ok(packages),
++                Err(error) => errors.push(format!("{reference}: {error}")),
++            }
++        }
++        Err(failure(errors.join("; ")))
++    }
++
++    fn deploy_from(
++        &self,
++        reference: &str,
++        entry: &policy::ManagedPackage,
++        managed: &policy::Managed,
++        index: Option<PathBuf>,
++        offline: bool,
++    ) -> Result<Vec<policy::DeployedPackage>> {
++        let mut source = ModPackageSource::parse(reference, index.clone())?;
++        if !entry.version.is_empty()
++            && matches!(
++                source,
++                ModPackageSource::Package { .. } | ModPackageSource::Npm { .. }
++            )
++        {
++            source = source.with_version(&entry.version)?;
++        }
++        if let (ModPackageSource::Npm { registry, .. }, Some(admin)) =
++            (&mut source, &managed.policy.registry)
++            && registry.is_empty()
++        {
++            registry.clone_from(admin);
++        }
++        let grant = |package: &policy::ManagedPackage| ModPackageGrant {
++            capabilities: package.capabilities.clone(),
++            dependencies: package.dependencies,
++            lifecycle: package.lifecycle.clone(),
++            secret_environment: package.secret_environment.clone(),
++        };
++        let mut packages: BTreeMap<String, ModPackageGrant> = managed
++            .policy
++            .packages
++            .iter()
++            .rev()
++            .map(|package| (package.id.clone(), grant(package)))
++            .collect();
++        packages.insert(entry.id.clone(), grant(entry));
++        let request = ModInstallRequest {
++            action: None,
++            source,
++            index,
++            scope: "user".to_owned(),
++            offline,
++            trust: ModPackageTrust { packages },
++            settings: BTreeMap::from([(entry.id.clone(), entry.settings.clone())]),
++        };
++        let plan = self.package_plan_locked(request, false, true)?;
++        if !plan
++            .packages
++            .iter()
++            .any(|locked| locked.id == entry.id && locked.integrity == entry.sha256)
++        {
++            return Err(failure(format!(
++                "managed_integrity_mismatch: {reference} does not hold the {} content administrator policy pins",
++                entry.id
++            )));
++        }
++        plan.packages
++            .iter()
++            .map(|locked| {
++                if !managed
++                    .policy
++                    .packages
++                    .iter()
++                    .any(|listed| listed.id == locked.id && listed.sha256 == locked.integrity)
++                {
++                    return Err(failure(format!(
++                        "managed_integrity_mismatch: dependency {} {} is not pinned by administrator policy",
++                        locked.id, locked.integrity
++                    )));
++                }
++                if !locked.lifecycle.is_empty() {
++                    return Err(failure(format!(
++                        "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
++                        locked.id
++                    )));
++                }
++                Ok(policy::DeployedPackage {
++                    id: locked.id.clone(),
++                    version: locked.version.clone(),
++                    sha256: locked.integrity.clone(),
++                    path: locked.cache_path.clone(),
++                })
++            })
++            .collect()
 +    }
 +
 +    fn resolve_requested(
@@ -96085,6 +97290,442 @@ index 000000000..0446ee122
 +            "restored":backup,"recovery":self.root.join(recovery),"source_sha256":hash,
 +            "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
 +        )
++    }
++}
+diff --git a/codex-rs/omd/src/mods/policy.rs b/codex-rs/omd/src/mods/policy.rs
+new file mode 100644
+index 000000000..adfeafea0
+--- /dev/null
++++ b/codex-rs/omd/src/mods/policy.rs
+@@ -0,0 +1,430 @@
++use super::*;
++use std::os::unix::fs::MetadataExt;
++
++#[cfg(target_os = "macos")]
++pub const MANAGED_POLICY_FILE: &str = "/Library/Application Support/OhMyDiff/policy.json";
++#[cfg(not(target_os = "macos"))]
++pub const MANAGED_POLICY_FILE: &str = "/etc/oh-my-diff/policy.json";
++pub const MANAGED_POLICY_KEY: &str = "mods";
++pub const MANAGED_SCOPE: &str = "managed";
++const MANAGED_POLICY_BYTES: u64 = 65_536;
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum ManagedUpdates {
++    #[default]
++    User,
++    Managed,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum ManagedTier {
++    Prepend,
++    Append,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ManagedPackage {
++    pub id: String,
++    pub source: String,
++    #[serde(default, skip_serializing_if = "String::is_empty")]
++    pub version: String,
++    pub sha256: String,
++    pub capabilities: Vec<String>,
++    #[serde(default)]
++    pub dependencies: bool,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub lifecycle: Vec<String>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub secret_environment: Vec<String>,
++    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
++    pub settings: BTreeMap<String, Value>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub tier: Option<ManagedTier>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub users: Option<Vec<String>>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub projects: Option<Vec<PathBuf>>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub percent: Option<u8>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub mirrors: Vec<String>,
++}
++
++/// An immutable package index: the first location holding exactly `sha256` is used.
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ManagedIndex {
++    pub sha256: String,
++    pub locations: Vec<PathBuf>,
++}
++
++/// Administrator policy for mods: controls over user and project selections plus required packages.
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ManagedPolicy {
++    pub schema: u32,
++    #[serde(default)]
++    pub managed_only: bool,
++    #[serde(default = "allowed")]
++    pub sideload: bool,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub sources: Option<Vec<String>>,
++    #[serde(default)]
++    pub updates: ManagedUpdates,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub deny: Vec<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub capabilities: Option<Vec<String>>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub packages: Vec<ManagedPackage>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub index: Option<ManagedIndex>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub registry: Option<String>,
++}
++
++fn allowed() -> bool {
++    true
++}
++
++impl ManagedIndex {
++    pub fn location(&self) -> Result<PathBuf> {
++        self.locations
++            .iter()
++            .find(|location| {
++                store::read(location, 524_288).is_ok_and(|bytes| digest(&bytes) == self.sha256)
++            })
++            .cloned()
++            .ok_or_else(|| {
++                failure(format!(
++                    "managed_index_unavailable: no location holds index {}",
++                    self.sha256
++                ))
++            })
++    }
++}
++
++#[derive(Clone, Debug, PartialEq)]
++pub struct Managed {
++    pub origin: String,
++    pub sha256: String,
++    pub policy: ManagedPolicy,
++}
++
++impl ManagedPolicy {
++    pub fn parse(value: Value) -> Result<Self> {
++        let policy: Self = serde_json::from_value(value)
++            .map_err(|error| failure(format!("managed_policy_invalid: {error}")))?;
++        let invalid = |reason: &str| failure(format!("managed_policy_invalid: {reason}"));
++        let capabilities = |list: &[String]| {
++            list.iter()
++                .all(|capability| MOD_CAPABILITIES.contains(&capability.as_str()))
++        };
++        let sha256 = |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
++        if policy.schema != 1 {
++            return Err(invalid("schema must be 1"));
++        }
++        if policy.index.as_ref().is_some_and(|index| {
++            !sha256(&index.sha256)
++                || index.locations.is_empty()
++                || !index.locations.iter().all(|location| location.is_absolute())
++        }) {
++            return Err(invalid("index needs a sha256 and absolute locations"));
++        }
++        if !policy.deny.iter().all(|id| identifier(id)) {
++            return Err(invalid("deny lists mod IDs"));
++        }
++        if policy
++            .sources
++            .iter()
++            .flatten()
++            .any(|source| source.trim().is_empty())
++        {
++            return Err(invalid("sources are non-empty reference prefixes"));
++        }
++        if policy
++            .capabilities
++            .as_ref()
++            .is_some_and(|ceiling| !capabilities(ceiling))
++        {
++            return Err(invalid("capabilities lists host capabilities"));
++        }
++        for package in &policy.packages {
++            if !identifier(&package.id)
++                || !sha256(&package.sha256)
++                || !capabilities(&package.capabilities)
++                || package.percent.is_some_and(|percent| !(1..=100).contains(&percent))
++                || package
++                    .projects
++                    .iter()
++                    .flatten()
++                    .any(|project| !project.is_absolute())
++            {
++                return Err(invalid(&format!(
++                    "package {} needs an ID, a sha256, host capabilities, absolute projects and percent 1-100",
++                    package.id
++                )));
++            }
++        }
++        Ok(policy)
++    }
++
++    /// Why this policy refuses a user or project selection; `source` is its package-manager source, if any.
++    pub fn refusal(&self, id: &str, capabilities: &[String], source: Option<&str>) -> Option<String> {
++        if self.deny.iter().any(|denied| denied == id) {
++            return Some(format!(
++                "managed_denied: {id} is revoked by administrator policy"
++            ));
++        }
++        if self.managed_only {
++            return Some(format!(
++                "managed_only: administrator policy loads only managed mods, not {id}"
++            ));
++        }
++        if let Some(capability) = self.capabilities.as_ref().and_then(|ceiling| {
++            capabilities
++                .iter()
++                .find(|capability| !ceiling.contains(capability))
++        }) {
++            return Some(format!(
++                "managed_capability_denied: administrator policy withholds {capability} from {id}"
++            ));
++        }
++        match source {
++            None if !self.sideload => Some(format!(
++                "managed_sideload_denied: administrator policy loads {id} only from an installed package"
++            )),
++            Some(source) if !self.source_allowed(source) => Some(format!(
++                "managed_source_denied: administrator policy does not allow {source}"
++            )),
++            _ => None,
++        }
++    }
++
++    /// Why this policy refuses a user install, or with `update` a version change, from `source`.
++    pub fn install_refusal(
++        &self,
++        id: &str,
++        capabilities: &[String],
++        source: &str,
++        update: bool,
++    ) -> Option<String> {
++        if update && self.updates == ManagedUpdates::Managed {
++            return Some(format!(
++                "managed_updates_denied: administrator policy manages package versions; {id} stays as installed"
++            ));
++        }
++        self.refusal(id, capabilities, Some(source))
++    }
++
++    pub fn source_allowed(&self, reference: &str) -> bool {
++        self.sources.as_ref().is_none_or(|allowed| {
++            allowed
++                .iter()
++                .any(|prefix| reference.starts_with(prefix.as_str()))
++        })
++    }
++}
++
++pub fn managed(value: Value, origin: String) -> Result<Managed> {
++    let sha256 = digest(crate::broker::canonical(&value).as_bytes());
++    Ok(Managed {
++        origin,
++        sha256,
++        policy: ManagedPolicy::parse(value)?,
++    })
++}
++
++/// The administrator policy: the broker's when deployed and set, otherwise the root-owned policy file.
++pub fn load_managed() -> Result<Option<Managed>> {
++    load_managed_from(Path::new(MANAGED_POLICY_FILE), 0)
++}
++
++/// Like `load_managed`, trusting `owner` besides root for the policy file and its folders.
++pub fn load_managed_from(file: &Path, owner: u32) -> Result<Option<Managed>> {
++    if crate::broker::deployed() {
++        let value = crate::broker::call("policy.get", json!({"key": MANAGED_POLICY_KEY}))?;
++        if !value.is_null() {
++            return managed(value, "broker".to_owned()).map(Some);
++        }
++    }
++    let canonical = match file.canonicalize() {
++        Ok(canonical) => canonical,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
++        Err(error) => return Err(error),
++    };
++    let trusted = |path: &Path, folder: bool| {
++        std::fs::symlink_metadata(path).is_ok_and(|metadata| {
++            (metadata.uid() == 0 || metadata.uid() == owner)
++                && (metadata.mode() & 0o022 == 0 || folder && metadata.mode() & 0o1000 != 0)
++        })
++    };
++    if !trusted(&canonical, false) || !canonical.ancestors().skip(1).all(|folder| trusted(folder, true)) {
++        return Err(failure(format!(
++            "managed_policy_untrusted: {} and its folders must be owned by root and writable only by their owner",
++            file.display()
++        )));
++    }
++    let value = serde_json::from_slice(&store::read(&canonical, MANAGED_POLICY_BYTES)?)
++        .map_err(|error| failure(format!("managed_policy_invalid: {error}")))?;
++    managed(value, canonical.display().to_string()).map(Some)
++}
++
++/// The account name policy `users` entries and rollout cohorts match.
++pub fn login() -> String {
++    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
++    let mut buffer = vec![0 as libc::c_char; 4096];
++    let mut found = std::ptr::null_mut();
++    let status = unsafe {
++        libc::getpwuid_r(
++            libc::getuid(),
++            &mut entry,
++            buffer.as_mut_ptr(),
++            buffer.len(),
++            &mut found,
++        )
++    };
++    if status != 0 || found.is_null() {
++        return format!("uid:{}", rustix::process::getuid().as_raw());
++    }
++    unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }
++        .to_string_lossy()
++        .into_owned()
++}
++
++/// Deterministic 0-99 rollout cohort of a user for a package ID.
++fn cohort(user: &str, id: &str) -> u8 {
++    let hash = digest(format!("{user}\0{id}").as_bytes());
++    (u64::from_str_radix(&hash[..8], 16).unwrap_or_default() % 100) as u8
++}
++
++impl ManagedPackage {
++    /// Whether the entry targets `user`: listed users and the rollout cohort.
++    pub fn assigned(&self, user: &str) -> bool {
++        self.users
++            .as_ref()
++            .is_none_or(|users| users.iter().any(|name| name == user))
++            && self
++                .percent
++                .is_none_or(|percent| cohort(user, &self.id) < percent)
++    }
++
++    pub fn applies(&self, user: &str, project: Option<&Path>) -> bool {
++        self.assigned(user)
++            && self.projects.as_ref().is_none_or(|projects| {
++                project.is_some_and(|project| projects.iter().any(|root| project.starts_with(root)))
++            })
++    }
++}
++
++/// What `package-sync` last deployed to a store; only fully installed generations are recorded.
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ManagedDeployment {
++    pub generation: u64,
++    pub policy_sha256: String,
++    pub packages: Vec<DeployedPackage>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub previous: Option<Box<ManagedDeployment>>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct DeployedPackage {
++    pub id: String,
++    pub version: String,
++    pub sha256: String,
++    pub path: PathBuf,
++}
++
++impl Managed {
++    /// The first applicable entry per ID is the target; later entries are fallbacks outside a rollout.
++    pub fn targets(&self, user: &str, project: Option<&Path>) -> Vec<&ManagedPackage> {
++        let mut seen = BTreeSet::new();
++        self.policy
++            .packages
++            .iter()
++            .filter(|package| package.applies(user, project) && seen.insert(package.id.clone()))
++            .collect()
++    }
++
++    /// Every entry `package-sync` installs for `user`, whatever the project, once per ID and content.
++    pub fn deployable(&self, user: &str) -> Vec<&ManagedPackage> {
++        let mut seen = BTreeSet::new();
++        self.policy
++            .packages
++            .iter()
++            .filter(|package| {
++                package.assigned(user) && seen.insert((package.id.clone(), package.sha256.clone()))
++            })
++            .collect()
++    }
++
++    /// Each target loads when deployed; otherwise the first applicable deployed entry keeps running
++    /// until the next sync. Content the policy no longer lists never loads.
++    pub(super) fn selections(
++        &self,
++        deployment: &ManagedDeployment,
++        user: &str,
++        project: Option<&Path>,
++    ) -> (Vec<ModSelection>, Vec<ModRejection>) {
++        let (mut selections, mut pending) = (Vec::new(), Vec::new());
++        for target in self.targets(user, project) {
++            let chosen = self
++                .policy
++                .packages
++                .iter()
++                .filter(|package| package.id == target.id && package.applies(user, project))
++                .find_map(|package| {
++                    let deployed = deployment.packages.iter().find(|deployed| {
++                        deployed.id == package.id && deployed.sha256 == package.sha256
++                    })?;
++                    Some((package, deployed))
++                });
++            if chosen.is_none_or(|(package, _)| package.sha256 != target.sha256) {
++                pending.push(ModRejection {
++                    path: PathBuf::from(&target.source),
++                    id: Some(target.id.clone()),
++                    scope: MANAGED_SCOPE.to_owned(),
++                    reason: format!(
++                        "managed_pending_sync: {} {} is not deployed to this store; run omd-mod package-sync",
++                        target.id, target.sha256
++                    ),
++                });
++            }
++            if let Some((package, deployed)) = chosen {
++                selections.push(ModSelection {
++                    path: deployed.path.clone(),
++                    sha256: deployed.sha256.clone(),
++                    enabled: true,
++                    capabilities: package.capabilities.clone(),
++                    settings: package.settings.clone(),
++                    scope: MANAGED_SCOPE.to_owned(),
++                    secret_environment: package.secret_environment.clone(),
++                    expires_at: None,
++                    tier: package.tier,
++                });
++            }
++        }
++        (selections, pending)
++    }
++}
++
++/// The policy-facing reference of a package source, which `sources` prefixes match.
++pub fn source_reference(source: &package_manager::ModPackageSource) -> String {
++    match source {
++        package_manager::ModPackageSource::Local { path } => path.display().to_string(),
++        package_manager::ModPackageSource::Repository { repository, .. } => {
++            format!("git+{repository}")
++        }
++        package_manager::ModPackageSource::Package { index, id, .. } => {
++            format!("index:{}#{id}", index.display())
++        }
++        package_manager::ModPackageSource::Npm {
++            package, registry, ..
++        } => format!("npm:{registry}/{package}"),
 +    }
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
@@ -97629,10 +99270,10 @@ index 000000000..67ab2eb55
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..1acad6be7
+index 000000000..ab84c4e4e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,849 @@
+@@ -0,0 +1,969 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -97767,6 +99408,8 @@ index 000000000..1acad6be7
 +
 +pub struct ModStore {
 +    pub(super) root: PathBuf,
++    policy: (PathBuf, u32),
++    user: Option<String>,
 +}
 +
 +pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
@@ -97878,7 +99521,10 @@ index 000000000..1acad6be7
 +    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset
 +    /// `packages.lock.json` leaves its packages as plain trusted selections.
 +    pub fn reset(&self, name: &str) -> Result<PathBuf> {
-+        if !matches!(name, "mods.json" | "host.json" | "packages.lock.json") {
++        if !matches!(
++            name,
++            "mods.json" | "host.json" | "packages.lock.json" | "managed.json"
++        ) {
 +            return Err(failure("store_file_not_resettable"));
 +        }
 +        let path = self.root.join(name);
@@ -97906,7 +99552,25 @@ index 000000000..1acad6be7
 +        if !root.is_absolute() || root.canonicalize()? != root || !root.is_dir() {
 +            return Err(failure("canonical_store_path_required"));
 +        }
-+        Ok(Self { root })
++        Ok(Self {
++            root,
++            policy: (PathBuf::from(super::MANAGED_POLICY_FILE), 0),
++            user: None,
++        })
++    }
++
++    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated stores.
++    pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) {
++        self.policy = (file, owner);
++        self.user = Some(user.to_owned());
++    }
++
++    pub fn managed(&self) -> Result<Option<super::Managed>> {
++        super::load_managed_from(&self.policy.0, self.policy.1)
++    }
++
++    pub fn managed_user(&self) -> String {
++        self.user.clone().unwrap_or_else(super::policy::login)
 +    }
 +
 +    pub(super) fn lock(&self) -> Result<File> {
@@ -98051,19 +99715,83 @@ index 000000000..1acad6be7
 +        }
 +    }
 +
++    pub fn managed_deployment(&self) -> Result<super::policy::ManagedDeployment> {
++        match read(&self.root.join("managed.json"), 524_288) {
++            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
++                failure(format!(
++                    "managed_deployment_unreadable: {error}; run omd-mod reset STORE managed.json, then omd-mod package-sync"
++                ))
++            }),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
++            Err(error) => Err(error),
++        }
++    }
++
 +    pub fn selection_status(&self) -> Result<Value> {
++        self.selection_status_in(None)
++    }
++
++    /// Selections after administrator policy; `project` scopes project-targeted managed packages.
++    pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
 +        let configuration = self.configuration()?;
 +        let lock = self.package_lock()?;
++        let (managed, managed_error) = match self.managed() {
++            Ok(managed) => (managed, None),
++            Err(error) => (None, Some(error.to_string())),
++        };
++        let mut entries = configuration.mods.clone();
++        let mut pending = Vec::new();
++        if let Some(managed) = &managed {
++            let (administered, unsynced) = managed.selections(
++                &self.managed_deployment()?,
++                &self.managed_user(),
++                project,
++            );
++            entries.splice(0..0, administered);
++            pending = unsynced;
++        }
 +        let mut selections: Vec<Value> = Vec::new();
 +        let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-+        for selection in &configuration.mods {
++        for selection in &entries {
++            let administered = selection.scope == super::MANAGED_SCOPE;
 +            let inspected = package(&selection.path);
++            let mut settings_origin = BTreeMap::new();
 +            let (mut id, error, environment) = match inspected {
 +                Ok((manifest, _, integrity)) => {
++                    for key in super::effective_settings(
++                        manifest.settings_schema.as_ref(),
++                        &selection.settings,
++                    )
++                    .into_keys()
++                    {
++                        let origin = match selection.settings.contains_key(&key) {
++                            false => "default",
++                            true if administered => "managed",
++                            true => "user",
++                        };
++                        settings_origin.insert(key, origin);
++                    }
++                    let source = lock
++                        .packages
++                        .values()
++                        .find(|item| item.path == selection.path && item.scope == selection.scope)
++                        .map(|item| super::policy::source_reference(&item.source));
 +                    let error = if integrity != selection.sha256 {
 +                        Some("source_changed: inspect and trust the new digest".to_owned())
-+                    } else if !super::MOD_SCOPES.contains(&selection.scope.as_str()) {
++                    } else if !administered
++                        && !super::MOD_SCOPES.contains(&selection.scope.as_str())
++                    {
 +                        Some(format!("unsupported_scope: {}", selection.scope))
++                    } else if let Some(refusal) = managed.as_ref().filter(|_| !administered).and_then(
++                        |managed| {
++                            managed.policy.refusal(
++                                &manifest.id,
++                                &manifest.capabilities,
++                                source.as_deref(),
++                            )
++                        },
++                    ) {
++                        Some(refusal)
 +                    } else if manifest
 +                        .capabilities
 +                        .iter()
@@ -98090,7 +99818,7 @@ index 000000000..1acad6be7
 +                    .find(|item| item.path == selection.path && item.scope == selection.scope)
 +                    .map(|item| item.id.clone());
 +            }
-+            let managed = id
++            let packaged = id
 +                .as_ref()
 +                .and_then(|id| lock.packages.get(id))
 +                .is_some_and(|item| item.path == selection.path && item.scope == selection.scope);
@@ -98105,8 +99833,10 @@ index 000000000..1acad6be7
 +                "id": id,
 +                "path": selection.path,
 +                "scope": selection.scope,
++                "tier": selection.tier,
 +                "selected": selection.enabled,
-+                "managed": managed,
++                "packaged": packaged,
++                "settings_origin": settings_origin,
 +                "sha256": selection.sha256,
 +                "capabilities": selection.capabilities,
 +                "exec_environment": environment,
@@ -98120,23 +99850,39 @@ index 000000000..1acad6be7
 +                "reason": if selection.enabled { "pending_runtime_validation" } else { "disabled" },
 +            }));
 +        }
++        for rejection in pending {
++            selections.push(json!({"id": rejection.id, "path": rejection.path, "scope": rejection.scope,
++                "selected": true, "packaged": false, "error": rejection.reason, "effective": false,
++                "reason": "managed_pending_sync"}));
++        }
++        let rank = |scope: &Value| match scope.as_str() {
++            Some(super::MANAGED_SCOPE) => 2,
++            Some("project") => 1,
++            _ => 0,
++        };
 +        for indices in groups.values() {
-+            let project = indices
++            let top = indices
++                .iter()
++                .map(|index| rank(&selections[*index]["scope"]))
++                .max()
++                .unwrap_or_default();
++            let candidates = indices
 +                .iter()
 +                .copied()
-+                .filter(|index| selections[*index]["scope"] == "project")
++                .filter(|index| rank(&selections[*index]["scope"]) == top)
 +                .collect::<Vec<_>>();
-+            let candidates = if project.is_empty() {
-+                indices.clone()
-+            } else {
-+                project
-+            };
++            let shadow = format!(
++                "shadowed_by_{}_scope",
++                selections[candidates[0]]["scope"]
++                    .as_str()
++                    .unwrap_or_default()
++            );
 +            if candidates.len() != 1 {
 +                for index in indices {
 +                    selections[*index]["reason"] = if candidates.contains(index) {
 +                        json!("duplicate_scope_conflict")
 +                    } else {
-+                        json!("shadowed_by_project_scope_conflict")
++                        json!(format!("{shadow}_conflict"))
 +                    };
 +                }
 +                continue;
@@ -98145,14 +99891,16 @@ index 000000000..1acad6be7
 +            selections[winner]["effective"] = json!(true);
 +            selections[winner]["reason"] = json!("selected");
 +            for index in indices.iter().copied().filter(|index| *index != winner) {
-+                selections[index]["reason"] = json!("shadowed_by_project_scope");
++                selections[index]["reason"] = json!(shadow);
 +            }
 +        }
 +        Ok(json!({
 +            "revision": configuration.revision,
-+            "precedence": "valid enabled project selection over valid enabled user selection; runtime conflicts can still reject activation",
++            "precedence": "valid enabled managed selection over project over user; administrator policy refuses user and project selections it does not allow; runtime conflicts can still reject activation",
++            "managed": managed.map(|managed| json!({"origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy})),
++            "managed_error": managed_error,
 +            "selections": selections,
-+            "managed_packages": lock.packages.keys().collect::<Vec<_>>(),
++            "packaged": lock.packages.keys().collect::<Vec<_>>(),
 +        }))
 +    }
 +
@@ -98190,6 +99938,11 @@ index 000000000..1acad6be7
 +    }
 +
 +    pub fn trust_all(&self, packages: Vec<Trust>) -> Result<()> {
++        if self.managed()?.is_some_and(|managed| !managed.policy.sideload) {
++            return Err(failure(
++                "managed_sideload_denied: administrator policy loads mods only from installed packages",
++            ));
++        }
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
 +        let mut config = self.configuration()?;
@@ -98232,6 +99985,7 @@ index 000000000..1acad6be7
 +                scope,
 +                secret_environment: package.secret_environment(),
 +                expires_at,
++                tier: None,
 +            });
 +        }
 +        config.revision = config
@@ -98319,11 +100073,18 @@ index 000000000..1acad6be7
 +            }));
 +        }
 +        let mut config = self.configuration()?;
-+        let selection = config
-+            .mods
-+            .iter_mut()
-+            .find(|m| m.path == path)
-+            .ok_or_else(|| failure("package_not_trusted"))?;
++        let Some(selection) = config.mods.iter_mut().find(|m| m.path == path) else {
++            return Err(failure(
++                if self
++                    .managed_deployment()
++                    .is_ok_and(|deployment| deployment.packages.iter().any(|p| p.path == path))
++                {
++                    "managed_by_policy: administrator policy requires this mod; ask your administrator to change the policy"
++                } else {
++                    "package_not_trusted"
++                },
++            ));
++        };
 +        if enabled {
 +            let (manifest, _, hash) = package(path)?;
 +            if hash != selection.sha256 {
@@ -100980,7 +102741,7 @@ index 000000000..257d49d33
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 000000000..5c14cfeb6
+index 000000000..ca06d5b91
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
 @@ -0,0 +1,519 @@
@@ -101101,7 +102862,7 @@ index 000000000..5c14cfeb6
 +            let locked = lock
 +                .packages
 +                .get(id)
-+                .filter(|_| selection["managed"] == true);
++                .filter(|_| selection["packaged"] == true);
 +            let manifest = selection["path"]
 +                .as_str()
 +                .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
@@ -101394,7 +103155,7 @@ index 000000000..5c14cfeb6
 +        .find(|item| {
 +            item["id"] == id.as_str()
 +                && item["scope"] == arguments.scope.as_str()
-+                && item["managed"] != true
++                && item["packaged"] != true
 +        })
 +        .ok_or_else(|| failure(format!("package_not_installed: {id}")))?;
 +    let current = Selection {
@@ -103915,6 +105676,330 @@ index 000000000..bcc07501d
 +            return Err(io::Error::other("session_policy_changed"));
 +        }
 +        Ok(result)
++    }
++}
+diff --git a/codex-rs/omd/src/tool_schema.rs b/codex-rs/omd/src/tool_schema.rs
+new file mode 100644
+index 000000000..5926f3682
+--- /dev/null
++++ b/codex-rs/omd/src/tool_schema.rs
+@@ -0,0 +1,318 @@
++use serde_json::Value;
++use std::io;
++use std::io::Write;
++use std::os::unix::fs::OpenOptionsExt;
++use std::path::Path;
++use std::path::PathBuf;
++
++const INVENTORY_FILE: &str = "tool-inventory.json";
++const TYPES_FILE: &str = "tool-types.d.ts";
++
++fn escape(segment: &str) -> String {
++    segment.replace('~', "~0").replace('/', "~1")
++}
++
++fn kind(value: &Value) -> &'static str {
++    match value {
++        Value::Null => "null",
++        Value::Bool(_) => "boolean",
++        Value::Number(_) => "number",
++        Value::String(_) => "string",
++        Value::Array(_) => "array",
++        Value::Object(_) => "object",
++    }
++}
++
++fn is_type(value: &Value, name: &str) -> bool {
++    match name {
++        "integer" => value.as_f64().is_some_and(|number| number.fract() == 0.0),
++        name => kind(value) == name,
++    }
++}
++
++fn check(schema: &Value, value: &Value, pointer: &str) -> Result<(), String> {
++    let Some(schema) = schema.as_object() else {
++        return Ok(());
++    };
++    let at = |reason: String| {
++        let pointer = if pointer.is_empty() { "/" } else { pointer };
++        format!("{pointer}: {reason}")
++    };
++    match schema.get("type") {
++        Some(Value::String(name)) if !is_type(value, name) => {
++            return Err(at(format!("expected {name}, got {}", kind(value))));
++        }
++        Some(Value::Array(names))
++            if !names
++                .iter()
++                .filter_map(Value::as_str)
++                .any(|name| is_type(value, name)) =>
++        {
++            return Err(at(format!(
++                "expected one of {}",
++                Value::Array(names.clone())
++            )));
++        }
++        _ => {}
++    }
++    if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
++        && !allowed.contains(value)
++    {
++        return Err(at(format!(
++            "expected one of {}",
++            Value::Array(allowed.clone())
++        )));
++    }
++    if let Some(variants) = schema.get("anyOf").and_then(Value::as_array)
++        && !variants
++            .iter()
++            .any(|variant| check(variant, value, pointer).is_ok())
++    {
++        return Err(at("matches no anyOf variant".into()));
++    }
++    if let Some(object) = value.as_object() {
++        for name in schema
++            .get("required")
++            .and_then(Value::as_array)
++            .into_iter()
++            .flatten()
++            .filter_map(Value::as_str)
++        {
++            if !object.contains_key(name) {
++                return Err(format!("{pointer}/{}: required", escape(name)));
++            }
++        }
++        let properties = schema.get("properties").and_then(Value::as_object);
++        for (name, member) in object {
++            let child = format!("{pointer}/{}", escape(name));
++            match (
++                properties.and_then(|known| known.get(name)),
++                schema.get("additionalProperties"),
++            ) {
++                (Some(known), _) => check(known, member, &child)?,
++                (None, Some(Value::Bool(false))) => return Err(format!("{child}: not allowed")),
++                (None, Some(extra @ Value::Object(_))) => check(extra, member, &child)?,
++                _ => {}
++            }
++        }
++    }
++    if let (Some(items), Some(values)) = (schema.get("items"), value.as_array()) {
++        for (index, member) in values.iter().enumerate() {
++            check(items, member, &format!("{pointer}/{index}"))?;
++        }
++    }
++    Ok(())
++}
++
++/// Checks `value` against the JSON-schema subset tool parameters use; the error is `<json-pointer>: <reason>`.
++pub fn validate(schema: &Value, value: &Value) -> Result<(), String> {
++    check(schema, value, "")
++}
++
++fn comment(text: &str) -> String {
++    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
++    format!("/** {} */", text.replace("*/", "*\\/"))
++}
++
++fn documented(text: Option<&str>) -> String {
++    text.filter(|text| !text.trim().is_empty())
++        .map(|text| format!("{} ", comment(text)))
++        .unwrap_or_default()
++}
++
++fn union(members: Vec<String>) -> String {
++    if members.is_empty() {
++        "Json".into()
++    } else {
++        members.join(" | ")
++    }
++}
++
++fn named(name: &str, schema: &Value) -> String {
++    match name {
++        "string" | "boolean" | "null" => name.into(),
++        "number" | "integer" => "number".into(),
++        "array" => format!(
++            "Array<{}>",
++            schema.get("items").map_or("Json".into(), ts_type)
++        ),
++        "object" => object(schema),
++        _ => "Json".into(),
++    }
++}
++
++fn object(schema: &Value) -> String {
++    let Some(properties) = schema
++        .get("properties")
++        .and_then(Value::as_object)
++        .filter(|properties| !properties.is_empty())
++    else {
++        let rest = schema
++            .get("additionalProperties")
++            .filter(|extra| extra.is_object())
++            .map_or("Json".into(), ts_type);
++        return format!("Record<string, {rest}>");
++    };
++    let required = schema
++        .get("required")
++        .and_then(Value::as_array)
++        .map(|names| names.iter().filter_map(Value::as_str).collect::<Vec<_>>())
++        .unwrap_or_default();
++    let members = properties.iter().map(|(name, member)| {
++        let optional = if required.contains(&name.as_str()) {
++            ""
++        } else {
++            "?"
++        };
++        format!(
++            "{}{}{optional}: {};",
++            documented(member["description"].as_str()),
++            Value::from(name.as_str()),
++            ts_type(member)
++        )
++    });
++    format!("{{ {} }}", members.collect::<Vec<_>>().join(" "))
++}
++
++pub fn ts_type(schema: &Value) -> String {
++    if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
++        let literals = allowed
++            .iter()
++            .map(|value| (!value.is_array() && !value.is_object()).then(|| value.to_string()))
++            .collect::<Option<Vec<_>>>();
++        return literals.map_or("Json".into(), union);
++    }
++    if let Some(variants) = schema.get("anyOf").and_then(Value::as_array) {
++        return union(variants.iter().map(ts_type).collect());
++    }
++    match schema.get("type") {
++        Some(Value::String(name)) => named(name, schema),
++        Some(Value::Array(names)) => union(
++            names
++                .iter()
++                .filter_map(Value::as_str)
++                .map(|name| named(name, schema))
++                .collect(),
++        ),
++        _ => "Json".into(),
++    }
++}
++
++pub fn types(inventory: &Value) -> String {
++    let mut output = String::from(
++        "import type { Json } from '@oh-my-diff/mod-api';\n\ndeclare module '@oh-my-diff/mod-api' {\n  interface ToolArguments {\n",
++    );
++    for tool in inventory["tools"].as_array().into_iter().flatten() {
++        let original = &tool["original"];
++        let Some(name) = tool["name"].as_str() else {
++            continue;
++        };
++        let arguments = if original["freeform"] == true {
++            "string".into()
++        } else {
++            ts_type(&original["parameters"])
++        };
++        output.push_str(&format!(
++            "    {}{}: {arguments};\n",
++            documented(original["description"].as_str()),
++            Value::from(name)
++        ));
++    }
++    output.push_str("  }\n}\n");
++    output
++}
++
++fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
++    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
++        return Ok(());
++    }
++    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
++    let mut file = std::fs::OpenOptions::new()
++        .create_new(true)
++        .write(true)
++        .mode(0o600)
++        .open(&temporary)?;
++    file.write_all(bytes)
++        .and_then(|()| file.sync_all())
++        .and_then(|()| std::fs::rename(&temporary, path))
++        .inspect_err(|_| {
++            let _ = std::fs::remove_file(&temporary);
++        })
++}
++
++pub fn write_inventory(root: &Path, inventory: &Value) -> io::Result<()> {
++    write_if_changed(&root.join(INVENTORY_FILE), &serde_json::to_vec(inventory)?)
++}
++
++pub fn write_types(root: &Path) -> io::Result<()> {
++    let Ok(bytes) = std::fs::read(root.join(INVENTORY_FILE)) else {
++        return Ok(());
++    };
++    let inventory = serde_json::from_slice(&bytes)?;
++    write_if_changed(&root.join(TYPES_FILE), types(&inventory).as_bytes())
++}
++
++pub fn types_path(root: &Path) -> Option<PathBuf> {
++    Some(root.join(TYPES_FILE)).filter(|path| path.exists())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn schema() -> Value {
++        json!({"type": "object", "properties": {
++            "cmd": {"type": "string", "description": "shell */ command"},
++            "mode": {"enum": ["a", "b"]},
++            "paths": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "number"}]}},
++            "timeout": {"type": ["integer", "null"]}},
++            "required": ["cmd"], "additionalProperties": false})
++    }
++
++    #[test]
++    fn validation_refuses_with_a_pointer_and_reason() {
++        let schema = schema();
++        assert_eq!(
++            validate(&schema, &json!({"cmd": "ls", "timeout": 3})),
++            Ok(())
++        );
++        let refusals = [
++            (json!({}), "/cmd: required"),
++            (json!({"cmd": 1}), "/cmd: expected string, got number"),
++            (
++                json!({"cmd": "x", "timeout": 1.5}),
++                "/timeout: expected one of [\"integer\",\"null\"]",
++            ),
++            (
++                json!({"cmd": "x", "mode": "c"}),
++                "/mode: expected one of [\"a\",\"b\"]",
++            ),
++            (
++                json!({"cmd": "x", "paths": ["a", null]}),
++                "/paths/1: matches no anyOf variant",
++            ),
++            (json!({"cmd": "x", "extra": 1}), "/extra: not allowed"),
++            (json!("x"), "/: expected object, got string"),
++        ];
++        for (arguments, reason) in refusals {
++            assert_eq!(validate(&schema, &arguments), Err(reason.to_owned()));
++        }
++    }
++
++    #[test]
++    fn types_convert_the_schema_subset_and_default_to_json() {
++        let inventory = json!({"tools": [
++            {"name": "run", "original": {"description": "Run */ it", "freeform": false, "parameters": schema()}},
++            {"name": "patch", "original": {"description": "", "freeform": true, "parameters": null}},
++            {"name": "odd", "original": {"description": "", "freeform": false, "parameters": {"$ref": "#/x"}}}]});
++        let output = types(&inventory);
++        assert!(
++            output.contains("\"run\": { /** shell *\\/ command */ \"cmd\": string; \"mode\"?: \"a\" | \"b\"; \"paths\"?: Array<string | number>; \"timeout\"?: number | null; };"),
++            "{output}"
++        );
++        assert!(output.contains("/** Run *\\/ it */ \"run\""));
++        assert!(output.contains("    \"patch\": string;"));
++        assert!(output.contains("    \"odd\": Json;"));
 +    }
 +}
 diff --git a/codex-rs/omd/src/turn_activity.rs b/codex-rs/omd/src/turn_activity.rs
@@ -109249,12 +111334,563 @@ index 000000000..519c5c3d7
 +        "{error}"
 +    );
 +}
+diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
+new file mode 100644
+index 000000000..58e50c324
+--- /dev/null
++++ b/codex-rs/omd/tests/managed.rs
+@@ -0,0 +1,545 @@
++use codex_omd::MOD_API_VERSION;
++use codex_omd::ModHost;
++use codex_omd::ModInstallRequest;
++use codex_omd::ModPackageGrant;
++use codex_omd::ModPackageSource;
++use codex_omd::ModPackageTrust;
++use codex_omd::ModStore;
++use serde_json::Value;
++use serde_json::json;
++use sha2::Digest;
++use std::collections::BTreeMap;
++use std::os::unix::fs::MetadataExt;
++use std::os::unix::fs::PermissionsExt;
++use std::path::Path;
++use std::path::PathBuf;
++use std::sync::Mutex;
++use tempfile::TempDir;
++
++const PREFIX: &str = "export default api => api.intercept('tool', async (e, next) => { const r = await next({...e, arguments: {...e.arguments, p: true}}); return r.deny ? r : {...r, output: r.output + ' P'}; })";
++const GUARD: &str = "export default api => api.intercept('tool', {required: true}, async (e, next) => { if (e.tool === 'boom') throw new Error('guard down'); if (e.tool === 'blocked') return {deny: 'blocked by guard'}; const r = await next(e); return {...r, output: r.output + ' G'}; })";
++const TRANSFORM: &str = "export default api => api.intercept('tool', async (e, next) => { const r = await next({...e, arguments: {...e.arguments, a: true}}); return r.deny ? r : {...r, output: r.output + ' A'}; })";
++const ANSWER: &str = "export default api => api.intercept('tool', {match: {tool: ['cached', 'refused']}}, e => e.tool === 'refused' ? {deny: 'refused here'} : {output: 'cached', success: true})";
++const COMMAND: &str = "export default api => api.command('hello', () => 'hi')";
++const UNREACHABLE: &str =
++    "git+https://127.0.0.1:9/unreachable.git#0123456789abcdef0123456789abcdef01234567";
++
++/// An administrator's policy file and package folders shared by isolated per-user stores.
++struct Admin {
++    _temp: TempDir,
++    root: PathBuf,
++    policy: PathBuf,
++    owner: u32,
++}
++
++fn node() -> PathBuf {
++    PathBuf::from(
++        std::env::var_os("OMD_TEST_NODE")
++            .expect("set OMD_TEST_NODE to Node 24.18.0; sandbox tests must actually execute"),
++    )
++}
++
++impl Admin {
++    fn new() -> Self {
++        let temp = TempDir::new().unwrap();
++        let root = temp.path().canonicalize().unwrap();
++        let owner = std::fs::metadata(&root).unwrap().uid();
++        let policy = root.join("policy.json");
++        Self {
++            _temp: temp,
++            root,
++            policy,
++            owner,
++        }
++    }
++
++    fn package(&self, directory: &str, id: &str, source: &str, capabilities: &[&str]) -> (PathBuf, String) {
++        self.versioned(directory, id, "1.0.0", source, capabilities, json!({}))
++    }
++
++    fn versioned(
++        &self,
++        directory: &str,
++        id: &str,
++        version: &str,
++        source: &str,
++        capabilities: &[&str],
++        extra: Value,
++    ) -> (PathBuf, String) {
++        let path = self.root.join(directory);
++        std::fs::create_dir(&path).unwrap();
++        let mut manifest = json!({"schema":1,"id":id,"version":version,"api":MOD_API_VERSION,
++            "state_version":1,"capabilities":capabilities,"license":"Apache-2.0",
++            "provenance":{"maintainer":"Fixture Admin","source":"fixture"},
++            "settings_schema":{"type":"object","properties":{"mode":{"type":"string","default":"open"}}}});
++        manifest
++            .as_object_mut()
++            .unwrap()
++            .extend(extra.as_object().unwrap().clone());
++        std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
++        std::fs::write(path.join("index.ts"), source).unwrap();
++        let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        (path, sha256)
++    }
++
++    fn write_policy(&self, policy: Value) {
++        std::fs::write(&self.policy, serde_json::to_vec(&policy).unwrap()).unwrap();
++    }
++
++    fn store(&self, user: &str) -> ModStore {
++        let root = self.root.join(format!("store-{user}"));
++        let mut store = match root.exists() {
++            true => ModStore::open(root.canonicalize().unwrap()).unwrap(),
++            false => ModStore::create(root, node()).unwrap(),
++        };
++        store.set_managed_policy(self.policy.clone(), self.owner, user);
++        store
++    }
++
++    /// Writes the policy and deploys it to `user`'s store, as an unattended `package-sync` would.
++    fn administer(&self, policy: Value, user: &str) -> Value {
++        self.write_policy(policy);
++        self.store(user).package_sync(false).unwrap()
++    }
++
++    fn host(&self, user: &str) -> ModHost {
++        self.store(user);
++        let mut host = ModHost::open(self.root.join(format!("store-{user}")).canonicalize().unwrap()).unwrap();
++        host.set_managed_policy(self.policy.clone(), self.owner, user)
++            .unwrap();
++        host
++    }
++}
++
++fn trust(store: &ModStore, path: &Path, sha256: &str, capabilities: &[&str], scope: &str) {
++    let capabilities = capabilities.iter().map(|c| c.to_string()).collect();
++    store
++        .trust(path.to_path_buf(), sha256, capabilities, scope)
++        .unwrap();
++    store.enable(path, true).unwrap();
++}
++
++fn entry(id: &str, source: &Path, sha256: &str, extra: Value) -> Value {
++    let mut entry = json!({"id": id, "source": source, "sha256": sha256, "capabilities": ["interception"]});
++    entry
++        .as_object_mut()
++        .unwrap()
++        .extend(extra.as_object().unwrap().clone());
++    entry
++}
++
++fn rejection(host: &ModHost, id: &str) -> String {
++    host.status()["rejected"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|rejection| rejection["id"] == id)
++        .and_then(|rejection| rejection["reason"].as_str())
++        .unwrap_or_default()
++        .to_owned()
++}
++
++fn active(host: &ModHost) -> Vec<String> {
++    host.status()["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .filter(|m| m["error"].is_null())
++        .map(|m| format!("{}@{}", m["id"].as_str().unwrap(), m["version"].as_str().unwrap()))
++        .collect()
++}
++
++fn deployed(store: &ModStore) -> Vec<String> {
++    store
++        .managed_deployment()
++        .unwrap()
++        .packages
++        .iter()
++        .map(|package| format!("{}@{}", package.id, package.version))
++        .collect()
++}
++
++fn tool(runtime: &Mutex<ModHost>, name: &str, calls: &mut Vec<Value>) -> std::io::Result<codex_omd::ModChain> {
++    codex_omd::intercept_shared(
++        runtime,
++        "tool",
++        true,
++        json!({"tool": name, "arguments": {}}),
++        json!({"caller": "model"}),
++        || true,
++        |_, _| Err(std::io::Error::other("unexpected host call")),
++        |input| {
++            calls.push(input);
++            Ok(json!({"output": "ran", "success": true}))
++        },
++    )
++}
++
++fn cohort(user: &str, id: &str) -> u8 {
++    let hash = format!("{:x}", sha2::Sha256::digest(format!("{user}\0{id}").as_bytes()));
++    (u64::from_str_radix(&hash[..8], 16).unwrap() % 100) as u8
++}
++
++#[test]
++fn managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped() {
++    let admin = Admin::new();
++    let (prefix, prefix_sha) = admin.package("prefix", "prefix", PREFIX, &["interception"]);
++    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    let store = admin.store("alice");
++    for (id, source) in [("transform", TRANSFORM), ("answer", ANSWER)] {
++        let (path, sha256) = admin.package(id, id, source, &["interception"]);
++        trust(&store, &path, &sha256, &["interception"], "user");
++    }
++    admin.administer(
++        json!({"schema": 1, "packages": [
++            entry("prefix", &prefix, &prefix_sha, json!({"tier": "prepend"})),
++            entry("guard", &guard, &guard_sha, json!({"tier": "append"}))]}),
++        "alice",
++    );
++    let runtime = Mutex::new(admin.host("alice"));
++    let mut calls = Vec::new();
++    let chain = tool(&runtime, "exec", &mut calls).unwrap();
++    assert_eq!(chain.result, json!({"output": "ran G A P", "success": true}));
++    assert_eq!(calls, [json!({"tool": "exec", "arguments": {"p": true, "a": true}})]);
++    calls.clear();
++    let cached = tool(&runtime, "cached", &mut calls).unwrap();
++    assert_eq!(cached.answered_by, None, "a user answer cannot skip the managed guard");
++    assert_eq!(cached.result, json!({"output": "ran G A P", "success": true}));
++    assert_eq!(calls.len(), 1);
++    calls.clear();
++    let refused = tool(&runtime, "refused", &mut calls).unwrap();
++    assert_eq!(refused.result["deny"], "refused here", "a deny may still end the chain");
++    assert!(calls.is_empty());
++    let blocked = tool(&runtime, "blocked", &mut calls).unwrap();
++    assert_eq!(blocked.result["deny"], "blocked by guard");
++    let failed = tool(&runtime, "boom", &mut calls).unwrap_err().to_string();
++    assert!(failed.contains("intercept_required_failed"), "{failed}");
++    assert!(calls.is_empty());
++}
++
++#[test]
++fn offline_scenarios_run_named_mods_in_a_managed_tier() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    for (id, source) in [("transform", TRANSFORM), ("answer", ANSWER), ("guard", GUARD)] {
++        let (path, sha256) = admin.package(id, id, source, &["interception"]);
++        trust(&store, &path, &sha256, &["interception"], "user");
++    }
++    let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    let cached = |host: &mut ModHost, tiers: Value| {
++        host.offline_test(json!({"schema": 1, "tiers": tiers, "steps": [{"type": "intercept",
++            "surface": "tool", "payload": {"tool": "cached", "arguments": {}},
++            "core": [{"value": {"output": "ran", "success": true}}]}]}))
++            .unwrap()["steps"][0]["value"]
++            .clone()
++    };
++    assert_eq!(cached(&mut host, json!({}))["answered_by"], "answer");
++    let tiered = cached(&mut host, json!({"guard": "append"}));
++    assert!(tiered["answered_by"].is_null(), "{tiered}");
++    assert_eq!(tiered["result"]["output"], "ran G A");
++    let scopes = host.status()["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|m| m["scope"].clone())
++        .collect::<Vec<_>>();
++    assert!(scopes.iter().all(|scope| scope == "user"), "the tier lasts for the scenario only");
++    let unknown = host
++        .offline_test(json!({"schema": 1, "tiers": {"absent": "prepend"}, "steps": []}))
++        .unwrap_err()
++        .to_string();
++    assert!(unknown.starts_with("offline_tier_unknown_mod"), "{unknown}");
++}
++
++#[test]
++fn administrator_controls_override_user_and_project_selections_with_provenance() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    let (twin, twin_sha) = admin.package("twin", "guard", TRANSFORM, &["interception"]);
++    trust(&store, &twin, &twin_sha, &["interception"], "project");
++    let (plain, plain_sha) = admin.package("plain", "plain", TRANSFORM, &["interception"]);
++    trust(&store, &plain, &plain_sha, &["interception"], "user");
++    let (denied, denied_sha) = admin.package("denied", "denied", TRANSFORM, &["interception"]);
++    trust(&store, &denied, &denied_sha, &["interception"], "user");
++    let (wide, wide_sha) = admin.package("wide", "wide", COMMAND, &["commands"]);
++    trust(&store, &wide, &wide_sha, &["commands"], "user");
++    let base = json!({"schema": 1, "deny": ["denied"], "capabilities": ["interception"], "packages": [
++        entry("guard", &guard, &guard_sha, json!({"settings": {"mode": "strict"}}))]});
++    admin.administer(base.clone(), "alice");
++    let host = admin.host("alice");
++    assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
++    assert!(rejection(&host, "guard").starts_with("shadowed_by_managed_scope"), "{}", rejection(&host, "guard"));
++    assert!(rejection(&host, "denied").starts_with("managed_denied"));
++    assert!(rejection(&host, "wide").starts_with("managed_capability_denied"));
++    let status = store.selection_status().unwrap();
++    let row = |id: &str, scope: &str| {
++        status["selections"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|row| row["id"] == id && row["scope"] == scope)
++            .unwrap()
++            .clone()
++    };
++    assert_eq!(row("guard", "managed")["effective"], true);
++    assert_eq!(row("guard", "managed")["settings_origin"], json!({"mode": "managed"}));
++    assert_eq!(row("plain", "user")["settings_origin"], json!({"mode": "default"}));
++    assert_eq!(row("guard", "project")["reason"], "shadowed_by_managed_scope");
++    assert!(row("denied", "user")["error"].as_str().unwrap().starts_with("managed_denied"));
++    assert_eq!(status["managed"]["origin"], json!(admin.policy));
++    let deployed_guard = store.managed_deployment().unwrap().packages[0].path.clone();
++    let toggled = store.enable(&deployed_guard, false).unwrap_err().to_string();
++    assert!(toggled.starts_with("managed_by_policy"), "{toggled}");
++
++    let mut sideload = base.clone();
++    sideload["sideload"] = json!(false);
++    admin.write_policy(sideload);
++    let host = admin.host("alice");
++    assert_eq!(active(&host), ["guard@1.0.0"]);
++    assert!(rejection(&host, "plain").starts_with("managed_sideload_denied"));
++    let refused = store
++        .trust(plain.clone(), &plain_sha, vec!["interception".into()], "user")
++        .unwrap_err()
++        .to_string();
++    assert!(refused.starts_with("managed_sideload_denied"), "{refused}");
++
++    let mut only = base.clone();
++    only["managed_only"] = json!(true);
++    admin.write_policy(only);
++    let host = admin.host("alice");
++    assert_eq!(active(&host), ["guard@1.0.0"]);
++    assert!(rejection(&host, "plain").starts_with("managed_only"));
++
++    admin.write_policy(base);
++    store.reset("mods.json").unwrap();
++    assert_eq!(active(&admin.host("alice")), ["guard@1.0.0"], "mod-only recovery keeps managed packages");
++}
++
++#[test]
++fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    let (plain, plain_sha) = admin.package("plain", "plain", TRANSFORM, &["interception"]);
++    trust(&store, &plain, &plain_sha, &["interception"], "user");
++    let policy = json!({"schema": 1, "packages": [entry("guard", &guard, &guard_sha, json!({"tier": "append"}))]});
++    admin.administer(policy.clone(), "alice");
++    let mut host = admin.host("alice");
++    assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
++
++    std::fs::set_permissions(&admin.policy, std::fs::Permissions::from_mode(0o666)).unwrap();
++    let tampered = host
++        .set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap_err()
++        .to_string();
++    assert!(tampered.starts_with("managed_policy_untrusted"), "{tampered}");
++    assert!(active(&host).is_empty(), "an untrusted policy source loads no mods");
++    assert!(
++        store.selection_status().unwrap()["managed_error"]
++            .as_str()
++            .unwrap()
++            .starts_with("managed_policy_untrusted")
++    );
++    std::fs::set_permissions(&admin.policy, std::fs::Permissions::from_mode(0o644)).unwrap();
++    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap();
++    assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
++
++    admin.write_policy(json!({"schema": 1}));
++    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap();
++    assert_eq!(active(&host), ["plain@1.0.0"], "removing a package from policy revokes it at once");
++
++    let mut pinned = policy.clone();
++    pinned["packages"][0]["sha256"] = json!("0".repeat(64));
++    admin.write_policy(pinned);
++    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap();
++    assert_eq!(active(&host), ["plain@1.0.0"], "content the policy no longer lists stays unloaded");
++    assert!(rejection(&host, "guard").starts_with("managed_pending_sync"));
++
++    admin.write_policy(policy);
++    let cached = store.managed_deployment().unwrap().packages[0].path.clone();
++    std::fs::write(cached.join("index.ts"), TRANSFORM).unwrap();
++    let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    let stale = host
++        .set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap_err()
++        .to_string();
++    assert!(stale.starts_with("managed_content_stale"), "{stale}");
++}
++
++#[test]
++fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly() {
++    let admin = Admin::new();
++    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    let (guard2, guard2_sha) =
++        admin.versioned("guard2", "guard", "2.0.0", GUARD, &["interception"], json!({}));
++    let (tool_dir, tool_sha) = admin.package("tool", "tool", TRANSFORM, &["interception"]);
++    let (mirror, mirror_sha) = admin.package("mirror", "mirrored", PREFIX, &["interception"]);
++    std::fs::create_dir(admin.root.join("catalog")).unwrap();
++    let index = admin.root.join("catalog/index.json");
++    let index_bytes = serde_json::to_vec(&json!({"schema": 1, "packages": {"tool": [{"version": "1.0.0",
++        "source": {"kind": "local", "path": tool_dir}, "integrity": tool_sha}]}}))
++    .unwrap();
++    std::fs::write(&index, &index_bytes).unwrap();
++    let index_sha = format!("{:x}", sha2::Sha256::digest(&index_bytes));
++    let canary = (0..100)
++        .map(|n| format!("guard{n}"))
++        .find(|id| cohort("alice", id) != cohort("bob", id))
++        .unwrap();
++    let (early, late) = if cohort("alice", &canary) < cohort("bob", &canary) {
++        ("alice", "bob")
++    } else {
++        ("bob", "alice")
++    };
++    let (canary_v2, canary_v2_sha) =
++        admin.versioned("canary2", &canary, "2.0.0", COMMAND, &["commands"], json!({}));
++    let (canary_v1, canary_v1_sha) =
++        admin.versioned("canary1", &canary, "1.0.0", COMMAND, &["commands"], json!({}));
++    let percent = cohort("alice", &canary).max(cohort("bob", &canary));
++    let commands = json!({"capabilities": ["commands"]});
++    let mut extra = commands.as_object().unwrap().clone();
++    extra.insert("percent".into(), json!(percent));
++    let policy = json!({"schema": 1,
++        "index": {"sha256": index_sha, "locations": [admin.root.join("offline/index.json"), index]},
++        "packages": [
++            entry("guard", &guard, &guard_sha, json!({"tier": "append"})),
++            {"id": "tool", "source": "tool@1.0.0", "sha256": tool_sha, "capabilities": ["interception"], "users": ["alice"]},
++            entry("mirrored", Path::new(UNREACHABLE), &mirror_sha, json!({"mirrors": [mirror]})),
++            entry(&canary, &canary_v2, &canary_v2_sha, Value::Object(extra)),
++            entry(&canary, &canary_v1, &canary_v1_sha, commands)]});
++    let alice = admin.administer(policy.clone(), "alice");
++    assert_eq!(alice["generation"], 1);
++    admin.store("bob").package_sync(false).unwrap();
++    let alice = deployed(&admin.store("alice"));
++    for package in ["guard@1.0.0", "tool@1.0.0", "mirrored@1.0.0", &format!("{canary}@1.0.0")] {
++        assert!(alice.contains(&package.to_owned()), "{package} in {alice:?}");
++    }
++    assert!(!deployed(&admin.store("bob")).contains(&"tool@1.0.0".to_owned()), "tool targets alice only");
++    assert!(deployed(&admin.store(early)).contains(&format!("{canary}@2.0.0")));
++    assert!(!deployed(&admin.store(late)).contains(&format!("{canary}@2.0.0")), "outside the rollout cohort");
++    assert!(active(&admin.host(early)).contains(&format!("{canary}@2.0.0")));
++    assert!(active(&admin.host(late)).contains(&format!("{canary}@1.0.0")));
++    assert!(active(&admin.host("alice")).contains(&"tool@1.0.0".to_owned()));
++    assert!(!active(&admin.host("bob")).contains(&"tool@1.0.0".to_owned()));
++    let unchanged = admin.store("alice").package_sync(false).unwrap();
++    assert_eq!((unchanged["generation"].clone(), unchanged["changed"].clone()), (json!(1), json!(false)));
++
++    let mut upgraded = policy.clone();
++    upgraded["packages"][0] = entry("guard", &guard2, &guard2_sha, json!({"tier": "append"}));
++    upgraded["packages"]
++        .as_array_mut()
++        .unwrap()
++        .push(entry("guard", &guard, &guard_sha, json!({"tier": "append"})));
++    admin.write_policy(upgraded);
++    assert!(active(&admin.host("alice")).contains(&"guard@1.0.0".to_owned()), "the listed fallback keeps running until sync");
++    assert_eq!(admin.store("alice").package_sync(false).unwrap()["generation"], 2);
++    assert!(active(&admin.host("alice")).contains(&"guard@2.0.0".to_owned()));
++    assert_eq!(admin.store("alice").package_sync_rollback().unwrap()["generation"], 3);
++    let host = admin.host("alice");
++    assert!(active(&host).contains(&"guard@1.0.0".to_owned()));
++    assert!(rejection(&host, "guard").starts_with("managed_pending_sync"));
++    admin.write_policy(policy.clone());
++    let fresh = admin.store("carol");
++    let offline = fresh.package_sync(true).unwrap();
++    assert_eq!(offline["generation"], 1, "local folders, the catalog and mirrors deploy offline");
++    assert!(deployed(&fresh).contains(&"mirrored@1.0.0".to_owned()));
++}
++
++#[test]
++fn managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation() {
++    let admin = Admin::new();
++    let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    let (scripted, scripted_sha) = admin.versioned(
++        "scripted",
++        "scripted",
++        "1.0.0",
++        TRANSFORM,
++        &["interception"],
++        json!({"lifecycle": {"install": "index.ts"}}),
++    );
++    let policy = json!({"schema": 1, "packages": [entry("guard", &guard, &guard_sha, json!({}))]});
++    admin.administer(policy.clone(), "alice");
++    let mut unavailable = policy.clone();
++    unavailable["packages"]
++        .as_array_mut()
++        .unwrap()
++        .push(entry("remote", Path::new(UNREACHABLE), &guard_sha, json!({})));
++    admin.write_policy(unavailable);
++    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
++    assert!(error.starts_with("managed_sync_incomplete: generation 1 stays active"), "{error}");
++    assert_eq!(admin.store("alice").managed_deployment().unwrap().generation, 1);
++    assert!(active(&admin.host("alice")).contains(&"guard@1.0.0".to_owned()));
++
++    let mut with_script = policy.clone();
++    with_script["packages"].as_array_mut().unwrap().push(entry(
++        "scripted",
++        &scripted,
++        &scripted_sha,
++        json!({"lifecycle": ["install"]}),
++    ));
++    admin.write_policy(with_script);
++    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
++    assert!(error.contains("managed_lifecycle_requires_approval"), "{error}");
++
++    admin.write_policy(policy);
++    std::fs::write(guard.join("index.ts"), TRANSFORM).unwrap();
++    let error = admin.store("bob").package_sync(false).unwrap_err().to_string();
++    assert!(error.contains("managed_integrity_mismatch"), "{error}");
++    assert_eq!(admin.store("bob").managed_deployment().unwrap().generation, 0);
++    assert!(admin.store("alice").package_sync(false).is_ok(), "already deployed content stays verified in the cache");
++}
++
++#[test]
++fn managed_policy_refuses_user_installs_outside_allowed_sources_and_versions() {
++    let admin = Admin::new();
++    let (allowed, _) = admin.package("allowed", "allowed", TRANSFORM, &["interception"]);
++    std::fs::create_dir(admin.root.join("elsewhere")).unwrap();
++    let outside = admin.versioned("elsewhere/outside", "outside", "1.0.0", TRANSFORM, &["interception"], json!({})).0;
++    let install = |path: &Path, id: &str| ModInstallRequest {
++        action: None,
++        source: ModPackageSource::Local {
++            path: path.to_path_buf(),
++        },
++        index: None,
++        scope: "user".into(),
++        offline: false,
++        trust: ModPackageTrust {
++            packages: BTreeMap::from([(
++                id.to_owned(),
++                ModPackageGrant {
++                    capabilities: vec!["interception".into()],
++                    dependencies: false,
++                    lifecycle: Vec::new(),
++                    secret_environment: Vec::new(),
++                },
++            )]),
++        },
++        settings: BTreeMap::new(),
++    };
++    let store = admin.store("alice");
++    let plan = store.package_plan(install(&allowed, "allowed")).unwrap();
++    store
++        .package_apply(install(&allowed, "allowed"), &plan.confirmation)
++        .unwrap();
++    admin.write_policy(json!({"schema": 1, "updates": "managed",
++        "sources": [admin.root.join("allowed").display().to_string()]}));
++    let refused = store
++        .package_plan(install(&outside, "outside"))
++        .unwrap_err()
++        .to_string();
++    assert!(refused.starts_with("managed_source_denied"), "{refused}");
++    std::fs::write(allowed.join("index.ts"), PREFIX).unwrap();
++    let update = store
++        .package_plan(install(&allowed, "allowed"))
++        .unwrap_err()
++        .to_string();
++    assert!(update.starts_with("managed_updates_denied"), "{update}");
++    let rollback = store.package_rollback_plan("allowed").unwrap_err().to_string();
++    assert!(rollback.starts_with("managed_updates_denied"), "{rollback}");
++}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..cec4141c9
+index 000000000..ab4fc128d
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4492 @@
+@@ -0,0 +1,4534 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -113721,6 +116357,48 @@ index 000000000..cec4141c9
 +}
 +
 +#[test]
++fn offline_scenarios_mock_environment_pointer_clients_and_pending_waits() {
++    let source = "export default api => { api.command('env', () => api.host.call('environment.read', {names: ['MODE', 'API_TOKEN']})); api.command('clock', () => Date.now()); api.command('last', () => api.state.get()); api.on('component_event', event => api.state.set(event)); api.on('terminal', input => ({title: `clients:${input.clients.length}`, sites: {dialog: {components: [{type: 'box', id: 'canvas', label: 'Canvas', pointer: true}, {type: 'box', id: 'plain', label: 'Plain'}]}}})); }";
++    let (temp, _, _) = fixture(source, &["commands", "terminal", "exec", "store"]);
++    let pointer = |action: &str| json!({"column": 2, "row": -1, "half": null, "action": action, "button": "left"});
++    let steps = |scenario: Value| host(&temp).offline_test(scenario);
++    let result = steps(json!({"schema": 1, "virtual_time_ms": 1000, "environment": {"MODE": "ci"}, "steps": [
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "env", "payload": null,
++            "expect": {"values": {"MODE": {"set": true, "value": "ci"}, "API_TOKEN": {"set": false}}}},
++        {"type": "wait_until", "every_ms": 1000, "max_ms": 5000, "until": 3000,
++            "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "clock", "payload": null},
++            "expect": {"waited_ms": 2000, "value": 3000}},
++        {"type": "client_attach", "name": "web", "renderer": {"kind": "gui", "pointer": "pixel"},
++            "expect": {"id": "client-1", "clients": [{"id": "client-1", "name": "web", "renderer": {"kind": "gui", "formats": [], "pointer": "pixel", "reduced_motion": false},
++                "viewport": null, "focused": false, "attached_ms": 3000}]}},
++        {"type": "terminal_mount", "mod": "fixture", "payload": {"event": "draw"}},
++        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "client": "client-1", "payload": {"event": "draw"}, "pointer": pointer("down")},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "last", "payload": null,
++            "expect": {"component": "canvas", "kind": "pointer", "pointer": pointer("down"), "client": "client-1"}},
++        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "payload": {"event": "draw"}, "pointer": pointer("up")},
++        {"type": "invoke", "mod": "fixture", "event": "command", "name": "last", "payload": null,
++            "expect": {"component": "canvas", "kind": "pointer", "pointer": pointer("up"), "origin": "user"}},
++        {"type": "client_detach", "id": "client-1", "expect": {"clients": []}},
++        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "client": "client-1", "payload": {"event": "draw"}, "pointer": pointer("up"), "expect_error": "offline_client_not_attached"},
++        {"type": "terminal_interact", "mod": "fixture", "component": "plain", "payload": {"event": "draw"}, "pointer": pointer("up"), "expect_error": "offline_terminal_component_not_pointer"},
++        {"type": "terminal_interact", "mod": "fixture", "component": "canvas", "payload": {"event": "draw"}, "pointer": {"column": 0, "row": 0, "action": "tap"}, "expect_error": "offline_terminal_pointer_invalid"},
++        {"type": "wait_until", "max_ms": 2000, "until": 0,
++            "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "clock", "payload": null},
++            "expect_error": "offline_wait_timeout"}
++    ]}))
++    .unwrap();
++    assert_eq!(result["steps"][3]["value"]["title"], "clients:1");
++    let secret =
++        steps(json!({"schema": 1, "environment": {"API_TOKEN": "x"}, "steps": []})).unwrap_err();
++    assert!(
++        secret
++            .to_string()
++            .contains("offline_environment_secret_name: API_TOKEN"),
++        "{secret}"
++    );
++}
++
++#[test]
 +fn omd_mod_reset_moves_only_resettable_store_files_aside() {
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap().join("store");
@@ -113749,7 +116427,7 @@ index 000000000..cec4141c9
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..be5e031ce
+index 000000000..fd8cee240
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
 @@ -0,0 +1,1596 @@
@@ -114027,7 +116705,7 @@ index 000000000..be5e031ce
 +    store.package_enable("fixture").unwrap();
 +    let status = store.selection_status().unwrap();
 +    assert_eq!(status["selections"][0]["effective"], true);
-+    assert_eq!(status["selections"][0]["managed"], true);
++    assert_eq!(status["selections"][0]["packaged"], true);
 +    assert_eq!(status["selections"][0]["settings_keys"], json!(["mode"]));
 +    store.package_disable("fixture").unwrap();
 +    assert_eq!(
@@ -123760,7 +126438,7 @@ index 000000000..fb540c65d
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..0e9f76493
+index 000000000..537ee5366
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 @@ -0,0 +1,242 @@
@@ -123828,7 +126506,7 @@ index 000000000..0e9f76493
 +                path,
 +                scope: selection["scope"].as_str().unwrap_or("user").to_owned(),
 +                enabled: selection["selected"] == true,
-+                managed: selection["managed"] == true,
++                managed: selection["packaged"] == true,
 +                blocked: selection["error"].as_str().map(first_line),
 +                failure,
 +            })
@@ -130571,7 +133249,7 @@ index 000000000..24a7c38a2
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..042258549
+index 000000000..0789e1117
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
 @@ -0,0 +1,867 @@
@@ -131371,7 +134049,7 @@ index 000000000..042258549
 +    }
 +    match operation {
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
-+        "model.complete" | "model.fork" | "session.info" => {
++        "model.complete" | "model.fork" | "session.info" | "tools.list" => {
 +            let thread = scope
 +                .thread
 +                .map(str::to_owned)

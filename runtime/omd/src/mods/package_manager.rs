@@ -454,25 +454,31 @@ impl ModStore {
         }
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
-        self.package_plan_locked(request, false)
+        self.package_plan_locked(request, false, false)
     }
 
     pub fn package_requirements(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
-        self.package_plan_locked(request, true)
+        self.package_plan_locked(request, true, false)
     }
 
+    /// A `deployment` plan resolves administrator packages: the user's blocks and policy refusals do not apply.
     fn package_plan_locked(
         &self,
         request: ModInstallRequest,
         inspect: bool,
+        deployment: bool,
     ) -> Result<ModPackagePlan> {
         if !MOD_SCOPES.contains(&request.scope.as_str()) {
             return Err(failure("unsupported_scope: user or project"));
         }
         let existing = self.read_package_lock()?;
         let config = self.configuration()?;
+        let managed = match deployment || inspect {
+            true => None,
+            false => self.managed()?,
+        };
         let mut resolved = BTreeMap::new();
         let mut visiting = Vec::new();
         let root = self.resolve_requested(
@@ -492,13 +498,24 @@ impl ModStore {
                     &resolved.locked.id,
                     &resolved.locked.version,
                     &resolved.locked.integrity,
-                ) {
+                ) && !deployment
+                {
                     return Err(failure(format!(
                         "package_blocked: {} {}: {reason}",
                         resolved.locked.id, resolved.locked.version
                     )));
                 }
                 let previous = existing.packages.get(&resolved.package.id);
+                if let Some(reason) = managed.as_ref().and_then(|managed| {
+                    managed.policy.install_refusal(
+                        &resolved.locked.id,
+                        &resolved.locked.capabilities,
+                        &policy::source_reference(&resolved.locked.source),
+                        previous.is_some_and(|locked| locked.integrity != resolved.locked.integrity),
+                    )
+                }) {
+                    return Err(failure(reason));
+                }
                 let settings = request
                     .settings
                     .get(&resolved.package.id)
@@ -565,7 +582,7 @@ impl ModStore {
         request: ModInstallRequest,
         confirmation: &str,
     ) -> Result<ModPackageLock> {
-        let plan = self.package_plan_locked(request, false)?;
+        let plan = self.package_plan_locked(request, false, false)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
         }
@@ -610,6 +627,7 @@ impl ModStore {
                 scope: package.scope.clone(),
                 secret_environment: package.trust.secret_environment.clone(),
                 expires_at: None,
+                tier: None,
             };
             if let Some(selection) = selection {
                 config.mods[selection] = next;
@@ -856,6 +874,14 @@ impl ModStore {
     }
 
     fn package_rollback_plan_locked(&self, id: &str) -> Result<ModPackagePlan> {
+        if self
+            .managed()?
+            .is_some_and(|managed| managed.policy.updates == policy::ManagedUpdates::Managed)
+        {
+            return Err(failure(format!(
+                "managed_updates_denied: administrator policy manages package versions; {id} stays as installed"
+            )));
+        }
         let lock = self.read_package_lock()?;
         let current = lock
             .packages
@@ -934,6 +960,7 @@ impl ModStore {
             scope: previous.scope,
             secret_environment: previous.trust.secret_environment,
             expires_at: None,
+            tier: None,
         };
         config.revision = config
             .revision
@@ -1006,6 +1033,232 @@ impl ModStore {
         self.write("packages.lock.json", &transaction["old_lock"])?;
         std::fs::remove_file(path)?;
         std::fs::File::open(&self.root)?.sync_all()
+    }
+
+    /// Installs every package administrator policy assigns to this account and records a new
+    /// deployment generation only when all of them verify; otherwise the active generation stays.
+    pub fn package_sync(&self, offline: bool) -> Result<Value> {
+        let managed = self
+            .managed()?
+            .ok_or_else(|| failure("managed_policy_absent: no administrator policy applies"))?;
+        let user = self.managed_user();
+        let _guard = self.lock()?;
+        self.recover_package_transaction()?;
+        let current = self.managed_deployment()?;
+        let index = managed
+            .policy
+            .index
+            .as_ref()
+            .map(policy::ManagedIndex::location)
+            .transpose()
+            .map_err(|error| error.to_string());
+        let mut deployed: Vec<policy::DeployedPackage> = Vec::new();
+        let mut failures = BTreeMap::new();
+        for entry in managed.deployable(&user) {
+            match self.deploy(entry, &managed, &index, offline) {
+                Ok(packages) => {
+                    for package in packages {
+                        if !deployed.contains(&package) {
+                            deployed.push(package);
+                        }
+                    }
+                }
+                Err(error) => {
+                    failures.insert(format!("{} {}", entry.id, entry.sha256), error.to_string());
+                }
+            }
+        }
+        if !failures.is_empty() {
+            let _ = self.record_security_event("managed_sync_refused", json!({"failures": failures}));
+            return Err(failure(format!(
+                "managed_sync_incomplete: generation {} stays active: {}",
+                current.generation,
+                serde_json::to_string(&failures)?
+            )));
+        }
+        if deployed == current.packages && managed.sha256 == current.policy_sha256 {
+            return Ok(json!({"generation": current.generation, "changed": false, "packages": deployed}));
+        }
+        self.deploy_generation(current, managed.sha256, deployed)
+    }
+
+    /// Makes the previous deployment generation active again; policy still decides what loads.
+    pub fn package_sync_rollback(&self) -> Result<Value> {
+        let _guard = self.lock()?;
+        let current = self.managed_deployment()?;
+        let previous = current
+            .previous
+            .clone()
+            .ok_or_else(|| failure("managed_rollback_unavailable: no previous generation"))?;
+        self.deploy_generation(current, previous.policy_sha256, previous.packages)
+    }
+
+    fn deploy_generation(
+        &self,
+        current: policy::ManagedDeployment,
+        policy_sha256: String,
+        packages: Vec<policy::DeployedPackage>,
+    ) -> Result<Value> {
+        let next = policy::ManagedDeployment {
+            generation: current.generation + 1,
+            policy_sha256,
+            packages,
+            previous: Some(Box::new(policy::ManagedDeployment {
+                previous: None,
+                ..current
+            })),
+        };
+        self.write("managed.json", &serde_json::to_value(&next)?)?;
+        let packages = next
+            .packages
+            .iter()
+            .map(|package| json!({"id": package.id, "version": package.version, "sha256": package.sha256}))
+            .collect::<Vec<_>>();
+        let _ = self.record_security_event(
+            "managed_deploy",
+            json!({"generation": next.generation, "packages": packages}),
+        );
+        Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
+    }
+
+    /// The pinned content from the cache, else from the source or the first mirror that verifies.
+    fn deploy(
+        &self,
+        entry: &policy::ManagedPackage,
+        managed: &policy::Managed,
+        index: &std::result::Result<Option<PathBuf>, String>,
+        offline: bool,
+    ) -> Result<Vec<policy::DeployedPackage>> {
+        let cached = self
+            .root
+            .join("package-cache")
+            .join(&entry.id)
+            .join(&entry.sha256);
+        if let Ok(path) = cached.canonicalize()
+            && let Ok((package, _, sha256)) = store::package(&path)
+            && sha256 == entry.sha256
+        {
+            if !package.lifecycle.is_empty() {
+                return Err(failure(format!(
+                    "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
+                    entry.id
+                )));
+            }
+            return Ok(vec![policy::DeployedPackage {
+                id: package.id,
+                version: package.version,
+                sha256,
+                path,
+            }]);
+        }
+        let mut errors = Vec::new();
+        for reference in std::iter::once(&entry.source).chain(&entry.mirrors) {
+            let indexed = !(reference.starts_with('/')
+                || reference.starts_with("npm:")
+                || reference.starts_with("git+"));
+            let attempt = match index {
+                Err(error) if indexed => Err(failure(error)),
+                index => self.deploy_from(
+                    reference,
+                    entry,
+                    managed,
+                    index.clone().ok().flatten(),
+                    offline,
+                ),
+            };
+            match attempt {
+                Ok(packages) => return Ok(packages),
+                Err(error) => errors.push(format!("{reference}: {error}")),
+            }
+        }
+        Err(failure(errors.join("; ")))
+    }
+
+    fn deploy_from(
+        &self,
+        reference: &str,
+        entry: &policy::ManagedPackage,
+        managed: &policy::Managed,
+        index: Option<PathBuf>,
+        offline: bool,
+    ) -> Result<Vec<policy::DeployedPackage>> {
+        let mut source = ModPackageSource::parse(reference, index.clone())?;
+        if !entry.version.is_empty()
+            && matches!(
+                source,
+                ModPackageSource::Package { .. } | ModPackageSource::Npm { .. }
+            )
+        {
+            source = source.with_version(&entry.version)?;
+        }
+        if let (ModPackageSource::Npm { registry, .. }, Some(admin)) =
+            (&mut source, &managed.policy.registry)
+            && registry.is_empty()
+        {
+            registry.clone_from(admin);
+        }
+        let grant = |package: &policy::ManagedPackage| ModPackageGrant {
+            capabilities: package.capabilities.clone(),
+            dependencies: package.dependencies,
+            lifecycle: package.lifecycle.clone(),
+            secret_environment: package.secret_environment.clone(),
+        };
+        let mut packages: BTreeMap<String, ModPackageGrant> = managed
+            .policy
+            .packages
+            .iter()
+            .rev()
+            .map(|package| (package.id.clone(), grant(package)))
+            .collect();
+        packages.insert(entry.id.clone(), grant(entry));
+        let request = ModInstallRequest {
+            action: None,
+            source,
+            index,
+            scope: "user".to_owned(),
+            offline,
+            trust: ModPackageTrust { packages },
+            settings: BTreeMap::from([(entry.id.clone(), entry.settings.clone())]),
+        };
+        let plan = self.package_plan_locked(request, false, true)?;
+        if !plan
+            .packages
+            .iter()
+            .any(|locked| locked.id == entry.id && locked.integrity == entry.sha256)
+        {
+            return Err(failure(format!(
+                "managed_integrity_mismatch: {reference} does not hold the {} content administrator policy pins",
+                entry.id
+            )));
+        }
+        plan.packages
+            .iter()
+            .map(|locked| {
+                if !managed
+                    .policy
+                    .packages
+                    .iter()
+                    .any(|listed| listed.id == locked.id && listed.sha256 == locked.integrity)
+                {
+                    return Err(failure(format!(
+                        "managed_integrity_mismatch: dependency {} {} is not pinned by administrator policy",
+                        locked.id, locked.integrity
+                    )));
+                }
+                if !locked.lifecycle.is_empty() {
+                    return Err(failure(format!(
+                        "managed_lifecycle_requires_approval: {} runs install scripts; install it interactively",
+                        locked.id
+                    )));
+                }
+                Ok(policy::DeployedPackage {
+                    id: locked.id.clone(),
+                    version: locked.version.clone(),
+                    sha256: locked.integrity.clone(),
+                    path: locked.cache_path.clone(),
+                })
+            })
+            .collect()
     }
 
     fn resolve_requested(

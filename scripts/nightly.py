@@ -40,7 +40,7 @@ STEPS = [
     ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
     ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
     ("mods typecheck", ["mise", "run", "mods:check"]),
-    ("mods tests", ["mise", "run", "mods:test"]),
+    ("mods tests", ["env", f"OMD_MOD_BIN=/private/tmp/omd-b{BATCH}/artifacts/omd-mod", "mise", "run", "mods:test"]),
     ("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]),
     ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod",
                                    f"/private/tmp/omd-b{BATCH}/artifacts/omd-mod", "--scenarios"]),

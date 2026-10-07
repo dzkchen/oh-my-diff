@@ -51,6 +51,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "packages.preview",
     "packages.reload",
     "settings.write",
+    "tools.list",
     "tools.define",
     "tools.undefine",
     "tools.invoke",
@@ -69,6 +70,7 @@ pub(super) struct State {
     approval_result: AtomicBool,
     tool_specs: AtomicBool,
     tool_specs_required: AtomicBool,
+    inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
     tool_batch: AtomicBool,
     gates: Mutex<std::collections::VecDeque<(String, String)>>,
     current: Mutex<Option<LeadHandle>>,
@@ -458,6 +460,7 @@ pub(super) async fn dispatch(
         "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
+        "tools.list" => tool_specs::list(core, lead),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
         "tools.define" | "tools.undefine" => {
             let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;

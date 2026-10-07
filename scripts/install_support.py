@@ -77,8 +77,8 @@ def plugin_lock():
     return lock
 
 
-SELECTED_OPTIONAL_PLUGINS = ("omd-anchored-edit", "omd-browser", "omd-curated-memory", "omd-debugger", "omd-procedures",
-                             "omd-session-review")
+SELECTED_OPTIONAL_PLUGINS = ("omd-anchored-edit", "omd-browser", "omd-curated-memory", "omd-debugger", "omd-mod-authoring",
+                             "omd-procedures", "omd-session-review")
 
 
 def optional_plugin_sources():

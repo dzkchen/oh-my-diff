@@ -99,6 +99,13 @@
       "source": "plugins/optional/plugins/omd-procedures",
       "reason": "Optional promotion of completed omd_workflow tasks into versioned skill plugins; offline component acceptance only, real-task reuse unqualified. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
       "review": ".docs/audits/batch3c-debugger-procedures-20260930.md"
+    },
+    {
+      "id": "omd-mod-authoring",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-mod-authoring",
+      "reason": "Optional skill-only guide to scratch mod authoring with typed host tools and offline tests; the author helpers have offline fixture proof only, no supported-client evidence. OMD+ stages the source inactive; the user approves any mod it helps write.",
+      "review": "extensions/REVIEWS.md"
     }
   ]
 }

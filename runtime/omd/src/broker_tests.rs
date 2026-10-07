@@ -151,9 +151,32 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
         .authorized("policy.put", json!({"key": "k", "value": 1}))
         .unwrap();
     assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
+    client
+        .authorized("policy.put", json!({"key": "k", "value": 2}))
+        .unwrap();
+    assert_eq!(
+        error(client.call("policy.rollback", json!({"key": "k"}))),
+        "authority_challenge_invalid"
+    );
+    client
+        .authorized("policy.rollback", json!({"key": "k"}))
+        .unwrap();
+    assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
+    assert_eq!(
+        error(client.authorized("policy.rollback", json!({"key": "other"}))),
+        "authority_policy_previous_missing"
+    );
     assert_eq!(
         *gate.asked.lock().unwrap(),
-        [GRANT_RIGHT, GRANT_RIGHT, GRANT_RIGHT, POLICY_RIGHT]
+        [
+            GRANT_RIGHT,
+            GRANT_RIGHT,
+            GRANT_RIGHT,
+            POLICY_RIGHT,
+            POLICY_RIGHT,
+            POLICY_RIGHT,
+            POLICY_RIGHT
+        ]
     );
 }
 
@@ -332,4 +355,61 @@ fn peer_tags_verify_only_the_sealed_digest() {
         client.call("peer.seal", json!({"sha256": digest})).unwrap(),
         tag
     );
+}
+
+/// The connecting side of `peers_are_verified_by_kernel_cdhash_…`; idle unless that test runs it.
+#[test]
+fn peer_client() {
+    let Some(socket) = std::env::var_os("OMD_BROKER_PEER_SOCKET") else {
+        return;
+    };
+    let _stream = UnixStream::connect(socket).unwrap();
+    let _ = io::stdin().read_to_end(&mut Vec::new());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn peers_are_verified_by_kernel_cdhash_even_when_their_executable_is_unreadable() {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path().join("private");
+    fs::create_dir(&folder).unwrap();
+    let binary = folder.join("peer");
+    fs::copy(std::env::current_exe().unwrap(), &binary).unwrap();
+    let signature = std::process::Command::new("/usr/bin/codesign")
+        .args(["-d", "--verbose=4"])
+        .arg(&binary)
+        .output()
+        .unwrap();
+    let cdhash = String::from_utf8_lossy(&signature.stderr)
+        .lines()
+        .find_map(|line| line.strip_prefix("CDHash=").map(str::to_owned))
+        .unwrap();
+    let socket = temp.path().join("peer.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut child = std::process::Command::new(&binary)
+        .args(["--exact", "broker::tests::peer_client", "--test-threads=1"])
+        .env("OMD_BROKER_PEER_SOCKET", &socket)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let ours = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            Err(error) => panic!("peer never connected: {error}"),
+        }
+    };
+    fs::set_permissions(&folder, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
+    let pinned = platform::verify_peer(&ours, &[cdhash.as_str()]);
+    let other = platform::verify_peer(&ours, &["0".repeat(40).as_str()]);
+    fs::set_permissions(&folder, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(pinned.is_ok(), "{pinned:?}");
+    assert_eq!(other.unwrap_err().to_string(), "authority_peer_unverified");
 }

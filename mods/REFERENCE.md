@@ -6,7 +6,9 @@ This reference is version-matched to `@oh-my-diff/mod-api` and host API
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
-service contracts available to consumers.
+service contracts available to consumers. Once a session has listed its tools,
+the store also generates `tool-types.d.ts` for the tools the host actually has
+([Typed tool declarations](#typed-tool-declarations)).
 
 ## API 0.2 host primitives
 
@@ -48,7 +50,7 @@ native work.
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.blit`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -1214,6 +1216,26 @@ it without timings.
   drop a tool, re-describe it, or set `deferred: true` to move it behind
   `tool_search` (a model without tool search keeps deferred tools visible so
   they stay callable). Execution is unchanged.
+- `tools.list` (`inventory`) returns the lead thread's tools from the latest
+  router build: `{thread_id, tools: [{name, kind: 'builtin' | 'mcp' |
+  'extension' | 'dynamic', server, original: {description, parameters, freeform}, effective:
+  {description, parameters, deferred} | null}]}`. `original` is what the tool
+  registered and `effective` what the model sees after `tool_specs`
+  interceptors: `null` when one hid the tool, `deferred: true` for tools behind
+  `tool_search` already. `kind: 'extension'` covers every tool an extension
+  contributes, mod tools included, and `server` names an MCP tool's server. Lists are bounded like
+  `tool_specs`: 512 tools, 4096-character descriptions, and a `parameters`
+  schema over 16 KiB is `null`. It fails with `tools_unavailable` before the
+  thread's first turn builds its tools. The host keeps the latest lead-thread
+  snapshot in the store as `tool-inventory.json`, rewritten only when it
+  changes, and `omd-mod declarations STORE` renders it as `tool-types.d.ts`.
+- When a `tool` interceptor rewrote a call, or a `tool_specs` interceptor
+  replaced the tool's `parameters`, the host validates the call's final
+  arguments against the tool's original schema (`type`, `properties`,
+  `required`, `items`, `enum`, `anyOf`, `additionalProperties`; other keywords
+  are not checked) before dispatch. A mismatch refuses the call with
+  `tool_arguments_invalid: <tool>: <json-pointer>: <reason>`, with `/` for the
+  root. Freeform tools and tools without a schema are not validated.
 
 ### Channels, processes and watches (`events_v1`)
 
@@ -2241,11 +2263,11 @@ has no host maximum, so a provider's context window is configuration.
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author examples DIR` | Live routing, coordination, recovery, terminal, workflow, and stream-replacement mod examples |
 | `pnpm check` | Strict TypeScript validation against this exact SDK, plus the engine's erasable-syntax check |
-| `pnpm test` | Engine-owned scenario execution with no provider requests |
+| `pnpm test` | Engine-owned scenario execution with no provider requests, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
-| `pnpm watch -- STORE` | Re-inspects unchanged capabilities, approves the edited digest, and queues reload |
+| `pnpm watch -- STORE` | Re-inspects unchanged capabilities, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
@@ -2255,6 +2277,104 @@ The `omd-mod` binary is part of the OMD engine. Set `OMD_MOD_BIN` only when a
 development build is not already on `PATH`; set `OMD_MOD_NODE` to the supported
 Node 24.x executable, 24.18 or later. pnpm is the package manager. The repository also
 publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
+
+### Typed tool declarations
+
+A running host stores the lead thread's tool inventory (`tools.list`) in its
+store, and `omd-mod declarations STORE` renders it as `tool-types.d.ts`:
+a module augmentation of the empty `ToolArguments` interface, keyed by tool
+name with a type converted from the tool's original JSON schema (`type`,
+`properties`, `required`, `items`, `enum`, `anyOf`, `additionalProperties`;
+anything else is `Json`, a freeform tool is `string`). `omd-mod-author watch`
+copies it into `.omd/` beside `active-host.d.ts` and
+`installed-contracts.d.ts`; the scaffold's `tsconfig.json` already includes
+`.omd/*.d.ts`. Once `ToolArguments` lists tools, the `tool` interceptor input
+and `tools.invoke`/`tools.check` arguments are exactly one of those tools with
+its own argument type, so a tool the snapshot lacks needs a cast. Scenario runs
+use a throwaway store, so they leave an existing `.omd/tool-types.d.ts` alone.
+The declarations are as current as the last turn that built the thread's tools:
+MCP servers connected later and tools a `tool_specs` interceptor hid appear as
+the host last listed them, and a mod's runtime check of the call is the host's
+`tool_arguments_invalid` validation, not these types.
+
+### TypeScript tests
+
+`pnpm test` runs `mod.test.json` and then every `*.test.ts` and `*.test.mjs`
+next to it with `node --test`, so the assertions are `node:assert` (built into
+Node, no extra dependency or framework) and test files are plain TypeScript
+under Node's type stripping. `@oh-my-diff/mod-api/testing` builds and runs
+scenarios for them; it needs `omd-mod` like `pnpm test` and sends no provider
+request.
+
+```ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { advance, clock, environment, find, invoke, key, mount, packages, pointer, runScenario, storeMock, tiers, waitUntil } from '@oh-my-diff/mod-api/testing';
+
+test('panel opens', () => {
+  const trace = runScenario('.', clock(1000), environment({ MODE: 'ci' }), storeMock({ get: [null] }), packages('../policy'), tiers({ append: ['policy'] }), {
+    steps: [mount('panel'), key('panel', 'F2', { expect: { action: { command: 'panel:open', args: '' }, result: 'opened' } })],
+  });
+  assert.ok(find(trace.steps[0].value, 'open'));
+});
+```
+
+- Scenario fields: `clock(ms)` (`virtual_time_ms`), `environment(values)`,
+  `settings(id, values)`, `hostOperations({op: [reply | {error}]})`,
+  `storeMock({get, put, delete})` (ordered `store.*` replies, `null` for a
+  missing key), `packages(...paths)`, extra packages (a policy package, a user
+  package) trusted in that order before the project, and
+  `tiers({prepend, append})`, mod IDs run as
+  [administrator-managed](#administrator-policy-and-managed-deployment)
+  packages in that tier, so a test sees the composed order and the managed
+  guard rule; an `intercept` step's trace shows the order.
+  `scenario(...parts)` merges
+  parts (queues and packages append, settings and tiers merge, the last value
+  of any other field wins) and `runScenario(directory, ...parts)` runs the project and
+  returns the engine trace; `calls(trace, operation)` lists its host calls.
+- Steps: `invoke(mod, event, name, payload)`, `emit(event, payload)`,
+  `advance(ms)`, `waitUntil(check, until, {everyMs, maxMs})`, `reload()`,
+  `mount(mod)`, `key(mod, name)`, `activate(mod, component)`,
+  `input(mod, component, value)`, `select(mod, component, value)`,
+  `pointer(mod, component, {column, row, action})` (with `{client}` for an
+  attached client's event), `attach(name, {renderer})`, `detach(id)` and
+  `intercept(surface, payload, {core: [coreValue(v) | coreError(e)]})`. The
+  last argument takes `expect`, `expectError` and `cancelled`; interactions
+  and `mount` also take `payload`, the `terminal` event input (default
+  `{event: 'draw', ledger: null}`).
+- View queries over a mounted view's value: `find(view, id | fields | fn)`,
+  `findAll` and `text(view)`.
+- Interceptor assertions over an `intercept` step's value: `assertWrapped`
+  (the mod called `next` and the chain reached the core), `assertShortCircuit`
+  (it answered, so the core never ran) and `assertFailure(chain, mod,
+  /reason/)` (its link failed with that reason: skipped, kept, caught or
+  rejected).
+
+Mounting and interacting run the mod's `terminal` event and callbacks on fixture
+data. They show what a mod returns and how it reacts, not how a terminal or an
+attached client draws or delivers it: a supported-client claim needs the client
+conformance harness (`scripts/client_acceptance.py`) or a real terminal check.
+
+### Watch and reload
+
+Interactive: while a mod is written, `omd-mod-author watch DIR STORE` (or
+`pnpm watch -- STORE`) inspects the directory, approves its current digest in
+`STORE` as the user would with `omd-mod trust`, then queues a reload of that
+store's host and refreshes `.omd/`; saving an entry point, asset or lifecycle
+file reloads again after 100 ms and reports a half-written file instead of
+stopping. A running session picks the reload up at its next turn boundary;
+`/omd` reloads at once while no turn runs, and also disables or resets a mod.
+Because `watch` approves what it watches, point it only at a scratch store
+(`omd-mod init STORE NODE`) that holds no other trusted mods and run it only on
+code you wrote or reviewed; to try the mod in a real store, review the digest
+and approve it there yourself with `/omd` or `omd-mod trust`. Code an agent
+wrote is never trusted automatically.
+
+Noninteractive: `omd-mod-author watch DIR STORE --once` does one inspect,
+approve and reload and exits, which suits a build step against a scratch store;
+`omd-mod-author test DIR` (or `pnpm test`) is the CI check and needs no store,
+since it builds a throwaway store for every run. Neither starts a provider
+request.
 
 ### JSX/TSX
 
@@ -2290,7 +2410,9 @@ supported.
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
-| `omd-mod selection-status STORE` | Show saved user/project selections, precedence, source errors, and setting keys without running mod code |
+| `omd-mod selection-status STORE` | Show managed, project and user selections, precedence, administrator refusals, source errors, and each setting's origin without running mod code |
+| `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](#administrator-policy-and-managed-deployment)'s packages unattended, or reactivate the previous generation |
+| `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the administrator policy |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
 | `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
 | `omd-mod package-quarantine STORE ID REASON` | Disable the package and block its installed version and integrity; enable, reinstall and rollback of it are refused while data, cache and sources stay |
@@ -2457,7 +2579,31 @@ a mounted key or component ID. Component interaction activates buttons, inputs,
 and selectors with an optional `value`; copy actions return without touching the
 system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`.
 Additional trusted packages are listed in `packages`, enabling provider/consumer
-and conflict fixtures without shared globals or ambient authority.
+and conflict fixtures without shared globals or ambient authority. `tiers` maps
+loaded mod IDs to `prepend` or `append` and runs them as
+administrator-managed packages in that tier for the scenario only, so a test
+sees the managed interceptor order and that its answers can't skip a managed
+required guard.
+
+`environment` maps nonsecret names to string values (4096 bytes at most) that
+`environment.read` answers in place of a `host_operations` queue, so a scenario
+never reads the host's environment: an unlisted name is `{set: false}`, and a
+secret-like name (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...)
+fails the scenario with `offline_environment_secret_name`.
+`{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000,
+"max_ms": N}` runs `check`, and while its value differs from `until` advances
+virtual time by `every_ms` and checks again (at most 256 checks); it returns
+`{waited_ms, value}` or fails with `offline_wait_timeout` at `max_ms`.
+`terminal_interact` also takes `pointer: {column, row, half?, action, button?}`
+with `component`: the mounting mod receives `component_event {kind: 'pointer'}`
+with `origin: 'user'`, only for a `box`, `image` or `raster` mounted with
+`pointer: true` (`offline_terminal_component_not_pointer`); adding `client:
+ID` delivers it as that attached client's event (`client`, no `origin`).
+`client_attach {name, renderer?, viewport?, focused?}` adds an external client
+as `client-1`, `client-2`, ... and `client_detach {id}` removes it
+(`offline_client_not_attached`); a mounted `terminal` payload carries the
+roster as `clients` unless it sets its own. These steps run the mod's callbacks
+on fixture data; they are not terminal or client rendering evidence.
 
 API `.8` adds `task_scoped: true` on `api.tool` and the `tool_exposure` event.
 Before each sampling step, the event receives the host `ledger`, thread ID,
@@ -2692,7 +2838,8 @@ Offline runners without an interactive host replay the callback once per host
 call instead.
 
 Dependencies run before consumers and remaining mods use lexical ID order.
-Project scope shadows user scope without inheriting its state or grants.
+Managed scope shadows project scope, which shadows user scope, without
+inheriting its state or grants.
 Observers compose in that order; interceptors follow the continuation order above. Every mod's `terminal` patch composes in that order too
 (`ui_composition_v1`): sites wrap or replace (a wrap encloses the site's
 replacement whichever composes first; a site's `overlay` is not claimed, so
@@ -2716,7 +2863,10 @@ install` (sudo) deploys an OS-separated broker: a LaunchDaemon running as the
 hidden `_omdbroker` account owns `/Library/Application Support/OhMyDiff/broker`
 (mode 0700) and answers on `/var/run/dev.ohmydiff.broker.sock` only to peers
 whose kernel audit token resolves to a hardened-runtime binary whose code
-directory hash root has pinned. While the root-owned daemon plist exists,
+directory hash root has pinned. The broker asks the kernel for the running
+peer's signing status and code directory hash, never reading the executable,
+so binaries installed under a private home folder verify too. While the
+root-owned daemon plist exists,
 `status.authority` reports `protected (OS-separated broker)` and the host:
 
 - keeps credential profiles, secrets and sign-in tokens in the broker
@@ -2765,6 +2915,105 @@ edits a grant can read those secrets. OMD offers no secrets-read API. Installs, 
 (one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
 but keeps credentials. `omd-package broker uninstall` removes the daemon, account,
 rights and all broker state, returning to same-user mode.
+
+### Administrator policy and managed deployment
+
+An organization restricts and deploys mods through one administrator policy.
+OMD reads it from the broker (key `mods`) when the broker is deployed and holds
+one, otherwise from the root-owned file
+`/Library/Application Support/OhMyDiff/policy.json`
+(`/etc/oh-my-diff/policy.json` on Linux). `omd-mod policy set FILE` stores it in
+the broker and needs an administrator (`dev.ohmydiff.broker.policy`);
+`policy rollback` swaps it with the value it replaced and `policy clear` removes
+it. Without the broker, `omd-package policy install FILE` (sudo) checks the
+policy and writes the file (mode 0644, keeping the replaced one),
+`policy rollback` swaps them back and `policy remove` deletes it. A policy file or folder that isn't owned by root or
+is writable by anyone else fails with `managed_policy_untrusted` and no mod
+loads until it is fixed. OMD never contacts a vendor for policy and there is no
+remote disable: restrictions are an organization's own decision, made on the
+machine.
+
+```json
+{"schema": 1,
+ "managed_only": false, "sideload": true, "updates": "user",
+ "sources": ["/Library/OhMyDiff/packages/", "npm:https://npm.example.com/@corp/"],
+ "deny": ["old_tool"], "capabilities": ["commands", "interception", "store"],
+ "index": {"sha256": "…", "locations": ["/Volumes/mirror/index.json", "/Library/OhMyDiff/index.json"]},
+ "registry": "https://npm.example.com",
+ "packages": [
+  {"id": "corp_guard", "source": "corp_guard@2.0.0", "sha256": "…", "capabilities": ["interception"],
+   "tier": "append", "settings": {"mode": "strict"}, "percent": 20},
+  {"id": "corp_guard", "source": "/Library/OhMyDiff/packages/corp_guard", "sha256": "…",
+   "capabilities": ["interception"], "tier": "append",
+   "mirrors": ["git+https://git.example.com/guard.git#0123…"]}]}
+```
+
+The controls apply to user and project selections; packages the policy lists are
+never refused by them:
+
+| Field | Refusal |
+| --- | --- |
+| `deny` | `managed_denied`: the mod IDs are revoked. |
+| `managed_only` | `managed_only`: only managed packages load. |
+| `capabilities` | `managed_capability_denied`: a capability outside the list, for example `approve.override`, is withheld from every unmanaged mod. |
+| `sideload: false` | `managed_sideload_denied`: only package-manager installs load, and `trust` refuses. |
+| `sources` | `managed_source_denied`: installs and loads need a source reference with one of the prefixes: a folder path, `git+URL`, `index:PATH#ID` or `npm:REGISTRY/NAME`. |
+| `updates: "managed"` | `managed_updates_denied`: users can't update or roll back installed packages. |
+
+These refusals apply at every reload, so revoking takes effect immediately, and
+`/omd` lists them. Approval floors stay in Codex's managed requirements, which
+`approve.override` never overrides; the capability list withholds approval
+authority itself.
+
+Each `packages` entry pins a package's exact content (`sha256`) and its grant
+(`capabilities`, `dependencies`, `lifecycle`, `secret_environment`); the policy
+is the grant, so a managed package needs no broker grant or user prompt.
+`users` lists account names, `percent` (1–100) admits a stable share of accounts
+per package ID, and `projects` lists folders the session's repository must be
+inside. For each ID the first entry that applies is the target and later entries
+are fallbacks, so a rollout lists the new content first and the current content
+after it. Managed selections take precedence over project and user ones
+(`shadowed_by_managed_scope`), `/omd` and `omd-mod disable` refuse them
+(`managed_by_policy`) and `tier` places their interceptors: `prepend` outside
+every other mod, `append` inside. A handler that answers without `next`, other
+than with a deny, is invalid when a required interceptor of a managed package
+sits beneath it, so other mods can skip optional transforms but never a managed
+guard.
+
+`omd-mod package-sync STORE` deploys the policy unattended for the account that
+owns the store, typically from the organization's own launch agent or
+configuration tool after it installs the policy; it takes no confirmation.
+Every applicable entry, across projects, comes from the content-addressed
+package cache, otherwise from its `source` and then each mirror in order, through
+the normal package resolver: `ID@VERSION` uses the first `index` location whose
+bytes match its sha256, `npm:` sources without a registry use `registry` and the
+user's own `.npmrc` tokens (the policy carries no secrets). Content that differs from the pin (`managed_integrity_mismatch`),
+dependencies the policy doesn't list and packages with lifecycle scripts
+(`managed_lifecycle_requires_approval`, installed interactively instead) are
+refused. Only when every entry verifies does sync record a new generation in
+`STORE/managed.json`; otherwise it fails with `managed_sync_incomplete` and the
+previous generation stays active. `--offline` uses the cache and local sources
+only, and `--rollback` makes the previous generation active again. At load, a
+target that is deployed runs; otherwise a deployed fallback keeps running and
+`managed_pending_sync` is reported; content the policy no longer lists never
+runs, so removing an entry or changing its pin revokes it at once and an
+administrator's `policy rollback` with an unchanged cache restores the previous
+generation offline.
+
+`omd-mod policy show` prints the effective policy and its origin,
+`policy check FILE` validates one, and `policy explain STORE [PROJECT_DIR]`
+lists the account, each target and whether it is deployed, the deployment
+generation, and every selection with its scope, tier, effective state,
+refusal and the origin of each setting (`managed`, `user` or `default`).
+`status.managed` and `selection-status` report the same.
+
+Recovery stays local and offline. `/omd`, `omd-package mod disable` and
+`omd-mod reset STORE mods.json` recover user and project mods; managed packages
+keep running while the policy lists them. Running the upstream `codex` recovers
+from every customization. When a managed package fails, its required
+interceptors fail closed (`intercept_required_failed`) until an administrator
+changes or rolls back the policy; `omd-mod reset STORE managed.json` then
+`package-sync` repairs an unreadable deployment record.
 
 
 ## Plugin components and shell commands

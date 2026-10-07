@@ -1557,6 +1557,77 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments() {
+    use codex_extension_api::ToolInventoryEntry;
+    use codex_extension_api::ToolInventoryView;
+    use codex_extension_api::ToolSpecContributor;
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let thread_store = ExtensionData::new("thread".to_owned());
+    assert!(!mods.observing(&thread_store));
+    thread_store.insert(fixture.lead.clone());
+    assert!(mods.observing(&thread_store));
+    let schema =
+        json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
+    let entry =
+        |name: &str, parameters: &Value, effective: Option<(&Value, bool)>| ToolInventoryEntry {
+            name: name.to_owned(),
+            kind: "builtin",
+            server: None,
+            description: "d".into(),
+            freeform: parameters.is_null(),
+            parameters: parameters.clone(),
+            effective: effective.map(|(parameters, deferred)| ToolInventoryView {
+                description: "d".into(),
+                parameters: parameters.clone(),
+                deferred,
+            }),
+        };
+    let replaced = json!({"type": "object"});
+    let tools = [
+        entry("run", &schema, Some((&schema, false))),
+        entry("hidden", &schema, None),
+        entry("later", &schema, Some((&schema, true))),
+        entry("patch", &Value::Null, Some((&Value::Null, false))),
+        entry("loose", &schema, Some((&replaced, false))),
+    ];
+    mods.observe_tool_inventory(&thread_store, &tools);
+    let listed = tool_specs::list(&fixture.core, &fixture.lead).unwrap();
+    assert_eq!(listed["thread_id"], fixture.lead.thread.to_string());
+    assert_eq!(listed["tools"][1]["effective"], Value::Null);
+    assert_eq!(listed["tools"][2]["effective"]["deferred"], true);
+    assert_eq!(listed["tools"][3]["original"]["freeform"], true);
+    let stored = fixture.lead.host.root.join("tool-inventory.json");
+    assert_eq!(
+        std::fs::read(&stored).unwrap(),
+        serde_json::to_vec(&listed).unwrap()
+    );
+    std::fs::write(&stored, "sentinel").unwrap();
+    mods.observe_tool_inventory(&thread_store, &tools);
+    assert_eq!(std::fs::read(&stored).unwrap(), b"sentinel");
+    let validate = |tool: &str, arguments: Value, rewritten: bool| {
+        fixture
+            .core
+            .expansion
+            .validate_call(fixture.lead.thread, tool, &arguments, rewritten)
+    };
+    assert_eq!(validate("run", json!({"cmd": "ls"}), true), Ok(()));
+    assert_eq!(
+        validate("run", json!({"cmd": 1}), true),
+        Err("tool_arguments_invalid: run: /cmd: expected string, got number".into())
+    );
+    assert_eq!(validate("run", json!({"cmd": 1}), false), Ok(()));
+    assert_eq!(
+        validate("loose", json!({}), false),
+        Err("tool_arguments_invalid: loose: /cmd: required".into())
+    );
+    assert_eq!(validate("patch", json!("anything"), true), Ok(()));
+    assert_eq!(validate("unknown", json!(1), true), Ok(()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tool_batch_owner_merges_calls_into_its_own_tool() {
     use codex_extension_api::ToolBatchCall;
     use codex_extension_api::ToolBatchContributor;
