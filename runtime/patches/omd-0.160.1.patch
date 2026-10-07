@@ -33529,7 +33529,7 @@ index 9f80e5e5d..6cd4d7f4d 100644
          vec![format!("mcp:{}", self.call_id)]
      }
 diff --git a/codex-rs/tui/src/history_cell/messages.rs b/codex-rs/tui/src/history_cell/messages.rs
-index f80f311c7..8fdac26ff 100644
+index f80f311c7..ae27f425a 100644
 --- a/codex-rs/tui/src/history_cell/messages.rs
 +++ b/codex-rs/tui/src/history_cell/messages.rs
 @@ -176,6 +176,19 @@ impl UserHistoryCell {
@@ -33567,7 +33567,7 @@ index f80f311c7..8fdac26ff 100644
 +            "assistant_message",
 +            crate::mod_render::content_id("assistant", &text),
 +            false,
-+            serde_json::json!({"text": crate::mod_render::bounded(&text), "first": self.is_first_line}),
++            crate::mod_render::assistant_props(&text, self.is_first_line),
 +        ))
 +    }
 +
@@ -33584,7 +33584,7 @@ index f80f311c7..8fdac26ff 100644
 +            "assistant_message",
 +            crate::mod_render::content_id("assistant", &text),
 +            false,
-+            serde_json::json!({"text": crate::mod_render::bounded(&text), "first": true}),
++            crate::mod_render::assistant_props(&text, true),
 +        ))
 +    }
 +
@@ -33606,7 +33606,7 @@ index f80f311c7..8fdac26ff 100644
 +            "assistant_message",
 +            crate::mod_render::content_id("assistant", &text),
 +            true,
-+            serde_json::json!({"text": crate::mod_render::bounded(&text), "first": self.is_first_line}),
++            crate::mod_render::assistant_props(&text, self.is_first_line),
 +        ))
 +    }
 +
@@ -122289,10 +122289,10 @@ index 000000000..66ed2ea5a
 +  Oh My Diff · mod status unavailable · GPT-5.6-Sol default · /tmp/project
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 000000000..2904df6d3
+index 000000000..ae0864a33
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,383 @@
+@@ -0,0 +1,389 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -122319,6 +122319,8 @@ index 000000000..2904df6d3
 +pub(crate) struct ModDraft {
 +    revision: u64,
 +    fingerprint: u64,
++    /// Fingerprint of the attached images and the revision that advances when they change.
++    attachments: (u64, u64),
 +    origin: Option<String>,
 +    suggestion: Option<Suggestion>,
 +    ghost: Cell<Option<Rect>>,
@@ -122337,23 +122339,27 @@ index 000000000..2904df6d3
 +}
 +
 +impl ChatComposer {
-+    fn mod_fingerprint(&self) -> u64 {
++    fn mod_fingerprint(&self) -> (u64, u64) {
 +        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-+        self.draft.textarea.text().hash(&mut hasher);
 +        self.attachments.local_image_paths().hash(&mut hasher);
 +        self.attachments.remote_image_urls.hash(&mut hasher);
-+        hasher.finish()
++        let attachments = hasher.finish();
++        self.draft.textarea.text().hash(&mut hasher);
++        (hasher.finish(), attachments)
 +    }
 +
 +    /// Advances the revision after any draft change and clears a suggestion made for the old one.
 +    pub(crate) fn mod_draft_sync(&mut self) -> u64 {
-+        let fingerprint = self.mod_fingerprint();
++        let (fingerprint, attachments) = self.mod_fingerprint();
 +        if fingerprint != self.draft.mod_draft.fingerprint {
 +            let draft = &mut self.draft.mod_draft;
 +            draft.fingerprint = fingerprint;
 +            draft.revision += 1;
++            if attachments != draft.attachments.0 {
++                draft.attachments = (attachments, draft.attachments.1 + 1);
++            }
 +            let origin = draft.origin.take().unwrap_or_else(|| "user".into());
-+            let change = json!({"kind": "change", "revision": draft.revision, "origin": origin});
++            let change = json!({"kind": "change", "revision": draft.revision, "attachments_revision": draft.attachments.1, "origin": origin});
 +            draft.events.push((None, change));
 +            self.mod_suggestion_clear("edit");
 +        }
@@ -122678,10 +122684,10 @@ index 000000000..2904df6d3
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs
 new file mode 100644
-index 000000000..88f3af92c
+index 000000000..cf3185546
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,248 @@
 +use super::*;
 +use crate::bottom_pane::chat_composer::tests::new_test_composer;
 +use crate::render::renderable::Renderable;
@@ -122739,6 +122745,24 @@ index 000000000..88f3af92c
 +        Some(&(None, "fmt".to_owned()))
 +    );
 +    assert!(composer.recovery_snapshot().text.ends_with("there!"));
++}
++
++#[test]
++fn change_events_advance_the_attachments_revision_only_for_image_changes() {
++    let (mut composer, _rx) = new_test_composer();
++    let attachments_revision = |composer: &mut ChatComposer| {
++        composer.mod_draft_sync();
++        composer.mod_draft_take_events().last().unwrap().1["attachments_revision"].clone()
++    };
++    composer.insert_str("a");
++    let first = attachments_revision(&mut composer);
++    composer.insert_str("b");
++    assert_eq!(attachments_revision(&mut composer), first);
++    composer.attach_image(PathBuf::from("/tmp/preview.png"));
++    assert_eq!(
++        attachments_revision(&mut composer),
++        json!(first.as_u64().unwrap() + 1)
++    );
 +}
 +
 +#[test]
@@ -124846,10 +124870,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..64442dbd0
+index 000000000..ab7920a1f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,353 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -124952,12 +124976,15 @@ index 000000000..64442dbd0
 +            },
 +            "reduced_motion": self.reduced_motion,
 +            "cell_px": self.cell.map(|(width, height)| json!({"width": width, "height": height})),
++            "columns": self.size.0,
++            "rows": self.size.1,
 +        })
 +    }
 +}
 +
 +static FACTS: Mutex<Option<Facts>> = Mutex::new(None);
 +static PIXEL_MODE: AtomicBool = AtomicBool::new(false);
++static RERENDER: AtomicBool = AtomicBool::new(false);
 +static HALF: AtomicU8 = AtomicU8::new(HALF_UNKNOWN);
 +fn with<T>(run: impl FnOnce(&mut Facts) -> T) -> T {
 +    let mut facts = FACTS
@@ -124988,20 +125015,23 @@ index 000000000..64442dbd0
 +        reports_differ((before, pixel), (*facts, pixel))
 +    });
 +    if changed {
-+        std::thread::spawn(crate::mod_runtime::rerender);
++        rerender();
 +    }
 +}
 +
-+/// Whether what the mod view reports changed; the grid size alone does not re-render.
++/// Whether what the mod view reports changed.
 +fn reports_differ(before: (Facts, bool), after: (Facts, bool)) -> bool {
-+    let after = (
-+        Facts {
-+            size: before.0.size,
-+            ..after.0
-+        },
-+        after.1,
-+    );
 +    after != before
++}
++
++/// A burst of changes, such as a window drag, re-renders once per render in progress.
++fn rerender() {
++    if !RERENDER.swap(true, Ordering::AcqRel) {
++        std::thread::spawn(|| {
++            RERENDER.store(false, Ordering::Release);
++            crate::mod_runtime::rerender();
++        });
++    }
 +}
 +
 +/// SGR-pixel reports are requested only where the terminal is known to honor them.
@@ -125020,7 +125050,7 @@ index 000000000..64442dbd0
 +    let was = PIXEL_MODE.swap(on, Ordering::Relaxed);
 +    let facts = facts();
 +    if reports_differ((facts, was), (facts, on)) {
-+        std::thread::spawn(crate::mod_runtime::rerender);
++        rerender();
 +    }
 +    was
 +}
@@ -125199,10 +125229,10 @@ index 000000000..64442dbd0
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..a08e43ad2
+index 000000000..09a69b78f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,156 @@
 +use super::*;
 +use crossterm::event::KeyModifiers;
 +use crossterm::event::MouseEventKind;
@@ -125310,7 +125340,15 @@ index 000000000..a08e43ad2
 +        size: (120, 40),
 +        ..facts
 +    };
-+    assert!(!reports_differ((facts, false), (resized, false)));
++    assert!(!reports_differ((facts, false), (facts, false)));
++    assert!(reports_differ((facts, false), (resized, false)));
++    assert_eq!(
++        (
++            resized.value()["columns"].clone(),
++            resized.value()["rows"].clone()
++        ),
++        (json!(120), json!(40))
++    );
 +    assert!(reports_differ((facts, false), (facts, true)));
 +    assert!(reports_differ(
 +        (facts, false),
@@ -128127,10 +128165,10 @@ index 000000000..988694260
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..5f5d8daf0
+index 000000000..d93ea51b0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,645 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -128187,9 +128225,11 @@ index 000000000..5f5d8daf0
 +    format!("{kind}-{:016x}", hasher.finish())
 +}
 +
++const PROP_BYTES: usize = 4096;
++
 +/// Props carry at most 4 KiB of text; hooks needing more read their own sources.
 +pub(crate) fn bounded(text: &str) -> String {
-+    let mut end = text.len().min(4096);
++    let mut end = text.len().min(PROP_BYTES);
 +    while !text.is_char_boundary(end) {
 +        end -= 1;
 +    }
@@ -128198,11 +128238,15 @@ index 000000000..5f5d8daf0
 +
 +pub(crate) fn bounded_json(value: &Value) -> Value {
 +    let text = value.to_string();
-+    if text.len() <= 4096 {
++    if text.len() <= PROP_BYTES {
 +        value.clone()
 +    } else {
 +        Value::String(bounded(&text))
 +    }
++}
++
++pub(crate) fn assistant_props(text: &str, first: bool) -> Value {
++    serde_json::json!({"text": bounded(text), "first": first, "truncated": text.len() > PROP_BYTES})
 +}
 +
 +pub(crate) fn question_props(
@@ -128772,10 +128816,10 @@ index 000000000..5f5d8daf0
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 000000000..e6a54f078
+index 000000000..9c07cf291
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,163 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -128786,6 +128830,20 @@ index 000000000..e6a54f078
 +
 +fn tree(value: Value) -> Vec<ModComponent> {
 +    serde_json::from_value(value).unwrap()
++}
++
++#[test]
++fn assistant_props_flag_text_cut_at_the_prop_limit() {
++    let fits = "é".repeat(PROP_BYTES / 2);
++    assert_eq!(
++        assistant_props(&fits, true),
++        serde_json::json!({"text": fits, "first": true, "truncated": false})
++    );
++    let cut = assistant_props(&format!("a{fits}"), false);
++    assert_eq!(
++        (cut["text"].as_str().map(str::len), &cut["truncated"]),
++        (Some(PROP_BYTES - 1), &serde_json::json!(true))
++    );
 +}
 +
 +#[test]
@@ -132249,10 +132307,10 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..76b3d3bf0
+index 000000000..f6599e04c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3717 @@
+@@ -0,0 +1,3718 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -134810,6 +134868,7 @@ index 000000000..76b3d3bf0
 +        let mut interaction = INTERACTION
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        interaction.component_owners = snapshot.component_owners.clone();
 +        component_rows(&site.components, width, &mut interaction, 0)
 +            .into_iter()
 +            .map(|row| HyperlinkLine {
@@ -135972,10 +136031,10 @@ index 000000000..76b3d3bf0
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..557d17a55
+index 000000000..d49d6d731
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1956 @@
+@@ -0,0 +1,1987 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -137371,6 +137430,37 @@ index 000000000..557d17a55
 +        ModView::parse(serde_json::json!({"sites":{"sidebar":{"components":[
 +            {"type":"line","id":"bad","label":"Bad","spans":[{"text":"x","link":"javascript:alert(1)"}]}]}}}))
 +        .is_err()
++    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn above_composer_rows_resolve_owners_of_components_new_in_this_view() {
++    let mut view = snapshot(serde_json::json!({"sites": {"above_composer": {"components": [
++        {"type":"raster","id":"band_chart","label":"Chart","alt":"cpu chart","width":3,"height":1}
++    ]}}}));
++    view.component_owners = [("band_chart".to_owned(), "demo".to_owned())]
++        .into_iter()
++        .collect();
++    crate::mod_raster::blit(
++        "demo",
++        Some("demo".into()),
++        Some((3, 1)),
++        &serde_json::json!({"key":"band_chart","rect":{"x":0,"y":0,"width":3,"height":1},"cells":["x","y","z"]}),
++        std::time::Instant::now(),
++    )
++    .expect("queued");
++    INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .component_owners
++        .clear();
++    preview(view);
++    let lines = footer_hyperlink_lines(40);
++    assert!(
++        lines.iter().any(|line| line.line.to_string().contains("xyz")),
++        "the footer draws before the frame's render refreshes owners"
 +    );
 +    preview(ModViewSnapshot::default());
 +}

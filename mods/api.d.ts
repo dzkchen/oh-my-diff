@@ -170,7 +170,7 @@ export interface TerminalTheme {
 }
 export type TerminalClient = {
   kind: 'terminal'; graphics: 'kitty' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
-  cell_px: { width: number; height: number } | null;
+  cell_px: { width: number; height: number } | null; columns: number; rows: number;
 };
 /** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
 export type ClientEntry = {
@@ -196,7 +196,7 @@ export type RenderExecCall = { call_id: string; command: string; exit_code: numb
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
-  assistant_message: { text: string; first: boolean };
+  assistant_message: { text: string; first: boolean; truncated: boolean };
   tool_call: { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null }
     | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null };
   tool_result: { call_id: string; tool: string; success: boolean | null; text: string };
@@ -454,7 +454,7 @@ export interface Events {
     effort: { before: ReasoningEffort | null; after: ReasoningEffort | null }; provider: { before: string; after: string } }; output: void };
   worktree: { input: { phase: 'created' | 'removed'; path: string; owner: 'agent' | 'tui' }; output: void };
   elicitation_result: { input: { server: string; request_id: string; action: 'accept' | 'decline' | 'cancel'; content: Json; by: string | null }; output: void };
-  composer: { input: { kind: 'change'; revision: number; origin: string } | { kind: 'suggestion'; id: string; status: 'accepted' | 'dismissed' | 'cleared'; reason?: string }; output: void };
+  composer: { input: { kind: 'change'; revision: number; attachments_revision: number; origin: string } | { kind: 'suggestion'; id: string; status: 'accepted' | 'dismissed' | 'cleared'; reason?: string }; output: void };
   prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }
     | { kind: 'image'; source?: string; start?: number; end?: number; bytes?: number; sha256?: string } | { kind: 'paste'; start: number; end: number; bytes: number; sha256: string })[] }; output: void };
 }

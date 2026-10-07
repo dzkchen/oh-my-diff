@@ -1320,7 +1320,7 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
-| `assistant_message` | content digest | `text`, `first` (streamed chunks and the final message; the streaming tail is `live`) | — |
+| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
 | `tool_call` | call ID | `kind` (`mcp`/`dynamic`), `server`, `tool`, `arguments`, `status`, `duration_ms` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
 | `tool_group` | first call ID | `calls` of grouped exploration commands, `running` | — |
@@ -1494,14 +1494,15 @@ and dialogs (`ui_composition_v1`).
 Raster, pointer and overlays (`terminal_raster_v1`):
 
 - The `terminal` event carries `client: {kind: 'terminal', graphics, pointer,
-  reduced_motion, cell_px}`: `graphics` is `kitty` (pixel images),
+  reduced_motion, cell_px, columns, rows}`: `graphics` is `kitty` (pixel images),
   `cells` (half-block) or `text` (`NO_COLOR`); `pointer` is `half_cell`,
   `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline
   viewport); `reduced_motion` follows `tui.animations` and the system
   setting, and mods that animate stop when it is true; `cell_px` is the
-  measured cell size or null. It is null without a terminal client. When
-  any of these change (the font is resized, animations are turned off) the
-  view renders again with the new `client`.
+  measured cell size or null; `columns` and `rows` are the terminal grid. It
+  is null without a terminal client. When any of these change (the window or
+  font is resized, animations are turned off) the view renders again with the
+  new `client`; a burst of changes renders once per render in progress.
 - `{type: 'raster', id, label, alt, width, height, pointer?}` is a keyed
   canvas of 1–200 × 1–40 cells that shows `alt` until its first frame and
   clips to the component's width. `terminal.blit {key, rect: {x, y, width,
@@ -1902,7 +1903,8 @@ move-right key at the end of the draft (so a remapped `editor.move_right`
 applies) or by clicking it, and dismisses it with Esc. Any draft change, a turn
 start, an open dialog or the owner's reload clears it; `{clear: true}` withdraws
 the caller's own. The `composer` event (capability `composer`) reports `{kind:
-'change', revision, origin}` to every subscriber, debounced to 250 ms, and
+'change', revision, attachments_revision, origin}` to every subscriber
+(`attachments_revision` advances only when the attached images change), debounced to 250 ms, and
 `{kind: 'suggestion', id, status: 'accepted' | 'dismissed' | 'cleared',
 reason?}` to the suggestion's owner.
 

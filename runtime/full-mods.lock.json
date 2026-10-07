@@ -20,13 +20,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "ee76c6169f26e682db0417e4648f256c5921c48e1103c21dc23d8ac2b6ef1f65",
-        "mod.json": "d1832c523b9d4377b89515c17ab0d8ca1f038a4cd6e33d14d149bc6663c5aa2e"
+        "index.ts": "3964c4adb0976f716992f19aa0bbb0a159e70acd8c85cf70ffa96172f91ea286",
+        "mod.json": "f7c838bd53b8aebbe9d34cbfc2c733c2d17fb7709f0a9432c01665af39631400"
       },
       "id": "omd_advisor",
-      "package_sha256": "01b45fe603efeea539492ccf7e6c0e93defae15c773439f6fcfa89de0c80340a",
+      "package_sha256": "ddcd68e811022ed5e32a594c805b687288091fc196ab95ded70387026a2ad7b2",
       "source": "mods/first-party/omd_advisor",
-      "version": "0.3.0-preview.1"
+      "version": "0.4.0-preview.1"
     },
     "omd_checks": {
       "api": "0.2.0-experimental.5",
@@ -548,18 +548,19 @@
         "fs.read",
         "fs.write",
         "events",
-        "lifecycle"
+        "lifecycle",
+        "composer"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "bc3925022debd1bc4cf156e66c2a658eb81eb2336f2c7be486b3277e06a40e83",
-        "mod.json": "70e896b7330260382c6950fc1b98d9493f63f6e29dedcf2b1df148626fd8f3ca",
+        "index.ts": "cbe6d5ed9c09da5d37ad60dbe46c77a40afa475f4891e9ee948e4162c02bbaf9",
+        "mod.json": "75ccf4b333e3f4b93098e843fd8694a30e2fb6e73f9b8aed4ba4a81e7c4fc3ea",
         "render.mjs": "0be232a2bd8396d45b64499b548abb15c6caf9f46e8a38e2934b45b44efc925b"
       },
       "id": "omd_preview",
-      "package_sha256": "3b8f05918cc4cbcaff1c2af45f96e254db051f2fd9d8eb051dd46986046e7e24",
+      "package_sha256": "7a46bed0ebee9864c16301bd80495a7e3823dbf21914c89e4faa9cfe2b391fdb",
       "source": "mods/first-party/omd_preview",
-      "version": "0.1.0-preview.3"
+      "version": "0.2.0-preview.1"
     },
     "omd_privacy": {
       "api": "0.2.0-experimental.5",

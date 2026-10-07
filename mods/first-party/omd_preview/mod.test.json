@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "composer.read": [
+      {
+        "result": {
+          "text": "see [Image #1]",
+          "cursor": 14,
+          "selection": null,
+          "revision": 2,
+          "suggestion": null,
+          "attachments": [
+            {
+              "id": "img-1",
+              "kind": "image",
+              "label": "[Image #1]",
+              "owner": "user",
+              "resource": {
+                "reference": "omd-resource:fixture-1",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "id": "img-2",
+              "kind": "image",
+              "label": "[Image #2]",
+              "owner": "user",
+              "resource": null
+            }
+          ]
+        }
+      },
+      {
+        "result": {
+          "text": "see [Image #1]",
+          "cursor": 14,
+          "selection": null,
+          "revision": 2,
+          "suggestion": null,
+          "attachments": [
+            {
+              "id": "img-1",
+              "kind": "image",
+              "label": "[Image #1]",
+              "owner": "user",
+              "resource": {
+                "reference": "omd-resource:fixture-1",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            {
+              "id": "img-2",
+              "kind": "image",
+              "label": "[Image #2]",
+              "owner": "user",
+              "resource": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "event",
+      "event": "composer",
+      "payload": {
+        "kind": "change",
+        "revision": 2,
+        "attachments_revision": 1,
+        "origin": "user"
+      }
+    },
+    {
+      "type": "terminal_mount",
+      "mod": "omd_preview"
+    },
+    {
+      "type": "terminal_interact",
+      "mod": "omd_preview",
+      "component": "omd_preview_open_0"
+    },
+    {
+      "type": "terminal_mount",
+      "mod": "omd_preview"
+    },
+    {
+      "type": "intercept",
+      "surface": "render",
+      "payload": {
+        "component": "assistant_message",
+        "id": "fixture",
+        "surface": "fullscreen",
+        "viewport": {
+          "columns": 100,
+          "rows": 40
+        },
+        "lifecycle": "final",
+        "owner": null,
+        "props": {
+          "text": "Flow:\n\n```mermaid\nstateDiagram-v2\n  [*] --> Idle\n  Idle --> Busy : start\n  Busy --> [*]\n```\n",
+          "first": true,
+          "truncated": false
+        }
+      }
+    }
+  ]
+}
