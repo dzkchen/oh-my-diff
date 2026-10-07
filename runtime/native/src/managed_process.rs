@@ -29,6 +29,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
@@ -75,37 +76,38 @@ struct ManagedProcess {
 }
 
 impl ManagedProcess {
-    fn try_reap(&mut self) -> io::Result<bool> {
-        let mut reaped = self
-            .reaped
-            .lock()
-            .map_err(|_| io::Error::other("process_reap_poisoned"))?;
-        if !*reaped && self.child.try_wait()?.is_some() {
-            *reaped = true;
+    /// Leaves an exited leader unreaped, so its group id stays reserved until Drop kills the group.
+    fn exited(&self) -> io::Result<bool> {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                self.child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
         }
-        Ok(*reaped)
+        Ok(unsafe { info.si_pid() } != 0)
     }
 }
 
 fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
-    if let Ok(reaped) = reaped.lock()
-        && !*reaped
-    {
+    if !*reaped.lock().unwrap_or_else(PoisonError::into_inner) {
         let _ = kill_process_group(group);
     }
 }
 
 impl Drop for ManagedProcess {
     fn drop(&mut self) {
-        kill_group_if_alive(self.child.id(), &self.reaped);
-        if matches!(self.try_reap(), Ok(false)) {
-            let _ = self.child.kill();
-        }
-        let mut reaped = self.reaped.lock().ok();
+        let mut reaped = self.reaped.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = kill_process_group(self.child.id());
+        let _ = self.child.kill();
         let _ = self.child.wait();
-        if let Some(reaped) = reaped.as_mut() {
-            **reaped = true;
-        }
+        *reaped = true;
+        drop(reaped);
         let _ = fs::remove_dir_all(&self.scratch);
     }
 }
@@ -263,8 +265,8 @@ impl ManagedProcesses {
         let (_, process) = records
             .iter()
             .find(|((id, _, name), _)| id == owner && name == session)?;
-        let mut process = process.lock().ok()?;
-        Some(!process.try_reap().ok()?)
+        let process = process.lock().ok()?;
+        Some(!process.exited().ok()?)
     }
 
     pub fn cleanup_stale(&self, generation: u64) {
@@ -672,7 +674,7 @@ impl ManagedProcesses {
                     self.remove(&key, &session);
                     return Err("grant_expired: os".into());
                 }
-                if process.try_reap().map_err(|error| error.to_string())? {
+                if process.exited().map_err(|error| error.to_string())? {
                     self.remove(&key, &session);
                     return Err("process_stopped".into());
                 }
@@ -1025,9 +1027,20 @@ mod tests {
     }
 
     #[test]
-    fn a_reaped_child_is_never_signalled_through_its_old_group_id() {
-        let mut finished = ManagedProcess {
-            child: Command::new("true").process_group(0).spawn().unwrap(),
+    fn dropping_a_session_kills_what_its_exited_leader_left_in_the_group() {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 & echo $!"])
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let orphan: libc::pid_t = line.trim().parse().unwrap();
+        let process = ManagedProcess {
+            child,
             unrestricted: false,
             sender: mpsc::sync_channel(1).0,
             receiver: mpsc::sync_channel(1).1,
@@ -1036,20 +1049,17 @@ mod tests {
             reaped: Arc::default(),
         };
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !finished.try_reap().unwrap() {
-            assert!(Instant::now() < deadline, "the child never exited");
+        while !process.exited().unwrap() {
+            assert!(Instant::now() < deadline, "the leader never exited");
             std::thread::sleep(Duration::from_millis(10));
         }
-        let mut bystander = Command::new("sleep")
-            .arg("30")
-            .process_group(0)
-            .spawn()
-            .unwrap();
-        kill_group_if_alive(bystander.id(), &finished.reaped);
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(bystander.try_wait().unwrap().is_none());
-        kill_group_if_alive(bystander.id(), &Mutex::new(false));
-        assert!(bystander.wait().is_ok());
+        let reaped = Arc::clone(&process.reaped);
+        drop(process);
+        assert!(*reaped.lock().unwrap());
+        while unsafe { libc::kill(orphan, 0) } == 0 {
+            assert!(Instant::now() < deadline, "the background child survived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

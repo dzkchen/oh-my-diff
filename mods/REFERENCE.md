@@ -1584,8 +1584,9 @@ Operations:
   true}` removes it early and returns `{cleared}`. `placement: 'transcript'`
   appends a log notice to the transcript that never reaches the model unless
   `audience: 'model'`, which also adds the text as mod-provided context to the
-  thread's next model request (an OMD stream retry of that request carries it again; at most 8 queued per
-  thread, `model_context_queue_full`). `tool_call_id` draws a transcript
+  thread's next model request and every retry of it until a response completes (at most 8 queued per
+  thread, `model_context_queue_full`; with `model_request` interceptors' inserted sections, at most 8 per
+  request, the rest waiting for the next one). `tool_call_id` draws a transcript
   notice beneath that tool call's cell in the owned transcript, or as a notice
   naming the call in inline mode or when no drawn cell holds the call.
 - `terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}`
@@ -1662,18 +1663,20 @@ runtime or published view in this host), `command_unavailable` and
 | `omd/client/update` | `{renderer?, viewport?: {width, height, unit}, focus?}` | `{}`; `focus` sets the entry's `focused`; every client gets `omd/roster/updated` and mods render again |
 | `omd/client/detach` | `{}` | `{}` |
 | `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
-| `omd/client/event` | `{epoch, component, event}` with `event` one of `{kind: 'change', value}`, `{kind: 'change', values}` (strings), `{kind: 'pointer', pointer: {column, row, half?: 0\|1\|null, action: 'down'\|'up'\|'scroll_up'\|'scroll_down'\|'move'\|'drag'\|'enter'\|'leave', button: 'left'\|'right'\|'middle'\|null}}`, `{kind: 'scroll', offset}`, `{kind: 'key', key, text?}` or `{kind: 'focus'}` | `{delivered}`; the owner (from `component_owners`) gets `component_event` with `client: clientId` and only the kind's fields above (`origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped); `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing or malformed field the kind requires or an event over 64 KiB |
+| `omd/client/event` | `{epoch, component, event}` with `event` one of `{kind: 'change', value}`, `{kind: 'change', values}` (strings), `{kind: 'pointer', pointer: {column, row, half?: 0\|1\|null, action: 'down'\|'up'\|'scroll_up'\|'scroll_down'\|'move'\|'drag'\|'enter'\|'leave', button: 'left'\|'right'\|'middle'\|null}}`, `{kind: 'scroll', offset}`, `{kind: 'key', key, text?}` or `{kind: 'focus'}` | `{delivered}`, answered in the order the connection sent its events and actions; the owner (from `component_owners`) gets `component_event` with `client: clientId` and only the kind's fields above (`origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped); `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing or malformed field the kind requires or an event over 64 KiB |
 | `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
 | `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}` |
 | `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
-| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, managed, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
+| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, managed, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails with `recovery_unavailable_during_turn` while the lead thread's turn runs. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
 The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
 full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
 `activity`, `diagnostics`), `omd/roster/updated {roster}` and
 `omd/surface/mirrored {caller, operation, arguments}`, and the server request
 `omd/surface/call {caller, operation, arguments, confirm?}`, answered with the
-operation's result or an error whose message the mod receives. Other server
+operation's result or an error whose message the mod receives; when the mod's
+call is cancelled or outlives its callback budget first, the host drops the
+request and a late answer is ignored. Other server
 requests (approvals, `requestUserInput`, permissions, elicitation) reach every
 subscribed client, and the first answer wins, an error included: an SDK client
 answers only what its `onServerRequest` returns a value for (`undefined` leaves
@@ -1719,10 +1722,12 @@ controls](#binary-evidence-and-package-controls)); a client listing `svg`,
 `png` or `jpeg` reads the resource with `omd/resource/read` and draws it.
 `terminal.notify`, `terminal.notice` and `terminal.blit` are mirrored to
 attached clients in both modes, blits only to clients listing `cells`; others
-draw a raster's `alt`. Headless, the host answers those three itself: a blit
-is checked against `component_owners` (`terminal_blit_not_owned`,
-`terminal_blit_unknown`) and a `model`-audience notice is still queued for the
-model.
+draw a raster's `alt`. Headless, the host answers those three itself with the
+terminal's validation: a blit is checked against `component_owners`
+(`terminal_blit_not_owned`, `terminal_blit_unknown`) and the raster's size and
+paced at one frame per 33 ms with the same 32-update backpressure, a notice
+fails with `terminal_notice_invalid` like in the terminal, and a
+`model`-audience notice is still queued for the model.
 
 Delegation: with no terminal attached, `features` includes `surface_call` and
 `delegable` lists the declared operations the host delegates. A mod's surface
@@ -2050,8 +2055,9 @@ restores the transcript the latest rewrite replaced and keeps rows added since;
 undoing an undo redoes it. The host keeps a per-thread revision log, anchored by
 the authority broker when it is deployed, and resume fails with
 `history_anchor_mismatch` or `history_original_mismatch` when the log or a kept
-original changed; an interrupted rewrite is rolled forward or discarded on the
-next access. Revoking the mod drops `history_write`.
+original changed, or `history_anchor_unavailable` when the deployed broker
+cannot be asked; an interrupted rewrite, including a record torn by a crash, is
+rolled forward or discarded on the next access. Revoking the mod drops `history_write`.
 
 ### Compaction interception (`compaction_intercept_v1`)
 
@@ -2258,7 +2264,8 @@ self-contained `index.ts`, inlining the small JSX factory so the host still sees
 one module with no value imports. The project needs `typescript` installed
 (`pnpm add -D typescript@5.9.3`); without it the command fails with
 `jsx_requires_typescript`. Edit `index.tsx` and treat `index.ts` as generated
-output. The scaffolded `tsconfig.json` sets `jsx: "react-jsx"` and
+output; a hand-written `index.ts` beside `index.tsx` is never overwritten and
+fails with `jsx_entrypoint_conflict`. The scaffolded `tsconfig.json` sets `jsx: "react-jsx"` and
 `jsxImportSource: "@oh-my-diff/mod-api"`; `check` type-checks `index.tsx` itself.
 
 Each `TerminalComponent` kind is an intrinsic element (`<box>`, `<line>`,

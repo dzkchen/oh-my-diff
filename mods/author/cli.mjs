@@ -243,9 +243,12 @@ function compileJsx(directory) {
   if (/\bFragment\b/.test(importLine.exec(outputText)?.[1] ?? '')) fail('jsx_unsupported_element: fragment');
   const inlined = outputText.replace(importLine, (_match, names) => `const {${names.replaceAll(' as ', ': ')}} = (() => {\n${factory}return { jsx, jsxs };\n})();`);
   if (inlined.includes('@oh-my-diff/mod-api/jsx-runtime')) fail('jsx_import_unsupported: index.tsx may only use the JSX factory import the compiler emits');
-  const generated = `// @ts-nocheck\n${inlined}`;
+  const header = '// @ts-nocheck\n// Generated from index.tsx; edit that file instead.\n';
+  const generated = `${header}${inlined}`;
   const target = join(directory, 'index.ts');
-  if (!existsSync(target) || readFileSync(target, 'utf8') !== generated) writeFileSync(target, generated);
+  const existing = existsSync(target) ? readFileSync(target, 'utf8') : null;
+  if (existing !== null && !existing.startsWith(header)) fail('jsx_entrypoint_conflict: index.ts was not generated from index.tsx; remove one of them');
+  if (existing !== generated) writeFileSync(target, generated);
 }
 
 function checkProject(directory) {

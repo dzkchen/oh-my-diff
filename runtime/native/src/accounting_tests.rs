@@ -1240,7 +1240,7 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
 }
 
 #[test]
-fn queued_mod_notices_join_only_the_threads_next_request() {
+fn queued_mod_notices_repeat_on_retries_until_a_response_completes() {
     let (root, accounts, task, _request, _body) = setup();
     let thread = "queued-notices";
     accounts
@@ -1257,6 +1257,20 @@ fn queued_mod_notices_join_only_the_threads_next_request() {
         first.contains("Mod-provided context") && first.contains("lint failed"),
         "{first}"
     );
+    let retried = prepared(&accounts, thread, &body).unwrap().to_string();
+    assert!(retried.contains("lint failed"), "{retried}");
+    let mut request = Request::new(http::Method::POST, "http://localhost/responses".into());
+    request.headers.insert("thread-id", thread.parse().unwrap());
+    let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
+    accounts.prepare(&mut request, &mut encoded).unwrap();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut completed = json!({"type": "response.completed", "response": {"usage":
+        {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 5}}});
+    let _ = attempt.observe(&mut completed, true);
+    drop(attempt);
     let next = prepared(&accounts, thread, &body).unwrap().to_string();
     assert!(!next.contains("lint failed"), "{next}");
 }

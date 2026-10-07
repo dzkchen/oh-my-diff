@@ -556,3 +556,54 @@ fn presentation_reports_the_terminal_screen_mode() {
     );
     assert_eq!(presented(Value::Null), Value::Null);
 }
+
+#[test]
+fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
+    assert_eq!(
+        notice_request(&json!({"text": "saved"})),
+        Ok(NoticeRequest::Transient {
+            id: None,
+            kind: "info",
+            placement: NoticePlacement::Toast,
+            text: "saved",
+            ttl: std::time::Duration::from_secs(5),
+        })
+    );
+    assert_eq!(
+        notice_request(
+            &json!({"text": "slow", "kind": "warning", "placement": "transcript",
+            "audience": "model", "tool_call_id": "call_1"})
+        ),
+        Ok(NoticeRequest::Transcript {
+            kind: "warning",
+            text: "slow",
+            model: true,
+            call_id: Some("call_1"),
+        })
+    );
+    assert_eq!(
+        notice_request(&json!({"id": "run", "placement": "status", "clear": true})),
+        Ok(NoticeRequest::Clear { id: "run" })
+    );
+    for arguments in [
+        json!({}),
+        json!({"text": " "}),
+        json!({"text": "x".repeat(513)}),
+        json!({"text": "a\u{1b}b"}),
+        json!({"text": "x", "kind": "fatal"}),
+        json!({"text": "x", "ttl_ms": 999}),
+        json!({"text": "x", "ttl_ms": 60_001}),
+        json!({"text": "x", "audience": "model"}),
+        json!({"text": "x", "tool_call_id": "call_1"}),
+        json!({"text": "x", "placement": "transcript", "ttl_ms": 2000}),
+        json!({"text": "x", "placement": "transcript", "id": "run"}),
+        json!({"id": "run", "placement": "transcript", "clear": true}),
+        json!({"id": "Bad Id", "clear": true}),
+    ] {
+        assert_eq!(
+            notice_request(&arguments),
+            Err("terminal_notice_invalid".to_owned()),
+            "{arguments}"
+        );
+    }
+}

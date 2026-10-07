@@ -140,16 +140,9 @@ fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, 
         .ok_or_else(|| format!("view_stale: {component}"))
 }
 
-/// The published view, or `(0, 0, null)` while mods are inactive or before the host publishes its first one.
-pub fn view() -> Result<(u64, u64, Value), String> {
-    let Ok(core) = core() else {
-        return Ok((0, 0, Value::Null));
-    };
-    let Some(snapshot) = core.views.published() else {
-        return Ok((0, 0, Value::Null));
-    };
-    let value = serde_json::to_value(&*snapshot).map_err(|error| error.to_string())?;
-    Ok((snapshot.epoch, snapshot.revision, value))
+/// The published view, or `None` while mods are inactive or before the host publishes its first one.
+pub fn published() -> Option<Arc<ModViewSnapshot>> {
+    core().ok()?.views.published()
 }
 
 const EVENT_BYTES: usize = 64 * 1024;
@@ -491,12 +484,24 @@ pub fn recovery_apply(action: &str, target: &str) -> Result<Value, String> {
         "reload" => {}
         _ => return Err(format!("recovery_action_invalid: {action}")),
     }
+    if let Ok(core) = core() {
+        idle(&core)?;
+    }
     let (_, store) = store()?;
     store.reload().map_err(|error| error.to_string())?;
     if let Ok(core) = core() {
         reloaded(&core);
     }
     Ok(json!({"action": action, "target": target, "status": "applied"}))
+}
+
+pub(super) fn idle(core: &Core) -> Result<(), String> {
+    match core.expansion.current() {
+        Some(lead) if core.expansion.turn_running(lead.thread) => {
+            Err("recovery_unavailable_during_turn: reload after the turn ends".into())
+        }
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn reloaded(core: &Core) {

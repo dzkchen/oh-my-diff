@@ -14108,10 +14108,28 @@ index d0c9fea6d..7efa9b4ba 100644
  export type { ThreadSearchSortKey } from "./ThreadSearchSortKey";
  export type { ThreadSection } from "./ThreadSection";
 diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
-index c37c4956f..c7933eb29 100644
+index c37c4956f..8fbdd3fbd 100644
 --- a/codex-rs/app-server-protocol/src/protocol/common.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/common.rs
-@@ -757,6 +757,11 @@ client_request_definitions! {
+@@ -129,6 +129,7 @@ macro_rules! experimental_type_entry {
+ pub enum ClientRequestSerializationScope {
+     Global(&'static str),
+     GlobalSharedRead(&'static str),
++    Connection(&'static str),
+     Thread { thread_id: String },
+     ThreadPath { path: PathBuf },
+     CommandExecProcess { process_id: String },
+@@ -148,6 +149,9 @@ macro_rules! serialization_scope_expr {
+     ($actual_params:ident, global_shared_read($key:literal)) => {
+         Some(ClientRequestSerializationScope::GlobalSharedRead($key))
+     };
++    ($actual_params:ident, connection($key:literal)) => {
++        Some(ClientRequestSerializationScope::Connection($key))
++    };
+     ($actual_params:ident, thread_id($params:ident . $field:ident)) => {
+         Some(ClientRequestSerializationScope::Thread {
+             thread_id: $actual_params.$field.clone(),
+@@ -757,6 +761,11 @@ client_request_definitions! {
          serialization: thread_id(params.thread_id),
          response: v2::ThreadRevertResponse,
      },
@@ -14123,7 +14141,7 @@ index c37c4956f..c7933eb29 100644
      ThreadList => "thread/list" {
          params: v2::ThreadListParams,
          inspect_params: true,
-@@ -1488,6 +1493,66 @@ client_request_definitions! {
+@@ -1488,6 +1497,66 @@ client_request_definitions! {
          serialization: fuzzy_session_id(params.session_id),
          response: FuzzyFileSearchSessionStopResponse,
      },
@@ -14154,13 +14172,13 @@ index c37c4956f..c7933eb29 100644
 +    #[experimental("omd/client/event")]
 +    OmdClientEvent => "omd/client/event" {
 +        params: v2::OmdClientEventParams,
-+        serialization: None,
++        serialization: connection("omd-client-input"),
 +        response: v2::OmdClientEventResponse,
 +    },
 +    #[experimental("omd/action")]
 +    OmdAction => "omd/action" {
 +        params: v2::OmdActionParams,
-+        serialization: None,
++        serialization: connection("omd-client-input"),
 +        response: v2::OmdActionResponse,
 +    },
 +    #[experimental("omd/render")]
@@ -14190,7 +14208,7 @@ index c37c4956f..c7933eb29 100644
  }
 
  /// Generates an `enum ServerRequest` where each variant is a request that the
-@@ -1816,6 +1881,13 @@ server_request_definitions! {
+@@ -1816,6 +1885,13 @@ server_request_definitions! {
          response: v2::CurrentTimeReadResponse,
      },
 
@@ -14204,7 +14222,7 @@ index c37c4956f..c7933eb29 100644
      /// DEPRECATED APIs below
      /// Request to approve a patch.
      /// This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).
-@@ -1923,6 +1995,7 @@ server_notification_definitions! {
+@@ -1923,6 +1999,7 @@ server_notification_definitions! {
      ThreadUnarchived => "thread/unarchived" (v2::ThreadUnarchivedNotification),
      ThreadClosed => "thread/closed" (v2::ThreadClosedNotification),
      ThreadReverted => "thread/reverted" (v2::ThreadRevertedNotification),
@@ -14212,7 +14230,7 @@ index c37c4956f..c7933eb29 100644
      SkillsChanged => "skills/changed" (v2::SkillsChangedNotification),
      ThreadNameUpdated => "thread/name/updated" (v2::ThreadNameUpdatedNotification),
      ThreadAttachmentUpdated => "thread/attachment/updated" (v2::ThreadAttachmentUpdatedNotification),
-@@ -2027,6 +2100,12 @@ server_notification_definitions! {
+@@ -2027,6 +2104,12 @@ server_notification_definitions! {
      ThreadRealtimeError => "thread/realtime/error" (v2::ThreadRealtimeErrorNotification),
      #[experimental("thread/realtime/closed")]
      ThreadRealtimeClosed => "thread/realtime/closed" (v2::ThreadRealtimeClosedNotification),
@@ -14225,6 +14243,28 @@ index c37c4956f..c7933eb29 100644
 
      /// Notifies the user of world-writable directories on Windows, which cannot be protected by the sandbox.
      WindowsWorldWritableWarning => "windows/worldWritableWarning" (v2::WindowsWorldWritableWarningNotification),
+@@ -2358,6 +2441,21 @@ mod tests {
+             })
+         );
+
++        let omd_event = ClientRequest::OmdClientEvent {
++            request_id: request_id(),
++            params: v2::OmdClientEventParams {
++                epoch: String::new(),
++                component: "canvas".to_string(),
++                event: serde_json::json!({"kind": "pointer"}),
++            },
++        };
++        assert_eq!(
++            omd_event.serialization_scope(),
++            Some(ClientRequestSerializationScope::Connection(
++                "omd-client-input"
++            ))
++        );
++
+         let plugin_install = ClientRequest::PluginInstall {
+             request_id: request_id(),
+             params: v2::PluginInstallParams {
 diff --git a/codex-rs/app-server-protocol/src/protocol/v2/mod.rs b/codex-rs/app-server-protocol/src/protocol/v2/mod.rs
 index 5bc7d96f0..7d65b5e3b 100644
 --- a/codex-rs/app-server-protocol/src/protocol/v2/mod.rs
@@ -16229,6 +16269,35 @@ index 237c58e03..0429c771e 100644
 +        }
 +    }
  }
+diff --git a/codex-rs/app-server/src/request_serialization.rs b/codex-rs/app-server/src/request_serialization.rs
+index 390896a6c..e3b9f21a8 100644
+--- a/codex-rs/app-server/src/request_serialization.rs
++++ b/codex-rs/app-server/src/request_serialization.rs
+@@ -24,6 +24,10 @@ static QUEUED_REQUESTS: Gauge = Gauge::new("app.requests.queued");
+ #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+ pub(crate) enum RequestSerializationQueueKey {
+     Global(&'static str),
++    Connection {
++        connection_id: ConnectionId,
++        name: &'static str,
++    },
+     Thread {
+         thread_id: String,
+     },
+@@ -68,6 +72,13 @@ impl RequestSerializationQueueKey {
+             ClientRequestSerializationScope::GlobalSharedRead(name) => {
+                 (Self::Global(name), RequestSerializationAccess::SharedRead)
+             }
++            ClientRequestSerializationScope::Connection(name) => (
++                Self::Connection {
++                    connection_id,
++                    name,
++                },
++                RequestSerializationAccess::Exclusive,
++            ),
+             ClientRequestSerializationScope::Thread { thread_id } => (
+                 Self::Thread { thread_id },
+                 RequestSerializationAccess::Exclusive,
 diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
 index 8cfbc0098..08f60defb 100644
 --- a/codex-rs/app-server/src/thread_state.rs
@@ -26059,10 +26128,10 @@ index d67c3b766..f39c78daa 100644
      fn read_thread(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread>;
 
 diff --git a/codex-rs/thread-store/src/types.rs b/codex-rs/thread-store/src/types.rs
-index 5030f8864..147cad340 100644
+index 5030f8864..bb2c5bdcd 100644
 --- a/codex-rs/thread-store/src/types.rs
 +++ b/codex-rs/thread-store/src/types.rs
-@@ -222,6 +222,89 @@ pub struct RevertThreadParams {
+@@ -222,6 +222,90 @@ pub struct RevertThreadParams {
      pub multi_agent_version: Option<MultiAgentVersion>,
  }
 
@@ -26146,6 +26215,7 @@ index 5030f8864..147cad340 100644
 +/// Tamper evidence for a thread's revision log, e.g. a hash chain held outside the user's files.
 +pub trait HistoryWitness: Send + Sync {
 +    fn append(&self, stream: &std::path::Path, sha256: &str) -> std::io::Result<()>;
++    /// Fails with `InvalidData` when the log differs from its anchors; any other error means unverifiable.
 +    fn verify(&self, stream: &std::path::Path, sha256s: &[String]) -> std::io::Result<()>;
 +}
 +
@@ -33626,10 +33696,10 @@ index bbb05987b..4c263cbbb 100644
          let y = if area.height == 0 {
              0
 diff --git a/codex-rs/tui/src/history_cell/notices.rs b/codex-rs/tui/src/history_cell/notices.rs
-index c5fa22417..ebf2928fd 100644
+index c5fa22417..1e775e93a 100644
 --- a/codex-rs/tui/src/history_cell/notices.rs
 +++ b/codex-rs/tui/src/history_cell/notices.rs
-@@ -314,22 +314,95 @@ impl HistoryCell for DeprecationNoticeCell {
+@@ -314,22 +314,98 @@ impl HistoryCell for DeprecationNoticeCell {
          lines
      }
  }
@@ -33655,14 +33725,8 @@ index c5fa22417..ebf2928fd 100644
 +        message,
 +        hint: None,
 +    }
- }
-
--pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
--    // Use a hair space (U+200A) to create a subtle, near-invisible separation
--    // before the text. VS16 is intentionally omitted to keep spacing tighter
--    // in terminals like Ghostty.
--    let lines: Vec<Line<'static>> = vec![vec![format!("■ {message}").red()].into()];
--    PlainHistoryCell { lines }
++}
++
 +pub(crate) fn new_mod_notice(kind: &str, message: String, owner: &str) -> NoticeHistoryCell {
 +    NoticeHistoryCell {
 +        kind: notice_kind(kind),
@@ -33682,7 +33746,10 @@ index c5fa22417..ebf2928fd 100644
 +pub(crate) fn notice_spans(kind: &str, message: &str) -> Vec<Span<'static>> {
 +    match kind {
 +        "error" => vec![format!("■ {message}").red()],
-+        "warning" => vec!["⚠ ".yellow(), message.to_owned().yellow()],
++        "warning" => {
++            let style = crate::style::status_style(crate::style::StatusTone::Attention);
++            vec!["⚠ ".set_style(style), message.to_owned().set_style(style)]
++        }
 +        _ => vec!["• ".dim(), message.to_owned().into()],
 +    }
 +}
@@ -33703,8 +33770,14 @@ index c5fa22417..ebf2928fd 100644
 +        }
 +        vec![line.into()]
 +    }
-+}
-+
+ }
+
+-pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
+-    // Use a hair space (U+200A) to create a subtle, near-invisible separation
+-    // before the text. VS16 is intentionally omitted to keep spacing tighter
+-    // in terminals like Ghostty.
+-    let lines: Vec<Line<'static>> = vec![vec![format!("■ {message}").red()].into()];
+-    PlainHistoryCell { lines }
 +impl HistoryCell for NoticeHistoryCell {
 +    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
 +        Some(crate::mod_render::RenderTarget::new(
@@ -36982,10 +37055,10 @@ index 000000000..aef1c863b
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 000000000..07104240c
+index 000000000..32051f5e2
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,680 @@
+@@ -0,0 +1,708 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -37028,6 +37101,7 @@ index 000000000..07104240c
 +use codex_app_server_protocol::RequestId;
 +use codex_app_server_protocol::ServerNotification;
 +use codex_app_server_protocol::ServerRequestPayload;
++use codex_omd::ModViewSnapshot;
 +use codex_omd::client_surface;
 +use codex_omd::client_surface::Observed;
 +use codex_omd_extension::clients;
@@ -37087,16 +37161,27 @@ index 000000000..07104240c
 +}
 +
 +/// What a redraw changes besides the revision: progress, activity and diagnostics.
-+type PushedKey = (u64, u64, Value, Value, Value);
++type PushedKey = Option<(u64, u64, Value, Value, Value)>;
 +
-+fn pushed_key(epoch: u64, revision: u64, snapshot: &Value) -> PushedKey {
-+    (
-+        epoch,
-+        revision,
-+        snapshot["progress"].clone(),
-+        snapshot["activity"].clone(),
-+        snapshot["diagnostics"].clone(),
-+    )
++fn pushed_key(snapshot: Option<&ModViewSnapshot>) -> PushedKey {
++    snapshot.map(|snapshot| {
++        (
++            snapshot.epoch,
++            snapshot.revision,
++            serde_json::to_value(&snapshot.progress).unwrap_or_default(),
++            serde_json::to_value(&snapshot.activity).unwrap_or_default(),
++            serde_json::to_value(&snapshot.diagnostics).unwrap_or_default(),
++        )
++    })
++}
++
++fn bound(snapshot: Option<&ModViewSnapshot>) -> (u64, u64) {
++    snapshot.map_or((0, 0), |snapshot| (snapshot.epoch, snapshot.revision))
++}
++
++async fn serialized(snapshot: Option<Arc<ModViewSnapshot>>) -> Result<Value, JSONRPCErrorError> {
++    blocking(move || serde_json::to_value(snapshot.as_deref()).map_err(|error| error.to_string()))
++        .await
 +}
 +
 +const RETIRED_TOKENS: usize = 8;
@@ -37165,12 +37250,8 @@ index 000000000..07104240c
 +}
 +
 +/// Epochs exceed JS integer precision, so the wire carries them as opaque strings.
-+fn wire_epoch(epoch: u64, snapshot: &Value) -> String {
-+    if snapshot.is_null() {
-+        String::new()
-+    } else {
-+        epoch.to_string()
-+    }
++fn wire_epoch(snapshot: Option<&ModViewSnapshot>) -> String {
++    snapshot.map_or_else(String::new, |snapshot| snapshot.epoch.to_string())
 +}
 +
 +fn mod_renderer(renderer: OmdRenderer) -> Result<Value, JSONRPCErrorError> {
@@ -37291,7 +37372,7 @@ index 000000000..07104240c
 +        if gate.is_closed() {
 +            return Err(closing());
 +        }
-+        let (epoch, _, snapshot) = blocking(clients::view).await?;
++        let epoch = wire_epoch(clients::published().as_deref());
 +        let replaced = self.attached().remove(&connection_id);
 +        drop(replaced);
 +        let client_id = format!(
@@ -37348,7 +37429,7 @@ index 000000000..07104240c
 +        let response = OmdClientAttachResponse {
 +            client_id,
 +            protocol: "omd-client/1".to_string(),
-+            epoch: wire_epoch(epoch, &snapshot),
++            epoch,
 +            roster: roster(),
 +            features: if headless {
 +                vec!["surface_call".to_string()]
@@ -37369,23 +37450,18 @@ index 000000000..07104240c
 +        cells: Arc<AtomicBool>,
 +    ) -> Arc<dyn Fn(Observed) + Send + Sync> {
 +        let clients = Arc::downgrade(self);
-+        let runtime = tokio::runtime::Handle::current();
-+        Arc::new(move |observed| {
-+            if matches!(&observed, Observed::Mirrored { operation, .. }
-+                if operation == "terminal.blit" && !cells.load(Ordering::Acquire))
-+            {
-+                return;
-+            }
-+            let Some(clients) = clients.upgrade() else {
-+                return;
-+            };
-+            let view = Arc::clone(&view);
-+            runtime.spawn(async move {
++        // One task per connection delivers in observation order.
++        let (sender, mut observations) = tokio::sync::mpsc::unbounded_channel();
++        tokio::spawn(async move {
++            while let Some(observed) = observations.recv().await {
++                let Some(clients) = clients.upgrade() else {
++                    return;
++                };
 +                let notification = match observed {
 +                    Observed::Redraw => {
-+                        let view = view.lock_owned().await;
++                        let view = Arc::clone(&view).lock_owned().await;
 +                        clients.push(connection_id, view, /*force*/ false).await;
-+                        return;
++                        continue;
 +                    }
 +                    Observed::Roster => {
 +                        ServerNotification::OmdRosterUpdated(OmdRosterUpdatedNotification {
@@ -37406,7 +37482,14 @@ index 000000000..07104240c
 +                    .outgoing
 +                    .send_server_notification_to_connections(&[connection_id], notification)
 +                    .await;
-+            });
++            }
++        });
++        Arc::new(move |observed| {
++            if !matches!(&observed, Observed::Mirrored { operation, .. }
++                if operation == "terminal.blit" && !cells.load(Ordering::Acquire))
++            {
++                let _ = sender.send(observed);
++            }
 +        })
 +    }
 +
@@ -37416,20 +37499,23 @@ index 000000000..07104240c
 +        mut view: OwnedMutexGuard<View>,
 +        force: bool,
 +    ) {
-+        let Ok((epoch, revision, snapshot)) = blocking(clients::view).await else {
-+            return;
-+        };
-+        let pushed = pushed_key(epoch, revision, &snapshot);
++        let published = clients::published();
++        let pushed = pushed_key(published.as_deref());
 +        if !force && view.pushed.as_ref() == Some(&pushed) {
 +            return;
 +        }
++        let (epoch, revision) = bound(published.as_deref());
++        let epoch_wire = wire_epoch(published.as_deref());
++        let Ok(snapshot) = serialized(published).await else {
++            return;
++        };
 +        let action_token = view.token_for(epoch, revision);
 +        view.pushed = Some(pushed);
 +        self.outgoing
 +            .send_server_notification_to_connections(
 +                &[connection_id],
 +                ServerNotification::OmdViewUpdated(OmdViewUpdatedNotification {
-+                    epoch: wire_epoch(epoch, &snapshot),
++                    epoch: epoch_wire,
 +                    revision,
 +                    snapshot,
 +                    action_token,
@@ -37471,11 +37557,14 @@ index 000000000..07104240c
 +
 +    pub(crate) async fn view_read(&self, connection_id: ConnectionId) -> Response {
 +        let (_, view) = self.client(connection_id)?;
-+        let (epoch, revision, snapshot) = blocking(clients::view).await?;
++        let published = clients::published();
++        let (epoch, revision) = bound(published.as_deref());
++        let epoch_wire = wire_epoch(published.as_deref());
++        let snapshot = serialized(published).await?;
 +        let action_token = view.lock().await.token_for(epoch, revision);
 +        Ok(Some(
 +            OmdViewReadResponse {
-+                epoch: wire_epoch(epoch, &snapshot),
++                epoch: epoch_wire,
 +                revision,
 +                snapshot,
 +                action_token,
@@ -37490,8 +37579,7 @@ index 000000000..07104240c
 +        params: OmdClientEventParams,
 +    ) -> Response {
 +        let (client_id, _) = self.client(connection_id)?;
-+        let (epoch, _, snapshot) = blocking(clients::view).await?;
-+        if params.epoch != wire_epoch(epoch, &snapshot) {
++        if params.epoch != wire_epoch(clients::published().as_deref()) {
 +            return Err(invalid_request(
 +                "view_stale: the host restarted; re-read the view",
 +            ));
@@ -37514,7 +37602,7 @@ index 000000000..07104240c
 +    ) -> Response {
 +        let (client_id, view) = self.client(connection_id)?;
 +        // clients::action rejects a snapshot other than the one the token was spent against.
-+        let (epoch, revision, _) = blocking(clients::view).await?;
++        let (epoch, revision) = bound(clients::published().as_deref());
 +        let (action_token, (epoch, revision)) = {
 +            let mut view = view.lock().await;
 +            view.token_for(epoch, revision);
@@ -37596,11 +37684,12 @@ index 000000000..07104240c
 +        Ok(Some(OmdRecoveryApplyResponse(result).into()))
 +    }
 +
-+    /// Sends `omd/surface/call` to `targets`; the first answer wins.
++    /// Sends `omd/surface/call` to `targets`; the first answer wins, unless the mod's call ends first.
 +    pub(crate) async fn surface_call(
 +        &self,
 +        targets: Vec<ConnectionId>,
 +        params: OmdSurfaceCallParams,
++        active: impl Fn() -> bool + Send,
 +    ) -> Result<Value, String> {
 +        let (request_id, answer) = self
 +            .outgoing
@@ -37626,12 +37715,24 @@ index 000000000..07104240c
 +        if closed {
 +            self.outgoing.cancel_request(&request_id).await;
 +        }
-+        let answer = answer.await;
++        let ended = async {
++            while active() {
++                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++            }
++        };
++        let answer = tokio::select! {
++            answer = answer => Some(answer),
++            () = ended => None,
++        };
 +        self.calls().remove(&request_id);
 +        match answer {
-+            Ok(Ok(result)) => Ok(result),
-+            Ok(Err(error)) => Err(error.message),
-+            Err(_) => Err("client_surface_closed".to_string()),
++            Some(Ok(Ok(result))) => Ok(result),
++            Some(Ok(Err(error))) => Err(error.message),
++            Some(Err(_)) => Err("client_surface_closed".to_string()),
++            None => {
++                self.outgoing.cancel_request(&request_id).await;
++                Err("callback_cancelled".to_string())
++            }
 +        }
 +    }
 +
@@ -37668,10 +37769,10 @@ index 000000000..07104240c
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_clients_tests.rs b/codex-rs/app-server/src/omd_clients_tests.rs
 new file mode 100644
-index 000000000..8254d89c3
+index 000000000..a92ba690b
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients_tests.rs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,199 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingEnvelope;
 +use crate::transport::OutgoingMessage;
@@ -37719,7 +37820,7 @@ index 000000000..8254d89c3
 +}
 +
 +#[tokio::test]
-+async fn surface_calls_reach_declaring_clients_and_fail_when_they_disconnect() {
++async fn surface_calls_reach_declaring_clients_and_end_with_the_mod_call_or_the_connection() {
 +    let (sender, mut outgoing) = mpsc::channel(8);
 +    let clients = OmdClients::new(Arc::new(OutgoingMessageSender::new(
 +        sender,
@@ -37738,7 +37839,11 @@ index 000000000..8254d89c3
 +    let call = tokio::spawn({
 +        let clients = Arc::clone(&clients);
 +        let params = params.clone();
-+        async move { clients.surface_call(vec![ConnectionId(91)], params).await }
++        async move {
++            clients
++                .surface_call(vec![ConnectionId(91)], params, || true)
++                .await
++        }
 +    });
 +    let (connection, request_id, sent) = sent_call(&mut outgoing).await;
 +    assert_eq!(
@@ -37755,9 +37860,29 @@ index 000000000..8254d89c3
 +        .await;
 +    assert_eq!(call.await.unwrap(), Ok(json!({"applied": true})));
 +
++    let active = Arc::new(AtomicBool::new(true));
++    let call = tokio::spawn({
++        let (clients, params, active) = (Arc::clone(&clients), params.clone(), Arc::clone(&active));
++        async move {
++            clients
++                .surface_call(vec![ConnectionId(91)], params, || {
++                    active.load(Ordering::Acquire)
++                })
++                .await
++        }
++    });
++    sent_call(&mut outgoing).await;
++    active.store(false, Ordering::Release);
++    assert_eq!(call.await.unwrap(), Err("callback_cancelled".to_string()));
++    assert!(clients.calls().is_empty());
++
 +    let call = tokio::spawn({
 +        let clients = Arc::clone(&clients);
-+        async move { clients.surface_call(vec![ConnectionId(91)], params).await }
++        async move {
++            clients
++                .surface_call(vec![ConnectionId(91)], params, || true)
++                .await
++        }
 +    });
 +    sent_call(&mut outgoing).await;
 +    clients.connection_closed(ConnectionId(91)).await;
@@ -37807,11 +37932,15 @@ index 000000000..8254d89c3
 +
 +#[test]
 +fn diagnostic_only_changes_are_pushed() {
-+    let snapshot =
-+        |diagnostics: Value| json!({"progress": null, "activity": [], "diagnostics": diagnostics});
++    let snapshot = |diagnostics: &[&str]| ModViewSnapshot {
++        epoch: 1,
++        revision: 1,
++        diagnostics: diagnostics.iter().map(ToString::to_string).collect(),
++        ..ModViewSnapshot::default()
++    };
 +    assert_ne!(
-+        pushed_key(1, 1, &snapshot(json!([]))),
-+        pushed_key(1, 1, &snapshot(json!(["terminal: invalid view"])))
++        pushed_key(Some(&snapshot(&[]))),
++        pushed_key(Some(&snapshot(&["terminal: invalid view"])))
 +    );
 +}
 +
@@ -37845,10 +37974,10 @@ index 000000000..8254d89c3
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 000000000..746ebebef
+index 000000000..b76d4b519
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,324 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -37856,6 +37985,7 @@ index 000000000..746ebebef
 +use std::sync::PoisonError;
 +use std::sync::atomic::AtomicU64;
 +use std::sync::atomic::Ordering;
++use std::time::Instant;
 +
 +use codex_app_server_protocol::JSONRPCMessage;
 +use codex_app_server_protocol::JSONRPCRequest;
@@ -37863,6 +37993,7 @@ index 000000000..746ebebef
 +use codex_app_server_protocol::RequestId;
 +use codex_omd::client_surface;
 +use codex_omd::client_surface::ClientSurface;
++use codex_omd::client_surface::NoticeRequest;
 +use codex_omd::client_surface::SurfaceCall;
 +use serde_json::Value;
 +use serde_json::json;
@@ -37904,6 +38035,7 @@ index 000000000..746ebebef
 +            runtime: tokio::runtime::Handle::current(),
 +            connection: OnceCell::new(),
 +            next: AtomicU64::new(0),
++            frames: Frames::default(),
 +        }),
 +    ))))
 +}
@@ -37918,6 +38050,7 @@ index 000000000..746ebebef
 +    runtime: tokio::runtime::Handle,
 +    connection: OnceCell<(ConnectionId, Replies)>,
 +    next: AtomicU64,
++    frames: Frames,
 +}
 +
 +fn closed() -> String {
@@ -38026,6 +38159,7 @@ index 000000000..746ebebef
 +                            "message": confirm}),
 +                        confirm: None,
 +                    },
++                    || call.lifetime.active(),
 +                )
 +                .await?;
 +            if answer["status"] != "accepted" {
@@ -38048,24 +38182,13 @@ index 000000000..746ebebef
 +    }
 +}
 +
-+/// `terminal.notice` without a terminal: only a model-audience notice has an effect.
++/// `terminal.notice` without a terminal: attached clients see the mirrored call; a model notice is queued.
 +fn notice(call: &SurfaceCall) -> Result<Value, String> {
-+    let arguments = &call.arguments;
-+    if arguments["clear"] == true {
-+        return Ok(json!({"cleared": false}));
-+    }
-+    if arguments["audience"] != "model" {
-+        return Ok(json!({"shown": true}));
-+    }
-+    let text = arguments["text"].as_str().filter(|text| {
-+        !text.trim().is_empty() && text.len() <= 512 && !text.chars().any(char::is_control)
-+    });
-+    match text {
-+        Some(text)
-+            if arguments["placement"] == "transcript"
-+                && arguments["ttl_ms"].is_null()
-+                && arguments["id"].is_null() =>
-+        {
++    match client_surface::notice_request(&call.arguments)? {
++        NoticeRequest::Clear { .. } => Ok(json!({"cleared": false})),
++        NoticeRequest::Transcript {
++            text, model: true, ..
++        } => {
 +            let thread = call
 +                .thread
 +                .as_deref()
@@ -38073,17 +38196,47 @@ index 000000000..746ebebef
 +            codex_omd::model_request::queue_section(thread, &call.caller, text)?;
 +            Ok(json!({"shown": true, "model": true}))
 +        }
-+        _ => Err("terminal_notice_invalid".to_string()),
++        _ => Ok(json!({"shown": true})),
 +    }
 +}
 +
-+fn blit(caller: &str, arguments: &Value) -> Result<Value, String> {
-+    let (_, _, snapshot) = codex_omd_extension::clients::view()?;
-+    let key = arguments["key"].as_str().unwrap_or_default();
-+    match snapshot["component_owners"][key].as_str() {
-+        Some(owner) if owner == caller => Ok(json!({"frame": 0, "queued": 0, "frame_ms": 0})),
-+        Some(_) => Err("terminal_blit_not_owned".to_string()),
-+        None => Err("terminal_blit_unknown".to_string()),
++/// Paces mirrored `terminal.blit` frames like a drawing surface's queue: one frame per interval.
++#[derive(Default)]
++struct Frames(Mutex<HashMap<String, (u64, Instant)>>);
++
++impl Frames {
++    fn blit(&self, caller: &str, arguments: &Value, now: Instant) -> Result<Value, String> {
++        let key = arguments["key"].as_str().unwrap_or_default();
++        let published = codex_omd_extension::clients::published();
++        let owner = published
++            .as_ref()
++            .and_then(|snapshot| snapshot.component_owners.get(key))
++            .map(String::as_str);
++        let size = published
++            .as_ref()
++            .and_then(|snapshot| snapshot.view.raster_size(key));
++        let blit = client_surface::blit_request(caller, owner, size, arguments)?;
++        Ok(self.pace(blit.key, now))
++    }
++
++    fn pace(&self, key: String, now: Instant) -> Value {
++        let mut frames = self.0.lock().unwrap_or_else(PoisonError::into_inner);
++        let (frame, drained) = frames.entry(key).or_insert((0, now));
++        let queued = drained.saturating_duration_since(now).as_millis()
++            / client_surface::BLIT_FRAME.as_millis();
++        if queued >= client_surface::BLIT_QUEUE_UPDATES as u128 {
++            let wait = drained.saturating_duration_since(now)
++                - client_surface::BLIT_FRAME * (client_surface::BLIT_QUEUE_UPDATES as u32 - 1);
++            return json!({"status": "backpressure",
++                "retry_after_ms": wait.as_millis().max(1) as u64});
++        }
++        *drained = (*drained).max(now) + client_surface::BLIT_FRAME;
++        *frame += 1;
++        json!({
++            "frame": *frame,
++            "queued": queued + 1,
++            "frame_ms": client_surface::BLIT_FRAME.as_millis() as u64,
++        })
 +    }
 +}
 +
@@ -38095,7 +38248,10 @@ index 000000000..746ebebef
 +                Ok(json!({"delivered": false, "method": "none", "reason": "headless"}))
 +            }
 +            "terminal.notice" => notice(&call),
-+            "terminal.blit" => blit(&call.caller, &call.arguments),
++            "terminal.blit" => self
++                .0
++                .frames
++                .blit(&call.caller, &call.arguments, Instant::now()),
 +            _ if client_surface::USER_ONLY_OPERATIONS.contains(&operation)
 +                || operation == "prompts.consent" =>
 +            {
@@ -38128,9 +38284,12 @@ index 000000000..746ebebef
 +                    arguments: call.arguments,
 +                    confirm: call.confirm,
 +                };
-+                let reply = call.reply;
++                let (reply, lifetime) = (call.reply, call.lifetime);
 +                self.0.runtime.spawn(async move {
-+                    let _ = reply.send(clients.surface_call(targets, params).await);
++                    let answer = clients
++                        .surface_call(targets, params, || lifetime.active())
++                        .await;
++                    let _ = reply.send(answer);
 +                });
 +                return Ok(());
 +            }
@@ -38145,10 +38304,10 @@ index 000000000..746ebebef
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_surface_tests.rs b/codex-rs/app-server/src/omd_surface_tests.rs
 new file mode 100644
-index 000000000..d2b3b9967
+index 000000000..af6c41392
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface_tests.rs
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,186 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingMessageSender;
 +use codex_app_server_protocol::OmdRecoveryReadResponse;
@@ -38169,6 +38328,7 @@ index 000000000..d2b3b9967
 +        runtime: tokio::runtime::Handle::current(),
 +        connection: OnceCell::new(),
 +        next: AtomicU64::new(0),
++        frames: Frames::default(),
 +    }))
 +}
 +
@@ -38182,6 +38342,9 @@ index 000000000..d2b3b9967
 +) {
 +    let (reply, answer) = std::sync::mpsc::sync_channel(1);
 +    let call = SurfaceCall {
++        validity: client_surface::Validity(Arc::new(|| true)),
++        authority: None,
++        lifetime: client_surface::CallLifetime::default(),
 +        caller: "demo".to_string(),
 +        operation: operation.to_string(),
 +        arguments,
@@ -38285,6 +38448,51 @@ index 000000000..d2b3b9967
 +    let (connection_id, methods) = server.await.unwrap();
 +    assert_eq!(methods, vec!["initialize", "thread/list"]);
 +    assert!(surface.0.clients.is_internal(connection_id));
++}
++
++#[tokio::test]
++async fn headless_notices_and_blits_are_validated_and_paced() {
++    let (transport, _events) = mpsc::channel(1);
++    let surface = surface(&transport);
++    for (arguments, expected) in [
++        (json!({"text": "saved"}), Ok(json!({"shown": true}))),
++        (
++            json!({"text": "x".repeat(513)}),
++            Err("terminal_notice_invalid".to_string()),
++        ),
++        (
++            json!({"text": "x", "kind": "fatal"}),
++            Err("terminal_notice_invalid".to_string()),
++        ),
++    ] {
++        let (notice, reply) = call("terminal.notice", arguments, None);
++        surface.submit(notice).unwrap();
++        assert_eq!(answer(reply).await, expected);
++    }
++    let (blit, reply) = call(
++        "terminal.blit",
++        json!({"key": "canvas", "rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
++        None,
++    );
++    surface.submit(blit).unwrap();
++    assert_eq!(
++        answer(reply).await,
++        Err("terminal_blit_unknown".to_string())
++    );
++
++    let frames = Frames::default();
++    let start = Instant::now();
++    for frame in 1..=client_surface::BLIT_QUEUE_UPDATES as u64 {
++        assert_eq!(frames.pace("canvas".into(), start)["frame"], frame);
++    }
++    assert_eq!(
++        frames.pace("canvas".into(), start)["status"],
++        "backpressure"
++    );
++    assert_eq!(
++        frames.pace("canvas".into(), start + client_surface::BLIT_FRAME)["frame"],
++        client_surface::BLIT_QUEUE_UPDATES as u64 + 1
++    );
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/omd_clients.rs b/codex-rs/app-server/tests/suite/v2/omd_clients.rs
 new file mode 100644
@@ -42580,10 +42788,10 @@ index 000000000..64d24f71a
 +codex-sandboxing = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..07ec70727
+index 000000000..05178cf82
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2249 @@
+@@ -0,0 +1,2253 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -43676,6 +43884,7 @@ index 000000000..07ec70727
 +            "x-omd-attempt",
 +            attempt.to_string().parse().map_err(denied)?,
 +        );
++        let mut inserted = 0;
 +        if let Some(mods) = &mods {
 +            let intercepted =
 +                self.intercept_request(mods, &account, &thread, &value, &request_id, attempt)?;
@@ -43698,6 +43907,10 @@ index 000000000..07ec70727
 +                return Ok(());
 +            }
 +            if let Some((given, effective)) = intercepted.sections {
++                inserted = effective
++                    .iter()
++                    .filter(|section| !given.iter().any(|kept| kept["id"] == section["id"]))
++                    .count();
 +                edited |= codex_omd::model_request::apply_sections(&mut value, &given, &effective);
 +            }
 +            if let Some(route) = &intercepted.route {
@@ -43715,6 +43928,7 @@ index 000000000..07ec70727
 +            &mut value,
 +            &thread,
 +            retry_of.as_deref(),
++            inserted,
 +        );
 +        edited |= queued_edit;
 +        if let Some(rates) = account
@@ -43748,12 +43962,7 @@ index 000000000..07ec70727
 +        if edited {
 +            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
 +        }
-+        codex_omd::model_request::commit_queued_sections(
-+            &thread,
-+            &request_id,
-+            &carried,
-+            retry_of.as_deref(),
-+        );
++        codex_omd::model_request::commit_queued_sections(&thread, &request_id, &carried);
 +        Ok(())
 +    }
 +
@@ -44238,6 +44447,9 @@ index 000000000..07ec70727
 +
 +    fn settle(&mut self, raw: &Value) -> Result<(), TransportError> {
 +        let success = raw["type"] == "response.completed";
++        if success {
++            codex_omd::model_request::queued_sections_delivered(&self.thread, &self.request_id);
++        }
 +        let usage = raw
 +            .get("response")
 +            .and_then(|v| v.get("usage"))
@@ -44835,10 +45047,10 @@ index 000000000..07ec70727
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..8b9de0096
+index 000000000..cc15c2256
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1289 @@
+@@ -0,0 +1,1303 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -46081,7 +46293,7 @@ index 000000000..8b9de0096
 +}
 +
 +#[test]
-+fn queued_mod_notices_join_only_the_threads_next_request() {
++fn queued_mod_notices_repeat_on_retries_until_a_response_completes() {
 +    let (root, accounts, task, _request, _body) = setup();
 +    let thread = "queued-notices";
 +    accounts
@@ -46098,6 +46310,20 @@ index 000000000..8b9de0096
 +        first.contains("Mod-provided context") && first.contains("lint failed"),
 +        "{first}"
 +    );
++    let retried = prepared(&accounts, thread, &body).unwrap().to_string();
++    assert!(retried.contains("lint failed"), "{retried}");
++    let mut request = Request::new(http::Method::POST, "http://localhost/responses".into());
++    request.headers.insert("thread-id", thread.parse().unwrap());
++    let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
++    accounts.prepare(&mut request, &mut encoded).unwrap();
++    let mut attempt = accounts
++        .before_send(&mut request, encoded.as_ref())
++        .unwrap()
++        .unwrap();
++    let mut completed = json!({"type": "response.completed", "response": {"usage":
++        {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 5}}});
++    let _ = attempt.observe(&mut completed, true);
++    drop(attempt);
 +    let next = prepared(&accounts, thread, &body).unwrap().to_string();
 +    assert!(!next.contains("lint failed"), "{next}");
 +}
@@ -46130,10 +46356,10 @@ index 000000000..8b9de0096
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..1f8698a43
+index 000000000..7ebec7d20
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,691 @@
+@@ -0,0 +1,696 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -46276,16 +46502,9 @@ index 000000000..1f8698a43
 +        .ok_or_else(|| format!("view_stale: {component}"))
 +}
 +
-+/// The published view, or `(0, 0, null)` while mods are inactive or before the host publishes its first one.
-+pub fn view() -> Result<(u64, u64, Value), String> {
-+    let Ok(core) = core() else {
-+        return Ok((0, 0, Value::Null));
-+    };
-+    let Some(snapshot) = core.views.published() else {
-+        return Ok((0, 0, Value::Null));
-+    };
-+    let value = serde_json::to_value(&*snapshot).map_err(|error| error.to_string())?;
-+    Ok((snapshot.epoch, snapshot.revision, value))
++/// The published view, or `None` while mods are inactive or before the host publishes its first one.
++pub fn published() -> Option<Arc<ModViewSnapshot>> {
++    core().ok()?.views.published()
 +}
 +
 +const EVENT_BYTES: usize = 64 * 1024;
@@ -46627,12 +46846,24 @@ index 000000000..1f8698a43
 +        "reload" => {}
 +        _ => return Err(format!("recovery_action_invalid: {action}")),
 +    }
++    if let Ok(core) = core() {
++        idle(&core)?;
++    }
 +    let (_, store) = store()?;
 +    store.reload().map_err(|error| error.to_string())?;
 +    if let Ok(core) = core() {
 +        reloaded(&core);
 +    }
 +    Ok(json!({"action": action, "target": target, "status": "applied"}))
++}
++
++pub(super) fn idle(core: &Core) -> Result<(), String> {
++    match core.expansion.current() {
++        Some(lead) if core.expansion.turn_running(lead.thread) => {
++            Err("recovery_unavailable_during_turn: reload after the turn ends".into())
++        }
++        _ => Ok(()),
++    }
 +}
 +
 +pub(super) fn reloaded(core: &Core) {
@@ -46827,7 +47058,7 @@ index 000000000..1f8698a43
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 000000000..4ae0b77da
+index 000000000..992545000
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
 @@ -0,0 +1,228 @@
@@ -47008,7 +47239,7 @@ index 000000000..4ae0b77da
 +
 +#[test]
 +fn clients_see_a_null_view_while_mods_are_inactive() {
-+    assert_eq!(view(), Ok((0, 0, Value::Null)));
++    assert!(published().is_none());
 +}
 +
 +#[test]
@@ -50052,7 +50283,7 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..1ca400e6c
+index 000000000..0c9f8faf5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,714 @@
@@ -50202,9 +50433,9 @@ index 000000000..1ca400e6c
 +            Some(last) => codex_omd::broker::seed(stream, sha256s.len() as u64, &head, last),
 +            None => Ok(()),
 +        },
-+        Some(anchor) if anchor.count != sha256s.len() as u64 || anchor.head != head => {
-+            Err(std::io::Error::other("anchored chain differs"))
-+        }
++        Some(anchor) if anchor.count != sha256s.len() as u64 || anchor.head != head => Err(
++            std::io::Error::new(std::io::ErrorKind::InvalidData, "anchored chain differs"),
++        ),
 +        _ => Ok(()),
 +    }
 +}
@@ -50772,10 +51003,10 @@ index 000000000..1ca400e6c
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..7724d8418
+index 000000000..e53f1c1fc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1094 @@
+@@ -0,0 +1,1104 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -50807,6 +51038,7 @@ index 000000000..7724d8418
 +use std::process::Stdio;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++use std::sync::PoisonError;
 +use std::sync::mpsc;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -50853,37 +51085,38 @@ index 000000000..7724d8418
 +}
 +
 +impl ManagedProcess {
-+    fn try_reap(&mut self) -> io::Result<bool> {
-+        let mut reaped = self
-+            .reaped
-+            .lock()
-+            .map_err(|_| io::Error::other("process_reap_poisoned"))?;
-+        if !*reaped && self.child.try_wait()?.is_some() {
-+            *reaped = true;
++    /// Leaves an exited leader unreaped, so its group id stays reserved until Drop kills the group.
++    fn exited(&self) -> io::Result<bool> {
++        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
++        if unsafe {
++            libc::waitid(
++                libc::P_PID,
++                self.child.id(),
++                &mut info,
++                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
++            )
++        } != 0
++        {
++            return Err(io::Error::last_os_error());
 +        }
-+        Ok(*reaped)
++        Ok(unsafe { info.si_pid() } != 0)
 +    }
 +}
 +
 +fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
-+    if let Ok(reaped) = reaped.lock()
-+        && !*reaped
-+    {
++    if !*reaped.lock().unwrap_or_else(PoisonError::into_inner) {
 +        let _ = kill_process_group(group);
 +    }
 +}
 +
 +impl Drop for ManagedProcess {
 +    fn drop(&mut self) {
-+        kill_group_if_alive(self.child.id(), &self.reaped);
-+        if matches!(self.try_reap(), Ok(false)) {
-+            let _ = self.child.kill();
-+        }
-+        let mut reaped = self.reaped.lock().ok();
++        let mut reaped = self.reaped.lock().unwrap_or_else(PoisonError::into_inner);
++        let _ = kill_process_group(self.child.id());
++        let _ = self.child.kill();
 +        let _ = self.child.wait();
-+        if let Some(reaped) = reaped.as_mut() {
-+            **reaped = true;
-+        }
++        *reaped = true;
++        drop(reaped);
 +        let _ = fs::remove_dir_all(&self.scratch);
 +    }
 +}
@@ -51041,8 +51274,8 @@ index 000000000..7724d8418
 +        let (_, process) = records
 +            .iter()
 +            .find(|((id, _, name), _)| id == owner && name == session)?;
-+        let mut process = process.lock().ok()?;
-+        Some(!process.try_reap().ok()?)
++        let process = process.lock().ok()?;
++        Some(!process.exited().ok()?)
 +    }
 +
 +    pub fn cleanup_stale(&self, generation: u64) {
@@ -51450,7 +51683,7 @@ index 000000000..7724d8418
 +                    self.remove(&key, &session);
 +                    return Err("grant_expired: os".into());
 +                }
-+                if process.try_reap().map_err(|error| error.to_string())? {
++                if process.exited().map_err(|error| error.to_string())? {
 +                    self.remove(&key, &session);
 +                    return Err("process_stopped".into());
 +                }
@@ -51803,9 +52036,20 @@ index 000000000..7724d8418
 +    }
 +
 +    #[test]
-+    fn a_reaped_child_is_never_signalled_through_its_old_group_id() {
-+        let mut finished = ManagedProcess {
-+            child: Command::new("true").process_group(0).spawn().unwrap(),
++    fn dropping_a_session_kills_what_its_exited_leader_left_in_the_group() {
++        let mut child = Command::new("sh")
++            .args(["-c", "sleep 30 & echo $!"])
++            .stdout(Stdio::piped())
++            .process_group(0)
++            .spawn()
++            .unwrap();
++        let mut line = String::new();
++        BufReader::new(child.stdout.take().unwrap())
++            .read_line(&mut line)
++            .unwrap();
++        let orphan: libc::pid_t = line.trim().parse().unwrap();
++        let process = ManagedProcess {
++            child,
 +            unrestricted: false,
 +            sender: mpsc::sync_channel(1).0,
 +            receiver: mpsc::sync_channel(1).1,
@@ -51814,20 +52058,17 @@ index 000000000..7724d8418
 +            reaped: Arc::default(),
 +        };
 +        let deadline = Instant::now() + Duration::from_secs(10);
-+        while !finished.try_reap().unwrap() {
-+            assert!(Instant::now() < deadline, "the child never exited");
++        while !process.exited().unwrap() {
++            assert!(Instant::now() < deadline, "the leader never exited");
 +            std::thread::sleep(Duration::from_millis(10));
 +        }
-+        let mut bystander = Command::new("sleep")
-+            .arg("30")
-+            .process_group(0)
-+            .spawn()
-+            .unwrap();
-+        kill_group_if_alive(bystander.id(), &finished.reaped);
-+        std::thread::sleep(Duration::from_millis(300));
-+        assert!(bystander.try_wait().unwrap().is_none());
-+        kill_group_if_alive(bystander.id(), &Mutex::new(false));
-+        assert!(bystander.wait().is_ok());
++        let reaped = Arc::clone(&process.reaped);
++        drop(process);
++        assert!(*reaped.lock().unwrap());
++        while unsafe { libc::kill(orphan, 0) } == 0 {
++            assert!(Instant::now() < deadline, "the background child survived");
++            std::thread::sleep(Duration::from_millis(10));
++        }
 +    }
 +
 +    #[test]
@@ -60972,10 +61213,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..51c518641
+index 000000000..9f7140c42
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3170 @@
+@@ -0,0 +1,3184 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -61128,7 +61369,7 @@ index 000000000..51c518641
 +}
 +
 +#[test]
-+fn a_client_recovery_reload_refreshes_the_running_thread_like_a_turn_start() {
++fn a_client_recovery_reload_is_refused_mid_turn_and_otherwise_refreshes_like_a_turn_start() {
 +    let Some(fixture) = fixture(&[]) else {
 +        return;
 +    };
@@ -61157,6 +61398,20 @@ index 000000000..51c518641
 +    assert_eq!(lead.session.task.remaining().unwrap().2, 1000);
 +    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(lead));
 +    write(5000);
++    fixture
++        .core
++        .expansion
++        .running
++        .lock()
++        .unwrap()
++        .insert(lead.thread.to_string(), "turn".into());
++    assert!(
++        super::super::clients::idle(&fixture.core)
++            .unwrap_err()
++            .starts_with("recovery_unavailable_during_turn")
++    );
++    fixture.core.expansion.running.lock().unwrap().clear();
++    super::super::clients::idle(&fixture.core).unwrap();
 +    super::super::clients::reloaded(&fixture.core);
 +    assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
 +}
@@ -77027,10 +77282,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..c16da9f05
+index 000000000..3543f951e
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,945 @@
+@@ -0,0 +1,1144 @@
 +use crate::app_routes::InvocationContext;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -77837,8 +78092,7 @@ index 000000000..c16da9f05
 +    }
 +    let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
 +        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
-+    let mirrored = MIRRORED_OPERATIONS
-+        .contains(&operation)
++    let mirrored = (MIRRORED_OPERATIONS.contains(&operation) && !hub().observers.is_empty())
 +        .then(|| arguments.clone());
 +    let answer = wait(
 +        submit_bound(
@@ -77930,7 +78184,12 @@ index 000000000..c16da9f05
 +        .map_err(|error| error.to_string())?;
 +    let path = directory.join(format!("{digest}.{extension}"));
 +    if !path.exists() {
-+        std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
++        let mut temporary =
++            tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
++        std::io::Write::write_all(&mut temporary, &bytes).map_err(|error| error.to_string())?;
++        temporary
++            .persist(&path)
++            .map_err(|error| error.error.to_string())?;
 +    }
 +    Ok(path)
 +}
@@ -77973,15 +78232,210 @@ index 000000000..c16da9f05
 +    }
 +}
 +
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum NoticePlacement {
++    Toast,
++    Status,
++}
++
++#[derive(Debug, PartialEq)]
++pub enum NoticeRequest<'a> {
++    Clear {
++        id: &'a str,
++    },
++    Transient {
++        id: Option<&'a str>,
++        kind: &'static str,
++        placement: NoticePlacement,
++        text: &'a str,
++        ttl: Duration,
++    },
++    Transcript {
++        kind: &'static str,
++        text: &'a str,
++        model: bool,
++        call_id: Option<&'a str>,
++    },
++}
++
++/// `terminal.notice` arguments as every surface must accept them.
++pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
++    let invalid = || "terminal_notice_invalid".to_owned();
++    let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
++        Value::Null => Ok(values[0]),
++        value => values
++            .iter()
++            .find(|known| value == **known)
++            .copied()
++            .ok_or_else(invalid),
++    };
++    let kind = one_of("kind", &["info", "warning", "error"])?;
++    let placement = match one_of("placement", &["toast", "status", "transcript"])? {
++        "toast" => Some(NoticePlacement::Toast),
++        "status" => Some(NoticePlacement::Status),
++        _ => None,
++    };
++    let model = one_of("audience", &["user", "model"])? == "model";
++    let id = match &arguments["id"] {
++        Value::Null => None,
++        Value::String(id) if crate::mod_component_id(id) => Some(id.as_str()),
++        _ => return Err(invalid()),
++    };
++    if arguments["clear"] == true {
++        return match (id, placement) {
++            (Some(id), Some(_)) => Ok(NoticeRequest::Clear { id }),
++            _ => Err(invalid()),
++        };
++    }
++    let text = arguments["text"]
++        .as_str()
++        .filter(|text| {
++            !text.trim().is_empty() && text.len() <= 512 && !text.chars().any(char::is_control)
++        })
++        .ok_or_else(invalid)?;
++    match placement {
++        Some(placement) => {
++            let ttl = match &arguments["ttl_ms"] {
++                Value::Null => 5_000,
++                value => value
++                    .as_u64()
++                    .filter(|ttl| (1_000..=60_000).contains(ttl))
++                    .ok_or_else(invalid)?,
++            };
++            if model || !arguments["tool_call_id"].is_null() {
++                return Err(invalid());
++            }
++            Ok(NoticeRequest::Transient {
++                id,
++                kind,
++                placement,
++                text,
++                ttl: Duration::from_millis(ttl),
++            })
++        }
++        None if !arguments["ttl_ms"].is_null() || id.is_some() => Err(invalid()),
++        None => {
++            let call_id = match &arguments["tool_call_id"] {
++                Value::Null => None,
++                Value::String(call_id)
++                    if !call_id.is_empty()
++                        && call_id.len() <= 128
++                        && !call_id.chars().any(char::is_control) =>
++                {
++                    Some(call_id.as_str())
++                }
++                _ => return Err(invalid()),
++            };
++            Ok(NoticeRequest::Transcript {
++                kind,
++                text,
++                model,
++                call_id,
++            })
++        }
++    }
++}
++
++pub const BLIT_FRAME: Duration = Duration::from_millis(33);
++pub const BLIT_QUEUE_UPDATES: usize = 32;
++pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
++
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct BlitCell {
++    pub symbol: String,
++    pub fg: Option<crate::ModColor>,
++    pub bg: Option<crate::ModColor>,
++}
++
++#[derive(serde::Deserialize)]
++#[serde(untagged)]
++enum WireCell {
++    Glyph(String),
++    Styled(String, Option<crate::ModColor>, Option<crate::ModColor>),
++}
++
++#[derive(Clone, Copy, Debug, serde::Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct BlitRect {
++    pub x: u16,
++    pub y: u16,
++    pub width: u16,
++    pub height: u16,
++}
++
++#[derive(serde::Deserialize)]
++#[serde(deny_unknown_fields)]
++struct WireBlit {
++    key: String,
++    rect: BlitRect,
++    cells: Vec<WireCell>,
++}
++
++pub struct Blit {
++    pub key: String,
++    pub rect: BlitRect,
++    pub cells: Vec<BlitCell>,
++    pub bytes: usize,
++}
++
++/// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
++pub fn blit_request(
++    caller: &str,
++    owner: Option<&str>,
++    size: Option<(u16, u16)>,
++    arguments: &Value,
++) -> Result<Blit, String> {
++    let bytes = arguments.to_string().len();
++    if bytes > BLIT_QUEUE_BYTES {
++        return Err("terminal_blit_too_large".into());
++    }
++    let blit: WireBlit =
++        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
++    match owner {
++        Some(owner) if owner == caller => {}
++        Some(_) => return Err("terminal_blit_not_owned".into()),
++        None => return Err("terminal_blit_unknown".into()),
++    }
++    let (width, height) = size.ok_or("terminal_blit_unknown")?;
++    let rect = blit.rect;
++    if rect.width == 0
++        || rect.height == 0
++        || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
++        || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
++        || blit.cells.len() != usize::from(rect.width) * usize::from(rect.height)
++    {
++        return Err("terminal_blit_invalid".into());
++    }
++    let cells = blit
++        .cells
++        .into_iter()
++        .map(|cell| {
++            let (symbol, fg, bg) = match cell {
++                WireCell::Glyph(symbol) => (symbol, None, None),
++                WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
++            };
++            (!symbol.is_empty() && symbol.len() <= 16 && !symbol.chars().any(char::is_control))
++                .then_some(BlitCell { symbol, fg, bg })
++        })
++        .collect::<Option<Vec<_>>>()
++        .ok_or("terminal_blit_invalid")?;
++    Ok(Blit {
++        key: blit.key,
++        rect,
++        cells,
++        bytes,
++    })
++}
++
 +#[cfg(test)]
 +#[path = "client_surface_tests.rs"]
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..7e11634cc
+index 000000000..e8793c0c1
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,558 @@
+@@ -0,0 +1,609 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -78539,6 +78993,57 @@ index 000000000..7e11634cc
 +        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
 +    );
 +    assert_eq!(presented(Value::Null), Value::Null);
++}
++
++#[test]
++fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
++    assert_eq!(
++        notice_request(&json!({"text": "saved"})),
++        Ok(NoticeRequest::Transient {
++            id: None,
++            kind: "info",
++            placement: NoticePlacement::Toast,
++            text: "saved",
++            ttl: std::time::Duration::from_secs(5),
++        })
++    );
++    assert_eq!(
++        notice_request(
++            &json!({"text": "slow", "kind": "warning", "placement": "transcript",
++            "audience": "model", "tool_call_id": "call_1"})
++        ),
++        Ok(NoticeRequest::Transcript {
++            kind: "warning",
++            text: "slow",
++            model: true,
++            call_id: Some("call_1"),
++        })
++    );
++    assert_eq!(
++        notice_request(&json!({"id": "run", "placement": "status", "clear": true})),
++        Ok(NoticeRequest::Clear { id: "run" })
++    );
++    for arguments in [
++        json!({}),
++        json!({"text": " "}),
++        json!({"text": "x".repeat(513)}),
++        json!({"text": "a\u{1b}b"}),
++        json!({"text": "x", "kind": "fatal"}),
++        json!({"text": "x", "ttl_ms": 999}),
++        json!({"text": "x", "ttl_ms": 60_001}),
++        json!({"text": "x", "audience": "model"}),
++        json!({"text": "x", "tool_call_id": "call_1"}),
++        json!({"text": "x", "placement": "transcript", "ttl_ms": 2000}),
++        json!({"text": "x", "placement": "transcript", "id": "run"}),
++        json!({"id": "run", "placement": "transcript", "clear": true}),
++        json!({"id": "Bad Id", "clear": true}),
++    ] {
++        assert_eq!(
++            notice_request(&arguments),
++            Err("terminal_notice_invalid".to_owned()),
++            "{arguments}"
++        );
++    }
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
@@ -83677,10 +84182,10 @@ index 000000000..44647048b
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..182e1ef9c
+index 000000000..c69d9876b
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1145 @@
+@@ -0,0 +1,1158 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -84744,8 +85249,9 @@ index 000000000..182e1ef9c
 +#[derive(Default)]
 +struct Queue {
 +    pending: Vec<Value>,
-+    /// Request id and the batch it was sent with, which only a retry of that request repeats.
++    /// Request id and the batch it was sent with, repeated until a response to it completes and by its retries.
 +    sent: (String, Vec<Value>),
++    delivered: bool,
 +    issued: usize,
 +}
 +
@@ -84769,57 +85275,69 @@ index 000000000..182e1ef9c
 +    Ok(())
 +}
 +
-+/// Adds the thread's queued sections to an outgoing request without taking them. A retry of `retry_of` repeats
-+/// the batch that request sent and nothing else; any other request carries the pending sections.
-+/// Returns whether the request changed and the ids of the pending sections it carries.
++/// Adds the thread's queued sections to an outgoing request without taking them: the last sent batch while no
++/// response to it has completed or when retrying it, then pending sections, within the room `inserted` sections leave.
++/// Returns whether the request changed and the sections it carries.
 +pub fn apply_queued_sections(
 +    request: &mut Value,
 +    thread: &str,
 +    retry_of: Option<&str>,
++    inserted: usize,
 +) -> (bool, Vec<Value>) {
-+    let (batch, carried) = {
++    let batch = {
 +        let queued = QUEUED
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
 +        let Some(queue) = queued.get(thread) else {
 +            return (false, Vec::new());
 +        };
-+        if retry_of.is_some_and(|of| of == queue.sent.0) {
-+            (queue.sent.1.clone(), Vec::new())
-+        } else {
-+            let ids = queue.pending.iter().map(|section| section["id"].clone());
-+            (queue.pending.clone(), ids.collect())
-+        }
++        let resent = (!queue.delivered || retry_of.is_some_and(|of| of == queue.sent.0))
++            .then_some(&queue.sent.1);
++        resent
++            .into_iter()
++            .flatten()
++            .chain(&queue.pending)
++            .take(INSERTED_SECTIONS.saturating_sub(inserted))
++            .cloned()
++            .collect::<Vec<_>>()
 +    };
 +    if batch.is_empty() {
 +        return (false, Vec::new());
 +    }
 +    let given = sections(request);
-+    let effective = given.iter().cloned().chain(batch).collect::<Vec<_>>();
-+    (apply_sections(request, &given, &effective), carried)
++    let effective = given
++        .iter()
++        .cloned()
++        .chain(batch.clone())
++        .collect::<Vec<_>>();
++    (apply_sections(request, &given, &effective), batch)
 +}
 +
 +/// Records what request `request_id` sent once it is ready to send, so a denied request leaves its sections queued.
-+pub fn commit_queued_sections(
-+    thread: &str,
-+    request_id: &str,
-+    carried: &[Value],
-+    retry_of: Option<&str>,
-+) {
++pub fn commit_queued_sections(thread: &str, request_id: &str, carried: &[Value]) {
++    if carried.is_empty() {
++        return;
++    }
 +    let mut queued = QUEUED
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    let Some(queue) = queued.get_mut(thread) else {
 +        return;
 +    };
-+    let (sent, pending) = std::mem::take(&mut queue.pending)
-+        .into_iter()
-+        .partition::<Vec<_>, _>(|section| carried.contains(&section["id"]));
-+    queue.pending = pending;
-+    if !sent.is_empty() {
-+        queue.sent = (request_id.to_owned(), sent);
-+    } else if retry_of.is_some_and(|of| of == queue.sent.0) {
-+        queue.sent.0 = request_id.to_owned();
++    queue.pending.retain(|section| !carried.contains(section));
++    queue.sent = (request_id.to_owned(), carried.to_vec());
++    queue.delivered = false;
++}
++
++/// A response to `request_id` completed, so the batch it carried reached the model.
++pub fn queued_sections_delivered(thread: &str, request_id: &str) {
++    let mut queued = QUEUED
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some(queue) = queued.get_mut(thread)
++        && queue.sent.0 == request_id
++    {
++        queue.delivered = true;
 +    }
 +}
 +
@@ -84828,10 +85346,10 @@ index 000000000..182e1ef9c
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..f160291f0
+index 000000000..152db06d6
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,479 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -85262,64 +85780,49 @@ index 000000000..f160291f0
 +}
 +
 +#[test]
-+fn queued_sections_reach_the_next_request_once_and_its_retries() {
++fn queued_sections_repeat_until_a_response_completes_within_the_section_cap() {
 +    let thread = "thread-queued-sections";
-+    assert!(!apply_queued_sections(&mut request(), thread, None).0);
++    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
 +    queue_section(thread, "checks", "build failed").unwrap();
 +    let mut denied = request();
-+    let (_, carried) = apply_queued_sections(&mut denied, thread, None);
++    let (_, carried) = apply_queued_sections(&mut denied, thread, None, 0);
 +    assert_eq!(carried.len(), 1);
 +    let mut first = request();
-+    let (edited, carried) = apply_queued_sections(&mut first, thread, None);
++    let (edited, carried) = apply_queued_sections(&mut first, thread, None, 0);
 +    assert!(edited);
-+    commit_queued_sections(thread, "req-1", &carried, None);
++    commit_queued_sections(thread, "req-1", &carried);
 +    assert_eq!(first, denied);
 +    let text = first.to_string();
 +    assert!(
 +        text.contains("Mod-provided context") && text.contains("build failed"),
 +        "{text}"
 +    );
-+    for (request_id, retry_of) in [("req-2", "req-1"), ("req-3", "req-2")] {
-+        let mut retry = request();
-+        let (edited, carried) = apply_queued_sections(&mut retry, thread, Some(retry_of));
-+        assert!(edited && carried.is_empty());
-+        assert_eq!(retry, first);
-+        commit_queued_sections(thread, request_id, &carried, Some(retry_of));
-+    }
-+    assert!(!apply_queued_sections(&mut request(), thread, None).0);
-+    assert!(!apply_queued_sections(&mut request(), thread, Some("req-never-sent")).0);
-+    queue_section(thread, "checks", "second notice").unwrap();
-+    let mut stale = request();
-+    let (_, carried) = apply_queued_sections(&mut stale, thread, Some("req-never-sent"));
-+    let text = stale.to_string();
-+    assert!(
-+        carried.len() == 1 && text.contains("second notice") && !text.contains("build failed"),
-+        "{text}"
-+    );
-+    commit_queued_sections(thread, "req-4", &carried, Some("req-never-sent"));
-+    queue_section(thread, "checks", "third notice").unwrap();
-+    let (_, raced) = apply_queued_sections(&mut request(), thread, None);
-+    let (_, winner) = apply_queued_sections(&mut request(), thread, None);
-+    commit_queued_sections(thread, "req-5", &winner, None);
-+    queue_section(thread, "checks", "fourth notice").unwrap();
-+    commit_queued_sections(thread, "req-6", &raced, None);
++    let mut again = request();
++    let (_, carried) = apply_queued_sections(&mut again, thread, None, 0);
++    assert_eq!(again, first, "a core retry repeats the undelivered batch");
++    commit_queued_sections(thread, "req-2", &carried);
++    queued_sections_delivered(thread, "req-1");
++    assert!(apply_queued_sections(&mut request(), thread, None, 0).0);
++    queued_sections_delivered(thread, "req-2");
++    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
 +    let mut retry = request();
-+    apply_queued_sections(&mut retry, thread, Some("req-5"));
-+    assert!(retry.to_string().contains("third notice"), "{retry}");
-+    let mut next = request();
-+    let (_, carried) = apply_queued_sections(&mut next, thread, None);
-+    let text = next.to_string();
-+    assert!(
-+        carried.len() == 1 && text.contains("fourth notice") && !text.contains("third notice"),
-+        "{text}"
-+    );
-+    commit_queued_sections(thread, "req-7", &carried, None);
++    let (edited, carried) = apply_queued_sections(&mut retry, thread, Some("req-2"), 0);
++    assert!(edited);
++    assert_eq!(retry, first, "a mod retry repeats the delivered batch");
++    commit_queued_sections(thread, "req-3", &carried);
++    queued_sections_delivered(thread, "req-3");
 +    for _ in 0..INSERTED_SECTIONS {
 +        queue_section(thread, "checks", "note").unwrap();
 +    }
 +    assert_eq!(
 +        queue_section(thread, "checks", "one too many"),
 +        Err("model_context_queue_full".to_owned())
++    );
++    let (_, carried) = apply_queued_sections(&mut request(), thread, None, INSERTED_SECTIONS - 2);
++    assert_eq!(carried.len(), 2);
++    assert_eq!(
++        apply_queued_sections(&mut request(), thread, None, INSERTED_SECTIONS),
++        (false, Vec::new())
 +    );
 +    assert_eq!(
 +        queue_section("other-thread", "checks", " "),
@@ -97946,10 +98449,10 @@ index 000000000..1acad6be7
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..9e0cb9da8
+index 000000000..c22f65dae
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2074 @@
+@@ -0,0 +1,2096 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -99031,6 +99534,28 @@ index 000000000..9e0cb9da8
 +
 +fn valid_control(hotkey: &Option<String>) -> bool {
 +    hotkey.as_deref().is_none_or(mod_key_name)
++}
++
++impl ModView {
++    pub fn raster_size(&self, id: &str) -> Option<(u16, u16)> {
++        fn find(components: &[ModComponent], id: &str) -> Option<(u16, u16)> {
++            components.iter().find_map(|component| match component {
++                ModComponent::Raster {
++                    id: raster,
++                    width,
++                    height,
++                    ..
++                } if raster == id => Some((*width, *height)),
++                ModComponent::Box { children, .. }
++                | ModComponent::Pane { children, .. }
++                | ModComponent::Dialog { children, .. } => find(children, id),
++                _ => None,
++            })
++        }
++        self.sites
++            .values()
++            .find_map(|site| find(&site.components, id))
++    }
 +}
 +
 +pub fn mod_component_id(value: &str) -> bool {
@@ -102831,10 +103356,10 @@ index 000000000..c0fb9b585
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 000000000..9a6f6d8f6
+index 000000000..bcc07501d
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,522 @@
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
@@ -102907,6 +103432,12 @@ index 000000000..9a6f6d8f6
 +        && value[8..10]
 +            .parse::<u32>()
 +            .is_ok_and(|day| (1..=31).contains(&day))
++}
++
++fn segment(path: &Path) -> Option<String> {
++    path.file_name()
++        .and_then(|name| name.to_str())
++        .map(|name| name.trim_end_matches(".zst").to_owned())
 +}
 +
 +fn cancelled() -> io::Error {
@@ -102997,6 +103528,32 @@ index 000000000..9a6f6d8f6
 +        .read_until(b'\n', &mut line)?;
 +        let first: Value = serde_json::from_slice(&line)?;
 +        Ok((first["type"] == "session_meta").then(|| first["payload"].clone()))
++    }
++
++    /// The database's current segment and the segments its `history_base` chain continues.
++    fn lineage(&self, current: &Path, paths: &[PathBuf]) -> BTreeSet<String> {
++        let mut names = BTreeSet::new();
++        let mut next = segment(current);
++        while let Some(name) = next.take()
++            && names.insert(name.clone())
++        {
++            let base = paths
++                .iter()
++                .find(|path| segment(path).as_ref() == Some(&name))
++                .and_then(|path| self.head(path).ok().flatten())
++                .and_then(|head| {
++                    head["history_base"]["thread_id"]
++                        .as_str()
++                        .map(str::to_owned)
++                });
++            next = base.and_then(|base| {
++                paths.iter().filter_map(|path| segment(path)).find(|name| {
++                    let stem = name.trim_end_matches(".jsonl");
++                    stem.ends_with(&format!("-{base}")) || stem.ends_with(&format!("_{base}"))
++                })
++            });
++        }
++        names
 +    }
 +
 +    fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
@@ -103164,18 +103721,20 @@ index 000000000..9a6f6d8f6
 +        let policy =
 +            crate::session_policy::permitted(self.root, self.repository, self.database, &active)?;
 +        let allowed = |id: &str| policy.as_ref().is_none_or(|ids| ids.contains_key(id));
-+        let current = |id: &str, path: &Path| {
++        let lineages = std::cell::RefCell::new(std::collections::BTreeMap::new());
++        let current = |id: &str, path: &Path, paths: &[PathBuf]| {
 +            policy
 +                .as_ref()
 +                .and_then(|ids| ids.get(id))
 +                .and_then(Option::as_ref)
 +                .is_none_or(|current| {
-+                    let name = |path: &Path| {
-+                        path.file_name()
-+                            .and_then(|name| name.to_str())
-+                            .map(|name| name.trim_end_matches(".zst").to_owned())
-+                    };
-+                    name(current).is_some_and(|current| Some(current) == name(path))
++                    segment(path).is_some_and(|name| {
++                        lineages
++                            .borrow_mut()
++                            .entry(id.to_owned())
++                            .or_insert_with(|| self.lineage(current, paths))
++                            .contains(&name)
++                    })
 +                })
 +        };
 +        let result = match operation {
@@ -103217,7 +103776,7 @@ index 000000000..9a6f6d8f6
 +                    match self.load(path, &active) {
 +                        Ok(Some(session))
 +                            if allowed(&session.summary.session_id)
-+                                && current(&session.summary.session_id, path)
++                                && current(&session.summary.session_id, path, &paths)
 +                                && in_range(Some(&session.summary.timestamp), since, until) =>
 +                        {
 +                            if !ids.insert((
@@ -103282,7 +103841,7 @@ index 000000000..9a6f6d8f6
 +                    .load(path, &active)?
 +                    .filter(|session| {
 +                        session.summary.session_id == input.session_id
-+                            && current(&input.session_id, path)
++                            && current(&input.session_id, path, &paths)
 +                    })
 +                    .ok_or_else(|| io::Error::other("session_unavailable"))?;
 +                if input.revision != session.summary.revision {
@@ -115277,10 +115836,10 @@ index 000000000..aca1c2bf7
 +}
 diff --git a/codex-rs/omd/tests/sessions.rs b/codex-rs/omd/tests/sessions.rs
 new file mode 100644
-index 000000000..325469b94
+index 000000000..9237f8944
 --- /dev/null
 +++ b/codex-rs/omd/tests/sessions.rs
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,530 @@
 +use codex_omd::sessions::SessionIndex;
 +use serde_json::{Value, json};
 +use std::fs;
@@ -115696,6 +116255,72 @@ index 000000000..325469b94
 +            .to_string()
 +            .contains("identity_ambiguous")
 +    );
++}
++
++#[test]
++fn a_state_database_keeps_the_segments_its_current_rollout_continues() {
++    let (_temp, repo, sessions) = fixture();
++    let thread = "019a0000-0000-7000-8000-000000000001";
++    let base = sessions.join(format!("rollout-2026-09-26T12-00-00-{thread}.jsonl"));
++    record(&base, &repo, thread, "enabled");
++    record(
++        &sessions.join(format!(
++            "rollout-2026-09-26T12-30-00-{thread}_019a0000-0000-7000-8000-000000000002.jsonl"
++        )),
++        &repo,
++        thread,
++        "enabled",
++    );
++    let part = sessions.join(format!(
++        "rollout-2026-09-26T13-00-00-{thread}_019a0000-0000-7000-8000-000000000003.jsonl"
++    ));
++    let rows = [
++        json!({"type":"session_meta","payload":{"id":thread,"session_id":"task-a","cwd":repo,"timestamp":"2026-09-26T13:00:00Z","memory_mode":"enabled","history_mode":"paginated","history_base":{"thread_id":thread,"end_ordinal_exclusive":5}}}),
++        json!({"type":"turn_context","payload":{"turn_id":"turn-b","cwd":repo}}),
++        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"A later request."}]}}),
++    ];
++    fs::write(
++        &part,
++        rows.iter()
++            .map(|row| row.to_string() + "\n")
++            .collect::<String>(),
++    )
++    .unwrap();
++    let db = sessions.parent().unwrap().join("state_5.sqlite");
++    let sql = format!(
++        "CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT,rollout_path TEXT); INSERT INTO threads VALUES('{thread}','{}','enabled','{}');",
++        repo.to_str().unwrap().replace('\'', "''"),
++        part.to_str().unwrap().replace('\'', "''")
++    );
++    assert!(
++        std::process::Command::new("/usr/bin/sqlite3")
++            .arg(&db)
++            .arg(sql)
++            .status()
++            .unwrap()
++            .success()
++    );
++    let index = SessionIndex {
++        database: Some(&db),
++        root: &sessions,
++        repository: &repo,
++        enabled: true,
++    };
++    let list = index.call("sessions.list", json!({}), || true).unwrap();
++    let listed = list["sessions"].as_array().unwrap();
++    assert_eq!(listed.len(), 2, "{listed:?}");
++    let original = listed
++        .iter()
++        .find(|row| row["inherited_history"] != true)
++        .unwrap();
++    let result = index
++        .call(
++            "sessions.read",
++            json!({"session_id":thread,"revision":original["revision"],"handle":original["handle"]}),
++            || true,
++        )
++        .unwrap();
++    assert_eq!(result["records"][0]["turn_id"], "turn-a");
 +}
 +
 +#[test]
@@ -116485,10 +117110,10 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread.rs b/codex-rs/thread-store/src/local/rewrite_thread.rs
 new file mode 100644
-index 000000000..298300af0
+index 000000000..9139f9e55
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread.rs
-@@ -0,0 +1,1539 @@
+@@ -0,0 +1,1549 @@
 +use std::collections::BTreeSet;
 +use std::collections::HashMap;
 +use std::collections::HashSet;
@@ -116953,10 +117578,18 @@ index 000000000..298300af0
 +    witness: Option<&dyn HistoryWitness>,
 +    resolve_pending: bool,
 +) -> ThreadStoreResult<Vec<Record>> {
-+    let (mut records, digests) = read_log(log)?;
++    let (mut records, digests, torn) = read_log(log)?;
++    if torn && resolve_pending {
++        drop_last_record(log)?;
++    }
 +    if let Some(witness) = witness
 +        && let Err(err) = witness.verify(log, &digests)
 +    {
++        if err.kind() != std::io::ErrorKind::InvalidData {
++            return Err(internal(format!(
++                "history_anchor_unavailable: revision log of thread {thread_id}: {err}"
++            )));
++        }
 +        // A record is fsynced before its anchor, so a crash or lost reply leaves the log one record ahead.
 +        let behind = digests
 +            .len()
@@ -117945,15 +118578,17 @@ index 000000000..298300af0
 +        .join(format!("{thread_id}.jsonl"))
 +}
 +
-+fn read_log(path: &Path) -> ThreadStoreResult<(Vec<Record>, Vec<String>)> {
++/// Also reports an unterminated last line: a crash inside `append_record`, written but never anchored.
++fn read_log(path: &Path) -> ThreadStoreResult<(Vec<Record>, Vec<String>, bool)> {
 +    let text = match std::fs::read_to_string(path) {
 +        Ok(text) => text,
 +        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
 +        Err(err) => return Err(thread_store_io_error(err)),
 +    };
++    let complete = text.rfind('\n').map_or(0, |at| at + 1);
 +    let mut records = Vec::new();
 +    let mut digests = Vec::new();
-+    for line in text.lines().filter(|line| !line.is_empty()) {
++    for line in text[..complete].lines().filter(|line| !line.is_empty()) {
 +        records.push(serde_json::from_str(line).map_err(|err| {
 +            invalid(format!(
 +                "history_anchor_mismatch: unreadable revision log {}: {err}",
@@ -117962,7 +118597,7 @@ index 000000000..298300af0
 +        })?);
 +        digests.push(sha256(line));
 +    }
-+    Ok((records, digests))
++    Ok((records, digests, complete < text.len()))
 +}
 +
 +fn append_record(
@@ -118030,10 +118665,10 @@ index 000000000..298300af0
 +mod tests;
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread_tests.rs b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
 new file mode 100644
-index 000000000..58c5b3883
+index 000000000..5ab0d4a65
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
-@@ -0,0 +1,1196 @@
+@@ -0,0 +1,1258 @@
 +use std::collections::HashMap;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -118121,7 +118756,10 @@ index 000000000..58c5b3883
 +        if anchored == sha256s {
 +            Ok(())
 +        } else {
-+            Err(std::io::Error::other("chain differs"))
++            Err(std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "chain differs",
++            ))
 +        }
 +    }
 +}
@@ -118824,6 +119462,65 @@ index 000000000..58c5b3883
 +        .verify_thread_history(fixture.thread_id, Some(witness))
 +        .await
 +        .expect("the log matches its anchors again");
++}
++
++struct Unreachable;
++
++impl HistoryWitness for Unreachable {
++    fn append(&self, _stream: &Path, _sha256: &str) -> std::io::Result<()> {
++        Err(std::io::Error::other("broker unreachable"))
++    }
++
++    fn verify(&self, _stream: &Path, _sha256s: &[String]) -> std::io::Result<()> {
++        Err(std::io::Error::other("broker unreachable"))
++    }
++}
++
++#[tokio::test]
++async fn a_torn_last_record_is_dropped_and_an_unreachable_witness_is_not_tampering() {
++    use std::io::Write;
++    let fixture = fixture().await;
++    let witness: Arc<dyn HistoryWitness> = Arc::new(Chain::default());
++    let delete = |id: &str| vec![HistoryRowEdit::Delete { id: id.to_string() }];
++    let rewritten = fixture
++        .rewrite(
++            Some(fixture.read().await.revision),
++            delete("user-2"),
++            false,
++            Some(Arc::clone(&witness)),
++        )
++        .await
++        .expect("rewrite with witness");
++    let log = log_path(&fixture.store, fixture.thread_id);
++    std::fs::OpenOptions::new()
++        .append(true)
++        .open(&log)
++        .and_then(|mut file| file.write_all(b"{\"kind\":\"beg"))
++        .expect("tear the log");
++    fixture
++        .store
++        .verify_thread_history(fixture.thread_id, Some(Arc::clone(&witness)))
++        .await
++        .expect("a torn append is not tampering");
++    assert!(std::fs::read_to_string(&log).unwrap().ends_with("}\n"));
++    fixture
++        .rewrite(
++            Some(rewritten.revision),
++            delete("user-1"),
++            false,
++            Some(witness),
++        )
++        .await
++        .expect("the log stays appendable");
++    let err = fixture
++        .store
++        .verify_thread_history(fixture.thread_id, Some(Arc::new(Unreachable)))
++        .await
++        .expect_err("an unverifiable log fails closed");
++    assert!(
++        err.to_string().contains("history_anchor_unavailable"),
++        "{err}"
++    );
 +}
 +
 +#[tokio::test]
@@ -119570,10 +120267,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..fa1f24372
+index 000000000..233b37b41
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2016 @@
+@@ -0,0 +1,1870 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -119582,7 +120279,9 @@ index 000000000..fa1f24372
 +use crate::tui;
 +use codex_app_server_protocol::ServerNotification;
 +use codex_app_server_protocol::ServerRequest;
++use codex_omd::client_surface::NoticeRequest;
 +use codex_omd::client_surface::SurfaceCall;
++use codex_omd::client_surface::notice_request;
 +use serde_json::Value;
 +use serde_json::json;
 +
@@ -121073,103 +121772,6 @@ index 000000000..fa1f24372
 +    }
 +}
 +
-+#[derive(Debug, PartialEq)]
-+enum NoticeRequest<'a> {
-+    Clear {
-+        id: &'a str,
-+    },
-+    Transient {
-+        id: Option<&'a str>,
-+        kind: &'static str,
-+        placement: crate::mod_ui::NoticePlacement,
-+        text: &'a str,
-+        ttl: std::time::Duration,
-+    },
-+    Transcript {
-+        kind: &'static str,
-+        text: &'a str,
-+        model: bool,
-+        call_id: Option<&'a str>,
-+    },
-+}
-+
-+fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
-+    let invalid = || "terminal_notice_invalid".to_owned();
-+    let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
-+        Value::Null => Ok(values[0]),
-+        value => values
-+            .iter()
-+            .find(|known| value == **known)
-+            .copied()
-+            .ok_or_else(invalid),
-+    };
-+    let kind = one_of("kind", &["info", "warning", "error"])?;
-+    let placement = match one_of("placement", &["toast", "status", "transcript"])? {
-+        "toast" => Some(crate::mod_ui::NoticePlacement::Toast),
-+        "status" => Some(crate::mod_ui::NoticePlacement::Status),
-+        _ => None,
-+    };
-+    let model = one_of("audience", &["user", "model"])? == "model";
-+    let id = match &arguments["id"] {
-+        Value::Null => None,
-+        Value::String(id) if codex_omd::mod_component_id(id) => Some(id.as_str()),
-+        _ => return Err(invalid()),
-+    };
-+    if arguments["clear"] == true {
-+        return match (id, placement) {
-+            (Some(id), Some(_)) => Ok(NoticeRequest::Clear { id }),
-+            _ => Err(invalid()),
-+        };
-+    }
-+    let text = arguments["text"]
-+        .as_str()
-+        .filter(|text| {
-+            !text.trim().is_empty() && text.len() <= 512 && !text.chars().any(char::is_control)
-+        })
-+        .ok_or_else(invalid)?;
-+    match placement {
-+        Some(placement) => {
-+            let ttl = match &arguments["ttl_ms"] {
-+                Value::Null => 5_000,
-+                value => value
-+                    .as_u64()
-+                    .filter(|ttl| (1_000..=60_000).contains(ttl))
-+                    .ok_or_else(invalid)?,
-+            };
-+            if model || !arguments["tool_call_id"].is_null() {
-+                return Err(invalid());
-+            }
-+            Ok(NoticeRequest::Transient {
-+                id,
-+                kind,
-+                placement,
-+                text,
-+                ttl: std::time::Duration::from_millis(ttl),
-+            })
-+        }
-+        None if !arguments["ttl_ms"].is_null() || id.is_some() => Err(invalid()),
-+        None => {
-+            let call_id = match &arguments["tool_call_id"] {
-+                Value::Null => None,
-+                Value::String(call_id)
-+                    if !call_id.is_empty()
-+                        && call_id.len() <= 128
-+                        && !call_id.chars().any(char::is_control) =>
-+                {
-+                    Some(call_id.as_str())
-+                }
-+                _ => return Err(invalid()),
-+            };
-+            Ok(NoticeRequest::Transcript {
-+                kind,
-+                text,
-+                model,
-+                call_id,
-+            })
-+        }
-+    }
-+}
-+
 +async fn listening_ports(roots: Vec<u32>) -> Result<Value, String> {
 +    if roots.is_empty() {
 +        return Ok(json!({"ports": []}));
@@ -121536,57 +122138,6 @@ index 000000000..fa1f24372
 +            json!({"columns":1}),
 +        ] {
 +            assert!(image_sample_dimensions(&value).is_err(), "{value}");
-+        }
-+    }
-+
-+    #[test]
-+    fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
-+        assert_eq!(
-+            notice_request(&json!({"text": "saved"})),
-+            Ok(NoticeRequest::Transient {
-+                id: None,
-+                kind: "info",
-+                placement: crate::mod_ui::NoticePlacement::Toast,
-+                text: "saved",
-+                ttl: std::time::Duration::from_secs(5),
-+            })
-+        );
-+        assert_eq!(
-+            notice_request(
-+                &json!({"text": "slow", "kind": "warning", "placement": "transcript",
-+                "audience": "model", "tool_call_id": "call_1"})
-+            ),
-+            Ok(NoticeRequest::Transcript {
-+                kind: "warning",
-+                text: "slow",
-+                model: true,
-+                call_id: Some("call_1"),
-+            })
-+        );
-+        assert_eq!(
-+            notice_request(&json!({"id": "run", "placement": "status", "clear": true})),
-+            Ok(NoticeRequest::Clear { id: "run" })
-+        );
-+        for arguments in [
-+            json!({}),
-+            json!({"text": " "}),
-+            json!({"text": "x".repeat(513)}),
-+            json!({"text": "a\u{1b}b"}),
-+            json!({"text": "x", "kind": "fatal"}),
-+            json!({"text": "x", "ttl_ms": 999}),
-+            json!({"text": "x", "ttl_ms": 60_001}),
-+            json!({"text": "x", "audience": "model"}),
-+            json!({"text": "x", "tool_call_id": "call_1"}),
-+            json!({"text": "x", "placement": "transcript", "ttl_ms": 2000}),
-+            json!({"text": "x", "placement": "transcript", "id": "run"}),
-+            json!({"id": "run", "placement": "transcript", "clear": true}),
-+            json!({"id": "Bad Id", "clear": true}),
-+        ] {
-+            assert_eq!(
-+                notice_request(&arguments),
-+                Err("terminal_notice_invalid".to_owned()),
-+                "{arguments}"
-+            );
 +        }
 +    }
 +}
@@ -126908,16 +127459,14 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..814471ce1
+index 000000000..43f30c93e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,266 @@
-+use codex_omd::ModColor;
+@@ -0,0 +1,201 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
 +use ratatui::text::Span;
-+use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -126929,47 +127478,12 @@ index 000000000..814471ce1
 +use unicode_segmentation::UnicodeSegmentation;
 +use unicode_width::UnicodeWidthStr;
 +
-+pub(crate) const FRAME: Duration = Duration::from_millis(33);
-+const QUEUE_UPDATES: usize = 32;
-+const QUEUE_BYTES: usize = 256 * 1024;
++pub(crate) use codex_omd::client_surface::BLIT_FRAME as FRAME;
++use codex_omd::client_surface::BLIT_QUEUE_BYTES as QUEUE_BYTES;
++use codex_omd::client_surface::BLIT_QUEUE_UPDATES as QUEUE_UPDATES;
++use codex_omd::client_surface::Blit as Update;
++use codex_omd::client_surface::BlitCell as Cell;
 +const RASTERS_PER_MOD: usize = 16;
-+
-+#[derive(Clone, Debug, Default, PartialEq)]
-+struct Cell {
-+    symbol: String,
-+    fg: Option<ModColor>,
-+    bg: Option<ModColor>,
-+}
-+
-+#[derive(Deserialize)]
-+#[serde(untagged)]
-+enum BlitCell {
-+    Glyph(String),
-+    Styled(String, Option<ModColor>, Option<ModColor>),
-+}
-+
-+#[derive(Deserialize)]
-+#[serde(deny_unknown_fields)]
-+struct BlitRect {
-+    x: u16,
-+    y: u16,
-+    width: u16,
-+    height: u16,
-+}
-+
-+#[derive(Deserialize)]
-+#[serde(deny_unknown_fields)]
-+struct Blit {
-+    key: String,
-+    rect: BlitRect,
-+    cells: Vec<BlitCell>,
-+}
-+
-+struct Update {
-+    rect: BlitRect,
-+    cells: Vec<Cell>,
-+    bytes: usize,
-+}
 +
 +struct Raster {
 +    owner: String,
@@ -127036,18 +127550,6 @@ index 000000000..814471ce1
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
 +}
 +
-+fn cell(cell: BlitCell) -> Option<Cell> {
-+    let (symbol, fg, bg) = match cell {
-+        BlitCell::Glyph(symbol) => (symbol, None, None),
-+        BlitCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
-+    };
-+    (symbol.graphemes(true).count() == 1
-+        && symbol.width() == 1
-+        && symbol.len() <= 16
-+        && !symbol.chars().any(char::is_control))
-+    .then_some(Cell { symbol, fg, bg })
-+}
-+
 +/// `terminal.blit`: queues a partial update of the caller's own raster under the frame budget.
 +pub(crate) fn blit(
 +    caller: &str,
@@ -127056,35 +127558,19 @@ index 000000000..814471ce1
 +    arguments: &Value,
 +    now: Instant,
 +) -> Result<Value, String> {
-+    let bytes = arguments.to_string().len();
-+    if bytes > QUEUE_BYTES {
-+        return Err("terminal_blit_too_large".into());
-+    }
-+    let blit: Blit =
-+        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
-+    match owner.as_deref() {
-+        Some(owner) if owner == caller => {}
-+        Some(_) => return Err("terminal_blit_not_owned".into()),
-+        None => return Err("terminal_blit_unknown".into()),
-+    }
-+    let (width, height) = size.ok_or("terminal_blit_unknown")?;
-+    let rect = blit.rect;
-+    if rect.width == 0
-+        || rect.height == 0
-+        || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
-+        || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
-+        || blit.cells.len() != usize::from(rect.width) * usize::from(rect.height)
++    let mut update =
++        codex_omd::client_surface::blit_request(caller, owner.as_deref(), size, arguments)?;
++    if !update
++        .cells
++        .iter()
++        .all(|cell| cell.symbol.graphemes(true).count() == 1 && cell.symbol.width() == 1)
 +    {
 +        return Err("terminal_blit_invalid".into());
 +    }
-+    let cells = blit
-+        .cells
-+        .into_iter()
-+        .map(cell)
-+        .collect::<Option<Vec<_>>>()
-+        .ok_or("terminal_blit_invalid")?;
++    let (width, height) = size.ok_or("terminal_blit_unknown")?;
++    let (key, bytes) = (std::mem::take(&mut update.key), update.bytes);
 +    let mut rasters = rasters();
-+    if !rasters.contains_key(&blit.key)
++    if !rasters.contains_key(&key)
 +        && rasters
 +            .values()
 +            .filter(|raster| raster.owner == caller)
@@ -127094,7 +127580,7 @@ index 000000000..814471ce1
 +        return Err("terminal_blit_limit".into());
 +    }
 +    let raster = rasters
-+        .entry(blit.key)
++        .entry(key)
 +        .and_modify(|raster| {
 +            if (raster.width, raster.height) != (width, height) || raster.owner != caller {
 +                *raster = Raster::new(caller, width, height);
@@ -127116,7 +127602,7 @@ index 000000000..814471ce1
 +        return Ok(json!({"status": "backpressure", "retry_after_ms": wait.as_millis() as u64}));
 +    }
 +    raster.queued_bytes += bytes;
-+    raster.queue.push_back(Update { rect, cells, bytes });
++    raster.queue.push_back(update);
 +    Ok(json!({
 +        "frame": raster.frames + raster.queue.len() as u64,
 +        "queued": raster.queue.len(),
@@ -127180,11 +127666,12 @@ index 000000000..814471ce1
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..978001e0a
+index 000000000..fa005874b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,194 @@
 +use super::*;
++use codex_omd::ModColor;
 +use pretty_assertions::assert_eq;
 +
 +fn text(lines: &[Line<'static>]) -> Vec<String> {
@@ -131470,10 +131957,10 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..33bdc96de
+index 000000000..ff17573c8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3741 @@
+@@ -0,0 +1,3715 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -134056,11 +134543,7 @@ index 000000000..33bdc96de
 +    lines
 +}
 +
-+#[derive(Clone, Copy, Debug, PartialEq)]
-+pub(crate) enum NoticePlacement {
-+    Toast,
-+    Status,
-+}
++pub(crate) use codex_omd::client_surface::NoticePlacement;
 +
 +#[derive(Clone)]
 +pub(crate) struct Notice {
@@ -134537,29 +135020,7 @@ index 000000000..33bdc96de
 +}
 +
 +pub(crate) fn raster_size(id: &str) -> Option<(u16, u16)> {
-+    fn find(components: &[ModComponent], id: &str) -> Option<(u16, u16)> {
-+        components.iter().find_map(|component| match component {
-+            ModComponent::Raster {
-+                id: raster,
-+                width,
-+                height,
-+                ..
-+            } if raster == id => Some((*width, *height)),
-+            ModComponent::Box { children, .. }
-+            | ModComponent::Pane { children, .. }
-+            | ModComponent::Dialog { children, .. } => find(children, id),
-+            _ => None,
-+        })
-+    }
-+    with_cache(|cache| {
-+        cache
-+            .snapshot
-+            .view
-+            .sites
-+            .values()
-+            .find_map(|site| find(&site.components, id))
-+    })
-+    .flatten()
++    with_cache(|cache| cache.snapshot.view.raster_size(id)).flatten()
 +}
 +
 +pub(crate) fn component_owner(component: &str) -> Option<String> {

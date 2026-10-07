@@ -111,6 +111,15 @@ test('fragments are rejected and typescript is required', async () => {
   });
 });
 
+test('a hand-written index.ts is never overwritten by index.tsx', async () => {
+  await withProject('export const tree = <slot />;', {}, directory => {
+    const handWritten = '// @ts-nocheck\nexport default () => {};\n';
+    writeFileSync(join(directory, 'index.ts'), handWritten);
+    assert.match(check(directory).output, /jsx_entrypoint_conflict/);
+    assert.equal(readFileSync(join(directory, 'index.ts'), 'utf8'), handWritten);
+  });
+});
+
 test('types reject unsupported elements and props in index.tsx', async () => {
   await withProject('export const tree = <blink id="x" label="x" />;', { typecheck: true }, directory => {
     const result = check(directory);

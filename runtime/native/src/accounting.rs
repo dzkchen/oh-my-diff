@@ -1090,6 +1090,7 @@ impl ResponseObserver for Accounts {
             "x-omd-attempt",
             attempt.to_string().parse().map_err(denied)?,
         );
+        let mut inserted = 0;
         if let Some(mods) = &mods {
             let intercepted =
                 self.intercept_request(mods, &account, &thread, &value, &request_id, attempt)?;
@@ -1112,6 +1113,10 @@ impl ResponseObserver for Accounts {
                 return Ok(());
             }
             if let Some((given, effective)) = intercepted.sections {
+                inserted = effective
+                    .iter()
+                    .filter(|section| !given.iter().any(|kept| kept["id"] == section["id"]))
+                    .count();
                 edited |= codex_omd::model_request::apply_sections(&mut value, &given, &effective);
             }
             if let Some(route) = &intercepted.route {
@@ -1129,6 +1134,7 @@ impl ResponseObserver for Accounts {
             &mut value,
             &thread,
             retry_of.as_deref(),
+            inserted,
         );
         edited |= queued_edit;
         if let Some(rates) = account
@@ -1162,12 +1168,7 @@ impl ResponseObserver for Accounts {
         if edited {
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
         }
-        codex_omd::model_request::commit_queued_sections(
-            &thread,
-            &request_id,
-            &carried,
-            retry_of.as_deref(),
-        );
+        codex_omd::model_request::commit_queued_sections(&thread, &request_id, &carried);
         Ok(())
     }
 
@@ -1652,6 +1653,9 @@ impl Attempt {
 
     fn settle(&mut self, raw: &Value) -> Result<(), TransportError> {
         let success = raw["type"] == "response.completed";
+        if success {
+            codex_omd::model_request::queued_sections_delivered(&self.thread, &self.request_id);
+        }
         let usage = raw
             .get("response")
             .and_then(|v| v.get("usage"))

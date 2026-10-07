@@ -150,7 +150,7 @@ fn command(core: &Core, id: &str, name: &str) -> Value {
 }
 
 #[test]
-fn a_client_recovery_reload_refreshes_the_running_thread_like_a_turn_start() {
+fn a_client_recovery_reload_is_refused_mid_turn_and_otherwise_refreshes_like_a_turn_start() {
     let Some(fixture) = fixture(&[]) else {
         return;
     };
@@ -179,6 +179,20 @@ fn a_client_recovery_reload_refreshes_the_running_thread_like_a_turn_start() {
     assert_eq!(lead.session.task.remaining().unwrap().2, 1000);
     *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(lead));
     write(5000);
+    fixture
+        .core
+        .expansion
+        .running
+        .lock()
+        .unwrap()
+        .insert(lead.thread.to_string(), "turn".into());
+    assert!(
+        super::super::clients::idle(&fixture.core)
+            .unwrap_err()
+            .starts_with("recovery_unavailable_during_turn")
+    );
+    fixture.core.expansion.running.lock().unwrap().clear();
+    super::super::clients::idle(&fixture.core).unwrap();
     super::super::clients::reloaded(&fixture.core);
     assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
 }

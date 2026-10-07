@@ -1081,6 +1081,28 @@ fn valid_control(hotkey: &Option<String>) -> bool {
     hotkey.as_deref().is_none_or(mod_key_name)
 }
 
+impl ModView {
+    pub fn raster_size(&self, id: &str) -> Option<(u16, u16)> {
+        fn find(components: &[ModComponent], id: &str) -> Option<(u16, u16)> {
+            components.iter().find_map(|component| match component {
+                ModComponent::Raster {
+                    id: raster,
+                    width,
+                    height,
+                    ..
+                } if raster == id => Some((*width, *height)),
+                ModComponent::Box { children, .. }
+                | ModComponent::Pane { children, .. }
+                | ModComponent::Dialog { children, .. } => find(children, id),
+                _ => None,
+            })
+        }
+        self.sites
+            .values()
+            .find_map(|site| find(&site.components, id))
+    }
+}
+
 pub fn mod_component_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 48

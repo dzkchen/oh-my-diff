@@ -144,9 +144,9 @@ pub fn verify_history_anchor(stream: &std::path::Path, sha256s: &[String]) -> st
             Some(last) => codex_omd::broker::seed(stream, sha256s.len() as u64, &head, last),
             None => Ok(()),
         },
-        Some(anchor) if anchor.count != sha256s.len() as u64 || anchor.head != head => {
-            Err(std::io::Error::other("anchored chain differs"))
-        }
+        Some(anchor) if anchor.count != sha256s.len() as u64 || anchor.head != head => Err(
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "anchored chain differs"),
+        ),
         _ => Ok(()),
     }
 }

@@ -175,7 +175,7 @@ fn client_events_keep_only_their_kinds_fields() {
 
 #[test]
 fn clients_see_a_null_view_while_mods_are_inactive() {
-    assert_eq!(view(), Ok((0, 0, Value::Null)));
+    assert!(published().is_none());
 }
 
 #[test]

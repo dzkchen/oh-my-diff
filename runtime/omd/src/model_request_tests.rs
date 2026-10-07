@@ -428,64 +428,49 @@ fn send_results_keep_inner_edits_and_stay_inside_editable_text() {
 }
 
 #[test]
-fn queued_sections_reach_the_next_request_once_and_its_retries() {
+fn queued_sections_repeat_until_a_response_completes_within_the_section_cap() {
     let thread = "thread-queued-sections";
-    assert!(!apply_queued_sections(&mut request(), thread, None).0);
+    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
     queue_section(thread, "checks", "build failed").unwrap();
     let mut denied = request();
-    let (_, carried) = apply_queued_sections(&mut denied, thread, None);
+    let (_, carried) = apply_queued_sections(&mut denied, thread, None, 0);
     assert_eq!(carried.len(), 1);
     let mut first = request();
-    let (edited, carried) = apply_queued_sections(&mut first, thread, None);
+    let (edited, carried) = apply_queued_sections(&mut first, thread, None, 0);
     assert!(edited);
-    commit_queued_sections(thread, "req-1", &carried, None);
+    commit_queued_sections(thread, "req-1", &carried);
     assert_eq!(first, denied);
     let text = first.to_string();
     assert!(
         text.contains("Mod-provided context") && text.contains("build failed"),
         "{text}"
     );
-    for (request_id, retry_of) in [("req-2", "req-1"), ("req-3", "req-2")] {
-        let mut retry = request();
-        let (edited, carried) = apply_queued_sections(&mut retry, thread, Some(retry_of));
-        assert!(edited && carried.is_empty());
-        assert_eq!(retry, first);
-        commit_queued_sections(thread, request_id, &carried, Some(retry_of));
-    }
-    assert!(!apply_queued_sections(&mut request(), thread, None).0);
-    assert!(!apply_queued_sections(&mut request(), thread, Some("req-never-sent")).0);
-    queue_section(thread, "checks", "second notice").unwrap();
-    let mut stale = request();
-    let (_, carried) = apply_queued_sections(&mut stale, thread, Some("req-never-sent"));
-    let text = stale.to_string();
-    assert!(
-        carried.len() == 1 && text.contains("second notice") && !text.contains("build failed"),
-        "{text}"
-    );
-    commit_queued_sections(thread, "req-4", &carried, Some("req-never-sent"));
-    queue_section(thread, "checks", "third notice").unwrap();
-    let (_, raced) = apply_queued_sections(&mut request(), thread, None);
-    let (_, winner) = apply_queued_sections(&mut request(), thread, None);
-    commit_queued_sections(thread, "req-5", &winner, None);
-    queue_section(thread, "checks", "fourth notice").unwrap();
-    commit_queued_sections(thread, "req-6", &raced, None);
+    let mut again = request();
+    let (_, carried) = apply_queued_sections(&mut again, thread, None, 0);
+    assert_eq!(again, first, "a core retry repeats the undelivered batch");
+    commit_queued_sections(thread, "req-2", &carried);
+    queued_sections_delivered(thread, "req-1");
+    assert!(apply_queued_sections(&mut request(), thread, None, 0).0);
+    queued_sections_delivered(thread, "req-2");
+    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
     let mut retry = request();
-    apply_queued_sections(&mut retry, thread, Some("req-5"));
-    assert!(retry.to_string().contains("third notice"), "{retry}");
-    let mut next = request();
-    let (_, carried) = apply_queued_sections(&mut next, thread, None);
-    let text = next.to_string();
-    assert!(
-        carried.len() == 1 && text.contains("fourth notice") && !text.contains("third notice"),
-        "{text}"
-    );
-    commit_queued_sections(thread, "req-7", &carried, None);
+    let (edited, carried) = apply_queued_sections(&mut retry, thread, Some("req-2"), 0);
+    assert!(edited);
+    assert_eq!(retry, first, "a mod retry repeats the delivered batch");
+    commit_queued_sections(thread, "req-3", &carried);
+    queued_sections_delivered(thread, "req-3");
     for _ in 0..INSERTED_SECTIONS {
         queue_section(thread, "checks", "note").unwrap();
     }
     assert_eq!(
         queue_section(thread, "checks", "one too many"),
         Err("model_context_queue_full".to_owned())
+    );
+    let (_, carried) = apply_queued_sections(&mut request(), thread, None, INSERTED_SECTIONS - 2);
+    assert_eq!(carried.len(), 2);
+    assert_eq!(
+        apply_queued_sections(&mut request(), thread, None, INSERTED_SECTIONS),
+        (false, Vec::new())
     );
     assert_eq!(
         queue_section("other-thread", "checks", " "),

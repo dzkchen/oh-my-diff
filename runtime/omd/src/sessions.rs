@@ -72,6 +72,12 @@ fn date(value: &str) -> bool {
             .is_ok_and(|day| (1..=31).contains(&day))
 }
 
+fn segment(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.trim_end_matches(".zst").to_owned())
+}
+
 fn cancelled() -> io::Error {
     io::Error::other("session_read_cancelled")
 }
@@ -160,6 +166,32 @@ impl SessionIndex<'_> {
         .read_until(b'\n', &mut line)?;
         let first: Value = serde_json::from_slice(&line)?;
         Ok((first["type"] == "session_meta").then(|| first["payload"].clone()))
+    }
+
+    /// The database's current segment and the segments its `history_base` chain continues.
+    fn lineage(&self, current: &Path, paths: &[PathBuf]) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        let mut next = segment(current);
+        while let Some(name) = next.take()
+            && names.insert(name.clone())
+        {
+            let base = paths
+                .iter()
+                .find(|path| segment(path).as_ref() == Some(&name))
+                .and_then(|path| self.head(path).ok().flatten())
+                .and_then(|head| {
+                    head["history_base"]["thread_id"]
+                        .as_str()
+                        .map(str::to_owned)
+                });
+            next = base.and_then(|base| {
+                paths.iter().filter_map(|path| segment(path)).find(|name| {
+                    let stem = name.trim_end_matches(".jsonl");
+                    stem.ends_with(&format!("-{base}")) || stem.ends_with(&format!("_{base}"))
+                })
+            });
+        }
+        names
     }
 
     fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
@@ -327,18 +359,20 @@ impl SessionIndex<'_> {
         let policy =
             crate::session_policy::permitted(self.root, self.repository, self.database, &active)?;
         let allowed = |id: &str| policy.as_ref().is_none_or(|ids| ids.contains_key(id));
-        let current = |id: &str, path: &Path| {
+        let lineages = std::cell::RefCell::new(std::collections::BTreeMap::new());
+        let current = |id: &str, path: &Path, paths: &[PathBuf]| {
             policy
                 .as_ref()
                 .and_then(|ids| ids.get(id))
                 .and_then(Option::as_ref)
                 .is_none_or(|current| {
-                    let name = |path: &Path| {
-                        path.file_name()
-                            .and_then(|name| name.to_str())
-                            .map(|name| name.trim_end_matches(".zst").to_owned())
-                    };
-                    name(current).is_some_and(|current| Some(current) == name(path))
+                    segment(path).is_some_and(|name| {
+                        lineages
+                            .borrow_mut()
+                            .entry(id.to_owned())
+                            .or_insert_with(|| self.lineage(current, paths))
+                            .contains(&name)
+                    })
                 })
         };
         let result = match operation {
@@ -380,7 +414,7 @@ impl SessionIndex<'_> {
                     match self.load(path, &active) {
                         Ok(Some(session))
                             if allowed(&session.summary.session_id)
-                                && current(&session.summary.session_id, path)
+                                && current(&session.summary.session_id, path, &paths)
                                 && in_range(Some(&session.summary.timestamp), since, until) =>
                         {
                             if !ids.insert((
@@ -445,7 +479,7 @@ impl SessionIndex<'_> {
                     .load(path, &active)?
                     .filter(|session| {
                         session.summary.session_id == input.session_id
-                            && current(&input.session_id, path)
+                            && current(&input.session_id, path, &paths)
                     })
                     .ok_or_else(|| io::Error::other("session_unavailable"))?;
                 if input.revision != session.summary.revision {

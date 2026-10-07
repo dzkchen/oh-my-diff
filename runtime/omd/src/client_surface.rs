@@ -804,8 +804,7 @@ pub fn call(
     }
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
-    let mirrored = MIRRORED_OPERATIONS
-        .contains(&operation)
+    let mirrored = (MIRRORED_OPERATIONS.contains(&operation) && !hub().observers.is_empty())
         .then(|| arguments.clone());
     let answer = wait(
         submit_bound(
@@ -897,7 +896,12 @@ pub fn materialize(
         .map_err(|error| error.to_string())?;
     let path = directory.join(format!("{digest}.{extension}"));
     if !path.exists() {
-        std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+        let mut temporary =
+            tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
+        std::io::Write::write_all(&mut temporary, &bytes).map_err(|error| error.to_string())?;
+        temporary
+            .persist(&path)
+            .map_err(|error| error.error.to_string())?;
     }
     Ok(path)
 }
@@ -938,6 +942,201 @@ pub fn translate_images(
             .try_for_each(|value| translate_images(store, repository, caller, thread, value)),
         _ => Ok(()),
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NoticePlacement {
+    Toast,
+    Status,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum NoticeRequest<'a> {
+    Clear {
+        id: &'a str,
+    },
+    Transient {
+        id: Option<&'a str>,
+        kind: &'static str,
+        placement: NoticePlacement,
+        text: &'a str,
+        ttl: Duration,
+    },
+    Transcript {
+        kind: &'static str,
+        text: &'a str,
+        model: bool,
+        call_id: Option<&'a str>,
+    },
+}
+
+/// `terminal.notice` arguments as every surface must accept them.
+pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
+    let invalid = || "terminal_notice_invalid".to_owned();
+    let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
+        Value::Null => Ok(values[0]),
+        value => values
+            .iter()
+            .find(|known| value == **known)
+            .copied()
+            .ok_or_else(invalid),
+    };
+    let kind = one_of("kind", &["info", "warning", "error"])?;
+    let placement = match one_of("placement", &["toast", "status", "transcript"])? {
+        "toast" => Some(NoticePlacement::Toast),
+        "status" => Some(NoticePlacement::Status),
+        _ => None,
+    };
+    let model = one_of("audience", &["user", "model"])? == "model";
+    let id = match &arguments["id"] {
+        Value::Null => None,
+        Value::String(id) if crate::mod_component_id(id) => Some(id.as_str()),
+        _ => return Err(invalid()),
+    };
+    if arguments["clear"] == true {
+        return match (id, placement) {
+            (Some(id), Some(_)) => Ok(NoticeRequest::Clear { id }),
+            _ => Err(invalid()),
+        };
+    }
+    let text = arguments["text"]
+        .as_str()
+        .filter(|text| {
+            !text.trim().is_empty() && text.len() <= 512 && !text.chars().any(char::is_control)
+        })
+        .ok_or_else(invalid)?;
+    match placement {
+        Some(placement) => {
+            let ttl = match &arguments["ttl_ms"] {
+                Value::Null => 5_000,
+                value => value
+                    .as_u64()
+                    .filter(|ttl| (1_000..=60_000).contains(ttl))
+                    .ok_or_else(invalid)?,
+            };
+            if model || !arguments["tool_call_id"].is_null() {
+                return Err(invalid());
+            }
+            Ok(NoticeRequest::Transient {
+                id,
+                kind,
+                placement,
+                text,
+                ttl: Duration::from_millis(ttl),
+            })
+        }
+        None if !arguments["ttl_ms"].is_null() || id.is_some() => Err(invalid()),
+        None => {
+            let call_id = match &arguments["tool_call_id"] {
+                Value::Null => None,
+                Value::String(call_id)
+                    if !call_id.is_empty()
+                        && call_id.len() <= 128
+                        && !call_id.chars().any(char::is_control) =>
+                {
+                    Some(call_id.as_str())
+                }
+                _ => return Err(invalid()),
+            };
+            Ok(NoticeRequest::Transcript {
+                kind,
+                text,
+                model,
+                call_id,
+            })
+        }
+    }
+}
+
+pub const BLIT_FRAME: Duration = Duration::from_millis(33);
+pub const BLIT_QUEUE_UPDATES: usize = 32;
+pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BlitCell {
+    pub symbol: String,
+    pub fg: Option<crate::ModColor>,
+    pub bg: Option<crate::ModColor>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum WireCell {
+    Glyph(String),
+    Styled(String, Option<crate::ModColor>, Option<crate::ModColor>),
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlitRect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireBlit {
+    key: String,
+    rect: BlitRect,
+    cells: Vec<WireCell>,
+}
+
+pub struct Blit {
+    pub key: String,
+    pub rect: BlitRect,
+    pub cells: Vec<BlitCell>,
+    pub bytes: usize,
+}
+
+/// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
+pub fn blit_request(
+    caller: &str,
+    owner: Option<&str>,
+    size: Option<(u16, u16)>,
+    arguments: &Value,
+) -> Result<Blit, String> {
+    let bytes = arguments.to_string().len();
+    if bytes > BLIT_QUEUE_BYTES {
+        return Err("terminal_blit_too_large".into());
+    }
+    let blit: WireBlit =
+        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
+    match owner {
+        Some(owner) if owner == caller => {}
+        Some(_) => return Err("terminal_blit_not_owned".into()),
+        None => return Err("terminal_blit_unknown".into()),
+    }
+    let (width, height) = size.ok_or("terminal_blit_unknown")?;
+    let rect = blit.rect;
+    if rect.width == 0
+        || rect.height == 0
+        || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
+        || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
+        || blit.cells.len() != usize::from(rect.width) * usize::from(rect.height)
+    {
+        return Err("terminal_blit_invalid".into());
+    }
+    let cells = blit
+        .cells
+        .into_iter()
+        .map(|cell| {
+            let (symbol, fg, bg) = match cell {
+                WireCell::Glyph(symbol) => (symbol, None, None),
+                WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
+            };
+            (!symbol.is_empty() && symbol.len() <= 16 && !symbol.chars().any(char::is_control))
+                .then_some(BlitCell { symbol, fg, bg })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or("terminal_blit_invalid")?;
+    Ok(Blit {
+        key: blit.key,
+        rect,
+        cells,
+        bytes,
+    })
 }
 
 #[cfg(test)]
