@@ -221,27 +221,33 @@ async fn send(
             }
         }
         if let Some(profile) = &request.credential {
-            if !access.credentials.contains(profile) {
+            let listed = access.credentials.contains(profile);
+            if !listed && !access.credentials.iter().any(|id| id == "owned") {
                 return Err(format!("credential_not_granted: {profile}"));
             }
             let store = core.host.root.clone();
-            let (profile, target) = (profile.clone(), origin.clone());
+            let (profile, target, owner, first) = (
+                profile.clone(),
+                origin.clone(),
+                caller.id.to_owned(),
+                hops.is_empty(),
+            );
             let secret = tokio::task::spawn_blocking(move || {
                 let profiles = codex_omd::credentials::CredentialProfiles::open(&store)?;
-                if profiles.profile(&profile)?.destination() != Some(target.as_str()) {
+                let entry = profiles.profile(&profile)?;
+                if !listed && entry.kind != "secret" {
+                    return Err(std::io::Error::other(format!(
+                        "credential_not_granted: {profile}"
+                    )));
+                }
+                if !first && entry.destination() != Some(target.as_str()) {
                     return Ok(None);
                 }
-                profiles.secret(&profile, &target).map(Some)
+                profiles.secret(&profile, &target, Some(&owner)).map(Some)
             })
             .await
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
-            if secret.is_none() && hops.is_empty() {
-                return Err(format!(
-                    "credential_origin_mismatch: {}",
-                    request.credential.as_deref().unwrap_or_default()
-                ));
-            }
             if let Some(secret) = secret {
                 let mut value =
                     reqwest::header::HeaderValue::from_str(&format!("Bearer {}", secret.token))
@@ -587,12 +593,17 @@ async fn mcp(
         };
         if let (Some(profile), Some(url)) = (&declared.credential, &declared.url) {
             let store = core.host.root.clone();
-            let (profile, origin) = (
+            let (profile, origin, owner) = (
                 profile.clone(),
                 codex_omd::url_origin(url).ok_or("http_url_invalid")?,
+                caller.id.to_owned(),
             );
             let secret = tokio::task::spawn_blocking(move || {
-                codex_omd::credentials::CredentialProfiles::open(&store)?.secret(&profile, &origin)
+                codex_omd::credentials::CredentialProfiles::open(&store)?.secret(
+                    &profile,
+                    &origin,
+                    Some(&owner),
+                )
             })
             .await
             .map_err(|error| error.to_string())?

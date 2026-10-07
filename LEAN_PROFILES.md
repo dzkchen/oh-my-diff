@@ -125,8 +125,9 @@ mod errors, and staged plugins.
 Both profiles start with a one-time card naming the profile and its active
 mods. `/mods` lists every installed mod with what it adds, its scope, source,
 API, capabilities and whether it is active, pending the next turn or failed; it
-enables, disables, re-trusts an edited source, installs a local directory,
-updates, rolls back, removes and reloads through native confirmations. Changes
+enables, disables, re-trusts an edited source, browses the directory, installs
+any [package reference](#install-and-manage-mods), updates, rolls back, removes
+and reloads through native confirmations. Changes
 apply at the next turn without a restart. The native `/omd` view is the
 recovery path when `/mods` is disabled or broken: it toggles each mod and links
 to plugins, skills and hooks. The OMD+ inspector moved to `/inspect`; direct
@@ -232,6 +233,69 @@ only the managed launcher and installation prefix:
 
 The mod store and Codex state remain.
 
+## Install and manage mods
+
+In `/mods`, **Browse the directory** opens a searchable catalog of the curated
+index; pick a mod, pick a version (blocked versions are listed separately), choose
+**Install for** (me or this project) and review the install. **Add from source**
+takes any reference below, and is the fallback when the directory is unavailable.
+Installing never enables a mod: review what it exposes, then enable it from its
+row. The same flow runs from a shell, with the same preview and approval path:
+
+```sh
+omd mods catalog [QUERY]                       # search the curated directory
+omd install ID[@VERSION]                       # a directory release
+omd install npm:@author/omd-mod@1.2.3          # an npm package (exact version, ^range or latest)
+omd install 'git+https://github.com/author/repo#v1.2.3:mod'   # URL#REF:DIRECTORY, REF defaults to HEAD
+omd install ./my-mod                           # a folder (./, ../, ~/ or absolute)
+omd mods inspect REFERENCE                     # preview without installing
+omd mods list                                  # installed mods, with quarantine state
+omd mods enable ID                             # also: disable, update, remove, rollback
+omd mods events                                # the redacted security log
+omd mods reset-lock                            # set an unreadable package lock aside
+```
+
+Private and scoped registries come from your npmrc exactly as npm and pnpm read
+it (`@scope:registry=…`, `//host/:_authToken=${NPM_TOKEN}`).
+
+Commands take `--scope user|project`, `--store PATH` and `--yes`, and `omd
+install` also `--version V`. Install, update, remove, rollback and enable print a preview (source,
+integrity, license, capabilities, authority exposure, dependencies, install
+scripts, secret environment and an approval note) and ask `Proceed? [y/N]` on a
+terminal. Without a terminal they exit with code 2 (`package_approval_required`)
+unless `--yes` is given; other failures exit 1. A Git `REF` may be a branch or
+tag; the plan locks the commit it resolves to, and an offline install needs a
+commit. npm packages need a public registry (`https`, or loopback `http`), are
+checked against the registry's sha512 integrity, must have no runtime
+`dependencies`, and never run npm install scripts. Sharing and publishing a mod
+is described in [mods/REFERENCE.md](mods/REFERENCE.md#publish-a-mod-to-npm).
+
+`omd update` updates OMD itself; `omd mods update ID` updates one mod. An update
+keeps a mod on only if it was on and its grant, authority scopes and origin are
+unchanged; otherwise enable it again after reviewing the preview.
+
+If a mod misbehaves, stop it from a shell. These work when OMD's TUI or control
+mod is broken, because `omd-mod` is native:
+
+```sh
+omd mods disable ID                            # stop it, keep grant and data
+omd mods quarantine ID "reason"                # disable and block this version and integrity
+omd mods revoke ID                             # disable and drop its grant; re-enabling needs a new trust
+omd mods unblock ID                            # lift a quarantine (stays off)
+/path/to/omd-bin/omd-mod package-disable /path/to/omd-mod-store ID
+/path/to/omd-bin/omd-mod package-quarantine /path/to/omd-mod-store ID "reason"
+/path/to/omd-bin/omd-mod revoke /path/to/omd-mod-store ID
+/path/to/omd-bin/omd-mod security-events /path/to/omd-mod-store
+```
+
+A quarantined mod refuses enable, reinstall and rollback but keeps its data,
+cache and sources.
+
+Permissions you deliberately grant (`os`/unsandboxed, network, approve, secrets)
+still run with that authority. Scanning, integrity checks, signatures and
+inclusion in the directory do not make a mod safe, and a trusted service
+provider acts with its own authority for any caller.
+
 ## Updates
 
 Installations made with `install.sh` update themselves through the same verified transaction. Each release on
@@ -262,7 +326,7 @@ and it installs the next time OMD starts with no other session open; **Update no
 Automatic updates download in the background and install at launch the same way, and a release that failed once is
 not retried automatically. A failed update rolls back and keeps the current version; an update interrupted at any
 point is repaired by the next launch or installer command. Updates keep the profile, activation choice, route setups,
-settings, credentials, Codex state and user-installed mods; they never update user-installed mods, and when enabled
+settings, credentials, Codex state and user-installed mods; they never update user-installed mods (`omd mods update ID` does), and when enabled
 user mods do not support a release's mod API, automatic updates skip it and `omd update` asks first (`--yes` skips
 the question).
 

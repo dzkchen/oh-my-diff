@@ -2044,7 +2044,7 @@ async fn structured_http_reassesses_redirects_streams_cancels_and_records_receip
     let Some(fixture) = fixture(&[Package {
         id: "fetcher",
         capabilities: &["http"],
-        manifest: json!({"http_access": {"origins": [origin], "credentials": ["p1"]}}),
+        manifest: json!({"http_access": {"origins": [origin], "credentials": ["p1", "owned"]}}),
         source: "export default function () {}\n",
     }]) else {
         return;
@@ -2132,13 +2132,43 @@ async fn structured_http_reassesses_redirects_streams_cancels_and_records_receip
     .await
     .unwrap_err();
     assert_eq!(error, format!("credential_origin_mismatch: {}", up.id));
-    let error = run(call(
-        "http.request",
-        json!({"url": format!("{origin}/final"), "credential": "other"}),
-    ))
-    .await
-    .unwrap_err();
-    assert_eq!(error, "credential_not_granted: other");
+    let down = profiles
+        .create(
+            "down",
+            "provider",
+            Some("down"),
+            Some("https://down.example"),
+        )
+        .unwrap();
+    let borrowed = profiles
+        .create_secret("borrowed", "https://own.example", "vault")
+        .unwrap();
+    let own = profiles
+        .create_secret("own", "https://own.example", "fetcher")
+        .unwrap();
+    for (credential, expected) in [
+        (
+            down.id.clone(),
+            format!("credential_not_granted: {}", down.id),
+        ),
+        (
+            borrowed.id.clone(),
+            format!("credential_secret_not_owned: {}", borrowed.id),
+        ),
+        (
+            own.id.clone(),
+            format!("credential_origin_mismatch: {}", own.id),
+        ),
+        ("other".into(), "credential_profile_unknown: other".into()),
+    ] {
+        let error = run(call(
+            "http.request",
+            json!({"url": format!("{origin}/final"), "credential": credential}),
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(error, expected);
+    }
     let error = run(call(
         "http.request",
         json!({"url": format!("{origin}/slow"), "timeout_ms": 100}),

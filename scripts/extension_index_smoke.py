@@ -36,7 +36,6 @@ def main():
             manifest = json.loads((source / "mod.json").read_text())
             request = json.dumps({
                 "source": {"kind": "local", "path": str(source)},
-                "activate": False,
                 "trust": {"packages": {"atlas_policy": {"capabilities": manifest["capabilities"]}}},
             })
             plan = call("package-plan", store, request)

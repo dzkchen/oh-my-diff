@@ -399,6 +399,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "prompts.revoke",
     "builtins.invoke",
     "packages.list",
+    "packages.index",
     "packages.preview",
     "packages.apply",
     "packages.reload",
@@ -506,13 +507,13 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
         exposure.push("approve.override: this mod may also approve commands your own execpolicy rules forbid.");
     }
     if granted("http") {
-        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles to requests for their enrolled origin; it never sees the tokens.");
+        exposure.push("http: this mod may send requests, including non-loopback ones, to the origins in http_access and have OMD attach the listed credential profiles, and with `owned` every secret this mod enrolls now or later, to requests for their enrolled origin; it never sees the tokens.");
     }
     if granted("fs.external") {
         exposure.push("fs.external: this mod may read, list and stat, and where write is set change, files under the fs_access roots outside the workspace; credential locations and protected paths stay refused.");
     }
     if granted("mcp") {
-        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, and their tools go through normal tool approvals.");
+        exposure.push("mcp: this mod may connect the MCP servers in mcp_servers to its thread; command servers run as your account outside the sandbox like any configured MCP server, a URL server's credential profile (another mod's secret is refused) is sent to that origin, and their tools go through normal tool approvals.");
     }
     if granted("policy") {
         exposure.push("policy: this mod may refuse other mods at load and withhold the host namespaces listed in policy.namespaces from them; it cannot grant anything, change managed policy or judge itself, and disabling it in /omd restores the other mods.");
@@ -2696,6 +2697,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
         | "composer.read"
         | "prompts.status"
         | "packages.list"
+        | "packages.index"
         | "packages.preview"
         | "exec.output_page"
         | "terminal.image_sample" => true,
@@ -3082,6 +3084,25 @@ impl ModHost {
         self.node = config.node;
         self.loaded = next;
         self.order = order;
+        let denied = rejected
+            .iter()
+            .filter(|rejection| {
+                !self.rejected.iter().any(|previous| {
+                    previous.path == rejection.path && previous.reason == rejection.reason
+                })
+            })
+            .map(|rejection| {
+                json!({"path": rejection.path, "mod": rejection.id,
+                "scope": rejection.scope, "reason": rejection.reason.split(':').next()})
+            })
+            .collect::<Vec<_>>();
+        if !denied.is_empty()
+            && let Ok(_guard) = self.store.lock()
+        {
+            let _ = self
+                .store
+                .record_security_event("load_denied", json!({"selections": denied}));
+        }
         self.rejected = rejected;
         self.admit();
         self.configuration_sha256 = hash;

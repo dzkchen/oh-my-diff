@@ -2,10 +2,16 @@
 
 Default-active in both profiles. `/mods` lists installed mods in Failed, On and
 Off sections with a status glyph (◆ on, ◇ starting or stopping, ○ off, ✕
-failed), a friendly name and a one-line description.
+failed or quarantined), a friendly name and a one-line description.
 
 - ↑↓ move, Space or Enter turns the highlighted mod on or off, Tab reaches the
-  filter, the settings picker and the install field, Esc closes the screen.
+  filter, the settings picker, Browse the directory, Install for and Add from
+  source, Esc closes the screen.
+- Browse the directory searches the curated index (`packages.index`); Enter on
+  a mod shows its versions (blocked ones listed apart), then Review install.
+  Add from source takes `npm:NAME[@VERSION]`, `git+URL[#REF]`, an absolute
+  folder or a directory id. Every install is reviewed, confirmed by the host and
+  left off; when the directory is unavailable, Add from source still works.
 - Turning a mod on asks the host's own approval, which lists any new
   permissions in plain words. Its slash commands work at once; its hooks start
   with your next message.

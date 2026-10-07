@@ -184,8 +184,8 @@
         "rust:omd/tests/packages.rs::stale_plans_and_interrupted_transactions_preserve_the_previous_lock",
         "rust:omd/tests/packages.rs::repository_revision_is_immutable_and_cached_for_offline_reuse"
       ],
-      "limitations": "Local sources, immutable repository revisions and versioned packages only; there is no external registry publication or install path.",
-      "removal": "`omd-mod` disable and uninstall restore the previous lock, preserve edited sources and explicit settings, and leave no activated state."
+      "limitations": "Local folders, Git repositories (a branch or tag locks to its commit), curated-index releases and npm packages from public or npmrc-configured private registries (sha512-verified, no runtime dependencies, npm install scripts never run). Installing never enables a mod, and granted permissions still run with that authority.",
+      "removal": "`omd-mod` disable, uninstall, revoke and package-quarantine work without any control mod; disable and uninstall restore the previous lock and preserve edited sources and explicit settings, and quarantine blocks the installed version while keeping its data."
     },
     {
       "id": "omd_coordination",
@@ -1257,7 +1257,7 @@
       "source": "mods/first-party/omd_frecency"
     },
     "omd_git": {
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "source": "mods/first-party/omd_git"
     },
     "omd_graph_navigator": {

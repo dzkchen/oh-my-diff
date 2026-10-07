@@ -456,21 +456,31 @@ impl CredentialProfiles {
         if profile.kind != "secret" || profile.owner.as_deref() != Some(owner) {
             return Err(failure(format!("credential_secret_not_owned: {id}")));
         }
+        Ok(serde_json::json!({"id": profile.id, "label": profile.label,
+            "origin": profile.origin, "value": self.read_secret(id)?}))
+    }
+
+    fn read_secret(&self, id: &str) -> io::Result<String> {
         let path = self.home(id)?.join("secret");
         let metadata = fs::symlink_metadata(&path)
             .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;
         if !metadata.is_file() || metadata.len() > SECRET_BYTES as u64 {
             return Err(failure("credential_store_invalid"));
         }
-        Ok(serde_json::json!({"id": profile.id, "label": profile.label,
-            "origin": profile.origin, "value": fs::read_to_string(path)?}))
+        fs::read_to_string(path)
     }
 
-    /// Refuses unless `origin` is the profile's enrolled destination.
-    pub fn secret(&self, id: &str, origin: &str) -> io::Result<CredentialSecret> {
+    /// Refuses unless `origin` is the profile's enrolled destination and, when a mod
+    /// (`owner`) asks for a `secret` profile, that mod owns it.
+    pub fn secret(
+        &self,
+        id: &str,
+        origin: &str,
+        owner: Option<&str>,
+    ) -> io::Result<CredentialSecret> {
         if let Some(value) = self.remote(
             "secret",
-            serde_json::json!({"id": id, "origin": origin}),
+            serde_json::json!({"id": id, "origin": origin, "owner": owner}),
             false,
         ) {
             let value = value?;
@@ -484,8 +494,19 @@ impl CredentialProfiles {
             });
         }
         let profile = self.profile(id)?;
+        if profile.kind == "secret"
+            && owner.is_some_and(|owner| profile.owner.as_deref() != Some(owner))
+        {
+            return Err(failure(format!("credential_secret_not_owned: {id}")));
+        }
         if profile.destination() != Some(origin) {
             return Err(failure(format!("credential_origin_mismatch: {id}")));
+        }
+        if profile.kind == "secret" {
+            return Ok(CredentialSecret {
+                token: self.read_secret(id)?,
+                account_id: None,
+            });
         }
         let path = self.home(id)?.join("auth.json");
         let metadata = fs::symlink_metadata(&path)

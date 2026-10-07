@@ -267,7 +267,7 @@ async fn forward(
             .map(str::to_owned)
             .ok_or_else(|| "credential_origin_missing".to_owned())?;
         let secret = profiles
-            .secret(&profile, &origin)
+            .secret(&profile, &origin, None)
             .map_err(|error| error.to_string())?;
         Ok::<_, String>((origin, secret))
     })

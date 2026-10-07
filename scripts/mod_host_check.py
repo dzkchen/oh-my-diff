@@ -22,7 +22,7 @@ TUI_OPERATIONS = {
     "sessions.ports", "terminal.import_file", "terminal.image_sample", "composer.read", "composer.write",
     "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.pty",
     "app.routes", "turns.activity", "events.publish", "credentials.list", "settings.write",
-    "packages.list", "packages.preview", "packages.reload",
+    "packages.list", "packages.index", "packages.preview", "packages.reload",
 }
 MOCKS = {
     "store.get": None, "store.put": {"stored": True}, "store.delete": {"deleted": True},
