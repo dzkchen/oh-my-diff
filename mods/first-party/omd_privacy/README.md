@@ -14,12 +14,12 @@ It scans this provider-bound text, grouped into the scopes you enable (`scopes`)
 
 | Scope | Text |
 | --- | --- |
-| `prompt` | Your submitted prompts and other user-role text |
-| `context` | Instructions, AGENTS.md, developer and system text, tool specs, output schemas and policy text |
+| `prompt` | Your submitted prompts (`user.text` and untagged user messages) |
+| `context` | Instructions, AGENTS.md, environment context, skill and hook context, developer and system text, tool specs, output schemas and policy text |
 | `tools` | Tool-call arguments, freeform tool input and tool output, including errors |
 | `replies` | Earlier assistant replies and readable reasoning that are sent back |
 
-Text it can edit is redacted in place. Tool-call arguments stay valid JSON; when a redaction would break the JSON, the request is refused. Some text can only be denied, not edited: reasoning, tool specs, output schemas and host policy text. A finding there refuses the request and names the rule, the text kind and the placeholder, never the value.
+Text it can edit is redacted in place. When a page has more findings than the host's 256 edits allow, neighbouring redactions are merged into fewer edits of up to 4 KiB that produce the same text. Tool-call arguments stay valid JSON; when a redaction would break the JSON, the request is refused. Some text can only be denied, not edited: reasoning, tool specs, output schemas and host policy text. A finding there refuses the request and names the rule, the text kind and the placeholder, never the value.
 
 Because the selection is trusted with `request_policy`, it fails closed while enabled. The host refuses every request (`request_policy_unavailable` or `final_request_refused`) when the mod is not loaded, has faulted, fails, times out, returns an invalid result or waits more than 5 s for a busy runtime. While the policy is on, the host also refuses realtime calls, image generation, web search and memory summarization (`request_policy_unsupported_transport`), because those cannot pass through the stage. To send again, disable the mod in `/mods` or `/omd`.
 
@@ -60,11 +60,11 @@ Secret rules are all on by default (`secrets`):
 | `google_api_key` | `AIza` keys |
 | `npm_token` | `npm_` tokens |
 | `jwt` | Three-part `eyJ….eyJ….…` tokens |
-| `bearer_token` | The credential after `Bearer` or `Basic` (16+ characters, with letters and digits) |
+| `bearer_token` | The credential after `Bearer` (16+ token characters with letters and digits that include an uppercase letter, are hex, or have a 16+ character run) or the base64 credential after `Basic` |
 | `url_credentials` | The password in `scheme://user:password@host` |
 | `assigned_secret` | The value assigned to a key that ends in password, passwd, secret, token, api key, access key, private key, secret key or credential(s), with `=`, `:`, `:=` or `=>` |
 
-`assigned_secret` takes values of 6–256 characters. Unquoted values need a digit or a symbol, and these values are skipped:
+`assigned_secret` takes values of 6–256 characters. Quoted values may hold any character except their quote and a line break, including quotes escaped in JSON strings (`\"`); a quoted value with a space also needs a digit or symbol. Unquoted values need a digit or a symbol, and these values are skipped:
 
 - references (`$VAR`, `${VAR}`, `process.env…`, `os.environ…`);
 - member expressions and function calls;
@@ -89,7 +89,7 @@ Lookalikes are left alone:
 - MAC addresses;
 - code such as `std::vector` or `ab::cd`.
 
-Text that already holds a placeholder is never redacted again.
+A placeholder is never redacted again; the rest of a finding around one, such as the other lines of a key, still is.
 
 ### False positives and negatives
 
@@ -99,7 +99,7 @@ False negatives:
 
 - secrets with no known prefix that are not assigned to a secret-like key;
 - prefixed tokens glued to a preceding letter or digit (`xghp_…`);
-- unquoted word-only credentials (`password=letmein`; the quoted form is caught);
+- unquoted word-only credentials (`password=letmein`; the quoted form is caught) and quoted word-only phrases with spaces;
 - values split by formatting, such as concatenation, `\u` escapes, base64 wrapping or line breaks in the middle of a token;
 - secrets inside images, audio and files;
 - values over the length bounds above.
@@ -115,7 +115,7 @@ Stream deltas are not part of the guarantee. Completed replies return as whole s
 
 ## Sensitive paths
 
-The `approval` middleware sees every shell command, including auto-approved ones. With the default `paths: ask`, a command that names a path matching `sensitive_paths` brings up the native approval prompt and names the matched pattern, so you review a read before its output can reach the model. `deny` refuses such commands and `off` disables the check. The detectors still apply to whatever output does reach the model.
+The `approval` middleware sees every shell command, including auto-approved ones, input written to an interactive session and escalated `execve` calls. Input too large for the host to include in the approval is treated as a match. With the default `paths: ask`, a command that names a path matching `sensitive_paths` brings up the native approval prompt and names the matched pattern, so you review a read before its output can reach the model. `deny` refuses such commands and `off` disables the check. The detectors still apply to whatever output does reach the model.
 
 Patterns:
 
@@ -151,7 +151,7 @@ To recover from a false alert, run `/privacy allow <placeholder-id>`, or `/priva
 | `exempt` | the four path exemptions above |
 | `unscanned` | `allow` (`allow`, `deny`) |
 
-Images, audio and files are not scanned and fall outside the guarantee. With `unscanned: deny`, a request that carries them is refused. Encrypted reasoning and compaction always pass.
+Images, audio and files are not scanned and fall outside the guarantee. With `unscanned: deny`, a request that carries them is refused; the host lists them before encrypted items, so none hide past its 256-item list. Encrypted reasoning and compaction always pass.
 
 `/privacy` shows:
 

@@ -88,12 +88,60 @@ test('a secret partly replaced by an inner policy is redacted around that edit w
   assert.match(applied(segments, result.edits)['/s'], /^key \[REDACTED:github_token:[a-z2-7]{12}\]MID end$/);
 });
 
+test('quoted values with spaces or symbols and escaped JSON quotes are redacted without breaking tool-call JSON', () => {
+  const nested = JSON.stringify({ cmd: `echo '${JSON.stringify({ password: 'hunter2xyz' })}' > conf.json` });
+  const segments = [
+    segment('/s', 'password = "Xk9&mP2(qL" and secret: \'my pass 9word\''),
+    segment('/input/1/arguments', nested, { kind: 'tool_call.arguments', role: 'assistant' }),
+    segment('/b', 'curl -H "Authorization: Basic dXNlcjpwYXNzd29yZDEyMw=="'),
+  ];
+  const out = applied(segments, send(segments).result.edits);
+  assert.equal(out['/s'].replace(PLACEHOLDER, 'X').replace(PLACEHOLDER, 'X'), 'password = "X" and secret: \'X\'');
+  assert.match(JSON.parse(out['/input/1/arguments']).cmd, /^echo '\{\\?"password\\?":\\?"\[REDACTED:assigned_secret:[a-z2-7]{12}\]\\?"\}' > conf\.json$/);
+  assert.match(out['/b'], /Basic \[REDACTED:bearer_token:/);
+});
+
+test('a placeholder inside a finding redacts the rest of it instead of dropping it', () => {
+  const key = fake.pem().replace(body(64, 4), '[REDACTED:assigned_secret:abcdefghijkl]');
+  const segments = [segment('/s', `key:\n${key}\nend`)];
+  const out = applied(segments, send(segments).result.edits)['/s'];
+  assert.match(out, /^key:\n\[REDACTED:private_key:[a-z2-7]{12}\]\[REDACTED:assigned_secret:abcdefghijkl\]\nend$/);
+  assert.deepEqual(send([segment('/s', out)]).result.edits, []);
+});
+
+test('AGENTS.md and environment context are scanned in the context scope, not the prompt scope', () => {
+  const token = fake.github(3);
+  const segments = [
+    segment('/input/0/content/0/text', `# AGENTS.md instructions\nuse ${token}`, { kind: 'agents_md.instructions' }),
+    segment('/input/0/content/1/text', `<environment_context>${token}</environment_context>`, { kind: 'environments.environment_context' }),
+    segment('/input/1/content/0/text', `prompt ${token}`),
+  ];
+  const { result } = send(segments, { settings: { scopes: ['context', 'tools'] } });
+  assert.deepEqual(result.edits.map(edit => edit.segment), ['/input/0/content/0/text', '/input/0/content/1/text']);
+});
+
+test('more findings than one page takes edits for are merged into fewer edits with the same result', () => {
+  const text = Array.from({ length: 300 }, (_, index) => `user${index}@gmail.com logged in`).join('\n');
+  const segments = [segment('/input/0/output', text, { kind: 'tool_output', role: 'tool' })];
+  const inner = [{ segment: '/input/0/output', start: 0, end: 4, text: 'USER' }];
+  const { result, state } = send(segments, { settings: { pii: ['email'] }, inner });
+  assert.ok(result.edits.length <= 256);
+  assert.ok(result.edits.every(edit => Buffer.byteLength(edit.text) <= 4096));
+  assert.deepEqual(result.edits[0], inner[0]);
+  const out = applied(segments, result.edits)['/input/0/output'];
+  assert.ok(!/@gmail\.com/.test(out));
+  assert.equal(out.split('\n').length, 300);
+  assert.match(out, /^USER\[REDACTED:email:[a-z2-7]{12}\] logged in\n\[REDACTED:email:/);
+  assert.equal(state.counts.email, 300);
+});
+
 test('leaves lookalikes, references, placeholders and reserved examples alone', () => {
   const clean = [
     ['AK', 'IAIOSFODNN7EXAMPLE'].join(''), ['gh', 'p_', 'x'.repeat(36)].join(''), 'pip install scikit-learn; sk-learn docs',
     'max_tokens = 128000', 'password: string;', 'const token = getToken();', 'secret = process.env.SECRET', 'api_key: ${API_KEY}',
     'password = this.config.password', 'tokenizer = AutoTokenizer.from_pretrained(name)', 'std::vector<int> at 12:30:45 on aa:bb:cc:dd:ee:ff',
-    'token = [REDACTED:assigned_secret:abcdefghijkl]', 'Bearer authentication is described below', 'admin@example.com and 192.168.1.1',
+    'token = [REDACTED:assigned_secret:abcdefghijkl]', 'Bearer authentication is described below', 'use a basic aarch64-unknown-linux-gnu build',
+    'password: "Enter your password, then press Continue."', 'admin@example.com and 192.168.1.1',
   ];
   const segments = clean.map((text, index) => segment(`/input/${index}/content/0/text`, text));
   assert.deepEqual(send(segments).result.edits, []);
@@ -203,8 +251,13 @@ test('worker, internal and retried requests are redacted the same way', () => {
 });
 
 test('sensitive path policy asks before shell reads and honours exemptions and modes', () => {
-  const approval = (command, settings = {}, kind = 'exec') => run('approval', '', { id: 'a', kind, thread_id: 't', turn_id: null, agent_id: null,
-    host_decision: 'skip', policy: 'on-request', details: { command, cwd: '/repo' }, assessment: false }, { settings }).value;
+  const approval = (command, settings = {}, kind = 'exec', details = { command, cwd: '/repo' }) => run('approval', '', { id: 'a', kind, thread_id: 't',
+    turn_id: null, agent_id: null, host_decision: 'skip', policy: 'on-request', details, assessment: false }, { settings }).value;
+  assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'cat ~/.ssh/id_rsa\n', cwd: '/repo' }).ask, /id_rsa\*/);
+  assert.equal(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'y\n', cwd: '/repo' }), null);
+  assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, cwd: '/repo', truncated: true }).ask, /too large to check/);
+  assert.match(approval(null, {}, 'execve', { tool: 'execve', program: '/bin/cat', argv: ['cat', 'id_ed25519'], command: ['/bin/cat', 'id_ed25519'], cwd: '/home/me/.ssh' }).ask,
+    /id_ed25519\*/);
   assert.match(approval(['bash', '-lc', 'cat .env']).ask, /sensitive path \(\.env\)/);
   assert.match(approval(['bash', '-lc', 'grep -r key ~/.ssh']).ask, /\.ssh\//);
   assert.match(approval('cat ./config/.env.local').ask, /\.env\.\*/);

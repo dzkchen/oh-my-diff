@@ -1,6 +1,6 @@
 import type { FinalRequestEdit, FinalRequestPage, FinalRequestSegment, Json, ModAPI } from '../../api.d.ts';
 
-type Exemptions = { fingerprints: string[]; domains: string[]; paths: string[]; ignored: number };
+type Exemptions = { fingerprints: string[]; domains: string[]; paths: PathPattern[]; ignored: number };
 type Context = { exempt: Exemptions; before: number; leftOpen: boolean; rightOpen: boolean };
 type Rule = (text: string, context: Context) => [number, number][];
 type Check = (value: string, groups: Record<string, string | undefined>, exempt: Exemptions) => boolean;
@@ -20,10 +20,12 @@ const MAX_IDS = 1000;
 
 const varied = (value: string, distinct = 8) => new Set(value).size >= distinct && !PLAIN.test(value);
 const mixed = (value: string) => /\d/.test(value) && /[A-Za-z]/.test(value) && varied(value);
+const opaque = (value: string) => /[A-Z]/.test(value) || /^[0-9a-f._~+/-]+$/.test(value) || value.split(/[._~+/-]/).some(part => part.length >= 16);
 
-function regex(pattern: RegExp, check?: Check, group?: string): Rule {
+function regex(pattern: RegExp, check?: Check, groups: string[] = []): Rule {
   return (text, { exempt }) => [...text.matchAll(pattern)].flatMap(match => {
-    const [start, end] = group ? match.indices!.groups![group]! : [match.index!, match.index! + match[0].length];
+    const span = groups.map(group => match.indices!.groups![group]).find(Boolean);
+    const [start, end] = span ?? [match.index!, match.index! + match[0].length];
     return !check || check(text.slice(start, end), match.groups ?? {}, exempt) ? [[start, end] as [number, number]] : [];
   });
 }
@@ -31,7 +33,8 @@ function regex(pattern: RegExp, check?: Check, group?: string): Rule {
 function assigned(value: string, groups: Record<string, string | undefined>) {
   if (/^(?:\$|%|process\.env|os\.environ|env\.)/i.test(value) || !varied(value, 4)) return false;
   if (/^(?:true|false|null|none|nil|undefined|string|number|boolean|bool|str|int|bytes|required|optional|secret|password|token|test|empty|unset|hidden)$/i.test(value)) return false;
-  return !!groups.quote || /[^A-Za-z_]/.test(value) && !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(value);
+  if (groups.quoted !== undefined) return !/\s/.test(value) || /[^A-Za-z\s.,!?'"-]/.test(value);
+  return /[^A-Za-z_]/.test(value) && !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(value);
 }
 
 const pem: Rule = (text, { leftOpen }) => {
@@ -129,10 +132,12 @@ const SECRETS: Record<string, Rule> = {
   google_api_key: regex(/(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])/g, value => varied(value)),
   npm_token: regex(/(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])/g, value => varied(value)),
   jwt,
-  bearer_token: regex(/\b(?:Bearer|Basic)\s+(?<value>[A-Za-z0-9._~+/-]{16,1024}=*)(?![A-Za-z0-9._~+/=-])/dgi, mixed, 'value'),
+  bearer_token: regex(/\b(?:Bearer\s+(?<value>[A-Za-z0-9._~+/-]{16,1024}=*)|Basic\s+(?<basic>[A-Za-z0-9+/]{16,1024}={0,2}))(?![A-Za-z0-9._~+/=-])/dgi,
+    value => mixed(value) && opaque(value), ['value', 'basic']),
   url_credentials: regex(/\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:@/"'<>[\]\\]{1,128}:(?<value>[^\s@/"'<>[\]\\]{1,256})@/dgi,
-    value => !/^(?:\*+|\$\{?[A-Za-z_]+\}?)$/.test(value), 'value'),
-  assigned_secret: regex(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api_?key|apikey|access_?key|private_?key|secret_?key|credentials?)["']?\s*(?::=|=>|=|:)\s*(?<quote>["']?)(?<value>[^\s"'`,;&{}()<>[\]\\]{6,256})(?![^\s"'`,;&{}()<>[\]\\])\k<quote>(?!\s*\()/dgi, assigned, 'value'),
+    value => !/^(?:\*+|\$\{?[A-Za-z_]+\}?)$/.test(value), ['value']),
+  assigned_secret: regex(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api_?key|apikey|access_?key|private_?key|secret_?key|credentials?)(?:\\*["'])?\s*(?::=|=>|=|:)\s*(?:(?<quote>\\*["'])(?<quoted>(?:(?!\k<quote>|\[REDACTED:)[^\n\\]){6,256})\k<quote>|(?<value>[^\s"'`,;&{}()<>[\]\\]{6,256})(?![^\s"'`,;&{}()<>[\]\\])(?!\s*\())/dgi,
+    assigned, ['quoted', 'value']),
 };
 
 const PII: Record<string, Rule> = {
@@ -156,7 +161,7 @@ function configure(settings: Readonly<Record<string, Json>>) {
     const [kind, value] = [entry.slice(0, at), entry.slice(at + 1).trim()];
     if (kind === 'sha256' && /^[0-9a-f]{16,64}$/.test(value)) exempt.fingerprints.push(value);
     else if (kind === 'domain' && value) exempt.domains.push(value.toLowerCase());
-    else if (kind === 'path' && value) exempt.paths.push(value);
+    else if (kind === 'path' && value) exempt.paths.push(pathPattern(value));
     else exempt.ignored++;
   }
   return {
@@ -164,7 +169,7 @@ function configure(settings: Readonly<Record<string, Json>>) {
       ...pii.filter(name => name in PII).map(name => [name, PII[name]] as const)],
     secrets: secrets.filter(name => name in SECRETS), pii: pii.filter(name => name in PII),
     unknown: [...secrets.filter(name => !(name in SECRETS)), ...pii.filter(name => !(name in PII))],
-    scopes: strings(settings.scopes), paths: String(settings.paths), sensitive: strings(settings.sensitive_paths),
+    scopes: strings(settings.scopes), paths: String(settings.paths), sensitive: strings(settings.sensitive_paths).map(pathPattern),
     unscanned: String(settings.unscanned), exempt,
   };
 }
@@ -202,7 +207,7 @@ function utf8Length(text: string) {
 }
 
 const scopeOf = (segment: FinalRequestSegment) => segment.kind.startsWith('tool_call.') || segment.kind === 'tool_output' ? 'tools'
-  : segment.role === 'user' ? 'prompt' : segment.role === 'assistant' ? 'replies' : 'context';
+  : segment.kind === 'user.text' || segment.kind === 'message.user' ? 'prompt' : segment.role === 'assistant' ? 'replies' : 'context';
 
 function wellFormed(page: FinalRequestPage) {
   return !!page && Array.isArray(page.segments) && Array.isArray(page.opaque) && !!page.scope
@@ -215,20 +220,36 @@ function apply(text: string, edits: FinalRequestEdit[]) {
   return [...edits].sort((a, b) => b.start - a.start).reduce((out, edit) => out.slice(0, edit.start) + edit.text + out.slice(edit.end), text);
 }
 
-function pathHit(command: string, patterns: string[], exempt: string[]) {
-  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
-  const names = (token: string, pattern: string) => {
-    const want = pattern.replace(/\/+$/, '').split('/').map(glob);
-    const parts = token.replace(/\/+$/, '').split('/');
+type Pending = { segment: FinalRequestSegment; own: FinalRequestEdit[]; taken: FinalRequestEdit[] };
+
+function coalesce({ segment, own, taken }: Pending) {
+  const out: FinalRequestEdit[] = [];
+  for (const edit of own) {
+    const last = out[out.length - 1];
+    const text = last ? last.text + segment.text.slice(last.end, edit.start) + edit.text : '';
+    if (last && utf8Length(text) <= 4096 && !taken.some(other => other.start <= edit.start && other.end >= last.end)) Object.assign(last, { end: edit.end, text });
+    else out.push({ ...edit });
+  }
+  return out;
+}
+
+type PathPattern = { pattern: string; want: RegExp[]; directory: boolean };
+
+const pathPattern = (pattern: string): PathPattern => ({ pattern, directory: pattern.endsWith('/'), want: pattern.replace(/\/+$/, '').split('/')
+  .map(part => new RegExp(`^${part.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)) });
+
+function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]) {
+  const names = (parts: string[], { want, directory }: PathPattern) => {
     for (let at = 0; at + want.length <= parts.length; at++) {
-      if ((pattern.endsWith('/') || at + want.length === parts.length) && want.every((part, index) => part.test(parts[at + index]))) return true;
+      if ((directory || at + want.length === parts.length) && want.every((part, index) => part.test(parts[at + index]))) return true;
     }
     return false;
   };
   for (const token of command.split(/[\s'"`;|&<>()=]+/).filter(Boolean)) {
-    if (exempt.some(pattern => names(token, pattern))) continue;
-    const hit = patterns.find(pattern => names(token, pattern));
-    if (hit) return hit;
+    const parts = token.replace(/\/+$/, '').split('/');
+    if (exempt.some(pattern => names(parts, pattern))) continue;
+    const hit = patterns.find(pattern => names(parts, pattern));
+    if (hit) return hit.pattern;
   }
   return null;
 }
@@ -267,7 +288,7 @@ export default function activate(api: ModAPI) {
       if (!ids[id]) ids[id] = fingerprint;
       return id;
     };
-    const edits: FinalRequestEdit[] = [];
+    const pending: Pending[] = [];
     const counts: Record<string, number> = {};
     for (const segment of page.segments) {
       if (!config.scopes.includes(scopeOf(segment))) continue;
@@ -275,9 +296,8 @@ export default function activate(api: ModAPI) {
       const framed = head + segment.text + (segment.after ?? '');
       const context: Context = { exempt: config.exempt, before: head.length,
         leftOpen: (segment.offset ?? 0) > head.length, rightOpen: utf8Length(segment.after ?? '') > 1020 };
-      const masked = [...framed.matchAll(PLACEHOLDER)].map(match => [match.index!, match.index! + match[0].length]);
       const found = config.rules.flatMap(([rule, find]) => find(framed, context).map(([start, end]) => ({ rule, start, end })))
-        .filter(({ start, end }) => end > start && !masked.some(([from, to]) => start < to && from < end))
+        .filter(({ start, end }) => end > start)
         .sort((a, b) => a.start - b.start || b.end - a.end);
       const merged: typeof found = [];
       for (const finding of found) {
@@ -286,28 +306,29 @@ export default function activate(api: ModAPI) {
         else merged.push({ ...finding });
       }
       const taken = inner.edits.filter(edit => edit.segment === segment.id);
+      const skip = [...taken, ...[...framed.matchAll(PLACEHOLDER)].map(match => ({ start: match.index! - head.length, end: match.index! + match[0].length - head.length }))]
+        .sort((a, b) => a.start - b.start);
       const own: FinalRequestEdit[] = [];
       for (const { rule, start, end } of merged) {
         if (end <= head.length || start >= head.length + segment.text.length) continue;
+        const pieces: [number, number][] = [];
+        let from = Math.max(start, head.length) - head.length;
+        const to = Math.min(end, head.length + segment.text.length) - head.length;
+        for (const other of skip) {
+          if (other.end <= from || other.start >= to) continue;
+          if (other.start > from) pieces.push([from, other.start]);
+          from = Math.max(from, other.end);
+        }
+        if (from < to) pieces.push([from, to]);
+        if (!pieces.length) continue;
         const value = framed.slice(start, end);
         const fingerprint = await sha256(value);
         if (config.exempt.fingerprints.some(exempted => fingerprint.startsWith(exempted))) continue;
         const id = await mint(rule, value, fingerprint.slice(0, 16));
         if (!segment.editable) return refuse(`${rule} in ${segment.kind} text, which cannot be redacted (placeholder ${id}); review it and run /privacy allow ${id} if it is not sensitive`);
-        let text = start >= head.length ? `[REDACTED:${rule}:${id}]` : '';
-        let from = Math.max(start, head.length) - head.length;
-        const to = Math.min(end, head.length + segment.text.length) - head.length;
-        const push = (until: number) => {
-          own.push({ segment: segment.id, start: from, end: until, text });
-          if (text) counts[rule] = (counts[rule] ?? 0) + 1;
-          text = '';
-        };
-        for (const other of [...taken].sort((a, b) => a.start - b.start)) {
-          if (other.end <= from || other.start >= to) continue;
-          if (other.start > from) push(other.start);
-          from = Math.max(from, other.end);
-        }
-        if (from < to) push(to);
+        if (start >= head.length) counts[rule] = (counts[rule] ?? 0) + 1;
+        pieces.forEach(([piece, until], index) => own.push({ segment: segment.id, start: piece, end: until,
+          text: index === 0 && start >= head.length ? `[REDACTED:${rule}:${id}]` : '' }));
       }
       if (own.length && segment.kind === 'tool_call.arguments' && segment.offset === undefined) {
         let valid = true;
@@ -316,9 +337,11 @@ export default function activate(api: ModAPI) {
           try { JSON.parse(apply(segment.text, [...taken, ...own])); } catch { return refuse('redaction would break tool-call JSON arguments'); }
         }
       }
-      edits.push(...own);
+      pending.push({ segment, own, taken });
     }
-    if (inner.edits.length + edits.length > 256) return refuse('more than 256 redactions on one request page');
+    let edits = pending.flatMap(item => item.own);
+    if (inner.edits.length + edits.length > 256) edits = pending.flatMap(coalesce);
+    if (inner.edits.length + edits.length > 256) return refuse('more than 256 redaction edits on one request page');
     const redacted = Object.values(counts).reduce((sum, count) => sum + count, 0);
     if (redacted) {
       saved.counts ??= {};
@@ -333,11 +356,14 @@ export default function activate(api: ModAPI) {
 
   api.middleware('approval', event => {
     const config = configure(api.settings);
-    if (config.paths === 'off' || event.kind !== 'exec') return null;
-    const command = (event.details as { command?: Json } | null)?.command;
-    const hit = pathHit(Array.isArray(command) ? command.map(String).join(' ') : String(command ?? ''), config.sensitive, config.exempt.paths);
-    if (!hit) return null;
-    const reason = `omd_privacy: this command names a sensitive path (${hit}), so its output would reach the model`;
+    if (config.paths === 'off' || !['exec', 'stdin', 'execve'].includes(event.kind)) return null;
+    const details = (event.details ?? {}) as Record<string, Json>;
+    const text = [details.command, details.argv, details.input].map(value => Array.isArray(value) ? value.map(String).join(' ') : typeof value === 'string' ? value : '').join(' ');
+    const unchecked = event.kind === 'stdin' && typeof details.input !== 'string';
+    const hit = pathHit(text, config.sensitive, config.exempt.paths);
+    if (!hit && !unchecked) return null;
+    const reason = hit ? `omd_privacy: this command names a sensitive path (${hit}), so its output would reach the model`
+      : 'omd_privacy: this session input is too large to check for sensitive paths';
     return config.paths === 'deny' ? { deny: reason } : { ask: reason };
   });
 

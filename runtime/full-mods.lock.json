@@ -572,11 +572,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "7a8754f211dc6c016d06ec7a70c1488074ef4cb9bfb25ab3f05e1266d1fbecc9",
+        "index.ts": "d72791c05a12f95cb12dee18f71beb0d69f344393e25d002f2b432066def3e7f",
         "mod.json": "5f92cc6a137c98da77e6dd5f867f4478b44ec0b0560772770026e581d5558c68"
       },
       "id": "omd_privacy",
-      "package_sha256": "13082b61fb039dfd32de7b69682e86dd62ec1445ed72770af4c820f2c968778e",
+      "package_sha256": "bc31132601944917d9b8a3f38531487383e25f482db219317380ff72092dbe6e",
       "source": "mods/first-party/omd_privacy",
       "version": "0.1.0-preview.1"
     },

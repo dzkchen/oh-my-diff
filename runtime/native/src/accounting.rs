@@ -527,7 +527,7 @@ impl Accounts {
         let mut applied = Vec::new();
         for round in 0..2 {
             // Cached segments are matched by digest; only the ones a policy still has to read are copied into JSON.
-            let (segments, opaque) = codex_omd::model_request::send_segment_refs(value);
+            let (segments, opaque, opaque_total) = codex_omd::model_request::send_segment_refs(value);
             let mut edits = BTreeMap::<String, Edits>::new();
             let mut keys = Vec::new();
             let mut pending = Vec::new();
@@ -573,7 +573,7 @@ impl Accounts {
             for (index, page) in pages.into_iter().enumerate() {
                 let input = json!({"request_id":request_id,"attempt":attempt,"scope":scope,
                     "provider":provider,"route":route,"model":value["model"],"page":index + 1,
-                    "pages":count,"cached":cached,"segments":page,"opaque":opaque});
+                    "pages":count,"cached":cached,"segments":page,"opaque":opaque,"opaque_total":opaque_total});
                 let chain = codex_omd::intercept_shared(
                     mods,
                     "model_send",
