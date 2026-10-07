@@ -371,6 +371,26 @@
       "source": "mods/first-party/omd_mcp",
       "version": "0.1.0-preview.1"
     },
+    "omd_minefield": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "store",
+        "lifecycle",
+        "events",
+        "packages"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "8956995f237411a87045a08b8e97a4840782375b4e072c247cbb12737509c5b7",
+        "mod.json": "9015cbc94b9eb5f2a4e39906dc883b4d3054691f52f637fc260b9a632cb7c4a5"
+      },
+      "id": "omd_minefield",
+      "package_sha256": "39989327e8f3099cef202055529efd0c3166d466bd548777c8eee6673bb135ae",
+      "source": "mods/first-party/omd_minefield",
+      "version": "0.1.0-preview.1"
+    },
     "omd_mini": {
       "api": "0.2.0-experimental.5",
       "capabilities": [

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "thread_id": "minefield-scenario",
+  "host_operations": {
+    "packages.list": [
+      {"generation": 10, "packages": [], "reload_error": null},
+      {"generation": 10, "packages": [], "reload_error": null},
+      {"generation": 10, "packages": [], "reload_error": null},
+      {"generation": 11, "packages": [], "reload_error": null}
+    ],
+    "events.publish": [{"delivered": 1, "dropped": 0}]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "omd_minefield", "event": "terminal", "name": "", "payload": {"event": "idle"}, "expect": null},
+    {"type": "event", "event": "channel", "payload": {"publisher": "omd_minefield", "channel": "omd_minefield/play", "sequence": 1, "data": {"action": "new", "seed": 15}}},
+    {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "presentation": {"surface": "inline"}, "client": {"columns": 20, "rows": 16}}},
+    {"type": "event", "event": "component_event", "payload": {"component": "minefield_board", "kind": "input", "events": [{"key": "Enter", "text": null}]}},
+    {"type": "event", "event": "channel", "payload": {"publisher": "omd_minefield", "channel": "omd_minefield/play", "sequence": 2, "data": {"action": "keys", "board": 2, "keys": [{"action": "reveal"}]}}},
+    {"type": "advance_time", "ms": 2000, "expect": {"now_ms": 2000, "timers": [{"mod": "omd_minefield", "key": "mine-2-1", "at_ms": 1000}, {"mod": "omd_minefield", "key": "mine-2-2", "at_ms": 2000}]}},
+    {"type": "reload"},
+    {"type": "advance_time", "ms": 10000, "expect": {"now_ms": 12000, "timers": [{"mod": "omd_minefield", "key": "mine-2-3", "at_ms": 3000}]}},
+    {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "client": {"columns": 7, "rows": 12}}},
+    {"type": "event", "event": "channel", "payload": {"publisher": "omd_minefield", "channel": "omd_minefield/play", "sequence": 3, "data": {"action": "close"}}},
+    {"type": "advance_time", "ms": 10000, "expect": {"now_ms": 22000}},
+    {"type": "invoke", "mod": "omd_minefield", "event": "terminal", "name": "", "payload": {"event": "idle"}, "expect": null}
+  ]
+}

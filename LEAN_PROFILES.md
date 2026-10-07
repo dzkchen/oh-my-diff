@@ -159,6 +159,11 @@ secrets and the PII rules you select become stable opaque placeholders in every
 provider-bound request, and shell reads of sensitive paths ask first; `/privacy`
 shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 
+`omd-package mod enable omd_minefield` enables a seeded 9×9/10-mine game.
+Open `/minefield`, focus with F6 and close with Escape. It uses no model or
+network, saves boards and best records per thread, and resumes paused
+([controls and timing](mods/first-party/omd_minefield/README.md)).
+
 Git mutations also need an explicit permission-profile grant for the repository's
 Git metadata and affected files. Codex's default `.git` protection is respected;
 enabling `omd_git` alone does not authorize writes. Run from the repository root.
