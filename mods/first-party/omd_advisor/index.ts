@@ -269,7 +269,7 @@ export default function activate(api: ModAPI) {
     let parsed: unknown;
     try { parsed = JSON.parse(event.text); } catch { parsed = null; }
     const values = object(parsed) && Array.isArray(parsed.notes) && Object.keys(parsed).length === 1 && parsed.notes.length <= 3 ? parsed.notes : null;
-    if (!values || values.some(value => !object(value) || Object.keys(value).some(key => !['kind', 'implication', 'detail', 'quote'].includes(key)) || !KINDS[String(value.kind)] || !bounded(value.implication, 240) || (value.detail !== undefined && typeof value.detail !== 'string') || !bounded(value.quote, 200) || value.quote.length < 12)) {
+    if (!values || values.some(value => !object(value) || Object.keys(value).some(key => !['kind', 'implication', 'detail', 'quote'].includes(key)) || !Object.hasOwn(KINDS, String(value.kind)) || !bounded(value.implication, 240) || (value.detail !== undefined && typeof value.detail !== 'string') || !bounded(value.quote, 200) || value.quote.length < 12)) {
       return keep({ ...outcome, status: 'invalid_result', reason: 'observer_notes_schema' });
     }
     const said = spoken(watch.excerpt), notes: Note[] = [], seen = new Set(watch.seen);
@@ -297,7 +297,8 @@ export default function activate(api: ModAPI) {
   if (review || observe) {
     for (const name of ['start', 'resume'] as const) api.on(name, () => {
       if (review) hide();
-      if (observe && watching().status === 'observing') keep({ status: 'interrupted', reason: 'the session restarted before the observer finished', handle: '' });
+      const watch = observe ? watching() : null;
+      if (watch?.status === 'observing') { api.host.tryCall('agents.cancel', { handle: watch.handle }); keep({ status: 'interrupted', reason: 'the session restarted before the observer finished', handle: '' }); }
     });
     api.on('turn_start', () => {
       if (review) hide();

@@ -38,6 +38,7 @@ function invoke(repository, state, event, payload, name, settings = {}) {
       assert.deepEqual(args, { method: 'thread/turns/list', params: { threadId: 'thread-1', limit: args.params.limit, itemsView: 'summary' } });
       value = { data: responses.slice(0, args.params.limit).map(text => ({ items: [{ type: 'userMessage' }, { type: 'agentMessage', text }] })) };
     } else if (operation === 'workspace.stat') {
+      assert.ok(args.paths.every(path => !path.split('/').includes('.')), 'the host rejects . path parts');
       const path = join(repository, args.paths[0]);
       value = { files: { [args.paths[0]]: statSync(path, { throwIfNoEntry: false })?.isFile() ? { kind: 'file', size: statSync(path).size, mtime_ms: 0, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') } : null } };
     } else if (operation === 'workspace.read') value = { files: { [args.paths[0]]: { text: readFileSync(join(repository, args.paths[0]), 'utf8'), sha256: '0' } } };
@@ -96,6 +97,8 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     const dialog = view.sites.dialog.components[0];
     assert.equal(dialog.title, 'docs/a.md');
     assert.deepEqual(dialog.children[0].children[0], { type: 'markdown', id: 'omd_preview_body_1', label: 'docs/a.md', text: '# Changed [[Other note|see]]\n' });
+    writeFileSync(join(repository, 'image'), 'not a draft image');
+    assert.equal(command('./image --inline').state.inline.text, 'not a draft image', './ names a file that shadows a subcommand');
     assert.equal(command('close', inline.state).state.inline, null);
     assert.equal(invoke(repository, { ...inline.state, inline: null }, 'terminal', { event: 'redraw', ledger: null }).value, null);
     assert.match(command('--bogus').value.display, /^usage:/);
@@ -119,8 +122,9 @@ test('preview server opens a port the session is listening on', () => {
 test('draft image thumbnails follow the composer draft above the composer and open a preview', () => {
   const image = (n, resource = { reference: `omd-resource:${n}`, sha256: String(n).repeat(64) }) => ({ id: `img-${n}`, kind: 'image', label: `[Image #${n}]`, owner: 'user', resource });
   draft = { ...draft, revision: 2, attachments: [image(1), image(2, null), image(3), image(4)] };
-  const changed = invoke(null, null, 'composer', { kind: 'change', revision: 2, origin: 'user' });
+  const changed = invoke(null, null, 'composer', { kind: 'change', revision: 2, attachments_revision: 1, origin: 'user' });
   assert.deepEqual(changed.state.images.map(item => item.id), ['img-1', 'img-2', 'img-3', 'img-4']);
+  assert.deepEqual(invoke(null, changed.state, 'composer', { kind: 'change', revision: 3, attachments_revision: 1, origin: 'user' }).calls, [], 'typing does not reread the draft');
   const site = invoke(null, changed.state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer;
   assert.equal(site.mode, 'wrap');
   assert.deepEqual(site.components[0], { type: 'slot' });
@@ -139,7 +143,7 @@ test('draft image thumbnails follow the composer draft above the composer and op
   assert.equal(invoke(null, changed.state, 'command', 'image 2', 'preview').value.display, '[Image #2] has no preview: only PNG and JPEG images up to 8 MiB do');
 
   draft = { ...draft, revision: 3, attachments: [image(1)] };
-  const removed = invoke(null, clicked.state, 'composer', { kind: 'change', revision: 3, origin: 'user' });
+  const removed = invoke(null, clicked.state, 'composer', { kind: 'change', revision: 3, attachments_revision: 2, origin: 'user' });
   assert.equal(removed.state.inline, null, 'a preview of a removed image closes');
   draft = { ...draft, revision: 4, attachments: [] };
   const submitted = invoke(null, removed.state, 'resume', null);
@@ -152,8 +156,8 @@ test('draft image thumbnails follow the composer draft above the composer and op
 });
 
 test('assistant messages draw closed Mermaid fences in place and fall back to their source', () => {
-  const draw = (text, settings = {}, columns = 100) => {
-    const input = { component: 'assistant_message', id: 'one', surface: 'fullscreen', viewport: { columns, rows: 40 }, lifecycle: 'final', owner: null, props: { text, first: true } };
+  const draw = (text, settings = {}, columns = 100, truncated = false) => {
+    const input = { component: 'assistant_message', id: 'one', surface: 'fullscreen', viewport: { columns, rows: 40 }, lifecycle: 'final', owner: null, props: { text, first: true, truncated } };
     return invoke(null, null, 'intercept', { surface: 'render', input, original: input, origin: { caller: 'engine' } }, '0', settings);
   };
   const flat = nodes => nodes.flatMap(node => node.children ? flat(node.children) : [node]);
@@ -182,9 +186,20 @@ test('assistant messages draw closed Mermaid fences in place and fall back to th
   assert.match(narrow.at(-1).text, /turned to fit/);
   const tooWide = flat(draw('```mermaid\nsequenceDiagram\n  A->>B: a message that needs far more room than this terminal has\n```', {}, 30).value.result.tree);
   assert.match(tooWide.at(-1).text, /^mermaid not drawn: it needs \d+ columns; showing the source$/);
-  const long = draw(`${'Long answer. '.repeat(320)}\n${state}`);
+  const long = draw(`${'Long answer. '.repeat(320)}\n${state}`, {}, 100, true);
   assert.deepEqual(long.value.result.tree[0], { type: 'native' }, 'a message past the 4 KiB prop keeps its native drawing');
   assert.equal(long.value.result.tree[1].children[0].type, 'text');
+  const whole = draw(`${'x'.repeat(4_090 - state.length)}\n${state}`);
+  assert.equal(whole.value.result.tree[0].id, 'omd_preview_response', 'a complete message near 4 KiB is drawn in place');
+
+  const lines = (source, columns) => flat(draw(`\`\`\`mermaid\n${source}\n\`\`\``, {}, columns).value.result.tree)[0].text;
+  assert.equal(lines('graph TD; A-->B; B-->A'), '┌───┐\n│ A │\n└───┘\n  ▲\n  ▼\n┌───┐\n│ B │\n└───┘', 'opposite edges keep both arrowheads');
+  assert.match(lines('graph BT; A o--o B'), /○\n  ○/);
+  assert.match(lines('classDiagram\nAnimal<|--Duck'), /│ Animal │[\s\S]*△[\s\S]*│ Duck │/);
+  assert.match(lines('graph TD; A["#toString;"]'), /│ #toString; │/);
+  assert.equal(lines('graph TD; A["❤️ 👨‍👩‍👧 🇨🇦"]'), '┌──────────┐\n│ ❤️ 👨‍👩‍👧 🇨🇦 │\n└──────────┘', 'emoji sequences take two cells');
+  const chart = lines('xychart-beta\nx-axis [a, b]\ny-axis 0 --> 10\nbar [5, 10]\nline [5, 10]').split('\n');
+  assert.deepEqual([chart[0], chart[5], chart[10]], ['10 ┤     █●', ' 5 ┤ █●  ██', ' 0 └─────────'], 'line points sit on the bar tops and 0 labels the axis');
   assert.deepEqual(invoke(null, null, 'terminal', { event: 'redraw', ledger: null }, undefined, { diagrams: 'off' }).registrations.interceptors, []);
 
   responses = [`Done\n${state}`, 'Earlier answer'];
@@ -194,4 +209,9 @@ test('assistant messages draw closed Mermaid fences in place and fall back to th
   assert.equal(view.title, 'Diagram 1 (response 1)');
   assert.ok(view.children[0].children[0].text.includes('Idle'));
   assert.deepEqual(view.children[1].action, { copy: state.split('\n').slice(1, -1).join('\n'), label: 'Mermaid source' });
+  responses = ['```mermaid\nflowchart LR\n  A[a first long node] --> B[a second long node] --> C[a third long node]\n```'];
+  const wideState = invoke(null, null, 'command', 'diagrams 1', 'preview').state;
+  const fitted = columns => invoke(null, wideState, 'terminal', { event: 'redraw', ledger: null, client: { columns, rows: 40 } }).value.sites.dialog.components[0].children[0].children[0].text;
+  assert.ok(fitted(160).split('\n').length < 5 && fitted(160).includes('►'), 'a dialog wide enough keeps the left-to-right layout');
+  assert.ok(Math.max(...fitted(60).split('\n').map(line => line.length)) <= 53 && fitted(60).includes('▼'), 'a narrow terminal turns the diagram to fit the dialog');
 });

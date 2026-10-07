@@ -95,7 +95,10 @@ test('the opt-in observer flags cited visible output, drops forged quotes and du
   assert.equal(run('terminal', { event: 'idle', ledger: null }, denied.state).value.status[0], 'Advisor on demand · observer unavailable');
   state = end('d', () => ({ handle: 'h4', route: 'astra', permissions: 'read_only' })).state;
   assert.equal(finish('h4', 'not json').state.observer.status, 'invalid_result');
+  assert.equal(finish('h4', [{ ...note, kind: 'constructor' }]).state.observer.status, 'invalid_result', 'a kind inherited from Object is rejected');
   const superseded = run('turn_start', { turn_id: 'turn-e' }, state, ({ operation, arguments: input }) => { assert.deepEqual([operation, input], ['agents.cancel', { handle: 'h4' }]); return { cancelled: true }; });
   assert.equal(superseded.state.observer.status, 'superseded');
-  assert.equal(run('resume', null, state).state.observer.status, 'interrupted', 'resume never relaunches an observer');
+  const resumed = run('resume', null, state, () => ({ cancelled: true }));
+  assert.equal(resumed.state.observer.status, 'interrupted', 'resume never relaunches an observer');
+  assert.deepEqual(resumed.calls.map(call => [call.operation, call.arguments]), [['agents.cancel', { handle: 'h4' }]], 'resume stops the interrupted observer');
 });

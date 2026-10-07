@@ -17,24 +17,24 @@ const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview
 
 type Inline = { title: string; kind: string; text: string; source?: string; image?: ResourceRef };
 type Picture = { id: string; label: string; owner: string; image: ResourceRef | null };
-type State = { inline: Inline | null; revision: number; watch: string[]; hashes: Record<string, string>; images: Picture[] };
+type State = { inline: Inline | null; revision: number; watch: string[]; hashes: Record<string, string>; images: Picture[]; attachments?: number };
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
 
 // Inline views reject control characters, so line endings, tabs and terminal escapes are normalized first.
 const clean = (text: string) => text.replace(/\r\n?/g, '\n').replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\t/g, '    ').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+const utf8 = (char: string) => { const code = char.codePointAt(0) ?? 0; return code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4; };
 const clamp = (text: string, limit: number) => {
   let out = '';
   let bytes = 0;
   for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    bytes += utf8(char);
     if (bytes > limit) return { text: out, cut: true };
     out += char;
   }
   return { text: out, cut: false };
 };
-const size = (text: string) => { let total = 0; for (const char of text) { const code = char.codePointAt(0) ?? 0; total += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4; } return total; };
+const size = (text: string) => { let total = 0; for (const char of text) total += utf8(char); return total; };
 const outputFor = (source: string) => `${DIR}/${source.replace(/[/\\]/g, '__')}.html`;
 const inlineKind = (path: string) => {
   const extension = path.split('.').pop()?.toLowerCase() ?? '';
@@ -45,10 +45,12 @@ const pictures = (draft: ComposerDraft): Picture[] => draft.attachments.filter(i
   .map(item => ({ id: item.id, label: clamp(clean(item.label).replace(/\n/g, ' '), 64).text || 'image', owner: item.owner, image: item.resource }));
 
 const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}/u;
-const ZERO = /[\p{Mn}\p{Me}\p{Cf}]/u;
-const charCells = (char: string) => ZERO.test(char) ? 0 : WIDE.test(char) ? 2 : 1;
-const cells = (text: string) => { let total = 0; for (const char of text) total += charCells(char); return total; };
-const fit = (text: string, max: number) => { let out = '', used = 0; for (const char of text) { const width = charCells(char); if (out && used + width > max) break; out += char; used += width; } return out; };
+// One terminal cell group: a flag, an emoji ZWJ sequence, or a character with its marks, variation selector and skin tone.
+const GLYPH = /\p{RI}{2}|(?:\p{ExtPict}[\p{EMod}\uFE0F]*\u200D)*[^][\p{M}\p{Cf}\p{EMod}]*/gsu;
+const glyphs = (text: string) => text.match(GLYPH) ?? [];
+const charCells = (char: string) => /^[\p{M}\p{Cf}]/u.test(char) ? 0 : WIDE.test(char) || char.includes('\uFE0F') ? 2 : 1;
+const cells = (text: string) => { let total = 0; for (const char of glyphs(text)) total += charCells(char); return total; };
+const fit = (text: string, max: number) => { let out = '', used = 0; for (const char of glyphs(text)) { const width = charCells(char); if (out && used + width > max) break; out += char; used += width; } return out; };
 const wrap = (text: string, max: number) => text.split('\n').flatMap(raw => {
   const lines: string[] = [];
   let line = '';
@@ -59,9 +61,10 @@ const wrap = (text: string, max: number) => text.split('\n').flatMap(raw => {
   }
   return line || !lines.length ? [...lines, line] : lines;
 });
+const pick = (table: Record<string, string>, key = '') => Object.hasOwn(table, key) ? table[key] : undefined;
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 const decode = (raw: string) => fit(raw.trim().replace(/^"([\s\S]*)"$/, '$1').replace(/^\x60([\s\S]*)\x60$/, '$1').replace(/<br\s*\/?>/gi, '\n')
-  .replace(/[&#]#?(\w{1,8});/g, (all, name: string) => /^\d+$/.test(name) ? Number(name) <= 0x10ffff ? String.fromCodePoint(Number(name)) : all : ENTITIES[name] ?? all)
+  .replace(/[&#]#?(\w{1,8});/g, (all, name: string) => /^\d+$/.test(name) ? Number(name) <= 0x10ffff ? String.fromCodePoint(Number(name)) : all : pick(ENTITIES, name) ?? all)
   .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ''), 240);
 const label = (raw: string) => wrap(decode(raw), 28);
 
@@ -86,7 +89,7 @@ class Canvas {
   text(x: number, y: number, text: string) {
     this.grow(y);
     const row = this.chars[y];
-    for (const char of text) {
+    for (const char of glyphs(text)) {
       const width = charCells(char);
       if (!width) { let at = x - 1; while (at > 0 && row[at] === '') at--; if (at >= 0) row[at] = (row[at] ?? ' ') + char; continue; }
       row[x] = char;
@@ -241,7 +244,8 @@ const layered = (graph: Graph, direction: string, unicode: boolean) => {
   });
   const starts: number[] = [];
   let total = 0;
-  rows.forEach((_, index) => { starts[index] = total; total += band[index] + (index < tracks.length ? tracks[index] ? tracks[index] + 2 : across ? 3 : 1 : 0); });
+  const tailed = (row: Slot[]) => row.some(slot => slot.node && slot.outs.some(segment => segment.to.node && segment.edge.style !== 'hidden' && (segment.reversed ? segment.edge.head : segment.edge.tail)));
+  rows.forEach((row, index) => { starts[index] = total; total += band[index] + (index < tracks.length ? tracks[index] ? tracks[index] + 2 : across ? 3 : tailed(row) ? 2 : 1 : 0); });
   const canvas = new Canvas(unicode), flip = (at: number) => back ? total - 1 - at : at;
   const point = (along: number, side: number) => across ? [flip(along), side, 10] : [side, flip(along), 5];
   const corner = (slot: Slot, along: number) => { const at = back ? total - along - main(slot) : along; return across ? [at, slot.pos] : [slot.pos, at]; };
@@ -291,7 +295,7 @@ const flowchart = (statements: string[], direction: string): Graph => {
   for (const statement of statements) {
     if (/^(?:classDef|class|style|linkStyle|click)\s/.test(statement)) continue;
     const turn = /^direction\s+(\w+)$/.exec(statement), sub = /^subgraph\s+(.+)$/.exec(statement);
-    if (turn) { if (!open.length && DIRECTIONS[turn[1]]) graph.direction = DIRECTIONS[turn[1]]; continue; }
+    if (turn) { if (!open.length) graph.direction = pick(DIRECTIONS, turn[1]) ?? graph.direction; continue; }
     if (sub) {
       const named = /^([^\s\[]+)\s*\[(.*)\]$/.exec(sub[1]);
       groups.push({ id: named?.[1] ?? sub[1], title: decode(named?.[2] ?? sub[1]), members: new Set() });
@@ -358,7 +362,7 @@ const stateDiagram = (statements: string[], unicode: boolean): Graph => {
     let match: RegExpExecArray | null;
     if (note) { if (/^end\s+note$/i.test(statement)) { graph.legend.push(note.join(' ')); note = null; } else note.push(statement); continue; }
     if (statement === '--' || /^(?:classDef|class|style|scale|hide empty description)\b/.test(statement)) continue;
-    if ((match = /^direction\s+(\w+)$/.exec(statement))) { if (!scope.length && DIRECTIONS[match[1]]) graph.direction = DIRECTIONS[match[1]]; continue; }
+    if ((match = /^direction\s+(\w+)$/.exec(statement))) { if (!scope.length) graph.direction = pick(DIRECTIONS, match[1]) ?? graph.direction; continue; }
     if ((match = /^note\s+(?:left|right)\s+of\s+([^\s:]+)\s*(?::\s*(.*))?$/i.exec(statement))) {
       if (match[2] === undefined) note = [`Note on ${match[1]}:`]; else graph.legend.push(`Note on ${match[1]}: ${decode(match[2])}`);
       continue;
@@ -393,7 +397,7 @@ const stateDiagram = (statements: string[], unicode: boolean): Graph => {
   return graph;
 };
 
-const RELATION = /^([^\s"]+)\s+(?:"([^"]*)"\s*)?(<\||\*|o|<)?(--|\.\.)(\|>|\*|o|>)?\s*(?:"([^"]*)"\s*)?([^\s":]+)\s*(?::\s*(.*))?$/;
+const RELATION = /^([^\s"]+?)\s*(?:"([^"]*)"\s*)?(<\||\*|o|<)?(--|\.\.)(\|>|\*|o|>)?\s*(?:"([^"]*)"\s*)?([^\s":]+)\s*(?::\s*(.*))?$/;
 const RELATION_MARKS: Record<string, string> = { '<|': 'open', '|>': 'open', '*': 'diamond', o: 'hollow', '<': 'arrow', '>': 'arrow' };
 const classDiagram = (statements: string[], unicode: boolean): Graph => {
   const graph: Graph = { direction: 'TD', nodes: new Map(), edges: [], legend: [] };
@@ -414,7 +418,7 @@ const classDiagram = (statements: string[], unicode: boolean): Graph => {
     if (statement === '}') { if (!blocks.pop()) throw new Error('a } has no matching block'); continue; }
     if (block && !block.startsWith('#')) { member(block, statement); continue; }
     if (/^(?:cssClass|classDef|style|click|link|callback)\b/.test(statement)) continue;
-    if ((match = /^direction\s+(\w+)$/.exec(statement))) { if (DIRECTIONS[match[1]]) graph.direction = DIRECTIONS[match[1]]; continue; }
+    if ((match = /^direction\s+(\w+)$/.exec(statement))) { graph.direction = pick(DIRECTIONS, match[1]) ?? graph.direction; continue; }
     if ((match = /^namespace\s+(\S+)\s*\{$/.exec(statement))) { spaces.push({ name: match[1], members: [] }); blocks.push(`#${match[1]}`); continue; }
     if ((match = /^class\s+([^\s{\[":]+)(?:\s*\["([^"]*)"\])?\s*(\{)?\s*(?::::[\w-]+)?$/.exec(statement))) {
       const entry = type(match[1]);
@@ -455,7 +459,7 @@ const erDiagram = (statements: string[]): Graph => {
       graph.edges.push({ from: entity(match[1]), to: entity(match[5]), label: [...label(match[6]), `${CARDINALITY[match[2]]} : ${CARDINALITY[match[4]]}`], head: '', tail: '', style: match[3] === '..' ? 'dot' : '' });
       continue;
     }
-    if ((match = /^direction\s+(\w+)$/.exec(statement))) { if (DIRECTIONS[match[1]]) graph.direction = DIRECTIONS[match[1]]; continue; }
+    if ((match = /^direction\s+(\w+)$/.exec(statement))) { graph.direction = pick(DIRECTIONS, match[1]) ?? graph.direction; continue; }
     if ((match = new RegExp(`^${ENTITY}$`, 'u').exec(statement))) { entity(match[1]); continue; }
     if (/^(?:style|classDef|class)\s/.test(statement)) continue;
     throw unreadable(statement);
@@ -601,11 +605,11 @@ const xyChart = (statements: string[], unicode: boolean, columns: number) => {
     const axis = Math.max(...[low, (low + high) / 2, high].map(value => cells(tick(value)))) + 1, canvas = new Canvas(unicode), bar = Math.max(1, Math.floor((slot - 1) / Math.max(1, bars.length)));
     const PARTS = unicode ? ' ▁▂▃▄▅▆▇' : '    ####';
     for (let row = 0; row < height; row++) {
-      const value = row === 0 ? high : row === height - 1 ? low : row === Math.floor(height / 2) ? (low + high) / 2 : null;
+      const value = row === 0 ? high : row === height / 2 ? (low + high) / 2 : null;
       if (value !== null) canvas.text(axis - 1 - cells(tick(value)), row, tick(value));
       canvas.text(axis, row, value !== null ? unicode ? '┤' : '+' : unicode ? '│' : '|');
     }
-    canvas.text(axis, height, (unicode ? '└' : '+') + (unicode ? '─' : '-').repeat(count * (slot + 1) + 1));
+    canvas.text(axis - 1 - cells(tick(low)), height, `${tick(low)} ${unicode ? '└' : '+'}${(unicode ? '─' : '-').repeat(count * (slot + 1) + 1)}`);
     for (let at = 0; at < count; at++) {
       const left = axis + 2 + at * (slot + 1);
       bars.forEach((item, which) => {
@@ -614,7 +618,7 @@ const xyChart = (statements: string[], unicode: boolean, columns: number) => {
         const eighths = Math.round(scale(value) * height * 8);
         for (let row = 0; row < Math.ceil(eighths / 8); row++) canvas.text(left + which * bar, height - 1 - row, (row < Math.floor(eighths / 8) ? BLOCK : PARTS[eighths % 8]).repeat(bar));
       });
-      lines.forEach((item, which) => { const value = item.values[at]; if (value !== undefined) canvas.text(left + Math.floor(slot / 2), height - 1 - Math.round(scale(value) * (height - 1)), DOTS[which]); });
+      lines.forEach((item, which) => { const value = item.values[at]; if (value !== undefined) canvas.text(left + Math.floor(slot / 2), height - Math.round(scale(value) * height), DOTS[which]); });
       labels[at].forEach((line, row) => canvas.text(left + Math.floor((slot - cells(line)) / 2), height + 1 + row, line));
     }
     out.push(...canvas.lines());
@@ -649,7 +653,7 @@ const diagram = (source: string, unicode: boolean, columns: number) => {
     if (typeof other === 'string') throw new Error(first as string);
     return { lines: other, turned: other !== first };
   };
-  const drawn = kind === 'flowchart' || kind === 'graph' ? graph(flowchart(body, DIRECTIONS[head.split(/\s+/)[1]] ?? 'TD'))
+  const drawn = kind === 'flowchart' || kind === 'graph' ? graph(flowchart(body, pick(DIRECTIONS, head.split(/\s+/)[1]) ?? 'TD'))
     : kind === 'stateDiagram' || kind === 'stateDiagram-v2' ? graph(stateDiagram(body, unicode))
       : kind === 'classDiagram' || kind === 'classDiagram-v2' ? graph(classDiagram(body, unicode))
         : kind === 'erDiagram' ? graph(erDiagram(body))
@@ -762,6 +766,7 @@ export default function activate(api: ModAPI) {
     const inline = words.includes('--inline');
     const target = words.filter(word => !word.startsWith('--')).join(' ');
     if (words.some(word => word.startsWith('--') && word !== '--inline' && word !== '--watch')) return { display: USAGE };
+    if (target.startsWith('./')) return previewFile(target.slice(2), inline, words.includes('--watch'));
     if (target === 'close') {
       save({ inline: null });
       return null;
@@ -794,15 +799,8 @@ export default function activate(api: ModAPI) {
       if (!words[1]) return { display: found.length ? `${found.map((item, index) => `${index + 1}. ${kindOf(item.source)} in response ${item.response}`).join('\n')}\nUse /preview diagrams N to inspect, expand or copy one` : 'No Mermaid diagrams in the last 10 responses' };
       const item = found[Number(words[1]) - 1];
       if (!item) return { display: `No diagram ${words[1]}; /preview diagrams lists them` };
-      let drawn: string;
-      try {
-        drawn = diagram(item.source, diagrams !== 'ascii', 160).lines.join('\n');
-        if (size(drawn) > DRAWN_BYTES) throw new Error(`the drawing is over ${DRAWN_BYTES / 1000} KB`);
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
-        drawn = `Not drawn: ${error.message}${size(item.source) > SOURCE_BYTES ? '; source shown and copied up to 4 KB' : ''}`;
-      }
-      save({ inline: { title: `Diagram ${words[1]} (response ${item.response})`, kind: 'diagram', text: drawn, source: clamp(item.source, SOURCE_BYTES).text }, revision: load().revision + 1 });
+      const long = size(item.source) > SOURCE_BYTES ? `Not drawn: its source is over ${SOURCE_BYTES / 1000} KB; source shown and copied up to 4 KB` : '';
+      save({ inline: { title: `Diagram ${words[1]} (response ${item.response})`, kind: 'diagram', text: long, source: clamp(item.source, SOURCE_BYTES).text }, revision: load().revision + 1 });
       return null;
     }
     if (target === 'list') {
@@ -815,19 +813,23 @@ export default function activate(api: ModAPI) {
       if (text === undefined) return { display: `No response ${index} in this session` };
       return inline ? show(`Response ${index}`, 'markdown', text) : open(render(`${DIR}/response.html`, `Response ${index}`, undefined, text), `response ${index}`);
     }
-    const file = api.host.call('workspace.stat', { paths: [target] }).files[target];
-    if (file?.kind !== 'file') return { display: `No file ${target} in the workspace` };
+    return previewFile(target, inline, words.includes('--watch'));
+  };
+
+  const previewFile = (path: string, inline: boolean, watched: boolean): CommandResult => {
+    const file = api.host.call('workspace.stat', { paths: [path] }).files[path];
+    if (file?.kind !== 'file') return { display: `No file ${path} in the workspace` };
     if (inline) {
-      if (file.size > 1_000_000) return { display: `${target} is too large to show inline; use /preview ${target}` };
-      return show(target, inlineKind(target), api.host.call('workspace.read', { paths: [target] }).files[target]?.text ?? '');
+      if (file.size > 1_000_000) return { display: `${path} is too large to show inline; use /preview ${path}` };
+      return show(path, inlineKind(path), api.host.call('workspace.read', { paths: [path] }).files[path]?.text ?? '');
     }
-    if (words.includes('--watch')) {
-      const watch = [...new Set([...load().watch, target])];
+    if (watched) {
+      const watch = [...new Set([...load().watch, path])];
       if (watch.length > MAX_WATCHES) return { display: `At most ${MAX_WATCHES} files can be watched; use /preview unwatch` };
       save({ watch });
       api.host.tryCall('events.publish', { channel: 'watch', data: null });
     }
-    return open(render(outputFor(target), target, target), target);
+    return open(render(outputFor(path), path, path), path);
   };
 
   const poll = () => {
@@ -842,11 +844,11 @@ export default function activate(api: ModAPI) {
     api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
   };
 
-  const refresh = () => {
+  const refresh = (attachments?: number) => {
     const draft = api.host.tryCall('composer.read', null), images = draft.ok ? pictures(draft.value) : [], state = load();
-    if (JSON.stringify(images) === JSON.stringify(state.images)) return;
+    if (attachments === state.attachments && JSON.stringify(images) === JSON.stringify(state.images)) return;
     const stale = state.inline?.kind === 'image' && !images.some(picture => picture.id === state.inline!.text);
-    save({ images, ...(stale ? { inline: null } : {}) });
+    save({ images, attachments, ...(stale ? { inline: null } : {}) });
   };
 
   api.command('preview', value => {
@@ -861,7 +863,7 @@ export default function activate(api: ModAPI) {
   for (const event of ['channel', 'timer'] as const) api.on(event, poll);
   for (const event of ['start', 'resume'] as const) api.on(event, () => { poll(); if (thumbnails) refresh(); });
   if (thumbnails) {
-    api.on('composer', event => { if (event.kind === 'change') refresh(); });
+    api.on('composer', event => { if (event.kind === 'change' && event.attachments_revision !== load().attachments) refresh(event.attachments_revision); });
     api.on('component_event', event => {
       const index = /^omd_preview_thumb_(\d+)$/.exec(event.component)?.[1];
       const picture = index === undefined ? undefined : load().images[Number(index)];
@@ -873,19 +875,30 @@ export default function activate(api: ModAPI) {
       const { viewport, props } = event as RenderEvent<'assistant_message'>;
       const tree = presentation(props.text, diagrams === 'unicode', Math.max(20, viewport.columns - 3));
       if (!tree || tree.length > 60) return { tree: [{ type: 'native' }] };
-      if (size(props.text) >= 4_090) return { tree: [{ type: 'native' }, { type: 'box', id: 'omd_preview_diagrams', label: 'Drawn diagrams', title: 'Diagrams drawn from the start of this response', children: tree.filter(node => node.type !== 'markdown') }] };
+      if (props.truncated) return { tree: [{ type: 'native' }, { type: 'box', id: 'omd_preview_diagrams', label: 'Drawn diagrams', title: 'Diagrams drawn from the start of this response', children: tree.filter(node => node.type !== 'markdown') }] };
       return { tree: [{ type: 'box', id: 'omd_preview_response', label: 'Response', children: [{ type: 'box', id: 'omd_preview_response_body', label: 'Response', children: tree }] }] };
     });
   }
 
-  const dialog = (inline: Inline, revision: number): TerminalComponent[] => {
+  const drawing = (source: string, columns: number) => {
+    try {
+      const drawn = diagram(source, diagrams !== 'ascii', columns).lines.join('\n');
+      if (size(drawn) > DRAWN_BYTES) throw new Error(`the drawing is over ${DRAWN_BYTES / 1000} KB`);
+      return drawn;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return `Not drawn: ${error.message}`;
+    }
+  };
+
+  const dialog = (inline: Inline, revision: number, columns: number): TerminalComponent[] => {
     const close: TerminalComponent = { type: 'button', id: 'omd_preview_close', label: 'Close preview', text: 'Close', action: { command: 'omd_preview:preview', args: 'close' } };
     if (inline.kind === 'image' && inline.image) return [
       { type: 'image', id: `omd_preview_image_${revision}`, label: `${inline.title} preview`, image: inline.image, alt: inline.title, height: 16 },
       { type: 'text', id: 'omd_preview_image_note', label: 'Image note', text: `${inline.title} stays in the draft; Esc or Close returns to it`, tone: 'muted' }, close];
     if (inline.kind === 'diagram') return [
       { type: 'pane', id: `omd_preview_pane_${revision}`, label: 'Diagram and source, scroll with arrows or the mouse wheel', children: [
-        ...chunks(inline.text.split('\n')).map((text, index): TerminalComponent => ({ type: 'text', id: `omd_preview_drawn_${index}`, label: 'Drawn diagram', text })),
+        ...chunks((inline.text || drawing(inline.source ?? '', columns)).split('\n')).map((text, index): TerminalComponent => ({ type: 'text', id: `omd_preview_drawn_${index}`, label: 'Drawn diagram', text })),
         { type: 'code', id: 'omd_preview_source', label: 'Mermaid source', text: inline.source ?? '', language: 'mermaid' }] },
       { type: 'button', id: 'omd_preview_copy', label: 'Copy the Mermaid source', text: 'Copy source', action: { copy: inline.source || ' ', label: 'Mermaid source' } }, close];
     const id = `omd_preview_body_${revision}`;
@@ -895,10 +908,10 @@ export default function activate(api: ModAPI) {
     return [{ type: 'pane', id: `omd_preview_pane_${revision}`, label: 'Preview content, scroll with arrows or the mouse wheel', children: [body] }, close];
   };
 
-  api.on('terminal', () => {
+  api.on('terminal', event => {
     const { inline, revision, images } = load();
     const sites: Partial<Record<'dialog' | 'above_composer', TerminalRenderSite>> = {};
-    if (inline) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision) }] };
+    if (inline) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision, Math.min((event?.client?.columns ?? 80) - 4, 76) - 3) }] };
     if (thumbnails && images.length) sites.above_composer = { mode: 'wrap', components: [{ type: 'slot' }, {
       type: 'box', id: 'omd_preview_images', label: 'Draft images', title: `Draft image${images.length === 1 ? '' : 's'} (${images.length})`, children: [
         ...images.slice(0, SHOWN_IMAGES).flatMap((picture, index): TerminalComponent[] => picture.image ? [

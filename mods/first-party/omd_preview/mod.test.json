@@ -67,6 +67,7 @@
       "payload": {
         "kind": "change",
         "revision": 2,
+        "attachments_revision": 1,
         "origin": "user"
       }
     },
@@ -98,7 +99,8 @@
         "owner": null,
         "props": {
           "text": "Flow:\n\n```mermaid\nstateDiagram-v2\n  [*] --> Idle\n  Idle --> Busy : start\n  Busy --> [*]\n```\n",
-          "first": true
+          "first": true,
+          "truncated": false
         }
       }
     }

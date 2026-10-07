@@ -8,7 +8,7 @@ shows the draft's pasted images above the composer.
 ```text
 /preview                 the last response
 /preview N               the Nth most recent response (/preview list numbers them)
-/preview PATH            a workspace Markdown, code or diff file
+/preview PATH            a workspace Markdown, code or diff file (./PATH for a file named like a subcommand)
 /preview PATH --watch    also re-render PATH whenever it changes (at most 8 files)
 /preview ... --inline    show it in a terminal dialog instead
 /preview diagrams [N]    list the Mermaid diagrams in the last 10 responses, or inspect one
@@ -57,16 +57,16 @@ choice, fork and join, descriptions and notes), ER diagrams (attributes and
 cardinalities) and `xychart-beta` bar and line charts. A host-side match
 selects only messages that contain such a fence, so other messages never call
 the mod; the host caches each drawing until the message, width or setting
-changes. Text is measured in terminal cells (wide CJK and emoji count two,
-combining marks none), long labels wrap, and a graph that is too wide is drawn
+changes. Text is measured in terminal cells (wide CJK, emoji and emoji sequences count
+two, combining marks none), long labels wrap, and a graph that is too wide is drawn
 in the other orientation. The source must be at most 4 KB, 300 statements,
 60 nodes and 120 edges, and the drawing at most 200 rows, 10 KB and the
 terminal width; at most four diagrams per response are drawn. Anything else
 (an unsupported type, a parse error, an unclosed fence, a bound) keeps the
-original fence with a one-line reason. Responses over the 4 KiB render-prop
-limit keep their native drawing and get the diagrams from their first 4 KiB
-below it. `/preview diagrams N` opens the drawing at full size with its
-source and a copy button. The canonical transcript is never changed, and
+original fence with a one-line reason. Responses the host cut at the 4 KiB render-prop
+limit (`truncated`) keep their native drawing and get the diagrams from their first 4 KiB
+below it. `/preview diagrams N` opens the drawing, laid out for the dialog's width, with
+its source and a copy button. The canonical transcript is never changed, and
 disabling the mod restores the native drawing at once.
 
 ## Draft image thumbnails
