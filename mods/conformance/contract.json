@@ -1058,6 +1058,68 @@
       "replace_note": null
     },
     {
+      "id": "terminal.controls",
+      "group": "terminal",
+      "decision": "Rich controls, notices, pane visibility and owner focus/scroll hooks",
+      "observe": "`terminal.panes` lists the caller's own panes with visibility, collapse, focus and scroll; `component_event` reports a multiselect's checked `values`",
+      "alter": "`terminal.notice` shows attributed toast, status or transcript notices with lifetimes, optional model audience and tool-call correlation; a `component_change` interceptor denies, redirects or clamps a user focus or scroll change on its own components",
+      "replace": null,
+      "timing": "notices and pane reads on request; `component_change` synchronously before the change is reported",
+      "ownership": "mod: its own components, notices and queued context; host: notice attribution, link sanitizing, keys and focus ring",
+      "limits": "512-byte notices, 1–60 s lifetimes, 4 live per mod, 8 queued model notices per thread; http(s) links of 2,048 bytes; only the component's owner sees or answers its change",
+      "native": "no equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "intercepts": [
+          "component_change"
+        ],
+        "operations": [
+          "terminal.panes",
+          "terminal.notice"
+        ]
+      },
+      "evidence": [
+        "rust:component_change_interceptors_answer_only_for_the_components_owner",
+        "patch:notices_validate_placement_lifetime_audience_and_tool_correlation",
+        "patch:notices_replace_by_id_expire_clear_and_reach_the_status_row",
+        "patch:panes_list_only_the_callers_panes_with_their_visibility",
+        "patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values",
+        "patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls",
+        "patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "terminal.raster",
+      "group": "terminal",
+      "decision": "Keyed rasters, pointer capture, overlays, Kitty image placement and client facts",
+      "observe": "the `terminal` event carries `client` graphics, pointer, reduced-motion and cell-pixel facts; pointer components report `enter`, `leave`, `move`, `down`, `up` and `drag` with half-cell rows",
+      "alter": "`terminal.blit` queues partial cell updates into the mod's own `raster`; named sites may be overlays anchored to the screen or a component with z-order and clipping",
+      "replace": null,
+      "timing": "one queued blit applied per 33 ms frame; latest-wins pointer motion; a press captures until release",
+      "ownership": "mod: its own rasters, overlays and images; host: frame pacing, hit-testing layers, image ids and teardown",
+      "limits": "rasters 200x40 cells, 16 per mod, 32 queued updates or 256 KiB; overlay z 0–9; images 8 MiB and 4,096 px",
+      "native": "no equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "intercepts": [],
+        "operations": [
+          "terminal.blit"
+        ]
+      },
+      "evidence": [
+        "patch:blits_queue_and_apply_one_update_per_frame_interval",
+        "patch:blits_refuse_other_owners_bad_rects_and_report_backpressure",
+        "patch:rasters_overlays_and_pointer_regions_share_layers_capture_and_hover",
+        "patch:overlays_anchor_to_screen_corners_or_components_and_clip"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "terminal.reactive_state",
       "group": "terminal",
       "decision": "Reactive atoms, selectors and keyed subscriptions",
@@ -1616,6 +1678,33 @@
         "patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items",
         "patch:unsafe_edits_are_refused",
         "patch:call_arguments_and_image_messages_can_be_rewritten"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "context.durable_history_rewrite",
+      "group": "context_recovery",
+      "decision": "Granted durable rewriting of the persisted transcript",
+      "observe": "`app.request thread/rewrite` without `expectedRevision` reads the revision and rows; `thread/rewritten` reports each new revision",
+      "alter": "insert, append, replace, reorder and delete message and paired tool call/output rows as one revision, or undo the latest revision",
+      "replace": null,
+      "timing": "idle threads only; the thread is unloaded, rewritten and reloaded, and clients re-page turns and items",
+      "ownership": "user: the hash-bound, revocable `history_write` grant; mod: which rows; host: revision CAS, pairing, provenance, kept originals, revision log and its broker anchor",
+      "limits": "current thread and threads the mod started; paginated persisted threads; rows before the newest compaction and opaque items are frozen, reasoning is delete-only; replacements keep role or call id, inserted call ids are new; rewritten items drop execution, delivery and tool inventory metadata; at most 256 edits",
+      "native": "upstream `thread/revert` only truncates at a turn boundary",
+      "covers": {
+        "capabilities": [
+          "history_write"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:rewrite_replaces_deletes_inserts_and_moves_rows_durably",
+        "patch:rewrite_refuses_stale_unpaired_reused_and_role_changing_edits",
+        "patch:revision_log_recovers_interrupted_writes_and_detects_tampering",
+        "patch:thread_rewrite_is_durable_across_restart_search_export_and_undo"
       ],
       "replace_note": null
     },

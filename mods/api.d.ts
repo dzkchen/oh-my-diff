@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous';
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -116,24 +116,28 @@ export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
-export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
+export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor; link?: string };
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
+export type TerminalControl = { hotkey?: KeyName; autofocus?: boolean };
 export type TerminalComponent =
-  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number }
+  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number; pointer?: boolean }
   | { type: 'line'; id: string; label: string; spans: TerminalSpan[] }
   | { type: 'text'; id: string; label: string; text: string; tone?: TerminalTone }
-  | { type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction }
-  | { type: 'input'; id: string; label: string; value?: string; placeholder?: string; action: TerminalCommandAction }
-  | { type: 'select'; id: string; label: string; value: string; options: TerminalSelectOption[]; action: TerminalCommandAction }
-  | { type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction }
+  | ({ type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction } & TerminalControl)
+  | ({ type: 'input'; id: string; label: string; value?: string; placeholder?: string; action: TerminalCommandAction } & TerminalControl)
+  | ({ type: 'select'; id: string; label: string; value: string; options: TerminalSelectOption[]; action: TerminalCommandAction } & TerminalControl)
+  | ({ type: 'multiselect'; id: string; label: string; value?: string[]; options: TerminalSelectOption[]; action: TerminalCommandAction } & TerminalControl)
+  | ({ type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction } & TerminalControl)
   | { type: 'markdown'; id: string; label: string; text: string }
   | { type: 'code'; id: string; label: string; text: string; language?: string }
   | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] }
   | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[] }
   | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
-  | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number }
+  | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
+  /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
+  | { type: 'raster'; id: string; label: string; alt: string; width: number; height: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
   | { type: 'slot' }
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
@@ -150,7 +154,12 @@ export type TerminalBackdrop =
   | { ascii: AsciiBackdrop }
   | { image: BackdropTransform & { resource: ResourceRef; overlay?: TerminalSurfacePaint }; fallback?: { ascii: AsciiBackdrop } };
 export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
-export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[] };
+/** An overlay draws a `owner/name` site above the layout at its anchor's top-left plus `offset`; higher `z` draws later. */
+export type TerminalOverlay = {
+  anchor: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center' | { component: string };
+  offset?: { x: number; y: number }; width: number; height: number; z?: number; clip?: 'screen' | 'anchor'; border?: boolean;
+};
+export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[]; overlay?: TerminalOverlay };
 export type TerminalWelcome = { show_while_composing?: boolean };
 /** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
 export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed'; surface?: 'inline' | 'fullscreen' };
@@ -159,6 +168,17 @@ export interface TerminalTheme {
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';
   glyphs?: Record<string, string>;
 }
+export type TerminalClient = {
+  kind: 'terminal'; graphics: 'kitty' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
+  cell_px: { width: number; height: number } | null;
+};
+/** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
+export type ClientEntry = {
+  id: string; name: string;
+  renderer: { kind: 'terminal' | 'gui' | 'text'; formats: ('svg' | 'png' | 'jpeg' | 'cells' | 'text')[]; pointer: 'pixel' | 'cell' | 'half_cell' | 'none'; reduced_motion: boolean; cell_px?: { width: number; height: number } };
+  viewport: { width: number; height: number; unit: string } | null; focused: boolean; attached_ms: number;
+};
+export type TerminalCell = string | [glyph: string, fg: ThemeColor | null, bg: ThemeColor | null];
 export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
@@ -185,7 +205,7 @@ export interface RenderProps {
   command_output: RenderExecCall & { kind: 'exec' };
   spinner: { header: string; elapsed_seconds: number; details: string | null; message: string | null; interrupt_hint: boolean };
   turn_duration: { seconds: number | null; completed_at_ms: number | null };
-  notice: { kind: 'info' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
+  notice: { kind: 'info' | 'warning' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
   session_mode: { mode: 'plan'; label: string; cycle_hint: boolean };
   composer_hint: { slot: 'placeholder'; placeholder: string; input_enabled: boolean }
     | { slot: 'footer'; mode: 'history_search' | 'quit_reminder' | 'shortcut_overlay' | 'esc_hint' | 'composer_empty' | 'composer_draft'; text: string; task_running: boolean };
@@ -287,7 +307,7 @@ export interface HostOperations {
   'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null } };
   'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
-  'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };
+  'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };
   'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };
   'sessions.list': { arguments: { since?: string; until?: string; cursor?: string; limit?: number }; result: { sessions: SessionSummary[]; cursor: string | null; revision: string; scan_truncated: boolean; unavailable: number; projection: string } };
   'sessions.read': { arguments: { session_id: string; revision: string; handle: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string; projection_truncated: boolean } };
@@ -368,6 +388,11 @@ export interface HostOperations {
     | { kind: 'choice'; title: string; message: string; options: { value: string; label: string }[]; multiple?: boolean; other?: boolean };
     result: { status: 'accepted'; value?: string; values?: string[]; other?: boolean } | Declined };
   'terminal.pane': { arguments: { action: 'open' | 'close' | 'focus' | 'reveal'; id: string } | { action: 'scroll'; id: string; offset: number }; result: { applied: true } };
+  'terminal.panes': { arguments: Record<string, never>; result: { panes: { id: string; visible: boolean; collapsed: boolean; focused: boolean; scroll: number }[] } };
+  'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
+    result: { shown: true; model?: boolean } | { cleared: boolean } };
+  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] };
+    result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
   'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
@@ -381,7 +406,7 @@ export interface Events {
   routing: { input: { routes: RouteInfo[]; model: string | null; provider: string; reasoning: string | null }; output: { route: string } | null };
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
   tool_exposure: { input: { thread_id: string | null; ledger: Ledger | null; available: string[] }; output: { enable: string[] } };
-  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null }; output: TerminalPatch | null };
+  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null; client?: TerminalClient | null; clients?: ClientEntry[] }; output: TerminalPatch | null };
   start: { input: Json; output: void };
   resume: { input: { thread_id: string; last_turn: { turn_id: string; status: 'completed' | 'interrupted' | 'failed' | 'in_progress' } | null; restarted: boolean }; output: void };
   idle: { input: Json; output: void };
@@ -413,9 +438,9 @@ export interface Events {
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'open' | 'close';
-    origin?: 'user' | 'mod'; value?: string; offset?: number;
-    pointer?: { column: number; row: number; action: 'down' | 'up' | 'scroll_up' | 'scroll_down'; button: 'left' | 'right' | 'middle' | null };
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
+    origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
+    pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
@@ -461,6 +486,8 @@ export interface InterceptSurfaces {
   peer_receive: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json }; result: { data: Json }; answer: { deny: string } };
   turn_stop: { input: { thread_id: string; turn_id: string; outcome: 'completed' | 'error'; error: string | null; message: string | null; continued: number; limit: number; provenance: { kind: 'mod'; package: string } | null }; result: { stop: true }; answer: { continue: string } };
   composer_edit: { input: { source: 'mod' | 'paste' | 'history' | 'completion'; caller: string; revision: number; edit: ComposerEdit }; result: { edit: ComposerEdit }; answer: { deny: string } };
+  component_change: { input: { kind: 'focus'; id: string; from: string | null; to: string | null; origin: 'user' } | { kind: 'scroll'; id: string; from: number | null; to: number; origin: 'user' };
+    result: { focus: string | null } | { scroll: number }; answer: { deny: string } };
   elicitation: { input: { thread_id: string; turn_id: string; server: string; request_id: string; mode: 'form' | 'openai/form' | 'openaiForm'; message: string; schema: Json };
     result: { action: 'ask' }; answer: { accept: Record<string, Json> } | { decline: string } | { cancel: string } };
   compaction: { input: CompactionOccurrence; result: CompactionResult; answer: { skip: string } | { defer: string } | { summary: string } | { history: CompactionHistory } };

@@ -220,7 +220,7 @@ impl ModLayout {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModBackdropOffset {
     pub x: i16,
@@ -392,6 +392,64 @@ pub struct ModRenderSite {
     pub mode: ModSiteMode,
     #[serde(default)]
     pub components: Vec<ModComponent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<ModOverlay>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModScreenAnchor {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ModAnchor {
+    Screen(ModScreenAnchor),
+    Component { component: String },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModOverlayClip {
+    #[default]
+    Screen,
+    Anchor,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModOverlay {
+    pub anchor: ModAnchor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<ModBackdropOffset>,
+    pub width: u16,
+    pub height: u16,
+    #[serde(default)]
+    pub z: u8,
+    #[serde(default)]
+    pub clip: ModOverlayClip,
+    #[serde(default)]
+    pub border: bool,
+}
+
+impl ModOverlay {
+    fn valid(&self) -> bool {
+        (1..=200).contains(&self.width)
+            && (1..=60).contains(&self.height)
+            && self.z <= 9
+            && self.offset.as_ref().is_none_or(|offset| {
+                offset.x.unsigned_abs() <= 500 && offset.y.unsigned_abs() <= 200
+            })
+            && match &self.anchor {
+                ModAnchor::Screen(_) => self.clip == ModOverlayClip::Screen,
+                ModAnchor::Component { component } => mod_component_id(component),
+            }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -408,6 +466,8 @@ pub enum ModComponent {
         min_width: Option<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_width: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
     },
     Line {
         id: String,
@@ -426,6 +486,10 @@ pub enum ModComponent {
         label: String,
         text: String,
         action: ModComponentAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Input {
         id: String,
@@ -435,6 +499,10 @@ pub enum ModComponent {
         #[serde(default)]
         placeholder: String,
         action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Select {
         id: String,
@@ -442,6 +510,22 @@ pub enum ModComponent {
         value: String,
         options: Vec<ModSelectOption>,
         action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
+    },
+    Multiselect {
+        id: String,
+        label: String,
+        #[serde(default)]
+        value: Vec<String>,
+        options: Vec<ModSelectOption>,
+        action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Markdown {
         id: String,
@@ -485,6 +569,10 @@ pub enum ModComponent {
         #[serde(default)]
         height: Option<u16>,
         action: ModCommandAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hotkey: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        autofocus: bool,
     },
     Document {
         id: String,
@@ -520,6 +608,17 @@ pub enum ModComponent {
         alt: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         height: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
+    },
+    Raster {
+        id: String,
+        label: String,
+        alt: String,
+        width: u16,
+        height: u16,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
     },
     Diff {
         id: String,
@@ -598,9 +697,47 @@ pub struct ModSpan {
     pub fg: Option<ModColor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bg: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 impl ModComponent {
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Self::Box { id, .. }
+            | Self::Line { id, .. }
+            | Self::Text { id, .. }
+            | Self::Button { id, .. }
+            | Self::Input { id, .. }
+            | Self::Select { id, .. }
+            | Self::Multiselect { id, .. }
+            | Self::Markdown { id, .. }
+            | Self::Code { id, .. }
+            | Self::Pane { id, .. }
+            | Self::Dialog { id, .. }
+            | Self::List { id, .. }
+            | Self::Document { id, .. }
+            | Self::Terminal { id, .. }
+            | Self::Image { id, .. }
+            | Self::Raster { id, .. }
+            | Self::Diff { id, .. } => Some(id),
+            Self::Slot | Self::Native { .. } => None,
+        }
+    }
+
+    /// Pushes this component and every descendant, parents first.
+    pub fn descendants<'a>(&'a self, into: &mut Vec<&'a ModComponent>) {
+        into.push(self);
+        if let Self::Box { children, .. }
+        | Self::Pane { children, .. }
+        | Self::Dialog { children, .. } = self
+        {
+            for child in children {
+                child.descendants(into);
+            }
+        }
+    }
+
     pub fn fits(&self, width: u16) -> bool {
         match self {
             Self::Box {
@@ -636,6 +773,20 @@ pub struct ModCommandAction {
     pub command: String,
     #[serde(default)]
     pub args: String,
+}
+
+impl ModCommandAction {
+    pub fn with_value(&self, value: Option<&str>) -> ModKeyAction {
+        let args = match value {
+            Some(value) if self.args.is_empty() => value.to_owned(),
+            Some(value) => format!("{} {value}", self.args),
+            None => self.args.clone(),
+        };
+        ModKeyAction::Command {
+            command: self.command.clone(),
+            args,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -909,7 +1060,50 @@ fn multiline(text: &str, limit: usize) -> bool {
             .any(|c| c.is_control() && c != '\n' && c != '\t')
 }
 
-fn component_id(value: &str) -> bool {
+pub fn mod_link(link: &str) -> bool {
+    visible(link, 2048)
+        && !link.contains(char::is_whitespace)
+        && ["https://", "http://"].iter().any(|scheme| {
+            link.get(..scheme.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+                && link[scheme.len()..]
+                    .split(['/', '?', '#'])
+                    .next()
+                    .is_some_and(|host| !host.is_empty())
+        })
+}
+
+fn valid_span(span: &ModSpan, limit: usize) -> bool {
+    visible(&span.text, limit) && span.link.as_deref().is_none_or(mod_link)
+}
+
+fn valid_control(hotkey: &Option<String>) -> bool {
+    hotkey.as_deref().is_none_or(mod_key_name)
+}
+
+impl ModView {
+    pub fn raster_size(&self, id: &str) -> Option<(u16, u16)> {
+        fn find(components: &[ModComponent], id: &str) -> Option<(u16, u16)> {
+            components.iter().find_map(|component| match component {
+                ModComponent::Raster {
+                    id: raster,
+                    width,
+                    height,
+                    ..
+                } if raster == id => Some((*width, *height)),
+                ModComponent::Box { children, .. }
+                | ModComponent::Pane { children, .. }
+                | ModComponent::Dialog { children, .. } => find(children, id),
+                _ => None,
+            })
+        }
+        self.sites
+            .values()
+            .find_map(|site| find(&site.components, id))
+    }
+}
+
+pub fn mod_component_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 48
         && value
@@ -1023,7 +1217,7 @@ impl ModComponent {
             return false;
         }
         let identified = |id: &str, label: &str, ids: &mut BTreeSet<String>| {
-            component_id(id)
+            mod_component_id(id)
                 && !label.is_empty()
                 && visible(label, 128)
                 && ids.insert(id.to_owned())
@@ -1044,6 +1238,7 @@ impl ModComponent {
                 children: nested,
                 min_width,
                 max_width,
+                ..
             } => {
                 let bound =
                     |width: &Option<u16>| width.is_none_or(|width| (1..=500).contains(&width));
@@ -1060,7 +1255,7 @@ impl ModComponent {
                 identified(id, label, ids)
                     && !spans.is_empty()
                     && spans.len() <= 12
-                    && spans.iter().all(|span| visible(&span.text, 1024))
+                    && spans.iter().all(|span| valid_span(span, 1024))
                     && spans
                         .iter()
                         .map(|span| span.text.chars().count())
@@ -1101,11 +1296,14 @@ impl ModComponent {
                 label,
                 text,
                 action,
+                hotkey,
+                ..
             } => {
                 identified(id, label, ids)
                     && !text.is_empty()
                     && visible(text, 256)
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::Input {
                 id,
@@ -1113,27 +1311,47 @@ impl ModComponent {
                 value,
                 placeholder,
                 action,
+                hotkey,
+                ..
             } => {
                 identified(id, label, ids)
                     && multiline(value, 1024)
                     && visible(placeholder, 256)
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::Select {
                 id,
                 label,
-                value,
                 options,
                 action,
+                hotkey,
+                ..
+            }
+            | Self::Multiselect {
+                id,
+                label,
+                options,
+                action,
+                hotkey,
+                ..
             } => {
                 let values = options
                     .iter()
                     .map(|option| option.value.as_str())
                     .collect::<BTreeSet<_>>();
+                let chosen = match self {
+                    Self::Select { value, .. } => values.contains(value.as_str()),
+                    Self::Multiselect { value, .. } => {
+                        value.iter().all(|value| values.contains(value.as_str()))
+                            && value.iter().collect::<BTreeSet<_>>().len() == value.len()
+                    }
+                    _ => false,
+                };
                 identified(id, label, ids)
                     && (1..=16).contains(&options.len())
                     && values.len() == options.len()
-                    && options.iter().any(|option| option.value == *value)
+                    && chosen
                     && options.iter().all(|option| {
                         !option.value.is_empty()
                             && visible(&option.value, 128)
@@ -1141,6 +1359,7 @@ impl ModComponent {
                             && visible(&option.label, 128)
                     })
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::List {
                 id,
@@ -1149,6 +1368,8 @@ impl ModComponent {
                 selected,
                 height,
                 action,
+                hotkey,
+                ..
             } => {
                 let values = rows
                     .iter()
@@ -1167,7 +1388,7 @@ impl ModComponent {
                             && !row.label.is_empty()
                             && visible(&row.label, 256)
                             && row.spans.len() <= 12
-                            && row.spans.iter().all(|span| visible(&span.text, 256))
+                            && row.spans.iter().all(|span| valid_span(span, 256))
                             && row
                                 .spans
                                 .iter()
@@ -1176,6 +1397,7 @@ impl ModComponent {
                                 <= 256
                     })
                     && action.valid()
+                    && valid_control(hotkey)
             }
             Self::Document {
                 id,
@@ -1193,7 +1415,10 @@ impl ModComponent {
                     && (source.is_none() || lines.is_empty())
                     && lines.len() <= 2000
                     && lines.iter().all(|spans| {
-                        spans.len() <= 12 && spans.iter().all(|span| visible(&span.text, 1024))
+                        spans.len() <= 12
+                            && spans
+                                .iter()
+                                .all(|span| visible(&span.text, 1024) && span.link.is_none())
                     })
                     && lines
                         .iter()
@@ -1244,6 +1469,19 @@ impl ModComponent {
                 identified(id, label, ids)
                     && visible(alt, 256)
                     && height.is_none_or(|height| (1..=40).contains(&height))
+            }
+            Self::Raster {
+                id,
+                label,
+                alt,
+                width,
+                height,
+                ..
+            } => {
+                identified(id, label, ids)
+                    && visible(alt, 256)
+                    && (1..=200).contains(width)
+                    && (1..=40).contains(height)
             }
             Self::Slot | Self::Native { .. } => {
                 *slots += 1;
@@ -1324,7 +1562,7 @@ fn valid_action(action: &ModKeyAction) -> bool {
         ModKeyAction::Command { command, args } => {
             mod_command_reference(command) && multiline(args, 4096)
         }
-        ModKeyAction::Focus { focus } => component_id(focus),
+        ModKeyAction::Focus { focus } => mod_component_id(focus),
         ModKeyAction::Copy { copy, label } => {
             !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
         }
@@ -1354,6 +1592,13 @@ fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>) -> Option<String> {
         if !valid_site(name) {
             return Some(format!("sites.{name}"));
         }
+        if site
+            .overlay
+            .as_ref()
+            .is_some_and(|overlay| !name.contains('/') || !overlay.valid())
+        {
+            return Some(format!("sites.{name}.overlay"));
+        }
         site.invalid(&mut ids)
             .map(|field| format!("sites.{name}.{field}"))
     })
@@ -1375,31 +1620,12 @@ pub fn component_ids_of<'a>(
 }
 
 fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
-    match component {
-        ModComponent::Box { id, children, .. }
-        | ModComponent::Pane { id, children, .. }
-        | ModComponent::Dialog { id, children, .. } => {
-            ids.insert(id.clone());
-            for child in children {
-                component_ids(child, ids);
-            }
-        }
-        ModComponent::Text { id, .. }
-        | ModComponent::Line { id, .. }
-        | ModComponent::Button { id, .. }
-        | ModComponent::Input { id, .. }
-        | ModComponent::Select { id, .. }
-        | ModComponent::Markdown { id, .. }
-        | ModComponent::Code { id, .. }
-        | ModComponent::List { id, .. }
-        | ModComponent::Document { id, .. }
-        | ModComponent::Diff { id, .. }
-        | ModComponent::Terminal { id, .. }
-        | ModComponent::Image { id, .. } => {
-            ids.insert(id.clone());
-        }
-        ModComponent::Slot | ModComponent::Native { .. } => {}
-    }
+    let mut all = Vec::new();
+    component.descendants(&mut all);
+    ids.extend(
+        all.into_iter()
+            .filter_map(|found| found.id().map(str::to_owned)),
+    );
 }
 
 fn valid_focus_targets(
@@ -1430,6 +1656,7 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 children,
                 min_width,
                 max_width,
+                pointer,
             } => vec![ModComponent::Box {
                 id,
                 label,
@@ -1437,6 +1664,7 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 children: replace_slot(children, current),
                 min_width,
                 max_width,
+                pointer,
             }],
             ModComponent::Pane {
                 id,
@@ -1669,16 +1897,20 @@ impl ModViewPatch {
             let current = candidate.sites.remove(&name).unwrap_or(ModRenderSite {
                 mode: ModSiteMode::Wrap,
                 components: vec![ModComponent::Slot],
+                overlay: None,
             });
+            let overlay = site.overlay.clone().or(current.overlay);
             let composed = match (site.mode, current.mode) {
-                (ModSiteMode::Replace, ModSiteMode::Replace) => site,
+                (ModSiteMode::Replace, ModSiteMode::Replace) => ModRenderSite { overlay, ..site },
                 (ModSiteMode::Replace, ModSiteMode::Wrap) => ModRenderSite {
                     mode: ModSiteMode::Replace,
                     components: replace_slot(current.components, &site.components),
+                    overlay,
                 },
                 (ModSiteMode::Wrap, mode) => ModRenderSite {
                     mode,
                     components: replace_slot(site.components, &current.components),
+                    overlay,
                 },
             };
             candidate.sites.insert(name, composed);

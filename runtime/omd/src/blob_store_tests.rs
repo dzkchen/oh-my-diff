@@ -88,6 +88,105 @@ fn invalid_evidence_is_refused() {
 }
 
 #[test]
+fn svg_evidence_is_gated() {
+    with_store(|store| {
+        let record = |svg: &str| {
+            store
+                .evidence_record(
+                    json!({"media_type": "image/svg+xml", "base64": STANDARD.encode(svg)}),
+                )
+                .map_err(|error| error.to_string())
+        };
+        let svg = r##"<?xml version="1.0"?><!-- c --><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><style><![CDATA[.a{fill:url(#g)}]]></style><rect id="r" style="fill: url('#g')"/><use xlink:href="#r"/><image href="data:image/png;base64,iVBO"/></svg>"##;
+        assert_eq!(
+            record(svg).unwrap()["bytes"].as_u64(),
+            Some(svg.len() as u64)
+        );
+        for (svg, reason) in [
+            ("<svg><script>x</script></svg>", "svg_element_forbidden"),
+            ("<svg><foreignObject/></svg>", "svg_element_forbidden"),
+            (r#"<svg onload="x()"/>"#, "svg_event_handler"),
+            (
+                r#"<svg><img xmlns="http://www.w3.org/1999/xhtml"/></svg>"#,
+                "svg_element_forbidden",
+            ),
+            (
+                r#"<svg xmlns="http://www.w3.org/1999/xhtml"/>"#,
+                "svg_element_forbidden",
+            ),
+            (
+                r#"<svg xmlns:h="http://www.w3.org/1999/xhtml"><h:a/></svg>"#,
+                "svg_element_forbidden",
+            ),
+            (
+                r#"<svg><animate attributeName="OnClick" to="x()"/></svg>"#,
+                "svg_event_handler",
+            ),
+            (
+                r#"<svg><image src="x.png"/></svg>"#,
+                "svg_attribute_forbidden",
+            ),
+            (r#"<svg><a ping="//e"/></svg>"#, "svg_attribute_forbidden"),
+            (
+                r#"<svg><use href="http://e/x.svg#a"/></svg>"#,
+                "svg_href_external",
+            ),
+            (
+                r#"<svg><a xlink:href="&#106;avascript:x"/></svg>"#,
+                "svg_href_external",
+            ),
+            (
+                r##"<svg><set attributeName="xlink:href" to="#a"/></svg>"##,
+                "svg_href_external",
+            ),
+            (
+                r#"<svg><rect fill="url(http://e/p)"/></svg>"#,
+                "svg_url_external",
+            ),
+            (
+                r#"<svg><rect style="fill:-WebKit-Image-Set(&quot;x&quot; 1x)"/></svg>"#,
+                "svg_url_external",
+            ),
+            (
+                r#"<svg><rect style="fill:image-set(&#39;x&#39; 1x)"/></svg>"#,
+                "svg_url_external",
+            ),
+            (
+                "<svg><style>@FONT-FACE{font-family:f}</style></svg>",
+                "svg_url_external",
+            ),
+            (
+                "<svg><style><![CDATA[a{b:sr]]><!---->c(x)}</style></svg>",
+                "svg_url_external",
+            ),
+            (
+                "<svg><style>a{b:ur<!---->l(//e)}</style></svg>",
+                "svg_url_external",
+            ),
+            ("<svg><style>a{b:url(//e)}", "svg_malformed"),
+            ("<!DOCTYPE svg><svg/>", "svg_doctype"),
+            (
+                r#"<svg><?xml-stylesheet href="x"?></svg>"#,
+                "svg_processing_instruction",
+            ),
+            ("<html><svg/></html>", "svg_root_not_svg"),
+            ("<!-- only -->", "svg_root_missing"),
+        ] {
+            assert_eq!(
+                record(svg).unwrap_err(),
+                format!("evidence_record_invalid: {reason}"),
+                "{svg}"
+            );
+        }
+        let large = format!("<svg>{}</svg>", " ".repeat(SVG_BYTES));
+        assert_eq!(
+            record(&large).unwrap_err(),
+            "evidence_record_invalid: svg_too_large"
+        );
+    });
+}
+
+#[test]
 fn text_evidence_pages_over_the_blob_content() {
     with_store(|store| {
         let text = "line\n".repeat(10_000);

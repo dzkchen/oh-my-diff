@@ -4239,6 +4239,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         "fs.read",
         "fs.external",
         "mcp",
+        "history_write",
     ];
     let path = write(
         "delegate",
@@ -4280,7 +4281,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 5);
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 6);
     contended(|| store.revoke("delegate"));
     runtime.reload().unwrap();
     assert!(
@@ -4358,4 +4359,134 @@ fn credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin() {
     );
     assert!(profiles.owned_secret(id, "another_mod").is_err());
     assert!(profiles.visible("").unwrap().is_empty());
+}
+
+#[test]
+fn component_change_interceptors_answer_only_for_the_components_owner() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, source) in [
+        (
+            "wizard",
+            "export default api => api.intercept('component_change', (e, next) => {
+                if (e.kind === 'scroll') return {scroll: Math.min(e.to, 5)};
+                if (e.from === 'name' && e.to === 'other') return {deny: 'finish the name'};
+                if (e.to === 'skip') return {focus: 'name'};
+                if (e.to === 'bad') return {focus: 'Not An Id'};
+                return next(e);
+            })",
+        ),
+        (
+            "intruder",
+            "export default api => api.intercept('component_change', () => ({deny: 'mine'}))",
+        ),
+    ] {
+        let path = package(&root, id, source, &["terminal"]);
+        trust(&store, &path, &["terminal"]);
+    }
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let change = |owner: &str, input: Value| {
+        codex_omd::continue_operation(
+            &runtime,
+            "component_change",
+            input,
+            json!({"owner": owner}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |effective| {
+                Ok(match effective["kind"].as_str() {
+                    Some("focus") => json!({"focus": effective["to"]}),
+                    _ => json!({"scroll": effective["to"]}),
+                })
+            },
+        )
+    };
+    let focus = |to: &str| json!({"kind": "focus", "id": "name", "from": "name", "to": to, "origin": "user"});
+    let denied = change("wizard", focus("other")).unwrap_err();
+    assert!(
+        denied
+            .to_string()
+            .contains("component_change_denied: finish the name"),
+        "{denied}"
+    );
+    assert_eq!(
+        change("wizard", focus("skip")).unwrap(),
+        json!({"focus": "name"})
+    );
+    assert_eq!(
+        change("wizard", focus("next")).unwrap(),
+        json!({"focus": "next"})
+    );
+    assert_eq!(
+        change(
+            "wizard",
+            json!({"kind": "scroll", "id": "log", "from": 0, "to": 9, "origin": "user"})
+        )
+        .unwrap(),
+        json!({"scroll": 5})
+    );
+    assert_ne!(
+        change("wizard", focus("bad")).ok(),
+        Some(json!({"focus": "Not An Id"}))
+    );
+    assert_eq!(
+        change("nobody", focus("other")).unwrap(),
+        json!({"focus": "other"})
+    );
+}
+
+#[test]
+fn offline_multiselect_interactions_send_checked_values_in_option_order() {
+    let (temp, _, _) = fixture(
+        "export default api => { api.command('pick', input => input); api.on('terminal', () => ({sites: {dialog: {components: [{type: 'multiselect', id: 'files', label: 'Files', value: ['a'], action: {command: 'fixture:pick'}, options: [{value: 'a', label: 'A'}, {value: 'b', label: 'B'}]}]}}})); }",
+        &["commands", "terminal"],
+    );
+    let interact = |value: Option<&str>| {
+        let mut step = json!({"type": "terminal_interact", "mod": "fixture", "component": "files",
+            "payload": {"event": "draw", "checkpoint": null}});
+        if let Some(value) = value {
+            step["value"] = value.into();
+        }
+        host(&temp).offline_test(json!({"schema": 1, "steps": [step]}))
+    };
+    let checked = interact(None).unwrap();
+    assert_eq!(checked["steps"][0]["value"]["action"]["args"], r#"["a"]"#);
+    let ordered = interact(Some(r#"["b","a"]"#)).unwrap();
+    assert_eq!(
+        ordered["steps"][0]["value"]["action"]["args"],
+        r#"["a","b"]"#
+    );
+    assert_eq!(ordered["steps"][0]["value"]["result"], r#"["a","b"]"#);
+    for invalid in [r#"["a","a"]"#, r#"["c"]"#, "a"] {
+        assert!(interact(Some(invalid)).is_err(), "{invalid}");
+    }
+}
+
+#[test]
+fn omd_mod_reset_moves_only_resettable_store_files_aside() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap().join("store");
+    ModStore::create(root.clone(), node()).unwrap();
+    std::fs::write(root.join("host.json"), b"{broken").unwrap();
+    let reset = |name: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
+            .arg("reset")
+            .arg(&root)
+            .arg(name)
+            .output()
+            .unwrap()
+    };
+    let output = reset("host.json");
+    assert!(output.status.success());
+    let aside = root.join("host.json.corrupt");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"reset": "host.json", "aside": aside})
+    );
+    assert_eq!(std::fs::read(&aside).unwrap(), b"{broken");
+    assert!(!root.join("host.json").exists());
+    let refused = reset("grants.json");
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
 }

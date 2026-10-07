@@ -9,12 +9,14 @@ import { runnerSync } from '../tests/mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = {
-  events: { terminal: 'terminal', channel: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
+  events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
   replacements: [], intercept: { render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts',
 };
-const source = name => readFileSync(new URL(`./first-party/${name}/index.ts`, import.meta.url), 'utf8');
+const read = (name, file) => readFileSync(new URL(`./first-party/${name}/${file}`, import.meta.url), 'utf8');
+const source = name => read(name, 'index.ts');
+const assets = name => Object.fromEntries((JSON.parse(read(name, 'mod.json')).assets ?? []).map(asset => [asset, { text: read(name, asset) }]));
 function run(name, input) {
-  const result = runnerSync({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input });
+  const result = runnerSync({ source: source(name), assets: assets(name), filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input });
   assert.ifError(result.error);
   const output = JSON.parse(result.stdout);
   assert.equal(result.status, 0, `${result.stderr}\n${output.error ?? ''}`);
@@ -136,7 +138,7 @@ const gitReceipts = [
 ];
 
 test('Git sidebar bounds a 700-file status view and rejects oversized or truncated status', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const many = `## main\0${Array.from({ length: 700 }, (_, index) => `?? file-${String(index).padStart(4, '0')}.txt\0`).join('')}`;
   const statusCall = gitReceipts[0].call;
   const accepted = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: [
@@ -162,7 +164,7 @@ test('Git sidebar bounds a 700-file status view and rejects oversized or truncat
 });
 
 test('Git status and branch preview use sandboxed reads while protected index writes are denied', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   assert.match(inspected.value.display, /important\.txt/);
   const rendered = run('omd_git', { capabilities, event: 'terminal', state: inspected.state, payload: { event: 'idle' } });
@@ -203,7 +205,7 @@ test('Git status and branch preview use sandboxed reads while protected index wr
 });
 
 test('stage binds exact path access, status, HEAD, index, and file content to one write', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   const fileHash = 'e'.repeat(64);
   const scope = { call: gitArgs(['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'important.txt']), value: reply('important.txt\0') };
@@ -229,7 +231,7 @@ test('stage binds exact path access, status, HEAD, index, and file content to on
 });
 
 test('commit preview fingerprints the full index and rejects stale index views', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const stagedReceipts = [{ call: gitReceipts[0].call, value: reply(`## main\0M  important.txt\0?? new.txt\0`) }, ...gitReceipts.slice(1)];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: stagedReceipts });
   const message = run('omd_git', { capabilities, event: 'command', name: 'message', payload: 'Reviewable commit', state: inspected.state });
@@ -290,7 +292,7 @@ test('commit preview fingerprints the full index and rejects stale index views',
 });
 
 test('commit confirmation lists every staged path and refuses an oversized exact preview', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const paths = Array.from({ length: 12 }, (_, index) => `staged-${String(index).padStart(2, '0')}.txt`);
   const stagedStatus = `## main\0${paths.map(path => `M  ${path}\0`).join('')}`;
   const statusReceipts = [{ call: gitReceipts[0].call, value: reply(stagedStatus) }, ...gitReceipts.slice(1)];
@@ -323,7 +325,7 @@ test('commit confirmation lists every staged path and refuses an oversized exact
 });
 
 test('untracked discard requires exact status and an atomic outside-repository backup', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   const selected = run('omd_git', { capabilities, event: 'command', name: 'choose', payload: 'new.txt', state: inspected.state });
   const fileHash = 'e'.repeat(64);
@@ -363,17 +365,19 @@ test('untracked discard requires exact status and an atomic outside-repository b
 });
 
 test('tracked discard keeps a scoped backup and rejects a changed precondition', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   const beforeHash = 'e'.repeat(64);
-  const restored = reply('original\n');
+  const restoredHash = createHash('sha256').update('original\n').digest('hex');
+  const restored = reply(`${restoredHash}\n`);
+  const fingerprint = read('omd_git', 'fingerprint.mjs');
   const before = { call: { operation: 'workspace.stat', arguments: { paths: ['important.txt'], hash: true } }, value: { files: { 'important.txt': { kind: 'file', size: 12, mtime_ms: 1, sha256: beforeHash } } } };
   const access = { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, value: { paths: ['important.txt'], write: true } };
   const preview = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'discard', state: inspected.state, receipts: [
     ...gitReceipts, before, access,
     { call: gitArgs(['diff', '--binary', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--', 'important.txt']), value: reply('diff --git a/important.txt b/important.txt\n') },
     { call: gitArgs(['ls-files', '-s', '-z']), value: reply(`100644 ${'f'.repeat(40)} 0\timportant.txt\0`) },
-    { call: gitArgs(['cat-file', '--filters', '--path=important.txt', 'f'.repeat(40)]), value: restored },
+    { call: { operation: 'exec.run', arguments: { program: 'node', argv: ['--input-type=module', '-', '/usr/bin/git', 'd'.repeat(64), ...gitArgs(['cat-file', '--filters', '--path=important.txt', 'f'.repeat(40)]).arguments.argv], stdin: fingerprint, timeout_ms: 10000, max_output_bytes: 65536, write: false, network: 'none' } }, value: restored },
     { call: gitArgs(['hash-object', '--no-filters', '--', 'important.txt'], 256), value: reply(`${'c'.repeat(40)}\n`) },
   ] });
   assert.equal(preview.state.preview.tracked, true);
@@ -392,12 +396,12 @@ test('tracked discard keeps a scoped backup and rejects a changed precondition',
     { call: gitReceipts[0].call, value: reply('## main\0?? new.txt\0') }, ...gitReceipts.slice(1),
   ] });
   assert.match(written.value.display, /discarded important\.txt; backup/);
-  assert.equal(written.state.backup.expected, restored.stdout_sha256);
+  assert.equal(written.state.backup.expected, restoredHash);
   assert.deepEqual(written.calls.find(call => call.operation === 'exec.run' && call.arguments.write === true).arguments.required_access, { write: ['important.txt'] });
 });
 
 test('clean branch switch binds destination and affected paths and preserves ignored files', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const clean = [
     { call: gitReceipts[0].call, value: reply('## main\0') },
     gitReceipts[1], gitReceipts[2], gitReceipts[3],
@@ -434,7 +438,7 @@ test('clean branch switch binds destination and affected paths and preserves ign
 });
 
 test('switch confirmation lists every affected path and refuses an oversized exact preview', () => {
-  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
+  const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal', 'events'];
   const clean = [{ call: gitReceipts[0].call, value: reply('## main\0') }, ...gitReceipts.slice(1)];
   const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', receipts: clean });
   const target = { call: gitArgs(['show-ref', '--verify', '--hash', 'refs/heads/feature'], 256), value: reply(`${other}\n`) };

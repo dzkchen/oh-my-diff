@@ -227,3 +227,145 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
     assert_eq!(sidebar["mode"], "replace");
     assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
 }
+
+#[test]
+fn links_multiselects_and_control_hotkeys_are_validated() {
+    let site = |component: Value| json!({"sites": {"sidebar": {"components": [component]}}});
+    let line = |link: &str| {
+        site(
+            json!({"type": "line", "id": "l", "label": "L", "spans": [{"text": "x", "link": link}]}),
+        )
+    };
+    let choice = |value: Value| {
+        site(
+            json!({"type": "multiselect", "id": "m", "label": "M", "value": value,
+        "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}], "action": {"command": "pick"}}),
+        )
+    };
+    let button = |hotkey: &str| {
+        site(
+            json!({"type": "button", "id": "b", "label": "B", "text": "Go",
+        "action": {"command": "go"}, "hotkey": hotkey, "autofocus": true}),
+        )
+    };
+    for valid in [
+        line("https://example.com/a?b#c"),
+        line("HTTP://host"),
+        choice(json!(["b", "a"])),
+        choice(json!([])),
+        button("Alt+g"),
+    ] {
+        assert!(view(valid.clone()).is_ok(), "{valid}");
+    }
+    for invalid in [
+        line("javascript:alert(1)"),
+        line("https:///path"),
+        line("https://a b"),
+        line(&format!("https://h/{}", "x".repeat(2048))),
+        site(
+            json!({"type": "document", "id": "d", "label": "D", "lines": [[{"text": "x", "link": "https://h"}]]}),
+        ),
+        choice(json!(["c"])),
+        choice(json!(["a", "a"])),
+        button("Ctrl+c"),
+        button("g"),
+    ] {
+        assert!(view(invalid.clone()).is_err(), "{invalid}");
+    }
+}
+
+#[test]
+fn rasters_and_overlays_are_bounded_and_overlays_survive_wraps() {
+    let raster = |extra: Value| {
+        let mut raster = json!({"type": "raster", "id": "chart", "label": "Chart", "alt": "Load",
+            "width": 40, "height": 8, "pointer": true});
+        raster
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        view(json!({"sites": {"sidebar": {"components": [raster]}}}))
+    };
+    assert!(raster(json!({})).is_ok());
+    for invalid in [
+        json!({"width": 0}),
+        json!({"width": 201}),
+        json!({"height": 41}),
+        json!({"alt": "a\u{001b}[2J"}),
+        json!({"cells": []}),
+    ] {
+        assert!(raster(invalid.clone()).is_err(), "{invalid}");
+    }
+    let overlay = |site: &str, overlay: Value| {
+        view(json!({"sites": {site: {"overlay": overlay,
+            "components": [{"type": "box", "id": "tip", "label": "Tip", "pointer": true}]}}}))
+    };
+    let tooltip = json!({"anchor": {"component": "chart"}, "offset": {"x": 1, "y": -1},
+        "width": 20, "height": 3, "z": 9, "clip": "anchor", "border": true});
+    assert!(overlay("charts/tip", tooltip.clone()).is_ok());
+    assert!(
+        overlay(
+            "charts/menu",
+            json!({"anchor": "bottom_right", "width": 20, "height": 3})
+        )
+        .is_ok()
+    );
+    for (site, invalid) in [
+        ("sidebar", tooltip.clone()),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 0, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 10, "height": 3, "z": 10}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 10, "height": 3, "clip": "anchor"}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": {"component": "Bad Id"}, "width": 10, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "middle", "width": 10, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "offset": {"x": -32768, "y": 0}, "width": 10, "height": 3}),
+        ),
+    ] {
+        assert!(overlay(site, invalid.clone()).is_err(), "{site} {invalid}");
+    }
+
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    for (id, patch) in [
+        (
+            "charts",
+            json!({"sites": {"charts/tip": {"overlay": tooltip, "components": [{"type": "slot"}], "mode": "wrap"}}}),
+        ),
+        (
+            "notes",
+            json!({"sites": {"charts/tip": {"components": [{"type": "text", "id": "note", "label": "Note", "text": "peak"}]}}}),
+        ),
+    ] {
+        ModViewPatch::parse(patch)
+            .unwrap()
+            .apply(&mut target, &mut claims, id, "idle")
+            .unwrap();
+    }
+    target.close_wraps();
+    assert_eq!(
+        target.sites["charts/tip"]
+            .overlay
+            .as_ref()
+            .map(|overlay| overlay.z),
+        Some(9)
+    );
+    assert_eq!(
+        component_ids_of(&target.sites["charts/tip"].components),
+        BTreeSet::from(["note".to_owned()])
+    );
+}

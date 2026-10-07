@@ -64,6 +64,21 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "contract.status"
                         | "workspace.fingerprint"
                 ))
+        || matches!(event, "component_event" | "command")
+            && (codex_omd::host::served(operation)
+                || codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation)
+                || matches!(
+                    operation,
+                    "app.routes"
+                        | "model.complete"
+                        | "model.fork"
+                        | "session.info"
+                        | "turns.activity"
+                        | "events.publish"
+                        | "credentials.list"
+                        | "packages.list"
+                        | "packages.preview"
+                ))
 }
 
 pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {

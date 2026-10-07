@@ -1,4 +1,5 @@
 use crate::app_routes::InvocationContext;
+use serde::Serialize;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -58,6 +59,9 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "terminal.open",
     "terminal.prompt",
     "terminal.pane",
+    "terminal.panes",
+    "terminal.notice",
+    "terminal.blit",
     "terminal.pty",
 ];
 
@@ -208,6 +212,8 @@ pub struct SurfaceCall {
     pub operation: String,
     pub arguments: Value,
     pub context: InvocationContext,
+    /// Caused by an attached client's action or event rather than the local user.
+    pub remote: bool,
     pub thread: Option<String>,
     pub authority: Option<Authority>,
     pub confirm: Option<String>,
@@ -215,18 +221,63 @@ pub struct SurfaceCall {
     pub lifetime: CallLifetime,
 }
 
+/// Operations only the user at the terminal may cause, never an attached client.
+pub fn needs_terminal(operation: &str, arguments: &Value) -> bool {
+    USER_ONLY_OPERATIONS.contains(&operation)
+        || operation == "prompts.consent"
+        || (operation == "terminal.pty" && arguments["action"] == "start")
+}
+
+pub fn needs_terminal_error(operation: &str) -> String {
+    format!(
+        "client_surface_operation_unavailable: {operation} needs the terminal (/omd) or omd-mod"
+    )
+}
+
 pub trait ClientSurface: Send + Sync {
     fn submit(&self, call: SurfaceCall) -> Result<(), String>;
 
     fn redraw(&self) {}
+
+    fn client(&self) -> Value {
+        Value::Null
+    }
 }
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+pub type Observer = Arc<dyn Fn(Observed) + Send + Sync>;
+
+const MIRRORED_OPERATIONS: &[&str] = &["terminal.notify", "terminal.notice", "terminal.blit"];
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ClientEntry {
+    pub id: String,
+    pub name: String,
+    pub renderer: Value,
+    pub viewport: Value,
+    pub operations: Vec<String>,
+    pub attached_ms: u64,
+    pub focused: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum Observed {
+    Redraw,
+    Roster,
+    Mirrored {
+        caller: String,
+        operation: String,
+        arguments: Value,
+    },
+}
 
 #[derive(Default)]
 struct Hub {
     surface: Option<(u64, Arc<dyn ClientSurface>)>,
     wake: Option<(u64, Wake)>,
+    clients: Vec<(u64, ClientEntry)>,
+    observers: Vec<(u64, Observer)>,
     next: u64,
 }
 
@@ -252,6 +303,8 @@ pub fn presented(mut presentation: Value) -> Value {
 static HUB: Mutex<Hub> = Mutex::new(Hub {
     surface: None,
     wake: None,
+    clients: Vec::new(),
+    observers: Vec::new(),
     next: 0,
 });
 
@@ -260,44 +313,124 @@ fn hub() -> std::sync::MutexGuard<'static, Hub> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+enum Slot {
+    Surface,
+    Wake,
+    Client,
+    Observer,
+}
+
 #[must_use]
 pub struct Registration {
     id: u64,
-    wake: bool,
+    slot: Slot,
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
+        let id = self.id;
         let mut hub = hub();
-        let slot_id = if self.wake {
-            hub.wake.as_ref().map(|(id, _)| *id)
-        } else {
-            hub.surface.as_ref().map(|(id, _)| *id)
-        };
-        if slot_id == Some(self.id) {
-            if self.wake {
-                hub.wake = None;
-            } else {
-                hub.surface = None;
+        match self.slot {
+            Slot::Surface => drop(hub.surface.take_if(|(slot, _)| *slot == id)),
+            Slot::Wake => drop(hub.wake.take_if(|(slot, _)| *slot == id)),
+            Slot::Observer => hub.observers.retain(|(slot, _)| *slot != id),
+            Slot::Client => {
+                let attached = hub.clients.len();
+                hub.clients.retain(|(slot, _)| *slot != id);
+                if hub.clients.len() != attached {
+                    drop(hub);
+                    roster_changed();
+                }
             }
         }
     }
 }
 
-pub fn register(surface: Arc<dyn ClientSurface>) -> Registration {
+fn insert(slot: Slot, add: impl FnOnce(&mut Hub, u64)) -> Registration {
     let mut hub = hub();
     hub.next += 1;
     let id = hub.next;
-    hub.surface = Some((id, surface));
-    Registration { id, wake: false }
+    add(&mut hub, id);
+    Registration { id, slot }
+}
+
+pub fn register(surface: Arc<dyn ClientSurface>) -> Registration {
+    insert(Slot::Surface, |hub, id| hub.surface = Some((id, surface)))
 }
 
 pub fn register_wake(wake: Wake) -> Registration {
-    let mut hub = hub();
-    hub.next += 1;
-    let id = hub.next;
-    hub.wake = Some((id, wake));
-    Registration { id, wake: true }
+    insert(Slot::Wake, |hub, id| hub.wake = Some((id, wake)))
+}
+
+pub fn register_observer(observer: Observer) -> Registration {
+    insert(Slot::Observer, |hub, id| hub.observers.push((id, observer)))
+}
+
+pub fn attach(entry: ClientEntry) -> Registration {
+    let registration = insert(Slot::Client, |hub, id| {
+        hub.clients.retain(|(_, attached)| attached.id != entry.id);
+        hub.clients.push((id, entry));
+    });
+    roster_changed();
+    registration
+}
+
+pub fn update(id: &str, renderer: Option<Value>, viewport: Option<Value>, focused: Option<bool>) {
+    {
+        let mut hub = hub();
+        let Some((_, entry)) = hub.clients.iter_mut().find(|(_, entry)| entry.id == id) else {
+            return;
+        };
+        if let Some(renderer) = renderer {
+            entry.renderer = renderer;
+        }
+        if let Some(viewport) = viewport {
+            entry.viewport = viewport;
+        }
+        if let Some(focused) = focused {
+            entry.focused = focused;
+        }
+    }
+    roster_changed();
+}
+
+pub fn roster() -> Vec<Value> {
+    hub()
+        .clients
+        .iter()
+        .map(|(_, entry)| serde_json::json!(entry))
+        .collect()
+}
+
+pub fn clients() -> Vec<Value> {
+    hub()
+        .clients
+        .iter()
+        .map(|(_, entry)| {
+            serde_json::json!({"id": entry.id, "name": entry.name, "renderer": entry.renderer,
+                "viewport": entry.viewport, "attached_ms": entry.attached_ms, "focused": entry.focused})
+        })
+        .collect()
+}
+
+pub fn surface_available() -> bool {
+    hub().surface.is_some()
+}
+
+fn notify(observed: Observed) {
+    let observers = hub()
+        .observers
+        .iter()
+        .map(|(_, observer)| observer.clone())
+        .collect::<Vec<_>>();
+    for observer in observers {
+        observer(observed.clone());
+    }
+}
+
+fn roster_changed() {
+    notify(Observed::Roster);
+    wake();
 }
 
 pub fn wake() {
@@ -312,6 +445,12 @@ pub fn redraw() {
     if let Some(surface) = surface {
         surface.redraw();
     }
+    notify(Observed::Redraw);
+}
+
+pub fn client() -> Value {
+    let surface = hub().surface.as_ref().map(|(_, surface)| surface.clone());
+    surface.map_or(Value::Null, |surface| surface.client())
 }
 
 pub fn submit(
@@ -319,6 +458,7 @@ pub fn submit(
     operation: &str,
     arguments: Value,
     context: InvocationContext,
+    remote: bool,
     thread: Option<&str>,
     confirm: Option<String>,
 ) -> Result<PendingReply, String> {
@@ -327,6 +467,7 @@ pub fn submit(
         operation,
         arguments,
         context,
+        remote,
         thread,
         confirm,
         Arc::new(|| true),
@@ -339,6 +480,7 @@ fn submit_bound(
     operation: &str,
     arguments: Value,
     context: InvocationContext,
+    remote: bool,
     thread: Option<&str>,
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -348,6 +490,9 @@ fn submit_bound(
     }
     if context != InvocationContext::User && USER_ONLY_OPERATIONS.contains(&operation) {
         return Err(format!("host_operation_user_only: {operation}"));
+    }
+    if remote && needs_terminal(operation, &arguments) {
+        return Err(needs_terminal_error(operation));
     }
     let surface = hub()
         .surface
@@ -375,6 +520,7 @@ fn submit_bound(
         operation: operation.to_owned(),
         arguments,
         context,
+        remote,
         thread: thread.map(str::to_owned),
         authority: (operation == "terminal.pty")
             .then(|| AUTHORITY.with_borrow(Clone::clone))
@@ -433,6 +579,7 @@ pub fn app_request(
     caller: &str,
     capabilities: &[String],
     context: InvocationContext,
+    remote: bool,
     thread: Option<&str>,
     repository: &std::path::Path,
     routes: &[(String, String)],
@@ -470,11 +617,19 @@ pub fn app_request(
         .confirm
         .then(|| confirmation(caller, &method, &arguments["params"]))
         .transpose()?;
+    let mut arguments = arguments;
+    if method == "thread/rewrite" {
+        arguments["params"]
+            .as_object_mut()
+            .ok_or("app_params_invalid: params must be an object")?
+            .insert("author".into(), Value::String(format!("mod:{caller}")));
+    }
     let mut value = call(
         caller,
         "app.request",
         arguments,
         context,
+        remote,
         thread,
         confirm,
         active,
@@ -633,11 +788,13 @@ fn confirmation(caller: &str, method: &str, params: &Value) -> Result<String, St
     Ok(format!("Mod {caller} requests {method} with {detail}."))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn call(
     caller: &str,
     operation: &str,
     arguments: Value,
     context: InvocationContext,
+    remote: bool,
     thread: Option<&str>,
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -647,19 +804,339 @@ pub fn call(
     }
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
-    wait(
+    let mirrored = (MIRRORED_OPERATIONS.contains(&operation) && !hub().observers.is_empty())
+        .then(|| arguments.clone());
+    let answer = wait(
         submit_bound(
             caller,
             operation,
             arguments,
             context,
+            remote,
             thread,
             confirm,
             active.clone(),
         )?,
         active.as_ref(),
         deadline,
+    )?;
+    if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
+        notify(Observed::Mirrored {
+            caller: caller.to_owned(),
+            operation: operation.to_owned(),
+            arguments,
+        });
+    }
+    Ok(answer)
+}
+
+/// The caller's scoped resource store, bound to its active package from `mod-status.json`.
+pub fn resource_host(
+    store: &std::path::Path,
+    repository: &std::path::Path,
+    caller: &str,
+    thread: Option<&str>,
+) -> Result<crate::scoped_data::ScopedDataHost, String> {
+    let status = store.join("mod-status.json");
+    let metadata = std::fs::symlink_metadata(&status).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || metadata.len() > 262_144 {
+        return Err(format!(
+            "unsafe or oversized Oh My Diff file: {}",
+            status.display()
+        ));
+    }
+    let source = serde_json::from_slice::<Value>(
+        &std::fs::read(&status).map_err(|error| error.to_string())?,
     )
+    .ok()
+    .and_then(|status| {
+        status["mods"].as_array()?.iter().find_map(|item| {
+            (item["id"] == caller).then(|| item["sha256"].as_str().map(str::to_owned))?
+        })
+    })
+    .ok_or("host_caller_inactive")?;
+    crate::scoped_data::ScopedDataHost::new(
+        store.to_path_buf(),
+        repository.to_path_buf(),
+        None,
+        None,
+        caller.to_owned(),
+        thread.unwrap_or("user").to_owned(),
+        source,
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Writes a referenced image resource under `<store>/attachments` and returns its path.
+pub fn materialize(
+    store: &std::path::Path,
+    repository: &std::path::Path,
+    caller: &str,
+    thread: Option<&str>,
+    reference: &Value,
+) -> Result<std::path::PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let host = resource_host(store, repository, caller, thread)?;
+    let resources = host.resources();
+    let reference: crate::resource_data::ResourceRef =
+        serde_json::from_value(reference.clone()).map_err(|error| error.to_string())?;
+    let record = resources
+        .load(&reference, "evidence")
+        .map_err(|error| error.to_string())?;
+    let extension = match record["media_type"].as_str() {
+        Some("image/png") => "png",
+        Some("image/jpeg") => "jpg",
+        _ => return Err("resource_not_image".into()),
+    };
+    let digest = record["blob"].as_str().ok_or("resource_not_binary")?;
+    let bytes = resources.blob(digest).map_err(|error| error.to_string())?;
+    let directory = store.join("attachments");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    let path = directory.join(format!("{digest}.{extension}"));
+    if !path.exists() {
+        let mut temporary =
+            tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
+        std::io::Write::write_all(&mut temporary, &bytes).map_err(|error| error.to_string())?;
+        temporary
+            .persist(&path)
+            .map_err(|error| error.error.to_string())?;
+    }
+    Ok(path)
+}
+
+/// Rewrites `app.request` params: `localImage` resource references become materialized paths.
+pub fn translate_images(
+    store: &std::path::Path,
+    repository: &std::path::Path,
+    caller: &str,
+    thread: Option<&str>,
+    value: &mut Value,
+) -> Result<(), String> {
+    match value {
+        Value::Object(object) => {
+            if matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("localImage" | "localAudio")
+            ) && object.contains_key("path")
+            {
+                return Err("local_path_refused: attach a resource reference".into());
+            }
+            if let Some(resource) = object.remove("resource") {
+                if object.get("type").and_then(Value::as_str) != Some("localImage") {
+                    return Err("resource_field_requires_local_image".into());
+                }
+                let path = materialize(store, repository, caller, thread, &resource)?;
+                object.insert(
+                    "path".into(),
+                    Value::String(path.to_string_lossy().into_owned()),
+                );
+            }
+            object
+                .values_mut()
+                .try_for_each(|value| translate_images(store, repository, caller, thread, value))
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .try_for_each(|value| translate_images(store, repository, caller, thread, value)),
+        _ => Ok(()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NoticePlacement {
+    Toast,
+    Status,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum NoticeRequest<'a> {
+    Clear {
+        id: &'a str,
+    },
+    Transient {
+        id: Option<&'a str>,
+        kind: &'static str,
+        placement: NoticePlacement,
+        text: &'a str,
+        ttl: Duration,
+    },
+    Transcript {
+        kind: &'static str,
+        text: &'a str,
+        model: bool,
+        call_id: Option<&'a str>,
+    },
+}
+
+/// `terminal.notice` arguments as every surface must accept them.
+pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
+    let invalid = || "terminal_notice_invalid".to_owned();
+    let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
+        Value::Null => Ok(values[0]),
+        value => values
+            .iter()
+            .find(|known| value == **known)
+            .copied()
+            .ok_or_else(invalid),
+    };
+    let kind = one_of("kind", &["info", "warning", "error"])?;
+    let placement = match one_of("placement", &["toast", "status", "transcript"])? {
+        "toast" => Some(NoticePlacement::Toast),
+        "status" => Some(NoticePlacement::Status),
+        _ => None,
+    };
+    let model = one_of("audience", &["user", "model"])? == "model";
+    let id = match &arguments["id"] {
+        Value::Null => None,
+        Value::String(id) if crate::mod_component_id(id) => Some(id.as_str()),
+        _ => return Err(invalid()),
+    };
+    if arguments["clear"] == true {
+        return match (id, placement) {
+            (Some(id), Some(_)) => Ok(NoticeRequest::Clear { id }),
+            _ => Err(invalid()),
+        };
+    }
+    let text = arguments["text"]
+        .as_str()
+        .filter(|text| {
+            !text.trim().is_empty() && text.len() <= 512 && !text.chars().any(char::is_control)
+        })
+        .ok_or_else(invalid)?;
+    match placement {
+        Some(placement) => {
+            let ttl = match &arguments["ttl_ms"] {
+                Value::Null => 5_000,
+                value => value
+                    .as_u64()
+                    .filter(|ttl| (1_000..=60_000).contains(ttl))
+                    .ok_or_else(invalid)?,
+            };
+            if model || !arguments["tool_call_id"].is_null() {
+                return Err(invalid());
+            }
+            Ok(NoticeRequest::Transient {
+                id,
+                kind,
+                placement,
+                text,
+                ttl: Duration::from_millis(ttl),
+            })
+        }
+        None if !arguments["ttl_ms"].is_null() || id.is_some() => Err(invalid()),
+        None => {
+            let call_id = match &arguments["tool_call_id"] {
+                Value::Null => None,
+                Value::String(call_id)
+                    if !call_id.is_empty()
+                        && call_id.len() <= 128
+                        && !call_id.chars().any(char::is_control) =>
+                {
+                    Some(call_id.as_str())
+                }
+                _ => return Err(invalid()),
+            };
+            Ok(NoticeRequest::Transcript {
+                kind,
+                text,
+                model,
+                call_id,
+            })
+        }
+    }
+}
+
+pub const BLIT_FRAME: Duration = Duration::from_millis(33);
+pub const BLIT_QUEUE_UPDATES: usize = 32;
+pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BlitCell {
+    pub symbol: String,
+    pub fg: Option<crate::ModColor>,
+    pub bg: Option<crate::ModColor>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum WireCell {
+    Glyph(String),
+    Styled(String, Option<crate::ModColor>, Option<crate::ModColor>),
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlitRect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireBlit {
+    key: String,
+    rect: BlitRect,
+    cells: Vec<WireCell>,
+}
+
+pub struct Blit {
+    pub key: String,
+    pub rect: BlitRect,
+    pub cells: Vec<BlitCell>,
+    pub bytes: usize,
+}
+
+/// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
+pub fn blit_request(
+    caller: &str,
+    owner: Option<&str>,
+    size: Option<(u16, u16)>,
+    arguments: &Value,
+) -> Result<Blit, String> {
+    let bytes = arguments.to_string().len();
+    if bytes > BLIT_QUEUE_BYTES {
+        return Err("terminal_blit_too_large".into());
+    }
+    let blit: WireBlit =
+        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
+    match owner {
+        Some(owner) if owner == caller => {}
+        Some(_) => return Err("terminal_blit_not_owned".into()),
+        None => return Err("terminal_blit_unknown".into()),
+    }
+    let (width, height) = size.ok_or("terminal_blit_unknown")?;
+    let rect = blit.rect;
+    if rect.width == 0
+        || rect.height == 0
+        || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
+        || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
+        || blit.cells.len() != usize::from(rect.width) * usize::from(rect.height)
+    {
+        return Err("terminal_blit_invalid".into());
+    }
+    let cells = blit
+        .cells
+        .into_iter()
+        .map(|cell| {
+            let (symbol, fg, bg) = match cell {
+                WireCell::Glyph(symbol) => (symbol, None, None),
+                WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
+            };
+            (!symbol.is_empty() && symbol.len() <= 16 && !symbol.chars().any(char::is_control))
+                .then_some(BlitCell { symbol, fg, bg })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or("terminal_blit_invalid")?;
+    Ok(Blit {
+        key: blit.key,
+        rect,
+        cells,
+        bytes,
+    })
 }
 
 #[cfg(test)]

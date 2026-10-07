@@ -20,7 +20,8 @@ TUI_OPERATIONS = {
     "app.request", "credentials.request", "terminal.notify", "terminal.show_thread", "commands.list",
     "commands.describe", "commands.invoke", "config.describe", "config.set", "environment.read",
     "sessions.ports", "terminal.import_file", "terminal.image_sample", "composer.read", "composer.write",
-    "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.pty",
+    "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.panes",
+    "terminal.notice", "terminal.blit", "terminal.pty",
     "app.routes", "turns.activity", "events.publish", "credentials.list", "settings.write",
     "packages.list", "packages.index", "packages.preview", "packages.reload",
 }

@@ -245,7 +245,7 @@ fn later_metadata_and_state_database_opt_out_override_earlier_records() {
         ..index
     };
     let sql = format!(
-        "CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT); INSERT INTO threads VALUES('session-a','{}','disabled');",
+        "CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT,rollout_path TEXT); INSERT INTO threads VALUES('session-a','{}','disabled',NULL);",
         repo.to_str().unwrap().replace('\'', "''")
     );
     assert!(
@@ -416,15 +416,92 @@ fn continuation_segments_list_separately_while_copies_stay_ambiguous() {
 }
 
 #[test]
+fn a_state_database_keeps_the_segments_its_current_rollout_continues() {
+    let (_temp, repo, sessions) = fixture();
+    let thread = "019a0000-0000-7000-8000-000000000001";
+    let base = sessions.join(format!("rollout-2026-09-26T12-00-00-{thread}.jsonl"));
+    record(&base, &repo, thread, "enabled");
+    record(
+        &sessions.join(format!(
+            "rollout-2026-09-26T12-30-00-{thread}_019a0000-0000-7000-8000-000000000002.jsonl"
+        )),
+        &repo,
+        thread,
+        "enabled",
+    );
+    let part = sessions.join(format!(
+        "rollout-2026-09-26T13-00-00-{thread}_019a0000-0000-7000-8000-000000000003.jsonl"
+    ));
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":thread,"session_id":"task-a","cwd":repo,"timestamp":"2026-09-26T13:00:00Z","memory_mode":"enabled","history_mode":"paginated","history_base":{"thread_id":thread,"end_ordinal_exclusive":5}}}),
+        json!({"type":"turn_context","payload":{"turn_id":"turn-b","cwd":repo}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"A later request."}]}}),
+    ];
+    fs::write(
+        &part,
+        rows.iter()
+            .map(|row| row.to_string() + "\n")
+            .collect::<String>(),
+    )
+    .unwrap();
+    let db = sessions.parent().unwrap().join("state_5.sqlite");
+    let sql = format!(
+        "CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT,rollout_path TEXT); INSERT INTO threads VALUES('{thread}','{}','enabled','{}');",
+        repo.to_str().unwrap().replace('\'', "''"),
+        part.to_str().unwrap().replace('\'', "''")
+    );
+    assert!(
+        std::process::Command::new("/usr/bin/sqlite3")
+            .arg(&db)
+            .arg(sql)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let index = SessionIndex {
+        database: Some(&db),
+        root: &sessions,
+        repository: &repo,
+        enabled: true,
+    };
+    let list = index.call("sessions.list", json!({}), || true).unwrap();
+    let listed = list["sessions"].as_array().unwrap();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    let original = listed
+        .iter()
+        .find(|row| row["inherited_history"] != true)
+        .unwrap();
+    let result = index
+        .call(
+            "sessions.read",
+            json!({"session_id":thread,"revision":original["revision"],"handle":original["handle"]}),
+            || true,
+        )
+        .unwrap();
+    assert_eq!(result["records"][0]["turn_id"], "turn-a");
+}
+
+#[test]
 fn wal_state_database_without_sidecar_files_is_readable() {
     let (_temp, repo, sessions) = fixture();
     record(&sessions.join("a.jsonl"), &repo, "session-a", "enabled");
+    record(
+        &sessions.join("a_replaced.jsonl"),
+        &repo,
+        "session-a",
+        "enabled",
+    );
     let sqlite = sessions.parent().unwrap().join("wal-state");
     fs::create_dir(&sqlite).unwrap();
     let db = sqlite.join("state_5.sqlite");
     let sql = format!(
-        "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT); INSERT INTO threads VALUES('session-a','{}','enabled'); PRAGMA wal_checkpoint(TRUNCATE);",
-        repo.to_str().unwrap().replace('\'', "''")
+        "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT,rollout_path TEXT); INSERT INTO threads VALUES('session-a','{}','enabled','{}'); PRAGMA wal_checkpoint(TRUNCATE);",
+        repo.to_str().unwrap().replace('\'', "''"),
+        sessions
+            .join("a.jsonl")
+            .to_str()
+            .unwrap()
+            .replace('\'', "''")
     );
     assert!(
         std::process::Command::new("/usr/bin/sqlite3")

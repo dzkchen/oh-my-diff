@@ -29,6 +29,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
@@ -70,15 +71,43 @@ struct ManagedProcess {
     receiver: mpsc::Receiver<io::Result<Value>>,
     scratch: PathBuf,
     last_used: Instant,
+    /// Set under the lock that reaps the child, so nothing signals a pid the system may have reused.
+    reaped: Arc<Mutex<bool>>,
+}
+
+impl ManagedProcess {
+    /// Leaves an exited leader unreaped, so its group id stays reserved until Drop kills the group.
+    fn exited(&self) -> io::Result<bool> {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                self.child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { info.si_pid() } != 0)
+    }
+}
+
+fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
+    if !*reaped.lock().unwrap_or_else(PoisonError::into_inner) {
+        let _ = kill_process_group(group);
+    }
 }
 
 impl Drop for ManagedProcess {
     fn drop(&mut self) {
+        let mut reaped = self.reaped.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = kill_process_group(self.child.id());
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-        }
+        let _ = self.child.kill();
         let _ = self.child.wait();
+        *reaped = true;
+        drop(reaped);
         let _ = fs::remove_dir_all(&self.scratch);
     }
 }
@@ -236,8 +265,8 @@ impl ManagedProcesses {
         let (_, process) = records
             .iter()
             .find(|((id, _, name), _)| id == owner && name == session)?;
-        let mut process = process.lock().ok()?;
-        Some(process.child.try_wait().ok()?.is_none())
+        let process = process.lock().ok()?;
+        Some(!process.exited().ok()?)
     }
 
     pub fn cleanup_stale(&self, generation: u64) {
@@ -547,11 +576,19 @@ impl ManagedProcesses {
                     let (sender, receiver) = mpsc::sync_channel(128);
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
+                    let group = child.id();
+                    let reaped = Arc::new(Mutex::new(false));
+                    let reader_reaped = Arc::clone(&reaped);
                     std::thread::spawn(move || {
                         let mut reader = BufReader::new(stdout);
                         loop {
                             let result = read_framed(&mut reader, framing);
                             let terminal = result.is_err();
+                            if let Err(error) = &result
+                                && error.kind() != io::ErrorKind::UnexpectedEof
+                            {
+                                kill_group_if_alive(group, &reader_reaped);
+                            }
                             let bytes = match (&result, notify_output) {
                                 (Ok(message), true) => {
                                     serde_json::to_vec(message).ok().map(|bytes| bytes.len())
@@ -588,6 +625,7 @@ impl ManagedProcesses {
                         receiver,
                         scratch: scratch.clone(),
                         last_used: Instant::now(),
+                        reaped,
                     })
                 })();
                 match launched {
@@ -636,12 +674,7 @@ impl ManagedProcesses {
                     self.remove(&key, &session);
                     return Err("grant_expired: os".into());
                 }
-                if process
-                    .child
-                    .try_wait()
-                    .map_err(|error| error.to_string())?
-                    .is_some()
-                {
+                if process.exited().map_err(|error| error.to_string())? {
                     self.remove(&key, &session);
                     return Err("process_stopped".into());
                 }
@@ -825,6 +858,43 @@ mod tests {
     }
 
     #[test]
+    fn a_child_that_breaks_the_framed_channel_is_stopped() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            os_access: None,
+        };
+        let found = processes
+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
+            .unwrap();
+        let sh = &found["found"][0];
+        processes
+            .call(
+                owner,
+                "process.start",
+                json!({"session":"plain","name":"sh","path":sh["path"],"sha256":sh["sha256"],
+                    "arguments":["-c","echo plain; sleep 30"],"framing":"ndjson"}),
+                || true,
+            )
+            .unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while processes
+            .call(owner, "process.status", json!({"session":"plain"}), || true)
+            .is_ok_and(|status| status["running"] == true)
+        {
+            assert!(Instant::now() < deadline, "the child kept running");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    #[test]
     fn unrestricted_process_needs_a_current_grant_and_takes_its_tree_down() {
         let directory = tempfile::tempdir().unwrap();
         let repository = directory.path().canonicalize().unwrap();
@@ -954,6 +1024,42 @@ mod tests {
                 .unwrap_err(),
             "process_session_unavailable"
         );
+    }
+
+    #[test]
+    fn dropping_a_session_kills_what_its_exited_leader_left_in_the_group() {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 & echo $!"])
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let orphan: libc::pid_t = line.trim().parse().unwrap();
+        let process = ManagedProcess {
+            child,
+            unrestricted: false,
+            sender: mpsc::sync_channel(1).0,
+            receiver: mpsc::sync_channel(1).1,
+            scratch: PathBuf::from("/nonexistent/omd-reaped"),
+            last_used: Instant::now(),
+            reaped: Arc::default(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !process.exited().unwrap() {
+            assert!(Instant::now() < deadline, "the leader never exited");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let reaped = Arc::clone(&process.reaped);
+        drop(process);
+        assert!(*reaped.lock().unwrap());
+        while unsafe { libc::kill(orphan, 0) } == 0 {
+            assert!(Instant::now() < deadline, "the background child survived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

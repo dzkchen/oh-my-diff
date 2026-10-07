@@ -44,6 +44,7 @@ STEPS = [
     ("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]),
     ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod",
                                    f"/private/tmp/omd-b{BATCH}/artifacts/omd-mod", "--scenarios"]),
+    ("client acceptance", ["python3", "scripts/client_acceptance.py", "--binaries", f"/private/tmp/omd-b{BATCH}/artifacts"]),
 ]
 
 

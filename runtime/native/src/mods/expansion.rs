@@ -148,6 +148,12 @@ impl State {
             .and_then(LeadHandle::upgrade)
     }
 
+    pub(super) fn turn_running(&self, thread: ThreadId) -> bool {
+        self.running
+            .lock()
+            .is_ok_and(|running| running.contains_key(&thread.to_string()))
+    }
+
     pub(super) fn lead(&self, thread: ThreadId) -> Option<Lead> {
         self.leads.lock().ok()?.get(&thread)?.upgrade()
     }
@@ -247,6 +253,7 @@ pub(super) async fn run<T: Send + 'static>(
     core: &Core,
     lead: &Lead,
     event: &'static str,
+    origin: Origin,
     job: impl FnOnce(&Mutex<ModHost>, HostFn<'_>, &dyn Fn() -> bool) -> T + Send + 'static,
 ) -> Option<T> {
     let runtime = core.runtime.clone();
@@ -284,7 +291,7 @@ pub(super) async fn run<T: Send + 'static>(
                 source: &call.source,
                 grants: call.grants,
                 generation: generation.load(Ordering::Acquire),
-                origin: Origin::Event,
+                origin,
                 record_changes: true,
             },
             None,
@@ -308,41 +315,49 @@ pub(super) async fn invoke_one(
     payload: Value,
 ) -> Option<Result<Value, String>> {
     let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
-    run(core, lead, event, move |runtime, host, active| {
-        let (generation, before) = {
-            let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-            if !runtime.registered(&id, event) {
-                return Ok(Value::Null);
+    run(
+        core,
+        lead,
+        event,
+        Origin::Event,
+        move |runtime, host, active| {
+            let (generation, before) = {
+                let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+                if !runtime.registered(&id, event) {
+                    return Ok(Value::Null);
+                }
+                (runtime.generation(), runtime.state(&id).cloned())
+            };
+            let result = codex_omd::invoke_shared(
+                runtime,
+                &id,
+                generation,
+                event,
+                "",
+                payload,
+                active,
+                host,
+                |_| {},
+            )
+            .map_err(|error| error.to_string());
+            // The tool_result event that follows every tool_output republishes the view.
+            if event != "tool_output"
+                && let Ok(mut runtime) = runtime.lock()
+                && runtime.state(&id) != before.as_ref()
+            {
+                publish(&mut runtime, &owner, &views, event, ledger, active);
             }
-            (runtime.generation(), runtime.state(&id).cloned())
-        };
-        let result = codex_omd::invoke_shared(
-            runtime,
-            &id,
-            generation,
-            event,
-            "",
-            payload,
-            active,
-            host,
-            |_| {},
-        )
-        .map_err(|error| error.to_string());
-        // The tool_result event that follows every tool_output republishes the view.
-        if event != "tool_output"
-            && let Ok(mut runtime) = runtime.lock()
-            && runtime.state(&id) != before.as_ref()
-        {
-            publish(&mut runtime, &owner, &views, event, ledger, active);
-        }
-        result
-    })
+            result
+        },
+    )
     .await
 }
 
 tokio::task_local! {
     /// Set while serving a callback outside any tool call, whose `tools.invoke` waits for the turn's tool gate.
     static SERIALIZED: bool;
+    /// Set while running work an attached client caused; its surface calls carry `remote`.
+    pub(crate) static REMOTE: bool;
 }
 
 pub(super) const TOOL_RESULT_BYTES: usize = 48 * 1024;
@@ -574,6 +589,7 @@ async fn surface(
         Origin::UserCommand | Origin::Cli => InvocationContext::User,
         Origin::Tool | Origin::Event => InvocationContext::Event,
     };
+    let remote = REMOTE.try_with(|remote| *remote).unwrap_or(false);
     let thread = lead.thread.to_string();
     let capabilities = caller
         .grants
@@ -634,6 +650,7 @@ async fn surface(
                         &id,
                         &capabilities,
                         context,
+                        remote,
                         Some(&thread),
                         &repository,
                         &routes,
@@ -646,6 +663,7 @@ async fn surface(
                     &operation,
                     arguments,
                     context,
+                    remote,
                     Some(&thread),
                     None,
                     active,

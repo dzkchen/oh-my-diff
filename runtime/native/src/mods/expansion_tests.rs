@@ -150,6 +150,54 @@ fn command(core: &Core, id: &str, name: &str) -> Value {
 }
 
 #[test]
+fn a_client_recovery_reload_is_refused_mid_turn_and_otherwise_refreshes_like_a_turn_start() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let lead = &fixture.lead;
+    let write = |exposure: u64| {
+        let config = json!({"limits": {"requests": 400, "exposure_microusd": exposure, "seconds": 86400,
+            "concurrent_workers": 4, "max_depth": 2}, "routes": [{"name": "first", "provider": "local",
+            "model": "first-model", "reasoning_effort": "high", "responses_url": "http://127.0.0.1:1/v1/responses",
+            "roles": ["lead"], "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
+            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
+            "input_token_ceiling": 1000, "included_subscription": true}}]});
+        std::fs::write(lead.host.root.join("host.json"), config.to_string()).unwrap();
+    };
+    write(1000);
+    let route = lead
+        .host
+        .route_config()
+        .0
+        .route("first", config::RouteRole::Lead, None)
+        .cloned()
+        .unwrap();
+    lead.host
+        .enroll(lead.thread, &lead.session, "lead", Some(&route), None)
+        .unwrap();
+    lead.host.refresh_session(&lead.session).unwrap();
+    assert_eq!(lead.session.task.remaining().unwrap().2, 1000);
+    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(lead));
+    write(5000);
+    fixture
+        .core
+        .expansion
+        .running
+        .lock()
+        .unwrap()
+        .insert(lead.thread.to_string(), "turn".into());
+    assert!(
+        super::super::clients::idle(&fixture.core)
+            .unwrap_err()
+            .starts_with("recovery_unavailable_during_turn")
+    );
+    fixture.core.expansion.running.lock().unwrap().clear();
+    super::super::clients::idle(&fixture.core).unwrap();
+    super::super::clients::reloaded(&fixture.core);
+    assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
+}
+
+#[test]
 fn routes_reload_from_host_config_and_select_routes_added_after_enrollment() {
     let Some(fixture) = fixture(&[]) else {
         return;

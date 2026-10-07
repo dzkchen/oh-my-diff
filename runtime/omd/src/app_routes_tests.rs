@@ -100,6 +100,31 @@ fn capability_context_and_unrouted_methods_are_enforced() {
 }
 
 #[test]
+fn transcript_rewrites_need_history_write_and_stay_on_reachable_threads() {
+    let edit = |thread: &str| json!({"threadId": thread, "expectedRevision": "r:1", "edits": [{"op": "delete", "id": "x"}]});
+    assert_eq!(
+        fixture(&["threads"]).code("thread/rewrite", edit("current"), User),
+        "app_capability_missing"
+    );
+    let f = fixture(&["history_write"]);
+    assert_eq!(f.code("thread/rewrite", edit("current"), User), "ok");
+    assert_eq!(f.code("thread/rewrite", edit("other"), Event), "ok");
+    assert_eq!(
+        f.code("thread/rewrite", edit("someone-else"), User),
+        "app_thread_out_of_scope"
+    );
+    assert_eq!(
+        f.code(
+            "thread/rewrite",
+            json!({"threadId": "current", "author": "user"}),
+            User
+        ),
+        "app_param_refused"
+    );
+    assert!(notification_routed("thread/rewritten"));
+}
+
+#[test]
 fn authority_fields_are_refused_but_null_is_absent() {
     let f = fixture(&["threads"]);
     for field in [

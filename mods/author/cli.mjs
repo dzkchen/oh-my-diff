@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { stripTypeScriptTypes } from 'node:module';
+import { createRequire, stripTypeScriptTypes } from 'node:module';
 
 const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Installed generations are pruned after updates, so projects depend on the SDK through the installer's current link.
@@ -65,9 +65,11 @@ function tsconfig() {
       moduleResolution: 'NodeNext',
       strict: true,
       noEmit: true,
+      jsx: 'react-jsx',
+      jsxImportSource: '@oh-my-diff/mod-api',
       types: [],
     },
-    include: ['index.ts', '.omd/*.d.ts'],
+    include: ['index.ts', 'index.tsx', '.omd/*.d.ts'],
   };
 }
 
@@ -219,11 +221,53 @@ async function copyExamples(directory) {
   await writeFile(join(directory, 'pnpm-workspace.yaml'), "packages:\n  - '*'\n");
 }
 
+function compileJsx(directory) {
+  const sourcePath = join(directory, 'index.tsx');
+  if (!existsSync(sourcePath)) return;
+  let ts;
+  try {
+    ts = createRequire(join(directory, 'package.json'))('typescript');
+  } catch (error) {
+    if (error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
+    throw error;
+  }
+  const { outputText, diagnostics } = ts.transpileModule(readFileSync(sourcePath, 'utf8'), {
+    compilerOptions: { jsx: ts.JsxEmit.ReactJSX, jsxImportSource: '@oh-my-diff/mod-api', module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: 'index.tsx',
+    reportDiagnostics: true,
+  });
+  const errors = diagnostics.filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
+  if (errors.length) fail(errors.map(diagnostic => `index.tsx: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`).join('\n'));
+  const factory = readFileSync(join(sdkRoot, 'author/jsx-runtime.mjs'), 'utf8').replace(/^export /gm, '');
+  const importLine = /^import \{([^}]*)\} from ["']@oh-my-diff\/mod-api\/jsx-runtime["'];?$/m;
+  if (/\bFragment\b/.test(importLine.exec(outputText)?.[1] ?? '')) fail('jsx_unsupported_element: fragment');
+  const inlined = outputText.replace(importLine, (_match, names) => `const {${names.replaceAll(' as ', ': ')}} = (() => {\n${factory}return { jsx, jsxs };\n})();`);
+  if (inlined.includes('@oh-my-diff/mod-api/jsx-runtime')) fail('jsx_import_unsupported: index.tsx may only use the JSX factory import the compiler emits');
+  const header = '// @ts-nocheck\n// Generated from index.tsx; edit that file instead.\n';
+  const generated = `${header}${inlined}`;
+  const target = join(directory, 'index.ts');
+  const existing = existsSync(target) ? readFileSync(target, 'utf8') : null;
+  if (existing !== null && !existing.startsWith(header)) fail('jsx_entrypoint_conflict: index.ts was not generated from index.tsx; remove one of them');
+  if (existing !== generated) writeFileSync(target, generated);
+}
+
 function checkProject(directory) {
+  compileJsx(directory);
   const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
   stripTypeScriptTypes(readFileSync(join(directory, manifest.entrypoint ?? 'index.ts'), 'utf8'));
-  if (existsSync(join(directory, 'node_modules/.bin/tsc'))) command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
-  else process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
+  if (!existsSync(join(directory, 'node_modules/.bin/tsc'))) {
+    process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
+    return;
+  }
+  if (!existsSync(join(directory, 'index.tsx'))) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
+  // TypeScript drops index.tsx from a program that also lists index.ts, so check the source rather than its generated output.
+  const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files: ['index.tsx'] }));
+  try {
+    command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
+  } finally {
+    rmSync(jsxConfig, { force: true });
+  }
 }
 
 function trustPackage(store, directory) {
@@ -245,11 +289,12 @@ function copyDeclarations(store, directory) {
 function runScenario(directory, file) {
   const scenarioPath = resolve(directory, file);
   const scenario = JSON.parse(readFileSync(scenarioPath, 'utf8'));
+  const packages = [...(scenario.packages || []).map(path => resolve(directory, path)), directory];
+  for (const packagePath of packages) compileJsx(packagePath);
   const temporary = mkdtempSync(join(tmpdir(), 'omd-mod-author-'));
   const store = join(temporary, 'store');
   try {
     engineJson(['init', store, node]);
-    const packages = [...(scenario.packages || []).map(path => resolve(directory, path)), directory];
     const installed = new Map(packages.map(packagePath => {
       const inspected = trustPackage(store, resolve(packagePath));
       return [inspected.manifest.id, inspected.path];
@@ -294,8 +339,10 @@ async function packageProject(directory) {
 function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
+    compileJsx(directory);
     const inspected = trustPackage(store, directory);
     files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
+    if (existsSync(join(directory, 'index.tsx'))) files.add('index.tsx');
     const result = engineJson(['reload', store]);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);
   };

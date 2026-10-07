@@ -25,3 +25,6 @@ __pycache__/
 /browser/artifacts/
 /browser/bundle.json
 /browser/*.tar.xz
+/node_modules/
+/package.json
+/pnpm-lock.yaml

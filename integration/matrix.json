@@ -92,6 +92,7 @@
         "model_complete_v2",
         "sdk_helpers_v1",
         "history_v1",
+        "history_rewrite_v1",
         "terminal_pty_v1",
         "dynamic_tools_v1",
         "timers_v1",
@@ -105,6 +106,7 @@
         "terminal_inline_sites_v1",
         "render_hooks_v1",
         "ui_composition_v1",
+        "ui_controls_v1",
         "reactive_state_v1",
         "session_ports_v1",
         "structured_access_v1",
@@ -117,7 +119,9 @@
         "compaction_intercept_v1",
         "composer_v2",
         "lifecycle_events_v1",
-        "user_submissions_v1"
+        "user_submissions_v1",
+        "terminal_raster_v1",
+        "svg_assets_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -169,6 +173,9 @@
         "terminal.open",
         "terminal.prompt",
         "terminal.pane",
+        "terminal.panes",
+        "terminal.notice",
+        "terminal.blit",
         "terminal.pty"
       ]
     },

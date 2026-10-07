@@ -1238,3 +1238,66 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
         vec![(true, Some(500)), (true, Some(700))]
     );
 }
+
+#[test]
+fn queued_mod_notices_repeat_on_retries_until_a_response_completes() {
+    let (root, accounts, task, _request, _body) = setup();
+    let thread = "queued-notices";
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .insert(thread.into(), account(&task, root.path(), "worker"));
+    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
+        "max_output_tokens": 128, "input": [{"type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "hi"}]}]});
+    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
+    let first = prepared(&accounts, thread, &body).unwrap().to_string();
+    assert!(
+        first.contains("Mod-provided context") && first.contains("lint failed"),
+        "{first}"
+    );
+    let retried = prepared(&accounts, thread, &body).unwrap().to_string();
+    assert!(retried.contains("lint failed"), "{retried}");
+    let mut request = Request::new(http::Method::POST, "http://localhost/responses".into());
+    request.headers.insert("thread-id", thread.parse().unwrap());
+    let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
+    accounts.prepare(&mut request, &mut encoded).unwrap();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut completed = json!({"type": "response.completed", "response": {"usage":
+        {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 5}}});
+    let _ = attempt.observe(&mut completed, true);
+    drop(attempt);
+    let next = prepared(&accounts, thread, &body).unwrap().to_string();
+    assert!(!next.contains("lint failed"), "{next}");
+}
+
+#[test]
+fn queued_mod_notices_survive_a_request_the_final_policy_refuses() {
+    let (root, accounts, task, _request, _body) = setup();
+    let thread = "queued-refused";
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .insert(thread.into(), account(&task, root.path(), "worker"));
+    let source = "export default api => { throw new Error('policy failed to start'); }";
+    let (store, package, runtime) = install_package(
+        &accounts,
+        root.path(),
+        source,
+        &["middleware", "request_policy"],
+    );
+    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
+        "input": [{"type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "hi"}]}]});
+    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
+    assert!(prepared(&accounts, thread, &body).is_err());
+    store.enable(&package, false).unwrap();
+    runtime.lock().unwrap().reload().unwrap();
+    let next = prepared(&accounts, thread, &body).unwrap().to_string();
+    assert!(next.contains("lint failed"), "{next}");
+}

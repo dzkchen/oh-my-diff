@@ -47,7 +47,7 @@ native work.
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.blit`; the `component_change` interceptor |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
@@ -69,6 +69,7 @@ native work.
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
+| `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -78,7 +79,7 @@ the mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers` and `autonomous` are authority grants. The manifest
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous` and `history_write` are authority grants. The manifest
 declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
@@ -1042,8 +1043,10 @@ the effective config and in each layer.
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas
 coalesced, 256 events / 1 MiB per mod, oldest dropped with a count) and
-`app_server_request` phases. Only the in-process app-server (TUI and
-`codex exec`) is reachable; other clients get `client_surface_unavailable`.
+`app_server_request` phases. Only the session's own app-server (TUI,
+`codex exec` or a headless `codex app-server`, see
+[External clients](#external-clients-omd-client1)) is reachable; hosts without
+one return `client_surface_unavailable`.
 
 ### Approvals (`approval_v1`)
 
@@ -1435,8 +1438,20 @@ detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
 reduced motion, other protocols and inline viewports use ASCII fallback.
 Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
 Components add `document` (up to 100,000 lines with anchors, selection and
-find), `diff`, `image` (truecolor half-block cells, alt text under
-`NO_COLOR`) and `terminal` (a PTY session). Spans accept `fg` and `bg` theme
+find), `diff`, `image`, `raster` and `terminal` (a PTY session). An `image`
+places a Kitty graphics image in its cells, aspect-fit to the measured cell
+size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
+and hides under dialogs and overlays like text); elsewhere it draws truecolor
+half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Each
+image component has its own image id; replacing or removing the component
+deletes it, and exit and suspend delete every image and the backdrop.
+Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side
+(`terminal_raster_v1`). An SVG `image` (`svg_assets_v1`) draws
+`[image unavailable: alt]` in the terminal, which has no SVG rasterizer;
+external renderers receive the same resource and draw it natively. Either way the image is aspect-fit into the
+component's cells from its top-left cell (Kitty with `client.cell_px`, or
+8×16 when unknown; half-block cells count as 1×2 pixels), so a mod can map
+`pointer` cells, and `half` rows, on an `image` back to image pixels. Spans accept `fg` and `bg` theme
 colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps
 span styles. A `pane` or `document` with `keys: true` (`terminal_input_v1`)
 forwards keys and pastes while focused as `component_event {kind: 'input',
@@ -1472,9 +1487,62 @@ terminal control keys and Shift+Tab; a binding that collides with a native key
 is ignored with a warning. `component_event`, `view` and `focus` report
 interaction; `component_event` also reports, to the component's owner only and
 with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
-select's new `value` on every edit, `scroll` with a pane's `offset`, `pointer`
+select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
-and dialogs (`ui_composition_v1`). Operations:
+and dialogs (`ui_composition_v1`).
+
+Raster, pointer and overlays (`terminal_raster_v1`):
+
+- The `terminal` event carries `client: {kind: 'terminal', graphics, pointer,
+  reduced_motion, cell_px}`: `graphics` is `kitty` (pixel images),
+  `cells` (half-block) or `text` (`NO_COLOR`); `pointer` is `half_cell`,
+  `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline
+  viewport); `reduced_motion` follows `tui.animations` and the system
+  setting, and mods that animate stop when it is true; `cell_px` is the
+  measured cell size or null. It is null without a terminal client. When
+  any of these change (the font is resized, animations are turned off) the
+  view renders again with the new `client`.
+- `{type: 'raster', id, label, alt, width, height, pointer?}` is a keyed
+  canvas of 1–200 × 1–40 cells that shows `alt` until its first frame and
+  clips to the component's width. `terminal.blit {key, rect: {x, y, width,
+  height}, cells}` updates part of the caller's own raster (`key` is its id;
+  another mod's is `terminal_blit_not_owned`, and a raster the terminal
+  has not received in a view yet, such as one returned by the same callback,
+  is `terminal_blit_unknown`): `cells` lists the rect's cells
+  row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
+  null. Updates queue per raster and apply one per 33 ms frame, so a timer
+  tick can enqueue an animation; at 32 queued updates or 256 KiB the call
+  returns `{status: 'backpressure', retry_after_ms}` instead of
+  `{frame, queued, frame_ms}`; one call over 256 KiB is
+  `terminal_blit_too_large`. A mod holds at most 16 rasters: a blit to a
+  17th key is `terminal_blit_limit`; a raster's frames are dropped with its
+  component.
+- `box`, `image` and `raster` accept `pointer: true`. The owner then receives
+  `component_event {kind: 'pointer'}` with `action` `enter`, `leave`,
+  `move`, `down`, `up` and `drag`, `column`/`row` relative to the
+  component's first cell (a nested box counts its title and children), and
+  `half` (0 or 1, the half-cell row) on terminals that report pixel
+  positions (Kitty, Ghostty and WezTerm), else null. A press captures the
+  pointer until release, so `drag` and `up` reach the component outside its
+  cells with out-of-range or negative coordinates. Motion is latest-wins per
+  component: a slow callback sees the newest position, never a backlog.
+  Views without pointer components add no pointer work.
+- A mod-named site (`mod/site`) with `overlay: {anchor, offset?, width,
+  height, z?, clip?, border?}` draws above the layout instead of in the
+  sidebar: `anchor` is a screen corner (`top_left`, `top_right`,
+  `bottom_left`, `bottom_right`) or `center`, or `{component}` (the
+  component's top-left cell; the overlay is skipped while that component is
+  not drawn); `offset` moves it by cells; `z` (0–9) orders overlays;
+  `clip: 'anchor'` clips it to the anchor component's cells, otherwise to the
+  screen. An overlay hides what lies beneath it from pointer events, and a
+  dialog stays above every overlay. A view with an overlay outside these
+  bounds is invalid: `width` 1–200, `height` 1–60, `offset.x` within ±500,
+  `offset.y` within ±200, and a screen anchor cannot use `clip: 'anchor'`. Overlays
+  are not exclusive: when several patches set one for the same site, the patch
+  that composes last wins, and a `wrap` patch overrides another mod's overlay
+  without a claim or a `terminal.conflicts` entry.
+
+Operations:
 
 - `terminal.notify {title, body?}` uses the configured notification method
   with a focus condition and a 2 s rate limit.
@@ -1499,9 +1567,28 @@ and dialogs (`ui_composition_v1`). Operations:
   native picker of up to 32 options: one value, several with `multiple`, or a
   typed answer through an `Other…` row with `other`; it returns
   `{status: 'accepted', values, other?}` or `declined` when cancelled.
+- `terminal.blit {key, rect, cells}` (`terminal_raster_v1`) queues a raster
+  update, described above.
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
   focuses, scrolls (`offset`) or reveals one of the caller's own panes,
   dialogs or controls; another mod's component is `terminal_pane_not_owned`.
+- `terminal.panes {}` (`ui_controls_v1`) returns the caller's own panes as
+  `{panes: [{id, visible, collapsed, focused, scroll}]}`; a pane is `visible`
+  while its header row was on screen in the last frame.
+- `terminal.notice {text, kind?, placement?, ...}` (`ui_controls_v1`) shows a
+  notice of at most 512 bytes attributed to the mod. `kind` is `info`
+  (default), `warning` or `error`. `placement: 'toast'` (default) draws it below
+  the composer notes and `'status'` in the status row (first 40 characters),
+  each for `ttl_ms` (1,000 to 60,000, default 5,000); at most 4 per mod, and a
+  new notice with the same `id` replaces the old one. `{id, placement, clear:
+  true}` removes it early and returns `{cleared}`. `placement: 'transcript'`
+  appends a log notice to the transcript that never reaches the model unless
+  `audience: 'model'`, which also adds the text as mod-provided context to the
+  thread's next model request and every retry of it until a response completes (at most 8 queued per
+  thread, `model_context_queue_full`; with `model_request` interceptors' inserted sections, at most 8 per
+  request, the rest waiting for the next one). `tool_call_id` draws a transcript
+  notice beneath that tool call's cell in the owned transcript, or as a notice
+  naming the call in inline mode or when no drawn cell holds the call.
 - `terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}`
   starts an interactive shell from a user command after confirmation, in the
   session sandbox without network (macOS) with a scratch `HOME`. `start` may
@@ -1522,6 +1609,196 @@ and dialogs (`ui_composition_v1`). Operations:
 - `builtins.invoke {action}` runs a key action from user contexts;
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never
   `approval.*`) and routes a built-in command to a mod command.
+
+### External clients (`omd-client/1`)
+
+Other renderers (a desktop window, an editor webview, a text console) attach
+to a running session over the upstream app-server JSON-RPC and draw the same
+composed mod view. Oh My Diff ships no desktop or editor client of its own; a
+mod ships its adapter (see the end of this section).
+
+Transports and auth:
+
+- `unix://PATH`, or `unix://` for the default socket under `$CODEX_HOME`: a
+  WebSocket over a 0600, owner-checked Unix socket, no token. The default
+  choice for local clients.
+- `ws://IP:PORT` with `--ws-auth capability-token` (`--ws-token-file` or
+  `--ws-token-sha256`) or `--ws-auth signed-bearer-token`
+  (`--ws-shared-secret-file`, optional `--ws-issuer`/`--ws-audience`); a
+  non-loopback listener refuses to start without auth. Native clients send
+  `Authorization: Bearer <token>`; browsers offer the subprotocols
+  `codex-app-server` and `codex.bearer.<token>` instead and the server selects
+  `codex-app-server`; the server compares the raw token, so a capability
+  token used from a browser must be base64url or hex (subprotocol values
+  cannot carry `+`, `/` or `=`, and browsers may log them).
+  `--ws-allowed-origin ORIGIN` (repeatable, `scheme://host[:port]`, requires
+  `--ws-auth`) admits a browser or webview origin, compared exactly after
+  normalization, which drops a default port (`:80`, `:443`); any other
+  `Origin` is refused. The exec-server listener honors the
+  same allowed origins and subprotocol bearer.
+- `stdio`: the spawning process speaks newline-delimited JSON-RPC to
+  `codex app-server`.
+- `codex app-server --listen URL` runs a headless host. `codex --listen URL`
+  (same `--ws-*` flags, including `--ws-allowed-origin`) exposes the live
+  TUI's in-process app-server, so a client co-attaches to the terminal
+  session; it takes only `unix://PATH` or `ws://IP:PORT` with an explicit port
+  (bare `unix://` and port 0 are refused).
+
+A client sends `initialize {clientInfo, capabilities: {experimentalApi: true}}`
+and the `initialized` notification; `omd/*` methods are experimental and need
+that opt-in. Requests are not serialized by the host, so a client awaits the
+attach before any other `omd/*` call; before it every method fails with
+`client_not_attached`. Errors are JSON-RPC errors whose message starts with
+the code: besides those below, `mod_host_inactive`, `session_unavailable`,
+`host_operation_unavailable` and `view_unavailable` (no mods, thread, session
+runtime or published view in this host), `command_unavailable` and
+`command_unavailable_during_turn` for the action's command,
+`render_slot_invalid` and `render_props_invalid`, `resource_not_in_view` and
+`resource_unavailable`, and `recovery_action_invalid`, `mod_not_found` and
+`mod_store_unavailable` from recovery.
+
+| Request | Params | Result |
+| --- | --- | --- |
+| `omd/client/attach` | `{name, renderer: {kind: 'terminal'\|'gui'\|'text', formats: ('svg'\|'png'\|'jpeg'\|'cells'\|'text')[], pointer: 'pixel'\|'cell'\|'half_cell'\|'none', reducedMotion, cellPx?}, operations}` | `{clientId, protocol: 'omd-client/1', epoch, roster, features, delegable}`, then `omd/view/updated`; the result's `roster` already lists the new client, and `omd/roster/updated` reports later changes; attaching again on the connection replaces its entry; attach also succeeds while mods are inactive or failed to start (empty `epoch`, null `snapshot`), so the recovery calls stay reachable |
+| `omd/client/update` | `{renderer?, viewport?: {width, height, unit}, focus?}` | `{}`; `focus` sets the entry's `focused`; every client gets `omd/roster/updated` and mods render again |
+| `omd/client/detach` | `{}` | `{}` |
+| `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
+| `omd/client/event` | `{epoch, component, event}` with `event` one of `{kind: 'change', value}`, `{kind: 'change', values}` (strings), `{kind: 'pointer', pointer: {column, row, half?: 0\|1\|null, action: 'down'\|'up'\|'scroll_up'\|'scroll_down'\|'move'\|'drag'\|'enter'\|'leave', button: 'left'\|'right'\|'middle'\|null}}`, `{kind: 'scroll', offset}`, `{kind: 'key', key, text?}` or `{kind: 'focus'}` | `{delivered}`, answered in the order the connection sent its events and actions; the owner (from `component_owners`) gets `component_event` with `client: clientId` and only the kind's fields above (`origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped); `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing or malformed field the kind requires or an event over 64 KiB |
+| `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
+| `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}` |
+| `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
+| `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, managed, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails with `recovery_unavailable_during_turn` while the lead thread's turn runs. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
+
+The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
+full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
+`activity`, `diagnostics`), `omd/roster/updated {roster}` and
+`omd/surface/mirrored {caller, operation, arguments}`, and the server request
+`omd/surface/call {caller, operation, arguments, confirm?}`, answered with the
+operation's result or an error whose message the mod receives; when the mod's
+call is cancelled or outlives its callback budget first, the host drops the
+request and a late answer is ignored. Other server
+requests (approvals, `requestUserInput`, permissions, elicitation) reach every
+subscribed client, and the first answer wins, an error included: an SDK client
+answers only what its `onServerRequest` returns a value for (`undefined` leaves
+the request unanswered), so a client that does not handle a request never
+resolves it before the user at the terminal.
+
+Actions: a client names a component and row, never a command. The host
+resolves the action from its own current view and runs it like Space/Enter in
+the TUI: `command` interceptors, then the command as a user action. Tokens are
+random, per connection and bound to the view's epoch and revision; a pushed
+revision or a use replaces the token, while progress and activity pushes keep
+it. A use spends the token even when the action then fails, so re-read the
+view after an error; the last 8 retired tokens keep `action_stale` and
+`action_replayed` accurate. Send one action at a time per connection and keep
+the newest token from the last view or action result. Roster-driven re-renders
+coalesce, and a view that did not change keeps its revision, so one client's
+viewport or focus update does not rotate the others' tokens.
+
+Ordering: state is per connection, and a disconnect removes the roster entry
+and at once fails that client's pending surface calls with
+`client_surface_closed` (an attach on a closing connection gets
+`client_surface_closed: the connection is closing`).
+`epoch` is an opaque decimal string (empty, with revision 0 and a null
+snapshot, until the host publishes its first view); `revision` grows within
+an `epoch`, and a new `epoch` means the host restarted and invalidates
+everything the client holds. Reconnecting is `initialize`, attach
+(a full snapshot, never deltas), then `thread/resume` per thread, which
+replays pending approvals; `thread/resume` also joins a loaded thread before
+its first turn. Approvals stay upstream server requests broadcast to
+subscribed connections (first answer wins, `serverRequest/resolved` tells the
+rest); `turn/interrupt` cancels a turn; `thread/rewritten` invalidates a
+thread's cached history.
+
+Capabilities and fallback: the wire roster lists `{id, name, renderer,
+viewport, focused, attachedMs}` (camelCase renderer). Mods see it as
+`clients: ClientEntry[]` beside `client` in the `terminal` input, in
+snake_case (`renderer.reduced_motion`, `renderer.cell_px`, `focused`,
+`attached_ms`); neither lists declared operations. `client` stays the local
+terminal's facts, or null headless. A view serves every attached renderer, so
+draw for the least capable or branch on `clients`. An SVG `image` shows its
+alt text in terminals (SVG rules in [Binary evidence and package
+controls](#binary-evidence-and-package-controls)); a client listing `svg`,
+`png` or `jpeg` reads the resource with `omd/resource/read` and draws it.
+`terminal.notify`, `terminal.notice` and `terminal.blit` are mirrored to
+attached clients in both modes, blits only to clients listing `cells`; others
+draw a raster's `alt`. Headless, the host answers those three itself with the
+terminal's validation: a blit is checked against `component_owners`
+(`terminal_blit_not_owned`, `terminal_blit_unknown`) and the raster's size and
+paced at one frame per 33 ms with the same 32-update backpressure, a notice
+fails with `terminal_notice_invalid` like in the terminal, and a
+`model`-audience notice is still queued for the model.
+
+Delegation: with no terminal attached, `features` includes `surface_call` and
+`delegable` lists the declared operations the host delegates. A mod's surface
+operation goes to the clients that declared it, and the first answer wins.
+User-only operations (`credentials.request`, `terminal.import_file`,
+`builtins.invoke`, `commands.invoke`, `config.set`, `packages.apply`,
+`contract.select`) and `prompts.consent` are never delegated, and whenever a
+client's action or event caused the call they, and a `terminal.pty` start,
+fail in both modes (`client_surface_operation_unavailable: <operation> needs
+the terminal (/omd) or omd-mod`), so clients never reach grant-writing or
+user-only operations: use the terminal's `/omd` or `omd-mod
+enable|disable|reload|reset`. Headless, a `terminal.pty` start from a
+non-user context is `host_operation_user_only`. An operation no attached client declared fails
+with `client_surface_operation_unavailable: no attached client serves
+<operation>`. `app.request` runs on the headless host itself; a confirmed
+method first goes as `omd/surface/call terminal.prompt {kind: 'confirm',
+title, message}` to the clients that declared `terminal.prompt` and runs only
+on `{status: 'accepted'}`, returning `{status: 'declined'}` otherwise or when
+none did. A call with `confirm` needs the user's consent in the client before
+it acts.
+
+Security: clients cannot mint grants or evidence. No `omd/*` method writes a
+grant, consent or evidence record; actions resolve against the host's view,
+events reach only a component's owner, and resources only those in the view.
+Mod engine callbacks keep running in the host runner without ambient Node,
+DOM or secrets; only the confined renderer process uses its own UI runtime.
+
+A mod owns its client adapter: it declares `os` with `os_access.programs`
+(for example `node`) and starts its UI process from a native callback (a
+`channel` hop from a command) with `process.start {sandbox: 'none'}`, or
+starts it sandboxed with `network: 'loopback'` (`network`) for a loopback
+`ws://` listener. It passes the listen URL and the token, or a token file
+path, through `environment` (names listed in `exec_environment`; a name
+containing `TOKEN`, `KEY` or `SECRET` needs `--allow-secret-env`) or ndjson
+stdin; the host stops the process with the mod. Its stdout is the framed
+message channel, so a UI process logs to stderr or a file: output that
+breaks the framing stops the process (an `exit` `process_event` follows). The UI
+process connects with the SDK in
+`@oh-my-diff/mod-api/client`: `connect({url, token?, command?, name, renderer,
+operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?,
+onNotification?, onReconnect?, onClose?})` is dependency-free ESM for browsers
+and Node 22+ over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
+`stdio` (Node; spawns `codex app-server`). The session's `attach`, `update`,
+`detach`, `read`, `event`, `action` (serialized), `render`, `resource`,
+`recovery` and `request(method, params)` cover every `omd/*` and app-server
+method; after a disconnect it reconnects with backoff, re-initializes,
+re-attaches, replays the last update, resumes the threads it resumed through
+`request('thread/resume', …)` and reports `onReconnect({epoch,
+previousEpoch})`. `unsupported(component, renderer, drawable)` returns null
+or an `unsupported_element: <type> '<id>': <reason>; drawing its fallback
+"<text>"` error for a component the renderer cannot draw (a type outside
+`drawable`, a `raster` without `cells`, an `image` without an image format),
+with `fallback` set to its alt text, text or label. `mods/examples/external_client`
+(a text renderer) and `mods/examples/approval_desk` (a GUI-shaped renderer
+that answers approvals) are complete adapters for unrelated mods.
+
+The same contract backs an independently packaged desktop app or editor
+webview; Oh My Diff ships neither. A desktop app spawns `codex app-server
+--listen unix://PATH` (or connects to a user's `codex --listen` session) from
+its main process and runs the SDK there. A VS Code extension's host starts or
+finds the listener, writes a base64url capability token, and passes the URL
+and token to its webview, which loads the SDK as ESM and connects over
+`ws://127.0.0.1:PORT` with `--ws-auth capability-token` and
+`--ws-allowed-origin` set to the webview origin. Either renderer draws
+`snapshot.view.sites` by component type, calls `unsupported()` for the rest,
+reads images with `omd/resource/read`, sends `omd/action` and `omd/client/event`,
+answers approval server requests through `onServerRequest`, and re-renders
+from the full snapshot after `onReconnect`. `scripts/client_acceptance.py
+--binaries DIR` drives both example adapters against headless and co-attached
+hosts with a scripted local provider and is the conformance check for a new
+client.
 
 ### Commands and configuration (`command_config_middleware_v1`)
 
@@ -1633,7 +1910,7 @@ reason?}` to the suggestion's owner.
 it reaches the draft: `{source: 'mod' | 'paste' | 'history' | 'completion',
 caller, revision, edit}`; handlers may change only `edit.text` or answer
 `{deny}`, which leaves the draft unchanged and tells the user. They run while
-the terminal applies the edit, so they get no host operations. The `input`
+the terminal applies the edit, so they get no host operations. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
 interceptors also receive the submitted draft's `revision`, `attachments`
 (`{kind, source}`) and placeholder `elements` (`{kind: 'paste' | 'mention' |
 'skill' | 'image', start?, end?, name?, source}`). After skills and mentions are
@@ -1691,7 +1968,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   wait holds no runtime lock and does not count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
-  `config_list`, `tool_specs`, `agent_offers`, `admission` and `composer_edit` callbacks run
+  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit` and `component_change` callbacks run
   without host operations and get `host_operation_unavailable`; `model_request`,
   `model_send` and `response_stream` interceptors run on the request path and get
   `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
@@ -1737,6 +2014,52 @@ are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
 
+### Durable transcript rewriting (`history_rewrite_v1`)
+
+A mod with the `history_write` authority grant changes the persisted transcript
+itself through `app.request thread/rewrite {threadId, expectedRevision?, edits?,
+undo?}`, on the current thread or a thread it started. Without
+`expectedRevision` the call only reads `{revision, rows}` (`edits` or `undo`
+without it fail with `history_rewrite_invalid`); each row is
+`{id, turnId, kind, access}` where `kind` is `message.<role>`, the tool call type
+or a display item type and `access` is `edit`, `delete` (reasoning, web search,
+image generation and display-only items) or `frozen` (compaction, configuration
+and rows before the newest compaction checkpoint). A row pairs a display item
+with its model items: a message, or a tool call with its output.
+
+`edits` apply in order as one revision: `{op: "delete", id}`, `{op: "replace",
+id, items}`, `{op: "insert", before? | after?, items}` (neither appends after the
+last row) and `{op: "move", id, before? | after?}`. `items` is one Responses
+`message` (`user`, `assistant` or `developer`) or one tool call followed by its
+output with the same `call_id`. A replacement keeps the row's role or call id;
+an inserted call id must be new to the thread. A replaced or inserted message
+gets a matching display item; a replaced or inserted tool row keeps only its
+model items, so it leaves replay and export views. Images are referenced by
+`image_url` (a URL or data URL) or `file_id`. Host metadata in the items is
+dropped and ids are assigned by the host. A thread with a turn in progress or
+pending agent mail fails with `history_rewrite_busy` (checked again atomically
+when the thread unloads, so a turn that starts meanwhile is never cut off and
+the thread stays loaded; retry once it is idle), a stale `expectedRevision` with
+`history_revision_conflict`; any refused edit leaves the transcript unchanged.
+
+A rewrite copies the whole edited transcript to a new rollout and switches the
+thread to it, so resume, `thread/turns/list`, `thread/items/list`, search and
+export read the result; every client receives `thread/rewritten {threadId,
+revision}` and the terminal reloads the transcript. The replaced rollout is kept
+unchanged. Each inserted, replaced or moved model item carries
+`rewritten {revision, op, source?, by: "mod:<id>"}` metadata, loses the host's
+execution, delivery and tool-call inventory metadata and so never proves that a
+tool ran; the approval reviewer's transcript labels rewritten messages and tool
+rows as not original. Receipts, usage and evidence records are not rewritten. `undo: true`
+restores the transcript the latest rewrite replaced and keeps rows added since;
+undoing an undo redoes it. The host keeps a per-thread revision log, anchored by
+the authority broker when it is deployed, and resume fails with
+`history_anchor_mismatch` or `history_original_mismatch` when the log or an
+original referenced by the latest committed rewrite changed, or
+`history_anchor_unavailable` when the deployed broker cannot be asked; an
+interrupted rewrite, including a record torn by a crash, is
+rolled forward or discarded on the next access. Revoking the mod drops `history_write`.
+
 ### Compaction interception (`compaction_intercept_v1`)
 
 `api.intercept('compaction', (input, next) => …)` (capability `compaction`)
@@ -1778,9 +2101,24 @@ failure after `next` keeps the host's result with a diagnostic.
 ### Binary evidence and package controls
 
 `evidence.write` accepts `{media_type: 'image/png' | 'image/jpeg' |
-'application/octet-stream', base64}` up to 8 MiB (`binary_evidence_v1`);
-image references can be attached through `composer.write` and image-capable
-app methods. `packages.list`, `packages.index`, `packages.preview`,
+'image/svg+xml' | 'application/octet-stream', base64}` up to 8 MiB
+(`binary_evidence_v1`); PNG and JPEG references can be attached through
+`composer.write` and image-capable app methods. SVG (`svg_assets_v1`) is UTF-8
+XML of at most 1 MiB whose root element is `svg`, after an optional XML
+declaration and comments. Every element must be in the SVG namespace (an
+unprefixed element without a default namespace counts as SVG). It refuses a
+DOCTYPE, other processing instructions, `script`, `foreignObject`, `iframe`,
+`object`, `embed`, `audio` and `video` elements, `animate*`/`set` targeting
+`href` or an `on*` attribute, `on*`, `src`, `srcset`, `data`, `action`,
+`formaction` and `ping` attributes, `href`/`xlink:href` other than `#fragment` or a base64 PNG/JPEG `data:` URI,
+and in any attribute or `<style>` text (case-insensitive, after resolving
+references) a `url(` other than `url(#...)`, `image-set(` (including
+`-webkit-image-set(`), `src(`, `@import`, `@font-face` or a backslash escape,
+failing with `evidence_record_invalid:
+svg_<reason>`. `terminal.import_file` labels SVG text `image/svg+xml`, so it
+passes the same check. External renderers draw SVG natively; the terminal
+shows an `image` component's alt text, refuses SVG in `terminal.image_sample`
+and backdrops, and never attaches it to the composer. `packages.list`, `packages.index`, `packages.preview`,
 `packages.apply` and `packages.reload` (`package_controls_v1`) install, update,
 remove, roll back, enable and disable packages from local directories, Git
 repositories, curated index releases and npm packages (sources and references
@@ -1846,8 +2184,11 @@ any it refuses.
   from every mod has at most 64, and a key bound by two mods rejects the later
   mod's patch. A view holds at most 64 components nested at most 6 deep;
   component ids use `a-z`, `0-9` and `_`, up to 48 bytes, and are unique across
-  the composed view. A `select` has at most 16 options and a `list` at most 200
-  rows; row values, labels and spans are at most 256 bytes; `text`, `code` and
+  the composed view. A `select` or `multiselect` has at most 16 options and a `list` at most 200
+  rows; a span `link` is an http(s) URL of at most 2,048 bytes on `line` and
+  `list` spans (documents refuse it), drawn as an OSC 8 hyperlink, and
+  `markdown` links become hyperlinks too; a control `hotkey` uses the
+  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code` and
   `markdown` at most 4,096 bytes; `diff` and `document` at most 49,152 bytes. A
   view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
   `wrap` site contains exactly one `slot`. Text fields refuse control characters
@@ -1859,7 +2200,13 @@ any it refuses.
   a click outside releases focus and hides the dialog until a mod command runs,
   and Esc reaches the focused component's owner as `component_event {kind:
   'input', events: [{key: 'Esc'}]}`. Space on a focused `list` row activates it
-  like Enter. An `input` or `select` is controlled: the user's edits stay
+  like Enter. On a focused `multiselect`, Space toggles the current option and
+  Enter runs its action with the checked values as a JSON array argument. A
+  `hotkey` on a button, input, select, multiselect or list focuses it (a button
+  runs its action) unless a text input has focus; it obeys the keybinding
+  collision rules, is checked before view `keybindings`, and when two controls
+  share one the first wins. `autofocus` focuses the control when it first
+  appears and nothing has focus, reported as a `focus` event with origin `mod`. An `input`, `select` or `multiselect` is controlled: the user's edits stay
   while the view repeats a value, an echo of one of the user's own recent
   values is ignored, and a new `value` from the mod resets the field.
 - Callback contexts: `terminal` renders and `render` hooks get no host
@@ -1908,6 +2255,30 @@ The `omd-mod` binary is part of the OMD engine. Set `OMD_MOD_BIN` only when a
 development build is not already on `PATH`; set `OMD_MOD_NODE` to the supported
 Node 24.x executable, 24.18 or later. pnpm is the package manager. The repository also
 publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
+
+### JSX/TSX
+
+Writing terminal components as JSX is optional and author-side only. When a
+project has `index.tsx`, `omd-mod-author` (check, test, run, debug, package, and
+each watch reload) compiles it with the project's own TypeScript into a
+self-contained `index.ts`, inlining the small JSX factory so the host still sees
+one module with no value imports. The project needs `typescript` installed
+(`pnpm add -D typescript@5.9.3`); without it the command fails with
+`jsx_requires_typescript`. Edit `index.tsx` and treat `index.ts` as generated
+output; a hand-written `index.ts` beside `index.tsx` is never overwritten and
+fails with `jsx_entrypoint_conflict`. The scaffolded `tsconfig.json` sets `jsx: "react-jsx"` and
+`jsxImportSource: "@oh-my-diff/mod-api"`; `check` type-checks `index.tsx` itself.
+
+Each `TerminalComponent` kind is an intrinsic element (`<box>`, `<line>`,
+`<text>`, ...) with the component's fields as props. Children of `box`, `pane`
+and `dialog` become `children`; string and number children of `text`, `button`,
+`markdown` and `code` become `text`; string and span children of `line` become
+`spans`. Function components returning a component work. The factory is pure
+object construction with no Node or DOM authority and grants no capability.
+Unsupported elements and props fail at compile time through the types, and a
+dynamic unknown tag fails with `jsx_unsupported_element` (children on a kind
+that takes none fail with `jsx_children_unsupported`). Fragments are not
+supported.
 
 ## Package commands
 
@@ -2182,7 +2553,10 @@ expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
 to the same declared capability and host permission checks.
 
-`process.start` frames stdio as `content-length` (default) or `ndjson`;
+`process.start` frames stdio as `content-length` (default) or `ndjson`, and
+stops a process whose stdout breaks the framing (a line that is not JSON
+under `ndjson`; a blank line or 8 KiB without a valid header under
+`content-length`); stderr is discarded;
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch
@@ -2321,7 +2695,8 @@ Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.
 Observers compose in that order; interceptors follow the continuation order above. Every mod's `terminal` patch composes in that order too
 (`ui_composition_v1`): sites wrap or replace (a wrap encloses the site's
-replacement whichever composes first), presentation fields merge, and
+replacement whichever composes first; a site's `overlay` is not claimed, so
+the last patch that sets one wins, even a wrap over another mod's), presentation fields merge, and
 exclusive fields (layout, backdrop, panels, header, footer, placeholder,
 replaced sites, keys, glyphs and the status budget) go to the first claimant;
 each later claim is reported in `omd-mod status` under `terminal.conflicts` as

@@ -1,6 +1,8 @@
 mod access;
 mod agents;
 mod autonomy;
+#[path = "clients.rs"]
+pub mod clients;
 mod compaction;
 mod elicitation;
 mod evidence;
@@ -441,6 +443,7 @@ pub(super) fn install(
         elicitations: Mutex::default(),
     });
     intercept::install_dispatcher(&extension.core);
+    clients::install(&extension.core);
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.thread_lifecycle_contributor(extension.clone());
@@ -465,7 +468,9 @@ fn publish(
     active: impl Fn() -> bool,
 ) {
     let mut input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
-        "presentation": codex_omd::client_surface::presented(views.current_presentation())});
+        "presentation": codex_omd::client_surface::presented(views.current_presentation()),
+        "client": codex_omd::client_surface::client(),
+        "clients": codex_omd::client_surface::clients()});
     let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
     let rendered_ms = codex_omd::ModViewSnapshot::clock();
     let mut terminal = runtime.terminal_view(input.clone(), active);
@@ -538,6 +543,16 @@ fn publish(
 // `turns.activity` readers see changed files from the turn-activity ledger.
 fn observes_workspace(runtime: &ModHost) -> bool {
     runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
+}
+
+/// Re-reads `host.json`, mod generations and the session contract the way a turn start does.
+fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
+    let _ = host.refresh_session(session);
+    if let Ok(mut runtime) = runtime.lock() {
+        runtime.turn_boundary();
+        refresh_contract(&runtime, session);
+        codex_omd::observe_workspace_changes(&host.repository, observes_workspace(&runtime));
+    }
 }
 
 fn refresh_contract(runtime: &ModHost, session: &Session) {
@@ -1607,19 +1622,8 @@ impl TurnLifecycleContributor for Mods {
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
             let host = lead.host.clone();
-            let session_repository = lead.host.repository.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = host.refresh_session(&session);
-                if let Ok(mut runtime) = runtime.lock() {
-                    runtime.turn_boundary();
-                    refresh_contract(&runtime, &session);
-                    codex_omd::observe_workspace_changes(
-                        &session_repository,
-                        observes_workspace(&runtime),
-                    );
-                }
-            })
-            .await;
+            let _ =
+                tokio::task::spawn_blocking(move || refresh_turn(&host, &session, &runtime)).await;
             self.publish_workspace_changes(&lead).await;
             let evidence = evidence::begin(&self.core, &lead).await;
             if let Ok(mut turns) = self.turns.lock() {

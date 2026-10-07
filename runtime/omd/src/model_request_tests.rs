@@ -426,3 +426,78 @@ fn send_results_keep_inner_edits_and_stay_inside_editable_text() {
             .contains("no longer JSON")
     );
 }
+
+#[test]
+fn queued_sections_repeat_until_a_response_completes_within_the_section_cap() {
+    let thread = "thread-queued-sections";
+    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
+    queue_section(thread, "checks", "build failed").unwrap();
+    let mut denied = request();
+    let (_, carried) = apply_queued_sections(&mut denied, thread, None, 0);
+    assert_eq!(carried.len(), 1);
+    let mut first = request();
+    let (edited, carried) = apply_queued_sections(&mut first, thread, None, 0);
+    assert!(edited);
+    commit_queued_sections(thread, "req-1", &carried);
+    assert_eq!(first, denied);
+    let text = first.to_string();
+    assert!(
+        text.contains("Mod-provided context") && text.contains("build failed"),
+        "{text}"
+    );
+    let mut again = request();
+    let (_, carried) = apply_queued_sections(&mut again, thread, None, 0);
+    assert_eq!(again, first, "a core retry repeats the undelivered batch");
+    commit_queued_sections(thread, "req-2", &carried);
+    queued_sections_delivered(thread, "req-1");
+    assert!(apply_queued_sections(&mut request(), thread, None, 0).0);
+    queued_sections_delivered(thread, "req-2");
+    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
+    let mut retry = request();
+    let (edited, carried) = apply_queued_sections(&mut retry, thread, Some("req-2"), 0);
+    assert!(edited);
+    assert_eq!(retry, first, "a mod retry repeats the delivered batch");
+    commit_queued_sections(thread, "req-3", &carried);
+    queued_sections_delivered(thread, "req-3");
+    for _ in 0..INSERTED_SECTIONS {
+        queue_section(thread, "checks", "note").unwrap();
+    }
+    assert_eq!(
+        queue_section(thread, "checks", "one too many"),
+        Err("model_context_queue_full".to_owned())
+    );
+    let (_, carried) = apply_queued_sections(&mut request(), thread, None, INSERTED_SECTIONS - 2);
+    assert_eq!(carried.len(), 2);
+    assert_eq!(
+        apply_queued_sections(&mut request(), thread, None, INSERTED_SECTIONS),
+        (false, Vec::new())
+    );
+    assert_eq!(
+        queue_section("other-thread", "checks", " "),
+        Err("model_context_invalid".to_owned())
+    );
+}
+
+#[test]
+fn queued_sections_keep_notices_omitted_by_a_smaller_retry() {
+    let thread = "thread-queued-smaller-retry";
+    for index in 0..INSERTED_SECTIONS {
+        queue_section(thread, "checks", &format!("note-{index}")).unwrap();
+    }
+    let (_, first) = apply_queued_sections(&mut request(), thread, None, 0);
+    assert_eq!(first.len(), INSERTED_SECTIONS);
+    commit_queued_sections(thread, "req-1", &first);
+    queue_section(thread, "checks", "later").unwrap();
+    let (_, retry) =
+        apply_queued_sections(&mut request(), thread, Some("req-1"), INSERTED_SECTIONS - 1);
+    assert_eq!(retry, first[..1]);
+    commit_queued_sections(thread, "req-2", &retry);
+    queued_sections_delivered(thread, "req-2");
+    let (_, remaining) = apply_queued_sections(&mut request(), thread, None, 0);
+    assert_eq!(remaining.len(), INSERTED_SECTIONS);
+    assert_eq!(remaining[..INSERTED_SECTIONS - 1], first[1..]);
+    assert_eq!(remaining.last().unwrap()["text"], "later");
+    commit_queued_sections(thread, "req-3", &remaining);
+    queued_sections_delivered(thread, "req-3");
+    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
+}
