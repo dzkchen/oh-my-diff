@@ -95,8 +95,9 @@ def setup(args):
     if not target.exists() and (WARM / "debug").is_dir() and not args.cold:
         target.mkdir()
         run("cp", "-cR", WARM / "debug", target / "debug")
-        for stale in (target / "debug/.fingerprint").glob("codex-*"):
-            shutil.rmtree(stale)
+        for pattern in ("codex-*", "v8-*"):
+            for stale in (target / "debug/.fingerprint").glob(pattern):
+                shutil.rmtree(stale)
     if not V8.is_dir():
         print(f"missing {V8}: download the rusty-v8 assets from the openai/codex rusty-v8 release before building")
     print(json.dumps({"tree": str(tree), "target": str(target), "warm": target.exists(),

@@ -477,3 +477,27 @@ fn queued_sections_repeat_until_a_response_completes_within_the_section_cap() {
         Err("model_context_invalid".to_owned())
     );
 }
+
+#[test]
+fn queued_sections_keep_notices_omitted_by_a_smaller_retry() {
+    let thread = "thread-queued-smaller-retry";
+    for index in 0..INSERTED_SECTIONS {
+        queue_section(thread, "checks", &format!("note-{index}")).unwrap();
+    }
+    let (_, first) = apply_queued_sections(&mut request(), thread, None, 0);
+    assert_eq!(first.len(), INSERTED_SECTIONS);
+    commit_queued_sections(thread, "req-1", &first);
+    queue_section(thread, "checks", "later").unwrap();
+    let (_, retry) =
+        apply_queued_sections(&mut request(), thread, Some("req-1"), INSERTED_SECTIONS - 1);
+    assert_eq!(retry, first[..1]);
+    commit_queued_sections(thread, "req-2", &retry);
+    queued_sections_delivered(thread, "req-2");
+    let (_, remaining) = apply_queued_sections(&mut request(), thread, None, 0);
+    assert_eq!(remaining.len(), INSERTED_SECTIONS);
+    assert_eq!(remaining[..INSERTED_SECTIONS - 1], first[1..]);
+    assert_eq!(remaining.last().unwrap()["text"], "later");
+    commit_queued_sections(thread, "req-3", &remaining);
+    queued_sections_delivered(thread, "req-3");
+    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
+}

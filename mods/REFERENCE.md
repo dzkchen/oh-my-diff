@@ -2054,9 +2054,10 @@ rows as not original. Receipts, usage and evidence records are not rewritten. `u
 restores the transcript the latest rewrite replaced and keeps rows added since;
 undoing an undo redoes it. The host keeps a per-thread revision log, anchored by
 the authority broker when it is deployed, and resume fails with
-`history_anchor_mismatch` or `history_original_mismatch` when the log or a kept
-original changed, or `history_anchor_unavailable` when the deployed broker
-cannot be asked; an interrupted rewrite, including a record torn by a crash, is
+`history_anchor_mismatch` or `history_original_mismatch` when the log or an
+original referenced by the latest committed rewrite changed, or
+`history_anchor_unavailable` when the deployed broker cannot be asked; an
+interrupted rewrite, including a record torn by a crash, is
 rolled forward or discarded on the next access. Revoking the mod drops `history_write`.
 
 ### Compaction interception (`compaction_intercept_v1`)

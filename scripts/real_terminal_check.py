@@ -72,6 +72,15 @@ class Terminal:
     def bounds(self):
         return json.loads(call([self.base / "macos_window", self.pid()], ROOT).stdout.strip())
 
+    def wait_for_exit(self):
+        pid = int((self.base / "codex.pid").read_text())
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.25)
+
 
 class Kitty(Terminal):
 
@@ -178,24 +187,26 @@ def main():
     (repo / "README.md").write_text("terminal check\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "fixture")
-    server, url = provider(reply)
     probe = base / "mods/terminal_probe"
     probe.mkdir(parents=True)
     (probe / "mod.json").write_text(json.dumps(PROBE_MANIFEST))
     (probe / "index.ts").write_text(PROBE_SOURCE % base64.b64encode(png()).decode())
     store = base / "store"
     store_with(args.binaries / "omd-mod", store, [ROOT / "mods/examples/raster_canvas", ROOT / "mods/examples/approval_desk", probe])
-    env = environment(base, args.binaries, repo, store, url)
-    env.pop("TERM")
-    script = base / "run.sh"
-    overrides = ["-c", "tui.animations=false"] if args.reduced_motion else []
-    script.write_text("#!/bin/sh\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env.items())
-                      + f"cd {shlex.quote(str(repo))}\nexec {shlex.quote(str(args.binaries / 'codex'))} {' '.join(overrides)} -C {shlex.quote(str(repo))}\n")
-    terminal = {"kitty": Kitty, "ghostty": Ghostty, "wezterm": WezTerm}[args.terminal](base, script)
-    results = {"terminal": args.terminal, "run": str(base)}
-    terminal.start({key: value for key, value in os.environ.items()
-                    if not key.startswith(("TERM_PROGRAM", "LC_TERMINAL", "COLORTERM", "TMUX", "KITTY_", "WEZTERM_", "GHOSTTY_"))})
+    server, url = provider(reply)
+    terminal = None
     try:
+        env = environment(base, args.binaries, repo, store, url)
+        env.pop("TERM")
+        script = base / "run.sh"
+        overrides = ["-c", "tui.animations=false"] if args.reduced_motion else []
+        script.write_text("#!/bin/sh\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env.items())
+                          + f"cd {shlex.quote(str(repo))}\nprintf '%s\\n' \"$$\" > {shlex.quote(str(base / 'codex.pid'))}\n"
+                          + f"exec {shlex.quote(str(args.binaries / 'codex'))} {' '.join(overrides)} -C {shlex.quote(str(repo))}\n")
+        terminal = {"kitty": Kitty, "ghostty": Ghostty, "wezterm": WezTerm}[args.terminal](base, script)
+        results = {"terminal": args.terminal, "run": str(base)}
+        terminal.start({key: value for key, value in os.environ.items()
+                        if not key.startswith(("TERM_PROGRAM", "LC_TERMINAL", "COLORTERM", "TMUX", "KITTY_", "WEZTERM_", "GHOSTTY_"))})
         client = wait("probe saw the terminal", lambda: state(store, "terminal_probe").get("client"), 90)
         image = wait("probe image written", lambda: state(store, "terminal_probe").get("image"))
         results["client"] = client
@@ -218,46 +229,48 @@ def main():
             results["probe_note"] = probe.get("note")
             terminal.send("\x1b")
             time.sleep(0.4)
-        if not terminal.drives_keys:
-            return finish(results, base)
-        terminal.key("alt+k")
-        time.sleep(0.4)
-        terminal.key("down")
-        terminal.key("space")
-        terminal.key("enter")
-        time.sleep(1)
-        results["desk_kinds"] = state(store, "approval_desk").get("kinds")
-        terminal.key("esc")
-        time.sleep(0.3)
-        terminal.send("APPROVE_ME from a real terminal")
-        time.sleep(0.5)
-        terminal.key("enter")
-        time.sleep(4)
-        shot("approval")
-        terminal.send("y")
-        wait("approval decided", lambda: any(entry.get("decision") for entry in state(store, "approval_desk").get("entries", [])), 60)
-        time.sleep(1)
-        results["desk_entries"] = state(store, "approval_desk").get("entries")
-        results["screen_after_approval"] = terminal.screen()[-3000:]
-        shot("notice")
-        if isinstance(terminal, Kitty):
-            terminal.resize(100, 30)
-            time.sleep(2)
-            resized = terminal.screen().splitlines()
-            results["resized_grid"] = [max(map(len, resized), default=0), len(resized)]
-            results["screen_resized"] = "\n".join(resized)
-            shot("resized")
+            terminal.key("alt+k")
+            time.sleep(0.4)
+            terminal.key("down")
+            terminal.key("space")
+            terminal.key("enter")
+            time.sleep(1)
+            results["desk_kinds"] = state(store, "approval_desk").get("kinds")
+            terminal.key("esc")
+            time.sleep(0.3)
+            terminal.send("APPROVE_ME from a real terminal")
+            time.sleep(0.5)
+            terminal.key("enter")
+            time.sleep(4)
+            shot("approval")
+            terminal.send("y")
+            wait("approval decided", lambda: any(entry.get("decision") for entry in state(store, "approval_desk").get("entries", [])), 60)
+            time.sleep(1)
+            results["desk_entries"] = state(store, "approval_desk").get("entries")
+            results["screen_after_approval"] = terminal.screen()[-3000:]
+            shot("notice")
+            if isinstance(terminal, Kitty):
+                terminal.resize(100, 30)
+                time.sleep(2)
+                resized = terminal.screen().splitlines()
+                results["resized_grid"] = [max(map(len, resized), default=0), len(resized)]
+                results["screen_resized"] = "\n".join(resized)
+                shot("resized")
+        finish(results, base)
+        if args.keep_open:
+            terminal.wait_for_exit()
     finally:
-        if not args.keep_open:
-            terminal.close()
+        try:
+            if terminal is not None and not args.keep_open:
+                terminal.close()
+        finally:
             server.shutdown()
-    finish(results, base)
 
 
 def finish(results, base):
     (base / "results.json").write_text(json.dumps(results, indent=2))
-    print(json.dumps({key: value for key, value in results.items() if not key.startswith("screen")}, indent=2))
-    print(f"screenshots and results in {base}")
+    print(json.dumps({key: value for key, value in results.items() if not key.startswith("screen")}, indent=2), flush=True)
+    print(f"screenshots and results in {base}", flush=True)
 
 
 if __name__ == "__main__":

@@ -1137,6 +1137,17 @@ pub fn commit_queued_sections(thread: &str, request_id: &str, carried: &[Value])
         return;
     };
     queue.pending.retain(|section| !carried.contains(section));
+    if !queue.delivered {
+        let mut omitted = queue
+            .sent
+            .1
+            .iter()
+            .filter(|section| !carried.contains(section))
+            .cloned()
+            .collect::<Vec<_>>();
+        omitted.append(&mut queue.pending);
+        queue.pending = omitted;
+    }
     queue.sent = (request_id.to_owned(), carried.to_vec());
     queue.delivered = false;
 }

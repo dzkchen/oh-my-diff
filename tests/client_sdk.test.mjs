@@ -189,6 +189,42 @@ test('server requests are answered only through onServerRequest, and undefined l
   }
 });
 
+test('server replies stay with the connection that requested them', async t => {
+  for (const [method, handler] of [['item/commandExecution/requestApproval', 'onServerRequest'], ['omd/surface/call', 'onSurfaceCall']]) {
+    for (const failed of [false, true]) await t.test(`${handler} ${failed ? 'error' : 'result'}`, async () => {
+      const host = fakeHost();
+      await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+      const pending = [];
+      let reconnected = false;
+      const session = await connect({
+        url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+        [handler]: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+        onReconnect: () => { reconnected = true; },
+      });
+      try {
+        host.push({ id: 0, method, params: {} });
+        await until(() => pending.length === 1);
+        for (const socket of host.sockets) socket.destroy();
+        await until(() => reconnected);
+        host.push({ id: 0, method, params: {} });
+        await until(() => pending.length === 2);
+        if (failed) pending[0].reject(new Error('expired request'));
+        else pending[0].resolve({ decision: 'accept' });
+        await new Promise(resolve => setImmediate(resolve));
+        await session.request('thread/list', {});
+        assert.equal(host.seen.some(message => message.epoch === '2' && message.id === 0 && !message.method), false);
+        pending[1].resolve({ decision: 'decline' });
+        const reply = await until(() => host.seen.find(message => message.epoch === '2' && message.id === 0 && !message.method));
+        assert.deepEqual(reply.result, { decision: 'decline' });
+      } finally {
+        session.close();
+        for (const socket of host.sockets) socket.destroy();
+        host.server.close();
+      }
+    });
+  }
+});
+
 test('close during a reconnect ends the session instead of reattaching', async () => {
   const host = fakeHost();
   const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');

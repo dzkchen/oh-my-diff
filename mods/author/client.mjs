@@ -210,10 +210,14 @@ class Session {
   serve({ id, method, params }) {
     const { onSurfaceCall, onServerRequest } = this.options;
     const surface = method === 'omd/surface/call';
-    const reply = message => this.link?.send(JSON.stringify({ id, ...message }));
+    const link = this.link;
+    const generation = this.generation;
+    const current = () => !this.closed && generation === this.generation && link === this.link;
+    const reply = message => current() && link?.send(JSON.stringify({ id, ...message }));
     if (!surface && !onServerRequest) return;
     Promise.resolve()
       .then(() => {
+        if (!current()) return;
         if (!surface) return onServerRequest(method, params);
         if (!onSurfaceCall) throw Object.assign(new Error(`unhandled surface call: ${params?.operation}`), { code: -32601 });
         return onSurfaceCall(params);

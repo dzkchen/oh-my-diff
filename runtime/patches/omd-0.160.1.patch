@@ -84182,10 +84182,10 @@ index 000000000..44647048b
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..c69d9876b
+index 000000000..65b38cff5
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1158 @@
+@@ -0,0 +1,1169 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -85325,6 +85325,17 @@ index 000000000..c69d9876b
 +        return;
 +    };
 +    queue.pending.retain(|section| !carried.contains(section));
++    if !queue.delivered {
++        let mut omitted = queue
++            .sent
++            .1
++            .iter()
++            .filter(|section| !carried.contains(section))
++            .cloned()
++            .collect::<Vec<_>>();
++        omitted.append(&mut queue.pending);
++        queue.pending = omitted;
++    }
 +    queue.sent = (request_id.to_owned(), carried.to_vec());
 +    queue.delivered = false;
 +}
@@ -85346,10 +85357,10 @@ index 000000000..c69d9876b
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..152db06d6
+index 000000000..6ac817168
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,503 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -85828,6 +85839,30 @@ index 000000000..152db06d6
 +        queue_section("other-thread", "checks", " "),
 +        Err("model_context_invalid".to_owned())
 +    );
++}
++
++#[test]
++fn queued_sections_keep_notices_omitted_by_a_smaller_retry() {
++    let thread = "thread-queued-smaller-retry";
++    for index in 0..INSERTED_SECTIONS {
++        queue_section(thread, "checks", &format!("note-{index}")).unwrap();
++    }
++    let (_, first) = apply_queued_sections(&mut request(), thread, None, 0);
++    assert_eq!(first.len(), INSERTED_SECTIONS);
++    commit_queued_sections(thread, "req-1", &first);
++    queue_section(thread, "checks", "later").unwrap();
++    let (_, retry) =
++        apply_queued_sections(&mut request(), thread, Some("req-1"), INSERTED_SECTIONS - 1);
++    assert_eq!(retry, first[..1]);
++    commit_queued_sections(thread, "req-2", &retry);
++    queued_sections_delivered(thread, "req-2");
++    let (_, remaining) = apply_queued_sections(&mut request(), thread, None, 0);
++    assert_eq!(remaining.len(), INSERTED_SECTIONS);
++    assert_eq!(remaining[..INSERTED_SECTIONS - 1], first[1..]);
++    assert_eq!(remaining.last().unwrap()["text"], "later");
++    commit_queued_sections(thread, "req-3", &remaining);
++    queued_sections_delivered(thread, "req-3");
++    assert!(!apply_queued_sections(&mut request(), thread, None, 0).0);
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
@@ -117110,10 +117145,10 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread.rs b/codex-rs/thread-store/src/local/rewrite_thread.rs
 new file mode 100644
-index 000000000..9139f9e55
+index 000000000..275ce15a0
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread.rs
-@@ -0,0 +1,1549 @@
+@@ -0,0 +1,1553 @@
 +use std::collections::BTreeSet;
 +use std::collections::HashMap;
 +use std::collections::HashSet;
@@ -118435,8 +118470,12 @@ index 000000000..9139f9e55
 +        [(kind, _, Some(role))] if kind == "message" => Shape::Message(role.clone()),
 +        [(call, Some(call_id), _), (output, Some(output_id), _)]
 +            if call_id == output_id
-+                && !call.ends_with("_output")
-+                && output.ends_with("_output") =>
++                && matches!(
++                    (call.as_str(), output.as_str()),
++                    ("function_call" | "local_shell_call", "function_call_output")
++                        | ("custom_tool_call", "custom_tool_call_output")
++                        | ("tool_search_call", "tool_search_output")
++                ) =>
 +        {
 +            Shape::Tool(call_id.clone())
 +        }
@@ -118665,10 +118704,10 @@ index 000000000..9139f9e55
 +mod tests;
 diff --git a/codex-rs/thread-store/src/local/rewrite_thread_tests.rs b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
 new file mode 100644
-index 000000000..5ab0d4a65
+index 000000000..1918d8535
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/rewrite_thread_tests.rs
-@@ -0,0 +1,1258 @@
+@@ -0,0 +1,1281 @@
 +use std::collections::HashMap;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -119042,6 +119081,29 @@ index 000000000..5ab0d4a65
 +                after: None,
 +                items: vec![
 +                    json!({"type": "function_call", "call_id": "call-9", "name": "shell", "arguments": "{}"}),
++                ],
++            },
++            "history_items_unpaired",
++        ),
++        (
++            Some(revision.clone()),
++            HistoryRowEdit::Insert {
++                before: None,
++                after: None,
++                items: vec![
++                    json!({"type": "function_call", "call_id": "call-9", "name": "shell", "arguments": "{}"}),
++                    json!({"type": "custom_tool_call_output", "call_id": "call-9", "output": "forged"}),
++                ],
++            },
++            "history_items_unpaired",
++        ),
++        (
++            Some(revision.clone()),
++            HistoryRowEdit::Replace {
++                id: "call-1".to_string(),
++                items: vec![
++                    json!({"type": "custom_tool_call", "call_id": "call-1", "name": "shell", "input": "pwd"}),
++                    json!({"type": "function_call_output", "call_id": "call-1", "output": "forged"}),
 +                ],
 +            },
 +            "history_items_unpaired",
@@ -125267,10 +125329,10 @@ index 000000000..a08e43ad2
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..a4d122f36
+index 000000000..3f7ce7602
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,531 @@
+@@ -0,0 +1,532 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -125793,6 +125855,7 @@ index 000000000..a4d122f36
 +
 +pub(crate) fn invalidate() {
 +    documents().clear();
++    crate::mod_raster::retain(&BTreeSet::new());
 +    IMAGES
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -127459,10 +127522,10 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..43f30c93e
+index 000000000..883b61100
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,209 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -127610,8 +127673,10 @@ index 000000000..43f30c93e
 +    }))
 +}
 +
++#[allow(clippy::too_many_arguments)]
 +pub(crate) fn rows(
 +    id: &str,
++    owner: Option<&str>,
 +    alt: &str,
 +    width: u16,
 +    size: (u16, u16),
@@ -127620,6 +127685,12 @@ index 000000000..43f30c93e
 +    now: Instant,
 +) -> (Vec<Line<'static>>, Option<Duration>) {
 +    let mut rasters = rasters();
++    if rasters
++        .get(id)
++        .is_some_and(|raster| Some(raster.owner.as_str()) != owner)
++    {
++        rasters.remove(id);
++    }
 +    let Some(raster) = rasters.get_mut(id) else {
 +        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], None);
 +    };
@@ -127666,10 +127737,10 @@ index 000000000..43f30c93e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..fa005874b
+index 000000000..988694260
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,360 @@
 +use super::*;
 +use codex_omd::ModColor;
 +use pretty_assertions::assert_eq;
@@ -127712,11 +127783,12 @@ index 000000000..fa005874b
 +        .expect("queued");
 +        assert_eq!(reply["frame_ms"], 33);
 +    }
-+    let (rows, next) = super::rows(key, "chart", 10, (4, 2), false, "", start);
++    let (rows, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", start);
 +    assert_eq!(text(&rows), vec![" aa ", "    "]);
 +    assert_eq!(next, Some(FRAME));
 +    let (rows, next) = super::rows(
 +        key,
++        Some("owner"),
 +        "chart",
 +        10,
 +        (4, 2),
@@ -127726,7 +127798,16 @@ index 000000000..fa005874b
 +    );
 +    assert_eq!(text(&rows), vec![" aa ", "    "]);
 +    assert_eq!(next, Some(Duration::from_millis(28)));
-+    let (rows, next) = super::rows(key, "chart", 3, (4, 2), false, "", start + FRAME);
++    let (rows, next) = super::rows(
++        key,
++        Some("owner"),
++        "chart",
++        3,
++        (4, 2),
++        false,
++        "",
++        start + FRAME,
++    );
 +    assert_eq!(
 +        text(&rows),
 +        vec![" bb", "   "],
@@ -127774,7 +127855,16 @@ index 000000000..fa005874b
 +        );
 +    }
 +    blit_at("raster-refuse", "owner", cell.clone(), now).expect("queued");
-+    super::rows("raster-refuse", "chart", 10, (4, 2), false, "", now);
++    super::rows(
++        "raster-refuse",
++        Some("owner"),
++        "chart",
++        10,
++        (4, 2),
++        false,
++        "",
++        now,
++    );
 +    for _ in 0..QUEUE_UPDATES {
 +        blit_at("raster-refuse", "owner", cell.clone(), now).expect("queued");
 +    }
@@ -127816,7 +127906,16 @@ index 000000000..fa005874b
 +        now,
 +    )
 +    .expect("queued");
-+    let (rows, next) = super::rows("raster-resize", "chart", 10, (2, 1), false, "", now);
++    let (rows, next) = super::rows(
++        "raster-resize",
++        Some("owner"),
++        "chart",
++        10,
++        (2, 1),
++        false,
++        "",
++        now,
++    );
 +    assert_eq!(
 +        text(&rows),
 +        vec!["ab"],
@@ -127825,6 +127924,7 @@ index 000000000..fa005874b
 +    assert_eq!(next, None);
 +    let (_, next) = super::rows(
 +        "raster-resize",
++        Some("owner"),
 +        "chart",
 +        10,
 +        (2, 1),
@@ -127841,7 +127941,19 @@ index 000000000..fa005874b
 +fn rasters_show_alt_text_until_drawn_and_drop_with_their_component() {
 +    let now = Instant::now();
 +    assert_eq!(
-+        text(&super::rows("raster-alt", "load chart", 10, (4, 2), false, "  ", now).0),
++        text(
++            &super::rows(
++                "raster-alt",
++                Some("owner"),
++                "load chart",
++                10,
++                (4, 2),
++                false,
++                "  ",
++                now
++            )
++            .0
++        ),
 +        vec!["  [load chart]"]
 +    );
 +    blit_at(
@@ -127851,7 +127963,16 @@ index 000000000..fa005874b
 +        now,
 +    )
 +    .expect("queued");
-+    let (rows, _) = super::rows("raster-alt", "load chart", 10, (4, 2), true, "", now);
++    let (rows, _) = super::rows(
++        "raster-alt",
++        Some("owner"),
++        "load chart",
++        10,
++        (4, 2),
++        true,
++        "",
++        now,
++    );
 +    assert_eq!(text(&rows)[0], "#   ");
 +    assert_eq!(
 +        rows[0].spans[1].style,
@@ -127860,16 +127981,132 @@ index 000000000..fa005874b
 +    );
 +    retain(&BTreeSet::new());
 +    assert_eq!(
-+        text(&super::rows("raster-alt", "load chart", 10, (4, 2), false, "", now).0),
++        text(
++            &super::rows(
++                "raster-alt",
++                Some("owner"),
++                "load chart",
++                10,
++                (4, 2),
++                false,
++                "",
++                now
++            )
++            .0
++        ),
 +        vec!["[load chart]"]
 +    );
 +}
++
++#[test]
++#[serial_test::serial]
++fn context_changes_drop_raster_pixels_and_pending_frames() {
++    let now = Instant::now();
++    let key = "raster-context";
++    for glyph in ["a", "b"] {
++        blit_at(
++            key,
++            "owner",
++            json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": [glyph]}),
++            now,
++        )
++        .expect("queued");
++    }
++    let (lines, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", now);
++    assert_eq!(text(&lines)[0], "a   ");
++    assert_eq!(next, Some(FRAME));
++    crate::mod_ui::invalidate_context();
++    let (lines, next) = super::rows(
++        key,
++        Some("owner"),
++        "new chart",
++        10,
++        (4, 2),
++        false,
++        "",
++        now + FRAME,
++    );
++    assert_eq!(text(&lines), vec!["[new chart]"]);
++    assert_eq!(next, None);
++    blit_at(
++        key,
++        "owner",
++        json!({"rect": {"x": 1, "y": 0, "width": 1, "height": 1}, "cells": ["c"]}),
++        now + FRAME,
++    )
++    .expect("new context queued");
++    let (lines, next) = super::rows(
++        key,
++        Some("owner"),
++        "new chart",
++        10,
++        (4, 2),
++        false,
++        "",
++        now + FRAME,
++    );
++    assert_eq!(text(&lines), vec![" c  ", "    "]);
++    assert_eq!(next, None);
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn owner_changes_drop_raster_pixels_and_pending_frames_before_a_new_blit() {
++    let now = Instant::now();
++    let key = "raster-owner";
++    for glyph in ["a", "b"] {
++        blit_at(
++            key,
++            "owner",
++            json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": [glyph]}),
++            now,
++        )
++        .expect("queued");
++    }
++    let (lines, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", now);
++    assert_eq!(text(&lines)[0], "a   ");
++    assert_eq!(next, Some(FRAME));
++    let (lines, next) = super::rows(
++        key,
++        Some("next-owner"),
++        "new chart",
++        10,
++        (4, 2),
++        false,
++        "",
++        now + FRAME,
++    );
++    assert_eq!(text(&lines), vec!["[new chart]"]);
++    assert_eq!(next, None);
++    blit(
++        "next-owner",
++        Some("next-owner".into()),
++        Some((4, 2)),
++        &json!({"key": key, "rect": {"x": 1, "y": 0, "width": 1, "height": 1}, "cells": ["c"]}),
++        now + FRAME,
++    )
++    .expect("new owner queued");
++    let (lines, next) = super::rows(
++        key,
++        Some("next-owner"),
++        "new chart",
++        10,
++        (4, 2),
++        false,
++        "",
++        now + FRAME,
++    );
++    assert_eq!(text(&lines), vec![" c  ", "    "]);
++    assert_eq!(next, None);
++    retain(&BTreeSet::new());
++}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..b46c3345e
+index 000000000..5f5d8daf0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,627 @@
+@@ -0,0 +1,639 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -127995,6 +128232,18 @@ index 000000000..b46c3345e
 +    kind: &'static str,
 +    text: String,
 +    owner: String,
++}
++
++pub(crate) fn clear_tool_notices() {
++    DRAWN_CALLS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .clear();
++    TOOL_NOTICES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .clear();
++    EPOCH.fetch_add(1, Ordering::Relaxed);
 +}
 +
 +/// Attaches a mod notice beneath the drawn transcript cell of one tool call; false, storing nothing, when no drawn cell claims the call.
@@ -128499,10 +128748,10 @@ index 000000000..b46c3345e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 000000000..3dcaec12a
+index 000000000..e6a54f078
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,149 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -128623,6 +128872,7 @@ index 000000000..3dcaec12a
 +#[test]
 +#[serial_test::serial]
 +fn tool_notices_report_whether_a_drawn_cell_claims_the_call() {
++    clear_tool_notices();
 +    let target = |id: &str| RenderTarget::new("tool_call", id, false, json!({}));
 +    assert!(!tool_notice("call_unseen", "info", "x", "checks"));
 +    assert!(
@@ -128631,7 +128881,25 @@ index 000000000..3dcaec12a
 +    );
 +    tool_notice_lines(&target("call_seen"));
 +    assert!(tool_notice("call_seen", "info", "x", "checks"));
-+    assert_eq!(tool_notice_lines(&target("call_seen")).len(), 1);
++    let shown = texts(&tool_notice_lines(&target("call_seen")));
++    assert_eq!(shown.len(), 1);
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    assert_eq!(
++        texts(&tool_notice_lines(&target("call_seen"))),
++        shown,
++        "ordinary view updates retain a tool's notice"
++    );
++    crate::mod_ui::invalidate_context();
++    assert!(
++        !tool_notice("call_seen", "info", "old call", "checks"),
++        "the previous thread's drawn call cannot claim a new notice"
++    );
++    assert!(tool_notice_lines(&target("call_seen")).is_empty());
++    assert!(tool_notice("call_seen", "info", "new thread", "checks"));
++    let shown = texts(&tool_notice_lines(&target("call_seen")));
++    assert_eq!(shown.len(), 1);
++    assert!(shown[0].contains("new thread"));
++    clear_tool_notices();
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
@@ -131957,10 +132225,10 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..ff17573c8
+index 000000000..76b3d3bf0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3715 @@
+@@ -0,0 +1,3717 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -132625,6 +132893,7 @@ index 000000000..ff17573c8
 +
 +pub(crate) fn invalidate_context() {
 +    crate::mod_components::invalidate();
++    crate::mod_render::clear_tool_notices();
 +    let (_, snapshot) = crate::omd::mod_snapshot();
 +    let context = crate::mod_runtime::active_context();
 +    if context.as_ref().is_some_and(|context| {
@@ -133649,6 +133918,7 @@ index 000000000..ff17573c8
 +            } => {
 +                let (lines, next) = crate::mod_raster::rows(
 +                    id,
++                    interaction.component_owners.get(id).map(String::as_str),
 +                    alt,
 +                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
 +                    (*columns, *rows_high),
