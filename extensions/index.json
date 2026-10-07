@@ -317,9 +317,9 @@
     },
     {
       "id": "omd_preview",
-      "version": "0.1.0-preview.3",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
-      "capability": "User-typed /preview of responses and Markdown, code or diff files as sanitized HTML in the browser or an inline dialog",
+      "capability": "User-typed /preview of responses and Markdown, code or diff files as sanitized HTML in the browser or an inline dialog, inline Mermaid drawings in responses and draft image thumbnails",
       "source": "mods/first-party/omd_preview",
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -761,9 +761,9 @@
     },
     {
       "id": "omd_advisor",
-      "version": "0.3.0-preview.1",
+      "version": "0.4.0-preview.1",
       "extension_type": "mod",
-      "capability": "An independent advisor reviews plans, stalls and claimed completion with typed, cited findings; Codex has no second-opinion reviewer",
+      "capability": "An independent advisor reviews plans, stalls and claimed completion with typed, cited findings and can flag consequential output the user should know",
       "source": "mods/first-party/omd_advisor",
       "license": "MIT",
       "maintainer": "Oh My Diff",

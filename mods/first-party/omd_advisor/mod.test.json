@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "settings": {
+    "omd_advisor": {
+      "observe": true
+    }
+  },
+  "host_operations": {
+    "evidence.read": [
+      {
+        "result": {
+          "reference": "evidence:1",
+          "text": "{\"turn_id\": \"turn-1\", \"thread_id\": \"fixture-thread\", \"workspace_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"records\": [{\"item\": 1, \"role\": \"user\", \"text\": \"Make uploads reliable\"}, {\"item\": 2, \"role\": \"assistant\", \"text\": \"I raised the upload retry limit to unlimited, so failed uploads now retry forever. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. \"}]}",
+          "cursor": null,
+          "bytes": 1
+        }
+      }
+    ],
+    "agents.spawn": [
+      {
+        "result": {
+          "handle": "observer-1",
+          "route": "astra",
+          "permissions": "read_only"
+        }
+      }
+    ],
+    "agents.inventory": [
+      {
+        "result": {
+          "agents": [
+            {
+              "agent_id": "observer-1",
+              "thread_id": "worker-thread",
+              "parent": {
+                "thread_id": "fixture-thread",
+                "agent_id": null
+              },
+              "origin": "mod",
+              "owner": "omd_advisor",
+              "definition": null,
+              "role": "advisor",
+              "status": "completed",
+              "started_at_ms": 0,
+              "ended_at_ms": 4200,
+              "duration_ms": 4200,
+              "turns": 1,
+              "last_turn": null,
+              "answer": null,
+              "usage": {
+                "requests": 1,
+                "input_tokens": 900,
+                "output_tokens": 80,
+                "cached_tokens": 0,
+                "microusd": 1200,
+                "basis": "settled",
+                "source": "accounting"
+              },
+              "reason": null
+            }
+          ]
+        }
+      }
+    ],
+    "agents.cancel": [
+      {
+        "result": {
+          "cancelled": false
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "event",
+      "event": "turn_end",
+      "payload": {
+        "turn_id": "turn-1",
+        "outcome": "completed",
+        "evidence": {
+          "reference": "evidence:1",
+          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": "agent_end",
+      "payload": {
+        "handle": "observer-1",
+        "role": "advisor",
+        "status": "completed",
+        "text": "{\"notes\": [{\"kind\": \"behavior_change\", \"implication\": \"Failed uploads never stop retrying, which can hide outages.\", \"detail\": \"The limit was removed rather than raised.\", \"quote\": \"retry limit to unlimited\"}]}",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    {
+      "type": "terminal_mount",
+      "mod": "omd_advisor"
+    },
+    {
+      "type": "terminal_interact",
+      "mod": "omd_advisor",
+      "component": "advisor_observation_list",
+      "value": "1"
+    },
+    {
+      "type": "terminal_mount",
+      "mod": "omd_advisor"
+    },
+    {
+      "type": "terminal_interact",
+      "mod": "omd_advisor",
+      "component": "advisor_observation_dismiss"
+    },
+    {
+      "type": "terminal_mount",
+      "mod": "omd_advisor"
+    }
+  ]
+}

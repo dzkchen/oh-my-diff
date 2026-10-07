@@ -1232,7 +1232,7 @@
   },
   "first_party_packages": {
     "omd_advisor": {
-      "version": "0.3.0-preview.1",
+      "version": "0.4.0-preview.1",
       "source": "mods/first-party/omd_advisor"
     },
     "omd_checks": {
@@ -1336,7 +1336,7 @@
       "source": "mods/first-party/omd_plan_removal"
     },
     "omd_preview": {
-      "version": "0.1.0-preview.3",
+      "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_preview"
     },
     "omd_profiles": {

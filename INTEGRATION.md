@@ -40,7 +40,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
-| `omd_advisor` | 0.3.0-preview.1 | `mods/first-party/omd_advisor` |
+| `omd_advisor` | 0.4.0-preview.1 | `mods/first-party/omd_advisor` |
 | `omd_checks` | 0.1.0-preview.1 | `mods/first-party/omd_checks` |
 | `omd_claude_cli` | 0.2.0-preview.3 | `mods/first-party/omd_claude_cli` |
 | `omd_continue` | 0.1.0-preview.1 | `mods/first-party/omd_continue` |
@@ -66,7 +66,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_panes` | 0.1.0-preview.3 | `mods/first-party/omd_panes` |
 | `omd_plan_panel` | 0.1.0-preview.1 | `mods/first-party/omd_plan_panel` |
 | `omd_plan_removal` | 0.1.0-preview.1 | `mods/first-party/omd_plan_removal` |
-| `omd_preview` | 0.1.0-preview.3 | `mods/first-party/omd_preview` |
+| `omd_preview` | 0.2.0-preview.1 | `mods/first-party/omd_preview` |
 | `omd_profiles` | 0.1.0-preview.2 | `mods/first-party/omd_profiles` |
 | `omd_programmable_context` | 0.1.0-preview.1 | `mods/first-party/omd_programmable_context` |
 | `omd_project_pi_prompts` | 0.1.0-preview.2 | `mods/first-party/omd_project_pi_prompts` |

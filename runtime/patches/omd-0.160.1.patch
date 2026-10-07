@@ -132225,10 +132225,10 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..76b3d3bf0
+index 000000000..f6599e04c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3717 @@
+@@ -0,0 +1,3718 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -134786,6 +134786,7 @@ index 000000000..76b3d3bf0
 +        let mut interaction = INTERACTION
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        interaction.component_owners = snapshot.component_owners.clone();
 +        component_rows(&site.components, width, &mut interaction, 0)
 +            .into_iter()
 +            .map(|row| HyperlinkLine {
@@ -135948,10 +135949,10 @@ index 000000000..76b3d3bf0
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..557d17a55
+index 000000000..d49d6d731
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1956 @@
+@@ -0,0 +1,1987 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -137347,6 +137348,37 @@ index 000000000..557d17a55
 +        ModView::parse(serde_json::json!({"sites":{"sidebar":{"components":[
 +            {"type":"line","id":"bad","label":"Bad","spans":[{"text":"x","link":"javascript:alert(1)"}]}]}}}))
 +        .is_err()
++    );
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn above_composer_rows_resolve_owners_of_components_new_in_this_view() {
++    let mut view = snapshot(serde_json::json!({"sites": {"above_composer": {"components": [
++        {"type":"raster","id":"band_chart","label":"Chart","alt":"cpu chart","width":3,"height":1}
++    ]}}}));
++    view.component_owners = [("band_chart".to_owned(), "demo".to_owned())]
++        .into_iter()
++        .collect();
++    crate::mod_raster::blit(
++        "demo",
++        Some("demo".into()),
++        Some((3, 1)),
++        &serde_json::json!({"key":"band_chart","rect":{"x":0,"y":0,"width":3,"height":1},"cells":["x","y","z"]}),
++        std::time::Instant::now(),
++    )
++    .expect("queued");
++    INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .component_owners
++        .clear();
++    preview(view);
++    let lines = footer_hyperlink_lines(40);
++    assert!(
++        lines.iter().any(|line| line.line.to_string().contains("xyz")),
++        "the footer draws before the frame's render refreshes owners"
 +    );
 +    preview(ModViewSnapshot::default());
 +}

@@ -1,8 +1,9 @@
 # omd_preview
 
-Opt-in first-party mod (`0.1.0-preview.2`, API `0.2.0-experimental.5`) that
+Opt-in first-party mod (`0.2.0-preview.1`, API `0.2.0-experimental.5`) that
 renders a response or a local Markdown, code or diff file as a themed HTML page
-and opens it in the browser.
+and opens it in the browser, draws Mermaid diagrams in responses as text and
+shows the draft's pasted images above the composer.
 
 ```text
 /preview                 the last response
@@ -10,6 +11,8 @@ and opens it in the browser.
 /preview PATH            a workspace Markdown, code or diff file
 /preview PATH --watch    also re-render PATH whenever it changes (at most 8 files)
 /preview ... --inline    show it in a terminal dialog instead
+/preview diagrams [N]    list the Mermaid diagrams in the last 10 responses, or inspect one
+/preview image [N]       preview the draft's Nth image
 /preview server [PORT]   open a server this session is listening on
 /preview unwatch         stop watching files
 /preview close           close the inline dialog
@@ -36,15 +39,61 @@ seconds, keeping its scroll position. `[[Note]]`, `[[Note|label]]` and
 `[[Note#heading]]` wiki links render as links to `Note.md` beside the file. `--inline` shows Markdown, code and diffs
 with the terminal's own components in a scrollable dialog (the first 4 KB of
 Markdown or code and 48 KB of a diff, with CRLF, tabs and terminal escapes
-normalized); images, math and diagrams render only in the browser. A declined
+normalized); images and math render only in the browser. A declined
 or unavailable browser leaves the written path in the message.
+
+## Mermaid diagrams in responses
+
+A `render` hook on finished assistant messages draws closed ```` ```mermaid ````
+and `~~~mermaid` fences as Unicode box drawing (`diagrams: ascii` for plain
+ASCII, `diagrams: off` for none) in place of their source: flowcharts and
+graphs (all four directions, node shapes, labels, dotted, thick, invisible and
+bidirectional links, `&` chains, subgraphs listed below the drawing), sequence
+diagrams (participants and actors, every arrow type, notes, `loop`/`alt`/`opt`/
+`par`/`critical`/`break` blocks, `autonumber`), class diagrams (members,
+generics, stereotypes, relations with cardinalities, namespaces and notes),
+state diagrams (`[*]` start and end states, scoped inside composite states,
+choice, fork and join, descriptions and notes), ER diagrams (attributes and
+cardinalities) and `xychart-beta` bar and line charts. A host-side match
+selects only messages that contain such a fence, so other messages never call
+the mod; the host caches each drawing until the message, width or setting
+changes. Text is measured in terminal cells (wide CJK and emoji count two,
+combining marks none), long labels wrap, and a graph that is too wide is drawn
+in the other orientation. The source must be at most 4 KB, 300 statements,
+60 nodes and 120 edges, and the drawing at most 200 rows, 10 KB and the
+terminal width; at most four diagrams per response are drawn. Anything else
+(an unsupported type, a parse error, an unclosed fence, a bound) keeps the
+original fence with a one-line reason. Responses over the 4 KiB render-prop
+limit keep their native drawing and get the diagrams from their first 4 KiB
+below it. `/preview diagrams N` opens the drawing at full size with its
+source and a copy button. The canonical transcript is never changed, and
+disabling the mod restores the native drawing at once.
+
+## Draft image thumbnails
+
+With `thumbnails` (default on) the mod reads the draft after every composer
+change and shows its PNG and JPEG attachments above the composer: up to three
+3-row thumbnails with their placeholder labels, each with a Preview button
+(click the thumbnail too), and a count of the rest. The images come from the
+host's draft attachment resources (`composer.read`), never from another
+program's cache; other formats or files over 8 MiB show a text tile. Pasting,
+removing or replacing an image, switching drafts and submitting update or clear
+the tiles, `start` and `resume` re-read the draft, and a preview of an image
+that left the draft closes. Kitty and Ghostty draw pixels; other terminals get
+half-block cells and `NO_COLOR` or very narrow terminals the label. The host
+hides the tiles while a question or approval is open. With `thumbnails: false`
+the mod registers no composer callback.
 
 Capabilities: `commands`, `terminal`, `store`, `sessions` (reads responses
 through `thread/turns/list` and listening ports through `sessions.ports`), `exec` (the renderer runs as a writing command under
-`.omd/preview`), `fs.read`, `events` and `lifecycle` (the watch timer). There is
-no pandoc, puppeteer, LaTeX or PDF export, and the terminal does not show
-rendered page images.
+`.omd/preview`), `fs.read`, `fs.write`, `events`, `lifecycle` (the watch timer)
+and `composer` (draft images). There is no pandoc, puppeteer, LaTeX or PDF
+export.
 
 Ported from [`pi-markdown-preview`](https://github.com/omaclaren/pi-markdown-preview)
 0.19.1 by Oliver MacLaren (MIT). This package reimplements its preview behavior
-with its own renderer and copies no code.
+with its own renderer and copies no code. The inline diagrams follow
+[`claude-mermaid`](https://github.com/galElmalah/claude-mods) 0.3.1 by Gal
+Elmalah (MIT) and the thumbnails [Claude Image
+View](https://github.com/jarrodwatts/claude-image-view) 0.1.0 by Jarrod Watts
+(MIT); both are reimplemented with no code copied.
