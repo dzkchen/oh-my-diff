@@ -59541,10 +59541,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..1cd5e34f2
+index 000000000..ea5ded0be
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,720 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -59627,6 +59627,7 @@ index 000000000..1cd5e34f2
 +    restarted: Mutex<BTreeMap<String, bool>>,
 +    watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
 +    subscribed: Mutex<BTreeSet<String>>,
++    bus_cursor: Mutex<String>,
 +    subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
 +    wake: Arc<tokio::sync::Notify>,
 +    delivery: Mutex<Option<Delivery>>,
@@ -59745,7 +59746,9 @@ index 000000000..1cd5e34f2
 +        if let Ok(mut subscriptions) = self.subscriptions.lock() {
 +            *subscriptions = runtime.subscriptions();
 +        }
-+        delivery::sync_bus(self);
++        if !delivery::sync_bus(self).is_empty() {
++            self.wake.notify_one();
++        }
 +        if let Ok(mut definitions) = self.definitions.lock() {
 +            *definitions = runtime.agent_definitions();
 +        }
@@ -60960,10 +60963,10 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..04c56547d
+index 000000000..237561eba
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,575 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -61143,84 +61146,34 @@ index 000000000..04c56547d
 +        );
 +    }
 +    let current = core.expansion.current();
-+    let mut budget = DELIVERIES_PER_ROUND;
-+    // Only what was queued when the round began: streaming process output must not starve the bus.
-+    let queued = core
++    let cursor = core
 +        .expansion
-+        .pending
++        .bus_cursor
 +        .lock()
-+        .map(|queue| queue.len())
++        .map(|cursor| cursor.clone())
 +        .unwrap_or_default();
-+    for _ in 0..queued.min(budget) {
++    let (later, earlier): (Vec<_>, Vec<_>) = sync_bus(&core.expansion)
++        .into_iter()
++        .partition(|id| *id > cursor);
++    let mut subscribers = later.into_iter().chain(earlier).collect();
++    let mut budget = DELIVERIES_PER_ROUND;
++    while budget > 0 {
 +        let next = core
 +            .expansion
 +            .pending
 +            .lock()
 +            .ok()
 +            .and_then(|mut queue| queue.pop_front());
-+        let Some(next) = next else {
-+            break;
-+        };
-+        budget -= 1;
-+        match next {
-+            Pending::Process {
-+                thread,
-+                owner,
-+                session,
-+                bytes,
-+            } => {
-+                let Some(lead) = core.expansion.thread(thread) else {
-+                    continue;
-+                };
-+                let payload = match bytes {
-+                    Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
-+                    None => {
-+                        json!({"session": session, "kind": "exit"})
-+                    }
-+                };
-+                invoke_one(core, &lead, owner, "process_event", payload).await;
-+            }
-+            Pending::Watch {
-+                thread,
-+                owner,
-+                watch,
-+                paths,
-+                include_ignored,
-+            } => {
-+                let Some(lead) = core.expansion.thread(thread) else {
-+                    continue;
-+                };
-+                let changes =
-+                    super::activity::external_changes(core, &lead, &paths, include_ignored).await;
-+                if changes.is_empty() {
-+                    continue;
-+                }
-+                let payload = json!({"repository": lead.host.repository, "source": "external",
-+                    "call_id": null, "watch_id": watch, "changes": changes, "status": "observed", "reason": null});
-+                invoke_one(core, &lead, owner, "workspace_change", payload).await;
-+            }
-+            Pending::Broadcast { event, payload } => {
-+                core.event(event, payload, current.as_ref()).await;
-+            }
-+            Pending::Timer { thread, owner, key } => {
-+                let Some(lead) = core.expansion.thread(thread) else {
-+                    continue;
-+                };
-+                invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
-+            }
-+        }
-+    }
-+    let ids = sync_bus(&core.expansion);
-+    for id in ids {
-+        if budget == 0 {
++        let channel = next_channel_event(&core.expansion, &mut subscribers);
++        if next.is_none() && channel.is_none() {
 +            break;
 +        }
-+        let events = codex_omd::event_bus::global()
-+            .lock()
-+            .map(|mut bus| bus.drain(&id, budget))
-+            .unwrap_or_default();
-+        for event in events {
++        if let Some(next) = next {
 +            budget -= 1;
++            deliver_pending(core, current.as_ref(), next).await;
++        }
++        if let Some((id, event)) = channel {
++            budget = budget.saturating_sub(1);
 +            let Some(lead) = ThreadId::from_string(&event.thread)
 +                .ok()
 +                .and_then(|thread| core.expansion.thread(thread))
@@ -61230,10 +61183,80 @@ index 000000000..04c56547d
 +            let payload = json!({"publisher": event.publisher, "channel": event.channel,
 +                "data": event.data, "correlation": event.correlation,
 +                "sequence": event.sequence, "dropped": event.dropped});
-+            invoke_one(core, &lead, id.clone(), "channel", payload).await;
++            invoke_one(core, &lead, id, "channel", payload).await;
 +        }
 +    }
 +    budget == 0
++}
++
++fn next_channel_event(
++    expansion: &State,
++    subscribers: &mut std::collections::VecDeque<String>,
++) -> Option<(String, codex_omd::event_bus::ChannelEvent)> {
++    let mut bus = codex_omd::event_bus::global().lock().ok()?;
++    while let Some(id) = subscribers.pop_front() {
++        let Some(event) = bus.drain(&id, 1).pop() else {
++            continue;
++        };
++        if bus.pending(&id) > 0 {
++            subscribers.push_back(id.clone());
++        }
++        if let Ok(mut cursor) = expansion.bus_cursor.lock() {
++            cursor.clone_from(&id);
++        }
++        return Some((id, event));
++    }
++    None
++}
++
++async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending) {
++    match next {
++        Pending::Process {
++            thread,
++            owner,
++            session,
++            bytes,
++        } => {
++            let Some(lead) = core.expansion.thread(thread) else {
++                return;
++            };
++            let payload = match bytes {
++                Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
++                None => {
++                    json!({"session": session, "kind": "exit"})
++                }
++            };
++            invoke_one(core, &lead, owner, "process_event", payload).await;
++        }
++        Pending::Watch {
++            thread,
++            owner,
++            watch,
++            paths,
++            include_ignored,
++        } => {
++            let Some(lead) = core.expansion.thread(thread) else {
++                return;
++            };
++            let changes =
++                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
++            if changes.is_empty() {
++                return;
++            }
++            let payload = json!({"repository": lead.host.repository, "source": "external",
++                "call_id": null, "watch_id": watch, "changes": changes, "status": "observed", "reason": null});
++            invoke_one(core, &lead, owner, "workspace_change", payload).await;
++        }
++        Pending::Broadcast { event, payload } => {
++            core.event(event, payload, current).await;
++        }
++        Pending::Timer { thread, owner, key } => {
++            let Some(lead) = core.expansion.thread(thread) else {
++                return;
++            };
++            invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
++        }
++    }
 +}
 +
 +pub(super) fn sync_bus(expansion: &State) -> Vec<String> {
@@ -62038,7 +62061,7 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..c6edd8c48
+index 000000000..b3cecd74d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 @@ -0,0 +1,3259 @@
@@ -62779,51 +62802,51 @@ index 000000000..c6edd8c48
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
-+async fn streaming_process_output_does_not_starve_channel_events() {
-+    let Some(fixture) = fixture(&[Package {
-+        id: "streamer",
-+        capabilities: &["events", "store", "commands", "exec"],
-+        manifest: json!({"subscriptions": {"channels": ["streamer/*"]}}),
-+        source: "export default function (api) {\n  api.on('process_event', () => {});\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
-+    }]) else {
++async fn busy_queue_and_subscriber_do_not_starve_other_channel_subscribers() {
++    let Some(fixture) = fixture(&[
++        Package {
++            id: "flooded",
++            capabilities: &["events"],
++            manifest: json!({"subscriptions": {"channels": ["floodgate/busy"]}}),
++            source: "export default function (api) { api.on('channel', () => {}); }\n",
++        },
++        Package {
++            id: "starved",
++            capabilities: &["events", "store", "commands"],
++            manifest: json!({"subscriptions": {"channels": ["floodgate/quiet"]}}),
++            source: "export default function (api) {\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
++        },
++    ]) else {
 +        return;
 +    };
 +    let core = &fixture.core;
-+    core.expansion
-+        .leads
-+        .lock()
-+        .unwrap()
-+        .insert(fixture.lead.thread, LeadHandle::new(&fixture.lead));
-+    let streaming = Arc::new(std::sync::atomic::AtomicBool::new(true));
-+    let feeder = {
-+        let (core, streaming, thread) = (core.clone(), streaming.clone(), fixture.lead.thread);
-+        std::thread::spawn(move || {
-+            while streaming.load(Ordering::Relaxed) {
-+                delivery::push(
-+                    &core.expansion,
-+                    delivery::Pending::Process {
-+                        thread,
-+                        owner: "streamer".into(),
-+                        session: "viewer".into(),
-+                        bytes: Some(1),
-+                    },
-+                );
-+                std::thread::sleep(std::time::Duration::from_millis(5));
-+            }
-+        })
-+    };
-+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-+    delivery::publish(
-+        core,
-+        &fixture.lead,
-+        "streamer",
-+        json!({"channel": "nav", "data": "go"}),
-+    )
-+    .unwrap();
-+    delivery::deliver(core).await;
-+    streaming.store(false, Ordering::Relaxed);
-+    feeder.join().unwrap();
-+    assert_eq!(command(core, "streamer", "seen"), json!("go"));
++    let elsewhere = ThreadId::new();
++    for session in (0..2 * 64).map(|index| ["a", "b"][index % 2]) {
++        delivery::push(
++            &core.expansion,
++            delivery::Pending::Process {
++                thread: elsewhere,
++                owner: "flooded".into(),
++                session: session.into(),
++                bytes: Some(1),
++            },
++        );
++    }
++    for (channel, data) in std::iter::repeat_n(("busy", "noise"), 64).chain([("quiet", "go")]) {
++        delivery::publish(
++            core,
++            &fixture.lead,
++            "floodgate",
++            json!({"channel": channel, "data": data}),
++        )
++        .unwrap();
++    }
++    assert!(delivery::deliver(core).await);
++    let mut bus = codex_omd::event_bus::global().lock().unwrap();
++    bus.unsubscribe("flooded");
++    bus.unsubscribe("starved");
++    drop(bus);
++    assert_eq!(command(core, "starved", "seen"), json!("go"));
 +}
 +
 +fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
@@ -125606,7 +125629,7 @@ index 000000000..bf8d3805c
 +}
 diff --git a/codex-rs/tui/src/mod_backdrop.rs b/codex-rs/tui/src/mod_backdrop.rs
 new file mode 100644
-index 000000000..90351ee33
+index 000000000..69431fda2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_backdrop.rs
 @@ -0,0 +1,415 @@
@@ -125770,8 +125793,8 @@ index 000000000..90351ee33
 +    )
 +}
 +
-+pub(crate) fn kitty_transmit(png: &[u8], header: &str) -> String {
-+    let payload = STANDARD.encode(png);
++pub(crate) fn kitty_transmit(payload: &[u8], header: &str) -> String {
++    let payload = STANDARD.encode(payload);
 +    let chunks: Vec<&[u8]> = payload.as_bytes().chunks(KITTY_CHUNK).collect();
 +    let mut command = String::new();
 +    for (index, chunk) in chunks.iter().enumerate() {
@@ -126198,10 +126221,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..6df8333a6
+index 000000000..f4fc2152b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,963 @@
+@@ -0,0 +1,1006 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -126780,6 +126803,7 @@ index 000000000..6df8333a6
 +    transmissions: Vec<(u32, Pixels, u16, u16)>,
 +    inline: BTreeMap<u32, Inline>,
 +    pending: Vec<String>,
++    directory: Option<tempfile::TempDir>,
 +}
 +
 +static IMAGES: Mutex<Images> = Mutex::new(Images {
@@ -126788,6 +126812,7 @@ index 000000000..6df8333a6
 +    transmissions: Vec::new(),
 +    inline: BTreeMap::new(),
 +    pending: Vec::new(),
++    directory: None,
 +});
 +
 +fn images() -> std::sync::MutexGuard<'static, Images> {
@@ -126797,8 +126822,14 @@ index 000000000..6df8333a6
 +}
 +
 +impl Images {
++    /// Kitty images also lose a queued transmission and any shared memory or file the terminal never read.
 +    fn drop_image(&mut self, id: u32) {
 +        if self.inline.remove(&id).is_none() {
++            self.transmissions.retain(|(queued, ..)| *queued != id);
++            unlink_shared(id);
++            if let Some(directory) = &self.directory {
++                let _ = std::fs::remove_file(directory.path().join(file_name(id)));
++            }
 +            self.pending.push(crate::mod_backdrop::kitty_remove(id));
 +        }
 +    }
@@ -126921,38 +126952,72 @@ index 000000000..6df8333a6
 +    }
 +}
 +
-+/// Raw pixels through shared memory or a temporary file Kitty reads and deletes: nothing to encode and nothing large on the terminal stream.
-+fn transmission(id: u32, pixels: &Pixels, columns: u16, rows: u16, shared: bool) -> Option<String> {
-+    use base64::Engine as _;
-+    let (medium, source) = match shared.then(|| shared_memory(id, &pixels.bytes)).flatten() {
-+        Some(name) => ("s", name),
-+        None => {
-+            let path = std::env::temp_dir().join(format!(
-+                "omd-tty-graphics-protocol-{}-{id}",
-+                std::process::id()
-+            ));
-+            std::fs::write(&path, &pixels.bytes).ok()?;
-+            ("t", path.to_string_lossy().into_owned())
-+        }
-+    };
-+    Some(format!(
-+        "\x1b_Ga=T,U=1,t={medium},f={},s={},v={},i={id},c={columns},r={rows},q=2;{}\x1b\\",
++fn file_name(id: u32) -> String {
++    format!("tty-graphics-protocol-{id}")
++}
++
++fn private_directory() -> Option<tempfile::TempDir> {
++    let mut builder = tempfile::Builder::new();
++    builder.prefix("omd-");
++    #[cfg(unix)]
++    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
++    builder.tempdir().ok()
++}
++
++/// Raw pixels through shared memory or a file in a private temporary directory that the terminal reads and deletes; inline when neither can be written.
++fn transmission(
++    directory: Option<&std::path::Path>,
++    id: u32,
++    pixels: &Pixels,
++    columns: u16,
++    rows: u16,
++    shared: bool,
++) -> String {
++    let header = format!(
++        "a=T,U=1,f={},s={},v={},i={id},c={columns},r={rows},q=2",
 +        if pixels.alpha { 32 } else { 24 },
 +        pixels.width,
 +        pixels.height,
-+        base64::engine::general_purpose::STANDARD.encode(source.as_bytes())
-+    ))
++    );
++    if let Some(name) = shared.then(|| shared_memory(id, &pixels.bytes)).flatten() {
++        return crate::mod_backdrop::kitty_transmit(name.as_bytes(), &format!("{header},t=s"));
++    }
++    match directory
++        .map(|directory| directory.join(file_name(id)))
++        .filter(|path| std::fs::write(path, &pixels.bytes).is_ok())
++    {
++        Some(path) => crate::mod_backdrop::kitty_transmit(
++            path.to_string_lossy().as_bytes(),
++            &format!("{header},t=t"),
++        ),
++        None => crate::mod_backdrop::kitty_transmit(&pixels.bytes, &format!("{header},t=d")),
++    }
 +}
 +
 +/// Sends this frame's new images before its placeholder cells reach the terminal: Kitty never shows placeholders drawn before their image exists.
 +pub(crate) fn transmit() {
 +    let shared = facts().shared_memory;
-+    let transmissions = std::mem::take(&mut images().transmissions);
++    let (transmissions, directory) = {
++        let mut images = images();
++        if images.transmissions.is_empty() {
++            return;
++        }
++        if images.directory.is_none() {
++            images.directory = private_directory();
++        }
++        (
++            std::mem::take(&mut images.transmissions),
++            images
++                .directory
++                .as_ref()
++                .map(|directory| directory.path().to_owned()),
++        )
++    };
 +    write(
 +        transmissions
 +            .iter()
-+            .filter_map(|(id, pixels, columns, rows)| {
-+                transmission(*id, pixels, *columns, *rows, shared)
++            .map(|(id, pixels, columns, rows)| {
++                transmission(directory.as_deref(), *id, pixels, *columns, *rows, shared)
 +            })
 +            .collect(),
 +    );
@@ -127033,12 +127098,13 @@ index 000000000..6df8333a6
 +    let mut images = images();
 +    images.transmissions.clear();
 +    for (_, id, _, _) in std::mem::take(&mut images.placed).into_values() {
-+        unlink_shared(id);
 +        images.drop_image(id);
 +    }
 +    let sequences = std::mem::take(&mut images.pending);
++    let directory = images.directory.take();
 +    drop(images);
 +    write(sequences);
++    drop(directory);
 +}
 +
 +/// Where each marker cell of `inline` images sits: id, buffer index, and the cell's row and column inside its image.
@@ -127167,10 +127233,10 @@ index 000000000..6df8333a6
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..ac4e763c3
+index 000000000..3cdf91a9a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,670 @@
 +use super::*;
 +use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
@@ -127217,32 +127283,75 @@ index 000000000..ac4e763c3
 +    let sent = std::mem::take(&mut images().transmissions);
 +    assert_eq!(sent.len(), 1);
 +    let (_, pixels, _, _) = &sent[0];
-+    let command = transmission(id, pixels, 4, 2, false).expect("written");
-+    let encoded = command
-+        .strip_prefix(&format!(
-+            "\x1b_Ga=T,U=1,t=t,f=24,s=1,v=1,i={id},c=4,r=2,q=2;"
-+        ))
-+        .and_then(|rest| rest.strip_suffix("\x1b\\"))
-+        .expect("temporary-file transmission");
-+    let path = String::from_utf8(
++    let payload = |command: String, medium: &str| {
++        let encoded = command
++            .strip_prefix(&format!(
++                "\x1b_Ga=T,U=1,f=24,s=1,v=1,i={id},c=4,r=2,q=2,t={medium},m=0;"
++            ))
++            .and_then(|rest| rest.strip_suffix("\x1b\\"))
++            .expect("one-chunk transmission");
 +        base64::engine::general_purpose::STANDARD
 +            .decode(encoded)
-+            .expect("base64 path"),
-+    )
-+    .expect("utf-8 path");
-+    assert!(path.contains("tty-graphics-protocol"));
++            .expect("base64 payload")
++    };
++    images().directory = private_directory();
++    let directory = images()
++        .directory
++        .as_ref()
++        .expect("private directory")
++        .path()
++        .to_owned();
++    #[cfg(unix)]
++    assert_eq!(
++        std::os::unix::fs::PermissionsExt::mode(
++            &std::fs::metadata(&directory)
++                .expect("directory")
++                .permissions()
++        ) & 0o777,
++        0o700
++    );
++    assert_eq!(
++        payload(
++            transmission(Some(&directory.join("missing")), id, pixels, 4, 2, false),
++            "d"
++        ),
++        vec![1, 2, 3],
++        "pixels go inline when the file can't be written"
++    );
++    let path = std::path::PathBuf::from(
++        String::from_utf8(payload(
++            transmission(Some(&directory), id, pixels, 4, 2, false),
++            "t",
++        ))
++        .expect("utf-8 path"),
++    );
++    assert_eq!(path, directory.join(file_name(id)));
++    assert!(path.to_string_lossy().contains("tty-graphics-protocol"));
 +    assert_eq!(std::fs::read(&path).expect("pixels"), vec![1, 2, 3]);
-+    std::fs::remove_file(path).expect("removed");
 +    assert!(images().pending.is_empty(), "nothing is deleted yet");
 +    let (next, _, _) = kitty_image("thumb", "b", png).expect("replaced");
++    assert!(!path.exists(), "a replaced image's unread file is removed");
++    let (last, _, _) = kitty_image("thumb", "c", png).expect("replaced");
 +    assert_ne!(next, id);
-+    assert_eq!(std::mem::take(&mut images().transmissions)[0].0, next);
-+    let pending = std::mem::take(&mut images().pending);
-+    assert_eq!(pending[0], crate::mod_backdrop::kitty_remove(id));
++    assert_eq!(
++        std::mem::take(&mut images().transmissions)
++            .iter()
++            .map(|(id, ..)| *id)
++            .collect::<Vec<_>>(),
++        vec![last],
++        "an image replaced before it was sent is never sent"
++    );
++    assert_eq!(
++        std::mem::take(&mut images().pending),
++        vec![
++            crate::mod_backdrop::kitty_remove(id),
++            crate::mod_backdrop::kitty_remove(next)
++        ]
++    );
 +    retain(&BTreeSet::new());
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(next)]
++        vec![crate::mod_backdrop::kitty_remove(last)]
 +    );
 +    kitty_image("other", "c", png).expect("placed");
 +    let removed = images().placed["other"].1;
@@ -127251,6 +127360,10 @@ index 000000000..ac4e763c3
 +        images().placed.is_empty()
 +            && images().pending.is_empty()
 +            && images().transmissions.is_empty()
++    );
++    assert!(
++        !directory.exists(),
++        "teardown removes the private directory"
 +    );
 +    assert_eq!(
 +        kitty_image("other", "c", png).map(|(id, _, _)| id == removed),
@@ -127796,7 +127909,7 @@ index 000000000..ac4e763c3
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..46063813b
+index 000000000..804833276
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
 @@ -0,0 +1,596 @@
@@ -128001,16 +128114,16 @@ index 000000000..46063813b
 +        resized = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
 +        &resized
 +    };
-+    let alpha = decoded.color().has_alpha();
++    let translucent = decoded
++        .color()
++        .has_alpha()
++        .then(|| decoded.to_rgba8())
++        .filter(|rgba| rgba.pixels().any(|pixel| pixel[3] < u8::MAX));
 +    crate::mod_client::Pixels {
-+        bytes: if alpha {
-+            decoded.to_rgba8().into_raw()
-+        } else {
-+            decoded.to_rgb8().into_raw()
-+        },
++        alpha: translucent.is_some(),
++        bytes: translucent.map_or_else(|| decoded.to_rgb8().into_raw(), image::RgbaImage::into_raw),
 +        width: decoded.width(),
 +        height: decoded.height(),
-+        alpha,
 +    }
 +}
 +
@@ -128398,10 +128511,10 @@ index 000000000..46063813b
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..af1cb80c2
+index 000000000..bf733c265
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,318 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -128651,6 +128764,21 @@ index 000000000..af1cb80c2
 +    assert_eq!(fit((900, 1600), 40, 12, (8, 16)), (14, 12));
 +    assert_eq!(fit((900, 1600), 40, 12, (10, 20)), (14, 12));
 +    assert_eq!(fit((1, 4000), 40, 12, (8, 16)), (1, 12));
++}
++
++#[test]
++fn only_translucent_images_are_sent_with_alpha() {
++    let pixels = |alpha: u8| {
++        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
++            2,
++            1,
++            image::Rgba([1, 2, 3, alpha]),
++        ));
++        let pixels = placement_pixels(&image, 1, 1, (8, 16));
++        (pixels.alpha, pixels.bytes)
++    };
++    assert_eq!(pixels(u8::MAX), (false, vec![1, 2, 3, 1, 2, 3]));
++    assert_eq!(pixels(7), (true, vec![1, 2, 3, 7, 1, 2, 3, 7]));
 +}
 +
 +#[test]

@@ -735,51 +735,51 @@ async fn declared_subscriptions_receive_publications_before_any_delivery_round()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn streaming_process_output_does_not_starve_channel_events() {
-    let Some(fixture) = fixture(&[Package {
-        id: "streamer",
-        capabilities: &["events", "store", "commands", "exec"],
-        manifest: json!({"subscriptions": {"channels": ["streamer/*"]}}),
-        source: "export default function (api) {\n  api.on('process_event', () => {});\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
-    }]) else {
+async fn busy_queue_and_subscriber_do_not_starve_other_channel_subscribers() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "flooded",
+            capabilities: &["events"],
+            manifest: json!({"subscriptions": {"channels": ["floodgate/busy"]}}),
+            source: "export default function (api) { api.on('channel', () => {}); }\n",
+        },
+        Package {
+            id: "starved",
+            capabilities: &["events", "store", "commands"],
+            manifest: json!({"subscriptions": {"channels": ["floodgate/quiet"]}}),
+            source: "export default function (api) {\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
+        },
+    ]) else {
         return;
     };
     let core = &fixture.core;
-    core.expansion
-        .leads
-        .lock()
-        .unwrap()
-        .insert(fixture.lead.thread, LeadHandle::new(&fixture.lead));
-    let streaming = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let feeder = {
-        let (core, streaming, thread) = (core.clone(), streaming.clone(), fixture.lead.thread);
-        std::thread::spawn(move || {
-            while streaming.load(Ordering::Relaxed) {
-                delivery::push(
-                    &core.expansion,
-                    delivery::Pending::Process {
-                        thread,
-                        owner: "streamer".into(),
-                        session: "viewer".into(),
-                        bytes: Some(1),
-                    },
-                );
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-        })
-    };
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    delivery::publish(
-        core,
-        &fixture.lead,
-        "streamer",
-        json!({"channel": "nav", "data": "go"}),
-    )
-    .unwrap();
-    delivery::deliver(core).await;
-    streaming.store(false, Ordering::Relaxed);
-    feeder.join().unwrap();
-    assert_eq!(command(core, "streamer", "seen"), json!("go"));
+    let elsewhere = ThreadId::new();
+    for session in (0..2 * 64).map(|index| ["a", "b"][index % 2]) {
+        delivery::push(
+            &core.expansion,
+            delivery::Pending::Process {
+                thread: elsewhere,
+                owner: "flooded".into(),
+                session: session.into(),
+                bytes: Some(1),
+            },
+        );
+    }
+    for (channel, data) in std::iter::repeat_n(("busy", "noise"), 64).chain([("quiet", "go")]) {
+        delivery::publish(
+            core,
+            &fixture.lead,
+            "floodgate",
+            json!({"channel": channel, "data": data}),
+        )
+        .unwrap();
+    }
+    assert!(delivery::deliver(core).await);
+    let mut bus = codex_omd::event_bus::global().lock().unwrap();
+    bus.unsubscribe("flooded");
+    bus.unsubscribe("starved");
+    drop(bus);
+    assert_eq!(command(core, "starved", "seen"), json!("go"));
 }
 
 fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {

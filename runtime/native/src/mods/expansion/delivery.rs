@@ -177,84 +177,34 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
         );
     }
     let current = core.expansion.current();
-    let mut budget = DELIVERIES_PER_ROUND;
-    // Only what was queued when the round began: streaming process output must not starve the bus.
-    let queued = core
+    let cursor = core
         .expansion
-        .pending
+        .bus_cursor
         .lock()
-        .map(|queue| queue.len())
+        .map(|cursor| cursor.clone())
         .unwrap_or_default();
-    for _ in 0..queued.min(budget) {
+    let (later, earlier): (Vec<_>, Vec<_>) = sync_bus(&core.expansion)
+        .into_iter()
+        .partition(|id| *id > cursor);
+    let mut subscribers = later.into_iter().chain(earlier).collect();
+    let mut budget = DELIVERIES_PER_ROUND;
+    while budget > 0 {
         let next = core
             .expansion
             .pending
             .lock()
             .ok()
             .and_then(|mut queue| queue.pop_front());
-        let Some(next) = next else {
-            break;
-        };
-        budget -= 1;
-        match next {
-            Pending::Process {
-                thread,
-                owner,
-                session,
-                bytes,
-            } => {
-                let Some(lead) = core.expansion.thread(thread) else {
-                    continue;
-                };
-                let payload = match bytes {
-                    Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
-                    None => {
-                        json!({"session": session, "kind": "exit"})
-                    }
-                };
-                invoke_one(core, &lead, owner, "process_event", payload).await;
-            }
-            Pending::Watch {
-                thread,
-                owner,
-                watch,
-                paths,
-                include_ignored,
-            } => {
-                let Some(lead) = core.expansion.thread(thread) else {
-                    continue;
-                };
-                let changes =
-                    super::activity::external_changes(core, &lead, &paths, include_ignored).await;
-                if changes.is_empty() {
-                    continue;
-                }
-                let payload = json!({"repository": lead.host.repository, "source": "external",
-                    "call_id": null, "watch_id": watch, "changes": changes, "status": "observed", "reason": null});
-                invoke_one(core, &lead, owner, "workspace_change", payload).await;
-            }
-            Pending::Broadcast { event, payload } => {
-                core.event(event, payload, current.as_ref()).await;
-            }
-            Pending::Timer { thread, owner, key } => {
-                let Some(lead) = core.expansion.thread(thread) else {
-                    continue;
-                };
-                invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
-            }
-        }
-    }
-    let ids = sync_bus(&core.expansion);
-    for id in ids {
-        if budget == 0 {
+        let channel = next_channel_event(&core.expansion, &mut subscribers);
+        if next.is_none() && channel.is_none() {
             break;
         }
-        let events = codex_omd::event_bus::global()
-            .lock()
-            .map(|mut bus| bus.drain(&id, budget))
-            .unwrap_or_default();
-        for event in events {
+        if let Some(next) = next {
             budget -= 1;
+            deliver_pending(core, current.as_ref(), next).await;
+        }
+        if let Some((id, event)) = channel {
+            budget = budget.saturating_sub(1);
             let Some(lead) = ThreadId::from_string(&event.thread)
                 .ok()
                 .and_then(|thread| core.expansion.thread(thread))
@@ -264,10 +214,80 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
             let payload = json!({"publisher": event.publisher, "channel": event.channel,
                 "data": event.data, "correlation": event.correlation,
                 "sequence": event.sequence, "dropped": event.dropped});
-            invoke_one(core, &lead, id.clone(), "channel", payload).await;
+            invoke_one(core, &lead, id, "channel", payload).await;
         }
     }
     budget == 0
+}
+
+fn next_channel_event(
+    expansion: &State,
+    subscribers: &mut std::collections::VecDeque<String>,
+) -> Option<(String, codex_omd::event_bus::ChannelEvent)> {
+    let mut bus = codex_omd::event_bus::global().lock().ok()?;
+    while let Some(id) = subscribers.pop_front() {
+        let Some(event) = bus.drain(&id, 1).pop() else {
+            continue;
+        };
+        if bus.pending(&id) > 0 {
+            subscribers.push_back(id.clone());
+        }
+        if let Ok(mut cursor) = expansion.bus_cursor.lock() {
+            cursor.clone_from(&id);
+        }
+        return Some((id, event));
+    }
+    None
+}
+
+async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending) {
+    match next {
+        Pending::Process {
+            thread,
+            owner,
+            session,
+            bytes,
+        } => {
+            let Some(lead) = core.expansion.thread(thread) else {
+                return;
+            };
+            let payload = match bytes {
+                Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
+                None => {
+                    json!({"session": session, "kind": "exit"})
+                }
+            };
+            invoke_one(core, &lead, owner, "process_event", payload).await;
+        }
+        Pending::Watch {
+            thread,
+            owner,
+            watch,
+            paths,
+            include_ignored,
+        } => {
+            let Some(lead) = core.expansion.thread(thread) else {
+                return;
+            };
+            let changes =
+                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
+            if changes.is_empty() {
+                return;
+            }
+            let payload = json!({"repository": lead.host.repository, "source": "external",
+                "call_id": null, "watch_id": watch, "changes": changes, "status": "observed", "reason": null});
+            invoke_one(core, &lead, owner, "workspace_change", payload).await;
+        }
+        Pending::Broadcast { event, payload } => {
+            core.event(event, payload, current).await;
+        }
+        Pending::Timer { thread, owner, key } => {
+            let Some(lead) = core.expansion.thread(thread) else {
+                return;
+            };
+            invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
+        }
+    }
 }
 
 pub(super) fn sync_bus(expansion: &State) -> Vec<String> {
