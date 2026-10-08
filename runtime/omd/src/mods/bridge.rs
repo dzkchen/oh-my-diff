@@ -214,12 +214,24 @@ pub(super) fn run(
         "adapter": loaded.adapter,
     });
     request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
+    // Renders cannot call the host or write state, so one activated runner serves every render of
+    // this package revision, settings and state.
+    let warm = (event == "intercept" && request["payload"]["surface"] == "render").then(|| {
+        request["serve"] = Value::Bool(true);
+        let mut key = request.clone();
+        if let Some(fields) = key.as_object_mut() {
+            for field in ["name", "payload", "receipts"] {
+                fields.remove(field);
+            }
+        }
+        format!("{}:{}", node.display(), digest(key.to_string().as_bytes()))
+    });
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
     let mut reply: Reply = loop {
         request["receipts"] = Value::Array(receipts.clone());
-        let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
+        let mut answer = |frame: Value| -> Result<Value> {
             if event == "inspect" {
                 return Err(failure("invalid_host_call_sequence"));
             }
@@ -264,7 +276,11 @@ pub(super) fn run(
             }
             scope.check_execution(started.elapsed().saturating_sub(waited))?;
             Ok(receipt)
-        });
+        };
+        let evaluated = match &warm {
+            Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
+            None => process::evaluate(node, &request, budget, active, &mut answer),
+        };
         let reply: Reply = serde_json::from_value(evaluated?)?;
         let Some(call) = reply
             .host_call

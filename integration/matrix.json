@@ -1202,6 +1202,7 @@
         "omd_source_knowledge",
         "omd_task_tools",
         "omd_theme",
+        "omd_tool_lines",
         "omd_typed_tasks",
         "omd_update",
         "omd_usage",
@@ -1214,6 +1215,7 @@
         "omd_logo",
         "omd_model_picker",
         "omd_mods",
+        "omd_tool_lines",
         "omd_update",
         "omd_workspace"
       ],
@@ -1391,6 +1393,10 @@
     "omd_theme": {
       "version": "0.4.0-candidate.3",
       "source": "mods/first-party/omd_theme"
+    },
+    "omd_tool_lines": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_tool_lines"
     },
     "omd_typed_tasks": {
       "version": "0.2.0-preview.1",

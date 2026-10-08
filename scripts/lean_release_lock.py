@@ -163,7 +163,7 @@ def build(artifact_dir, package_mode=False):
             "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods", "omd_update"], "first_party_default_active": ["omd_logo", "omd_mods", "omd_update"],
                          "plugin_sources": []},
             "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace"],
+                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_tool_lines", "omd_update", "omd_workspace"],
                      "plugin_sources": sorted((*selected, *support.SELECTED_OPTIONAL_PLUGINS))},
         },
         "qualification": "development package candidate; supported collection and default pending",

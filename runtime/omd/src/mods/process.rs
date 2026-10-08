@@ -8,6 +8,8 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
+use std::process::ChildStdin;
+use std::process::ChildStdout;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -47,13 +49,19 @@ fn stop(mut child: Child) {
     let _ = child.wait();
 }
 
-/// Trims the warm pool back to one runner once callbacks have been idle for five seconds.
+/// Trims the warm pool back to one runner once callbacks have been idle for five seconds, and
+/// stops render runners unused for a minute.
 fn reap() {
     static REAPER: std::sync::Once = std::sync::Once::new();
     REAPER.call_once(|| {
         std::thread::spawn(|| {
             loop {
                 std::thread::sleep(Duration::from_secs(1));
+                if let Ok(mut warm) = WARM.lock() {
+                    for runner in warm.extract_if(.., |runner| runner.used.elapsed() >= WARM_IDLE) {
+                        stop(runner.child);
+                    }
+                }
                 let Ok(mut spares) = SPARES.lock() else {
                     return;
                 };
@@ -106,33 +114,16 @@ fn runner(node: &Path) -> Result<Child> {
     warm.map_or_else(|| spawn(node), Ok)
 }
 
-pub(super) fn evaluate(
-    node: &Path,
-    request: &Value,
-    budget: Duration,
-    active: &dyn Fn() -> bool,
-    host: &mut dyn FnMut(Value) -> Result<Value>,
-) -> Result<Value> {
+fn request_line(request: &Value) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
     if bytes.len() > 524_288 {
         return Err(failure("input_limit"));
     }
     bytes.push(b'\n');
-    let mut child = runner(node)?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| failure("missing_stderr"))?;
-    let errors = std::thread::spawn(move || {
-        let mut output = Vec::new();
-        let _ = stderr.take(769).read_to_end(&mut output);
-        output
-    });
-    let mut stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| failure("missing_stdout"))?;
+    Ok(bytes)
+}
+
+fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHandle<()>) {
     let (sender, lines) = mpsc::channel();
     let reader = std::thread::spawn(move || {
         let mut stdout = BufReader::new(stdout);
@@ -148,40 +139,173 @@ pub(super) fn evaluate(
             }
         }
     });
+    (lines, reader)
+}
+
+/// Sends one request and answers its host calls until the runner writes its result line.
+fn converse(
+    stdin: &mut ChildStdin,
+    lines: &mpsc::Receiver<Vec<u8>>,
+    bytes: &[u8],
+    budget: Duration,
+    active: &dyn Fn() -> bool,
+    host: &mut dyn FnMut(Value) -> Result<Value>,
+) -> (Result<Vec<u8>>, Instant) {
     let mut deadline = Instant::now() + budget + Duration::from_millis(250);
-    let output = if let Err(error) = stdin.write_all(&bytes) {
-        Err(error)
-    } else {
-        loop {
-            if !active() {
-                break Err(failure("callback_cancelled"));
-            }
-            let line = match lines.recv_timeout(Duration::from_millis(10)) {
-                Ok(line) => line,
-                Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
-                Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
-                Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(Vec::new()),
-            };
-            if line.len() > 262_144 {
-                break Err(failure("output_limit"));
-            }
-            let frame = match serde_json::from_slice::<Value>(&line) {
-                Ok(frame) if frame.get("call").is_some() => frame,
-                _ => break Ok(line),
-            };
-            let started = Instant::now();
-            let receipt = match host(frame) {
-                Ok(receipt) => receipt,
-                Err(error) => break Err(error),
-            };
-            deadline += started.elapsed();
-            let mut receipt = receipt.to_string().into_bytes();
-            receipt.push(b'\n');
-            if let Err(error) = stdin.write_all(&receipt) {
-                break Err(error);
-            }
+    if let Err(error) = stdin.write_all(bytes) {
+        return (Err(error.into()), deadline);
+    }
+    let output = loop {
+        if !active() {
+            break Err(failure("callback_cancelled"));
+        }
+        let line = match lines.recv_timeout(Duration::from_millis(10)) {
+            Ok(line) => line,
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(Vec::new()),
+        };
+        if line.len() > 262_144 {
+            break Err(failure("output_limit"));
+        }
+        let frame = match serde_json::from_slice::<Value>(&line) {
+            Ok(frame) if frame.get("call").is_some() => frame,
+            _ => break Ok(line),
+        };
+        let started = Instant::now();
+        let receipt = match host(frame) {
+            Ok(receipt) => receipt,
+            Err(error) => break Err(error),
+        };
+        deadline += started.elapsed();
+        let mut receipt = receipt.to_string().into_bytes();
+        receipt.push(b'\n');
+        if let Err(error) = stdin.write_all(&receipt) {
+            break Err(error.into());
         }
     };
+    (output, deadline)
+}
+
+struct Warm {
+    key: String,
+    child: Child,
+    stdin: ChildStdin,
+    lines: mpsc::Receiver<Vec<u8>>,
+    used: Instant,
+}
+
+static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
+const WARM_RUNNERS: usize = 4;
+const WARM_IDLE: Duration = Duration::from_secs(60);
+
+fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
+    let mut child = runner(node)?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| failure("missing_stderr"))?;
+    std::thread::spawn(move || std::io::copy(&mut { stderr }, &mut std::io::sink()));
+    let stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| failure("missing_stdout"))?;
+    Ok(Warm {
+        key: key.to_owned(),
+        child,
+        stdin,
+        lines: lines(stdout).0,
+        used: Instant::now(),
+    })
+}
+
+/// Evaluates a render callback in a runner that stays activated for later renders with the same
+/// `key`: the package, its settings and state, everything except the render's own input.
+pub(super) fn evaluate_warm(
+    node: &Path,
+    key: &str,
+    request: &Value,
+    budget: Duration,
+    active: &dyn Fn() -> bool,
+    host: &mut dyn FnMut(Value) -> Result<Value>,
+) -> Result<Value> {
+    let bytes = request_line(request)?;
+    let reused = WARM.lock().ok().and_then(|mut warm| {
+        let index = warm.iter().position(|runner| runner.key == key)?;
+        let mut runner = warm.swap_remove(index);
+        if matches!(runner.child.try_wait(), Ok(None)) {
+            Some(runner)
+        } else {
+            stop(runner.child);
+            None
+        }
+    });
+    let mut warm = match reused {
+        Some(warm) => warm,
+        None => warm_runner(node, key)?,
+    };
+    let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
+    let value = output.and_then(|line| {
+        serde_json::from_slice::<Value>(&line)
+            .map_err(|_| failure("mod_process_failed: the render runner ended"))
+    });
+    match value {
+        Ok(value) if value.get("error").is_none() => {
+            warm.used = Instant::now();
+            if let Ok(mut runners) = WARM.lock() {
+                runners.push(warm);
+                while runners.len() > WARM_RUNNERS {
+                    if let Some(oldest) = runners
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, runner)| runner.used)
+                        .map(|(index, _)| index)
+                    {
+                        stop(runners.swap_remove(oldest).child);
+                    }
+                }
+            }
+            Ok(value)
+        }
+        Ok(value) => {
+            stop(warm.child);
+            Err(failure(
+                value["error"].as_str().unwrap_or("mod_process_failed"),
+            ))
+        }
+        Err(error) => {
+            stop(warm.child);
+            Err(error)
+        }
+    }
+}
+
+pub(super) fn evaluate(
+    node: &Path,
+    request: &Value,
+    budget: Duration,
+    active: &dyn Fn() -> bool,
+    host: &mut dyn FnMut(Value) -> Result<Value>,
+) -> Result<Value> {
+    let bytes = request_line(request)?;
+    let mut child = runner(node)?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| failure("missing_stderr"))?;
+    let errors = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let _ = stderr.take(769).read_to_end(&mut output);
+        output
+    });
+    let mut stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| failure("missing_stdout"))?;
+    let (lines, reader) = lines(stdout);
+    let (output, deadline) = converse(&mut stdin, &lines, &bytes, budget, active, host);
     drop(stdin);
     if output.is_ok() {
         while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {

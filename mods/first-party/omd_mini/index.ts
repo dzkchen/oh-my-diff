@@ -82,9 +82,9 @@ export default function activate(api: ModAPI) {
     const { props } = event as RenderEvent<'composer_hint'>;
     return mode.get() === 'mini' && props.slot === 'placeholder' ? next({ ...event, props: { ...props, placeholder: 'Ask anything · /omd_mini:switch opens the full UI' } } as RenderEvent<'composer_hint'>) : next(event);
   });
-  api.intercept('render', { match: { component: 'command_output', lifecycle: 'final' } }, (event, next) => {
-    const { props } = event as RenderEvent<'command_output'>;
-    if (mode.get() !== 'mini' || props.exit_code !== 0 || props.user_shell) return next(event);
+  api.intercept('render', { match: { component: 'tool_call', lifecycle: 'final', props: { kind: 'exec' } } }, (event, next) => {
+    const { props } = event as RenderEvent<'tool_call'>;
+    if (mode.get() !== 'mini' || props.kind !== 'exec' || props.expanded || props.exit_code !== 0 || props.user_shell) return next(event);
     return { tree: [{ type: 'line', id: 'mini_compact', label: 'Completed command', spans: [
       { text: `• Ran ${fit(props.command, 120)}`, tone: 'success' }, { text: ` · ${props.output_lines} output lines`, tone: 'muted' }] }] };
   });

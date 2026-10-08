@@ -78,7 +78,18 @@ const rendering = request.event === 'intercept' && request.payload?.surface === 
 let activating = true;
 let pending = null;
 const calls = [];
-const receipts = request.receipts ?? [];
+let receipts = request.receipts ?? [];
+// A warm render runner answers the next render with the activated mod, from that render's own input.
+function serve(line) {
+  const next = JSON.parse(line);
+  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
+  receipts = request.receipts;
+  state = structuredCloneFallback(request.state);
+  reads.clear();
+  calls.length = 0;
+  updates.length = 0;
+  pending = null;
+}
 const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
@@ -634,7 +645,7 @@ const api = Object.freeze({
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => rendering ? request.state : state, request, calls,
-  pending: () => pending, ready: () => { activating = false; }, suspension };
+  pending: () => pending, ready: () => { activating = false; }, suspension, serve };
 `;
 try {
   const setup = new SourceTextModule(bootstrap, { context });
@@ -695,7 +706,34 @@ try {
   await dispatch.link(() => { throw new Error('unsupported_import'); });
   await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
   if (context.__result.length > 262144) throw new Error('output_limit');
-  process.stdout.write(context.__result);
+  if (!request.serve) process.stdout.write(context.__result);
+  if (request.serve) {
+    const step = new SourceTextModule(`
+      const omd = globalThis.__omd;
+      globalThis.__step = async line => {
+        omd.serve(line);
+        let value = null;
+        try {
+          value = await omd.intercept(omd.request.payload) ?? null;
+          if (omd.pending()) throw new Error('swallowed_host_suspension');
+        } catch (error) {
+          if (error !== omd.suspension) throw error;
+        }
+        if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
+        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
+      };
+    `, { context });
+    await step.link(() => { throw new Error('unsupported_import'); });
+    await step.evaluate();
+    let result = context.__result;
+    for (;;) {
+      writeSync(1, result + '\n');
+      const line = readLine();
+      if (!line) break;
+      result = await context.__step(line);
+      if (result.length > 262144) throw new Error('output_limit');
+    }
+  }
 } catch (error) {
   const files = [request.filename, request.surface?.adapter?.filename,
     ...Object.values(request.surface?.adapter?.aliases ?? {}).map(module => module.filename)].filter(Boolean);

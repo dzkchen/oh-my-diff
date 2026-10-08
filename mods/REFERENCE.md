@@ -1321,11 +1321,8 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
 | `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
-| `tool_call` | call ID | `kind` (`mcp`/`dynamic`), `server`, `tool`, `arguments`, `status`, `duration_ms` | — |
+| `tool_call` | call ID (row ID for agent and image rows) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
-| `tool_group` | first call ID | `calls` of grouped exploration commands, `running` | — |
-| `tool_progress` | call ID | a running command, MCP or dynamic call (`tool_call` or `command_output` props) | — |
-| `command_output` | call ID | `command`, `exit_code`, `duration_ms`, `output_lines`, `output_tail`, `user_shell` | — |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
 | `turn_duration` | `turn-<completed ms>` | `seconds`, `completed_at_ms` | — |
 | `notice` | content digest | `kind` (`info`/`warning`/`error`), `text`, `hint` | `text` |
@@ -1335,7 +1332,13 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `list` | view ID | `view_id`, `title`, `subtitle`, `items`, `selected` | — |
 
 Text props carry at most 4 KiB; a content digest is stable across resume and
-reflow, so equal content draws identically. Approval overlays have no render
+reflow, so equal content draws identically. Tool rows are offered once committed
+to history; the running call below the transcript keeps its native progress
+drawing. In the fullscreen transcript a hooked tool row needs no control row: F4
+focuses it and Enter, →/← or a click opens and closes it, and `expanded` is
+`true` while it is open and for every row of the full transcript (Ctrl+T), so a
+hook that shortens rows returns `next(e)` then. Selection copies what is drawn;
+raw mode never runs hooks. Approval overlays have no render
 hook: their identity, decision text, options, focus and grants stay native, and
 `surface_styles.approval` only paints the frame. A question hook changes the
 presentation only; answers, focus and keys stay with the native dialog. The
@@ -1343,7 +1346,10 @@ existing panes, `above_composer` band and named sites stay declarative views.
 
 Render callbacks get no host operations and cannot write state
 (`render_side_effect_refused`; a write during activation stays local to that
-render); read `api.state` or atoms instead. A tree
+render); read `api.state` or atoms instead. Renders run in a runner that stays
+activated for the same package revision, settings and state, so a render costs
+well under a millisecond after the first; module variables may survive between
+renders, so never draw from them. A tree
 lives until its input changes or a state key its hooks read changes: live
 components redraw asynchronously and keep their last tree until the new one
 arrives, fullscreen transcript cells redraw the same way, and inline scrollback,

@@ -65,13 +65,14 @@ test('optional focus flow compacts only successful agent commands and retains it
   const initial = run(name, 'terminal', { event: 'idle', ledger: null });
   assert.deepEqual(initial.value, { keybindings: { F9: { command: 'omd_focus_flow:toggle' } } });
   const render = (state, props) => {
-    const input = { component: 'command_output', id: 'call-1', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'final', owner: null,
-      props: { kind: 'exec', call_id: 'call-1', command: 'npm test', exit_code: 0, duration_ms: 5, output_lines: 40, output_tail: 'ok', user_shell: false, ...props } };
+    const input = { component: 'tool_call', id: 'call-1', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'final', owner: null,
+      props: { kind: 'exec', call_id: 'call-1', command: 'npm test', parsed: [], status: 'completed', expanded: false, exit_code: 0, duration_ms: 5, output_lines: 40, output_tail: 'ok', user_shell: false, ...props } };
     return run(name, 'intercept', { surface: 'render', input, original: input, origin: { caller: 'engine' } }, state, {}, null, '0');
   };
   assert.deepEqual(render(null, {}).value.result.tree[0].spans.map(span => span.text), ['• Ran npm test', ' · 40 output lines']);
   assert.equal(render(null, { exit_code: 1 }).host_call.operation, 'continuation.next');
   assert.equal(render(null, { user_shell: true }).host_call.operation, 'continuation.next');
+  assert.equal(render(null, { expanded: true }).host_call.operation, 'continuation.next');
   const toggled = run(name, 'command', null, initial.state, {}, null, 'toggle');
   assert.match(toggled.value.display, /expanded/);
   assert.equal(toggled.state, false);

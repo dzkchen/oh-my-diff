@@ -56,6 +56,7 @@ the versioned cache directory.
 | `omd_typed_tasks` | mod | Bounded workers with typed results | OMD+, installed inactive |
 | `omd_logo` | mod | Oh My Diff terminal logo and launch status | Both profiles, active by default |
 | `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | OMD+, active by default |
+| `omd_tool_lines` | mod | One line per agent tool call | OMD+, active by default |
 | `omd_update` | mod | Update notices and `/update` controls | Both profiles, active by default |
 | `omd_git` | mod | Git sidebar with confirmed source-control actions and read-only GitHub PR and CI status | OMD+, installed inactive |
 | `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | OMD+, inactive candidate |

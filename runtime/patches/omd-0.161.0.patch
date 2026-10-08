@@ -32127,6 +32127,44 @@ index 15dac9770..15d52e947 100644
      }
 
      pub(crate) fn clear_token_usage(&mut self) {
+diff --git a/codex-rs/tui/src/chatwidget/activity_presentation.rs b/codex-rs/tui/src/chatwidget/activity_presentation.rs
+index 573a4770f..683f68481 100644
+--- a/codex-rs/tui/src/chatwidget/activity_presentation.rs
++++ b/codex-rs/tui/src/chatwidget/activity_presentation.rs
+@@ -31,12 +31,21 @@ impl ChatWidget {
+         };
+         let has_activity = mode == HistoryRenderMode::Rich
+             && active.is_some_and(|cell| !cell.activity_ids().is_empty());
++        let mut replaced = false;
+         let activity = active.map_or_else(Vec::new, |cell| {
+-            if expanded && has_activity {
+-                cell.expanded_hyperlink_lines(width)
+-            } else {
+-                render_compact(cell, width)
++            if !has_activity {
++                return render_compact(cell, width);
+             }
++            let (lines, hooked) =
++                history_cell::hooked_lines(cell, width, expanded, |cell, width| {
++                    if expanded {
++                        cell.expanded_hyperlink_lines(width)
++                    } else {
++                        cell.compact_hyperlink_lines(width)
++                    }
++                });
++            replaced = hooked;
++            lines
+         });
+         let disclosure = active
+             .filter(|_| has_activity)
+@@ -60,6 +69,7 @@ impl ChatWidget {
+             activity,
+             auxiliary,
+             disclosure,
++            replaced,
+         })
+     }
+ }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
 index cf78ed06f..a6cbc32ed 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
@@ -32444,7 +32482,7 @@ index b1b63f41e..defeea366 100644
 -  status line stays visible
 +  Oh My Diff · upstream-style direct · hooks off · status line stays visible
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index 36c873351..6f7017997 100644
+index 36c873351..e8f4c8805 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
 @@ -12,6 +12,23 @@ use ratatui::text::Span;
@@ -32501,6 +32539,29 @@ index 36c873351..6f7017997 100644
      }
 
      /// Returns compact live-history lines using the current rich or raw presentation.
+@@ -324,7 +354,13 @@ struct PersistentActiveCellLayout<'a> {
+ impl Renderable for TranscriptAreaRenderable<'_> {
+     fn render(&self, area: Rect, buf: &mut Buffer) {
+         let area = self.child_area(area);
+-        let lines = self.child.display_hyperlink_lines(area.width);
++        let lines = crate::history_cell::hooked_lines(
++            self.child,
++            area.width,
++            /*expanded*/ false,
++            |cell, width| cell.display_hyperlink_lines(width),
++        )
++        .0;
+         let paragraph = HyperlinkParagraph::new(&lines, Style::default());
+         let y = if area.height == 0 {
+             0
+@@ -378,6 +414,7 @@ impl TranscriptAreaRenderable<'_> {
+             width,
+             render_mode: persistent.render_mode,
+             syntax_theme_revision: crate::render::highlight::syntax_theme_revision(),
++            hooks: crate::mod_render::live_epoch(),
+         };
+         let layout = persistent
+             .cache
 diff --git a/codex-rs/tui/src/chatwidget/rendering_tests.rs b/codex-rs/tui/src/chatwidget/rendering_tests.rs
 index f2e58846d..2006835bf 100644
 --- a/codex-rs/tui/src/chatwidget/rendering_tests.rs
@@ -34557,6 +34618,31 @@ index 61f60f133..d89309d77 100644
  #[tokio::test]
  async fn app_server_cyber_policy_error_renders_dedicated_notice() {
      let (mut chat, mut rx, _ops) = make_chatwidget_manual(Some("gpt-5.6-sol")).await;
+diff --git a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
+index 135aabca8..d3999051d 100644
+--- a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
++++ b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
+@@ -105,7 +105,7 @@ impl ChatWidget {
+         }
+     }
+
+-    pub(super) fn on_collab_event(&mut self, cell: PlainHistoryCell) {
++    pub(super) fn on_collab_event(&mut self, cell: impl HistoryCell + 'static) {
+         self.flush_answer_stream_with_separator();
+         self.add_to_history(cell);
+         self.request_redraw();
+diff --git a/codex-rs/tui/src/chatwidget/transcript.rs b/codex-rs/tui/src/chatwidget/transcript.rs
+index f055cd1b7..991e3eb8a 100644
+--- a/codex-rs/tui/src/chatwidget/transcript.rs
++++ b/codex-rs/tui/src/chatwidget/transcript.rs
+@@ -13,6 +13,7 @@ pub(super) struct ActiveCellLayoutCacheKey {
+     pub(super) width: u16,
+     pub(super) render_mode: HistoryRenderMode,
+     pub(super) syntax_theme_revision: u64,
++    pub(super) hooks: u64,
+ }
+
+ /// Retains the active cell's semantic and actual wrapped heights independently.
 diff --git a/codex-rs/tui/src/chatwidget/turn_runtime.rs b/codex-rs/tui/src/chatwidget/turn_runtime.rs
 index cc26dc879..da8c102af 100644
 --- a/codex-rs/tui/src/chatwidget/turn_runtime.rs
@@ -34755,10 +34841,10 @@ index 395a8746e..98e4f1481 100644
  }
 
 diff --git a/codex-rs/tui/src/exec_cell/render.rs b/codex-rs/tui/src/exec_cell/render.rs
-index bae014ea1..4f37086dc 100644
+index bae014ea1..21d683b67 100644
 --- a/codex-rs/tui/src/exec_cell/render.rs
 +++ b/codex-rs/tui/src/exec_cell/render.rs
-@@ -210,6 +210,51 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
+@@ -210,6 +210,73 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
  }
 
  impl HistoryCell for ExecCell {
@@ -34766,6 +34852,11 @@ index bae014ea1..4f37086dc 100644
 +        let calls = self.iter_calls().collect::<Vec<_>>();
 +        let first = calls.first()?;
 +        let running = self.is_active();
++        let status = |call: &ExecCall| match &call.output {
++            _ if call.duration.is_none() => "running",
++            Some(output) if output.exit_code != 0 => "failed",
++            _ => "completed",
++        };
 +        let call = |call: &ExecCall| {
 +            let (total, _) = call
 +                .output
@@ -34773,7 +34864,18 @@ index bae014ea1..4f37086dc 100644
 +                .map_or((0, 0), CommandOutput::line_counts);
 +            serde_json::json!({
 +                "call_id": call.call_id,
-+                "command": crate::mod_render::bounded(&call.command.join(" ")),
++                "kind": "exec",
++                "command": crate::mod_render::bounded(&strip_bash_lc_and_escape(&call.command)),
++                "parsed": call.parsed.iter().take(8).map(|parsed| {
++                    let mut value = serde_json::to_value(parsed).unwrap_or_default();
++                    for field in ["cmd", "name", "path", "query"] {
++                        if let Some(text) = value[field].as_str() {
++                            value[field] = crate::mod_render::bounded(text).into();
++                        }
++                    }
++                    value
++                }).collect::<Vec<_>>(),
++                "status": status(call),
 +                "exit_code": call.output.as_ref().map(|output| output.exit_code),
 +                "duration_ms": call.duration.map(|duration| duration.as_millis() as u64),
 +                "output_lines": total,
@@ -34785,22 +34887,28 @@ index bae014ea1..4f37086dc 100644
 +                "user_shell": matches!(call.source, ExecCommandSource::UserShell),
 +            })
 +        };
-+        let component = if self.is_exploring_cell() {
-+            "tool_group"
-+        } else if running {
-+            "tool_progress"
++        let props = if self.is_exploring_cell() {
++            let status = if running {
++                "running"
++            } else if calls.iter().any(|item| status(item) == "failed") {
++                "failed"
++            } else {
++                "completed"
++            };
++            let duration = (!running).then(|| {
++                calls
++                    .iter()
++                    .filter_map(|item| item.duration)
++                    .sum::<std::time::Duration>()
++                    .as_millis() as u64
++            });
++            serde_json::json!({"call_id": first.call_id, "kind": "explore", "status": status,
++                "duration_ms": duration, "calls": calls.iter().take(32).map(|item| call(item)).collect::<Vec<_>>()})
 +        } else {
-+            "command_output"
-+        };
-+        let props = if component == "tool_group" {
-+            serde_json::json!({"kind": "exec", "calls": calls.iter().take(32).map(|item| call(item)).collect::<Vec<_>>(), "running": running})
-+        } else {
-+            let mut props = call(first);
-+            props["kind"] = serde_json::json!("exec");
-+            props
++            call(first)
 +        };
 +        Some(crate::mod_render::RenderTarget::new(
-+            component,
++            "tool_call",
 +            first.call_id.clone(),
 +            running,
 +            props,
@@ -34810,11 +34918,63 @@ index bae014ea1..4f37086dc 100644
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
          if self.is_exploring_cell() {
              self.group.push_detail(std::sync::Arc::from(cell));
+diff --git a/codex-rs/tui/src/history_cell/base.rs b/codex-rs/tui/src/history_cell/base.rs
+index 16d484518..30ac1498b 100644
+--- a/codex-rs/tui/src/history_cell/base.rs
++++ b/codex-rs/tui/src/history_cell/base.rs
+@@ -24,6 +24,47 @@ impl HistoryCell for PlainHistoryCell {
+     }
+ }
+
++/// Fixed tool-call lines offered to mod `render` hooks as one `tool_call` row.
++#[derive(Debug)]
++pub(crate) struct ToolCallCell {
++    cell: PlainHistoryCell,
++    row: String,
++    props: serde_json::Value,
++}
++
++impl ToolCallCell {
++    pub(crate) fn new(cell: PlainHistoryCell, row: String, props: serde_json::Value) -> Self {
++        Self { cell, row, props }
++    }
++}
++
++impl HistoryCell for ToolCallCell {
++    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
++        self.cell.display_lines(width)
++    }
++
++    fn raw_lines(&self) -> Vec<Line<'static>> {
++        self.cell.raw_lines()
++    }
++
++    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
++        Some(crate::mod_render::RenderTarget::new(
++            "tool_call",
++            self.row.clone(),
++            false,
++            self.props.clone(),
++        ))
++    }
++
++    fn activity_ids(&self) -> Vec<String> {
++        vec![format!("tool:{}", self.row)]
++    }
++
++    fn activity_disclosure(&self, _width: u16) -> Option<ActivityDisclosure> {
++        None
++    }
++}
++
+ #[derive(Debug)]
+ pub(crate) struct WebHyperlinkHistoryCell {
+     lines: Vec<HyperlinkLine>,
 diff --git a/codex-rs/tui/src/history_cell/dynamic.rs b/codex-rs/tui/src/history_cell/dynamic.rs
-index 9c5c60306..69af6be66 100644
+index 9c5c60306..943a04025 100644
 --- a/codex-rs/tui/src/history_cell/dynamic.rs
 +++ b/codex-rs/tui/src/history_cell/dynamic.rs
-@@ -173,6 +173,32 @@ impl DynamicToolCallData {
+@@ -173,6 +173,29 @@ impl DynamicToolCallData {
  }
 
  impl HistoryCell for DynamicToolCallCell {
@@ -34831,16 +34991,13 @@ index 9c5c60306..69af6be66 100644
 +            DynamicToolCallStatus::Failed => "failed",
 +        };
 +        Some(crate::mod_render::RenderTarget::new(
-+            if running {
-+                "tool_progress"
-+            } else {
-+                "tool_call"
-+            },
++            "tool_call",
 +            self.call_id.clone(),
 +            running,
 +            serde_json::json!({"call_id": self.call_id, "kind": "dynamic", "tool": data.name,
 +                "arguments": crate::mod_render::bounded_json(&data.arguments), "status": status,
-+                "duration_ms": data.duration_ms}),
++                "duration_ms": data.duration_ms,
++                "output_lines": data.output.as_ref().map(|output| output.iter().map(|item| item.lines().count()).sum::<usize>())}),
 +        ))
 +    }
 +
@@ -34848,10 +35005,10 @@ index 9c5c60306..69af6be66 100644
          false
      }
 diff --git a/codex-rs/tui/src/history_cell/mcp.rs b/codex-rs/tui/src/history_cell/mcp.rs
-index 9f80e5e5d..6cd4d7f4d 100644
+index 9f80e5e5d..e57f43b6c 100644
 --- a/codex-rs/tui/src/history_cell/mcp.rs
 +++ b/codex-rs/tui/src/history_cell/mcp.rs
-@@ -239,6 +239,31 @@ impl McpToolCallCell {
+@@ -239,6 +239,32 @@ impl McpToolCallCell {
 
      /// Share one bounded preview across result blocks while retaining full transcript sources.
      fn render_detail_lines(&self, width: u16, mode: McpToolCallRenderMode) -> Vec<HyperlinkLine> {
@@ -34877,13 +35034,14 @@ index 9f80e5e5d..6cd4d7f4d 100644
 +        crate::mod_render::hyperlink_lines(&target, width, |_, width| {
 +            self.native_detail_lines(width, mode)
 +        })
++        .0
 +    }
 +
 +    fn native_detail_lines(&self, width: u16, mode: McpToolCallRenderMode) -> Vec<HyperlinkLine> {
          let detail_width = usize::from(width)
              .saturating_sub(/*rhs*/ 4)
              .max(/*other*/ 1);
-@@ -356,6 +381,28 @@ impl McpToolCallCell {
+@@ -356,6 +382,33 @@ impl McpToolCallCell {
  }
 
  impl HistoryCell for McpToolCallCell {
@@ -34894,18 +35052,23 @@ index 9f80e5e5d..6cd4d7f4d 100644
 +            Some(true) => "completed",
 +            Some(false) => "failed",
 +        };
++        let output_lines = self.result.as_ref().map(|result| match result {
++            Ok(result) => result
++                .content
++                .iter()
++                .map(|block| block.text().map_or(1, |text| text.lines().count()))
++                .sum::<usize>(),
++            Err(error) => error.lines().count(),
++        });
 +        Some(crate::mod_render::RenderTarget::new(
-+            if running {
-+                "tool_progress"
-+            } else {
-+                "tool_call"
-+            },
++            "tool_call",
 +            self.call_id.clone(),
 +            running,
 +            serde_json::json!({"call_id": self.call_id, "kind": "mcp", "server": self.invocation.server,
 +                "tool": self.invocation.tool,
 +                "arguments": self.invocation.arguments.as_ref().map(crate::mod_render::bounded_json),
-+                "status": status, "duration_ms": self.duration.map(|duration| duration.as_millis() as u64)}),
++                "status": status, "duration_ms": self.duration.map(|duration| duration.as_millis() as u64),
++                "output_lines": output_lines}),
 +        ))
 +    }
 +
@@ -34998,35 +35161,41 @@ index f80f311c7..ae27f425a 100644
          visible_lines(self.display_hyperlink_lines(width))
      }
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index bbb05987b..4c263cbbb 100644
+index bbb05987b..959ee69f4 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
-@@ -196,6 +196,24 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+@@ -196,6 +196,30 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
  /// intact by adaptive wrapping). Concrete types only need to override
  /// heights when they apply additional layout logic beyond what
  /// `Paragraph::line_count` captures.
-+/// Runs `cell`'s native drawing through the mod `render` hooks that match it.
++/// Runs `cell`'s native drawing through the mod `render` hooks that match it, telling tool rows
++/// whether the user expanded them; the flag reports whether a hook replaced the native drawing.
 +pub(crate) fn hooked_lines<C: HistoryCell + ?Sized>(
 +    cell: &C,
 +    width: u16,
++    expanded: bool,
 +    draw: impl FnOnce(&C, u16) -> Vec<HyperlinkLine>,
-+) -> Vec<HyperlinkLine> {
++) -> (Vec<HyperlinkLine>, bool) {
 +    match cell.render_target() {
-+        Some(target) => {
-+            let mut lines = crate::mod_render::hyperlink_lines(&target, width, |props, width| {
-+                cell.render_native(props, draw(cell, width))
-+            });
++        Some(mut target) => {
++            if target.component == "tool_call" {
++                target.props["expanded"] = serde_json::Value::Bool(expanded);
++            }
++            let (mut lines, replaced) =
++                crate::mod_render::hyperlink_lines(&target, width, |props, width| {
++                    cell.render_native(props, draw(cell, width))
++                });
 +            lines.extend(crate::mod_render::tool_notice_lines(&target));
-+            lines
++            (lines, replaced)
 +        }
-+        None => draw(cell, width),
++        None => (draw(cell, width), false),
 +    }
 +}
 +
  pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
      /// Retain reasoning inside an activity group, or return it for normal insertion.
      /// Call positions stay fixed as in-flight calls complete; other history cells decline it.
-@@ -229,6 +247,20 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -229,6 +253,20 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          plain_hyperlink_lines(self.display_lines(width))
      }
 
@@ -35047,7 +35216,7 @@ index bbb05987b..4c263cbbb 100644
      /// Compact presentation for the owned transcript, which can reveal details in place.
      #[allow(dead_code, reason = "Used by later layers of the TUI refresh stack.")]
      fn compact_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-@@ -263,7 +295,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -263,7 +301,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
      fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {
          match mode {
@@ -35058,18 +35227,21 @@ index bbb05987b..4c263cbbb 100644
              HistoryRenderMode::Raw => self.live_raw_lines(),
          }
      }
-@@ -274,7 +308,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -274,7 +314,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          mode: HistoryRenderMode,
      ) -> Vec<HyperlinkLine> {
          match mode {
 -            HistoryRenderMode::Rich => self.display_hyperlink_lines(width),
-+            HistoryRenderMode::Rich => hooked_lines(self, width, |cell, width| {
-+                cell.display_hyperlink_lines(width)
-+            }),
++            HistoryRenderMode::Rich => {
++                hooked_lines(self, width, /*expanded*/ false, |cell, width| {
++                    cell.display_hyperlink_lines(width)
++                })
++                .0
++            }
              HistoryRenderMode::Raw => plain_hyperlink_lines(self.live_raw_lines()),
          }
      }
-@@ -345,7 +381,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -345,7 +390,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
  impl Renderable for Box<dyn HistoryCell> {
      fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -35196,6 +35368,197 @@ index 06d7b2f13..219c1586d 100644
  }
 
  #[derive(Debug)]
+diff --git a/codex-rs/tui/src/history_cell/patches.rs b/codex-rs/tui/src/history_cell/patches.rs
+index 3569c7c9a..f597551ac 100644
+--- a/codex-rs/tui/src/history_cell/patches.rs
++++ b/codex-rs/tui/src/history_cell/patches.rs
+@@ -24,6 +24,36 @@ impl PatchHistoryCell {
+ }
+
+ impl HistoryCell for PatchHistoryCell {
++    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
++        let id = self.activity_id.trim_start_matches("patch:").to_owned();
++        let mut files = self
++            .changes
++            .iter()
++            .map(|(path, change)| {
++                let (change, (added, removed)) = match change {
++                    FileChange::Add { content } => ("add", (content.lines().count(), 0)),
++                    FileChange::Delete { content } => ("delete", (0, content.lines().count())),
++                    FileChange::Update { unified_diff, .. } => (
++                        "update",
++                        crate::diff_render::calculate_add_remove_from_diff(unified_diff),
++                    ),
++                };
++                let path = path.strip_prefix(&self.cwd).unwrap_or(path);
++                serde_json::json!({"path": crate::mod_render::bounded(&path.display().to_string()),
++                    "change": change, "added": added, "removed": removed})
++            })
++            .collect::<Vec<_>>();
++        files.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
++        files.truncate(32);
++        Some(crate::mod_render::RenderTarget::new(
++            "tool_call",
++            id.clone(),
++            false,
++            serde_json::json!({"call_id": id, "kind": "patch", "status": "completed",
++                "duration_ms": null, "files": files, "error": null}),
++        ))
++    }
++
+     fn activity_ids(&self) -> Vec<String> {
+         vec![self.activity_id.clone()]
+     }
+@@ -90,6 +120,17 @@ pub(crate) struct PatchFailureCell {
+ }
+
+ impl HistoryCell for PatchFailureCell {
++    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
++        let id = self.activity_id.trim_start_matches("patch-failure:").to_owned();
++        Some(crate::mod_render::RenderTarget::new(
++            "tool_call",
++            id.clone(),
++            false,
++            serde_json::json!({"call_id": id, "kind": "patch", "status": "failed",
++                "duration_ms": null, "files": [], "error": crate::mod_render::bounded(&self.stderr)}),
++        ))
++    }
++
+     fn activity_ids(&self) -> Vec<String> {
+         vec![self.activity_id.clone()]
+     }
+@@ -159,11 +200,31 @@ impl HistoryCell for PatchFailureCell {
+
+ #[derive(Debug)]
+ pub(crate) struct ViewImageHistoryCell {
++    id: String,
+     filename: String,
+     path_label: String,
+ }
+
+ impl HistoryCell for ViewImageHistoryCell {
++    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
++        Some(crate::mod_render::RenderTarget::new(
++            "tool_call",
++            self.id.clone(),
++            false,
++            serde_json::json!({"call_id": self.id, "kind": "image", "tool": "view_image",
++                "status": "completed", "duration_ms": null,
++                "path": crate::mod_render::bounded(&self.path_label), "prompt": null}),
++        ))
++    }
++
++    fn activity_ids(&self) -> Vec<String> {
++        vec![format!("image:{}", self.id)]
++    }
++
++    fn activity_disclosure(&self, _width: u16) -> Option<ActivityDisclosure> {
++        None
++    }
++
+     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+         let line = vec![
+             "• ".dim(),
+@@ -197,6 +258,7 @@ pub(crate) fn new_view_image_tool_call(path: LegacyAppPathString) -> ViewImageHi
+         .and_then(|path| path.basename())
+         .unwrap_or_else(|| path.render_for_ui());
+     ViewImageHistoryCell {
++        id: uuid::Uuid::new_v4().to_string(),
+         filename,
+         path_label: path.into_string(),
+     }
+@@ -207,8 +269,12 @@ pub(crate) fn new_image_generation_call(
+     status: &str,
+     revised_prompt: Option<String>,
+     saved_path: Option<AbsolutePathBuf>,
+-) -> PlainHistoryCell {
+-    let detail = revised_prompt.unwrap_or(call_id);
++) -> ToolCallCell {
++    let props = serde_json::json!({"call_id": call_id, "kind": "image", "tool": "image_generation",
++        "status": if status == "failed" { "failed" } else { "completed" }, "duration_ms": null,
++        "path": saved_path.as_ref().map(|path| path.display().to_string()),
++        "prompt": revised_prompt.as_deref().map(crate::mod_render::bounded)});
++    let detail = revised_prompt.unwrap_or_else(|| call_id.clone());
+     let heading = if status == "failed" {
+         vec!["✗ ".red().bold(), "Image generation failed".bold()].into()
+     } else {
+@@ -222,5 +288,5 @@ pub(crate) fn new_image_generation_call(
+         lines.push(vec!["  └ ".dim(), "Saved to: ".dim(), saved_path.into()].into());
+     }
+
+-    PlainHistoryCell { lines }
++    ToolCallCell::new(PlainHistoryCell { lines }, call_id, props)
+ }
+diff --git a/codex-rs/tui/src/history_cell/patches_tests.rs b/codex-rs/tui/src/history_cell/patches_tests.rs
+index 9844d9b4e..4bbc55318 100644
+--- a/codex-rs/tui/src/history_cell/patches_tests.rs
++++ b/codex-rs/tui/src/history_cell/patches_tests.rs
+@@ -1,6 +1,65 @@
+ use super::*;
+ use pretty_assertions::assert_eq;
+
++#[test]
++fn tool_rows_offer_one_tool_call_target_per_row() {
++    let target = |cell: &dyn HistoryCell| cell.render_target().expect("tool row");
++    let patch = target(&new_patch_event(
++        HashMap::from([
++            (
++                PathBuf::from("new.txt"),
++                FileChange::Add {
++                    content: "one\ntwo\n".into(),
++                },
++            ),
++            (
++                PathBuf::from("src/lib.rs"),
++                FileChange::Update {
++                    unified_diff: "@@ -1,3 +1,3 @@\n context\n-before\n+after\n tail\n".into(),
++                    move_path: None,
++                },
++            ),
++        ]),
++        Path::new("."),
++    ));
++    assert_eq!(
++        (patch.component, patch.props["kind"].clone(), patch.props["files"].clone()),
++        (
++            "tool_call",
++            serde_json::json!("patch"),
++            serde_json::json!([
++                {"path": "new.txt", "change": "add", "added": 2, "removed": 0},
++                {"path": "src/lib.rs", "change": "update", "added": 1, "removed": 1},
++            ])
++        )
++    );
++    let failure = target(&new_patch_apply_failure("hunk failed".into()));
++    assert_eq!(
++        (failure.props["status"].clone(), failure.props["error"].clone()),
++        (serde_json::json!("failed"), serde_json::json!("hunk failed"))
++    );
++    let images = [
++        new_view_image_tool_call(LegacyAppPathString::from_string("shot.png")),
++        new_view_image_tool_call(LegacyAppPathString::from_string("shot.png")),
++    ];
++    assert_ne!(target(&images[0]).id, target(&images[1]).id);
++    assert_ne!(images[0].activity_ids(), images[1].activity_ids());
++    let running = new_active_web_search_call("ws".into(), String::new(), false);
++    let done = new_web_search_call(
++        "ws".into(),
++        "ratatui".into(),
++        WebSearchAction::Search {
++            query: Some("ratatui".into()),
++            queries: None,
++        },
++    );
++    assert_ne!(target(&running).id, target(&done).id);
++    assert_eq!(
++        (target(&running).props["status"].clone(), target(&done).props["query"].clone()),
++        (serde_json::json!("running"), serde_json::json!("ratatui"))
++    );
++}
++
+ #[test]
+ fn compact_patches_retain_full_changes_and_failure_details() {
+     let patch = new_patch_event(
 diff --git a/codex-rs/tui/src/history_cell/request_user_input.rs b/codex-rs/tui/src/history_cell/request_user_input.rs
 index 006ed07b8..ab72476ad 100644
 --- a/codex-rs/tui/src/history_cell/request_user_input.rs
@@ -35226,6 +35589,59 @@ index 006ed07b8..ab72476ad 100644
      fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
          visible_lines(self.display_hyperlink_lines(width))
      }
+diff --git a/codex-rs/tui/src/history_cell/search.rs b/codex-rs/tui/src/history_cell/search.rs
+index e32ccd918..7ca051fa6 100644
+--- a/codex-rs/tui/src/history_cell/search.rs
++++ b/codex-rs/tui/src/history_cell/search.rs
+@@ -76,6 +76,15 @@ impl WebSearchCell {
+         self.completed = true;
+     }
+
++    /// A begin row the end event did not update stays beside the completed row of its call.
++    fn row_id(&self) -> String {
++        if self.completed {
++            self.call_id.clone()
++        } else {
++            format!("{}:running", self.call_id)
++        }
++    }
++
+     fn summary(&self) -> Line<'static> {
+         let detail = web_search_detail(self.action.as_ref(), &self.query);
+         let (header, separator) = match (&self.action, self.completed) {
+@@ -121,6 +130,32 @@ impl WebSearchCell {
+ }
+
+ impl HistoryCell for WebSearchCell {
++    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
++        let action = match self.action {
++            Some(WebSearchAction::OpenPage { .. }) => "open_page",
++            Some(WebSearchAction::FindInPage { .. }) => "find_in_page",
++            Some(WebSearchAction::Search { .. }) => "search",
++            Some(WebSearchAction::Other) | None => "other",
++        };
++        Some(crate::mod_render::RenderTarget::new(
++            "tool_call",
++            self.row_id(),
++            !self.completed,
++            serde_json::json!({"call_id": self.call_id, "kind": "web_search",
++                "status": if self.completed { "completed" } else { "running" }, "duration_ms": null,
++                "action": action,
++                "query": crate::mod_render::bounded(&web_search_detail(self.action.as_ref(), &self.query))}),
++        ))
++    }
++
++    fn activity_ids(&self) -> Vec<String> {
++        vec![format!("web_search:{}", self.row_id())]
++    }
++
++    fn activity_disclosure(&self, _width: u16) -> Option<ActivityDisclosure> {
++        None
++    }
++
+     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+         let bullet = if self.completed {
+             "•".dim()
 diff --git a/codex-rs/tui/src/history_cell/separators.rs b/codex-rs/tui/src/history_cell/separators.rs
 index 7c398870a..a1bbf76b0 100644
 --- a/codex-rs/tui/src/history_cell/separators.rs
@@ -35248,7 +35664,7 @@ index 7c398870a..a1bbf76b0 100644
          if width == 0 {
              return Vec::new();
 diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
-index 48295d4b8..7dde7edd3 100644
+index 48295d4b8..0d5503a69 100644
 --- a/codex-rs/tui/src/history_cell/session.rs
 +++ b/codex-rs/tui/src/history_cell/session.rs
 @@ -42,11 +42,15 @@ pub(crate) fn with_border_with_inner_width(
@@ -35292,18 +35708,19 @@ index 48295d4b8..7dde7edd3 100644
      fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
          self.0.display_lines(width)
      }
-@@ -129,7 +145,9 @@ pub(crate) fn fullscreen_session_lines(
+@@ -129,7 +145,10 @@ pub(crate) fn fullscreen_session_lines(
          }
          lines
      } else if detailed || mode == HistoryRenderMode::Rich {
 -        cell.retained_hyperlink_lines(width, detailed)
-+        super::hooked_lines(cell, width, |cell, width| {
++        super::hooked_lines(cell, width, detailed, |cell, width| {
 +            cell.retained_hyperlink_lines(width, detailed)
 +        })
++        .0
      } else {
          cell.display_hyperlink_lines_for_mode(width, mode)
      }
-@@ -354,6 +372,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -354,6 +373,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
                  "YOLO mode".magenta().bold(),
              ]));
          }
@@ -35317,7 +35734,7 @@ index 48295d4b8..7dde7edd3 100644
          lines
              .into_iter()
              .map(|line| truncate_line_with_ellipsis_if_overflow(line, width))
-@@ -361,8 +386,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -361,8 +387,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
      }
 
      fn raw_lines(&self) -> Vec<Line<'static>> {
@@ -35332,7 +35749,7 @@ index 48295d4b8..7dde7edd3 100644
              Line::from(format!(
                  "model: {}{}",
                  self.model,
-@@ -378,6 +408,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -378,6 +409,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
          if self.yolo_mode {
              lines.push(Line::from("permissions: YOLO mode"));
          }
@@ -35636,6 +36053,101 @@ index 14d1c97f6..28b51d259 100644
                  )
                  .await?;
                  app_server = AppServerSession::new(client, app_server_target.thread_params_mode())
+diff --git a/codex-rs/tui/src/multi_agents.rs b/codex-rs/tui/src/multi_agents.rs
+index c81112b44..8b10675f7 100644
+--- a/codex-rs/tui/src/multi_agents.rs
++++ b/codex-rs/tui/src/multi_agents.rs
+@@ -5,6 +5,7 @@
+ //! deciding which thread becomes active or when a thread closes, stays in [`crate::app::App`].
+
+ use crate::history_cell::PlainHistoryCell;
++use crate::history_cell::ToolCallCell;
+ use crate::render::line_utils::prefix_lines;
+ use crate::style::accent_color;
+ use crate::text_formatting::truncate_text;
+@@ -205,8 +206,9 @@ pub(crate) fn tool_call_history_cell(
+     item: &ThreadItem,
+     cached_spawn_request: Option<&SpawnRequestSummary>,
+     mut agent_metadata: impl FnMut(ThreadId) -> AgentMetadata,
+-) -> Option<PlainHistoryCell> {
++) -> Option<ToolCallCell> {
+     let ThreadItem::CollabAgentToolCall {
++        id,
+         tool,
+         status,
+         receiver_thread_ids,
+@@ -222,8 +224,30 @@ pub(crate) fn tool_call_history_cell(
+         .first()
+         .and_then(|id| parse_thread_id(id));
+     let prompt = prompt.as_deref().unwrap_or_default();
+-
+-    match tool {
++    let tool_name = match tool {
++        CollabAgentTool::SpawnAgent => "spawn_agent",
++        CollabAgentTool::SendInput => "send_input",
++        CollabAgentTool::ResumeAgent => "resume_agent",
++        CollabAgentTool::Wait => "wait",
++        CollabAgentTool::CloseAgent => "close_agent",
++        CollabAgentTool::SendMessage
++        | CollabAgentTool::FollowupTask
++        | CollabAgentTool::InterruptAgent
++        | CollabAgentTool::ListAgents => "agent",
++    };
++    let props = serde_json::json!({"call_id": id, "kind": "agent", "tool": tool_name,
++        "status": match status {
++            CollabAgentToolCallStatus::InProgress => "running",
++            CollabAgentToolCallStatus::Completed => "completed",
++            CollabAgentToolCallStatus::Failed => "failed",
++            CollabAgentToolCallStatus::Interrupted => "interrupted",
++        },
++        "duration_ms": null,
++        "agents": receiver_thread_ids.iter().take(32).map(|receiver| parse_thread_id(receiver)
++            .and_then(|thread_id| agent_metadata(thread_id).agent_nickname)
++            .unwrap_or_else(|| receiver.clone())).collect::<Vec<_>>(),
++        "prompt": crate::mod_render::bounded(prompt)});
++    let cell = match tool {
+         // V2 uses SubAgentActivity for display; these variants are analytics-only.
+         CollabAgentTool::SendMessage
+         | CollabAgentTool::FollowupTask
+@@ -281,7 +305,10 @@ pub(crate) fn tool_call_history_cell(
+             first_receiver
+                 .map(|receiver_thread_id| close_end(receiver_thread_id, &mut agent_metadata))
+         }
+-    }
++    }?;
++    // Start and end events of one call are separate rows.
++    let row = format!("{id}:{}", props["status"].as_str().unwrap_or_default());
++    Some(ToolCallCell::new(cell, row, props))
+ }
+
+ pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentActivityDisplay> {
+@@ -738,6 +765,17 @@ mod tests {
+             |thread_id| metadata_for(thread_id, robie_id, bob_id),
+         )
+         .expect("spawn item renders");
++        let target = spawn.render_target().expect("tool row");
++        assert_eq!(
++            (target.component, target.id.as_str(), target.props.clone()),
++            (
++                "tool_call",
++                "call-spawn:completed",
++                serde_json::json!({"call_id": "call-spawn", "kind": "agent", "tool": "spawn_agent",
++                    "status": "completed", "duration_ms": null, "agents": ["Robie"],
++                    "prompt": "Compute 11! and reply with just the integer result."})
++            )
++        );
+
+         let send = tool_call_history_cell(
+             &ThreadItem::CollabAgentToolCall {
+@@ -971,7 +1009,7 @@ mod tests {
+         }
+     }
+
+-    fn cell_to_text(cell: &PlainHistoryCell) -> String {
++    fn cell_to_text(cell: &impl HistoryCell) -> String {
+         cell.display_lines(/*width*/ 200)
+             .iter()
+             .map(line_to_text)
 diff --git a/codex-rs/tui/src/notifications/mod.rs b/codex-rs/tui/src/notifications/mod.rs
 index ee6694b35..b94feefc0 100644
 --- a/codex-rs/tui/src/notifications/mod.rs
@@ -36939,11 +37451,155 @@ index 7ff9b968f..76a37e016 100644
          StdoutColorLevel::Ansi16 | StdoutColorLevel::Unknown => Color::default(),
      }
  }
+diff --git a/codex-rs/tui/src/transcript_view.rs b/codex-rs/tui/src/transcript_view.rs
+index f565f3a7d..ba2e30b28 100644
+--- a/codex-rs/tui/src/transcript_view.rs
++++ b/codex-rs/tui/src/transcript_view.rs
+@@ -96,6 +96,7 @@ pub(crate) struct TranscriptView {
+     live: Option<Arc<TextLayout>>,
+     live_separated: Option<Arc<TextLayout>>,
+     live_key: Option<(u16, ActiveCellTranscriptKey)>,
++    live_hooks: u64,
+     live_continuation: bool,
+     area: Rect,
+     suppressed_prompt_header: Option<prompt_header::SuppressedHeader>,
+@@ -129,6 +130,7 @@ impl Default for TranscriptView {
+             live: None,
+             live_separated: None,
+             live_key: None,
++            live_hooks: 0,
+             live_continuation: false,
+             area: Rect::default(),
+             suppressed_prompt_header: None,
+@@ -305,12 +307,15 @@ impl TranscriptView {
+         layout: impl FnOnce(u16) -> Option<TextLayout>,
+     ) -> bool {
+         let next = key.map(|key| (width, key));
+-        if key.is_some_and(|key| key.cacheable) && self.live_key == next {
++        let hooks = crate::mod_render::live_epoch();
++        if key.is_some_and(|key| key.cacheable) && self.live_key == next && self.live_hooks == hooks
++        {
+             return false;
+         }
+         let revision_changed = self.live_key.is_none()
+             || self.live_key.map(|(_, key)| key.revision) != next.map(|(_, key)| key.revision);
+         self.live_key = next;
++        self.live_hooks = hooks;
+         self.live_separated = None;
+         self.live_continuation = key.is_some_and(|key| key.is_stream_continuation);
+         let live = layout(width).map(Arc::new);
+diff --git a/codex-rs/tui/src/transcript_view/disclosure.rs b/codex-rs/tui/src/transcript_view/disclosure.rs
+index ccbc373a1..547711b14 100644
+--- a/codex-rs/tui/src/transcript_view/disclosure.rs
++++ b/codex-rs/tui/src/transcript_view/disclosure.rs
+@@ -162,6 +162,30 @@ impl TranscriptView {
+         true
+     }
+
++    /// A stationary click on an entry drawn without a control row toggles it.
++    pub(super) fn toggle_entry_at(&mut self, cells: &[Arc<dyn HistoryCell>], row: u16) -> bool {
++        if self.detailed || self.mode != HistoryRenderMode::Rich {
++            return false;
++        }
++        let Some(visible) = row
++            .checked_sub(self.area.y)
++            .and_then(|row| self.visible.get(usize::from(row)))
++        else {
++            return false;
++        };
++        if !visible.layout.disclosure
++            || visible.layout.disclosure_row().is_some()
++            || visible.row < usize::from(visible.layout.separated)
++        {
++            return false;
++        }
++        let Some(index) = self.canonical_activity_index(cells, &visible.activity_ids) else {
++            return false;
++        };
++        self.toggle_activity(cells, index);
++        true
++    }
++
+     pub(super) fn handle_disclosure_key(
+         &mut self,
+         key: KeyEvent,
+diff --git a/codex-rs/tui/src/transcript_view/footer_tests.rs b/codex-rs/tui/src/transcript_view/footer_tests.rs
+index 61fb2ca41..3981ad7e5 100644
+--- a/codex-rs/tui/src/transcript_view/footer_tests.rs
++++ b/codex-rs/tui/src/transcript_view/footer_tests.rs
+@@ -415,6 +415,7 @@ fn activity_focus_keeps_controls_without_passive_hints() {
+                 },
+                 auxiliary: Vec::new(),
+                 disclosure: cell.activity_disclosure(width),
++                replaced: false,
+             })
+         });
+         render(view, &[])
+diff --git a/codex-rs/tui/src/transcript_view/input.rs b/codex-rs/tui/src/transcript_view/input.rs
+index 0ced5d90c..2877b0faf 100644
+--- a/codex-rs/tui/src/transcript_view/input.rs
++++ b/codex-rs/tui/src/transcript_view/input.rs
+@@ -244,14 +244,17 @@ impl TranscriptView {
+             MouseEventKind::Up(MouseButton::Left) if dragging => {
+                 // Open only a stationary click. Dragging back to the origin is still selection,
+                 // and wheel scrolling clears the pointer even when it cannot move the viewport.
+-                let link = self.selection.as_mut().and_then(|selection| {
+-                    (inside
++                let stationary = self.selection.as_ref().is_some_and(|selection| {
++                    inside
+                         && !selection.moved
+                         && selection.pointer == Some(ScreenPosition::new(event.column, event.row))
+-                        && event.modifiers.is_empty())
+-                    .then(|| selection.pressed_link.take())
+-                    .flatten()
++                        && event.modifiers.is_empty()
+                 });
++                let link = self
++                    .selection
++                    .as_mut()
++                    .and_then(|selection| stationary.then(|| selection.pressed_link.take()))
++                    .flatten();
+                 let link = link.filter(|destination| {
+                     self.link_at(event.column, event.row).as_ref() == Some(destination)
+                 });
+@@ -270,6 +273,12 @@ impl TranscriptView {
+                 if let Some(link) = link {
+                     return Some(ViewAction::OpenLink(link));
+                 }
++                if stationary
++                    && selected.as_ref().is_none_or(String::is_empty)
++                    && self.toggle_entry_at(cells, event.row)
++                {
++                    return Some(ViewAction::Changed);
++                }
+                 if let Some(text) = selected.filter(|text| !text.is_empty()) {
+                     if self.copy_on_select {
+                         return Some(ViewAction::CopyOnSelect(text));
 diff --git a/codex-rs/tui/src/transcript_view/layout.rs b/codex-rs/tui/src/transcript_view/layout.rs
-index bac11e7a2..1dbabffe2 100644
+index bac11e7a2..56dd9df82 100644
 --- a/codex-rs/tui/src/transcript_view/layout.rs
 +++ b/codex-rs/tui/src/transcript_view/layout.rs
-@@ -67,6 +67,7 @@ pub(super) struct LayoutCache {
+@@ -18,6 +18,8 @@ pub(crate) struct ActivityTranscriptLines {
+     pub(crate) activity: Vec<HyperlinkLine>,
+     pub(crate) auxiliary: Vec<HyperlinkLine>,
+     pub(crate) disclosure: Option<ActivityDisclosure>,
++    /// A mod hook drew the activity, so the entry itself toggles instead of a control row.
++    pub(crate) replaced: bool,
+ }
+
+ /// Keep disclosure controls outside selectable source without rendering hidden details.
+@@ -27,6 +29,10 @@ pub(super) fn activity_layout(
+     expanded: bool,
+     shortcut: Option<ShortcutHint>,
+ ) -> TextLayout {
++    if lines.replaced {
++        lines.activity.extend(lines.auxiliary);
++        return TextLayout::new(lines.activity, width).toggleable();
++    }
+     let has_details = !lines.activity.is_empty() && (expanded || lines.disclosure.is_some());
+     let source_offset = (!lines.auxiliary.is_empty())
+         .then(|| TextLayout::new(lines.activity.clone(), width).text().len());
+@@ -67,6 +73,7 @@ pub(super) struct LayoutCache {
  #[derive(PartialEq, Eq)]
  struct RenderState {
      theme: u64,
@@ -36951,30 +37607,45 @@ index bac11e7a2..1dbabffe2 100644
      foreground: Option<(u8, u8, u8)>,
      background: Option<(u8, u8, u8)>,
      color_level: crate::terminal_palette::StdoutColorLevel,
-@@ -163,11 +164,17 @@ impl TranscriptView {
+@@ -79,6 +86,8 @@ struct CachedLayout {
+     layout: Arc<TextLayout>,
+     rendered_frame: u64,
+     animation_tick: Option<u64>,
++    /// Hook answers for a still-changing tool row redraw it even when its height is stable.
++    hooks: Option<u64>,
+ }
+
+ #[derive(Clone, Copy, PartialEq, Eq)]
+@@ -161,15 +170,24 @@ impl TranscriptView {
+             .primary_hint(KeymapContext::Global, "open_transcript");
+         Some(self.cache.get(cell, width, presentation, || {
              if disclosure {
-                 activity_layout(
-                     ActivityTranscriptLines {
+-                activity_layout(
+-                    ActivityTranscriptLines {
 -                        activity: if expanded {
--                            cell.expanded_hyperlink_lines(width)
--                        } else {
--                            cell.compact_hyperlink_lines(width)
++                let (activity, replaced) = crate::history_cell::hooked_lines(
++                    cell.as_ref(),
++                    width,
++                    expanded,
++                    |cell, width| {
++                        if expanded {
+                             cell.expanded_hyperlink_lines(width)
+                         } else {
+                             cell.compact_hyperlink_lines(width)
 -                        },
-+                        activity: crate::history_cell::hooked_lines(
-+                            cell.as_ref(),
-+                            width,
-+                            |cell, width| {
-+                                if expanded {
-+                                    cell.expanded_hyperlink_lines(width)
-+                                } else {
-+                                    cell.compact_hyperlink_lines(width)
-+                                }
-+                            },
-+                        ),
++                        }
++                    },
++                );
++                activity_layout(
++                    ActivityTranscriptLines {
++                        activity,
                          auxiliary: Vec::new(),
                          disclosure: cell.activity_disclosure(width),
++                        replaced,
                      },
-@@ -195,6 +202,7 @@ impl LayoutCache {
+                     width,
+                     expanded,
+@@ -195,6 +213,7 @@ impl LayoutCache {
          self.frame = self.frame.wrapping_add(/*rhs*/ 1);
          let state = RenderState {
              theme: crate::render::highlight::syntax_theme_revision(),
@@ -36982,6 +37653,75 @@ index bac11e7a2..1dbabffe2 100644
              foreground: crate::terminal_palette::default_fg(),
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
+@@ -220,7 +239,10 @@ impl LayoutCache {
+                 && entry.source.ptr_eq(&source)
+                 && (entry.rendered_frame == self.frame
+                     || (cell.has_stable_transcript_height()
+-                        && entry.animation_tick == animation_tick))
++                        && entry.animation_tick == animation_tick
++                        && entry
++                            .hooks
++                            .is_none_or(|hooks| hooks == crate::mod_render::live_epoch())))
+         }) {
+             let layout = Arc::clone(&self.entries[index].layout);
+             if index + 1 != self.entries.len() {
+@@ -229,6 +251,8 @@ impl LayoutCache {
+             }
+             return layout;
+         }
++        // Read before rendering, so an answer arriving meanwhile redraws the entry next frame.
++        let hooks = crate::mod_render::live_epoch();
+         let layout = render();
+         let layout = if presentation.separated {
+             layout.with_leading_separator()
+@@ -248,6 +272,10 @@ impl LayoutCache {
+             layout: Arc::clone(&layout),
+             rendered_frame: self.frame,
+             animation_tick,
++            hooks: cell
++                .render_target()
++                .filter(|target| target.live)
++                .map(|_| hooks),
+         });
+         self.evict();
+         layout
+diff --git a/codex-rs/tui/src/transcript_view/text.rs b/codex-rs/tui/src/transcript_view/text.rs
+index 44877552c..6bf2b18c4 100644
+--- a/codex-rs/tui/src/transcript_view/text.rs
++++ b/codex-rs/tui/src/transcript_view/text.rs
+@@ -77,6 +77,7 @@ impl TextLayout {
+     /// Reflow the same displayed content revision, retaining styles, links and disclosure label.
+     pub(super) fn rewrap(&self, width: u16) -> Self {
+         let mut layout = Self::from_logical(self.logical.clone(), width);
++        layout.disclosure = self.disclosure;
+         if let Some(control) = &self.disclosure_control {
+             layout =
+                 layout.with_disclosure_control_at(control.label.clone(), control.source_offset);
+@@ -88,6 +89,12 @@ impl TextLayout {
+         }
+     }
+
++    /// Let the entry's own rows focus and toggle its disclosure, without a control row.
++    pub(super) fn toggleable(mut self) -> Self {
++        self.disclosure = !self.text.is_empty();
++        self
++    }
++
+     /// Append a clipped interaction row outside the copied and searched source text.
+     pub(super) fn with_disclosure_control(self, label: String) -> Self {
+         let source_offset = self.text.len();
+diff --git a/codex-rs/tui/src/transcript_view_tests.rs b/codex-rs/tui/src/transcript_view_tests.rs
+index 54dbe15e2..0112a43ca 100644
+--- a/codex-rs/tui/src/transcript_view_tests.rs
++++ b/codex-rs/tui/src/transcript_view_tests.rs
+@@ -95,6 +95,7 @@ fn terminal_output_disclosure_follows_live_history_and_keymap() {
+                 activity: cell.compact_hyperlink_lines(width),
+                 auxiliary: Vec::new(),
+                 disclosure: cell.activity_disclosure(width),
++                replaced: false,
+             })
+         },
+     );
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
 index 50b4e80e7..ca030665e 100644
 --- a/codex-rs/tui/src/tui.rs
@@ -93090,10 +93830,10 @@ index 000000000..35e9f492b
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..d28718157
+index 000000000..6699776c7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,356 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -93310,12 +94050,24 @@ index 000000000..d28718157
 +        "adapter": loaded.adapter,
 +    });
 +    request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
++    // Renders cannot call the host or write state, so one activated runner serves every render of
++    // this package revision, settings and state.
++    let warm = (event == "intercept" && request["payload"]["surface"] == "render").then(|| {
++        request["serve"] = Value::Bool(true);
++        let mut key = request.clone();
++        if let Some(fields) = key.as_object_mut() {
++            for field in ["name", "payload", "receipts"] {
++                fields.remove(field);
++            }
++        }
++        format!("{}:{}", node.display(), digest(key.to_string().as_bytes()))
++    });
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
 +    // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
 +    let mut reply: Reply = loop {
 +        request["receipts"] = Value::Array(receipts.clone());
-+        let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
++        let mut answer = |frame: Value| -> Result<Value> {
 +            if event == "inspect" {
 +                return Err(failure("invalid_host_call_sequence"));
 +            }
@@ -93360,7 +94112,11 @@ index 000000000..d28718157
 +            }
 +            scope.check_execution(started.elapsed().saturating_sub(waited))?;
 +            Ok(receipt)
-+        });
++        };
++        let evaluated = match &warm {
++            Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
++            None => process::evaluate(node, &request, budget, active, &mut answer),
++        };
 +        let reply: Reply = serde_json::from_value(evaluated?)?;
 +        let Some(call) = reply
 +            .host_call
@@ -97775,10 +98531,10 @@ index 000000000..0446ee122
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..be8be2d83
+index 000000000..33fa8b3b3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,342 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -97789,6 +98545,8 @@ index 000000000..be8be2d83
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::process::Child;
++use std::process::ChildStdin;
++use std::process::ChildStdout;
 +use std::process::Command;
 +use std::process::Stdio;
 +use std::sync::Mutex;
@@ -97828,13 +98586,19 @@ index 000000000..be8be2d83
 +    let _ = child.wait();
 +}
 +
-+/// Trims the warm pool back to one runner once callbacks have been idle for five seconds.
++/// Trims the warm pool back to one runner once callbacks have been idle for five seconds, and
++/// stops render runners unused for a minute.
 +fn reap() {
 +    static REAPER: std::sync::Once = std::sync::Once::new();
 +    REAPER.call_once(|| {
 +        std::thread::spawn(|| {
 +            loop {
 +                std::thread::sleep(Duration::from_secs(1));
++                if let Ok(mut warm) = WARM.lock() {
++                    for runner in warm.extract_if(.., |runner| runner.used.elapsed() >= WARM_IDLE) {
++                        stop(runner.child);
++                    }
++                }
 +                let Ok(mut spares) = SPARES.lock() else {
 +                    return;
 +                };
@@ -97887,33 +98651,16 @@ index 000000000..be8be2d83
 +    warm.map_or_else(|| spawn(node), Ok)
 +}
 +
-+pub(super) fn evaluate(
-+    node: &Path,
-+    request: &Value,
-+    budget: Duration,
-+    active: &dyn Fn() -> bool,
-+    host: &mut dyn FnMut(Value) -> Result<Value>,
-+) -> Result<Value> {
++fn request_line(request: &Value) -> Result<Vec<u8>> {
 +    let mut bytes = serde_json::to_vec(request)?;
 +    if bytes.len() > 524_288 {
 +        return Err(failure("input_limit"));
 +    }
 +    bytes.push(b'\n');
-+    let mut child = runner(node)?;
-+    let stderr = child
-+        .stderr
-+        .take()
-+        .ok_or_else(|| failure("missing_stderr"))?;
-+    let errors = std::thread::spawn(move || {
-+        let mut output = Vec::new();
-+        let _ = stderr.take(769).read_to_end(&mut output);
-+        output
-+    });
-+    let mut stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
-+    let stdout = child
-+        .stdout
-+        .take()
-+        .ok_or_else(|| failure("missing_stdout"))?;
++    Ok(bytes)
++}
++
++fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHandle<()>) {
 +    let (sender, lines) = mpsc::channel();
 +    let reader = std::thread::spawn(move || {
 +        let mut stdout = BufReader::new(stdout);
@@ -97929,40 +98676,173 @@ index 000000000..be8be2d83
 +            }
 +        }
 +    });
++    (lines, reader)
++}
++
++/// Sends one request and answers its host calls until the runner writes its result line.
++fn converse(
++    stdin: &mut ChildStdin,
++    lines: &mpsc::Receiver<Vec<u8>>,
++    bytes: &[u8],
++    budget: Duration,
++    active: &dyn Fn() -> bool,
++    host: &mut dyn FnMut(Value) -> Result<Value>,
++) -> (Result<Vec<u8>>, Instant) {
 +    let mut deadline = Instant::now() + budget + Duration::from_millis(250);
-+    let output = if let Err(error) = stdin.write_all(&bytes) {
-+        Err(error)
-+    } else {
-+        loop {
-+            if !active() {
-+                break Err(failure("callback_cancelled"));
-+            }
-+            let line = match lines.recv_timeout(Duration::from_millis(10)) {
-+                Ok(line) => line,
-+                Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
-+                Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
-+                Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(Vec::new()),
-+            };
-+            if line.len() > 262_144 {
-+                break Err(failure("output_limit"));
-+            }
-+            let frame = match serde_json::from_slice::<Value>(&line) {
-+                Ok(frame) if frame.get("call").is_some() => frame,
-+                _ => break Ok(line),
-+            };
-+            let started = Instant::now();
-+            let receipt = match host(frame) {
-+                Ok(receipt) => receipt,
-+                Err(error) => break Err(error),
-+            };
-+            deadline += started.elapsed();
-+            let mut receipt = receipt.to_string().into_bytes();
-+            receipt.push(b'\n');
-+            if let Err(error) = stdin.write_all(&receipt) {
-+                break Err(error);
-+            }
++    if let Err(error) = stdin.write_all(bytes) {
++        return (Err(error.into()), deadline);
++    }
++    let output = loop {
++        if !active() {
++            break Err(failure("callback_cancelled"));
++        }
++        let line = match lines.recv_timeout(Duration::from_millis(10)) {
++            Ok(line) => line,
++            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
++            Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
++            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(Vec::new()),
++        };
++        if line.len() > 262_144 {
++            break Err(failure("output_limit"));
++        }
++        let frame = match serde_json::from_slice::<Value>(&line) {
++            Ok(frame) if frame.get("call").is_some() => frame,
++            _ => break Ok(line),
++        };
++        let started = Instant::now();
++        let receipt = match host(frame) {
++            Ok(receipt) => receipt,
++            Err(error) => break Err(error),
++        };
++        deadline += started.elapsed();
++        let mut receipt = receipt.to_string().into_bytes();
++        receipt.push(b'\n');
++        if let Err(error) = stdin.write_all(&receipt) {
++            break Err(error.into());
 +        }
 +    };
++    (output, deadline)
++}
++
++struct Warm {
++    key: String,
++    child: Child,
++    stdin: ChildStdin,
++    lines: mpsc::Receiver<Vec<u8>>,
++    used: Instant,
++}
++
++static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
++const WARM_RUNNERS: usize = 4;
++const WARM_IDLE: Duration = Duration::from_secs(60);
++
++fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
++    let mut child = runner(node)?;
++    let stderr = child
++        .stderr
++        .take()
++        .ok_or_else(|| failure("missing_stderr"))?;
++    std::thread::spawn(move || std::io::copy(&mut { stderr }, &mut std::io::sink()));
++    let stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
++    let stdout = child
++        .stdout
++        .take()
++        .ok_or_else(|| failure("missing_stdout"))?;
++    Ok(Warm {
++        key: key.to_owned(),
++        child,
++        stdin,
++        lines: lines(stdout).0,
++        used: Instant::now(),
++    })
++}
++
++/// Evaluates a render callback in a runner that stays activated for later renders with the same
++/// `key`: the package, its settings and state, everything except the render's own input.
++pub(super) fn evaluate_warm(
++    node: &Path,
++    key: &str,
++    request: &Value,
++    budget: Duration,
++    active: &dyn Fn() -> bool,
++    host: &mut dyn FnMut(Value) -> Result<Value>,
++) -> Result<Value> {
++    let bytes = request_line(request)?;
++    let reused = WARM.lock().ok().and_then(|mut warm| {
++        let index = warm.iter().position(|runner| runner.key == key)?;
++        let mut runner = warm.swap_remove(index);
++        if matches!(runner.child.try_wait(), Ok(None)) {
++            Some(runner)
++        } else {
++            stop(runner.child);
++            None
++        }
++    });
++    let mut warm = match reused {
++        Some(warm) => warm,
++        None => warm_runner(node, key)?,
++    };
++    let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
++    let value = output.and_then(|line| {
++        serde_json::from_slice::<Value>(&line)
++            .map_err(|_| failure("mod_process_failed: the render runner ended"))
++    });
++    match value {
++        Ok(value) if value.get("error").is_none() => {
++            warm.used = Instant::now();
++            if let Ok(mut runners) = WARM.lock() {
++                runners.push(warm);
++                while runners.len() > WARM_RUNNERS {
++                    if let Some(oldest) = runners
++                        .iter()
++                        .enumerate()
++                        .min_by_key(|(_, runner)| runner.used)
++                        .map(|(index, _)| index)
++                    {
++                        stop(runners.swap_remove(oldest).child);
++                    }
++                }
++            }
++            Ok(value)
++        }
++        Ok(value) => {
++            stop(warm.child);
++            Err(failure(
++                value["error"].as_str().unwrap_or("mod_process_failed"),
++            ))
++        }
++        Err(error) => {
++            stop(warm.child);
++            Err(error)
++        }
++    }
++}
++
++pub(super) fn evaluate(
++    node: &Path,
++    request: &Value,
++    budget: Duration,
++    active: &dyn Fn() -> bool,
++    host: &mut dyn FnMut(Value) -> Result<Value>,
++) -> Result<Value> {
++    let bytes = request_line(request)?;
++    let mut child = runner(node)?;
++    let stderr = child
++        .stderr
++        .take()
++        .ok_or_else(|| failure("missing_stderr"))?;
++    let errors = std::thread::spawn(move || {
++        let mut output = Vec::new();
++        let _ = stderr.take(769).read_to_end(&mut output);
++        output
++    });
++    let mut stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
++    let stdout = child
++        .stdout
++        .take()
++        .ok_or_else(|| failure("missing_stdout"))?;
++    let (lines, reader) = lines(stdout);
++    let (output, deadline) = converse(&mut stdin, &lines, &bytes, budget, active, host);
 +    drop(stdin);
 +    if output.is_ok() {
 +        while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
@@ -97999,13 +98879,49 @@ index 000000000..be8be2d83
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..4f51961c1
+index 000000000..b703b570e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,79 @@
++use super::WARM;
 +use super::command;
++use super::evaluate_warm;
++use serde_json::json;
 +use std::path::PathBuf;
 +use std::process::Stdio;
++use std::time::Duration;
++
++#[test]
++fn render_runners_stay_activated_per_key_and_retire_on_errors() {
++    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("OMD_TEST_NODE required"));
++    let request = |key: &str, text: &str| {
++        let input = json!({"component": "tool_call", "id": "c", "props": {"text": text}});
++        json!({"source": format!("let renders = 0; export default api => api.intercept('render', e => {{ if (e.props.text === 'boom') throw new Error('boom'); renders += 1; return {{tree: [{{type: 'text', id: 't', label: 'T', text: '{key}:' + renders + ':' + e.props.text}}]}}; }});"),
++            "filename": "/fixture/index.ts", "api": crate::MOD_API_VERSION, "capabilities": ["terminal"],
++            "surface": {"events": {}, "replacements": [], "middleware": [], "intercept": {"render": "terminal"}, "state": "store", "contracts": "contracts"},
++            "state": null, "settings": {}, "event": "intercept", "name": "0", "interactive": true, "serve": true, "hook_budget_ms": 1000,
++            "receipts": [], "payload": {"surface": "render", "input": input, "original": input, "origin": {"caller": "engine"}}})
++    };
++    let render = |key: &str, text: &str| {
++        evaluate_warm(&node, key, &request(key, text), Duration::from_secs(2), &|| true, &mut |_| unreachable!())
++            .map(|reply| reply["value"]["result"]["tree"][0]["text"].clone())
++    };
++    let pid = |key: &str| {
++        WARM.lock()
++            .unwrap()
++            .iter()
++            .find(|runner| runner.key == key)
++            .map(|runner| runner.child.id())
++    };
++    assert_eq!(render("a", "one").unwrap(), "a:1:one");
++    let first = pid("a").unwrap();
++    assert_eq!(render("a", "two").unwrap(), "a:2:two");
++    assert_eq!(pid("a"), Some(first));
++    assert_eq!(render("b", "one").unwrap(), "b:1:one");
++    assert!(render("a", "boom").unwrap_err().to_string().contains("boom"));
++    assert_eq!(pid("a"), None);
++    assert_eq!(render("a", "three").unwrap(), "a:1:three");
++}
 +
 +#[test]
 +fn os_sandbox_denies_host_files_network_and_children_even_outside_vm() {
@@ -98048,10 +98964,10 @@ index 000000000..4f51961c1
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..43f1bc569
+index 000000000..1f5e3004f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,196 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -98064,9 +98980,6 @@ index 000000000..43f1bc569
 +    ("assistant_message", &[]),
 +    ("tool_call", &[]),
 +    ("tool_result", &[]),
-+    ("tool_group", &[]),
-+    ("tool_progress", &[]),
-+    ("command_output", &[]),
 +    ("spinner", &["header"]),
 +    ("turn_duration", &[]),
 +    ("notice", &["text"]),
@@ -98598,10 +99511,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..67ab2eb55
+index 000000000..7b25e5be5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,711 @@
+@@ -0,0 +1,749 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -98682,7 +99595,18 @@ index 000000000..67ab2eb55
 +let activating = true;
 +let pending = null;
 +const calls = [];
-+const receipts = request.receipts ?? [];
++let receipts = request.receipts ?? [];
++// A warm render runner answers the next render with the activated mod, from that render's own input.
++function serve(line) {
++  const next = JSON.parse(line);
++  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
++  receipts = request.receipts;
++  state = structuredCloneFallback(request.state);
++  reads.clear();
++  calls.length = 0;
++  updates.length = 0;
++  pending = null;
++}
 +const suspension = Object.freeze({});
 +const exchange = globalThis.__exchange;
 +const clock = globalThis.__clock;
@@ -99238,7 +100162,7 @@ index 000000000..67ab2eb55
 +});
 +globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
 +  state: () => rendering ? request.state : state, request, calls,
-+  pending: () => pending, ready: () => { activating = false; }, suspension };
++  pending: () => pending, ready: () => { activating = false; }, suspension, serve };
 +`;
 +try {
 +  const setup = new SourceTextModule(bootstrap, { context });
@@ -99299,7 +100223,34 @@ index 000000000..67ab2eb55
 +  await dispatch.link(() => { throw new Error('unsupported_import'); });
 +  await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
 +  if (context.__result.length > 262144) throw new Error('output_limit');
-+  process.stdout.write(context.__result);
++  if (!request.serve) process.stdout.write(context.__result);
++  if (request.serve) {
++    const step = new SourceTextModule(`
++      const omd = globalThis.__omd;
++      globalThis.__step = async line => {
++        omd.serve(line);
++        let value = null;
++        try {
++          value = await omd.intercept(omd.request.payload) ?? null;
++          if (omd.pending()) throw new Error('swallowed_host_suspension');
++        } catch (error) {
++          if (error !== omd.suspension) throw error;
++        }
++        if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
++        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
++      };
++    `, { context });
++    await step.link(() => { throw new Error('unsupported_import'); });
++    await step.evaluate();
++    let result = context.__result;
++    for (;;) {
++      writeSync(1, result + '\n');
++      const line = readLine();
++      if (!line) break;
++      result = await context.__step(line);
++      if (result.length > 262144) throw new Error('output_limit');
++    }
++  }
 +} catch (error) {
 +  const files = [request.filename, request.surface?.adapter?.filename,
 +    ...Object.values(request.surface?.adapter?.aliases ?? {}).map(module => module.filename)].filter(Boolean);
@@ -124858,10 +125809,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..fb540c65d
+index 000000000..2a4321793
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,606 @@
+@@ -0,0 +1,615 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -125389,7 +126340,16 @@ index 000000000..fb540c65d
 +            "completed" => format!("• Ran {} ({})", activity.label, activity.tool),
 +            status => format!("• {} {status} ({})", activity.label, activity.tool),
 +        };
-+        self.add_plain_history_lines(vec![Line::from(line).dim()]);
++        let row = format!("mod:{}:{}", activity.mod_id, activity.sequence);
++        let props = serde_json::json!({"call_id": row, "kind": "dynamic", "tool": activity.tool,
++            "arguments": null, "status": if activity.status == "completed" { "completed" } else { "failed" },
++            "duration_ms": null, "output_lines": null});
++        self.add_to_history(history_cell::ToolCallCell::new(
++            PlainHistoryCell::new(vec![Line::from(line).dim()]),
++            row,
++            props,
++        ));
++        self.request_redraw();
 +    }
 +
 +    pub(crate) fn apply_mod_placeholder(&mut self, placeholder: Option<String>) {
@@ -129825,10 +130785,10 @@ index 000000000..988694260
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..d93ea51b0
+index 000000000..0e9e6560a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,645 @@
+@@ -0,0 +1,659 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -129950,6 +130910,7 @@ index 000000000..d93ea51b0
 +static COLUMNS: AtomicU16 = AtomicU16::new(0);
 +static ROWS: AtomicU16 = AtomicU16::new(0);
 +static EPOCH: AtomicU64 = AtomicU64::new(0);
++static LIVE_EPOCH: AtomicU64 = AtomicU64::new(0);
 +static FRAMES: Mutex<Option<crate::tui::FrameRequester>> = Mutex::new(None);
 +static TOOL_NOTICES: Mutex<VecDeque<ToolNotice>> = Mutex::new(VecDeque::new());
 +static DRAWN_CALLS: Mutex<std::collections::BTreeSet<String>> =
@@ -130007,8 +130968,9 @@ index 000000000..d93ea51b0
 +        .flatten()
 +        .filter_map(|call| call["call_id"].as_str())
 +        .chain([target.id.as_str()])
++        .chain(target.props["call_id"].as_str())
 +        .collect::<Vec<_>>();
-+    if target.component.starts_with("tool_") || target.component == "command_output" {
++    if target.component.starts_with("tool_") {
 +        let mut drawn = DRAWN_CALLS
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -130074,6 +131036,11 @@ index 000000000..d93ea51b0
 +    EPOCH.load(Ordering::Relaxed)
 +}
 +
++/// Advances whenever a hook answer changes, so layouts cached for the live cell redraw.
++pub(crate) fn live_epoch() -> u64 {
++    LIVE_EPOCH.load(Ordering::Relaxed)
++}
++
 +/// A new view revision may follow a state change, so finished renders are asked again;
 +/// the last tree of each instance stands until its answer arrives.
 +pub(crate) fn refresh(revision: (u64, u64)) {
@@ -130089,6 +131056,7 @@ index 000000000..d93ea51b0
 +        Some(hooked) => {
 +            forget();
 +            HOOKED.store(hooked, Ordering::Relaxed);
++            LIVE_EPOCH.fetch_add(1, Ordering::Relaxed);
 +        }
 +        // A busy runtime leaves the flag and finished renders as they were and asks again on the next frame;
 +        // forgetting them now would only queue renders that need the same busy runtime.
@@ -130201,6 +131169,7 @@ index 000000000..d93ea51b0
 +            if retained {
 +                EPOCH.fetch_add(1, Ordering::Relaxed);
 +            }
++            LIVE_EPOCH.fetch_add(1, Ordering::Relaxed);
 +            schedule_frame(Duration::ZERO);
 +        }
 +    }
@@ -130326,16 +131295,20 @@ index 000000000..d93ea51b0
 +}
 +
 +/// Draws `target` through its hooks; `native` draws the host component from effective props.
++/// The flag reports whether a hook replaced the unchanged native drawing.
 +pub(crate) fn hyperlink_lines(
 +    target: &RenderTarget,
 +    width: u16,
 +    native: impl FnOnce(&Value, u16) -> Vec<HyperlinkLine>,
-+) -> Vec<HyperlinkLine> {
++) -> (Vec<HyperlinkLine>, bool) {
 +    let Some(rendered) = resolve(target, width) else {
-+        return native(&target.props, width);
++        return (native(&target.props, width), false);
 +    };
 +    let inner = native_width(&rendered.tree, width);
-+    compose_lines(&rendered.tree, width, None, native(&rendered.props, inner))
++    (
++        compose_lines(&rendered.tree, width, None, native(&rendered.props, inner)),
++        true,
++    )
 +}
 +
 +/// Lays out a hook's tree, drawing the native component where it holds `native`.
@@ -130466,6 +131439,7 @@ index 000000000..d93ea51b0
 +    hyperlink_lines(target, width, |props, width| {
 +        crate::terminal_hyperlinks::plain_hyperlink_lines(native(props, width))
 +    })
++    .0
 +    .into_iter()
 +    .map(|line| line.line)
 +    .collect()
@@ -132019,10 +132993,10 @@ index 000000000..4efb44883
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..42d7291bf
+index 000000000..91222c6de
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,517 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -132043,6 +133017,148 @@ index 000000000..42d7291bf
 +    let started = Instant::now();
 +    assert_eq!(render_hooked(), None);
 +    assert!(started.elapsed() < LOCK_WAIT / 2);
++}
++
++#[test]
++#[serial_test::serial]
++fn hooked_tool_rows_toggle_to_the_native_row_by_key_and_click() {
++    use crate::history_cell::HistoryCell;
++    use crossterm::event::KeyCode;
++    use crossterm::event::KeyEvent;
++    use crossterm::event::KeyModifiers;
++    use crossterm::event::MouseButton;
++    use crossterm::event::MouseEvent;
++    use crossterm::event::MouseEventKind;
++
++    struct Restore(Option<Arc<Mutex<ModHost>>>, ActiveContext);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *HOST.lock().unwrap() = self.0.take();
++            *ACTIVE_CONTEXT.lock().unwrap() = std::mem::take(&mut self.1);
++        }
++    }
++    let _restore = Restore(
++        HOST.lock().unwrap().take(),
++        std::mem::take(&mut *ACTIVE_CONTEXT.lock().unwrap()),
++    );
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store_path = root.join("store");
++    let store = codex_omd::ModStore::create(
++        store_path.clone(),
++        std::env::var_os("OMD_TEST_NODE").unwrap().into(),
++    )
++    .unwrap();
++    let package = root.join("rows");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(
++        package.join("mod.json"),
++        serde_json::json!({"schema": 1, "id": "rows", "version": "1.0.0",
++            "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["terminal"]})
++        .to_string(),
++    )
++    .unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => api.intercept('render', {match: {component: 'tool_call'}}, (e, next) => e.props.expanded ? next(e) : {tree: [{type: 'line', id: 'row', label: 'Row', spans: [{text: `• ${e.props.kind} ${e.props.command} ${e.props.status}`}]}]});",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into()],
++            "user",
++        )
++        .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&store_path);
++    store.enable(&package, true).unwrap();
++    shared_host(store_path.clone())
++        .unwrap()
++        .lock()
++        .unwrap()
++        .reload()
++        .unwrap();
++    crate::mod_render::refresh((u64::MAX, 1));
++    let _wait = crate::mod_render::Wait::enter();
++
++    let mut cell = crate::exec_cell::new_active_exec_command(
++        "call-rows".into(),
++        vec!["echo".into()],
++        Vec::new(),
++        codex_app_server_protocol::CommandExecutionSource::Agent,
++        /*interaction_input*/ None,
++        /*animations_enabled*/ false,
++    );
++    cell.complete_call(
++        "call-rows",
++        crate::exec_cell::CommandOutput::new(/*exit_code*/ 0, "1\n2\n3\n4\n5\n6\n7\n8\n".into()),
++        std::time::Duration::ZERO,
++    );
++    let cells: [Arc<dyn HistoryCell>; 1] = [Arc::new(cell)];
++    let mut view = crate::transcript_view::TranscriptView::default();
++    let draw = |view: &mut crate::transcript_view::TranscriptView| {
++        let area = ratatui::layout::Rect::new(0, 0, 60, 12);
++        let mut buffer = ratatui::buffer::Buffer::empty(area);
++        view.render(area, &mut buffer, &cells);
++        (0..area.height)
++            .map(|y| {
++                (0..area.width)
++                    .map(|x| buffer[(x, y)].symbol())
++                    .collect::<String>()
++                    .trim_end()
++                    .to_owned()
++            })
++            .filter(|line| !line.is_empty())
++            .collect::<Vec<_>>()
++    };
++    let collapsed = vec!["• exec echo completed".to_owned()];
++    // A busy host leaves hooks off until the next refresh, as on the next frame of the app.
++    for revision in 2..200 {
++        if draw(&mut view) == collapsed {
++            break;
++        }
++        std::thread::sleep(Duration::from_millis(10));
++        crate::mod_render::refresh((u64::MAX, revision));
++        view = crate::transcript_view::TranscriptView::default();
++    }
++    assert_eq!(draw(&mut view), collapsed);
++
++    view.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE), &cells);
++    assert!(view.is_activity_focused());
++    view.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &cells);
++    let expanded = draw(&mut view);
++    assert!(expanded.iter().any(|line| line.contains("echo")) && expanded.len() > 2);
++    assert!(expanded.iter().any(|line| line.contains("Show less")));
++    view.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &cells);
++    assert_eq!(draw(&mut view), collapsed);
++
++    view.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &cells);
++    let row = (0..12)
++        .find(|row| {
++            let area = ratatui::layout::Rect::new(0, 0, 60, 12);
++            let mut buffer = ratatui::buffer::Buffer::empty(area);
++            view.render(area, &mut buffer, &cells);
++            buffer[(0, *row)].symbol() == "•"
++        })
++        .unwrap();
++    let click = |kind| MouseEvent {
++        kind,
++        column: 4,
++        row,
++        modifiers: KeyModifiers::NONE,
++    };
++    view.handle_mouse(click(MouseEventKind::Down(MouseButton::Left)), &cells);
++    view.handle_mouse(click(MouseEventKind::Up(MouseButton::Left)), &cells);
++    assert_eq!(draw(&mut view), expanded);
++
++    view.set_presentation(/*detailed*/ true, crate::history_cell::HistoryRenderMode::Rich);
++    assert!(draw(&mut view).len() > 1);
++
++    store.enable(&package, false).unwrap();
++    shared_host(store_path).unwrap().lock().unwrap().reload().unwrap();
++    crate::mod_render::refresh((u64::MAX - 1, 0));
 +}
 +
 +#[test]

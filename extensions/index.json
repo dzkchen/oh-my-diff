@@ -244,6 +244,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_tool_lines",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "One line per agent tool call; opens to the native row",
+      "source": "mods/first-party/omd_tool_lines",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; render_hooks_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.160.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_git",
       "version": "0.2.0-preview.4",
       "extension_type": "mod",

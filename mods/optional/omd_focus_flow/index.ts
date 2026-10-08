@@ -9,9 +9,9 @@ export default function activate(api: ModAPI) {
     return { display: `Completed agent tools: ${next ? 'compact' : 'expanded'}. Active work, failures, prompts, evidence and recovery stay visible.` };
   }, { description: 'Toggle compact completed agent tools' });
 
-  api.intercept('render', { match: { component: 'command_output', lifecycle: 'final' } }, (event, next) => {
-    const { props } = event as RenderEvent<'command_output'>;
-    if (!compact() || props.exit_code !== 0 || props.user_shell) return next(event);
+  api.intercept('render', { match: { component: 'tool_call', lifecycle: 'final', props: { kind: 'exec' } } }, (event, next) => {
+    const { props } = event as RenderEvent<'tool_call'>;
+    if (!compact() || props.kind !== 'exec' || props.expanded || props.exit_code !== 0 || props.user_shell) return next(event);
     const command = props.command.length > 120 ? `${props.command.slice(0, 119)}…` : props.command;
     return { tree: [{ type: 'line', id: 'focus_flow_compact', label: 'Completed command', spans: [
       { text: `• Ran ${command}`, tone: 'success' }, { text: ` · ${props.output_lines} output lines`, tone: 'muted' }] }] };

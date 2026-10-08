@@ -75,8 +75,8 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod, the `omd_mods` control screen and the `omd_update` notices, all enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs forty-six first-party candidate mods. A fresh OMD+ store enables
-`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update` and `omd_model_picker`; Codex's
+`--profile full` installs forty-seven first-party candidate mods. A fresh OMD+ store enables
+`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker` and `omd_tool_lines`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
