@@ -40,7 +40,7 @@ const readBody = request => new Promise((resolve, reject) => {
   let body = '';
   request.on('data', chunk => {
     body += chunk;
-    if (body.length > 65_536) request.destroy(new Error('body_too_large'));
+    if (body.length > 262_144) request.destroy(new Error('body_too_large'));
   }).on('end', () => resolve(body)).on('error', reject);
 });
 
@@ -56,10 +56,11 @@ export function startLive({ frame, input, pane }) {
     try {
       if (kind === 'pane') {
         attached.set(name, Date.now());
+        if (action === 'cdp') return await pane.cdp(name, request, response);
         const body = request.method === 'POST' ? JSON.parse(await readBody(request)) : null;
         if (action === 'done') waiter?.resolve(body);
-        const result = action === 'frame' ? await pane.frame(name)
-          : action === 'done' ? {} : action === 'act' ? await pane.act(name, body) : { ...await pane.status(name, action === 'state'), handoff: waiter?.reason ?? null };
+        const result = action === 'frame' ? await pane.frame(name) : action === 'done' ? {}
+          : Object.hasOwn(pane.routes, action) ? await pane.routes[action](name, body) : { ...await pane.status(name, action === 'state'), handoff: waiter?.reason ?? null };
         return Buffer.isBuffer(result) ? response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(result)
           : response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
       }

@@ -48,6 +48,13 @@ pub(super) struct ProcessNotice {
 
 pub(super) type ProcessNotifier = Arc<dyn Fn(ProcessNotice) + Send + Sync>;
 
+/// Draws one `terminal.blit` for the process's owner while `active` holds.
+pub(super) type BlitSink =
+    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, String> + Send + Sync>;
+
+const BLIT_RETRY: Duration = Duration::from_millis(100);
+const BLIT_ATTEMPTS: u32 = 50;
+
 #[derive(Default)]
 pub(super) struct ManagedProcesses {
     records: Mutex<BTreeMap<Key, Session>>,
@@ -62,6 +69,7 @@ pub(super) struct ProcessOwner<'a> {
     pub policy: &'a FileSystemSandboxPolicy,
     pub protected: &'a [PathBuf],
     pub os_access: Option<&'a codex_omd::ModOsAccess>,
+    pub blit: Option<&'a BlitSink>,
 }
 
 struct ManagedProcess {
@@ -73,6 +81,7 @@ struct ManagedProcess {
     last_used: Instant,
     /// Set under the lock that reaps the child, so nothing signals a pid the system may have reused.
     reaped: Arc<Mutex<bool>>,
+    _raster: Option<codex_omd::process_raster::Binding>,
 }
 
 impl ManagedProcess {
@@ -116,6 +125,88 @@ impl Drop for ManagedProcess {
 enum Framing {
     ContentLength,
     Ndjson,
+}
+
+type Stamp = (u64, u64, u64, i64, i64, i64, i64);
+
+/// A program's sha256, hashed again only when its device, inode, size, mtime or ctime changes (any write changes the ctime).
+fn program_sha256(path: &Path) -> io::Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    static HASHES: Mutex<BTreeMap<PathBuf, (Stamp, String)>> = Mutex::new(BTreeMap::new());
+    let metadata = fs::metadata(path)?;
+    let stamp = (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    );
+    if let Some((known, sha256)) = HASHES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        && *known == stamp
+    {
+        return Ok(sha256.clone());
+    }
+    let sha256 = crate::execution::hash(&fs::read(path)?);
+    HASHES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(path.to_path_buf(), (stamp, sha256.clone()));
+    Ok(sha256)
+}
+
+/// The newest frame waiting for the blit thread; older ones are dropped, `Null` stops the thread.
+struct Frames(Arc<(Mutex<Option<Value>>, std::sync::Condvar)>);
+
+impl Frames {
+    fn offer(&self, image: Value) {
+        let (slot, ready) = &*self.0;
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(image);
+        ready.notify_one();
+    }
+}
+
+fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::AtomicBool>) -> Frames {
+    let shared = Arc::new((Mutex::new(None::<Value>), std::sync::Condvar::new()));
+    let frames = shared.clone();
+    std::thread::spawn(move || {
+        let (slot, ready) = &*shared;
+        let active: Arc<dyn Fn() -> bool + Send + Sync> =
+            Arc::new(move || alive.load(std::sync::atomic::Ordering::Acquire));
+        let mut attempts = 0;
+        loop {
+            let image = {
+                let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+                while slot.is_none() {
+                    slot = ready.wait(slot).unwrap_or_else(PoisonError::into_inner);
+                }
+                slot.take().unwrap_or_default()
+            };
+            if image.is_null() {
+                return;
+            }
+            let wait = match sink(json!({"key": key, "image": image}), active.clone()) {
+                Ok(reply) if reply["status"] == "backpressure" => Some(Duration::from_millis(
+                    reply["retry_after_ms"].as_u64().unwrap_or(33).min(1_000),
+                )),
+                Ok(_) => None,
+                Err(_) if !active() => return,
+                Err(_) => (attempts < BLIT_ATTEMPTS).then_some(BLIT_RETRY),
+            };
+            attempts = if wait.is_some() { attempts + 1 } else { 0 };
+            if let Some(wait) = wait {
+                slot.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .get_or_insert(image);
+                std::thread::sleep(wait);
+            }
+        }
+    });
+    Frames(frames)
 }
 
 fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value> {
@@ -320,6 +411,7 @@ impl ManagedProcesses {
             policy,
             protected,
             os_access,
+            blit,
         } = owner;
         if !active()
             || !repository.is_absolute()
@@ -351,7 +443,7 @@ impl ManagedProcesses {
                         if metadata.len() > 128 * 1024 * 1024 {
                             return None;
                         }
-                        let sha256 = crate::execution::hash(&fs::read(&path).ok()?);
+                        let sha256 = program_sha256(&path).ok()?;
                         Some(json!({"name":name,"path":path,"sha256":sha256}))
                     })
                     .collect::<Vec<_>>();
@@ -377,9 +469,38 @@ impl ManagedProcesses {
                     notify: Vec<String>,
                     #[serde(default)]
                     sandbox: Option<String>,
+                    #[serde(default)]
+                    raster: Option<String>,
+                    #[serde(default)]
+                    keys: Option<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+                let component = |id: &String| {
+                    !id.is_empty()
+                        && id.len() <= 128
+                        && id.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric()
+                                || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
+                        })
+                };
+                let raster = match (&input.raster, &input.keys) {
+                    (None, None) => None,
+                    (Some(raster), keys)
+                        if input.framing.as_deref() == Some("ndjson")
+                            && component(raster)
+                            && keys
+                                .as_ref()
+                                .is_none_or(|keys| component(keys) && keys != raster) =>
+                    {
+                        Some((
+                            raster.clone(),
+                            keys.clone(),
+                            blit.cloned().ok_or("capability_denied: terminal")?,
+                        ))
+                    }
+                    _ => return Err("process_raster_invalid".into()),
+                };
                 let unrestricted = match input.sandbox.as_deref() {
                     None => None,
                     Some("none") if input.network.is_some() => {
@@ -449,9 +570,8 @@ impl ManagedProcesses {
                 let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
                 if !metadata.is_file()
                     || metadata.len() > 128 * 1024 * 1024
-                    || crate::execution::hash(
-                        &fs::read(&input.path).map_err(|error| error.to_string())?,
-                    ) != input.sha256
+                    || program_sha256(&input.path).map_err(|error| error.to_string())?
+                        != input.sha256
                 {
                     return Err("process_executable_changed".into());
                 }
@@ -469,13 +589,15 @@ impl ManagedProcesses {
                 ) {
                     return Err("process_session_limit_or_duplicate".into());
                 }
+                static STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let scratch = std::env::temp_dir().join(format!(
-                    "omd-process-{}-{}",
+                    "omd-process-{}-{}-{}",
                     std::process::id(),
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_err(|error| error.to_string())?
                         .as_nanos(),
+                    STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 ));
                 fs::create_dir(&scratch).map_err(|error| error.to_string())?;
                 fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700)).map_err(
@@ -574,6 +696,35 @@ impl ManagedProcesses {
                         }
                     });
                     let (sender, receiver) = mpsc::sync_channel(128);
+                    let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+                    let frames = raster.as_ref().map(|(key, _, sink)| {
+                        blit_worker(key.clone(), sink.clone(), alive.clone())
+                    });
+                    let binding = raster.as_ref().map(|(key, keys, _)| {
+                        let writer = writer_sender.clone();
+                        let (input, queued) = mpsc::channel::<Value>();
+                        std::thread::spawn(move || {
+                            while let Ok(message) = queued.recv() {
+                                let (reply, written) = mpsc::sync_channel(1);
+                                if writer.send((vec![message], reply)).is_err()
+                                    || !matches!(written.recv(), Ok(Ok(())))
+                                {
+                                    break;
+                                }
+                            }
+                        });
+                        let mut components =
+                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
+                        components.extend(
+                            keys.iter()
+                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
+                        );
+                        codex_omd::process_raster::bind(
+                            id,
+                            components,
+                            Arc::new(move |message| input.send(message).is_ok()),
+                        )
+                    });
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
                     let group = child.id();
@@ -583,6 +734,12 @@ impl ManagedProcesses {
                         let mut reader = BufReader::new(stdout);
                         loop {
                             let result = read_framed(&mut reader, framing);
+                            if let (Some(frames), Ok(message)) = (&frames, &result)
+                                && let Some(image) = message.get("blit")
+                            {
+                                frames.offer(image.clone());
+                                continue;
+                            }
                             let terminal = result.is_err();
                             if let Err(error) = &result
                                 && error.kind() != io::ErrorKind::UnexpectedEof
@@ -596,6 +753,10 @@ impl ManagedProcesses {
                                 _ => None,
                             };
                             if sender.send(result).is_err() || terminal {
+                                alive.store(false, std::sync::atomic::Ordering::Release);
+                                if let Some(frames) = &frames {
+                                    frames.offer(Value::Null);
+                                }
                                 if let Some(notifier) = &notifier {
                                     notifier(ProcessNotice {
                                         owner: owner.clone(),
@@ -626,6 +787,7 @@ impl ManagedProcesses {
                         scratch: scratch.clone(),
                         last_used: Instant::now(),
                         reaped,
+                        _raster: binding,
                     })
                 })();
                 match launched {
@@ -806,6 +968,7 @@ mod tests {
             policy: &policy,
             protected: &[],
             os_access: None,
+            blit: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["cat"]}), || true)
@@ -870,6 +1033,7 @@ mod tests {
             policy: &policy,
             protected: &[],
             os_access: None,
+            blit: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["sh"]}), || true)
@@ -895,6 +1059,104 @@ mod tests {
     }
 
     #[test]
+    fn raster_bound_processes_draw_frames_without_callbacks_and_take_bound_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let access = codex_omd::ModOsAccess {
+            programs: vec!["sh".into()],
+            network: false,
+        };
+        let drawn = Arc::new(Mutex::new(Vec::new()));
+        let sink: BlitSink = {
+            let drawn = drawn.clone();
+            Arc::new(move |arguments, _| {
+                drawn.lock().unwrap().push(arguments);
+                Ok(json!({"frame": 1}))
+            })
+        };
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            os_access: Some(&access),
+            blit: Some(&sink),
+        };
+        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sha256 = program_sha256(&sh).unwrap();
+        let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
+        let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
+            processes.call(
+                owner,
+                "process.start",
+                json!({"session": session, "name": "sh", "path": sh, "sha256": sha256, "sandbox": "none",
+                    "framing": framing, "raster": "pr-frame", "keys": "pr-keys", "arguments": ["-c", script]}),
+                || true,
+            )
+        };
+        assert_eq!(
+            start(
+                ProcessOwner {
+                    blit: None,
+                    ..owner
+                },
+                "denied",
+                "ndjson"
+            )
+            .unwrap_err(),
+            "capability_denied: terminal"
+        );
+        assert_eq!(
+            start(owner, "framed", "content-length").unwrap_err(),
+            "process_raster_invalid"
+        );
+        start(owner, "screen", "ndjson").unwrap();
+        let exchange = || {
+            processes
+                .call(
+                    owner,
+                    "process.exchange",
+                    json!({"session":"screen","wait_ms":2000}),
+                    || true,
+                )
+                .unwrap()["messages"]
+                .clone()
+        };
+        assert_eq!(exchange(), json!([{"note": 1}]));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while drawn.lock().unwrap().is_empty() {
+            assert!(Instant::now() < deadline, "the frame was never drawn");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            drawn.lock().unwrap()[0],
+            json!({"key": "pr-frame", "image": {"media_type": "image/png", "base64": "AA=="}})
+        );
+        assert!(!codex_omd::process_raster::send(
+            "other",
+            "pr-keys",
+            json!({"input": []})
+        ));
+        assert!(codex_omd::process_raster::send(
+            "fixture",
+            "pr-keys",
+            json!({"input": [{"key": "a"}]})
+        ));
+        assert_eq!(exchange(), json!([{"input": [{"key": "a"}]}]));
+        processes
+            .call(owner, "process.stop", json!({"session":"screen"}), || true)
+            .unwrap();
+        assert!(!codex_omd::process_raster::send(
+            "fixture",
+            "pr-frame",
+            json!({"pointer": {}})
+        ));
+    }
+
+    #[test]
     fn unrestricted_process_needs_a_current_grant_and_takes_its_tree_down() {
         let directory = tempfile::tempdir().unwrap();
         let repository = directory.path().canonicalize().unwrap();
@@ -911,6 +1173,7 @@ mod tests {
             policy: &policy,
             protected: &[],
             os_access: Some(&access),
+            blit: None,
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
         let sha256 = crate::execution::hash(&fs::read(&sh).unwrap());
@@ -928,6 +1191,7 @@ mod tests {
             start(
                 ProcessOwner {
                     os_access: None,
+                    blit: None,
                     ..owner
                 },
                 "denied"
@@ -960,6 +1224,7 @@ mod tests {
                 .call(
                     ProcessOwner {
                         os_access: None,
+                        blit: None,
                         ..owner
                     },
                     "process.status",
@@ -989,6 +1254,7 @@ mod tests {
             policy: &policy,
             protected: &[],
             os_access: None,
+            blit: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["sleep"]}), || true)
@@ -1047,6 +1313,7 @@ mod tests {
             scratch: PathBuf::from("/nonexistent/omd-reaped"),
             last_used: Instant::now(),
             reaped: Arc::default(),
+            _raster: None,
         };
         let deadline = Instant::now() + Duration::from_secs(10);
         while !process.exited().unwrap() {
@@ -1075,6 +1342,7 @@ mod tests {
             policy: &policy,
             protected: &[],
             os_access: None,
+            blit: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["cat"]}), || true)

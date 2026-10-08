@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "omd_browser",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Live omd-browser sessions beside the conversation with pointer and key input, plus a design-mode element picker and annotation tray",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "plugins/optional/plugins/omd-browser/mod"},
+  "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "network", "composer", "services"],
+  "exec_environment": ["OH_MY_DIFF_PANE_URL", "OH_MY_DIFF_PANE_SESSION"],
+  "subscriptions": {"channels": ["omd_browser/*"]},
+  "services": {"imports": [{"name": "omd.panes", "version": "1.0.0", "optional": true}], "exports": [{"name": "omd.browser", "version": "1.0.0", "methods": {"open": {"input": "object", "output": "object"}, "close": {"input": "object", "output": "object"}}}]},
+  "compatibility": {"required_features": ["events_v1", "exec_v1", "framed_process_v1", "process_raster_v1", "timers_v1", "store_thread_v1", "state_scopes_v1", "service_dispatch_v1", "terminal_surface_v1", "terminal_raster_v1", "terminal_input_v1", "terminal_media_v1", "composer_v2"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "endpoint": {"type": "string", "default": ""}
+    },
+    "additionalProperties": false
+  }
+}

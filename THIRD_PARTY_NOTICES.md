@@ -9,6 +9,7 @@ OMD first-party packages that port behavior from other projects credit them here
 | `omd_advisor` on-demand and triggered advice | [pi-advisor-flow](https://github.com/philipbrembeck/pi-advisor) | Philip Brembeck | 0.9.0 | MIT | Ask tool, command, failure/loop triggers, prompt principles and secret patterns adapted; reimplemented |
 | `omd_lsp_sync` post-edit diagnostics | [pi-lens](https://github.com/apmantza/pi-lens) | Apostolos Mantzaris | 4.3.0 | MIT | Introduced/resolved diagnostic feedback after writes adapted; reimplemented |
 | `omd-browser` plugin | [BetterWright](https://github.com/BetterWright/betterwright) | The BetterWright Project and contributors | 2.8.8 | MIT | Session, snapshot, network-policy, handoff, vault and CAPTCHA behavior reimplemented; no code copied |
+| `omd-browser` design mode (`omd_browser` mod) | [terminal-browser](https://github.com/zenbu-labs/terminal-browser/tree/ea63ea4904785649c5505b612d5fdbb704b203fa/claude-code-plugin) | Zenbu Labs, Inc. | 0.0.2 (`ea63ea4`) | MIT | Manual element selection, annotation tray and delivery of picked HTML, styles and screenshots to the agent reimplemented over managed Chromium and the OMD mod API; no code copied |
 | `omd_preview` `/preview` | [pi-markdown-preview](https://github.com/omaclaren/pi-markdown-preview) | Oliver MacLaren | 0.19.1 | MIT | Preview behavior reimplemented with an OMD renderer; no code copied |
 | `omd_preview` inline Mermaid diagrams | [claude-mermaid](https://github.com/galElmalah/claude-mods/tree/b19a0f0d09bf214c010b15cc2849c0c1a11d7b0d) | Gal Elmalah | 0.3.1 | MIT | Text drawing of six Mermaid families in assistant messages reimplemented with an OMD renderer; no code copied |
 | `omd_preview` draft image thumbnails | [Claude Image View](https://github.com/jarrodwatts/claude-image-view) | Jarrod Watts | 0.1.0 | MIT | Thumbnails of pasted images above the prompt reimplemented over public draft attachment resources; no code copied |
@@ -153,6 +154,18 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+## terminal-browser
+
+```text
+Copyright 2026 Zenbu Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ## pi-markdown-preview

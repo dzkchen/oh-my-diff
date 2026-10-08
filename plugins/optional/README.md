@@ -50,4 +50,4 @@ Public release and other platform/version support remain separate qualification 
 
 The same optional marketplace offers [anchored edits](plugins/omd-anchored-edit/README.md), [past-session review](plugins/omd-session-review/README.md), [local curated memory](plugins/omd-curated-memory/README.md), and [promoted workflow procedures](plugins/omd-procedures/README.md). Each uses a separately inspected/trusted API 0.2 component. Installation does not activate a component.
 
-The [browser plugin](plugins/omd-browser/README.md) has no mod component: its MCP server stays inert until the user writes its configuration, and Codex prompts before each tool call. Local memory has no third-party backend connection.
+The [browser plugin](plugins/omd-browser/README.md)'s MCP server stays inert until the user writes its configuration, and Codex prompts before each tool call. Its separately trusted `omd_browser` mod component shows pane-enabled sessions beside the conversation and adds design-mode notes; the first-party `omd_chess` mod opens a user-only Chess.com session through it. Local memory has no third-party backend connection.

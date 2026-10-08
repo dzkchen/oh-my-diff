@@ -981,6 +981,24 @@ With the `os` grant, `sandbox: "none"` starts a listed program (`path` and
 limits, cancellation and process-group teardown, and stops it when the grant
 expires or is revoked, the mod reloads or is disabled, or its source changes.
 
+With `process_raster_v1` and the `terminal` capability, an `ndjson` process can
+take `raster: KEY` (one of the caller's raster ids) and optionally `keys: ID`
+(a `keys: true` component). Its stdout messages `{"blit": {media_type, base64}}`
+are drawn into that raster by the host as `terminal.blit {key, image}` from the
+mod, with the same validation, but without a callback per frame: the newest
+frame wins and a frame the terminal cannot take yet is retried for up to 5 s.
+Other messages reach `process_event` and `process.exchange` as usual. Pointer
+events on the raster are written to its stdin as `{"pointer": {action, button,
+x, y, inside}}` with `x`/`y` in the drawn frame's pixels (null before a frame;
+sub-cell on terminals that report pixel positions),
+and key and paste input on the keys component as `{"input": [events]}`, instead
+of `component_event` callbacks; a left press on the raster focuses the keys
+component. After the first render and whenever the raster's drawable box or the
+client cell changes, `{"box": {columns, rows, cell_px: {width, height}}}` is
+written to its stdin. The binding ends with the process. An invalid
+key or another framing is `process_raster_invalid`; without `terminal`,
+`capability_denied: terminal`.
+
 ### Terminal lists, insert, placeholder and glyphs
 
 A `render` hook on component `list` draws built-in pickers as components; the
@@ -1442,7 +1460,8 @@ find), `diff`, `image`, `raster` and `terminal` (a PTY session). An `image`
 places a Kitty graphics image in its cells, aspect-fit to the measured cell
 size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
 and hides under dialogs and overlays like text); elsewhere it draws truecolor
-half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Each
+half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Local
+Orca, iTerm2 and WezTerm draw it as an iTerm2 inline image (`iip`). Each
 image component has its own image id; replacing or removing the component
 deletes it, and exit and suspend delete every image and the backdrop.
 Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side
@@ -1495,7 +1514,8 @@ Raster, pointer and overlays (`terminal_raster_v1`):
 
 - The `terminal` event carries `client: {kind: 'terminal', graphics, pointer,
   reduced_motion, cell_px, columns, rows}`: `graphics` is `kitty` (pixel images),
-  `cells` (half-block) or `text` (`NO_COLOR`); `pointer` is `half_cell`,
+  `iip` (iTerm2 inline images: Orca, iTerm2, WezTerm), `cells` (half-block) or
+  `text` (`NO_COLOR`); `pointer` is `half_cell`,
   `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline
   viewport); `reduced_motion` follows `tui.animations` and the system
   setting, and mods that animate stop when it is true; `cell_px` is the
@@ -1503,9 +1523,13 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   is null without a terminal client. When any of these change (the window or
   font is resized, animations are turned off) the view renders again with the
   new `client`; a burst of changes renders once per render in progress.
-- `{type: 'raster', id, label, alt, width, height, pointer?}` is a keyed
+- `{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed
   canvas of 1–200 × 1–40 cells that shows `alt` until its first frame and
-  clips to the component's width. `terminal.blit {key, rect: {x, y, width,
+  clips to the component's width. An omitted `width` fills the region's
+  width; an omitted `height` shares the rows left in a layout region like
+  `terminal`, `document`, `diff` and `list` (12 elsewhere). A fill raster's
+  size is the one it last rendered at, and a cells `terminal.blit` before its
+  first render is `terminal_blit_unknown`. `terminal.blit {key, rect: {x, y, width,
   height}, cells}` updates part of the caller's own raster (`key` is its id;
   another mod's is `terminal_blit_not_owned`, and a raster the terminal
   has not received in a view yet, such as one returned by the same callback,
@@ -1517,7 +1541,20 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   `{frame, queued, frame_ms}`; one call over 256 KiB is
   `terminal_blit_too_large`. A mod holds at most 16 rasters: a blit to a
   17th key is `terminal_blit_limit`; a raster's frames are dropped with its
-  component.
+  component. `terminal.blit {key, image: {media_type: 'image/png' |
+  'image/jpeg', base64}}` (instead of `rect` and `cells`) shows a raster you
+  own as one transient picture, aspect-fit from the top-left cell into the
+  raster's width × height cells by the same rule and renderers as `image`
+  (Kitty placeholders, iTerm2 inline images, truecolor half-blocks, `alt` under `NO_COLOR`); the
+  newest frame replaces the previous one, a cells blit replaces the frame
+  and a frame replaces the cells. It is never stored as a resource, so prefer
+  it to a new `image` resource per frame (which exhausts the record quota) or
+  to cells (about 200 × 80 effective pixels). A wrong media type, bad base64
+  or an image that does not decode within 4096 px per side is
+  `terminal_blit_image_invalid`, and passing both or neither of `image` and
+  `rect`/`cells` is `terminal_blit_invalid`; both refuse before queueing.
+  External clients whose renderer `formats` include the media type receive
+  the frame as sent, other clients with `cells` receive half-block cells.
 - `box`, `image` and `raster` accept `pointer: true`. The owner then receives
   `component_event {kind: 'pointer'}` with `action` `enter`, `leave`,
   `move`, `down`, `up` and `drag`, `column`/`row` relative to the

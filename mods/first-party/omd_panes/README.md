@@ -52,8 +52,10 @@ Files and Diff tabs.
 
 **Services.** `omd.panes` 1.0.0 lets other mods list and show tabs, open a file
 in the viewer, apply the cockpit and set a find query; viewers then highlight
-the matches and report their count. `omd_layout` uses it for jump, quick open
-and find.
+the matches and report their count. `site {name, close?}` opens a mod's panel
+site to the right of the conversation, focuses it when already open, or closes
+it. `omd_layout` uses it for jump, quick open and find; `omd_browser` places its
+browser view with `site`.
 
 **Layout.** The layout is a tree of splits persisted per session in the
 thread-scoped store, so resuming a session restores its panes and forking

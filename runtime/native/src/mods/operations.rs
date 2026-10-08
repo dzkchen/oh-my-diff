@@ -439,6 +439,10 @@ async fn run(
             .grants
             .as_ref()
             .and_then(|grants| grants.os_access.clone());
+        let blit = started
+            .as_ref()
+            .filter(|arguments| arguments.get("raster").is_some())
+            .and_then(|_| super::expansion::blit_sink(lead, &caller));
         let result = tokio::task::spawn_blocking(move || {
             processes.call(
                 crate::managed_process::ProcessOwner {
@@ -448,6 +452,7 @@ async fn run(
                     policy: &authority.policy,
                     protected: &protected,
                     os_access: os_access.as_ref(),
+                    blit: blit.as_ref(),
                 },
                 &request.operation,
                 request.arguments,

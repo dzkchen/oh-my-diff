@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "omd_chess",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Play on Chess.com in a user-only managed browser pane beside the conversation, with coding-turn notices",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_chess"},
+  "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "services"],
+  "subscriptions": {"channels": ["omd_chess/*", "omd_browser/opened", "omd_browser/closed"]},
+  "services": {"imports": [{"name": "omd.browser", "version": "1.0.0", "optional": true}]},
+  "compatibility": {"required_features": ["events_v1", "store_thread_v1", "state_scopes_v1", "service_dispatch_v1", "terminal_surface_v1", "ui_controls_v1"]}
+}

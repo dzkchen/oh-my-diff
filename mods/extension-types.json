@@ -45,6 +45,12 @@
       "why_mod": "Selects bounded language-specific verification commands for the current candidate snapshot and relevant inputs during a live task."
     },
     {
+      "path": "mods/first-party/omd_chess",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the Chess.com preset, the /chess open, hide and end flow and the coding-turn notices over the omd.browser service; the browser view, input and the user-only session stay in omd-browser; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_repository_analysis",
       "extension_type": "mod",
       "role": "candidate",

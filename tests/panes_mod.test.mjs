@@ -191,7 +191,7 @@ test('viewer positions and pending Undo stay with their thread across resume', (
 });
 
 test('panes split, focus, move, resize and persist a valid layout per thread', () => {
-  const { repository, store, command, view, event, state } = fixture();
+  const { repository, store, command, view, event, state, service } = fixture();
   try {
     assert.equal(view().layout, undefined);
     assert.equal(view().keybindings['Alt+e'].command, 'omd_panes:tree');
@@ -217,6 +217,13 @@ test('panes split, focus, move, resize and persist a valid layout per thread', (
     assert.equal(command('pane', 'split right @p3').display, 'the layout allows at most 12 panes nested 4 deep, and each mod panel once');
     assert.equal(command('pane', 'close @chat').display, 'The conversation pane stays open; close the other panes instead');
     command('pane', 'reset');
+    assert.equal(view().layout, undefined);
+    service('omd.panes.site', { name: 'omd_browser/view' });
+    command('pane', 'focus left');
+    service('omd.panes.site', { name: 'omd_browser/view' });
+    assert.deepEqual(view().layout.children[1], { content: 'site:omd_browser/view' });
+    assert.equal(state().layout.panes[state().layout.active].site, 'omd_browser/view');
+    service('omd.panes.site', { name: 'omd_browser/view', close: true });
     assert.equal(view().layout, undefined);
     store.set('thread:layout', { value: { root: { split: 'horizontal', ratio: [50, 50], children: ['chat', 'p9'] }, panes: { chat: { kind: 'chat' }, p9: { kind: 'site', site: 'sidebar' } }, active: 'p9', next: 10 }, revision: 7 });
     event('resume', { thread_id: 'thread-1', last_turn: null, restarted: true });

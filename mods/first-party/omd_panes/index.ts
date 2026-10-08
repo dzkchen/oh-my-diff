@@ -783,7 +783,7 @@ export default function activate(api: ModAPI) {
   };
   api.on('start', restore);
   api.on('resume', restore);
-  api.provide({ name: 'omd.panes', version: '1.0.0', methods: { tabs: { input: 'null', output: 'object' }, show_tab: { input: 'object', output: 'object' }, find: { input: 'object', output: 'object' }, cockpit: { input: 'null', output: 'object' }, open: { input: 'object', output: 'object' } } }, {
+  api.provide({ name: 'omd.panes', version: '1.0.0', methods: { tabs: { input: 'null', output: 'object' }, show_tab: { input: 'object', output: 'object' }, find: { input: 'object', output: 'object' }, cockpit: { input: 'null', output: 'object' }, open: { input: 'object', output: 'object' }, site: { input: 'object', output: 'object' } } }, {
     tabs: () => {
       const { layout } = load();
       const group = groupOf(layout.root);
@@ -805,6 +805,17 @@ export default function activate(api: ModAPI) {
       return { layout: 'cockpit' };
     },
     open: input => ({ display: (openFile(load(), String((input as { path?: string }).path ?? '')) as { display?: string } | null)?.display ?? null }),
+    site: input => {
+      const { name, close } = input as { name?: string; close?: boolean };
+      const state = load();
+      const id = leaves(state.layout.root).find(pane => state.layout.panes[pane].kind === 'site' && state.layout.panes[pane].site === name);
+      if (close || id) {
+        if (id && close) remove(state, id);
+        else if (id) state.layout.active = id;
+        return { display: (done(state, null) as { display?: string } | null)?.display ?? null };
+      }
+      return { display: (create(state, 'chat', 'right', ['site', String(name ?? '')]) as { display?: string } | null)?.display ?? null };
+    },
   });
   api.on('channel', event => {
     const state = load();

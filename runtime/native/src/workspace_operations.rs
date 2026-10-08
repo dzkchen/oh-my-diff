@@ -299,6 +299,7 @@ impl WorkspaceAuthority {
                             policy: &self.policy,
                             protected,
                             os_access: None,
+                            blit: None,
                         },
                         operation,
                         call.arguments,

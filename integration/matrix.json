@@ -63,6 +63,7 @@
         "builtins_v1",
         "contracts_v2",
         "framed_process_v1",
+        "process_raster_v1",
         "kernels_v1",
         "terminal_lists_v1",
         "adapters_v1",
@@ -1164,6 +1165,7 @@
       "first_party_installed": [
         "omd_advisor",
         "omd_checks",
+        "omd_chess",
         "omd_claude_cli",
         "omd_continue",
         "omd_coordination",
@@ -1239,6 +1241,10 @@
     "omd_checks": {
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_checks"
+    },
+    "omd_chess": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_chess"
     },
     "omd_claude_cli": {
       "version": "0.2.0-preview.3",
@@ -1325,7 +1331,7 @@
       "source": "mods/first-party/omd_notes"
     },
     "omd_panes": {
-      "version": "0.1.0-preview.3",
+      "version": "0.1.0-preview.4",
       "source": "mods/first-party/omd_panes"
     },
     "omd_plan_panel": {

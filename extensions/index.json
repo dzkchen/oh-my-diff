@@ -353,13 +353,31 @@
     },
     {
       "id": "omd_panes",
-      "version": "0.1.0-preview.3",
+      "version": "0.1.0-preview.4",
       "extension_type": "mod",
       "capability": "Opt-in recursive split panes with a Git-aware file tree, viewer, shell, diff, mod-panel and browser panes, persisted per session",
       "source": "mods/first-party/omd_panes",
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1, service_dispatch_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.160.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_chess",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in /chess that opens Chess.com in a user-only omd-browser session beside the conversation, with coding-turn notices and no agent access",
+      "source": "mods/first-party/omd_chess",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.160.1; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, store_thread_v1, terminal_surface_v1, ui_controls_v1; the omd-browser plugin with its omd_browser mod and a user-only pane profile; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",

@@ -45,6 +45,26 @@
       "source": "mods/first-party/omd_checks",
       "version": "0.1.0-preview.1"
     },
+    "omd_chess": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "lifecycle",
+        "events",
+        "services"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "f859ff87a8afdff8c61a5efe3964b7d9ca7728feafc6e69d81b1a53173eec615",
+        "mod.json": "ab6057ab247ad850bdc45314fc6e383b0320a06802a0fce488407adc9983d01a"
+      },
+      "id": "omd_chess",
+      "package_sha256": "fd45ae237027c0a52a554cdc7dd2ccd0ab7fcb697201b3317c4cedcbe0ca0824",
+      "source": "mods/first-party/omd_chess",
+      "version": "0.1.0-preview.1"
+    },
     "omd_claude_cli": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -496,13 +516,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "9829c6d4777148f15c8d6e5a2daf35118fc0f906d50154468d4160365ea2b48c",
-        "mod.json": "40df5b7227771eb5d164ae749452e1ad2e2aa952659c55ae33c763dad2b78569"
+        "index.ts": "26fc7dd3bd88d34b89c09b44e22f99896d39eedd720c545c9bb60ae196f1106b",
+        "mod.json": "6288960a8bb89e4e5d51a02669bbbf802d0af75832f1f9e518e58d7e892cb534"
       },
       "id": "omd_panes",
-      "package_sha256": "40710f16be64a6948861d46dec896320c8ab5924a544680435fdd33b89f6ab1e",
+      "package_sha256": "085bc9152158b39b75077aaca8abe8bf4520d7b974ecbf03c1dd4ae026679713",
       "source": "mods/first-party/omd_panes",
-      "version": "0.1.0-preview.3"
+      "version": "0.1.0-preview.4"
     },
     "omd_plan_panel": {
       "api": "0.2.0-experimental.5",

@@ -198,6 +198,7 @@ impl State {
         if let Ok(mut subscriptions) = self.subscriptions.lock() {
             *subscriptions = runtime.subscriptions();
         }
+        delivery::sync_bus(self);
         if let Ok(mut definitions) = self.definitions.lock() {
             *definitions = runtime.agent_definitions();
         }
@@ -576,6 +577,42 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
         selections.remove(thread);
     }
     Some(route)
+}
+
+/// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
+pub(in crate::mods) fn blit_sink(
+    lead: &Lead,
+    caller: &Caller<'_>,
+) -> Option<crate::managed_process::BlitSink> {
+    let grants = caller.grants.as_ref()?;
+    if !grants
+        .capabilities
+        .iter()
+        .any(|capability| capability == "terminal")
+    {
+        return None;
+    }
+    let remote = REMOTE.try_with(|remote| *remote).unwrap_or(false);
+    let (id, source, generation, thread) = (
+        caller.id.to_owned(),
+        caller.source.to_owned(),
+        caller.generation,
+        lead.thread.to_string(),
+    );
+    Some(Arc::new(move |arguments, active| {
+        codex_omd::client_surface::with_admission(&source, generation, None, || {
+            codex_omd::client_surface::call(
+                &id,
+                "terminal.blit",
+                arguments,
+                InvocationContext::Event,
+                remote,
+                Some(&thread),
+                None,
+                active,
+            )
+        })
+    }))
 }
 
 async fn surface(

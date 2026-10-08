@@ -178,7 +178,14 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
     }
     let current = core.expansion.current();
     let mut budget = DELIVERIES_PER_ROUND;
-    while budget > 0 {
+    // Only what was queued when the round began: streaming process output must not starve the bus.
+    let queued = core
+        .expansion
+        .pending
+        .lock()
+        .map(|queue| queue.len())
+        .unwrap_or_default();
+    for _ in 0..queued.min(budget) {
         let next = core
             .expansion
             .pending
@@ -237,7 +244,7 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
             }
         }
     }
-    let ids = sync_bus(core);
+    let ids = sync_bus(&core.expansion);
     for id in ids {
         if budget == 0 {
             break;
@@ -263,9 +270,8 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
     budget == 0
 }
 
-fn sync_bus(core: &Core) -> Vec<String> {
-    let subscriptions = core
-        .expansion
+pub(super) fn sync_bus(expansion: &State) -> Vec<String> {
+    let subscriptions = expansion
         .subscriptions
         .lock()
         .map(|subscriptions| subscriptions.clone())
@@ -277,7 +283,7 @@ fn sync_bus(core: &Core) -> Vec<String> {
         .collect::<BTreeSet<_>>();
     let (Ok(mut bus), Ok(mut subscribed)) = (
         codex_omd::event_bus::global().lock(),
-        core.expansion.subscribed.lock(),
+        expansion.subscribed.lock(),
     ) else {
         return Vec::new();
     };
@@ -311,7 +317,7 @@ pub(in crate::mods) fn publish(
         correlation: Option<String>,
     }
     let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-    sync_bus(core);
+    sync_bus(&core.expansion);
     let delivery = codex_omd::event_bus::global()
         .lock()
         .map_err(|_| "event_bus_poisoned")?
