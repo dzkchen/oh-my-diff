@@ -138,7 +138,7 @@ test('the directory searches the catalog, installs a picked version or a typed s
 
 test('the first-run card is plain, profile-aware and never repeats once a session has started', () => {
   const terminal = (phase, profile, state = null) => run({ event: 'terminal', state, payload: { event: 'start', ledger: null, presentation: { thread_id: null, phase },
-    identity: { codex_version: '0.160.1', install_profile: profile, mode: 'omd', mods: { installed: 3, enabled: 2, active: 2, failed: 1 } } } });
+    identity: { codex_version: '0.161.0', install_profile: profile, mode: 'omd', mods: { installed: 3, enabled: 2, active: 2, failed: 1 } } } });
   const card = output => output.value.sites.welcome.components.slice(1).map(line => line.text).join('\n');
   assert.match(card(terminal('fresh', 'platform_only')), /^Oh My Diff Core[^]*2 of 3 mods on, 1 failed[^]*omd-mod-author create/);
   const full = card(terminal('fresh', 'full'));

@@ -83,7 +83,12 @@ impl WorkspaceAuthority {
         {
             return Err("workspace_operation_requires_local_repository".into());
         }
-        let context = environment[0].file_system_sandbox_context.clone();
+        let context = environment[0]
+            .fs()
+            .cache_key()
+            .sandbox_context()
+            .cloned()
+            .ok_or("workspace_call_authority_unavailable")?;
         let mut roots = context
             .workspace_roots
             .iter()

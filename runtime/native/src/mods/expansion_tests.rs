@@ -2041,6 +2041,143 @@ async fn mcp_connect_builds_only_declared_servers_for_the_engine() {
     assert_eq!(error, "native_thread_manager_stopped");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_refresh_tracks_rejected_publications_and_preserves_stale_cleanup_ownership() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "connector",
+        capabilities: &["mcp"],
+        manifest: json!({"mcp_servers": {"docs": {"command": "/usr/bin/true"}}}),
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    config.model_provider.base_url = Some("http://127.0.0.1:9/v1".into());
+    let policy = codex_config::CloudConfigBundlePolicy::default();
+    let mut snapshot = codex_config::CloudConfigBundleSnapshot {
+        bundle: Ok(None),
+        binding: None,
+    };
+    policy.publish_snapshot(&mut snapshot);
+    config.config_layer_stack = config
+        .config_layer_stack
+        .with_cloud_config_binding(snapshot.binding);
+    let manager = Arc::new(
+        codex_core::test_support::thread_manager_with_models_provider(
+            codex_login::CodexAuth::from_api_key("test"),
+            config.model_provider.clone(),
+        ),
+    );
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions::new(config))
+        .await
+        .unwrap();
+    let host = &fixture.lead.host;
+    fixture.lead.host = Arc::new(Host {
+        root: host.root.clone(),
+        repository: host.repository.clone(),
+        repository_identity: host.repository_identity.clone(),
+        config: host.config.clone(),
+        routes: Mutex::new(crate::RouteTable {
+            stamp: None,
+            config: Arc::new(host.config.clone()),
+            error: None,
+        }),
+        accounts: host.accounts.clone(),
+        manager: Arc::downgrade(&manager),
+        epoch: host.epoch,
+    });
+    fixture.lead.thread = started.thread_id;
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("connector"), runtime.generation())
+    };
+    let caller = Caller {
+        id: "connector",
+        source: "",
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let flag = AtomicBool::new(false);
+    let request = |operation: &str| ModHostCall {
+        operation: operation.into(),
+        arguments: json!({"server": "docs"}),
+    };
+    let mut changed = codex_config::CloudConfigBundle::default();
+    changed
+        .requirements_toml
+        .enterprise_managed
+        .push(codex_config::CloudRequirementsFragment {
+            id: "changed".into(),
+            name: "changed".into(),
+            contents: String::new(),
+        });
+    policy.observe_remote_bundle(&changed);
+    for operation in ["mcp.connect", "mcp.disconnect", "mcp.connect"] {
+        super::access::dispatch(
+            &fixture.core,
+            &fixture.lead,
+            &caller,
+            request(operation),
+            &flag,
+        )
+        .await
+        .unwrap();
+    }
+    let mut current_snapshot = codex_config::CloudConfigBundleSnapshot {
+        bundle: Ok(Some(changed.clone())),
+        binding: None,
+    };
+    policy.publish_snapshot(&mut current_snapshot);
+    let current = started.thread.config().await;
+    let mut next = current.as_ref().clone();
+    next.config_layer_stack = next
+        .config_layer_stack
+        .with_cloud_config_binding(current_snapshot.binding);
+    assert_eq!(
+        started.thread.refresh_mcp_config(current, next).await,
+        codex_core::ConfigRefreshOutcome::Published
+    );
+    changed.requirements_toml.enterprise_managed[0].id = "changed-again".into();
+    policy.observe_remote_bundle(&changed);
+    policy.publish_snapshot(&mut codex_config::CloudConfigBundleSnapshot {
+        bundle: Ok(Some(changed)),
+        binding: None,
+    });
+    super::access::release_servers(&fixture.lead, generation, Some("connector")).await;
+    assert!(
+        started
+            .thread
+            .config()
+            .await
+            .mcp_servers
+            .get()
+            .contains_key("mod_connector_docs")
+    );
+    let error = super::access::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        &caller,
+        request("mcp.disconnect"),
+        &flag,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "mcp_config_stale");
+    started.thread.shutdown_and_wait().await.unwrap();
+}
+
 fn serve(server: tiny_http::Server, denied: u16) {
     for request in server.incoming_requests() {
         let header = |name: &str, value: &str| tiny_http::Header::from_bytes(name, value).unwrap();

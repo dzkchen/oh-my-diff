@@ -100,7 +100,7 @@ pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 pub use store::Trust;
 
-pub const CODEX_HOST_RELEASE: &str = "0.160.1";
+pub const CODEX_HOST_RELEASE: &str = "0.161.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;

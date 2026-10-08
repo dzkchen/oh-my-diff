@@ -27,7 +27,7 @@ def release(version, prerelease=False, **manifest):
                 {"name": "omd-release.json", "browser_download_url": f"https://example.test/{version}/omd-release.json"},
                 {"name": name, "browser_download_url": f"https://example.test/{version}/{name}",
                  "digest": f"sha256:{manifest.get('sha256', 'a' * 64)}"}],
-            "manifest": {"schema": 1, "version": version, "target": "aarch64-apple-darwin", "upstream_tag": "rust-v0.160.1",
+            "manifest": {"schema": 1, "version": version, "target": "aarch64-apple-darwin", "upstream_tag": "rust-v0.161.0",
                          "mod_api": "0.2.0-experimental.5", "node": "24.18.0", "archive": name, "sha256": "a" * 64, **manifest}}
 
 
@@ -62,9 +62,9 @@ class UpdateSelection(unittest.TestCase):
         (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_update"), "settings": self.settings}]}))
 
     def upstream(self, args, current, minor=None):
-        if minor and minor != "0.160":
-            raise ValueError(f"upstream Codex {minor}.x is required; found codex-cli 0.160.1")
-        return {"path": "/usr/bin/true", "version": "codex-cli 0.160.1"}
+        if minor and minor != "0.161":
+            raise ValueError(f"upstream Codex {minor}.x is required; found codex-cli 0.161.0")
+        return {"path": "/usr/bin/true", "version": "codex-cli 0.161.0"}
 
     def fetch(self, url, limit):
         if url == "https://example.test/releases":
@@ -161,13 +161,13 @@ class UpdateSelection(unittest.TestCase):
             self.assertFalse((root / "update/journal.json").exists())
 
     def test_channel_pin_compatibility_and_failures(self):
-        self.published = [release("0.3.0-beta.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.161.0"),
+        self.published = [release("0.3.0-beta.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.162.0"),
                           release("0.2.0"), release("0.1.0"), release("0.1.5"),
                           {"tag_name": "nightly", "assets": []}, {**release("0.4.0"), "draft": True}]
         stable = self.check()
         self.assertEqual(stable["available"]["version"], "0.2.0")
         self.assertEqual(stable["blocked"]["version"], "0.2.1")
-        self.assertIn("0.161.x", stable["blocked"]["reasons"][0])
+        self.assertIn("0.162.x", stable["blocked"]["reasons"][0])
         self.assertEqual(stable["available"]["manifest"]["url"], "https://example.test/0.2.0/oh-my-diff-0.2.0.tar.xz")
         self.assertEqual(self.check(channel="beta")["available"]["version"], "0.3.0-beta.1")
         self.assertEqual(self.check(pin="0.1.0")["available"], None)
@@ -242,7 +242,7 @@ class UpdateSelection(unittest.TestCase):
                 self.assertTrue((self.root / "update/ready.json").is_file())
                 self.settings.update({key: value for key, value in changes.items() if key in self.settings or key == "pin"})
                 self.write_settings()
-                self.module.upstream_binary = (lambda *arguments: self.upstream(args, self.current, "0.161")) if changes.get("incompatible") else self.upstream
+                self.module.upstream_binary = (lambda *arguments: self.upstream(args, self.current, "0.162")) if changes.get("incompatible") else self.upstream
                 self.module.user_mods = lambda *arguments: ["custom"] if changes.get("user_mods") else []
                 for key in ("held", "failed"):
                     if changes.get(key):

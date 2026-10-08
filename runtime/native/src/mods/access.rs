@@ -48,11 +48,22 @@ struct Body {
 }
 
 /// HTTP streams and MCP servers a session's mods hold; both end with the mod generation that opened them.
-#[derive(Default)]
 pub(crate) struct AccessState {
     streams: Mutex<BTreeMap<u64, Stream>>,
     next: std::sync::atomic::AtomicU64,
     servers: Mutex<BTreeMap<String, (String, u64)>>,
+    mcp_mutation: tokio::sync::Semaphore,
+}
+
+impl Default for AccessState {
+    fn default() -> Self {
+        Self {
+            streams: Mutex::default(),
+            next: std::sync::atomic::AtomicU64::default(),
+            servers: Mutex::default(),
+            mcp_mutation: tokio::sync::Semaphore::new(1),
+        }
+    }
 }
 
 impl AccessState {
@@ -566,7 +577,20 @@ async fn mcp(
     }
     let input: Input =
         serde_json::from_value(request.arguments).map_err(|error| error.to_string())?;
-    let grants = current_grants(core, caller.id)?;
+    let _mutation = lead
+        .session
+        .access
+        .mcp_mutation
+        .acquire()
+        .await
+        .map_err(|_| "mcp_mutation_closed")?;
+    let grants = {
+        let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+        if runtime.generation() != caller.generation {
+            return Err("host_caller_inactive".into());
+        }
+        runtime.grants(caller.id).ok_or("host_caller_inactive")?
+    };
     let declared = grants
         .mcp_servers
         .get(&input.server)
@@ -647,37 +671,55 @@ async fn reconfigure(
         .get_thread(lead.thread)
         .await
         .map_err(|error| error.to_string())?;
-    let mut config = (*thread.config().await).clone();
-    let mut servers = config.mcp_servers.get().clone();
-    let owned = lead
-        .session
-        .access
-        .servers
-        .lock()
-        .map_err(|_| "mcp_servers_poisoned")?
-        .contains_key(name);
-    if servers.contains_key(name) && !owned {
-        return Err(format!("mcp_server_name_taken: {name}"));
-    }
-    match server {
-        Some(server) => {
-            servers.insert(name.to_owned(), server);
+    for _ in 0..3 {
+        let expected_config = thread.config().await;
+        let mut config = expected_config.as_ref().clone();
+        let mut servers = config.mcp_servers.get().clone();
+        let owned = lead
+            .session
+            .access
+            .servers
+            .lock()
+            .map_err(|_| "mcp_servers_poisoned")?
+            .contains_key(name);
+        if servers.contains_key(name) && !owned {
+            return Err(format!("mcp_server_name_taken: {name}"));
         }
-        None if !owned => return Ok(()),
-        None => {
-            servers.remove(name);
+        match &server {
+            Some(server) => {
+                servers.insert(name.to_owned(), server.clone());
+            }
+            None if !owned => return Ok(()),
+            None => {
+                servers.remove(name);
+            }
+        }
+        config
+            .mcp_servers
+            .set(servers)
+            .map_err(|error| format!("mcp_server_refused: {error}"))?;
+        if config.mcp_servers.get().get(name) != server.as_ref() {
+            return Err("mcp_server_refused: constrained configuration changed the request".into());
+        }
+        match thread.refresh_mcp_config(expected_config, config).await {
+            codex_core::ConfigRefreshOutcome::Stale => continue,
+            codex_core::ConfigRefreshOutcome::Published
+            | codex_core::ConfigRefreshOutcome::Rejected => {
+                if thread.config().await.mcp_servers.get().get(name) == server.as_ref() {
+                    return Ok(());
+                }
+                return Err("mcp_config_rejected".into());
+            }
         }
     }
-    config
-        .mcp_servers
-        .set(servers)
-        .map_err(|error| format!("mcp_server_refused: {error}"))?;
-    thread.refresh_mcp_config(config).await;
-    Ok(())
+    Err("mcp_config_stale".into())
 }
 
 /// Disconnects MCP servers whose owner is gone or reloaded; `owner` limits it to one mod.
 pub(super) async fn release_servers(lead: &Lead, generation: u64, owner: Option<&str>) {
+    let Ok(_mutation) = lead.session.access.mcp_mutation.acquire().await else {
+        return;
+    };
     let stale = lead.session.access.servers.lock().map_or_else(
         |_| Vec::new(),
         |servers| {
@@ -692,8 +734,9 @@ pub(super) async fn release_servers(lead: &Lead, generation: u64, owner: Option<
         },
     );
     for name in stale {
-        let _ = reconfigure(lead, &name, None).await;
-        if let Ok(mut servers) = lead.session.access.servers.lock() {
+        if reconfigure(lead, &name, None).await.is_ok()
+            && let Ok(mut servers) = lead.session.access.servers.lock()
+        {
             servers.remove(&name);
         }
     }

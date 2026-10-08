@@ -1,10 +1,18 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.160.1",
-  "commit": "d27764b82f7118f674371e6d6e76271d9d606edb"
+  "tag": "rust-v0.161.0",
+  "commit": "979011409de0a60b52f179721948e65531d26144"
  },
  "requests": {
+  "account/bedrock/checkGovCloudRequirements": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": []
+  },
   "account/gatewayOAuth/read": {
    "class": "account",
    "contexts": [
@@ -829,6 +837,7 @@
    ],
    "scope": "current",
    "fields": [
+    "origin",
     "threadId"
    ]
   },
@@ -851,6 +860,7 @@
    "scope": "current",
    "fields": [
     "objective",
+    "origin",
     "status",
     "threadId",
     "tokenBudget"
@@ -1397,6 +1407,7 @@
   "thread/goal/cleared",
   "thread/goal/updated",
   "thread/name/updated",
+  "thread/prediction/updated",
   "thread/project/updated",
   "thread/queue/changed",
   "thread/realtime/closed",
@@ -1475,6 +1486,7 @@
   "features.guardian_reuse_parent_compaction",
   "features.guardian_root_handoff_context",
   "features.guardianv2",
+  "features.login_shell_package_path",
   "features.mcp_oauth_refresh_coordination",
   "features.network_proxy",
   "features.plugin_sharing",
@@ -1567,12 +1579,14 @@
   "apps_mcp_product_sku",
   "audio",
   "audio.microphone",
+  "audio.microphone_channel",
   "audio.speaker",
   "background_terminal_max_timeout",
   "check_for_update_on_startup",
   "cloud",
   "cloud.skills",
   "compact_prompt",
+  "daybreak",
   "desktop",
   "developer_instructions",
   "disable_paste_burst",
@@ -1585,6 +1599,7 @@
   "features",
   "features.agent_message_board",
   "features.analytics_plan_history",
+  "features.api_key_cyber_access_programs",
   "features.api_key_model_discovery",
   "features.apply_patch_freeform",
   "features.apply_patch_preserve_line_endings",
@@ -1593,9 +1608,11 @@
   "features.apps_mcp_path_override",
   "features.background_paginated_rollout_migration",
   "features.bedrock_setup_wizard",
+  "features.browser_annotation_api",
   "features.browser_use",
   "features.browser_use_external",
   "features.chronicle",
+  "features.cli_daybreak",
   "features.code_mode",
   "features.code_mode_buffered_exec",
   "features.code_mode_host",
@@ -1640,6 +1657,7 @@
   "features.in_app_dictation",
   "features.in_app_local_automation",
   "features.in_app_updates",
+  "features.in_app_voice",
   "features.instant_interrupt",
   "features.item_ids",
   "features.js_repl",
@@ -1650,6 +1668,7 @@
   "features.memories",
   "features.memory_tool",
   "features.mentions_v2",
+  "features.model_catalog_in_context",
   "features.multi_agent",
   "features.multi_agent_mode",
   "features.multi_agent_v2",
