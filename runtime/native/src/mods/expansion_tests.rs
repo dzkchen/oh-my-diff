@@ -707,6 +707,81 @@ async fn background_delivery_wakes_on_publish_and_client_wake() {
     assert_eq!(ignored["delivered"], 0);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn declared_subscriptions_receive_publications_before_any_delivery_round() {
+    let Some(fixture) = fixture(&[Package {
+        id: "preheard",
+        capabilities: &["events"],
+        manifest: json!({"subscriptions": {"channels": ["prespeaker/news"]}}),
+        source: "export default function (api) { api.on('channel', () => {}); }\n",
+    }]) else {
+        return;
+    };
+    let delivery = codex_omd::event_bus::global()
+        .lock()
+        .unwrap()
+        .publish(
+            "prespeaker",
+            "news",
+            json!("early"),
+            None,
+            &fixture.lead.thread.to_string(),
+        )
+        .unwrap();
+    assert_eq!(delivery.delivered, 1);
+    let mut bus = codex_omd::event_bus::global().lock().unwrap();
+    assert_eq!(bus.drain("preheard", 1)[0].data, json!("early"));
+    bus.unsubscribe("preheard");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn busy_queue_and_subscriber_do_not_starve_other_channel_subscribers() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "flooded",
+            capabilities: &["events"],
+            manifest: json!({"subscriptions": {"channels": ["floodgate/busy"]}}),
+            source: "export default function (api) { api.on('channel', () => {}); }\n",
+        },
+        Package {
+            id: "starved",
+            capabilities: &["events", "store", "commands"],
+            manifest: json!({"subscriptions": {"channels": ["floodgate/quiet"]}}),
+            source: "export default function (api) {\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let core = &fixture.core;
+    let elsewhere = ThreadId::new();
+    for session in (0..2 * 64).map(|index| ["a", "b"][index % 2]) {
+        delivery::push(
+            &core.expansion,
+            delivery::Pending::Process {
+                thread: elsewhere,
+                owner: "flooded".into(),
+                session: session.into(),
+                bytes: Some(1),
+            },
+        );
+    }
+    for (channel, data) in std::iter::repeat_n(("busy", "noise"), 64).chain([("quiet", "go")]) {
+        delivery::publish(
+            core,
+            &fixture.lead,
+            "floodgate",
+            json!({"channel": channel, "data": data}),
+        )
+        .unwrap();
+    }
+    assert!(delivery::deliver(core).await);
+    let mut bus = codex_omd::event_bus::global().lock().unwrap();
+    bus.unsubscribe("flooded");
+    bus.unsubscribe("starved");
+    drop(bus);
+    assert_eq!(command(core, "starved", "seen"), json!("go"));
+}
+
 fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
     let thread = ThreadId::new();
     let session = first.host.open_session(thread, false).unwrap();

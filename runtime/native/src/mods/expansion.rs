@@ -80,6 +80,7 @@ pub(super) struct State {
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
     subscribed: Mutex<BTreeSet<String>>,
+    bus_cursor: Mutex<String>,
     subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
     wake: Arc<tokio::sync::Notify>,
     delivery: Mutex<Option<Delivery>>,
@@ -197,6 +198,9 @@ impl State {
             .store(runtime.has_event("approval_result"), Ordering::Release);
         if let Ok(mut subscriptions) = self.subscriptions.lock() {
             *subscriptions = runtime.subscriptions();
+        }
+        if !delivery::sync_bus(self).is_empty() {
+            self.wake.notify_one();
         }
         if let Ok(mut definitions) = self.definitions.lock() {
             *definitions = runtime.agent_definitions();

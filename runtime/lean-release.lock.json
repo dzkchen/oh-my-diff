@@ -1,8 +1,8 @@
 {
   "artifacts": {
     "codex": {
-      "bytes": 605243136,
-      "sha256": "b8ee68981639efc5495a93d398833c6ae4a72458dbf17d3c88e9dd1c66a44470"
+      "bytes": 604941392,
+      "sha256": "50a2858291969fee742370c0b57ffeade57aa60c9a7425a583f43a0344e3859e"
     },
     "codex-code-mode-host": {
       "bytes": 133700592,
@@ -125,7 +125,7 @@
     }
   },
   "qualification": "development package candidate; supported collection and default pending",
-  "runtime_patch_sha256": "d12c04075e81ba101f9bd7bb9c956e77a6ba972695b468960574c915b2bd9441",
+  "runtime_patch_sha256": "be0723777ce29ee07aea8badbf4e3bcd0f095fb23bb5b95cb475569364c1f176",
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "source_sha256": {
@@ -327,7 +327,7 @@
     "plugins/optional/plugins/omd-session-review/tsconfig.json": "921e1c62c4469bcfea370d6a993d2dacc88a0bfcdaa6394fb1408692b1a6d26a",
     "runtime/full-mods.lock.json": "b1deb4c0023dab9a4f8506b8f8e4c23525362a466da896f263fe18b07dacb2cb",
     "runtime/hardened-entitlements.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
-    "runtime/patches/manifest.json": "7a18e940cf5401270fbc176f226bbc3b906ce1ab56719f20e67c57e53e8f2771",
+    "runtime/patches/manifest.json": "da26167ec05a9ac2f8fca4cc0deec28439065e947e1fcc8328fc45a7270725f0",
     "runtime/plugin-v1.lock.json": "671c4b8b62c520ab386722166e6541a2261e2865a43b27df870f692e1e9b4a50",
     "runtime/preview-v1.lock.json": "a15d08675ada29412e2b9b9054f29573cad0e40266068c5c5d62ad9846a6f36f",
     "scripts/authority_broker.py": "7178e9b86feafaf0665e154af71ae603a09d11c001c576f8708d66c19df01e11",
@@ -337,7 +337,7 @@
     "scripts/lean_profiles.py": "5de82ccf305fad0f55290160a6b3fa28be753afec7d96eaac70abff84bf3434c",
     "scripts/lean_release_lock.py": "b4782f61b96dcf0b9ad6f833ee87710a72f59c0bd9b58e7a5fc2157b45cd577e",
     "scripts/preview_lock.py": "a4bd67597366322d58e58739781be7e2a24020fd1e311a4ad42f03a5b49240fc",
-    "upstream.lock.json": "e73af2687af7e6c67b0dffdc3cb1f60a9e421a2f7fa34a11ef1d7a9bf1d14b79"
+    "upstream.lock.json": "c1e34fa3ab243fe4764f7eb2d117481eea541712892b1bf99a2beb3f867cf43b"
   },
   "target": "aarch64-apple-darwin",
   "upstream_commit": "d27764b82f7118f674371e6d6e76271d9d606edb",

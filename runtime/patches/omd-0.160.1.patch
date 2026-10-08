@@ -27381,7 +27381,7 @@ index 9d61157c4..1d511f153 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 37b5c788a..bba3a716d 100644
+index 37b5c788a..fce17a9ae 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -230,6 +230,10 @@ mod link_hover;
@@ -27540,7 +27540,7 @@ index 37b5c788a..bba3a716d 100644
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1183,23 +1287,34 @@ impl App {
+@@ -1183,23 +1287,35 @@ impl App {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
@@ -27575,6 +27575,7 @@ index 37b5c788a..bba3a716d 100644
 +                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
                      frame.set_cursor_position((x, y));
                  }
++                crate::mod_client::transmit();
              })?;
 +            crate::mod_client::flush();
              Ok(rendered_area)
@@ -28247,7 +28248,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 23d40daaa..d9932172c 100644
+index 23d40daaa..4e03f011c 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -79,8 +79,22 @@ impl App {
@@ -28422,7 +28423,7 @@ index 23d40daaa..d9932172c 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -253,7 +248,18 @@ impl App {
+@@ -253,18 +248,37 @@ impl App {
              .filter(|_| chat_widget.no_modal_or_popup_active());
              feedback_tick =
                  view.render_composer_gap(follow_area, composer_hint.as_ref(), frame.buffer, now);
@@ -28442,7 +28443,12 @@ index 23d40daaa..d9932172c 100644
              rendered_cursor = bottom.cursor_pos(bottom_area);
              if let Some(position) = rendered_cursor {
                  frame.set_cursor_style(bottom.cursor_style(bottom_area));
-@@ -265,6 +271,13 @@ impl App {
+                 frame.set_cursor_position(position);
+             }
++            crate::mod_client::transmit();
+         })?;
+         if let Some((surface, tip)) = &turn_tip
+             && tip.rendered.get()
          {
              self.turn_tips.acknowledge(*surface);
          }
@@ -59889,10 +59895,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..04870e738
+index 000000000..72df78e38
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,680 @@
+@@ -0,0 +1,684 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -59975,6 +59981,7 @@ index 000000000..04870e738
 +    restarted: Mutex<BTreeMap<String, bool>>,
 +    watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
 +    subscribed: Mutex<BTreeSet<String>>,
++    bus_cursor: Mutex<String>,
 +    subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
 +    wake: Arc<tokio::sync::Notify>,
 +    delivery: Mutex<Option<Delivery>>,
@@ -60092,6 +60099,9 @@ index 000000000..04870e738
 +            .store(runtime.has_event("approval_result"), Ordering::Release);
 +        if let Ok(mut subscriptions) = self.subscriptions.lock() {
 +            *subscriptions = runtime.subscriptions();
++        }
++        if !delivery::sync_bus(self).is_empty() {
++            self.wake.notify_one();
 +        }
 +        if let Ok(mut definitions) = self.definitions.lock() {
 +            *definitions = runtime.agent_definitions();
@@ -61271,10 +61281,10 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..853760fc4
+index 000000000..237561eba
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,575 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -61454,6 +61464,16 @@ index 000000000..853760fc4
 +        );
 +    }
 +    let current = core.expansion.current();
++    let cursor = core
++        .expansion
++        .bus_cursor
++        .lock()
++        .map(|cursor| cursor.clone())
++        .unwrap_or_default();
++    let (later, earlier): (Vec<_>, Vec<_>) = sync_bus(&core.expansion)
++        .into_iter()
++        .partition(|id| *id > cursor);
++    let mut subscribers = later.into_iter().chain(earlier).collect();
 +    let mut budget = DELIVERIES_PER_ROUND;
 +    while budget > 0 {
 +        let next = core
@@ -61462,69 +61482,16 @@ index 000000000..853760fc4
 +            .lock()
 +            .ok()
 +            .and_then(|mut queue| queue.pop_front());
-+        let Some(next) = next else {
-+            break;
-+        };
-+        budget -= 1;
-+        match next {
-+            Pending::Process {
-+                thread,
-+                owner,
-+                session,
-+                bytes,
-+            } => {
-+                let Some(lead) = core.expansion.thread(thread) else {
-+                    continue;
-+                };
-+                let payload = match bytes {
-+                    Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
-+                    None => {
-+                        json!({"session": session, "kind": "exit"})
-+                    }
-+                };
-+                invoke_one(core, &lead, owner, "process_event", payload).await;
-+            }
-+            Pending::Watch {
-+                thread,
-+                owner,
-+                watch,
-+                paths,
-+                include_ignored,
-+            } => {
-+                let Some(lead) = core.expansion.thread(thread) else {
-+                    continue;
-+                };
-+                let changes =
-+                    super::activity::external_changes(core, &lead, &paths, include_ignored).await;
-+                if changes.is_empty() {
-+                    continue;
-+                }
-+                let payload = json!({"repository": lead.host.repository, "source": "external",
-+                    "call_id": null, "watch_id": watch, "changes": changes, "status": "observed", "reason": null});
-+                invoke_one(core, &lead, owner, "workspace_change", payload).await;
-+            }
-+            Pending::Broadcast { event, payload } => {
-+                core.event(event, payload, current.as_ref()).await;
-+            }
-+            Pending::Timer { thread, owner, key } => {
-+                let Some(lead) = core.expansion.thread(thread) else {
-+                    continue;
-+                };
-+                invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
-+            }
-+        }
-+    }
-+    let ids = sync_bus(core);
-+    for id in ids {
-+        if budget == 0 {
++        let channel = next_channel_event(&core.expansion, &mut subscribers);
++        if next.is_none() && channel.is_none() {
 +            break;
 +        }
-+        let events = codex_omd::event_bus::global()
-+            .lock()
-+            .map(|mut bus| bus.drain(&id, budget))
-+            .unwrap_or_default();
-+        for event in events {
++        if let Some(next) = next {
 +            budget -= 1;
++            deliver_pending(core, current.as_ref(), next).await;
++        }
++        if let Some((id, event)) = channel {
++            budget = budget.saturating_sub(1);
 +            let Some(lead) = ThreadId::from_string(&event.thread)
 +                .ok()
 +                .and_then(|thread| core.expansion.thread(thread))
@@ -61534,15 +61501,84 @@ index 000000000..853760fc4
 +            let payload = json!({"publisher": event.publisher, "channel": event.channel,
 +                "data": event.data, "correlation": event.correlation,
 +                "sequence": event.sequence, "dropped": event.dropped});
-+            invoke_one(core, &lead, id.clone(), "channel", payload).await;
++            invoke_one(core, &lead, id, "channel", payload).await;
 +        }
 +    }
 +    budget == 0
 +}
 +
-+fn sync_bus(core: &Core) -> Vec<String> {
-+    let subscriptions = core
-+        .expansion
++fn next_channel_event(
++    expansion: &State,
++    subscribers: &mut std::collections::VecDeque<String>,
++) -> Option<(String, codex_omd::event_bus::ChannelEvent)> {
++    let mut bus = codex_omd::event_bus::global().lock().ok()?;
++    while let Some(id) = subscribers.pop_front() {
++        let Some(event) = bus.drain(&id, 1).pop() else {
++            continue;
++        };
++        if bus.pending(&id) > 0 {
++            subscribers.push_back(id.clone());
++        }
++        if let Ok(mut cursor) = expansion.bus_cursor.lock() {
++            cursor.clone_from(&id);
++        }
++        return Some((id, event));
++    }
++    None
++}
++
++async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending) {
++    match next {
++        Pending::Process {
++            thread,
++            owner,
++            session,
++            bytes,
++        } => {
++            let Some(lead) = core.expansion.thread(thread) else {
++                return;
++            };
++            let payload = match bytes {
++                Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
++                None => {
++                    json!({"session": session, "kind": "exit"})
++                }
++            };
++            invoke_one(core, &lead, owner, "process_event", payload).await;
++        }
++        Pending::Watch {
++            thread,
++            owner,
++            watch,
++            paths,
++            include_ignored,
++        } => {
++            let Some(lead) = core.expansion.thread(thread) else {
++                return;
++            };
++            let changes =
++                super::activity::external_changes(core, &lead, &paths, include_ignored).await;
++            if changes.is_empty() {
++                return;
++            }
++            let payload = json!({"repository": lead.host.repository, "source": "external",
++                "call_id": null, "watch_id": watch, "changes": changes, "status": "observed", "reason": null});
++            invoke_one(core, &lead, owner, "workspace_change", payload).await;
++        }
++        Pending::Broadcast { event, payload } => {
++            core.event(event, payload, current).await;
++        }
++        Pending::Timer { thread, owner, key } => {
++            let Some(lead) = core.expansion.thread(thread) else {
++                return;
++            };
++            invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
++        }
++    }
++}
++
++pub(super) fn sync_bus(expansion: &State) -> Vec<String> {
++    let subscriptions = expansion
 +        .subscriptions
 +        .lock()
 +        .map(|subscriptions| subscriptions.clone())
@@ -61554,7 +61590,7 @@ index 000000000..853760fc4
 +        .collect::<BTreeSet<_>>();
 +    let (Ok(mut bus), Ok(mut subscribed)) = (
 +        codex_omd::event_bus::global().lock(),
-+        core.expansion.subscribed.lock(),
++        expansion.subscribed.lock(),
 +    ) else {
 +        return Vec::new();
 +    };
@@ -61588,7 +61624,7 @@ index 000000000..853760fc4
 +        correlation: Option<String>,
 +    }
 +    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-+    sync_bus(core);
++    sync_bus(&core.expansion);
 +    let delivery = codex_omd::event_bus::global()
 +        .lock()
 +        .map_err(|_| "event_bus_poisoned")?
@@ -62343,10 +62379,10 @@ index 000000000..6c5794a52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..150c8d9a4
+index 000000000..348d96d2e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3185 @@
+@@ -0,0 +1,3260 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -63054,6 +63090,81 @@ index 000000000..150c8d9a4
 +    )
 +    .unwrap();
 +    assert_eq!(ignored["delivered"], 0);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn declared_subscriptions_receive_publications_before_any_delivery_round() {
++    let Some(fixture) = fixture(&[Package {
++        id: "preheard",
++        capabilities: &["events"],
++        manifest: json!({"subscriptions": {"channels": ["prespeaker/news"]}}),
++        source: "export default function (api) { api.on('channel', () => {}); }\n",
++    }]) else {
++        return;
++    };
++    let delivery = codex_omd::event_bus::global()
++        .lock()
++        .unwrap()
++        .publish(
++            "prespeaker",
++            "news",
++            json!("early"),
++            None,
++            &fixture.lead.thread.to_string(),
++        )
++        .unwrap();
++    assert_eq!(delivery.delivered, 1);
++    let mut bus = codex_omd::event_bus::global().lock().unwrap();
++    assert_eq!(bus.drain("preheard", 1)[0].data, json!("early"));
++    bus.unsubscribe("preheard");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn busy_queue_and_subscriber_do_not_starve_other_channel_subscribers() {
++    let Some(fixture) = fixture(&[
++        Package {
++            id: "flooded",
++            capabilities: &["events"],
++            manifest: json!({"subscriptions": {"channels": ["floodgate/busy"]}}),
++            source: "export default function (api) { api.on('channel', () => {}); }\n",
++        },
++        Package {
++            id: "starved",
++            capabilities: &["events", "store", "commands"],
++            manifest: json!({"subscriptions": {"channels": ["floodgate/quiet"]}}),
++            source: "export default function (api) {\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
++        },
++    ]) else {
++        return;
++    };
++    let core = &fixture.core;
++    let elsewhere = ThreadId::new();
++    for session in (0..2 * 64).map(|index| ["a", "b"][index % 2]) {
++        delivery::push(
++            &core.expansion,
++            delivery::Pending::Process {
++                thread: elsewhere,
++                owner: "flooded".into(),
++                session: session.into(),
++                bytes: Some(1),
++            },
++        );
++    }
++    for (channel, data) in std::iter::repeat_n(("busy", "noise"), 64).chain([("quiet", "go")]) {
++        delivery::publish(
++            core,
++            &fixture.lead,
++            "floodgate",
++            json!({"channel": channel, "data": data}),
++        )
++        .unwrap();
++    }
++    assert!(delivery::deliver(core).await);
++    let mut bus = codex_omd::event_bus::global().lock().unwrap();
++    bus.unsubscribe("flooded");
++    bus.unsubscribe("starved");
++    drop(bus);
++    assert_eq!(command(core, "starved", "seen"), json!("go"));
 +}
 +
 +fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
@@ -125385,7 +125496,7 @@ index 000000000..bf8d3805c
 +}
 diff --git a/codex-rs/tui/src/mod_backdrop.rs b/codex-rs/tui/src/mod_backdrop.rs
 new file mode 100644
-index 000000000..7ae97d43b
+index 000000000..3624ac2a0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_backdrop.rs
 @@ -0,0 +1,434 @@
@@ -125568,8 +125679,8 @@ index 000000000..7ae97d43b
 +    )
 +}
 +
-+pub(crate) fn kitty_transmit(png: &[u8], header: &str) -> String {
-+    let payload = STANDARD.encode(png);
++pub(crate) fn kitty_transmit(payload: &[u8], header: &str) -> String {
++    let payload = STANDARD.encode(payload);
 +    let chunks: Vec<&[u8]> = payload.as_bytes().chunks(KITTY_CHUNK).collect();
 +    let mut command = String::new();
 +    for (index, chunk) in chunks.iter().enumerate() {
@@ -125996,10 +126107,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..ab7920a1f
+index 000000000..cde3d3b42
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,730 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -126018,12 +126129,304 @@ index 000000000..ab7920a1f
 +use std::sync::atomic::Ordering;
 +
 +const PLACEHOLDER: char = '\u{10EEEE}';
-+const DIACRITICS: [char; 40] = [
-+    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}', '\u{033F}',
-+    '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}', '\u{0352}', '\u{0357}',
-+    '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}', '\u{0367}', '\u{0368}', '\u{0369}',
-+    '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}', '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}',
-+    '\u{0485}', '\u{0486}', '\u{0487}', '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}',
++const DIACRITICS: [char; 297] = [
++    '\u{0305}',
++    '\u{030D}',
++    '\u{030E}',
++    '\u{0310}',
++    '\u{0312}',
++    '\u{033D}',
++    '\u{033E}',
++    '\u{033F}',
++    '\u{0346}',
++    '\u{034A}',
++    '\u{034B}',
++    '\u{034C}',
++    '\u{0350}',
++    '\u{0351}',
++    '\u{0352}',
++    '\u{0357}',
++    '\u{035B}',
++    '\u{0363}',
++    '\u{0364}',
++    '\u{0365}',
++    '\u{0366}',
++    '\u{0367}',
++    '\u{0368}',
++    '\u{0369}',
++    '\u{036A}',
++    '\u{036B}',
++    '\u{036C}',
++    '\u{036D}',
++    '\u{036E}',
++    '\u{036F}',
++    '\u{0483}',
++    '\u{0484}',
++    '\u{0485}',
++    '\u{0486}',
++    '\u{0487}',
++    '\u{0592}',
++    '\u{0593}',
++    '\u{0594}',
++    '\u{0595}',
++    '\u{0597}',
++    '\u{0598}',
++    '\u{0599}',
++    '\u{059C}',
++    '\u{059D}',
++    '\u{059E}',
++    '\u{059F}',
++    '\u{05A0}',
++    '\u{05A1}',
++    '\u{05A8}',
++    '\u{05A9}',
++    '\u{05AB}',
++    '\u{05AC}',
++    '\u{05AF}',
++    '\u{05C4}',
++    '\u{0610}',
++    '\u{0611}',
++    '\u{0612}',
++    '\u{0613}',
++    '\u{0614}',
++    '\u{0615}',
++    '\u{0616}',
++    '\u{0617}',
++    '\u{0657}',
++    '\u{0658}',
++    '\u{0659}',
++    '\u{065A}',
++    '\u{065B}',
++    '\u{065D}',
++    '\u{065E}',
++    '\u{06D6}',
++    '\u{06D7}',
++    '\u{06D8}',
++    '\u{06D9}',
++    '\u{06DA}',
++    '\u{06DB}',
++    '\u{06DC}',
++    '\u{06DF}',
++    '\u{06E0}',
++    '\u{06E1}',
++    '\u{06E2}',
++    '\u{06E4}',
++    '\u{06E7}',
++    '\u{06E8}',
++    '\u{06EB}',
++    '\u{06EC}',
++    '\u{0730}',
++    '\u{0732}',
++    '\u{0733}',
++    '\u{0735}',
++    '\u{0736}',
++    '\u{073A}',
++    '\u{073D}',
++    '\u{073F}',
++    '\u{0740}',
++    '\u{0741}',
++    '\u{0743}',
++    '\u{0745}',
++    '\u{0747}',
++    '\u{0749}',
++    '\u{074A}',
++    '\u{07EB}',
++    '\u{07EC}',
++    '\u{07ED}',
++    '\u{07EE}',
++    '\u{07EF}',
++    '\u{07F0}',
++    '\u{07F1}',
++    '\u{07F3}',
++    '\u{0816}',
++    '\u{0817}',
++    '\u{0818}',
++    '\u{0819}',
++    '\u{081B}',
++    '\u{081C}',
++    '\u{081D}',
++    '\u{081E}',
++    '\u{081F}',
++    '\u{0820}',
++    '\u{0821}',
++    '\u{0822}',
++    '\u{0823}',
++    '\u{0825}',
++    '\u{0826}',
++    '\u{0827}',
++    '\u{0829}',
++    '\u{082A}',
++    '\u{082B}',
++    '\u{082C}',
++    '\u{082D}',
++    '\u{0951}',
++    '\u{0953}',
++    '\u{0954}',
++    '\u{0F82}',
++    '\u{0F83}',
++    '\u{0F86}',
++    '\u{0F87}',
++    '\u{135D}',
++    '\u{135E}',
++    '\u{135F}',
++    '\u{17DD}',
++    '\u{193A}',
++    '\u{1A17}',
++    '\u{1A75}',
++    '\u{1A76}',
++    '\u{1A77}',
++    '\u{1A78}',
++    '\u{1A79}',
++    '\u{1A7A}',
++    '\u{1A7B}',
++    '\u{1A7C}',
++    '\u{1B6B}',
++    '\u{1B6D}',
++    '\u{1B6E}',
++    '\u{1B6F}',
++    '\u{1B70}',
++    '\u{1B71}',
++    '\u{1B72}',
++    '\u{1B73}',
++    '\u{1CD0}',
++    '\u{1CD1}',
++    '\u{1CD2}',
++    '\u{1CDA}',
++    '\u{1CDB}',
++    '\u{1CE0}',
++    '\u{1DC0}',
++    '\u{1DC1}',
++    '\u{1DC3}',
++    '\u{1DC4}',
++    '\u{1DC5}',
++    '\u{1DC6}',
++    '\u{1DC7}',
++    '\u{1DC8}',
++    '\u{1DC9}',
++    '\u{1DCB}',
++    '\u{1DCC}',
++    '\u{1DD1}',
++    '\u{1DD2}',
++    '\u{1DD3}',
++    '\u{1DD4}',
++    '\u{1DD5}',
++    '\u{1DD6}',
++    '\u{1DD7}',
++    '\u{1DD8}',
++    '\u{1DD9}',
++    '\u{1DDA}',
++    '\u{1DDB}',
++    '\u{1DDC}',
++    '\u{1DDD}',
++    '\u{1DDE}',
++    '\u{1DDF}',
++    '\u{1DE0}',
++    '\u{1DE1}',
++    '\u{1DE2}',
++    '\u{1DE3}',
++    '\u{1DE4}',
++    '\u{1DE5}',
++    '\u{1DE6}',
++    '\u{1DFE}',
++    '\u{20D0}',
++    '\u{20D1}',
++    '\u{20D4}',
++    '\u{20D5}',
++    '\u{20D6}',
++    '\u{20D7}',
++    '\u{20DB}',
++    '\u{20DC}',
++    '\u{20E1}',
++    '\u{20E7}',
++    '\u{20E9}',
++    '\u{20F0}',
++    '\u{2CEF}',
++    '\u{2CF0}',
++    '\u{2CF1}',
++    '\u{2DE0}',
++    '\u{2DE1}',
++    '\u{2DE2}',
++    '\u{2DE3}',
++    '\u{2DE4}',
++    '\u{2DE5}',
++    '\u{2DE6}',
++    '\u{2DE7}',
++    '\u{2DE8}',
++    '\u{2DE9}',
++    '\u{2DEA}',
++    '\u{2DEB}',
++    '\u{2DEC}',
++    '\u{2DED}',
++    '\u{2DEE}',
++    '\u{2DEF}',
++    '\u{2DF0}',
++    '\u{2DF1}',
++    '\u{2DF2}',
++    '\u{2DF3}',
++    '\u{2DF4}',
++    '\u{2DF5}',
++    '\u{2DF6}',
++    '\u{2DF7}',
++    '\u{2DF8}',
++    '\u{2DF9}',
++    '\u{2DFA}',
++    '\u{2DFB}',
++    '\u{2DFC}',
++    '\u{2DFD}',
++    '\u{2DFE}',
++    '\u{2DFF}',
++    '\u{A66F}',
++    '\u{A67C}',
++    '\u{A67D}',
++    '\u{A6F0}',
++    '\u{A6F1}',
++    '\u{A8E0}',
++    '\u{A8E1}',
++    '\u{A8E2}',
++    '\u{A8E3}',
++    '\u{A8E4}',
++    '\u{A8E5}',
++    '\u{A8E6}',
++    '\u{A8E7}',
++    '\u{A8E8}',
++    '\u{A8E9}',
++    '\u{A8EA}',
++    '\u{A8EB}',
++    '\u{A8EC}',
++    '\u{A8ED}',
++    '\u{A8EE}',
++    '\u{A8EF}',
++    '\u{A8F0}',
++    '\u{A8F1}',
++    '\u{AAB0}',
++    '\u{AAB2}',
++    '\u{AAB3}',
++    '\u{AAB7}',
++    '\u{AAB8}',
++    '\u{AABE}',
++    '\u{AABF}',
++    '\u{AAC1}',
++    '\u{FE20}',
++    '\u{FE21}',
++    '\u{FE22}',
++    '\u{FE23}',
++    '\u{FE24}',
++    '\u{FE25}',
++    '\u{FE26}',
++    '\u{10A0F}',
++    '\u{10A38}',
++    '\u{1D185}',
++    '\u{1D186}',
++    '\u{1D187}',
++    '\u{1D188}',
++    '\u{1D189}',
++    '\u{1D1AA}',
++    '\u{1D1AB}',
++    '\u{1D1AC}',
++    '\u{1D1AD}',
++    '\u{1D242}',
++    '\u{1D243}',
++    '\u{1D244}',
 +];
 +const FIRST_IMAGE_ID: u32 = 0x4f_4d_01;
 +pub(crate) const DEFAULT_CELL: (u16, u16) = (8, 16);
@@ -126217,16 +126620,38 @@ index 000000000..ab7920a1f
 +    (half != HALF_UNKNOWN).then_some(half)
 +}
 +
++pub(crate) struct Pixels {
++    pub(crate) bytes: Vec<u8>,
++    pub(crate) width: u32,
++    pub(crate) height: u32,
++    pub(crate) alpha: bool,
++}
++
 +struct Images {
 +    placed: BTreeMap<String, (String, u32, u16, u16)>,
 +    next: u32,
++    transmissions: Vec<(u32, Pixels, u16, u16)>,
 +    pending: Vec<String>,
++    directory: Option<tempfile::TempDir>,
++}
++
++impl Images {
++    /// Queues an image's deletion and removes its file if the terminal never read it.
++    fn retire(&mut self, id: u32) {
++        self.transmissions.retain(|(queued, ..)| *queued != id);
++        if let Some(directory) = &self.directory {
++            let _ = std::fs::remove_file(directory.path().join(file_name(id)));
++        }
++        self.pending.push(remove(id));
++    }
 +}
 +
 +static IMAGES: Mutex<Images> = Mutex::new(Images {
 +    placed: BTreeMap::new(),
 +    next: FIRST_IMAGE_ID,
++    transmissions: Vec::new(),
 +    pending: Vec::new(),
++    directory: None,
 +});
 +
 +fn images() -> std::sync::MutexGuard<'static, Images> {
@@ -126243,7 +126668,7 @@ index 000000000..ab7920a1f
 +pub(crate) fn kitty_image(
 +    component: &str,
 +    key: &str,
-+    png: impl FnOnce() -> Option<(Vec<u8>, u16, u16)>,
++    pixels: impl FnOnce() -> Option<(Pixels, u16, u16)>,
 +) -> Option<(u32, u16, u16)> {
 +    let mut images = images();
 +    if let Some((placed, id, columns, rows)) = images.placed.get(component)
@@ -126251,24 +126676,87 @@ index 000000000..ab7920a1f
 +    {
 +        return Some((*id, *columns, *rows));
 +    }
-+    let (png, columns, rows) = png()?;
++    let (pixels, columns, rows) = pixels()?;
 +    let id = images.next;
 +    images.next = if id >= 0xff_ff_ff {
 +        FIRST_IMAGE_ID
 +    } else {
 +        id + 1
 +    };
-+    if let Some((_, previous, _, _)) = images
++    let replaced = images
 +        .placed
-+        .insert(component.to_owned(), (key.to_owned(), id, columns, rows))
-+    {
-+        images.pending.push(remove(previous));
++        .insert(component.to_owned(), (key.to_owned(), id, columns, rows));
++    if let Some((_, previous, _, _)) = replaced {
++        images.retire(previous);
 +    }
-+    images.pending.push(crate::mod_backdrop::kitty_transmit(
-+        &png,
-+        &format!("a=T,U=1,t=d,f=100,i={id},c={columns},r={rows},q=2"),
-+    ));
++    images.transmissions.push((id, pixels, columns, rows));
 +    Some((id, columns, rows))
++}
++
++fn file_name(id: u32) -> String {
++    format!("tty-graphics-protocol-{id}")
++}
++
++fn private_directory() -> Option<tempfile::TempDir> {
++    let mut builder = tempfile::Builder::new();
++    builder.prefix("omd-");
++    #[cfg(unix)]
++    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
++    builder.tempdir().ok()
++}
++
++/// Raw pixels through a file in a private temporary directory that the terminal reads and deletes; inline when the file can't be written.
++fn transmission(
++    directory: Option<&std::path::Path>,
++    id: u32,
++    pixels: &Pixels,
++    columns: u16,
++    rows: u16,
++) -> String {
++    let header = format!(
++        "a=T,U=1,f={},s={},v={},i={id},c={columns},r={rows},q=2",
++        if pixels.alpha { 32 } else { 24 },
++        pixels.width,
++        pixels.height,
++    );
++    match directory
++        .map(|directory| directory.join(file_name(id)))
++        .filter(|path| std::fs::write(path, &pixels.bytes).is_ok())
++    {
++        Some(path) => crate::mod_backdrop::kitty_transmit(
++            path.to_string_lossy().as_bytes(),
++            &format!("{header},t=t"),
++        ),
++        None => crate::mod_backdrop::kitty_transmit(&pixels.bytes, &format!("{header},t=d")),
++    }
++}
++
++/// Sends this frame's new images before its placeholder cells reach the terminal: Kitty never shows placeholders drawn before their image exists.
++pub(crate) fn transmit() {
++    let (transmissions, directory) = {
++        let mut images = images();
++        if images.transmissions.is_empty() {
++            return;
++        }
++        if images.directory.is_none() {
++            images.directory = private_directory();
++        }
++        (
++            std::mem::take(&mut images.transmissions),
++            images
++                .directory
++                .as_ref()
++                .map(|directory| directory.path().to_owned()),
++        )
++    };
++    write(
++        transmissions
++            .iter()
++            .map(|(id, pixels, columns, rows)| {
++                transmission(directory.as_deref(), *id, pixels, *columns, *rows)
++            })
++            .collect(),
++    );
 +}
 +
 +pub(crate) fn placeholder_rows(
@@ -126311,7 +126799,7 @@ index 000000000..ab7920a1f
 +        .collect::<Vec<_>>();
 +    for component in gone {
 +        if let Some((_, id, _, _)) = images.placed.remove(&component) {
-+            images.pending.push(remove(id));
++            images.retire(id);
 +        }
 +    }
 +}
@@ -126327,7 +126815,7 @@ index 000000000..ab7920a1f
 +    let _ = stdout.flush();
 +}
 +
-+/// Writes queued Kitty transmissions and deletions after a frame has been flushed.
++/// Writes queued Kitty deletions after a frame has been flushed.
 +pub(crate) fn flush() {
 +    let pending = std::mem::take(&mut images().pending);
 +    write(pending);
@@ -126337,17 +126825,17 @@ index 000000000..ab7920a1f
 +pub(crate) fn teardown() {
 +    crate::mod_backdrop_sync::teardown();
 +    let mut images = images();
-+    let mut sequences = std::mem::take(&mut images.pending)
-+        .into_iter()
-+        .filter(|sequence| sequence.starts_with("\x1b_Ga=d"))
-+        .collect::<Vec<_>>();
++    images.transmissions.clear();
++    let mut sequences = std::mem::take(&mut images.pending);
 +    sequences.extend(
 +        std::mem::take(&mut images.placed)
 +            .into_values()
 +            .map(|(_, id, _, _)| remove(id)),
 +    );
++    let directory = images.directory.take();
 +    drop(images);
 +    write(sequences);
++    drop(directory);
 +}
 +
 +#[cfg(test)]
@@ -126355,11 +126843,12 @@ index 000000000..ab7920a1f
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..09a69b78f
+index 000000000..4a471069c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,249 @@
 +use super::*;
++use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
 +use crossterm::event::MouseEventKind;
 +use pretty_assertions::assert_eq;
@@ -126381,37 +126870,129 @@ index 000000000..09a69b78f
 +    assert_eq!(buffer[(4, 0)].symbol(), " ", "three cells wide");
 +    assert_eq!(buffer[(1, 1)].symbol(), "\u{10EEEE}\u{030D}\u{0305}");
 +    assert_eq!(buffer[(1, 0)].fg, Color::Rgb(0x4f, 0x4d, 0x07));
++    let wide = placeholder_rows(0x4f_4d_07, 106, 60, "");
++    assert_eq!(wide.len(), 60, "placements are not capped at 40 rows");
++    assert_eq!(
++        wide[59].spans[1]
++            .content
++            .chars()
++            .filter(|c| *c == PLACEHOLDER)
++            .count(),
++        106,
++        "placements are not capped at 40 columns"
++    );
 +}
 +
 +#[test]
 +#[serial_test::serial]
 +fn kitty_images_transmit_once_replace_per_component_and_tear_down() {
-+    let png = || Some((vec![1, 2, 3], 4, 2));
++    let png = || {
++        Some((
++            Pixels {
++                bytes: vec![1, 2, 3],
++                width: 1,
++                height: 1,
++                alpha: false,
++            },
++            4,
++            2,
++        ))
++    };
 +    let (id, columns, rows) = kitty_image("thumb", "a", png).expect("placed");
 +    assert_eq!((columns, rows), (4, 2));
 +    assert_eq!(kitty_image("thumb", "a", || None), Some((id, 4, 2)));
-+    let pending = std::mem::take(&mut images().pending);
-+    assert_eq!(pending.len(), 1);
-+    assert!(pending[0].starts_with(&format!("\x1b_Ga=T,U=1,t=d,f=100,i={id},c=4,r=2,q=2,m=0;")));
++    let sent = std::mem::take(&mut images().transmissions);
++    assert_eq!(sent.len(), 1);
++    let (_, pixels, _, _) = &sent[0];
++    let payload = |command: String, medium: &str| {
++        let encoded = command
++            .strip_prefix(&format!(
++                "\x1b_Ga=T,U=1,f=24,s=1,v=1,i={id},c=4,r=2,q=2,t={medium},m=0;"
++            ))
++            .and_then(|rest| rest.strip_suffix("\x1b\\"))
++            .expect("one-chunk transmission");
++        base64::engine::general_purpose::STANDARD
++            .decode(encoded)
++            .expect("base64 payload")
++    };
++    images().directory = private_directory();
++    let directory = images()
++        .directory
++        .as_ref()
++        .expect("private directory")
++        .path()
++        .to_owned();
++    #[cfg(unix)]
++    assert_eq!(
++        std::os::unix::fs::PermissionsExt::mode(
++            &std::fs::metadata(&directory)
++                .expect("directory")
++                .permissions()
++        ) & 0o777,
++        0o700
++    );
++    assert_eq!(
++        payload(
++            transmission(Some(&directory.join("missing")), id, pixels, 4, 2),
++            "d"
++        ),
++        vec![1, 2, 3],
++        "pixels go inline when the file can't be written"
++    );
++    let path = std::path::PathBuf::from(
++        String::from_utf8(payload(
++            transmission(Some(&directory), id, pixels, 4, 2),
++            "t",
++        ))
++        .expect("utf-8 path"),
++    );
++    assert_eq!(path, directory.join(file_name(id)));
++    assert!(path.to_string_lossy().contains("tty-graphics-protocol"));
++    assert_eq!(std::fs::read(&path).expect("pixels"), vec![1, 2, 3]);
++    assert!(images().pending.is_empty(), "nothing is deleted yet");
 +    let (next, _, _) = kitty_image("thumb", "b", png).expect("replaced");
++    assert!(!path.exists(), "a replaced image's unread file is removed");
++    let (last, _, _) = kitty_image("thumb", "c", png).expect("replaced");
 +    assert_ne!(next, id);
-+    let pending = std::mem::take(&mut images().pending);
-+    assert_eq!(pending[0], crate::mod_backdrop::kitty_remove(id));
++    assert_eq!(
++        std::mem::take(&mut images().transmissions)
++            .iter()
++            .map(|(id, ..)| *id)
++            .collect::<Vec<_>>(),
++        vec![last],
++        "an image replaced before it was sent is never sent"
++    );
++    assert_eq!(
++        std::mem::take(&mut images().pending),
++        vec![
++            crate::mod_backdrop::kitty_remove(id),
++            crate::mod_backdrop::kitty_remove(next)
++        ]
++    );
 +    retain(&BTreeSet::new());
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(next)]
++        vec![crate::mod_backdrop::kitty_remove(last)]
 +    );
 +    kitty_image("other", "c", png).expect("placed");
 +    let removed = images().placed["other"].1;
 +    teardown();
-+    assert!(images().placed.is_empty() && images().pending.is_empty());
++    assert!(
++        images().placed.is_empty()
++            && images().pending.is_empty()
++            && images().transmissions.is_empty()
++    );
++    assert!(
++        !directory.exists(),
++        "teardown removes the private directory"
++    );
 +    assert_eq!(
 +        kitty_image("other", "c", png).map(|(id, _, _)| id == removed),
 +        Some(false)
 +    );
 +    retain(&BTreeSet::new());
 +    images().pending.clear();
++    images().transmissions.clear();
 +}
 +
 +#[test]
@@ -126517,10 +127098,10 @@ index 000000000..09a69b78f
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..54f2df516
+index 000000000..1463ad4e5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,530 @@
+@@ -0,0 +1,562 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -126687,6 +127268,45 @@ index 000000000..54f2df516
 +    )
 +}
 +
++/// The transmitted size of a placement: both sides scaled together to stay within 2048 pixels.
++pub(crate) fn kitty_pixels(columns: u16, rows: u16, cell: (u16, u16)) -> (u32, u32) {
++    let (width, height) = (
++        u32::from(columns) * u32::from(cell.0),
++        u32::from(rows) * u32::from(cell.1),
++    );
++    let scale = (2048.0 / f64::from(width.max(height))).min(1.0);
++    let scaled = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
++    (scaled(width), scaled(height))
++}
++
++/// The placement's raw pixels, scaled down only when the picture is larger than the placement; Kitty scales up.
++fn placement_pixels(
++    decoded: &image::DynamicImage,
++    columns: u16,
++    rows: u16,
++    cell: (u16, u16),
++) -> crate::mod_client::Pixels {
++    let (width, height) = kitty_pixels(columns, rows, cell);
++    let resized;
++    let decoded = if decoded.width() <= width && decoded.height() <= height {
++        decoded
++    } else {
++        resized = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
++        &resized
++    };
++    let translucent = decoded
++        .color()
++        .has_alpha()
++        .then(|| decoded.to_rgba8())
++        .filter(|rgba| rgba.pixels().any(|pixel| pixel[3] < u8::MAX));
++    crate::mod_client::Pixels {
++        alpha: translucent.is_some(),
++        bytes: translucent.map_or_else(|| decoded.to_rgb8().into_raw(), image::RgbaImage::into_raw),
++        width: decoded.width(),
++        height: decoded.height(),
++    }
++}
++
 +fn kitty_rows(
 +    component: &str,
 +    reference: &codex_omd::resource_data::ResourceRef,
@@ -126707,18 +127327,11 @@ index 000000000..54f2df516
 +    let (id, columns, rows) = crate::mod_client::kitty_image(component, &key, || {
 +        let decoded = decode(&reference.sha256, host, blob)?;
 +        let (columns, rows) = fit((decoded.width(), decoded.height()), width, height, cell);
-+        let pixels = |cells: u16, cell: u16| (u32::from(cells) * u32::from(cell)).min(2048);
-+        let mut png = Vec::new();
-+        decoded
-+            .resize_exact(
-+                pixels(columns, cell.0),
-+                pixels(rows, cell.1),
-+                image::imageops::FilterType::Triangle,
-+            )
-+            .to_rgba8()
-+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-+            .ok()?;
-+        Some((png, columns, rows))
++        Some((
++            placement_pixels(&decoded, columns, rows, cell),
++            columns,
++            rows,
++        ))
 +    })?;
 +    Some(crate::mod_client::placeholder_rows(
 +        id, columns, rows, prefix,
@@ -127053,10 +127666,10 @@ index 000000000..54f2df516
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..426161680
+index 000000000..4bcb42945
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,274 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -127303,6 +127916,21 @@ index 000000000..426161680
 +    assert_eq!(fit((900, 1600), 40, 12, (8, 16)), (14, 12));
 +    assert_eq!(fit((900, 1600), 40, 12, (10, 20)), (14, 12));
 +    assert_eq!(fit((1, 4000), 40, 12, (8, 16)), (1, 12));
++}
++
++#[test]
++fn only_translucent_images_are_sent_with_alpha() {
++    let pixels = |alpha: u8| {
++        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
++            2,
++            1,
++            image::Rgba([1, 2, 3, alpha]),
++        ));
++        let pixels = placement_pixels(&image, 1, 1, (8, 16));
++        (pixels.alpha, pixels.bytes)
++    };
++    assert_eq!(pixels(u8::MAX), (false, vec![1, 2, 3, 1, 2, 3]));
++    assert_eq!(pixels(7), (true, vec![1, 2, 3, 7, 1, 2, 3, 7]));
 +}
 +
 +#[test]
