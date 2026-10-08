@@ -16607,7 +16607,7 @@ index bf1bb9328..ba4423aef 100644
                              }
                          }
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 8c883373b..f8161194a 100644
+index 8c883373b..fffce028c 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -18,6 +18,7 @@ use crate::extensions::thread_extensions;
@@ -16626,7 +16626,23 @@ index 8c883373b..f8161194a 100644
  }
 
  #[derive(Debug)]
-@@ -400,6 +402,7 @@ impl MessageProcessor {
+@@ -366,11 +368,10 @@ impl MessageProcessor {
+                     outgoing.clone(),
+                     thread_state_manager.clone(),
+                 )),
+-                Some({
+-                    let time_provider =
+-                        app_server_time_provider(outgoing.clone(), thread_state_manager.clone());
+-                    time_provider
+-                }),
++                Some(app_server_time_provider(
++                    outgoing.clone(),
++                    thread_state_manager.clone(),
++                )),
+             );
+             match code_mode_session_provider {
+                 Some(provider) => manager.with_code_mode_session_provider(provider),
+@@ -400,6 +401,7 @@ impl MessageProcessor {
          let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
          let app_list_shutdown_token = CancellationToken::new();
          let request_serialization_queues = RequestSerializationQueues::default();
@@ -16634,7 +16650,7 @@ index 8c883373b..f8161194a 100644
          let config_processor = ConfigRequestProcessor::new(
              outgoing.clone(),
              config_manager.clone(),
-@@ -616,9 +619,14 @@ impl MessageProcessor {
+@@ -616,9 +618,14 @@ impl MessageProcessor {
              turn_processor,
              windows_sandbox_processor,
              request_serialization_queues,
@@ -16649,7 +16665,7 @@ index 8c883373b..f8161194a 100644
      pub(crate) fn clear_runtime_references(&self) {
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
-@@ -838,8 +846,9 @@ impl MessageProcessor {
+@@ -838,8 +845,9 @@ impl MessageProcessor {
      pub(crate) async fn try_attach_thread_listener(
          &self,
          thread_id: ThreadId,
@@ -16660,7 +16676,7 @@ index 8c883373b..f8161194a 100644
          self.thread_processor
              .try_attach_thread_listener(thread_id, connection_ids)
              .await;
-@@ -865,12 +874,22 @@ impl MessageProcessor {
+@@ -865,12 +873,22 @@ impl MessageProcessor {
          self.thread_processor.shutdown_threads().await;
      }
 
@@ -16684,7 +16700,7 @@ index 8c883373b..f8161194a 100644
          self.account_processor
              .gateway_connection_closed(connection_id);
          self.request_serialization_queues.discard_closed().await;
-@@ -993,6 +1012,7 @@ impl MessageProcessor {
+@@ -993,6 +1011,7 @@ impl MessageProcessor {
              | ClientRequest::ThreadFork { .. }
              | ClientRequest::ThreadResume { .. }
              | ClientRequest::ThreadRevert { .. }
@@ -16692,7 +16708,7 @@ index 8c883373b..f8161194a 100644
              | ClientRequest::ThreadSettingsUpdate { .. }
              | ClientRequest::TurnSettingsUpdate { .. }
              | ClientRequest::ThreadDelete { .. }
-@@ -1477,6 +1497,16 @@ impl MessageProcessor {
+@@ -1477,6 +1496,16 @@ impl MessageProcessor {
                      )
                      .await
              }
@@ -16709,7 +16725,7 @@ index 8c883373b..f8161194a 100644
              ClientRequest::ThreadList { params, .. } => {
                  self.thread_processor.thread_list(params).await
              }
-@@ -1882,6 +1912,34 @@ impl MessageProcessor {
+@@ -1882,6 +1911,34 @@ impl MessageProcessor {
              ClientRequest::FeedbackUpload { params, .. } => {
                  self.feedback_processor.feedback_upload(params).await
              }
@@ -16744,7 +16760,7 @@ index 8c883373b..f8161194a 100644
          };
 
          match result {
-@@ -1895,6 +1953,11 @@ impl MessageProcessor {
+@@ -1895,6 +1952,11 @@ impl MessageProcessor {
                  self.outgoing.send_error(request_id.clone(), error).await;
              }
          }
