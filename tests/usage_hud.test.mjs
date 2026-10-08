@@ -10,7 +10,6 @@ const mod = name => ({
   capabilities: JSON.parse(readFileSync(new URL(`../mods/first-party/${name}/mod.json`, import.meta.url), 'utf8')).capabilities,
 });
 const usageMod = mod('omd_usage');
-const theme = mod('omd_theme');
 const surface = {
   events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', tool_result: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', model_response: 'model', agent: 'middleware', tool_call: 'middleware', app_notification: 'threads' },
   replacements: [], intercept: { model_request: 'middleware', render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts',
@@ -94,7 +93,7 @@ test('provider costs, cache policy and missing usage keep their own labels', () 
     ['model_response', response('o1', { provider: 'openrouter', route: 'openrouter', credential: 'or', scope: { thread_id: 'child', agent_id: 'agent-2', kind: 'subagent' }, cost: { microusd: 900, basis: 'settled' },
       usage: { input_tokens: 100, input_tokens_details: { cached_tokens: 0 }, output_tokens: 10, omd_reported_cost: { usd: 0.0012, basis: 'provider_billed' } } })],
     ['model_response', response('u1', { provider: 'custom', route: 'custom', credential: 'custom', scope: { thread_id: 'child', agent_id: 'agent-3', kind: 'subagent' }, usage: null, cost: { microusd: null, basis: 'unpriced' } })],
-    ['model_response', response('k5', { provider: 'omd_cursor', route: 'cursor', credential: 'cursor', scope: { thread_id: 'child', agent_id: 'agent-5', kind: 'subagent' }, cost: { microusd: null, basis: 'unsettled' } })],
+    ['model_response', response('k5', { provider: 'sample', route: 'sample', credential: 'sample', scope: { thread_id: 'child', agent_id: 'agent-5', kind: 'subagent' }, cost: { microusd: null, basis: 'unsettled' } })],
     ['model_response', response('a1', { provider: 'openai', route: 'api', credential: 'key', scope: { thread_id: 'child', agent_id: 'agent-4', kind: 'subagent' }, cost: { microusd: 2_500_000, basis: 'settled' } })],
   ]);
   const { text } = dialog(state, hud, NOW - 59_000 + 120_000);
@@ -178,7 +177,7 @@ test('compaction, rewind and route switches mark the context reading stale; cate
   assert.match(dialog(first.state).text, /Assembled request 0m ago: ~2.5k tokens \(bytes\/4, approximate\) · system 40% · context 30% · tool output 20% · user 10%/);
 });
 
-test('sidebar shows usage, allowance, tasks and workers; theme draws compact cache, cost and quota segments', () => {
+test('sidebar shows usage, allowance, tasks and workers', () => {
   let state = start();
   state = feed(state, [['model_response', response('r1')],
     ['agent', { phase: 'start', agent: { agent_id: 'agent-123456789', thread_id: 'child', parent: { thread_id: 'lead', agent_id: null }, origin: 'model', owner: null, definition: null, role: 'explorer', status: 'running' } }],
@@ -193,16 +192,4 @@ test('sidebar shows usage, allowance, tasks and workers; theme draws compact cac
   assert.deepEqual(sidebar.keybindings, { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } });
   const toggled = call(usageMod, { event: 'command', name: 'hud', payload: 'toggle', state: { ...state, open: true }, settings: hud }).state;
   assert.equal(toggled.open, false);
-
-  const data = { thread: 'lead', cache: { ratio: 0.8, expires: NOW + 240_000 }, spend: { usd: 0.42, kind: 'estimate', uncertain: true, list: null }, quota: { name: '5h', used: 72, resets: NOW + 5_400_000, observed: NOW - 60_000 }, budget: 'warn' };
-  const on = { statusline: 'ascii' };
-  const themed = call(theme, { event: 'channel', payload: { publisher: 'omd_usage', channel: 'omd_usage/hud', data, correlation: null, sequence: 1, dropped: 0 }, settings: on }).state;
-  const replayed = call(theme, { event: 'channel', payload: { publisher: 'omd_usage', channel: 'omd_usage/hud', data, correlation: null, sequence: 2, dropped: 0 }, state: themed, settings: on }).state;
-  assert.deepEqual(replayed ?? themed, themed, 'an unchanged HUD leaves theme state alone, so the view is not republished');
-  const spans = call(theme, { event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead', cwd: '/', cost: null }, identity: null }, state: themed, settings: on }).value.sites.above_composer.components[1].spans;
-  assert.equal(spans.map(span => span.text).join(''), 'cache:80% ~4m | ~$0.42? | 5h 72% r1h30m');
-  const below = call(theme, { event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead', cwd: '/', cost: null }, identity: null }, state: themed, settings: { statusline: 'minimal', statusline_position: 'below' }, virtual_time_ms: NOW + 6_000_000 }).value;
-  assert.deepEqual(below.status, ['0 mods · ~$0.42?']);
-  const passed = call(theme, { event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead', cwd: '/', cost: null }, identity: null }, state: themed, settings: on, virtual_time_ms: NOW + 6_000_000 }).value.sites.above_composer.components[1].spans;
-  assert.match(passed.map(span => span.text).join(''), /cache:80% exp \| ~\$0.42\? \| 5h \?/);
 });

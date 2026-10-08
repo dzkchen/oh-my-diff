@@ -6,9 +6,8 @@ import sys
 from pathlib import Path
 
 try:
-    from scripts import install_support, lean_profiles
+    from scripts import lean_profiles
 except ModuleNotFoundError:
-    import install_support
     import lean_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,9 +17,7 @@ AREAS = {
     "host": "Host and public API",
     "first_party_mod": "First-party mods",
     "native": "Native Codex plugins, hooks and resources",
-    "browser": "Bundled browser tooling",
     "lsp": "Language server adapters",
-    "bridge": "Application bridge adapters",
     "optional": "Optional integrations",
 }
 STATUSES = {"supported", "default_off", "opt_in", "removed"}
@@ -41,19 +38,15 @@ def sources():
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
     preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
     packages = {**preview["packages"], **json.loads((ROOT / "runtime/full-mods.lock.json").read_text())["packages"]}
-    index = json.loads((ROOT / "extensions/index.json").read_text())
-    plugins = sorted([entry["id"] for entry in index["packages"]
-                      if entry["extension_type"] == "plugin"
-                      and entry["support_status"] in ("reviewed_candidate", "supported")]
-                     + list(install_support.SELECTED_OPTIONAL_PLUGINS))
+    plugin = json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text())
+    plugins = sorted(plugin["plugins"])
     view = (ROOT / "runtime/omd/src/mods/view.rs").read_text()
     site_validation = view[view.index("fn valid_site("):view.index("fn valid_action(")]
     return {
         "upstream": json.loads((ROOT / "upstream.lock.json").read_text()),
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
-        "browser": json.loads((ROOT / "browser/browser.lock.json").read_text()),
         "preview": preview,
-        "plugin": json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text()),
+        "plugin": plugin,
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
@@ -155,29 +148,10 @@ def check(matrix):
     claim("omd_host", "features", source["features"])
     claim("omd_host", "schemas", source["schemas"])
     claim("upstream_hooks", "hooks", source["hooks"])
-    bundled_plugin = source["plugin"]["plugins"]["omd-guidance-hooks"]
-    claim("omd_guidance_hooks", "version", bundled_plugin["version"])
-    claim("omd_guidance_hooks", "extension_type", bundled_plugin["extension_types"])
-    review_plugin = source["plugin"]["plugins"]["omd-review-policy"]
-    claim("omd_review_policy", "version", review_plugin["version"])
-    claim("omd_review_policy", "extension_type", review_plugin["extension_types"])
-    bridge_plugin = source["plugin"]["plugins"]["omd-application-bridges"]
-    claim("omd_application_bridges", "version", bridge_plugin["version"])
-    claim("omd_application_bridges", "extension_type", bridge_plugin["extension_types"])
-    artifact_plugin = source["plugin"]["plugins"]["omd-artifact-reading"]
-    claim("omd_artifact_reading", "version", artifact_plugin["version"])
-    claim("omd_artifact_reading", "extension_type", artifact_plugin["extension_types"])
-    execution_plugin = source["plugin"]["plugins"]["omd-code-execution"]
-    claim("omd_code_execution", "version", execution_plugin["version"])
-    claim("omd_code_execution", "extension_type", execution_plugin["extension_types"])
-    browser = source["browser"]
-    claim("browser_bundle", "versions", {
-        "node": browser["node"]["version"],
-        "pnpm": browser["package_manager"]["version"],
-        "@playwright/mcp": browser["mcp"]["package"] and browser["mcp"]["version"],
-        "playwright": browser["mcp"]["playwright"],
-        "chromium": browser["browser"]["browser_version"],
-    })
+    for plugin_id, plugin in source["plugin"]["plugins"].items():
+        component = plugin_id.replace("-", "_")
+        claim(component, "version", plugin["version"])
+        claim(component, "extension_type", plugin["extension_types"])
     for name, package in source["preview"]["packages"].items():
         claim(name, "version", package["version"])
         claim(name, "extension_type", package["extension_type"])
@@ -187,8 +161,6 @@ def check(matrix):
     for language, servers in source["languages"].items():
         claim(f"lsp_{language}", "version", servers)
     for component in matrix["components"]:
-        if component["area"] == "bridge" and not (ROOT / component.get("source", "")).exists():
-            problems.append(f"{component['id']}: missing adapter source {component.get('source')}")
         for operation in component.get("operations", []):
             if operation not in source["operations"]:
                 problems.append(f"{component['id']}: {operation} is not a host operation")
@@ -236,6 +208,8 @@ def check(matrix):
             if not resolve(reference):
                 problems.append(f"{entry['id']}: unresolved evidence {reference}")
 
+    problems += launch_problems(matrix.get("launch_cut"), source)
+
     untested = set()
     for entry in matrix["untested"]:
         if entry["id"] in identifiers:
@@ -245,6 +219,55 @@ def check(matrix):
         untested.add(entry["id"])
         if not entry.get("reason") or not entry.get("combination"):
             problems.append(f"untested {entry['id']}: missing combination or reason")
+    return problems
+
+
+LAUNCH_TIERS = ("default-active", "opt-in", "staged")
+DISPOSITIONS = ("launch", "wave_1", "wave_2")
+PROFILE_NAMES = {"platform": "OMD Core", "full": "OMD+"}
+
+
+def launch_problems(cut, source):
+    if not cut:
+        return ["launch_cut is missing"]
+    problems = []
+    pending = set(cut.get("pending", []))
+    seen = set()
+    launched = {"mod": set(), "plugin": set()}
+    active = set()
+    for entry in cut.get("entries", []):
+        name = entry.get("id")
+        if not entry.get("path"):
+            problems.append(f"launch_cut {name}: missing path")
+            continue
+        if name in seen:
+            problems.append(f"launch_cut: duplicate entry {name}")
+        seen.add(name)
+        disposition = entry.get("disposition")
+        if disposition not in DISPOSITIONS:
+            problems.append(f"launch_cut {name}: unknown disposition {disposition!r}")
+        elif disposition == "launch":
+            if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(PROFILE_NAMES) or not entry.get("profiles"):
+                problems.append(f"launch_cut {name}: needs a launch tier and profiles")
+            if name not in pending and not (ROOT / entry["path"]).exists():
+                problems.append(f"launch_cut {name}: launch path {entry['path']} is missing")
+            if entry.get("kind") in launched:
+                launched[entry["kind"]].add(name)
+            if entry.get("tier") == "default-active":
+                active.add(name)
+        elif (ROOT / entry["path"]).exists():
+            problems.append(f"launch_cut {name}: deferred path {entry['path']} still exists")
+    for path in cut.get("not_restored", []):
+        if (ROOT / path).exists():
+            problems.append(f"launch_cut: {path} should stay deleted")
+    if not cut.get("tag") or "<path>" not in cut.get("restore", ""):
+        problems.append("launch_cut: needs the restore tag and a restore command")
+    if launched["mod"] - pending != set(lean_profiles.PACKAGES):
+        problems.append("launch_cut mods differ from the selected package source inventory")
+    if active - pending != set(lean_profiles.DEFAULT_ACTIVE):
+        problems.append("launch_cut default-active mods differ from the fresh-install default selection")
+    if launched["plugin"] != set(source["plugin"]["plugins"]):
+        problems.append("launch_cut plugins differ from the plugin lock")
     return problems
 
 
@@ -312,6 +335,26 @@ def render(matrix):
               ["Profile", "Selector", "Installed mod sources", "Fresh-install default selection", "Inactive plugin sources"]), "",
         table([(f"`{name}`", package["version"], f"`{package['source']}`")
                for name, package in matrix["first_party_packages"].items()], ["Selected mod", "Version", "Source"]), "",
+    ]
+    cut = matrix["launch_cut"]
+    stage = {"launch": 2, "wave_1": 3, "wave_2": 4}
+    rows = []
+    for entry in cut["entries"]:
+        row = [f"`{entry['id']}`", entry["kind"], "—", "—", "—", f"`{entry['path']}`"]
+        if entry["disposition"] == "launch":
+            where = " + ".join(PROFILE_NAMES[profile] for profile in entry["profiles"])
+            row[2] = f"{entry['tier']} ({where})" + (" — pending" if entry["id"] in cut["pending"] else "")
+        else:
+            row[stage[entry["disposition"]]] = "restore"
+        rows.append(tuple(row))
+    out += [
+        "## Launch cut inventory", "",
+        f"Every package outside the launch collection is preserved at the `{cut['tag']}` tag and is not shipped,",
+        f"selected or tested here. Restore a path with `{cut['restore']}`.",
+        "Launch entries exist on disk; wave entries are deleted until their wave restores them.",
+        *[f"{note}" for note in cut["notes"]],
+        f"Deleted and not restored: {', '.join(f'`{path}/`' for path in cut['not_restored'])}.", "",
+        table(rows, ["Package", "Kind", "Launch", "Wave 1", "Wave 2", "Path"]), "",
     ]
     for area, title in AREAS.items():
         rows = [

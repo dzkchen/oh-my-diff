@@ -86,8 +86,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
 
     def appearance():
         return (visible(title) and mark_visible() == logo
-                and (visible(greeting) if greeting else not native_greeting_visible()
-                     and not visible("THEME GREETING PROBE"))
+                and (visible(greeting) if greeting else not native_greeting_visible())
                 and (not backdrop or visible(backdrop))
                 and all(not visible(phrase) for phrase in absent))
 
@@ -303,7 +302,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
         base = Path(temporary)
         home = base / "codex-home"
         home.mkdir()
-        shutil.copy2(ROOT / "benchmarks/fixtures/controlled-models.json", home / "models.json")
+        shutil.copy2(ROOT / "tests/fixtures/controlled-models.json", home / "models.json")
         repo = base / "repo"
         repo.mkdir()
         (home / "config.toml").write_text(
@@ -377,7 +376,8 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                    status=None if diagnostic_only else "Oh My Diff",
                    status_selector="platform_only" if profile == "platform" else "full",
                    live_mods=() if diagnostic_only else (("omd_logo", "omd_mods", "omd_update") if profile == "platform" else
-                       ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace")),
+                       ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_update",
+                        "omd_workspace")),
                    startup_seconds=30 if diagnostic_only else 10)
             if diagnostic_only:
                 call(command + ["uninstall"], env)
@@ -444,40 +444,33 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
 
             broken_package("omd_logo", {"logo": False, "greeting": None})
             if profile == "full":
-                call(command + ["mod", "disable", "omd_workspace"], env)
-                theme_source = store / "sources/omd_theme"
-                call([manager, "settings", store, theme_source, json.dumps({
-                    "greeting_enabled": True, "greeting_text": "THEME GREETING PROBE",
-                    "backdrop_mode": "ascii", "ascii_text": "THEMEPROBE", "position": "tile",
-                    "composer_gloss": True, "backdrop_gloss": True,
-                })], env)
-                call(command + ["mod", "enable", "omd_theme"], env)
-                launch("theme_composed", profile=expected, greeting="THEME GREETING PROBE",
-                       backdrop="THEMEPROBE")
+                usage_source = store / "sources/omd_usage"
+                budget_line = "Budget $0.00 of $7.77 (soft)"
+                call([manager, "settings", store, usage_source, json.dumps({"budget_usd": 7.77})], env)
+                call(command + ["mod", "enable", "omd_usage"], env)
+                launch("usage_budget", profile=expected, backdrop=budget_line)
                 for label, changes, arguments in (
                     ("no_color", {"NO_COLOR": "1"}, ()),
                     ("ssh_environment", {"SSH_CONNECTION": "127.0.0.1 1 127.0.0.1 2"}, ()),
                     ("tmux_environment", {"TMUX": str(base / "unconnected-tmux")}, ()),
                     ("reduced_motion", {}, ("-c", "tui.animations=false")),
                 ):
-                    launch(f"theme_{label}", environment={**env, **changes}, profile=expected,
-                        greeting="THEME GREETING PROBE", arguments=arguments,
-                        backdrop=None if label == "no_color" else "THEMEPROBE",
-                        absent=("THEMEPROBE",) if label == "no_color" else ())
+                    launch(f"usage_{label}", environment={**env, **changes}, profile=expected,
+                        arguments=arguments, backdrop=budget_line)
                 for label, arguments in (
                     ("inline", ("--no-alt-screen",)),
                     ("raw", ("-c", "tui.raw_output_mode=true")),
                 ):
-                    launch(f"theme_{label}", profile=expected, logo=False,
-                        greeting="THEME GREETING PROBE", arguments=arguments)
-                call(command + ["mod", "disable", "omd_theme"], env)
-                launch("theme_disabled", profile=expected, absent=("THEMEPROBE",))
-                call(command + ["mod", "enable", "omd_theme"], env)
-                broken_package("omd_theme", {"profile": expected, "absent": ("THEMEPROBE",)}, {
-                    "profile": expected, "greeting": "THEME GREETING PROBE", "backdrop": "THEMEPROBE",
+                    launch(f"usage_{label}", profile=expected, logo=False, arguments=arguments)
+                call(command + ["mod", "disable", "omd_usage"], env)
+                launch("usage_disabled", profile=expected, absent=("Budget $0.00",))
+                call(command + ["mod", "enable", "omd_usage"], env)
+                broken_package("omd_usage", {"profile": expected, "absent": ("Budget $0.00",)}, {
+                    "profile": expected, "backdrop": budget_line,
                 })
-                call(command + ["mod", "disable", "omd_theme"], env)
-                for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update"):
+                call(command + ["mod", "disable", "omd_usage"], env)
+                for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update",
+                                   "omd_workspace"):
                     call(command + ["mod", "disable", identifier], env)
                 launch("full_zero_first_party", logo=False, greeting=None)
             call(command + ["activate", "direct"], env)

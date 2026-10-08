@@ -117,9 +117,10 @@ def run(archive, upstream, output):
             assert full["installed"] == "full"
             full_status = command("status", *fixed)["profile"]
             assert full_status["profile"] == "full"
-            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace"}
+            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal",
+                                                                                                "omd_update", "omd_workspace"}
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
-            assert len(full_status["plugin_bundle"]["plugins"]) == 10
+            assert len(full_status["plugin_bundle"]["plugins"]) == 3
             registered = json.loads(subprocess.check_output([bin_dir / "omd-package", "plugins"], env=env, text=True))
             assert registered["source"] == str(install_root.resolve() / "current/prefix/bundles/oh-my-diff")
             registered_generation = Path(registered["source"]).resolve()

@@ -3,18 +3,6 @@
   "rule": "Use a skill for instructed procedures, a hook for lifecycle reactions, a plugin for tools or services, and a mod only for live engine or terminal replacement.",
   "packages": [
     {
-      "path": "mods/first-party/omd_coordination",
-      "extension_type": "mod",
-      "role": "bundled",
-      "why_mod": "Replaces live task-entry routing and context assembly, and exports bounded delegation preparation to the recovery policy."
-    },
-    {
-      "path": "mods/first-party/omd_recovery",
-      "extension_type": "mod",
-      "role": "bundled",
-      "why_mod": "Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices."
-    },
-    {
       "path": "mods/first-party/omd_workflow",
       "extension_type": "mod",
       "role": "bundled",
@@ -33,70 +21,10 @@
       "why_mod": "Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation."
     },
     {
-      "path": "mods/first-party/omd_task_tools",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Selects owned optional tools at the native per-request boundary from the current host checkpoint; a static skill or plugin cannot change that exposure for each task step."
-    },
-    {
-      "path": "mods/first-party/omd_checks",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Selects bounded language-specific verification commands for the current candidate snapshot and relevant inputs during a live task."
-    },
-    {
-      "path": "mods/first-party/omd_repository_analysis",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Builds a source-bound repository graph and compares approved dependency-boundary baselines during a live task through generic workspace and store operations."
-    },
-    {
-      "path": "mods/first-party/omd_guideline_governance",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Keeps proposals inert until explicit command activation, then uses revision-checked store state and source evidence to manage a task-visible guideline selection."
-    },
-    {
-      "path": "mods/first-party/omd_source_knowledge",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Refreshes source-bound repository facts against the current workspace and stores revision-checked evidence for live task reuse."
-    },
-    {
-      "path": "mods/first-party/omd_project_pi_prompts",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Discovers and expands source-bound project prompts and skills against the current workspace during a live task."
-    },
-    {
-      "path": "mods/first-party/omd_graph_navigator",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Presents version-bound repository graph neighbors and source-linked evidence in the live terminal through generic workspace and rendering operations."
-    },
-    {
       "path": "mods/first-party/omd_inspector",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Replaces the live terminal inspector dialog and refresh actions while reading generic task, contract, ledger, and install identity state."
-    },
-    {
-      "path": "mods/first-party/omd_session_anchor",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Replaces the local compaction decision and injects bounded host checkpoint anchors during a live session."
-    },
-    {
-      "path": "mods/first-party/omd_typed_tasks",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the live typed task tool, bounded sibling dispatch and result-schema validation while using generic native worker and isolated integration operations."
-    },
-    {
-      "path": "mods/first-party/omd_verification_gate",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Registers an explicitly selected native workflow contract and asks the host to restrict delegation when an exact candidate enters final verification."
     },
     {
       "path": "mods/examples/coordination",
@@ -177,42 +105,6 @@
       "why_mod": "Exercises a host-routed service export only; a user-facing service belongs in a plugin."
     },
     {
-      "path": "mods/exercise/atlas_console/1.0.0",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Exercises the pre-upgrade package release for live terminal replacement and state migration."
-    },
-    {
-      "path": "mods/exercise/atlas_console/2.0.0",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Exercises current live terminal replacement, interaction, and migrated state."
-    },
-    {
-      "path": "mods/exercise/atlas_policy/1.0.0",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Exercises the pre-upgrade package release for live routing policy and state migration."
-    },
-    {
-      "path": "mods/exercise/atlas_policy/2.0.0",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Exercises current live routing, context, coordination, interception, and cross-mod service replacement."
-    },
-    {
-      "path": "mods/exercise/task_scope",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Exercises task-scoped optional tool exposure at each native sampling step."
-    },
-    {
-      "path": "mods/exercise/session_anchor",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Exercises bounded live compaction and anchored task context across reload."
-    },
-    {
       "path": "mods/first-party/omd_logo",
       "extension_type": "mod",
       "role": "candidate",
@@ -223,12 +115,6 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
-    },
-    {
-      "path": "mods/first-party/omd_git",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations, and read-only GitHub pull request and CI status polled on timers through origin-bound HTTP with a package-owned token."
     },
     {
       "path": "mods/examples/workspace",
@@ -283,12 +169,6 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns on-demand, triggered and completed-turn advice, the opt-in important-output observer, independent review prompts, typed result and citation validation, deduplication and selected-context presentation through public accounted review primitives."
-    },
-    {
-      "path": "mods/first-party/omd_research",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns lead-requested broad-research admission, bounded briefing and evidence validation using an explicitly granted read-only host worker preset."
     },
     {
       "path": "mods/examples/approval_guard",
@@ -519,34 +399,10 @@
       "why_mod": "Starts a live thread bound to a permitted worktree root and shows it in the terminal."
     },
     {
-      "path": "mods/first-party/omd_theme",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Composes live terminal palettes, backgrounds, composer appearance, greeting settings, a powerline status line from thread notifications and a composer-draft stash through public presentation, composer and app primitives; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_reactive_rules",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Matches bounded explicit rules against completed response items and requests a stream stop and retry through response_stream middleware; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_programmable_context",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+."
-    },
-    {
       "path": "mods/first-party/omd_plan_removal",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_continue",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_preview",
@@ -565,66 +421,6 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the update notice, the /update dialog, snooze and skip state and the update policy settings (checks, channel, cadence, pin, automatic updates); the installer reads those settings and does the network check and installation; active in OMD Core and OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_cursor",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the Cursor SDK transport, custom-tool relay of OMD tools, usage settlement log and /cursor diagnostics over a host-approved provider service; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_muse",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the Muse MSP client, approval relay and research tool over a host-approved provider service; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_panes",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the pane layout, file tree, viewer and shell panes through public layout, terminal, PTY, workspace-transaction and thread-store primitives, ranking tree find through the optional omd.frecency service; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_layout",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Composes the session list, find, quick open and palettes from app-server thread, model and skill inventory, the terminal command inventory and the optional omd.panes, omd.worktrees and omd.frecency services; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_worktree",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Creates, switches, integrates and removes task worktrees through fixed Git argument lists, guarded exec writes, native prompts and app-server thread starts bound to registered worktree roots; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_notes",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the notes vault view, wiki-link index, note commands, its own command-argument completion and opt-in agent tools; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_editor",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns editable file buffers, their rendering, key handling, Git gutter and conflict recovery over public key documents, workspace transactions and watches, composing omd_panes, omd_git and omd_lsp_view through their commands; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_shared_checkout",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the shared-checkout registry, path reservations, handoffs and Git lease in mod state and enforces them for agent patches, Git commands and recognizable shell writes through approval middleware; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_mini",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, compact tool summaries, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_prompt_queue",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the user prompt queue: thread-scoped entries, capture from the draft, edit/reorder/join/send commands, idle draining through host consents and pause on a stopped turn; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_privacy",
@@ -651,28 +447,10 @@
       "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+."
     },
     {
-      "path": "mods/first-party/omd_plan_panel",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Pins Codex's update_plan steps above the composer from turn/plan/updated notifications in a wrapped above_composer site with a collapse key; installed inactive in OMD+."
-    },
-    {
       "path": "mods/first-party/omd_profiles",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_herdr",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Maps native thread status notifications to Herdr pane reports with the session resume command and releases the pane on exit, through declared environment metadata, exec.run and a granted Unix socket; installed inactive in OMD+."
-    },
-    {
-      "path": "mods/first-party/omd_mcp",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Owns the MCP server sidebar from startup notifications, per-server status, failed tool calls, the redacted configuration and plugin inventory, confirmed enable/disable writes, reload and composer-drafted upstream codex mcp setup commands; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

@@ -2129,7 +2129,7 @@
     },
     {
       "id": "first_party_parity",
-      "rule": "First-party mods use the published API only. `omd_coordination`, `omd_workspace`, and `omd_recovery` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
+      "rule": "First-party mods use the published API only. `omd_workflow` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
       "evidence": [
         "python:test_first_party_mods_use_only_the_published_api"
       ]

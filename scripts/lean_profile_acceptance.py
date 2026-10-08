@@ -133,20 +133,17 @@ def run(artifact_dir, upstream, output):
         assert full["profile_label"] == "OMD+"
         assert call([base / "full-bin/omd-package", "status", "--json"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
-        assert active == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace"]
+        assert active == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_update",
+                          "omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
-        assert not next(item for item in full["packages"] if item["id"] == "omd_theme")["active"]
+        assert not next(item for item in full["packages"] if item["id"] == "omd_usage")["active"]
         assert set(full["installed_tools"]) == {"omd", "omd-contract", "omd-mod"}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
         bundle = Path(full["plugin_bundle"]["marketplace"])
-        assert len(full["plugin_bundle"]["plugins"]) == 10
-        assert {"omd-anchored-edit", "omd-session-review", "omd-curated-memory"} <= set(full["plugin_bundle"]["plugins"])
-        assert not (bundle / "plugins/omd-code-execution").exists()
-        assert not (base / "full-prefix/browser").exists()
+        assert full["plugin_bundle"]["plugins"] == ["omd-anchored-edit", "omd-artifact-reading", "omd-code-execution"]
         host = base / "full-prefix/artifacts/codex-code-mode-host"
         assert host.is_file() and private.digest(host) == private.digest(artifact_dir / "codex-code-mode-host")
-        assert not (base / "full-prefix/artifacts/omd-browser").exists()
         staged_skills = {}
         inert_hooks = []
         for identifier in full["plugin_bundle"]["plugins"]:
@@ -214,7 +211,8 @@ def run(artifact_dir, upstream, output):
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
-        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update"]
+        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods",
+                                                                                         "omd_plan_removal", "omd_update"]
         enabled = command("full", "mod", "enable", "omd_workspace")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_workspace")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)

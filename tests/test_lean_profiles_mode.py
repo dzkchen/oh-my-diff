@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import subprocess
@@ -38,12 +37,12 @@ class LeanProfileModeTests(unittest.TestCase):
         self.assertNotIn("omd_claude_cli", lean_profiles.selected_text(record))
 
     def test_missing_service_rolls_back_selection_and_settings(self):
-        identifier = "omd_task_tools"
+        identifier = "omd_lsp_view"
         store = Path("/tmp/omd-unused-store")
         source = store / "sources" / identifier
         record = {"store": str(store), "packages": {identifier: {}}}
         selected = False
-        workflow_enabled = False
+        provider_enabled = False
         commands = []
 
         def invoke(_manager, command, _store, *arguments):
@@ -60,8 +59,8 @@ class LeanProfileModeTests(unittest.TestCase):
 
         def profile_status(_prefix, _bin_dir):
             return {"packages": [{"id": identifier, "enabled_in_store": selected,
-                                  "error": "service_provider_missing: omd_task_tools requires omd.workflow"
-                                  if selected and not workflow_enabled else None}]}
+                                  "error": "service_provider_missing: omd_lsp_view requires omd.lsp"
+                                  if selected and not provider_enabled else None}]}
 
         with patch.object(lean_profiles, "load", return_value=record), \
                 patch.object(lean_profiles, "check", return_value=(None, Path("/tmp/omd-unused-manager"))), \
@@ -72,14 +71,14 @@ class LeanProfileModeTests(unittest.TestCase):
                                          identifier, True)
             self.assertFalse(selected)
             self.assertEqual(commands, ["selection-status", "enable", "reload", "disable", "reload", "selection-status"])
-            workflow_enabled = True
+            provider_enabled = True
             result = lean_profiles.select_mod(Path("/tmp/omd-unused-prefix"), Path("/tmp/omd-unused-bin"),
                                               identifier, True)
             self.assertTrue(selected)
             self.assertIsNone(result["packages"][0]["error"])
 
     @unittest.skipUnless(os.environ.get("OMD_TEST_MOD_BIN"), "set OMD_TEST_MOD_BIN for native offline coverage")
-    def test_task_tools_enable_requires_workflow_in_isolated_store(self):
+    def test_service_import_enable_requires_its_provider_in_isolated_store(self):
         manager = Path(os.environ["OMD_TEST_MOD_BIN"]).resolve()
         node = shutil.which("node")
         self.assertIsNotNone(node)
@@ -89,7 +88,7 @@ class LeanProfileModeTests(unittest.TestCase):
             lean_profiles.invoke(manager, "init", store, node)
             sources = store / "sources"
             sources.mkdir()
-            for identifier in ("omd_task_tools", "omd_workflow"):
+            for identifier in ("omd_lsp_view", "omd_lsp_sync"):
                 source = sources / identifier
                 source.mkdir()
                 for name in ("mod.json", "index.ts"):
@@ -97,66 +96,31 @@ class LeanProfileModeTests(unittest.TestCase):
                 inspected = lean_profiles.invoke(manager, "inspect", source)
                 lean_profiles.invoke(manager, "trust", store, source, inspected["sha256"],
                                      ",".join(inspected["manifest"]["capabilities"]))
-            task_tools = sources / "omd_task_tools"
-            lean_profiles.invoke(manager, "settings", store, task_tools,
-                                 json.dumps({"python_command": ["python3", "-V"]}))
-            record = {"store": str(store), "packages": {"omd_task_tools": {}}}
+            record = {"store": str(store), "packages": {"omd_lsp_view": {}}}
 
             def profile_status(_prefix, _bin_dir):
                 host = lean_profiles.invoke(manager, "status", store)
                 selected = {item["id"]: item for item in host["mods"]}
-                active = selected.get("omd_task_tools")
-                return {"packages": [{"id": "omd_task_tools", "enabled_in_store": active is not None,
+                active = selected.get("omd_lsp_view")
+                return {"packages": [{"id": "omd_lsp_view", "enabled_in_store": active is not None,
                                       "error": active["error"] if active else None}]}
 
             before = lean_profiles.invoke(manager, "selection-status", store)["selections"]
-            task_before = next(item for item in before if item["id"] == "omd_task_tools")
+            view_before = next(item for item in before if item["id"] == "omd_lsp_view")
             with patch.object(lean_profiles, "load", return_value=record), \
                     patch.object(lean_profiles, "check", return_value=(None, manager)), \
                     patch.object(lean_profiles, "status", side_effect=profile_status):
-                with self.assertRaisesRegex(ValueError, "service_provider_missing.*omd.workflow"):
-                    lean_profiles.select_mod(base / "prefix", base / "bin", "omd_task_tools", True)
+                with self.assertRaisesRegex(ValueError, "service_provider_missing.*omd.lsp"):
+                    lean_profiles.select_mod(base / "prefix", base / "bin", "omd_lsp_view", True)
                 after = lean_profiles.invoke(manager, "selection-status", store)["selections"]
-                task_after = next(item for item in after if item["id"] == "omd_task_tools")
-                self.assertFalse(task_after["selected"])
-                self.assertEqual(task_after["settings_sha256"], task_before["settings_sha256"])
-                lean_profiles.invoke(manager, "enable", store, sources / "omd_workflow")
+                view_after = next(item for item in after if item["id"] == "omd_lsp_view")
+                self.assertFalse(view_after["selected"])
+                self.assertEqual(view_after["settings_sha256"], view_before["settings_sha256"])
+                lean_profiles.invoke(manager, "enable", store, sources / "omd_lsp_sync")
                 lean_profiles.invoke(manager, "reload", store)
-                result = lean_profiles.select_mod(base / "prefix", base / "bin", "omd_task_tools", True)
+                result = lean_profiles.select_mod(base / "prefix", base / "bin", "omd_lsp_view", True)
                 self.assertTrue(result["packages"][0]["enabled_in_store"])
                 self.assertIsNone(result["packages"][0]["error"])
-
-    def test_mini_relaunches_only_on_a_request_from_the_run_that_exited(self):
-        record = {"store": "/opt/omd/store", "activation": {"selection": "full"},
-                  "tools": {"omd": {"installed_path": "/opt/omd/bin/omd"}}}
-        enabled = [{"id": "omd_mini", "effective": True, "error": None}]
-        runs, requests = [], [{"run": 0, "target": "full", "thread": "019a-1"}, {"run": 0, "target": "mini", "thread": "019a-1"}]
-
-        def run(argv, **options):
-            if argv[0] == "/opt/omd/bin/omd":
-                request = requests.pop(0) if requests else None
-                entries = {f"switch_{runs[-1][1]['OH_MY_DIFF_LAUNCH'].split('.')[0]}": {"value": request}} if request else {}
-                return subprocess.CompletedProcess(argv, 0, json.dumps({"entries": entries}), "")
-            runs.append(([str(item) for item in argv], options["env"]))
-            return subprocess.CompletedProcess(argv, 3)
-
-        handlers = {name: lean_profiles.signal.getsignal(name) for name in (lean_profiles.signal.SIGINT, lean_profiles.signal.SIGQUIT)}
-        try:
-            with patch.object(lean_profiles, "load", return_value=record), \
-                    patch.object(lean_profiles, "check", return_value=(None, "/opt/omd/manager")), \
-                    patch.object(lean_profiles, "invoke", return_value={"selections": enabled}), \
-                    patch.object(lean_profiles.sys.stdin, "isatty", return_value=True), \
-                    patch.object(lean_profiles.sys.stdout, "isatty", return_value=True), \
-                    patch.object(lean_profiles.subprocess, "run", side_effect=run):
-                self.assertEqual(lean_profiles.mini(Path("/opt/omd"), Path("/opt/bin"), ["-m", "gpt"]), 3)
-                self.assertEqual([argv for argv, _ in runs], [["/opt/bin/codex", "--no-alt-screen", "-m", "gpt"], ["/opt/bin/codex", "resume", "019a-1"]])
-                self.assertEqual([(env["OH_MY_DIFF_PRESENTATION"], env["OH_MY_DIFF_LAUNCH"][-2:]) for _, env in runs], [("mini", ".0"), ("full", ".1")])
-                enabled[0]["effective"] = False
-                with self.assertRaisesRegex(ValueError, "omd-package mod enable omd_mini"):
-                    lean_profiles.mini(Path("/opt/omd"), Path("/opt/bin"), [])
-        finally:
-            for name, handler in handlers.items():
-                lean_profiles.signal.signal(name, handler)
 
 
 if __name__ == "__main__":

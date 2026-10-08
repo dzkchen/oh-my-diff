@@ -90,9 +90,7 @@ export default function activate(api: ModAPI) {
       { type: 'text', id: id('status'), label: 'Status', text: where || current.message || `${current.items.length} results`, tone: current.status === 'error' ? 'failure' : current.status === 'working' ? 'muted' : 'normal' },
       ...(excerpt ? [
         { type: 'document' as const, id: id('excerpt'), label: excerpt.path, lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
-        { type: 'button' as const, id: id('pane_open'), label: 'Open in the viewer pane', text: 'Open in pane', action: { command: 'omd_panes:open', args: `${excerpt.path}:${excerpt.line}` } },
         { type: 'button' as const, id: id('editor'), label: 'Open in your editor', text: 'Open in editor', action: { command: 'omd_lsp_view:lsp', args: `editor ${excerpt.path}:${excerpt.line}` } },
-        { type: 'button' as const, id: id('edit'), label: 'Edit in an omd_editor buffer', text: 'Edit here', action: { command: 'omd_editor:edit', args: `${excerpt.path}:${excerpt.line}` } },
         { type: 'button' as const, id: id('back'), label: 'Back to the results', text: 'Back', action: { command: 'omd_lsp_view:lsp', args: 'back' } },
         ...(own.length ? [{ type: 'list' as const, id: id('errors'), label: 'Errors in this file, Enter jumps', height: 6, rows: own.map(item => ({ value: item.value, label: item.label, spans: [{ text: item.label, tone: 'failure' as const }] })), action: { command: 'omd_lsp_view:lsp', args: 'open' } }] : []),
       ] : [

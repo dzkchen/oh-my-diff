@@ -85,7 +85,7 @@ def environment(base, binaries, repo, store, url, name="main", profile="full"):
     home.mkdir()
     (base / f"sqlite-{name}").mkdir()
     (base / f"home-{name}").mkdir()
-    shutil.copy2(ROOT / "benchmarks/fixtures/controlled-models.json", home / "models.json")
+    shutil.copy2(ROOT / "tests/fixtures/controlled-models.json", home / "models.json")
     (home / "config.toml").write_text("\n".join([
         'model = "gpt-5.6-sol"', 'model_provider = "omd_local_fixture"', 'model_reasoning_effort = "low"',
         f'model_catalog_json = {json.dumps(str(home / "models.json"))}', "check_for_update_on_startup = false",

@@ -1,8 +1,7 @@
 # omd_frecency
 
 Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`) that
-ranks `@` file mentions, and `omd_panes` file-tree find, by fuzzy match,
-per-project frecency and Git status. The agent's search tools are unchanged.
+ranks `@` file mentions by fuzzy match, per-project frecency and Git status. The agent's search tools are unchanged.
 
 **Matching.** Smart case: a query with an uppercase letter matches case
 exactly, otherwise case is ignored. A file name that starts with the query
@@ -26,9 +25,9 @@ time it would be shown.
 
 **Owner.** The mod owns the exclusive `completion` replacement for `@`
 mentions. The host sends each mod command's argument completion to that
-command's own mod, so `omd_notes` keeps `/note` completion alongside it.
-Disabling the mod restores Codex's ranking. `omd_panes` reorders tree find
-results through the `omd.frecency` service when this mod is enabled.
+command's own mod, so command completion stays with the command's mod.
+Disabling the mod restores Codex's ranking. The `omd.frecency` service
+exports the same ranking to other mods.
 
 Each ranking runs `git status` (3 s limit) and reads the store; a missing Git
 repository only removes the Git boost.
