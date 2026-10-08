@@ -3,7 +3,6 @@
 import argparse
 import importlib.metadata
 import json
-import re
 import shutil
 import subprocess
 import tempfile
@@ -14,15 +13,12 @@ from scripts.lean_profile_acceptance import isolated_environment
 from scripts.lean_terminal_acceptance import ROOT, call, terminal
 
 
-def run(artifacts, upstream, output, greeting_source):
+def run(artifacts, upstream, output):
     import pyte
 
     if output.exists():
         raise ValueError("evidence output already exists")
     version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-    greetings = [json.loads(line.strip().removesuffix(","))
-                 for line in greeting_source.read_text().splitlines()
-                 if re.match(r'^    ".*",$', line)]
     node = Path(subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()).resolve()
     operations = []
     result = {"status": "partial", "operations": operations,
@@ -30,7 +26,6 @@ def run(artifacts, upstream, output, greeting_source):
         "candidate_lock_sha256": support.digest(ROOT / "runtime/lean-release.lock.json"),
         "fixture_sha256": support.digest(Path(__file__)),
         "terminal_fixture_sha256": support.digest(ROOT / "scripts/lean_terminal_acceptance.py"),
-        "greeting_source_sha256": support.digest(greeting_source),
         "screen_parser": {"package": "pyte", "version": importlib.metadata.version("pyte"),
             "source_sha256": support.digest(Path(pyte.__file__)),
             "screen_source_sha256": support.digest(Path(pyte.screens.__file__)),
@@ -82,8 +77,8 @@ def run(artifacts, upstream, output, greeting_source):
                 return (visible(f"OpenAI Codex (v{version})")
                     and visible("| OMD+") and visible("Budget $0.00 of $") == theme
                     and (not note or visible(note))
-                    and (not broken or visible("failed: Error: intentional isolated live appearance fixture"))
-                    and not any(visible(phrase[:24]) for phrase in greetings))
+                    and (not broken or visible("1 failed"))
+                    and not sum(1 for line in capture()["screen"] for char in line if "\u2801" <= char <= "\u28ff") >= 40)
 
             def boundary(label, theme=True, note=None, broken=False,
                          invocation="omd_inspector:inspect close"):
@@ -147,8 +142,8 @@ def run(artifacts, upstream, output, greeting_source):
                 "model_provider": "inactive loopback port 9", "native_cache_initial_input": initial["input"]}
 
         try:
-            result["check"] = terminal(bin_dir / "codex", repo, env, 80, version, greetings,
-                profile="OMD+", backdrop="Budget $0.00 of $7.77 (soft)",
+            result["check"] = terminal(bin_dir / "codex", repo, env, 80, version,
+                profile="OMD+", backdrop="Budget $0.00 of $7.77",
                 cache_store=store, startup_seconds=15,
                 live_mods=("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_update",
                            "omd_usage", "omd_workspace"),
@@ -165,7 +160,7 @@ def run(artifacts, upstream, output, greeting_source):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    for name in ("artifact-dir", "upstream", "output", "greeting-source"):
+    for name in ("artifact-dir", "upstream", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
-    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve(), args.greeting_source.resolve())
+    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve())

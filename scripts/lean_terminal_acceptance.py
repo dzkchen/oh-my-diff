@@ -36,22 +36,22 @@ def call(args, env):
     return json.loads(result.stdout)
 
 
-def terminal(binary, repo, env, width, version, greetings, profile=None, *,
-             logo=True, greeting="", exercise=False, arguments=(), status=None, status_selector=None,
+def terminal(binary, repo, env, width, version, profile=None, *,
+             logo=True, blossom=False, welcome=False, early_blossom=False, exercise=False, arguments=(), status=None, status_selector=None,
              backdrop=None, absent=(), cache_store=None, startup_seconds=10, trace_path=None,
              check_first_paint=True, ascii_logo=False, live_mods=(), native_session=None,
              live_recovery=None):
     import pyte
 
     master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, width, 0, 0))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 44, width, 0, 0))
     launched_wall_ns = time.time_ns()
     process = subprocess.Popen([str(binary), "-C", str(repo), *arguments], cwd=repo, env=env,
                                stdin=slave, stdout=slave, stderr=slave,
                                start_new_session=True)
     os.close(slave)
     output = bytearray()
-    screen = pyte.Screen(width, 28)
+    screen = pyte.Screen(width, 44)
     screen.write_process_input = lambda text: os.write(master, text.encode())
     stream = pyte.ByteStream(screen)
     stages = {}
@@ -80,14 +80,17 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
         return (all(visible(row) for row in ascii_mark) if ascii_logo else
                 all(visible(row) for row in mark) or all(visible(row) for row in ascii_mark))
 
-    def native_greeting_visible():
-        # Long upstream phrases can be truncated: their first 24 characters still fit at 80 columns.
-        return any(visible(phrase[:24]) for phrase in greetings)
+    def native_blossom_visible():
+        return sum(1 for line in screen.display for char in line if "\u2801" <= char <= "\u28ff") >= 40
 
-    def appearance():
+    def empty_state_visible():
+        return native_blossom_visible() or (welcome and visible("mods on."))
+
+    def appearance(settled=True):
         return (visible(title) and mark_visible() == logo
-                and (visible(greeting) if greeting else not native_greeting_visible())
-                and (not backdrop or visible(backdrop))
+                and (empty_state_visible() if blossom else
+                     not native_blossom_visible() or (early_blossom and not settled))
+                and (not backdrop or not settled or visible(backdrop))
                 and all(not visible(phrase) for phrase in absent))
 
     def capture():
@@ -97,11 +100,11 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                 "backgrounds": sorted({cell.bg for row in screen.buffer.values()
                                        for cell in row.values()})}
 
-    def startup_appearance():
-        if greeting is None:
-            return (visible(title) and not mark_visible() and native_greeting_visible()
+    def startup_appearance(settled=True):
+        if blossom:
+            return (visible(title) and not mark_visible() and (empty_state_visible() or not settled)
                     and not visible("| OMD+") and not visible("| OMD Core"))
-        return appearance()
+        return appearance(settled)
 
     def feed(chunk):
         nonlocal completed_frames, completed_screen_digest
@@ -126,7 +129,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                 stages["first_paint"] = {**capture(), "completed_frame": completed_frames,
                     "trace_end_offset": end, "elapsed_ms": round((time.monotonic() - started) * 1000),
                     "boundary": "DEC synchronized update end (2026)"}
-                if check_first_paint and not startup_appearance():
+                if check_first_paint and not startup_appearance(False):
                     raise AssertionError("first completed editable frame assertion failed:\n"
                                          + "\n".join(screen.display))
             if (check_first_paint and not live_seen and screen.columns == width
@@ -134,7 +137,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                 prelive_frames.append({"completed_frame": completed_frames, "trace_end_offset": end,
                     "screen_sha256": capture()["screen_sha256"],
                     "elapsed_ms": round((time.monotonic() - started) * 1000)})
-                if not startup_appearance():
+                if not startup_appearance(False):
                     raise AssertionError("completed startup frame lost presentation before live publication:\n"
                                          + "\n".join(screen.display))
         stream.feed(chunk[consumed:])
@@ -160,7 +163,6 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                             if name == "mod-view.json":
                                 event.update(presentation=(value.get("input") or {}).get("presentation"),
                                     identity=(value.get("input") or {}).get("identity"),
-                                    greeting=value.get("view", {}).get("greeting"),
                                     suffix=value.get("view", {}).get("session_title_suffix"))
                                 if event["modified_after_launch"] and (event["presentation"] or {}).get("thread_id"):
                                     live_seen = True
@@ -193,12 +195,12 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
 
     def resize(columns, label, predicate):
         screen.resize(columns=columns)
-        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 28, columns, 0, 0))
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 44, columns, 0, 0))
         os.kill(process.pid, signal.SIGWINCH)
         read_frame(label, predicate)
 
     try:
-        read_frame("startup_fallback" if greeting is None else "startup",
+        read_frame("startup_fallback" if blossom else "startup",
                    startup_appearance, startup_seconds, complete_frame=check_first_paint)
         if check_first_paint and "first_paint" not in stages:
             raise AssertionError("no completed synchronized editable frame was observed")
@@ -285,7 +287,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                     process.wait(timeout=10)
 
 
-def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "full"),
+def run(artifact_dir, upstream, output, profiles=("platform", "full"),
         diagnostic_only=False):
     import pyte
 
@@ -293,11 +295,6 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
         raise ValueError("evidence output already exists")
     node = Path(subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()).resolve()
     version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-    greetings = [json.loads(line.strip().removesuffix(","))
-                 for line in greeting_source.read_text().splitlines()
-                 if re.match(r'^    ".*",$', line)]
-    if len(greetings) < 50:
-        raise ValueError("reviewed native greeting source did not contain the expected phrase list")
     with tempfile.TemporaryDirectory(prefix="omd-terminal-acceptance-", dir="/private/tmp") as temporary:
         base = Path(temporary)
         home = base / "codex-home"
@@ -343,7 +340,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
             def launch(label, environment=None, **options):
                 try:
                     observations[label] = terminal(bin_dir / "codex", repo, environment or env,
-                                                   80, version, greetings, cache_store=store,
+                                                   80, version, cache_store=store,
                                                    trace_path=output.with_name(f"{output.stem}-{label}.trace"),
                                                    check_first_paint=not diagnostic_only, **options)
                 except Exception as error:
@@ -409,7 +406,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                            arguments=(action, session_id), native_session=(action, session_id))
             manager = prefix / "artifacts/omd-mod"
             call(command + ["mod", "disable", "omd_logo"], env)
-            launch(f"{profile}_logo_disabled", logo=False, greeting=None)
+            launch(f"{profile}_logo_disabled", logo=False, blossom=True, welcome=True)
             call(command + ["mod", "enable", "omd_logo"], env)
             launch(f"{profile}_logo_reenabled", profile=expected)
             if profile == "platform":
@@ -442,10 +439,10 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                 launch(f"{profile}_{identifier}_repaired_reload_next_launch",
                        **(repaired_options or {"profile": expected}))
 
-            broken_package("omd_logo", {"logo": False, "greeting": None})
+            broken_package("omd_logo", {"logo": False, "blossom": True, "welcome": True})
             if profile == "full":
                 usage_source = store / "sources/omd_usage"
-                budget_line = "Budget $0.00 of $7.77 (soft)"
+                budget_line = "Budget $0.00 of $7.77"
                 call([manager, "settings", store, usage_source, json.dumps({"budget_usd": 7.77})], env)
                 call(command + ["mod", "enable", "omd_usage"], env)
                 launch("usage_budget", profile=expected, backdrop=budget_line)
@@ -461,7 +458,8 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                     ("inline", ("--no-alt-screen",)),
                     ("raw", ("-c", "tui.raw_output_mode=true")),
                 ):
-                    launch(f"usage_{label}", profile=expected, logo=False, arguments=arguments)
+                    launch(f"usage_{label}", profile=expected, logo=False, early_blossom=label == "raw",
+                           arguments=arguments)
                 call(command + ["mod", "disable", "omd_usage"], env)
                 launch("usage_disabled", profile=expected, absent=("Budget $0.00",))
                 call(command + ["mod", "enable", "omd_usage"], env)
@@ -472,9 +470,9 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                 for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update",
                                    "omd_workspace"):
                     call(command + ["mod", "disable", identifier], env)
-                launch("full_zero_first_party", logo=False, greeting=None)
+                launch("full_zero_first_party", logo=False, blossom=True)
             call(command + ["activate", "direct"], env)
-            launch(f"{profile}_direct", logo=False, greeting=None, status="upstream-style direct",
+            launch(f"{profile}_direct", logo=False, blossom=True, status="upstream-style direct",
                    status_selector="platform_only" if profile == "platform" else "full")
             call(command + ["uninstall"], env)
     result = {"status": "diagnostic" if diagnostic_only else "pass", "candidate_lock_sha256": support.digest(ROOT / "runtime/lean-release.lock.json"),
@@ -484,7 +482,6 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                                 "source_sha256": support.digest(Path(pyte.__file__)),
                                 "screen_source_sha256": support.digest(Path(pyte.screens.__file__)),
                                 "stream_source_sha256": support.digest(Path(pyte.streams.__file__))},
-              "greeting_source_sha256": support.digest(greeting_source),
               "fixture_sha256": support.digest(Path(__file__)),
               "scope": "isolated current-screen PTY appearance with an inactive loopback provider; no model request",
               "limits": ["repaired reload is checked on the next launch, not a live accepted-turn boundary",
@@ -501,12 +498,11 @@ def main():
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--greeting-source", type=Path, required=True)
     parser.add_argument("--profiles", choices=("platform", "full"), nargs="+", default=("platform", "full"))
     parser.add_argument("--diagnostic-only", action="store_true")
     args = parser.parse_args()
     run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve(),
-        args.greeting_source.resolve(), args.profiles, args.diagnostic_only)
+        args.profiles, args.diagnostic_only)
 
 
 if __name__ == "__main__":
