@@ -233,15 +233,15 @@ def pack_sdk(output):
 
 def artifacts(args):
     batch = batch_dir(args.batch)
-    if args.build and cargo_run(batch, "build-artifacts", BUILD):
+    if args.release and cargo_run(batch, "build-artifacts", [*BUILD, "--release"]):
         raise SystemExit(1)
     sys.path.insert(0, str(ROOT))
     from scripts import lean_release_lock
-    built = batch / "target/debug"
+    built = batch / "target/release"
     output = batch / "artifacts"
     missing = [name for name in BINARIES if not (built / name).is_file()]
     if missing:
-        raise SystemExit(f"missing {', '.join(missing)} in {built}; rerun with --build")
+        raise SystemExit(f"missing {', '.join(missing)} in {built}; rerun with --release")
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir()
     for name in BINARIES:
@@ -333,7 +333,7 @@ def main():
     command.set_defaults(handler=sync)
     command = commands.add_parser("artifacts", help="copy, sign and pack lean-release lock inputs")
     command.add_argument("batch")
-    command.add_argument("--build", action="store_true", help="build the debug binaries first")
+    command.add_argument("--release", action="store_true", help="build the release binaries first")
     command.set_defaults(handler=artifacts)
     command = commands.add_parser("locks", help="rewrite every generated lock and document in dependency order")
     command.add_argument("batch", nargs="?", help="batch whose artifacts feed the lean-release lock")

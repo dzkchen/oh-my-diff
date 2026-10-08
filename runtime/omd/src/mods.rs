@@ -280,6 +280,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "builtins_v1",
     "contracts_v2",
     "framed_process_v1",
+    "process_raster_v1",
     "kernels_v1",
     "terminal_lists_v1",
     "adapters_v1",

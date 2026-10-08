@@ -281,7 +281,8 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert {str(path.relative_to(home)): private.digest(path)
                 for path in (sentinel, auth, session)} == shared_hashes
     result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
-              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", "omd", "mod-api.tgz")},
+              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in (
+                  "codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}
     output.parent.mkdir(parents=True, exist_ok=True)

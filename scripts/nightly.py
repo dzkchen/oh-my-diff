@@ -36,7 +36,7 @@ STEPS = [
     ("clippy omd paths", cargo("clippy", "clippy", *CRATES, "--tests")),
     ("rustfmt", cargo("fmt", "fmt", *CRATES, "-p", "codex-core", "--", "--check")),
     ("native ownership", ["mise", "run", "native:ownership"]),
-    ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--build"]),
+    ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--release"]),
     ("locks", ["python3", "scripts/batch_tree.py", "locks", BATCH]),
     ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
     ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
