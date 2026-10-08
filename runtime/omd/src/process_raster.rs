@@ -6,6 +6,7 @@ use std::sync::PoisonError;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
+/// Accepts bounded input without blocking the UI thread.
 pub type Sink = Arc<dyn Fn(Value) -> bool + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +15,8 @@ pub enum Role {
     Keys,
 }
 
-type Bound = BTreeMap<String, (String, Role, Sink, u64)>;
+type Key = (Option<String>, String, String);
+type Bound = BTreeMap<Key, (String, Role, Sink, u64)>;
 
 static BOUND: Mutex<Bound> = Mutex::new(BTreeMap::new());
 static SERIAL: AtomicU64 = AtomicU64::new(0);
@@ -23,18 +25,23 @@ fn bound() -> std::sync::MutexGuard<'static, Bound> {
     BOUND.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A managed process bound to its owner's raster (and optional keys component); dropping it unbinds them.
+/// A managed process bound to its thread's owned components; dropping it unbinds them.
 pub struct Binding {
-    components: Vec<String>,
+    components: Vec<Key>,
     sink: Sink,
 }
 
-pub fn bind(owner: &str, components: Vec<(String, Role)>, sink: Sink) -> Binding {
+pub fn bind(
+    thread: Option<&str>,
+    owner: &str,
+    components: Vec<(String, Role)>,
+    sink: Sink,
+) -> Binding {
     let mut table = bound();
     let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
     for (component, role) in &components {
         table.insert(
-            component.clone(),
+            key(thread, owner, component),
             (owner.to_owned(), *role, sink.clone(), serial),
         );
     }
@@ -43,7 +50,7 @@ pub fn bind(owner: &str, components: Vec<(String, Role)>, sink: Sink) -> Binding
     Binding {
         components: components
             .into_iter()
-            .map(|(component, _)| component)
+            .map(|(component, _)| key(thread, owner, &component))
             .collect(),
         sink,
     }
@@ -68,39 +75,53 @@ pub fn any() -> bool {
     !bound().is_empty()
 }
 
-/// The role `component` is bound in when `owner` owns the binding.
-pub fn role(owner: &str, component: &str) -> Option<Role> {
+fn key(thread: Option<&str>, owner: &str, component: &str) -> Key {
+    (
+        thread.map(str::to_owned),
+        owner.to_owned(),
+        component.to_owned(),
+    )
+}
+
+/// The role `component` is bound in when `owner` owns the binding in `thread`.
+pub fn role(thread: Option<&str>, owner: &str, component: &str) -> Option<Role> {
     bound()
-        .get(component)
+        .get(&key(thread, owner, component))
         .filter(|(bound, _, _, _)| bound == owner)
         .map(|(_, role, _, _)| *role)
 }
 
-/// Identifies the process bound to `owner`'s `component`; a restarted process has a new one.
-pub fn serial(owner: &str, component: &str) -> Option<u64> {
+pub fn target(thread: Option<&str>, owner: &str, component: &str) -> Option<(Role, u64, Sink)> {
     bound()
-        .get(component)
+        .get(&key(thread, owner, component))
+        .map(|(_, role, sink, serial)| (*role, *serial, sink.clone()))
+}
+
+/// Identifies the process bound to `owner`'s `component`; a restarted process has a new one.
+pub fn serial(thread: Option<&str>, owner: &str, component: &str) -> Option<u64> {
+    bound()
+        .get(&key(thread, owner, component))
         .filter(|(bound, _, _, _)| bound == owner)
         .map(|(_, _, _, serial)| *serial)
 }
 
 /// The keys component bound to the same process as `owner`'s raster `component`.
-pub fn keys(owner: &str, component: &str) -> Option<String> {
+pub fn keys(thread: Option<&str>, owner: &str, component: &str) -> Option<String> {
     let table = bound();
     let (_, role, _, serial) = table
-        .get(component)
+        .get(&key(thread, owner, component))
         .filter(|(bound, _, _, _)| bound == owner)?;
     (*role == Role::Raster).then_some(())?;
     table
         .iter()
         .find(|(_, (_, role, _, other))| *role == Role::Keys && other == serial)
-        .map(|(keys, _)| keys.clone())
+        .map(|(keys, _)| keys.2.clone())
 }
 
 /// Writes `message` to the process bound to `owner`'s `component`; false when none is bound or it stopped.
-pub fn send(owner: &str, component: &str, message: Value) -> bool {
+pub fn send(thread: Option<&str>, owner: &str, component: &str, message: Value) -> bool {
     let sink = bound()
-        .get(component)
+        .get(&key(thread, owner, component))
         .filter(|(bound, _, _, _)| bound == owner)
         .map(|(_, _, sink, _)| sink.clone());
     sink.is_some_and(|sink| sink(message))
@@ -110,6 +131,51 @@ pub fn send(owner: &str, component: &str, message: Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn bindings_isolate_identical_components_across_threads() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let make = |thread: &'static str| {
+            let seen = seen.clone();
+            bind(
+                Some(thread),
+                "same-owner",
+                vec![
+                    ("same-frame".into(), Role::Raster),
+                    ("same-keys".into(), Role::Keys),
+                ],
+                Arc::new(move |value| {
+                    seen.lock().unwrap().push((thread, value));
+                    true
+                }),
+            )
+        };
+        let first = make("first");
+        let second = make("second");
+        assert_ne!(
+            serial(Some("first"), "same-owner", "same-frame"),
+            serial(Some("second"), "same-owner", "same-frame")
+        );
+        assert_eq!(
+            keys(Some("first"), "same-owner", "same-frame"),
+            Some("same-keys".into())
+        );
+        assert!(send(Some("first"), "same-owner", "same-frame", json!(1)));
+        assert!(send(Some("second"), "same-owner", "same-keys", json!(2)));
+        assert!(!send(None, "same-owner", "same-keys", json!(3)));
+        drop(first);
+        assert_eq!(role(Some("first"), "same-owner", "same-frame"), None);
+        assert!(send(Some("second"), "same-owner", "same-frame", json!(4)));
+        drop(second);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                ("first", json!(1)),
+                ("second", json!(2)),
+                ("second", json!(4))
+            ]
+        );
+    }
 
     #[test]
     fn bindings_route_only_their_owner_and_unbind_on_drop() {
@@ -122,6 +188,7 @@ mod tests {
             })
         };
         let binding = bind(
+            None,
             "owner",
             vec![
                 ("pr-frame".into(), Role::Raster),
@@ -129,12 +196,12 @@ mod tests {
             ],
             sink,
         );
-        assert_eq!(role("owner", "pr-keys"), Some(Role::Keys));
-        assert_eq!(role("other", "pr-frame"), None);
-        assert!(!send("other", "pr-frame", json!(1)));
-        assert!(send("owner", "pr-frame", json!(2)));
+        assert_eq!(role(None, "owner", "pr-keys"), Some(Role::Keys));
+        assert_eq!(role(None, "other", "pr-frame"), None);
+        assert!(!send(None, "other", "pr-frame", json!(1)));
+        assert!(send(None, "owner", "pr-frame", json!(2)));
         drop(binding);
-        assert!(!send("owner", "pr-frame", json!(3)));
+        assert!(!send(None, "owner", "pr-frame", json!(3)));
         assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
     }
 }

@@ -50,7 +50,8 @@ export function startLive({ frame, input, pane }) {
   const attached = new Map();
   const server = createServer(async (request, response) => {
     const host = `127.0.0.1:${server.address().port}`;
-    const [, key, kind, name, action] = new URL(request.url, `http://${host}`).pathname.split('/');
+    const [, key, kind, rawName, action] = new URL(request.url, `http://${host}`).pathname.split('/');
+    const name = kind === 'pane' || kind === 'view' ? rawName?.toLowerCase() : rawName;
     const waiter = waiters.get(`${kind === 'pane' ? 'view' : kind}/${name}`);
     if (request.headers.host !== host || key !== token || (kind === 'pane' ? !pane?.allowed(name) : !waiter)) return response.writeHead(404).end();
     try {

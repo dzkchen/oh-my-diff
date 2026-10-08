@@ -38,6 +38,154 @@ type Key = (String, u64, String);
 type Session = Arc<Mutex<ManagedProcess>>;
 type WriteRequest = (Vec<Value>, mpsc::SyncSender<Result<(), String>>);
 
+const INPUT_MESSAGES: usize = 128;
+const INPUT_BYTES: usize = 256 * 1024;
+const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct InputQueue {
+    messages: std::collections::VecDeque<(Value, usize)>,
+    bytes: usize,
+    closed: bool,
+}
+
+impl InputQueue {
+    fn offer(&mut self, message: Value) -> bool {
+        let bytes = serde_json::to_vec(&message).map_or(usize::MAX, |bytes| bytes.len());
+        if self.closed || bytes > INPUT_BYTES {
+            self.close();
+            return false;
+        }
+        let replaceable = |value: &Value| {
+            if value.get("box").is_some() {
+                Some(0)
+            } else {
+                match value["pointer"]["action"].as_str() {
+                    Some("move") => Some(1),
+                    Some("drag") => Some(2),
+                    _ => None,
+                }
+            }
+        };
+        if let Some((last, size)) = self.messages.back()
+            && replaceable(&message).is_some()
+            && replaceable(&message) == replaceable(last)
+        {
+            self.bytes -= size;
+            self.messages.pop_back();
+        }
+        if self.messages.len() >= INPUT_MESSAGES || self.bytes + bytes > INPUT_BYTES {
+            self.close();
+            return false;
+        }
+        self.bytes += bytes;
+        self.messages.push_back((message, bytes));
+        true
+    }
+
+    fn take(&mut self) -> Option<Value> {
+        let (message, bytes) = self.messages.pop_front()?;
+        self.bytes -= bytes;
+        Some(message)
+    }
+
+    fn close(&mut self) {
+        self.closed = true;
+        self.messages.clear();
+        self.bytes = 0;
+    }
+}
+
+fn write_until(
+    writer: &mpsc::SyncSender<WriteRequest>,
+    messages: Vec<Value>,
+    deadline: Instant,
+    active: &impl Fn() -> bool,
+) -> Result<(), String> {
+    let (reply, written) = mpsc::sync_channel(1);
+    let mut request = (messages, reply);
+    loop {
+        if !active() {
+            return Err("process_cancelled".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("process_write_timeout".into());
+        }
+        match writer.try_send(request) {
+            Ok(()) => break,
+            Err(mpsc::TrySendError::Disconnected(_)) => return Err("process_writer_stopped".into()),
+            Err(mpsc::TrySendError::Full(pending)) => {
+                request = pending;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+    loop {
+        if !active() {
+            return Err("process_cancelled".into());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match written.recv_timeout(remaining.min(Duration::from_millis(50))) {
+            Ok(result) => return result,
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => (),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("process_writer_stopped".into());
+            }
+            _ => return Err("process_write_timeout".into()),
+        }
+    }
+}
+
+fn input_sink(
+    writer: mpsc::SyncSender<WriteRequest>,
+    group: u32,
+    reaped: Arc<Mutex<bool>>,
+) -> codex_omd::process_raster::Sink {
+    let pending = Arc::new(Mutex::new(InputQueue::default()));
+    let (notify, notified) = mpsc::sync_channel(1);
+    let queued = pending.clone();
+    let worker_reaped = reaped.clone();
+    std::thread::spawn(move || {
+        while notified.recv().is_ok() {
+            loop {
+                let message = queued.lock().unwrap_or_else(PoisonError::into_inner).take();
+                let Some(message) = message else {
+                    break;
+                };
+                if write_until(
+                    &writer,
+                    vec![message],
+                    Instant::now() + WRITE_TIMEOUT,
+                    &|| true,
+                )
+                .is_err()
+                {
+                    queued
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .close();
+                    kill_group_if_alive(group, &worker_reaped);
+                    return;
+                }
+            }
+        }
+    });
+    Arc::new(move |message| {
+        let accepted = pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .offer(message);
+        if !accepted {
+            kill_group_if_alive(group, &reaped);
+            return false;
+        }
+        !matches!(
+            notify.try_send(()),
+            Err(mpsc::TrySendError::Disconnected(_))
+        )
+    })
+}
+
 pub(super) struct ProcessNotice {
     pub owner: String,
     pub session: String,
@@ -63,6 +211,7 @@ pub(super) struct ManagedProcesses {
 
 #[derive(Clone, Copy)]
 pub(super) struct ProcessOwner<'a> {
+    pub thread: Option<&'a str>,
     pub id: &'a str,
     pub generation: u64,
     pub repository: &'a Path,
@@ -405,6 +554,7 @@ impl ManagedProcesses {
         active: impl Fn() -> bool,
     ) -> Result<Value, String> {
         let ProcessOwner {
+            thread,
             id,
             generation,
             repository,
@@ -700,19 +850,9 @@ impl ManagedProcesses {
                     let frames = raster.as_ref().map(|(key, _, sink)| {
                         blit_worker(key.clone(), sink.clone(), alive.clone())
                     });
+                    let group = child.id();
+                    let reaped = Arc::new(Mutex::new(false));
                     let binding = raster.as_ref().map(|(key, keys, _)| {
-                        let writer = writer_sender.clone();
-                        let (input, queued) = mpsc::channel::<Value>();
-                        std::thread::spawn(move || {
-                            while let Ok(message) = queued.recv() {
-                                let (reply, written) = mpsc::sync_channel(1);
-                                if writer.send((vec![message], reply)).is_err()
-                                    || !matches!(written.recv(), Ok(Ok(())))
-                                {
-                                    break;
-                                }
-                            }
-                        });
                         let mut components =
                             vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
                         components.extend(
@@ -720,15 +860,14 @@ impl ManagedProcesses {
                                 .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
                         );
                         codex_omd::process_raster::bind(
+                            thread,
                             id,
                             components,
-                            Arc::new(move |message| input.send(message).is_ok()),
+                            input_sink(writer_sender.clone(), group, reaped.clone()),
                         )
                     });
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
-                    let group = child.id();
-                    let reaped = Arc::new(Mutex::new(false));
                     let reader_reaped = Arc::clone(&reaped);
                     std::thread::spawn(move || {
                         let mut reader = BufReader::new(stdout);
@@ -848,37 +987,17 @@ impl ManagedProcesses {
                 if input.send.len() > 32 || input.wait_ms > 10_000 {
                     return Err("process_exchange_limit".into());
                 }
-                if !input.send.is_empty() {
-                    let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-                    process
-                        .sender
-                        .send((input.send, reply_sender))
-                        .map_err(|_| "process_writer_stopped")?;
-                    let write_deadline = Instant::now() + Duration::from_secs(10);
-                    loop {
-                        if !active() {
-                            self.remove(&key, &session);
-                            return Err("process_cancelled".into());
-                        }
-                        match reply_receiver.recv_timeout(Duration::from_millis(50)) {
-                            Ok(Ok(())) => break,
-                            Ok(Err(error)) => {
-                                self.remove(&key, &session);
-                                return Err(error);
-                            }
-                            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                                self.remove(&key, &session);
-                                return Err("process_writer_stopped".into());
-                            }
-                            Err(mpsc::RecvTimeoutError::Timeout)
-                                if Instant::now() >= write_deadline =>
-                            {
-                                self.remove(&key, &session);
-                                return Err("process_write_timeout".into());
-                            }
-                            Err(mpsc::RecvTimeoutError::Timeout) => (),
-                        }
-                    }
+                if !input.send.is_empty()
+                    && let Err(error) = write_until(
+                        &process.sender,
+                        input.send,
+                        Instant::now() + WRITE_TIMEOUT,
+                        &active,
+                    )
+                {
+                    kill_group_if_alive(process.child.id(), &process.reaped);
+                    self.remove(&key, &session);
+                    return Err(error);
                 }
                 process.last_used = Instant::now();
                 let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
@@ -943,6 +1062,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn raster_input_queue_bounds_bytes_messages_and_coalesces_in_order() {
+        let mut queue = InputQueue::default();
+        for x in 0..1000 {
+            assert!(queue.offer(json!({"pointer": {"action": "move", "x": x}})));
+        }
+        assert_eq!(queue.messages.len(), 1);
+        assert!(queue.offer(json!({"input": [{"key": "a"}]})));
+        assert!(queue.offer(json!({"pointer": {"action": "move", "x": 1000}})));
+        assert_eq!(queue.take().unwrap()["pointer"]["x"], 999);
+        assert!(queue.take().unwrap().get("input").is_some());
+        assert_eq!(queue.take().unwrap()["pointer"]["x"], 1000);
+        for rows in 0..1000 {
+            assert!(queue.offer(json!({"box": {"rows": rows}})));
+        }
+        assert_eq!(queue.messages.len(), 1);
+        queue.take();
+        for _ in 0..INPUT_MESSAGES {
+            assert!(queue.offer(json!({"input": []})));
+        }
+        assert!(!queue.offer(json!({"input": []})));
+        assert_eq!(queue.bytes, 0);
+        assert!(queue.take().is_none());
+        assert!(!queue.offer(json!({"box": {}})));
+        let mut queue = InputQueue::default();
+        assert!(queue.offer(json!("x".repeat(INPUT_BYTES / 2))));
+        assert!(!queue.offer(json!("x".repeat(INPUT_BYTES / 2))));
+        assert!(queue.closed);
+        assert!(queue.messages.is_empty());
+        let (writer, _reader) = mpsc::sync_channel(1);
+        let (reply, _replies) = mpsc::sync_channel(1);
+        writer.send((vec![], reply)).unwrap();
+        let start = Instant::now();
+        assert_eq!(
+            write_until(&writer, vec![], start + Duration::from_millis(50), &|| true).unwrap_err(),
+            "process_write_timeout"
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn raster_input_stalled_writer_exits_and_rejects_later_input() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = child.id();
+        let reaped = Arc::new(Mutex::new(false));
+        let mut stdin = child.stdin.take().unwrap();
+        let (writer, requests) = mpsc::sync_channel::<WriteRequest>(1);
+        let worker = std::thread::spawn(move || {
+            while let Ok((messages, reply)) = requests.recv() {
+                let result = messages
+                    .iter()
+                    .try_for_each(|message| send_framed(&mut stdin, message, Framing::Ndjson));
+                let failed = result.is_err();
+                let _ = reply.send(result);
+                if failed {
+                    break;
+                }
+            }
+        });
+        let sink = input_sink(writer, group, reaped.clone());
+        let started = Instant::now();
+        assert!(sink(json!({"input": [{"paste": "x".repeat(128 * 1024)}]})));
+        loop {
+            let mut guard = reaped.lock().unwrap();
+            if child.try_wait().unwrap().is_some() {
+                *guard = true;
+                break;
+            }
+            drop(guard);
+            if started.elapsed() > Duration::from_secs(5) {
+                kill_group_if_alive(group, &reaped);
+                let mut guard = reaped.lock().unwrap();
+                child.wait().unwrap();
+                *guard = true;
+                panic!("stalled input did not kill its process");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!sink(json!({"input": [{"key": "late"}]})));
+        drop(sink);
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn content_length_headers_are_bounded_before_allocation() {
         for prefix in ["", "Content-Length: 2\r\n"] {
             let bytes = format!("{prefix}{}", "x".repeat(16384));
@@ -962,6 +1170,7 @@ mod tests {
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
         let owner = ProcessOwner {
+            thread: None,
             id: "fixture",
             generation: 1,
             repository: &repository,
@@ -1027,6 +1236,7 @@ mod tests {
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
         let owner = ProcessOwner {
+            thread: None,
             id: "fixture",
             generation: 1,
             repository: &repository,
@@ -1077,6 +1287,7 @@ mod tests {
             })
         };
         let owner = ProcessOwner {
+            thread: None,
             id: "fixture",
             generation: 1,
             repository: &repository,
@@ -1136,11 +1347,13 @@ mod tests {
             json!({"key": "pr-frame", "image": {"media_type": "image/png", "base64": "AA=="}})
         );
         assert!(!codex_omd::process_raster::send(
+            None,
             "other",
             "pr-keys",
             json!({"input": []})
         ));
         assert!(codex_omd::process_raster::send(
+            None,
             "fixture",
             "pr-keys",
             json!({"input": [{"key": "a"}]})
@@ -1150,6 +1363,7 @@ mod tests {
             .call(owner, "process.stop", json!({"session":"screen"}), || true)
             .unwrap();
         assert!(!codex_omd::process_raster::send(
+            None,
             "fixture",
             "pr-frame",
             json!({"pointer": {}})
@@ -1167,6 +1381,7 @@ mod tests {
             network: true,
         };
         let owner = ProcessOwner {
+            thread: None,
             id: "fixture",
             generation: 1,
             repository: &repository,
@@ -1248,6 +1463,7 @@ mod tests {
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
         let owner = ProcessOwner {
+            thread: None,
             id: "fixture",
             generation: 1,
             repository: &repository,
@@ -1336,6 +1552,7 @@ mod tests {
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
         let owner = ProcessOwner {
+            thread: None,
             id: "fixture",
             generation: 1,
             repository: &repository,

@@ -18,10 +18,8 @@ const SESSION = /^[A-Za-z0-9][\w-]{0,31}$/;
 const NOTES = 8;
 const USAGE = 'usage: /browser open [SESSION] [URL] | go URL | back | forward | reload | pick | hide | end | send all';
 const HINT = 'Click the page and type · Ctrl+] leaves · Alt+←/→ back/forward · Ctrl+R reload · Alt+↑/↓ zoom';
-const SHELL = 'f=$(base64 < "$1" 2>/dev/null | tr -d \'\\n\'); { printf \'const encoded = "%s";\\n\' "$f"; cat; } | node --input-type=module -';
 const HELPER = [
-  'let base = null;',
-  "try { base = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')).url; } catch {}",
+  'const base = input.url;',
   'const out = [];',
   'for (const [path, body] of base ? input.steps : []) {',
   "  const response = await fetch(base + '/pane/' + path, { method: 'POST', body: JSON.stringify(body) }).catch(() => null);",
@@ -64,7 +62,7 @@ export default function activate(api: ModAPI) {
   const schedule = (delay: number) => api.host.tryCall('events.schedule', { key: 'frame', delay_ms: delay });
   const tray = (state: State) => Boolean(state.view && !state.view.user_only && (state.view.picking || state.notes.length));
   const describe = (error: string, session: string) => ({
-    endpoint_unset: "Set the omd_browser endpoint setting to omd-browser's plugin-data/omd-browser/pane.json",
+    endpoint_unset: 'Set the omd_browser endpoint setting to its host-approved endpoint sidecar ID',
     endpoint_missing: 'No omd-browser pane endpoint; run OMD with the omd-browser plugin and a pane-enabled profile',
     disconnected: 'The omd-browser server is not reachable; retrying every 3 s',
     not_pane_enabled: `Session ${session} is not pane-enabled; set "pane": true in its omd-browser profile`,
@@ -73,11 +71,17 @@ export default function activate(api: ModAPI) {
     result_too_large: 'The page result was too large to transfer',
   } as Record<string, string>)[error] ?? `Browser: ${line(error, 300)}`;
 
+  const endpoint = (): Reply => {
+    const id = String(api.settings.endpoint ?? '');
+    if (!id) return { error: 'endpoint_unset' };
+    const reply = api.host.tryCall('sidecars.invoke', { id, input: {} });
+    return reply.ok ? reply.value.result as Reply : { error: reply.error };
+  };
   const run = (steps: Step[]): Reply[] => {
-    const file = String(api.settings.endpoint ?? '');
-    if (!file) return [{ error: 'endpoint_unset' }];
-    const stdin = `const input = ${JSON.stringify({ steps })};\n${HELPER}`;
-    const result = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', SHELL, 'sh', file], stdin, network: 'loopback', timeout_ms: 30_000 });
+    const address = endpoint();
+    if (address.error || !address.url) return [{ error: address.error ?? 'endpoint_missing' }];
+    const stdin = `const input = ${JSON.stringify({ steps, url: address.url })};\n${HELPER}`;
+    const result = api.host.tryCall('exec.run', { program: 'node', argv: ['--input-type=module', '-'], stdin, network: 'loopback', timeout_ms: 30_000 });
     if (!result.ok) return [{ error: result.error }];
     if (result.value.stdout_preview_truncated) return [{ error: 'result_too_large' }];
     try {
@@ -95,19 +99,13 @@ export default function activate(api: ModAPI) {
   const connect = (state: State, view: View) => {
     if (view.viewer) api.host.tryCall('process.stop', { session: view.viewer });
     view.viewer = `viewer${state.viewers = (state.viewers + 1) % 1000}`;
-    const file = String(api.settings.endpoint ?? '');
-    if (!file) return offline(state, view, 'endpoint_unset');
-    const read = api.host.tryCall('exec.run', { program: 'cat', argv: [file], timeout_ms: 5_000 });
-    let endpoint: { url?: string; viewer?: string } = {};
-    try {
-      endpoint = JSON.parse(read.ok ? read.value.stdout : '');
-    } catch {}
-    if (!endpoint.url || !endpoint.viewer) return offline(state, view, 'endpoint_missing');
+    const address = endpoint();
+    if (address.error || !address.url || !address.viewer) return offline(state, view, address.error ?? 'endpoint_missing');
     const node = api.host.tryCall('process.which', { names: ['node'] });
     const found = node.ok ? node.value.found[0] : undefined;
     if (!found) return offline(state, view, 'node is not on the session PATH');
-    const started = api.host.tryCall('process.start', { session: view.viewer, name: 'node', path: found.path, sha256: found.sha256, arguments: [endpoint.viewer],
-      environment: { OH_MY_DIFF_PANE_URL: endpoint.url, OH_MY_DIFF_PANE_SESSION: view.session }, framing: 'ndjson', network: 'loopback', notify: ['output', 'exit'], raster: FRAME, keys: KEYPAD });
+    const started = api.host.tryCall('process.start', { session: view.viewer, name: 'node', path: found.path, sha256: found.sha256, arguments: [String(address.viewer)],
+      environment: { OH_MY_DIFF_PANE_URL: String(address.url), OH_MY_DIFF_PANE_SESSION: view.session }, framing: 'ndjson', network: 'loopback', notify: ['output', 'exit'], raster: FRAME, keys: KEYPAD });
     if (!started.ok) return offline(state, view, started.error);
     Object.assign(view, { live: true, force: false, graphics: '' });
     if (state.offline) Object.assign(state, { offline: false, message: '' });
@@ -250,7 +248,7 @@ export default function activate(api: ModAPI) {
     const view = state.view;
     const note = state.notes.find(item => item.id === state.focus) ?? null;
     if (verb === 'open') {
-      publish('open', { session: rest[0] ?? 'default', url: rest[1] ?? null });
+      publish('open', { session: (rest[0] ?? 'default').toLowerCase(), url: rest[1] ?? null });
       return { display: `Opening browser ${rest[0] ?? 'default'}…` };
     }
     if (!view && !['focus', 'note', 'remove', 'send'].includes(verb)) return { display: `No browser is open. ${USAGE}` };
@@ -307,12 +305,12 @@ export default function activate(api: ModAPI) {
   api.provide({ name: 'omd.browser', version: '1.0.0', methods: { open: { input: 'object', output: 'object' }, close: { input: 'object', output: 'object' } } }, {
     open: input => {
       const data = input as { session?: string; url?: string; user_only?: boolean; zoom?: number };
-      publish('open', { session: String(data.session ?? 'default'), url: data.url ?? null, user_only: data.user_only === true, zoom: Number(data.zoom) || 1 });
-      return { display: `Opening browser ${String(data.session ?? 'default')}…` };
+      publish('open', { session: String(data.session ?? 'default').toLowerCase(), url: data.url ?? null, user_only: data.user_only === true, zoom: Number(data.zoom) || 1 });
+      return { display: `Opening browser ${String(data.session ?? 'default').toLowerCase()}…` };
     },
     close: input => {
       const data = input as { session?: string; end?: boolean };
-      publish('close', { session: String(data.session ?? load().view?.session ?? 'default'), end: data.end === true });
+      publish('close', { session: String(data.session ?? load().view?.session ?? 'default').toLowerCase(), end: data.end === true });
       return { display: data.end === true ? 'Ending the browser session…' : 'Hiding the browser view…' };
     },
   });
@@ -323,10 +321,11 @@ export default function activate(api: ModAPI) {
     const state = load();
     const view = state.view;
     if (op === 'open') {
-      state.message = open(state, String(data.session), data.url ? String(data.url) : null, data.user_only === true, Number(data.zoom) || 1);
-      publish('opened', { session: String(data.session), open: state.view?.session === String(data.session), display: state.message });
+      const session = String(data.session).toLowerCase();
+      state.message = open(state, session, data.url ? String(data.url) : null, data.user_only === true, Number(data.zoom) || 1);
+      publish('opened', { session, open: state.view?.session === session, display: state.message });
     }
-    else if (op === 'close') state.message = close(state, String(data.session), data.end === true);
+    else if (op === 'close') state.message = close(state, String(data.session).toLowerCase(), data.end === true);
     else if (!view) return;
     else if (op === 'picking') {
       view.picking = data.on === true;

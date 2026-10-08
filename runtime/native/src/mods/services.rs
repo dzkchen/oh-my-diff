@@ -807,6 +807,58 @@ async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, 
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn endpoint_handoff_reads_only_the_granted_file() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let root = repository.path().canonicalize().unwrap();
+        let store = store.path().canonicalize().unwrap();
+        let endpoint = store.join("pane.json");
+        let private = store.join("vault.json");
+        std::fs::write(&endpoint, "endpoint-token\n").unwrap();
+        std::fs::write(&private, "private-cookie").unwrap();
+        let parent = Config::load_default_with_cli_overrides_for_codex_home(
+            home.path().canonicalize().unwrap(),
+            vec![],
+        )
+        .await
+        .unwrap();
+        let config =
+            execution::isolated(&parent, &root, std::slice::from_ref(&endpoint), &[], false)
+                .unwrap();
+        let output = request_output(&config, vec!["/bin/sh".into(), "-c".into(),
+            "value=$(cat \"$1\") || exit 10; if cat \"$2\"; then exit 11; fi; if printf bad > \"$1\"; then exit 12; fi; printf '{\"exit_code\":0,\"stdout\":\"%s\"}\\n' \"$value\"".into(),
+            "check".into(), endpoint.display().to_string(), private.display().to_string()]).await.unwrap();
+        assert_eq!(output["exit_code"], 0, "{output}");
+        assert_eq!(output["stdout"], "endpoint-token");
+        assert_eq!(
+            std::fs::read_to_string(&endpoint).unwrap(),
+            "endpoint-token\n"
+        );
+        let denied = execution::isolated(
+            &parent,
+            &root,
+            std::slice::from_ref(&endpoint),
+            &[store],
+            false,
+        )
+        .unwrap();
+        let output = request_output(
+            &denied,
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "if cat \"$1\"; then printf '{\"stdout\":\"leaked\"}\\n'; else printf '{\"stdout\":\"denied\"}\\n'; fi".into(),
+                "check".into(),
+                endpoint.display().to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(output["stdout"], "denied");
+    }
+
     fn session(root: &Path, name: &str) -> Session {
         let directory = root.join(name);
         std::fs::create_dir(&directory).unwrap();

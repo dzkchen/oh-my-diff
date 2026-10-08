@@ -10,7 +10,9 @@ import { classify, isTracker, startGuard, vet } from '../plugins/optional/plugin
 import { openVault } from '../plugins/optional/plugins/omd-browser/scripts/vault.mjs';
 import { startLive } from '../plugins/optional/plugins/omd-browser/scripts/live.mjs';
 import { decodePng, halfBlocks } from '../plugins/optional/plugins/omd-browser/scripts/pane.mjs';
-import { locate } from '../plugins/optional/plugins/omd-browser/scripts/design.mjs';
+import { captureCurrent, locate, sourceLocations } from '../plugins/optional/plugins/omd-browser/scripts/design.mjs';
+import { profiles, sessionName } from '../plugins/optional/plugins/omd-browser/scripts/session.mjs';
+import { runInNewContext } from 'node:vm';
 import { geometry, jpegSize, keyEvents, startViewer } from '../plugins/optional/plugins/omd-browser/scripts/viewer.mjs';
 import { PassThrough } from 'node:stream';
 import { spawn } from 'node:child_process';
@@ -95,7 +97,7 @@ test('pane endpoint serves only pane-enabled sessions and shows handoffs in the 
     assert.equal((await call('work/frame')).headers.get('content-type'), 'image/png');
     const handed = live.handoff('work', 'Sign in please');
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal((await (await call('work/status')).json()).handoff, 'Sign in please');
+    assert.equal((await (await call('Work/status')).json()).handoff, 'Sign in please');
     await call('work/done', { note: 'signed in' });
     assert.deepEqual(await handed, { note: 'signed in' });
   } finally {
@@ -123,6 +125,99 @@ test('source maps resolve a generated rule position to its original file and lin
   assert.deepEqual(locate(map, 1, 9), { source: 'src/button.scss', line: 3 });
   assert.equal(locate(map, 4, 0), null);
   assert.equal(locate({ mappings: 'A!' , sources: ['x'] }, 0, 0), null);
+});
+
+test('session identities fold case and reject ambiguous profile aliases', () => {
+  const config = profiles({ Chess: { user_only: true } });
+  for (const name of ['chess', 'Chess', 'CHESS']) assert.equal(config[sessionName(name)].user_only, true);
+  assert.throws(() => profiles({ Chess: {}, chess: { user_only: true } }), /conflicting/);
+  assert.throws(() => sessionName('../chess'), /session names/);
+});
+
+test('agent tools refuse every case spelling of a protected session', { timeout: 10000 }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'omd-browser-identity-'));
+  const config = join(directory, 'config.json');
+  writeFileSync(config, JSON.stringify({ data: join(directory, 'data'), profiles: { chess: { user_only: true } } }));
+  const child = spawn(process.execPath, [new URL('../plugins/optional/plugins/omd-browser/scripts/server.mjs', import.meta.url).pathname],
+    { env: { ...process.env, OMD_BROWSER_CONFIG: config }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const lines = createInterface({ input: child.stdout });
+  const replies = lines[Symbol.asyncIterator]();
+  try {
+    let id = 0;
+    for (const name of ['chess', 'Chess', 'CHESS']) {
+      for (const [tool, args] of [['browser_navigate', { session: name, url: 'https://example.com' }], ['browser_sessions', { close: name }]]) {
+        child.stdin.write(`${JSON.stringify({ id: ++id, method: 'tools/call', params: { name: tool, arguments: args } })}\n`);
+        const reply = JSON.parse((await replies.next()).value);
+        assert.equal(reply.result.isError, true);
+        assert.match(reply.result.content[0].text, /user-only/);
+      }
+    }
+  } finally {
+    child.kill();
+    lines.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('design capture rejects navigation and page replacement during the screenshot', async () => {
+  for (const change of ['generation', 'page', 'none']) {
+    let calls = 0;
+    const page = {
+      evaluate: async () => ++calls === 1 ? { selector: 'button', box: { x: 0, y: 0, width: 10, height: 10 } } : { width: 100, height: 100 },
+      screenshot: async () => {
+        if (change === 'generation') session.generation++;
+        if (change === 'page') session.page = {};
+        return Buffer.from('image');
+      },
+      context: () => ({ newCDPSession: async () => { throw new Error('no sources'); } }),
+      url: () => 'https://example.com/',
+    };
+    const session = { page, generation: 1 };
+    const result = await captureCurrent(session, { x: 1, y: 1 });
+    if (change === 'none') assert.equal(result.generation, 1);
+    else assert.equal(result.error, 'stale_generation');
+  }
+});
+
+test('source-map reads abort on deadline and stop streaming at the byte limit', async () => {
+  for (const mode of ['hanging', 'large']) {
+    let aborted = false;
+    let cancelled = false;
+    let reads = 0;
+    let detached = false;
+    const cdp = {
+      on: (_, callback) => callback({ header: { styleSheetId: 's', sourceMapURL: 'map.json', sourceURL: 'https://example.com/style.css' } }),
+      send: async method => ({
+        'DOM.getDocument': { root: { nodeId: 1 } }, 'DOM.querySelector': { nodeId: 2 },
+        'CSS.getMatchedStylesForNode': { matchedCSSRules: [{ rule: { origin: 'regular', styleSheetId: 's', selectorList: { text: 'button', selectors: [{ range: { startLine: 0, startColumn: 0 } }] } } }] },
+      }[method] ?? {}),
+      detach: async () => { detached = true; },
+    };
+    const page = {
+      context: () => ({ newCDPSession: async () => cdp }), url: () => 'https://example.com/',
+      evaluate: (fn, args) => runInNewContext(`(${fn})`, {
+        AbortController, setTimeout, clearTimeout, Uint8Array, TextDecoder,
+        fetch: async (_, { signal }) => {
+          signal.addEventListener('abort', () => { aborted = true; });
+          return { ok: true, body: { getReader: () => ({
+            read: () => {
+              reads++;
+              if (reads > 3) throw new Error('fixture byte budget exceeded');
+              return mode === 'large' ? Promise.resolve({ value: new Uint8Array(1_000_000), done: false })
+                : new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+            },
+            cancel: async () => { cancelled = true; },
+          }) } };
+        },
+      })(args),
+    };
+    const started = Date.now();
+    assert.deepEqual(await sourceLocations(page, 'button', started + 50).catch(() => []), []);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(Date.now() - started < 1000);
+    assert.ok(aborted && cancelled && detached);
+    assert.equal(reads, mode === 'large' ? 3 : 1);
+  }
 });
 
 test('the viewer sizes pages to the terminal, maps keys to DevTools input and reads JPEG sizes', () => {

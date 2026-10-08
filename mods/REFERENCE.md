@@ -995,7 +995,10 @@ and key and paste input on the keys component as `{"input": [events]}`, instead
 of `component_event` callbacks; a left press on the raster focuses the keys
 component. After the first render and whenever the raster's drawable box or the
 client cell changes, `{"box": {columns, rows, cell_px: {width, height}}}` is
-written to its stdin. The binding ends with the process. An invalid
+written to its stdin. Bindings are scoped to the owning conversation thread.
+Input queues hold at most 128 messages and 256 KiB; consecutive motion and
+resize messages coalesce. Overflow or a write blocked for two seconds stops
+the process and discards queued input. The binding ends with the process. An invalid
 key or another framing is `process_raster_invalid`; without `terminal`,
 `capability_denied: terminal`.
 

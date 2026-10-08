@@ -4,10 +4,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { solveChallenge } from './captcha.mjs';
-import { capture } from './design.mjs';
+import { captureCurrent } from './design.mjs';
 import { startLive } from './live.mjs';
 import { startGuard } from './network.mjs';
 import { fill, openVault } from './vault.mjs';
+import { profiles, sessionName } from './session.mjs';
 
 const VERSION = '0.1.0-preview.3';
 const SESSION_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
@@ -30,7 +31,8 @@ const config = (() => {
 })();
 const data = config && (config.data ?? join(dirname(configPath), '..', 'plugin-data', 'omd-browser'));
 const idleMs = (config?.idle_minutes ?? 10) * 60_000;
-const profile = name => ({ vault: false, captcha: false, pane: false, user_only: false, adblock: true, allow: [], ...config.profiles?.[name] });
+const configuredProfiles = profiles(config?.profiles);
+const profile = name => ({ vault: false, captcha: false, pane: false, user_only: false, adblock: true, allow: [], ...configuredProfiles[sessionName(name)] });
 const sessions = new Map();
 const vault = config && openVault(join(data, 'vault.json'));
 let chromium;
@@ -103,7 +105,7 @@ async function launch(session) {
 }
 
 async function open(name = 'default') {
-  if (!SESSION_NAME.test(name)) throw new Error('session names are 1-32 letters, digits, - or _');
+  name = sessionName(name);
   let session = sessions.get(name);
   if (!session) {
     if (sessions.size >= MAX_SESSIONS) throw new Error(`at most ${MAX_SESSIONS} sessions run at once; close one with browser_sessions`);
@@ -163,7 +165,7 @@ function withSession(args, work) {
 }
 
 const running = name => {
-  const page = sessions.get(name)?.page;
+  const page = sessions.get(sessionName(name))?.page;
   if (!page) throw new Error('session_closed');
   return page;
 };
@@ -179,6 +181,7 @@ async function apply(page, event) {
 }
 
 async function pipe(name, request, response) {
+  name = sessionName(name);
   const session = await open(name);
   clearTimeout(session.timer);
   response.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
@@ -244,7 +247,7 @@ const live = startLive({
     status: async (name, full) => {
       const { user_only } = profile(name);
       if (!full) {
-        const session = sessions.get(name);
+        const session = sessions.get(sessionName(name));
         return { url: session?.page?.url() ?? null, title: session?.page ? await session.page.title().catch(() => '') : null, generation: session?.generation ?? null, user_only };
       }
       return withSession({ session: name }, async session => ({ url: session.page.url(), title: await session.page.title().catch(() => ''), generation: session.generation, user_only,
@@ -265,11 +268,10 @@ const live = startLive({
       pick: paneRoute(async (session, body) => {
         if (session.profile.user_only) throw new Error(`session ${session.name} is user-only; design mode cannot capture it`);
         if (!body.selector && body.generation !== session.generation) return { error: 'stale_generation', generation: session.generation };
-        const note = await capture(session.page, body.selector ? { selector: String(body.selector).slice(0, 1000) } : { x: Number(body.x), y: Number(body.y) });
-        return note ? scrub(session, { ...note, generation: session.generation }) : { error: 'not_found' };
+        return scrub(session, await captureCurrent(session, body.selector ? { selector: String(body.selector).slice(0, 1000) } : { x: Number(body.x), y: Number(body.y) }));
       }),
       close: async name => {
-        await sessions.get(name)?.context?.close();
+        await sessions.get(sessionName(name))?.context?.close();
         return { closed: true };
       },
     },
@@ -376,7 +378,7 @@ const browserTools = [{
   description: 'List running sessions with their profile settings, or close one (cookies stay on disk).',
   inputSchema: schema({ close: { type: 'string' } }),
   run: async args => {
-    if (args.close) await sessions.get(args.close)?.context?.close();
+    if (args.close) await sessions.get(sessionName(args.close))?.context?.close();
     const running = [...sessions.values()].filter(session => !session.profile.user_only).map(({ name, page, profile: { vault, captcha, adblock, allow } }) =>
       `${name}: ${page?.url() ?? 'starting'}; vault ${vault ? 'on' : 'off'}, captcha ${captcha ? 'on' : 'off'}, adblock ${adblock ? 'on' : 'off'}${allow.length ? `, allowed ${allow.join(' ')}` : ''}`);
     return running.join('\n') || 'No sessions are running.';

@@ -35,20 +35,44 @@ codex plugin add omd-browser@oh-my-diff
 The server runs under the `node` (20 or newer) on Codex's `PATH`. Optional
 top-level fields are `data` (default `$OMD_MOD_STORE/plugin-data/omd-browser`)
 and `idle_minutes` (default 10). A profile applies to the session of the same
-name; its fields are `allow` (exact `host:port` private destinations, default
+name, case-insensitively; storage and lookups use lowercase names, and duplicate
+case aliases in configuration are rejected. Its fields are `allow` (exact `host:port` private destinations, default
 none), `adblock` (default on), `vault`, `captcha`, `pane` and `user_only` (all
 off by default). Only the user edits this file; the agent's sandbox cannot
 write it.
 
 To use the in-OMD view, inspect, trust and enable the mod component with the
 digest the first command reports, then set its `endpoint` setting to
-`data/pane.json`:
+`browser_endpoint` (the sidecar grant ID below):
 
 ```sh
 omd-mod plugin-component /absolute/path/to/plugins/optional/plugins/omd-browser
 omd-mod trust /absolute/mod-store /absolute/path/to/plugins/optional/plugins/omd-browser/mod INSPECT_SHA256 commands,terminal,store,lifecycle,events,exec,network,composer,services
 omd-mod enable /absolute/mod-store /absolute/path/to/plugins/optional/plugins/omd-browser/mod
 ```
+
+Add this owner-scoped entry to the `services` array in the store's `host.json`,
+using canonical paths and SHA-256 digests of Node and `scripts/endpoint.mjs`:
+
+```json
+{
+  "id": "browser_endpoint",
+  "mod_id": "omd_browser",
+  "program": "/absolute/node",
+  "program_sha256": "NODE_SHA256",
+  "arguments": ["/absolute/plugin/scripts/endpoint.mjs", "/absolute/mod-store/plugin-data/omd-browser/pane.json"],
+  "requests": true,
+  "read_hashes": {"/absolute/plugin/scripts/endpoint.mjs": "HELPER_SHA256"},
+  "read_paths": ["/absolute/mod-store/plugin-data/omd-browser/pane.json"]
+}
+```
+
+The handoff reads only that endpoint file through `sidecars.invoke`; ordinary
+mod execution and agent tools still cannot read the mod store. Keep the store
+outside `CODEX_HOME` and other protected credential directories. The helper
+needs no network access. Do not grant the profile directory or vault, or move
+the endpoint into an agent-readable workspace. Its bearer token stays out of
+mod state and model output.
 
 ## Tools
 
@@ -99,6 +123,10 @@ standard error.
 
 ## Browser pane
 
+Use `/browser open` with the endpoint sidecar grant above for the protected
+default store. The older `omd_panes` text client still requires a direct file
+read and cannot use that store; its private handoff remains a separate decision.
+
 A profile with `"pane": true` can also be browsed inside OMD. The server then
 keeps the live-view listener running and writes its address and token to
 `data/pane.json` (mode 0600), removed on shutdown. `omd_panes` reads that file
@@ -122,14 +150,17 @@ every navigation. Only screencast, navigation history, device-metrics/focus
 emulation and input methods pass (no `Runtime`, `Network` or `Storage`), and
 `Page.navigate` takes http(s) URLs only. The page generation counts main-frame
 navigations and tab changes; picks from an older generation are refused with
-`stale_generation`. The full `state` text is withheld from user-only sessions.
+`stale_generation`, including navigation or tab changes during capture. Source
+maps share the five-second capture deadline and a two-million-byte streaming
+limit; timeout or oversize maps leave source locations unavailable. The full
+`state` text is withheld from user-only sessions.
 
 ## In-OMD view (`omd_browser` mod)
 
 The `omd_browser` mod draws a pane-enabled session beside the conversation:
 `/browser open [SESSION] [URL]` opens it in an `omd_panes` site (or shows the
 `/pane split right site omd_browser/view` command when `omd_panes` is off).
-Set the mod's `endpoint` setting to `data/pane.json`. One long-lived viewer
+Set the mod's `endpoint` setting to the `browser_endpoint` grant ID. One long-lived viewer
 (`scripts/viewer.mjs`, started with `process.start` and `process_raster_v1`,
 loopback only) drives the tab over the `cdp` pipe: the host tells it the
 pane's drawable cells and cell pixels, it sizes the page so its text matches the

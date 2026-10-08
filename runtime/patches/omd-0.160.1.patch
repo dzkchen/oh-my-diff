@@ -51300,10 +51300,10 @@ index 000000000..0c9f8faf5
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..00f5c0229
+index 000000000..14ffcd990
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1372 @@
+@@ -0,0 +1,1589 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -51344,6 +51344,154 @@ index 000000000..00f5c0229
 +type Session = Arc<Mutex<ManagedProcess>>;
 +type WriteRequest = (Vec<Value>, mpsc::SyncSender<Result<(), String>>);
 +
++const INPUT_MESSAGES: usize = 128;
++const INPUT_BYTES: usize = 256 * 1024;
++const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
++
++#[derive(Default)]
++struct InputQueue {
++    messages: std::collections::VecDeque<(Value, usize)>,
++    bytes: usize,
++    closed: bool,
++}
++
++impl InputQueue {
++    fn offer(&mut self, message: Value) -> bool {
++        let bytes = serde_json::to_vec(&message).map_or(usize::MAX, |bytes| bytes.len());
++        if self.closed || bytes > INPUT_BYTES {
++            self.close();
++            return false;
++        }
++        let replaceable = |value: &Value| {
++            if value.get("box").is_some() {
++                Some(0)
++            } else {
++                match value["pointer"]["action"].as_str() {
++                    Some("move") => Some(1),
++                    Some("drag") => Some(2),
++                    _ => None,
++                }
++            }
++        };
++        if let Some((last, size)) = self.messages.back()
++            && replaceable(&message).is_some()
++            && replaceable(&message) == replaceable(last)
++        {
++            self.bytes -= size;
++            self.messages.pop_back();
++        }
++        if self.messages.len() >= INPUT_MESSAGES || self.bytes + bytes > INPUT_BYTES {
++            self.close();
++            return false;
++        }
++        self.bytes += bytes;
++        self.messages.push_back((message, bytes));
++        true
++    }
++
++    fn take(&mut self) -> Option<Value> {
++        let (message, bytes) = self.messages.pop_front()?;
++        self.bytes -= bytes;
++        Some(message)
++    }
++
++    fn close(&mut self) {
++        self.closed = true;
++        self.messages.clear();
++        self.bytes = 0;
++    }
++}
++
++fn write_until(
++    writer: &mpsc::SyncSender<WriteRequest>,
++    messages: Vec<Value>,
++    deadline: Instant,
++    active: &impl Fn() -> bool,
++) -> Result<(), String> {
++    let (reply, written) = mpsc::sync_channel(1);
++    let mut request = (messages, reply);
++    loop {
++        if !active() {
++            return Err("process_cancelled".into());
++        }
++        if Instant::now() >= deadline {
++            return Err("process_write_timeout".into());
++        }
++        match writer.try_send(request) {
++            Ok(()) => break,
++            Err(mpsc::TrySendError::Disconnected(_)) => return Err("process_writer_stopped".into()),
++            Err(mpsc::TrySendError::Full(pending)) => {
++                request = pending;
++                std::thread::sleep(Duration::from_millis(5));
++            }
++        }
++    }
++    loop {
++        if !active() {
++            return Err("process_cancelled".into());
++        }
++        let remaining = deadline.saturating_duration_since(Instant::now());
++        match written.recv_timeout(remaining.min(Duration::from_millis(50))) {
++            Ok(result) => return result,
++            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => (),
++            Err(mpsc::RecvTimeoutError::Disconnected) => {
++                return Err("process_writer_stopped".into());
++            }
++            _ => return Err("process_write_timeout".into()),
++        }
++    }
++}
++
++fn input_sink(
++    writer: mpsc::SyncSender<WriteRequest>,
++    group: u32,
++    reaped: Arc<Mutex<bool>>,
++) -> codex_omd::process_raster::Sink {
++    let pending = Arc::new(Mutex::new(InputQueue::default()));
++    let (notify, notified) = mpsc::sync_channel(1);
++    let queued = pending.clone();
++    let worker_reaped = reaped.clone();
++    std::thread::spawn(move || {
++        while notified.recv().is_ok() {
++            loop {
++                let message = queued.lock().unwrap_or_else(PoisonError::into_inner).take();
++                let Some(message) = message else {
++                    break;
++                };
++                if write_until(
++                    &writer,
++                    vec![message],
++                    Instant::now() + WRITE_TIMEOUT,
++                    &|| true,
++                )
++                .is_err()
++                {
++                    queued
++                        .lock()
++                        .unwrap_or_else(PoisonError::into_inner)
++                        .close();
++                    kill_group_if_alive(group, &worker_reaped);
++                    return;
++                }
++            }
++        }
++    });
++    Arc::new(move |message| {
++        let accepted = pending
++            .lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .offer(message);
++        if !accepted {
++            kill_group_if_alive(group, &reaped);
++            return false;
++        }
++        !matches!(
++            notify.try_send(()),
++            Err(mpsc::TrySendError::Disconnected(_))
++        )
++    })
++}
++
 +pub(super) struct ProcessNotice {
 +    pub owner: String,
 +    pub session: String,
@@ -51369,6 +51517,7 @@ index 000000000..00f5c0229
 +
 +#[derive(Clone, Copy)]
 +pub(super) struct ProcessOwner<'a> {
++    pub thread: Option<&'a str>,
 +    pub id: &'a str,
 +    pub generation: u64,
 +    pub repository: &'a Path,
@@ -51711,6 +51860,7 @@ index 000000000..00f5c0229
 +        active: impl Fn() -> bool,
 +    ) -> Result<Value, String> {
 +        let ProcessOwner {
++            thread,
 +            id,
 +            generation,
 +            repository,
@@ -52006,19 +52156,9 @@ index 000000000..00f5c0229
 +                    let frames = raster.as_ref().map(|(key, _, sink)| {
 +                        blit_worker(key.clone(), sink.clone(), alive.clone())
 +                    });
++                    let group = child.id();
++                    let reaped = Arc::new(Mutex::new(false));
 +                    let binding = raster.as_ref().map(|(key, keys, _)| {
-+                        let writer = writer_sender.clone();
-+                        let (input, queued) = mpsc::channel::<Value>();
-+                        std::thread::spawn(move || {
-+                            while let Ok(message) = queued.recv() {
-+                                let (reply, written) = mpsc::sync_channel(1);
-+                                if writer.send((vec![message], reply)).is_err()
-+                                    || !matches!(written.recv(), Ok(Ok(())))
-+                                {
-+                                    break;
-+                                }
-+                            }
-+                        });
 +                        let mut components =
 +                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
 +                        components.extend(
@@ -52026,15 +52166,14 @@ index 000000000..00f5c0229
 +                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
 +                        );
 +                        codex_omd::process_raster::bind(
++                            thread,
 +                            id,
 +                            components,
-+                            Arc::new(move |message| input.send(message).is_ok()),
++                            input_sink(writer_sender.clone(), group, reaped.clone()),
 +                        )
 +                    });
 +                    let notifier = self.notifier.get().cloned();
 +                    let (owner, session) = (id.to_owned(), input.session.clone());
-+                    let group = child.id();
-+                    let reaped = Arc::new(Mutex::new(false));
 +                    let reader_reaped = Arc::clone(&reaped);
 +                    std::thread::spawn(move || {
 +                        let mut reader = BufReader::new(stdout);
@@ -52154,37 +52293,17 @@ index 000000000..00f5c0229
 +                if input.send.len() > 32 || input.wait_ms > 10_000 {
 +                    return Err("process_exchange_limit".into());
 +                }
-+                if !input.send.is_empty() {
-+                    let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-+                    process
-+                        .sender
-+                        .send((input.send, reply_sender))
-+                        .map_err(|_| "process_writer_stopped")?;
-+                    let write_deadline = Instant::now() + Duration::from_secs(10);
-+                    loop {
-+                        if !active() {
-+                            self.remove(&key, &session);
-+                            return Err("process_cancelled".into());
-+                        }
-+                        match reply_receiver.recv_timeout(Duration::from_millis(50)) {
-+                            Ok(Ok(())) => break,
-+                            Ok(Err(error)) => {
-+                                self.remove(&key, &session);
-+                                return Err(error);
-+                            }
-+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
-+                                self.remove(&key, &session);
-+                                return Err("process_writer_stopped".into());
-+                            }
-+                            Err(mpsc::RecvTimeoutError::Timeout)
-+                                if Instant::now() >= write_deadline =>
-+                            {
-+                                self.remove(&key, &session);
-+                                return Err("process_write_timeout".into());
-+                            }
-+                            Err(mpsc::RecvTimeoutError::Timeout) => (),
-+                        }
-+                    }
++                if !input.send.is_empty()
++                    && let Err(error) = write_until(
++                        &process.sender,
++                        input.send,
++                        Instant::now() + WRITE_TIMEOUT,
++                        &active,
++                    )
++                {
++                    kill_group_if_alive(process.child.id(), &process.reaped);
++                    self.remove(&key, &session);
++                    return Err(error);
 +                }
 +                process.last_used = Instant::now();
 +                let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
@@ -52249,6 +52368,95 @@ index 000000000..00f5c0229
 +    use super::*;
 +
 +    #[test]
++    fn raster_input_queue_bounds_bytes_messages_and_coalesces_in_order() {
++        let mut queue = InputQueue::default();
++        for x in 0..1000 {
++            assert!(queue.offer(json!({"pointer": {"action": "move", "x": x}})));
++        }
++        assert_eq!(queue.messages.len(), 1);
++        assert!(queue.offer(json!({"input": [{"key": "a"}]})));
++        assert!(queue.offer(json!({"pointer": {"action": "move", "x": 1000}})));
++        assert_eq!(queue.take().unwrap()["pointer"]["x"], 999);
++        assert!(queue.take().unwrap().get("input").is_some());
++        assert_eq!(queue.take().unwrap()["pointer"]["x"], 1000);
++        for rows in 0..1000 {
++            assert!(queue.offer(json!({"box": {"rows": rows}})));
++        }
++        assert_eq!(queue.messages.len(), 1);
++        queue.take();
++        for _ in 0..INPUT_MESSAGES {
++            assert!(queue.offer(json!({"input": []})));
++        }
++        assert!(!queue.offer(json!({"input": []})));
++        assert_eq!(queue.bytes, 0);
++        assert!(queue.take().is_none());
++        assert!(!queue.offer(json!({"box": {}})));
++        let mut queue = InputQueue::default();
++        assert!(queue.offer(json!("x".repeat(INPUT_BYTES / 2))));
++        assert!(!queue.offer(json!("x".repeat(INPUT_BYTES / 2))));
++        assert!(queue.closed);
++        assert!(queue.messages.is_empty());
++        let (writer, _reader) = mpsc::sync_channel(1);
++        let (reply, _replies) = mpsc::sync_channel(1);
++        writer.send((vec![], reply)).unwrap();
++        let start = Instant::now();
++        assert_eq!(
++            write_until(&writer, vec![], start + Duration::from_millis(50), &|| true).unwrap_err(),
++            "process_write_timeout"
++        );
++        assert!(start.elapsed() < Duration::from_secs(1));
++    }
++
++    #[test]
++    fn raster_input_stalled_writer_exits_and_rejects_later_input() {
++        let mut child = Command::new("/bin/sh")
++            .args(["-c", "exec sleep 30"])
++            .stdin(Stdio::piped())
++            .stdout(Stdio::null())
++            .process_group(0)
++            .spawn()
++            .unwrap();
++        let group = child.id();
++        let reaped = Arc::new(Mutex::new(false));
++        let mut stdin = child.stdin.take().unwrap();
++        let (writer, requests) = mpsc::sync_channel::<WriteRequest>(1);
++        let worker = std::thread::spawn(move || {
++            while let Ok((messages, reply)) = requests.recv() {
++                let result = messages
++                    .iter()
++                    .try_for_each(|message| send_framed(&mut stdin, message, Framing::Ndjson));
++                let failed = result.is_err();
++                let _ = reply.send(result);
++                if failed {
++                    break;
++                }
++            }
++        });
++        let sink = input_sink(writer, group, reaped.clone());
++        let started = Instant::now();
++        assert!(sink(json!({"input": [{"paste": "x".repeat(128 * 1024)}]})));
++        loop {
++            let mut guard = reaped.lock().unwrap();
++            if child.try_wait().unwrap().is_some() {
++                *guard = true;
++                break;
++            }
++            drop(guard);
++            if started.elapsed() > Duration::from_secs(5) {
++                kill_group_if_alive(group, &reaped);
++                let mut guard = reaped.lock().unwrap();
++                child.wait().unwrap();
++                *guard = true;
++                panic!("stalled input did not kill its process");
++            }
++            std::thread::sleep(Duration::from_millis(10));
++        }
++        assert!(!sink(json!({"input": [{"key": "late"}]})));
++        drop(sink);
++        worker.join().unwrap();
++    }
++
++    #[test]
 +    fn content_length_headers_are_bounded_before_allocation() {
 +        for prefix in ["", "Content-Length: 2\r\n"] {
 +            let bytes = format!("{prefix}{}", "x".repeat(16384));
@@ -52268,6 +52476,7 @@ index 000000000..00f5c0229
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
 +        let owner = ProcessOwner {
++            thread: None,
 +            id: "fixture",
 +            generation: 1,
 +            repository: &repository,
@@ -52333,6 +52542,7 @@ index 000000000..00f5c0229
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
 +        let owner = ProcessOwner {
++            thread: None,
 +            id: "fixture",
 +            generation: 1,
 +            repository: &repository,
@@ -52383,6 +52593,7 @@ index 000000000..00f5c0229
 +            })
 +        };
 +        let owner = ProcessOwner {
++            thread: None,
 +            id: "fixture",
 +            generation: 1,
 +            repository: &repository,
@@ -52442,11 +52653,13 @@ index 000000000..00f5c0229
 +            json!({"key": "pr-frame", "image": {"media_type": "image/png", "base64": "AA=="}})
 +        );
 +        assert!(!codex_omd::process_raster::send(
++            None,
 +            "other",
 +            "pr-keys",
 +            json!({"input": []})
 +        ));
 +        assert!(codex_omd::process_raster::send(
++            None,
 +            "fixture",
 +            "pr-keys",
 +            json!({"input": [{"key": "a"}]})
@@ -52456,6 +52669,7 @@ index 000000000..00f5c0229
 +            .call(owner, "process.stop", json!({"session":"screen"}), || true)
 +            .unwrap();
 +        assert!(!codex_omd::process_raster::send(
++            None,
 +            "fixture",
 +            "pr-frame",
 +            json!({"pointer": {}})
@@ -52473,6 +52687,7 @@ index 000000000..00f5c0229
 +            network: true,
 +        };
 +        let owner = ProcessOwner {
++            thread: None,
 +            id: "fixture",
 +            generation: 1,
 +            repository: &repository,
@@ -52554,6 +52769,7 @@ index 000000000..00f5c0229
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
 +        let owner = ProcessOwner {
++            thread: None,
 +            id: "fixture",
 +            generation: 1,
 +            repository: &repository,
@@ -52642,6 +52858,7 @@ index 000000000..00f5c0229
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
 +        let owner = ProcessOwner {
++            thread: None,
 +            id: "fixture",
 +            generation: 1,
 +            repository: &repository,
@@ -65673,10 +65890,10 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..0f641ddd2
+index 000000000..eedc1c7b5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,668 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -66122,9 +66339,11 @@ index 000000000..0f641ddd2
 +            .as_ref()
 +            .filter(|arguments| arguments.get("raster").is_some())
 +            .and_then(|_| super::expansion::blit_sink(lead, &caller));
++        let thread = lead.thread.to_string();
 +        let result = tokio::task::spawn_blocking(move || {
 +            processes.call(
 +                crate::managed_process::ProcessOwner {
++                    thread: Some(&thread),
 +                    id: &id,
 +                    generation,
 +                    repository: &authority.repository,
@@ -67041,10 +67260,10 @@ index 000000000..24a4f05ee
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..d9206750e
+index 000000000..3c31fd6a9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,904 @@
+@@ -0,0 +1,956 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -67853,6 +68072,58 @@ index 000000000..d9206750e
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[tokio::test]
++    async fn endpoint_handoff_reads_only_the_granted_file() {
++        let home = tempfile::tempdir().unwrap();
++        let repository = tempfile::tempdir().unwrap();
++        let store = tempfile::tempdir().unwrap();
++        let root = repository.path().canonicalize().unwrap();
++        let store = store.path().canonicalize().unwrap();
++        let endpoint = store.join("pane.json");
++        let private = store.join("vault.json");
++        std::fs::write(&endpoint, "endpoint-token\n").unwrap();
++        std::fs::write(&private, "private-cookie").unwrap();
++        let parent = Config::load_default_with_cli_overrides_for_codex_home(
++            home.path().canonicalize().unwrap(),
++            vec![],
++        )
++        .await
++        .unwrap();
++        let config =
++            execution::isolated(&parent, &root, std::slice::from_ref(&endpoint), &[], false)
++                .unwrap();
++        let output = request_output(&config, vec!["/bin/sh".into(), "-c".into(),
++            "value=$(cat \"$1\") || exit 10; if cat \"$2\"; then exit 11; fi; if printf bad > \"$1\"; then exit 12; fi; printf '{\"exit_code\":0,\"stdout\":\"%s\"}\\n' \"$value\"".into(),
++            "check".into(), endpoint.display().to_string(), private.display().to_string()]).await.unwrap();
++        assert_eq!(output["exit_code"], 0, "{output}");
++        assert_eq!(output["stdout"], "endpoint-token");
++        assert_eq!(
++            std::fs::read_to_string(&endpoint).unwrap(),
++            "endpoint-token\n"
++        );
++        let denied = execution::isolated(
++            &parent,
++            &root,
++            std::slice::from_ref(&endpoint),
++            &[store],
++            false,
++        )
++        .unwrap();
++        let output = request_output(
++            &denied,
++            vec![
++                "/bin/sh".into(),
++                "-c".into(),
++                "if cat \"$1\"; then printf '{\"stdout\":\"leaked\"}\\n'; else printf '{\"stdout\":\"denied\"}\\n'; fi".into(),
++                "check".into(),
++                endpoint.display().to_string(),
++            ],
++        )
++        .await
++        .unwrap();
++        assert_eq!(output["stdout"], "denied");
++    }
 +
 +    fn session(root: &Path, name: &str) -> Session {
 +        let directory = root.join(name);
@@ -69116,10 +69387,10 @@ index 000000000..738976d38
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 000000000..67afebfe3
+index 000000000..821fff436
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,658 @@
+@@ -0,0 +1,659 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -69415,6 +69686,7 @@ index 000000000..67afebfe3
 +                    }
 +                    operation if operation.starts_with("process.") => processes.call(
 +                        crate::managed_process::ProcessOwner {
++                            thread: None,
 +                            id,
 +                            generation,
 +                            repository: &self.repository,
@@ -103597,10 +103869,10 @@ index 000000000..f8b869378
 +}
 diff --git a/codex-rs/omd/src/process_raster.rs b/codex-rs/omd/src/process_raster.rs
 new file mode 100644
-index 000000000..21672e701
+index 000000000..357a7f6a0
 --- /dev/null
 +++ b/codex-rs/omd/src/process_raster.rs
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,207 @@
 +use serde_json::Value;
 +use std::collections::BTreeMap;
 +use std::sync::Arc;
@@ -103609,6 +103881,7 @@ index 000000000..21672e701
 +use std::sync::atomic::AtomicU64;
 +use std::sync::atomic::Ordering;
 +
++/// Accepts bounded input without blocking the UI thread.
 +pub type Sink = Arc<dyn Fn(Value) -> bool + Send + Sync>;
 +
 +#[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103617,7 +103890,8 @@ index 000000000..21672e701
 +    Keys,
 +}
 +
-+type Bound = BTreeMap<String, (String, Role, Sink, u64)>;
++type Key = (Option<String>, String, String);
++type Bound = BTreeMap<Key, (String, Role, Sink, u64)>;
 +
 +static BOUND: Mutex<Bound> = Mutex::new(BTreeMap::new());
 +static SERIAL: AtomicU64 = AtomicU64::new(0);
@@ -103626,18 +103900,23 @@ index 000000000..21672e701
 +    BOUND.lock().unwrap_or_else(PoisonError::into_inner)
 +}
 +
-+/// A managed process bound to its owner's raster (and optional keys component); dropping it unbinds them.
++/// A managed process bound to its thread's owned components; dropping it unbinds them.
 +pub struct Binding {
-+    components: Vec<String>,
++    components: Vec<Key>,
 +    sink: Sink,
 +}
 +
-+pub fn bind(owner: &str, components: Vec<(String, Role)>, sink: Sink) -> Binding {
++pub fn bind(
++    thread: Option<&str>,
++    owner: &str,
++    components: Vec<(String, Role)>,
++    sink: Sink,
++) -> Binding {
 +    let mut table = bound();
 +    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
 +    for (component, role) in &components {
 +        table.insert(
-+            component.clone(),
++            key(thread, owner, component),
 +            (owner.to_owned(), *role, sink.clone(), serial),
 +        );
 +    }
@@ -103646,7 +103925,7 @@ index 000000000..21672e701
 +    Binding {
 +        components: components
 +            .into_iter()
-+            .map(|(component, _)| component)
++            .map(|(component, _)| key(thread, owner, &component))
 +            .collect(),
 +        sink,
 +    }
@@ -103671,39 +103950,53 @@ index 000000000..21672e701
 +    !bound().is_empty()
 +}
 +
-+/// The role `component` is bound in when `owner` owns the binding.
-+pub fn role(owner: &str, component: &str) -> Option<Role> {
++fn key(thread: Option<&str>, owner: &str, component: &str) -> Key {
++    (
++        thread.map(str::to_owned),
++        owner.to_owned(),
++        component.to_owned(),
++    )
++}
++
++/// The role `component` is bound in when `owner` owns the binding in `thread`.
++pub fn role(thread: Option<&str>, owner: &str, component: &str) -> Option<Role> {
 +    bound()
-+        .get(component)
++        .get(&key(thread, owner, component))
 +        .filter(|(bound, _, _, _)| bound == owner)
 +        .map(|(_, role, _, _)| *role)
 +}
 +
-+/// Identifies the process bound to `owner`'s `component`; a restarted process has a new one.
-+pub fn serial(owner: &str, component: &str) -> Option<u64> {
++pub fn target(thread: Option<&str>, owner: &str, component: &str) -> Option<(Role, u64, Sink)> {
 +    bound()
-+        .get(component)
++        .get(&key(thread, owner, component))
++        .map(|(_, role, sink, serial)| (*role, *serial, sink.clone()))
++}
++
++/// Identifies the process bound to `owner`'s `component`; a restarted process has a new one.
++pub fn serial(thread: Option<&str>, owner: &str, component: &str) -> Option<u64> {
++    bound()
++        .get(&key(thread, owner, component))
 +        .filter(|(bound, _, _, _)| bound == owner)
 +        .map(|(_, _, _, serial)| *serial)
 +}
 +
 +/// The keys component bound to the same process as `owner`'s raster `component`.
-+pub fn keys(owner: &str, component: &str) -> Option<String> {
++pub fn keys(thread: Option<&str>, owner: &str, component: &str) -> Option<String> {
 +    let table = bound();
 +    let (_, role, _, serial) = table
-+        .get(component)
++        .get(&key(thread, owner, component))
 +        .filter(|(bound, _, _, _)| bound == owner)?;
 +    (*role == Role::Raster).then_some(())?;
 +    table
 +        .iter()
 +        .find(|(_, (_, role, _, other))| *role == Role::Keys && other == serial)
-+        .map(|(keys, _)| keys.clone())
++        .map(|(keys, _)| keys.2.clone())
 +}
 +
 +/// Writes `message` to the process bound to `owner`'s `component`; false when none is bound or it stopped.
-+pub fn send(owner: &str, component: &str, message: Value) -> bool {
++pub fn send(thread: Option<&str>, owner: &str, component: &str, message: Value) -> bool {
 +    let sink = bound()
-+        .get(component)
++        .get(&key(thread, owner, component))
 +        .filter(|(bound, _, _, _)| bound == owner)
 +        .map(|(_, _, sink, _)| sink.clone());
 +    sink.is_some_and(|sink| sink(message))
@@ -103713,6 +104006,51 @@ index 000000000..21672e701
 +mod tests {
 +    use super::*;
 +    use serde_json::json;
++
++    #[test]
++    fn bindings_isolate_identical_components_across_threads() {
++        let seen = Arc::new(Mutex::new(Vec::new()));
++        let make = |thread: &'static str| {
++            let seen = seen.clone();
++            bind(
++                Some(thread),
++                "same-owner",
++                vec![
++                    ("same-frame".into(), Role::Raster),
++                    ("same-keys".into(), Role::Keys),
++                ],
++                Arc::new(move |value| {
++                    seen.lock().unwrap().push((thread, value));
++                    true
++                }),
++            )
++        };
++        let first = make("first");
++        let second = make("second");
++        assert_ne!(
++            serial(Some("first"), "same-owner", "same-frame"),
++            serial(Some("second"), "same-owner", "same-frame")
++        );
++        assert_eq!(
++            keys(Some("first"), "same-owner", "same-frame"),
++            Some("same-keys".into())
++        );
++        assert!(send(Some("first"), "same-owner", "same-frame", json!(1)));
++        assert!(send(Some("second"), "same-owner", "same-keys", json!(2)));
++        assert!(!send(None, "same-owner", "same-keys", json!(3)));
++        drop(first);
++        assert_eq!(role(Some("first"), "same-owner", "same-frame"), None);
++        assert!(send(Some("second"), "same-owner", "same-frame", json!(4)));
++        drop(second);
++        assert_eq!(
++            *seen.lock().unwrap(),
++            vec![
++                ("first", json!(1)),
++                ("second", json!(2)),
++                ("second", json!(4))
++            ]
++        );
++    }
 +
 +    #[test]
 +    fn bindings_route_only_their_owner_and_unbind_on_drop() {
@@ -103725,6 +104063,7 @@ index 000000000..21672e701
 +            })
 +        };
 +        let binding = bind(
++            None,
 +            "owner",
 +            vec![
 +                ("pr-frame".into(), Role::Raster),
@@ -103732,12 +104071,12 @@ index 000000000..21672e701
 +            ],
 +            sink,
 +        );
-+        assert_eq!(role("owner", "pr-keys"), Some(Role::Keys));
-+        assert_eq!(role("other", "pr-frame"), None);
-+        assert!(!send("other", "pr-frame", json!(1)));
-+        assert!(send("owner", "pr-frame", json!(2)));
++        assert_eq!(role(None, "owner", "pr-keys"), Some(Role::Keys));
++        assert_eq!(role(None, "other", "pr-frame"), None);
++        assert!(!send(None, "other", "pr-frame", json!(1)));
++        assert!(send(None, "owner", "pr-frame", json!(2)));
 +        drop(binding);
-+        assert!(!send("owner", "pr-frame", json!(3)));
++        assert!(!send(None, "owner", "pr-frame", json!(3)));
 +        assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
 +    }
 +}
@@ -125859,10 +126198,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..9bf4f08d7
+index 000000000..6df8333a6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,961 @@
+@@ -0,0 +1,963 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -126749,7 +127088,9 @@ index 000000000..9bf4f08d7
 +    }
 +    let mut emitted = Vec::new();
 +    for (id, (x, y, cells)) in origins {
-+        let image = inline.get_mut(&id).expect("markers are registered");
++        let Some(image) = inline.get_mut(&id) else {
++            continue;
++        };
 +        let fits = x >= i32::from(area.left())
 +            && y >= i32::from(area.top())
 +            && x + i32::from(image.columns) <= i32::from(area.right())
@@ -126826,10 +127167,10 @@ index 000000000..9bf4f08d7
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..2373a6f1d
+index 000000000..ac4e763c3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,615 @@
+@@ -0,0 +1,623 @@
 +use super::*;
 +use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
@@ -127367,11 +127708,19 @@ index 000000000..2373a6f1d
 +    let (sender, received) = std::sync::mpsc::channel();
 +    let sender = Mutex::new(sender);
 +    let binding = codex_omd::process_raster::bind(
++        crate::mod_surface::current_thread().as_deref(),
 +        "owner",
 +        vec![("box-raster".into(), codex_omd::process_raster::Role::Raster)],
 +        Arc::new(move |message| sender.lock().unwrap().send(message).is_ok()),
 +    );
-+    let draw = |width, size| {
++    let draw = |width: u16, size: (u16, u16)| {
++        crate::mod_raster::track(
++            "box-raster",
++            crate::mod_surface::current_thread().as_deref(),
++            Some("owner"),
++            width.min(size.0),
++            size,
++        );
 +        crate::mod_raster::rows(
 +            "box-raster",
 +            Some("owner"),
@@ -129748,10 +130097,10 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..e8b3ae67c
+index 000000000..05cd86599
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,358 @@
+@@ -0,0 +1,369 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -129777,6 +130126,7 @@ index 000000000..e8b3ae67c
 +
 +struct Raster {
 +    owner: String,
++    binding: Option<u64>,
 +    width: u16,
 +    height: u16,
 +    cells: Vec<Cell>,
@@ -129794,6 +130144,7 @@ index 000000000..e8b3ae67c
 +    fn new(owner: &str, width: u16, height: u16) -> Self {
 +        Self {
 +            owner: owner.to_owned(),
++            binding: None,
 +            width,
 +            height,
 +            cells: vec![Cell::default(); usize::from(width) * usize::from(height)],
@@ -129877,14 +130228,18 @@ index 000000000..e8b3ae67c
 +}
 +
 +/// Records the rendered size and, for a process-bound raster, tells the process when its drawable box or the client cell changes; the write happens off the render thread, in order.
-+fn track(id: &str, owner: Option<&str>, columns: u16, size: (u16, u16)) {
-+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<(String, String, Value)>> =
-+        std::sync::OnceLock::new();
++pub(crate) fn track(
++    id: &str,
++    thread: Option<&str>,
++    owner: Option<&str>,
++    columns: u16,
++    size: (u16, u16),
++) {
 +    let mut layouts = layouts();
 +    let layout = layouts.entry(id.to_owned()).or_default();
 +    layout.size = size;
-+    let Some((owner, serial)) =
-+        owner.and_then(|owner| Some((owner, codex_omd::process_raster::serial(owner, id)?)))
++    let Some((_, serial, sink)) =
++        owner.and_then(|owner| codex_omd::process_raster::target(thread, owner, id))
 +    else {
 +        layout.told = None;
 +        return;
@@ -129898,16 +130253,7 @@ index 000000000..e8b3ae67c
 +    }
 +    let message = json!({"box": {"columns": columns, "rows": size.1,
 +        "cell_px": {"width": cell.0, "height": cell.1}}});
-+    let queue = QUEUE.get_or_init(|| {
-+        let (sender, receiver) = std::sync::mpsc::channel::<(String, String, Value)>();
-+        std::thread::spawn(move || {
-+            while let Ok((owner, id, message)) = receiver.recv() {
-+                codex_omd::process_raster::send(&owner, &id, message);
-+            }
-+        });
-+        sender
-+    });
-+    let _ = queue.send((owner.to_owned(), id.to_owned(), message));
++    sink(message);
 +}
 +
 +/// `terminal.blit`: queues a partial update of the caller's own raster under the frame budget.
@@ -129931,6 +130277,11 @@ index 000000000..e8b3ae67c
 +    let (key, bytes) = (std::mem::take(&mut update.key), update.bytes);
 +    let update = update.checked()?;
 +    let image = matches!(update.content, BlitContent::Image { .. });
++    let binding = codex_omd::process_raster::serial(
++        crate::mod_surface::current_thread().as_deref(),
++        caller,
++        &key,
++    );
 +    let mut rasters = rasters();
 +    if !rasters.contains_key(&key)
 +        && rasters
@@ -129944,7 +130295,10 @@ index 000000000..e8b3ae67c
 +    let raster = rasters
 +        .entry(key.clone())
 +        .and_modify(|raster| {
-+            if (raster.width, raster.height) != (width, height) || raster.owner != caller {
++            if (raster.width, raster.height) != (width, height)
++                || raster.owner != caller
++                || raster.binding != binding
++            {
 +                if raster.drawn {
 +                    crate::mod_client::forget(&key);
 +                }
@@ -129952,6 +130306,7 @@ index 000000000..e8b3ae67c
 +            }
 +        })
 +        .or_insert_with(|| Raster::new(caller, width, height));
++    raster.binding = binding;
 +    let full = |raster: &Raster| {
 +        !image && (raster.queue.len() >= QUEUE_UPDATES || raster.queued_bytes + bytes > QUEUE_BYTES)
 +    };
@@ -130008,15 +130363,16 @@ index 000000000..e8b3ae67c
 +    prefix: &str,
 +    now: Instant,
 +) -> (Vec<Line<'static>>, Option<Duration>) {
-+    track(id, owner, width.min(size.0), size);
++    let binding = layouts()
++        .get(id)
++        .and_then(|layout| layout.told.map(|(serial, _, _)| serial));
 +    let mut rasters = rasters();
 +    if rasters
 +        .get(id)
-+        .is_some_and(|raster| Some(raster.owner.as_str()) != owner)
++        .is_some_and(|raster| Some(raster.owner.as_str()) != owner || raster.binding != binding)
++        && rasters.remove(id).is_some_and(|raster| raster.drawn)
 +    {
-+        if rasters.remove(id).is_some_and(|raster| raster.drawn) {
-+            crate::mod_client::forget(id);
-+        }
++        crate::mod_client::forget(id);
 +    }
 +    let Some(raster) = rasters.get_mut(id) else {
 +        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], None);
@@ -130095,10 +130451,14 @@ index 000000000..e8b3ae67c
 +
 +/// Keeps the rasters in view and those a live process draws, so a context change doesn't drop a still page's only frame.
 +pub(crate) fn retain(ids: &BTreeSet<String>) {
++    let thread = crate::mod_surface::current_thread();
 +    let mut rasters = rasters();
 +    rasters.retain(|id, raster| {
-+        let kept =
-+            ids.contains(id) || codex_omd::process_raster::serial(&raster.owner, id).is_some();
++        let kept = ids.contains(id)
++            || raster.binding.is_some_and(|binding| {
++                Some(binding)
++                    == codex_omd::process_raster::serial(thread.as_deref(), &raster.owner, id)
++            });
 +        if !kept && raster.drawn {
 +            crate::mod_client::forget(id);
 +        }
@@ -130112,10 +130472,10 @@ index 000000000..e8b3ae67c
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..dad27509d
+index 000000000..14322cc08
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,599 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -130424,6 +130784,44 @@ index 000000000..dad27509d
 +    assert_eq!(text(&lines), vec![" c  ", "    "]);
 +    assert_eq!(next, None);
 +    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn process_binding_replacement_drops_retained_frames() {
++    let key = "bound-retained-raster";
++    let thread = crate::mod_surface::current_thread();
++    let bind = || {
++        codex_omd::process_raster::bind(
++            thread.as_deref(),
++            "owner",
++            vec![(key.into(), codex_omd::process_raster::Role::Raster)],
++            std::sync::Arc::new(|_| true),
++        )
++    };
++    let first = bind();
++    super::track(key, thread.as_deref(), Some("owner"), 4, (4, 2));
++    let now = Instant::now();
++    blit_at(
++        key,
++        "owner",
++        json!({"rect": {"x":0,"y":0,"width":1,"height":1},"cells":["a"]}),
++        now,
++    )
++    .unwrap();
++    super::retain(&std::collections::BTreeSet::new());
++    assert_eq!(
++        text(&super::rows(key, Some("owner"), "new page", 10, (4, 2), false, "", now).0)[0],
++        "a   "
++    );
++    let second = bind();
++    super::track(key, thread.as_deref(), Some("owner"), 4, (4, 2));
++    super::retain(&std::collections::BTreeSet::from([key.to_owned()]));
++    assert_eq!(
++        text(&super::rows(key, Some("owner"), "new page", 10, (4, 2), false, "", now).0),
++        vec!["[new page]"]
++    );
++    drop((first, second));
 +}
 +
 +#[test]
@@ -133167,10 +133565,10 @@ index 000000000..24a7c38a2
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..89910a7fb
+index 000000000..44a9436fe
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,912 @@
+@@ -0,0 +1,919 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -133658,18 +134056,18 @@ index 000000000..89910a7fb
 +}
 +
 +/// Pointer input on a raster, and key input on a keys component, bound to a managed process goes to its stdin instead of a callback.
-+fn to_process(payload: &Value) -> bool {
++pub(crate) fn to_process(thread: Option<&str>, owner: Option<&str>, payload: &Value) -> bool {
 +    use codex_omd::process_raster::Role;
 +    let Some(component) = payload["component"].as_str() else {
 +        return false;
 +    };
-+    let Some(owner) = crate::mod_ui::component_owner(component) else {
++    let Some(owner) = owner else {
 +        return false;
 +    };
-+    let message = match (
-+        codex_omd::process_raster::role(&owner, component),
-+        payload["kind"].as_str(),
-+    ) {
++    let Some((role, _, sink)) = codex_omd::process_raster::target(thread, owner, component) else {
++        return false;
++    };
++    let message = match (Some(role), payload["kind"].as_str()) {
 +        (Some(Role::Raster), Some("pointer")) => {
 +            let pointer = &payload["pointer"];
 +            let at = crate::mod_raster::pixel(
@@ -133687,7 +134085,8 @@ index 000000000..89910a7fb
 +        (Some(Role::Keys), Some("input")) => json!({"input": payload["events"]}),
 +        _ => return false,
 +    };
-+    codex_omd::process_raster::send(&owner, component, message)
++    sink(message);
++    true
 +}
 +
 +/// Delivers a `component_event` to the component's owner only, off the input thread.
@@ -133709,9 +134108,6 @@ index 000000000..89910a7fb
 +                    } else {
 +                        payload
 +                    };
-+                    if to_process(&payload) {
-+                        continue;
-+                    }
 +                    let mut payload = payload;
 +                    if let Some(pointer) = payload["pointer"].as_object_mut() {
 +                        pointer.remove("fraction");
@@ -133762,7 +134158,19 @@ index 000000000..89910a7fb
 +
 +static INPUT_DROPPED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 +
-+pub(crate) fn input_event(component: &str, event: Value) {
++pub(crate) fn input_event(
++    thread: Option<&str>,
++    owner: Option<&str>,
++    component: &str,
++    event: Value,
++) {
++    if to_process(
++        thread,
++        owner,
++        &json!({"component": component, "kind": "input", "events": [event]}),
++    ) {
++        return;
++    }
 +    static QUEUE: std::sync::OnceLock<std::sync::mpsc::SyncSender<(String, Value)>> =
 +        std::sync::OnceLock::new();
 +    if registered("component_event") || codex_omd::process_raster::any() {
@@ -133774,9 +134182,6 @@ index 000000000..89910a7fb
 +                    pending.extend(receiver.try_iter());
 +                    let dropped = INPUT_DROPPED.swap(0, std::sync::atomic::Ordering::Relaxed);
 +                    for payload in input_batches(pending, dropped) {
-+                        if to_process(&payload) {
-+                            continue;
-+                        }
 +                        if let Some(owner) = payload["component"]
 +                            .as_str()
 +                            .and_then(crate::mod_ui::component_owner)
@@ -134866,10 +135271,10 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..3f269d70b
+index 000000000..5c92cc891
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3746 @@
+@@ -0,0 +1,3795 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -134982,6 +135387,7 @@ index 000000000..3f269d70b
 +
 +#[derive(Default)]
 +struct Interaction {
++    thread: Option<String>,
 +    focused: Option<String>,
 +    ids: BTreeSet<String>,
 +    targets: BTreeMap<String, ComponentTarget>,
@@ -135096,6 +135502,7 @@ index 000000000..3f269d70b
 +
 +static CACHE: RwLock<Option<Cache>> = RwLock::new(None);
 +static INTERACTION: Mutex<Interaction> = Mutex::new(Interaction {
++    thread: None,
 +    focused: None,
 +    ids: BTreeSet::new(),
 +    targets: BTreeMap::new(),
@@ -136561,6 +136968,16 @@ index 000000000..3f269d70b
 +                let available = width
 +                    .saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX))
 +                    .max(1);
++                crate::mod_raster::track(
++                    id,
++                    interaction.thread.as_deref(),
++                    interaction.component_owners.get(id).map(String::as_str),
++                    available.min(columns.unwrap_or(available)),
++                    (
++                        columns.unwrap_or(available),
++                        rows_high.unwrap_or(RASTER_HEIGHT),
++                    ),
++                );
 +                let (lines, next) = crate::mod_raster::rows(
 +                    id,
 +                    interaction.component_owners.get(id).map(String::as_str),
@@ -136807,6 +137224,7 @@ index 000000000..3f269d70b
 +
 +fn bind_terminals(interaction: &mut Interaction, snapshot: &ModViewSnapshot) {
 +    let thread = snapshot.input["ledger"]["thread_id"].as_str();
++    interaction.thread = thread.map(str::to_owned);
 +    let epoch = snapshot.input["pty_scope"]["epoch"].as_u64();
 +    let admission = snapshot.input["pty_scope"]["admission"].as_u64();
 +    let configuration = snapshot.input["pty_scope"]["configuration"].as_str();
@@ -137437,6 +137855,9 @@ index 000000000..3f269d70b
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
 +        interaction.component_owners = snapshot.component_owners.clone();
++        interaction.thread = snapshot.input["ledger"]["thread_id"]
++            .as_str()
++            .map(str::to_owned);
 +        component_rows(&site.components, width, &mut interaction, 0)
 +            .into_iter()
 +            .map(|row| HyperlinkLine {
@@ -137724,6 +138145,11 @@ index 000000000..3f269d70b
 +                && escape
 +            {
 +                crate::mod_surface::input_event(
++                    interaction.thread.as_deref(),
++                    interaction
++                        .component_owners
++                        .get(&focused)
++                        .map(String::as_str),
 +                    &focused,
 +                    serde_json::json!({"key": "Esc", "text": null}),
 +                );
@@ -137778,6 +138204,11 @@ index 000000000..3f269d70b
 +            let name = key_name(key);
 +            if name.is_some() || text.is_some() {
 +                crate::mod_surface::input_event(
++                    interaction.thread.as_deref(),
++                    interaction
++                        .component_owners
++                        .get(&focused)
++                        .map(String::as_str),
 +                    &focused,
 +                    serde_json::json!({"key": name, "text": text}),
 +                );
@@ -138045,7 +138476,15 @@ index 000000000..3f269d70b
 +    if bounded.len() < text.len() {
 +        event["truncated"] = true.into();
 +    }
-+    crate::mod_surface::input_event(&focused, event);
++    crate::mod_surface::input_event(
++        interaction.thread.as_deref(),
++        interaction
++            .component_owners
++            .get(&focused)
++            .map(String::as_str),
++        &focused,
++        event,
++    );
 +    true
 +}
 +
@@ -138182,6 +138621,13 @@ index 000000000..3f269d70b
 +        .and_then(|payload| payload["component"].as_str())
 +        .map(str::to_owned);
 +    for payload in events {
++        let owner = payload["component"]
++            .as_str()
++            .and_then(|id| interaction.component_owners.get(id))
++            .map(String::as_str);
++        if crate::mod_surface::to_process(interaction.thread.as_deref(), owner, &payload) {
++            continue;
++        }
 +        match payload["pointer"]["action"].as_str() {
 +            Some("move" | "drag") => crate::mod_surface::pointer_motion(
 +                payload["component"].as_str().unwrap_or_default(),
@@ -138195,7 +138641,7 @@ index 000000000..3f269d70b
 +            interaction.focused = pressed
 +                .and_then(|raster| {
 +                    let owner = interaction.component_owners.get(&raster)?;
-+                    codex_omd::process_raster::keys(owner, &raster)
++                    codex_omd::process_raster::keys(interaction.thread.as_deref(), owner, &raster)
 +                })
 +                .filter(|keys| interaction.key_panes.contains(keys));
 +        }
@@ -138209,12 +138655,20 @@ index 000000000..3f269d70b
 +        _ => None,
 +    };
 +    if let (Some(hit), Some((action, button))) = (&hit, action) {
-+        crate::mod_surface::component_event(
-+            serde_json::json!({"component": hit.id, "kind": "pointer",
++        let payload = serde_json::json!({"component": hit.id, "kind": "pointer",
 +            "pointer": {"column": event.column.saturating_sub(hit.area.x), "row": event.row.saturating_sub(hit.area.y),
 +                "action": action,
-+                "button": button.map(button_name)}}),
-+        );
++                "button": button.map(button_name)}});
++        if !crate::mod_surface::to_process(
++            interaction.thread.as_deref(),
++            interaction
++                .component_owners
++                .get(&hit.id)
++                .map(String::as_str),
++            &payload,
++        ) {
++            crate::mod_surface::component_event(payload);
++        }
 +    }
 +    let Some(hit) = hit else {
 +        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -138618,10 +139072,10 @@ index 000000000..3f269d70b
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..d55f12405
+index 000000000..a2c137779
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2067 @@
+@@ -0,0 +1,2090 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -140441,6 +140895,7 @@ index 000000000..d55f12405
 +            {"type":"document","id":"bound_keys","label":"Keys","keys":true,"lines":[]}
 +        ]}}}),
 +    );
++    view.input = serde_json::json!({"ledger": {"thread_id": "displayed-thread"}});
 +    view.component_owners = [("bound_chart", "demo"), ("bound_keys", "demo")]
 +        .into_iter()
 +        .map(|(id, owner)| (id.to_owned(), owner.to_owned()))
@@ -140467,6 +140922,7 @@ index 000000000..d55f12405
 +    let (sender, received) = std::sync::mpsc::channel();
 +    let sender = std::sync::Mutex::new(sender);
 +    let binding = codex_omd::process_raster::bind(
++        Some("displayed-thread"),
 +        "demo",
 +        vec![
 +            (
@@ -140477,10 +140933,30 @@ index 000000000..d55f12405
 +        ],
 +        std::sync::Arc::new(move |message| sender.lock().unwrap().send(message).is_ok()),
 +    );
++    let other = codex_omd::process_raster::bind(
++        Some("hidden-thread"),
++        "demo",
++        vec![
++            (
++                "bound_chart".into(),
++                codex_omd::process_raster::Role::Raster,
++            ),
++            ("bound_keys".into(), codex_omd::process_raster::Role::Keys),
++        ],
++        std::sync::Arc::new(|_| panic!("input reached the hidden thread")),
++    );
++    render(area, area, &mut Buffer::empty(area), &view);
++    assert!(
++        received
++            .recv_timeout(std::time::Duration::from_secs(1))
++            .unwrap()
++            .get("box")
++            .is_some()
++    );
 +    let press = MouseEvent {
 +        kind: MouseEventKind::Down(MouseButton::Left),
 +        column: chart.area.x + 1,
-+        row: chart.area.y + 1,
++        row: chart.area.y,
 +        modifiers: KeyModifiers::NONE,
 +    };
 +    let pressing = std::thread::spawn(move || pointer(press));
@@ -140502,6 +140978,7 @@ index 000000000..d55f12405
 +        "the press focuses the process's keys component"
 +    );
 +    drop(binding);
++    drop(other);
 +    crate::mod_raster::retain(&std::collections::BTreeSet::new());
 +    preview(ModViewSnapshot::default());
 +}

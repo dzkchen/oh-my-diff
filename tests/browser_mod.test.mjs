@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -16,7 +16,7 @@ const KITTY = { kind: 'terminal', graphics: 'kitty', pointer: 'half_cell', reduc
 const NOTE = { selector: 'html > body > button', html: '<button class="cta">Buy</button>', truncated: false, context: '<body>\n  [selected element]', styles: { color: 'rgb(255, 0, 0)' },
   sources: [{ rule: '.cta', source: 'src/button.scss:3' }], crop: 'Y3JvcA==', url: 'http://localhost:3000/', origin: 'http://localhost:3000', time: '2026-10-07T00:00:00.000Z', generation: 2 };
 
-function fixture({ endpoint = '/tmp/pane.json', userOnly = false } = {}) {
+function fixture({ endpoint = 'browser_endpoint', userOnly = false } = {}) {
   const calls = [];
   const page = { generation: 2, url: 'http://localhost:3000/', offline: false, pick: NOTE, draft: { text: 'hi', revision: 3 }, stale: false, reads: [], sent: [], out: [] };
   const pane = (path, body) => {
@@ -29,8 +29,9 @@ function fixture({ endpoint = '/tmp/pane.json', userOnly = false } = {}) {
   const host = (operation, args) => {
     calls.push({ operation, args });
     switch (operation) {
+      case 'sidecars.invoke': return { result: page.offline ? { error: 'endpoint_missing' } : { url: 'http://127.0.0.1:9/token', viewer: '/plugin/scripts/viewer.mjs' } };
       case 'exec.run': {
-        if (args.program === 'cat') return { exit_code: 0, stdout: page.offline ? '' : JSON.stringify({ url: 'http://127.0.0.1:9/token', viewer: '/plugin/scripts/viewer.mjs' }), stderr: '', stdout_preview_truncated: false };
+        if (args.program === 'cat') throw new Error('protected_path');
         const input = JSON.parse(/^const input = (.*);$/m.exec(args.stdin)[1]);
         const replies = [];
         for (const [path, body] of input.steps) {
@@ -90,6 +91,9 @@ test('opens a pane-enabled session in a raster-bound viewer and follows the page
   f.channel('open', { session: 'default', url: 'http://localhost:3000/' });
   assert.deepEqual(JSON.parse(/^const input = (.*);$/m.exec(f.calls.find(call => call.operation === 'exec.run').args.stdin)[1]).steps, [['default/status', null]]);
   const started = f.calls.find(call => call.operation === 'process.start').args;
+  assert.deepEqual(f.calls.find(call => call.operation === 'sidecars.invoke').args, { id: 'browser_endpoint', input: {} });
+  assert.equal(f.calls.some(call => call.operation === 'exec.run' && call.args.program === 'cat'), false);
+  assert.doesNotMatch(JSON.stringify(f.state()), /127\.0\.0\.1:9\/token/);
   assert.deepEqual([started.session, started.path, started.framing, started.network, started.notify, started.raster, started.keys, started.environment, started.arguments],
     ['viewer1', '/usr/local/bin/node', 'ndjson', 'loopback', ['output', 'exit'], 'omd_browser_frame', 'omd_browser_keys',
       { OH_MY_DIFF_PANE_URL: 'http://127.0.0.1:9/token', OH_MY_DIFF_PANE_SESSION: 'default' }, ['/plugin/scripts/viewer.mjs']]);
@@ -232,6 +236,32 @@ test('user-only sessions refuse design mode and only open when the profile is us
   f.page.out.push({ pick: NOTE });
   f.invoke('process_event', { session: f.state().view.viewer, kind: 'output', bytes: 100 });
   assert.equal(f.state().notes.length, 0);
+  f.channel('open', { ...request, session: 'Chess' });
+  assert.equal(f.state().view.session, 'chess');
+  f.channel('close', { session: 'CHESS', end: true });
+  assert.equal(f.state().view, null);
+});
+
+test('the endpoint sidecar returns only a bounded local endpoint and reports missing files', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'omd-browser-endpoint-'));
+  const file = join(directory, 'pane.json');
+  const run = () => {
+    const result = spawnSync(process.execPath, [new URL('../plugins/optional/plugins/omd-browser/scripts/endpoint.mjs', import.meta.url).pathname, file, '--omd-request-json', '{}'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  try {
+    assert.deepEqual(run(), { error: 'endpoint_missing' });
+    const endpoint = { url: 'http://127.0.0.1:1234/token', viewer: '/plugin/viewer.mjs' };
+    writeFileSync(file, JSON.stringify({ ...endpoint, ignored: 'private' }));
+    assert.deepEqual(run(), endpoint);
+    writeFileSync(file, JSON.stringify({ ...endpoint, padding: 'x'.repeat(8192) }));
+    assert.deepEqual(run(), { error: 'endpoint_missing' });
+    writeFileSync(file, JSON.stringify({ ...endpoint, url: 'https://example.com/' }));
+    assert.deepEqual(run(), { error: 'endpoint_missing' });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('the pane helper script reports missing endpoints, refused sessions and replies', async () => {
@@ -242,11 +272,13 @@ test('the pane helper script reports missing endpoints, refused sessions and rep
     allowed: name => name === 'default', status: async () => ({ url: 'about:blank', title: '', generation: 1, user_only: false }), frame: async () => Buffer.alloc(0), routes: {} } });
   const directory = mkdtempSync(join(tmpdir(), 'omd-browser-mod-'));
   const run = (file, steps) => new Promise(resolve => {
-    const child = spawn(program, [...argv.slice(0, -1), file], { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}` } });
+    const child = spawn(program, argv, { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}` } });
     let out = '';
     child.stdout.on('data', chunk => { out += chunk; });
     child.on('exit', () => resolve(JSON.parse(out)));
-    child.stdin.end(script.replace(/^const input = .*;$/m, `const input = ${JSON.stringify({ steps })};`));
+    let url;
+    try { url = JSON.parse(readFileSync(file, 'utf8')).url; } catch {}
+    child.stdin.end(script.replace(/^const input = .*;$/m, `const input = ${JSON.stringify({ steps, url })};`));
   });
   try {
     writeFileSync(join(directory, 'pane.json'), JSON.stringify({ url: await live.listen() }));

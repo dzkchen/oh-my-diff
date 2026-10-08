@@ -443,9 +443,11 @@ async fn run(
             .as_ref()
             .filter(|arguments| arguments.get("raster").is_some())
             .and_then(|_| super::expansion::blit_sink(lead, &caller));
+        let thread = lead.thread.to_string();
         let result = tokio::task::spawn_blocking(move || {
             processes.call(
                 crate::managed_process::ProcessOwner {
+                    thread: Some(&thread),
                     id: &id,
                     generation,
                     repository: &authority.repository,
