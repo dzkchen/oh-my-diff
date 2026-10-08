@@ -10,7 +10,7 @@ The mod never reaches the network and never replaces a running session.
   or **Skip this version**, plus one line after an update succeeded or failed. The host draws no welcome area in
   `--no-alt-screen` sessions; `/update` works there.
 - `/update` shows the installed and available versions, the release notes, the `omd update` command and incompatible
-  user mods, and has buttons for update checks, automatic updates, the channel (stable or beta) and the cadence (daily
+  user mods, and has buttons for update checks, automatic updates, the channel (stable, beta or nightly) and the cadence (daily
   or weekly). **Update now** queues the release for the next start, because a running session keeps its host and mods.
 - The same settings, plus an exact version `pin`, are editable in `/mods` and with `omd update checks|channel|cadence|pin`
   and `omd update enable|disable` in a shell.
@@ -22,3 +22,6 @@ stop retrying a release that failed once, and never update mods you installed yo
 At launch, staged releases must still match the current pin, channel and runtime requirements.
 Automatic staging also rechecks automatic-update policy and enabled user-mod compatibility.
 Explicit manual updates still apply with automatic updates disabled.
+
+Nightly is opt-in and includes only nightly prereleases that passed hosted validation. Stable and beta never
+offer nightlies. Use `omd update channel nightly` or `/update channel nightly` to select it.

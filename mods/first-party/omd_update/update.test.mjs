@@ -113,8 +113,11 @@ test('/update shows the command, notes and incompatible mods, queues the next st
   assert.deepEqual(run({ event: 'start', payload: null, state: quiet, settings: { ...settings, auto: 'on', checks: 'off' } },
     call => call.operation === 'exec.run' ? environment({ installed: '0.1.0', available: release }) : null).state.overrides, {});
   state = command('channel nightly', state);
-  assert.equal(state.notice, 'channel takes stable or beta');
-  assert.equal(calls.filter(call => call.operation === 'settings.write').length, 2);
+  assert.equal(state.notice, 'Saved; it applies from the next check.');
+  assert.equal(calls.filter(call => call.operation === 'settings.write').length, 3);
+  assert.ok(view(state).some(child => child.id === 'omd_update_channel_stable'));
+  assert.ok(!view(state).some(child => child.id === 'omd_update_channel_nightly'));
+  assert.equal(command('channel invalid', state).notice, 'channel takes stable or beta or nightly');
   assert.equal(command('close', state).open, false);
 
   const pending = command('', session({ installed: '0.1.0', checked_at: 900, available: release, pending: { version: '0.2.0' } }, null));

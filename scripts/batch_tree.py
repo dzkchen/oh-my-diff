@@ -18,7 +18,7 @@ WARM = Path(os.environ.get("OMD_WARM_TARGET", TMP / "omd-cache/warm-target"))
 MIN_FREE_GIB = 100
 PROFILES = ("debug", "release")
 BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
-BUILD = ["build", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd", "--bins"]
+BUILD = ["build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd", "--bins"]
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
@@ -56,14 +56,14 @@ def sha(data):
 
 
 def free_gib():
-    stats = os.statvfs("/System/Volumes/Data")
+    stats = os.statvfs(TMP)
     return stats.f_bavail * stats.f_frsize / 2**30
 
 
 def scratch_repo():
     lock = pin()
     if not SCRATCH.exists():
-        run("git", "clone", "--quiet", "--no-checkout", lock["repository"], SCRATCH)
+        run("git", "clone", "--quiet", "--depth", "1", "--branch", lock["tag"], "--no-checkout", lock["repository"], SCRATCH)
     if not git(SCRATCH, "tag", "-l", lock["tag"]).strip():
         git(SCRATCH, "fetch", "--quiet", "origin", "tag", lock["tag"])
     return lock["commit"]
@@ -119,9 +119,10 @@ def cargo_env(batch):
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
         "OMD_TEST_NODE": run("mise", "which", "node", cwd=ROOT).decode().strip(),
         "RUST_MIN_STACK": "16777216",
-        "RUSTY_V8_ARCHIVE": str(V8 / "librusty_v8_ptrcomp_sandbox_release_aarch64-apple-darwin.a.gz"),
-        "RUSTY_V8_SRC_BINDING_PATH": str(V8 / "src_binding_ptrcomp_sandbox_release_aarch64-apple-darwin.rs"),
     })
+    target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
+    env.setdefault("RUSTY_V8_ARCHIVE", str(V8 / f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz"))
+    env.setdefault("RUSTY_V8_SRC_BINDING_PATH", str(V8 / f"src_binding_ptrcomp_sandbox_release_{target}.rs"))
     return env
 
 
@@ -233,11 +234,12 @@ def pack_sdk(output):
 
 def artifacts(args):
     batch = batch_dir(args.batch)
-    if args.build and cargo_run(batch, "build-artifacts", BUILD):
+    profile = args.profile
+    if args.build and cargo_run(batch, "build-artifacts", BUILD + (["--release"] if profile == "release" else [])):
         raise SystemExit(1)
     sys.path.insert(0, str(ROOT))
     from scripts import lean_release_lock
-    built = batch / "target/debug"
+    built = batch / "target" / profile
     output = batch / "artifacts"
     missing = [name for name in BINARIES if not (built / name).is_file()]
     if missing:
@@ -246,8 +248,9 @@ def artifacts(args):
     output.mkdir()
     for name in BINARIES:
         shutil.copy2(built / name, output / name)
-    for name in lean_release_lock.HARDENED:
-        lean_release_lock.sign(output / name)
+    if sys.platform == "darwin":
+        for name in lean_release_lock.HARDENED:
+            lean_release_lock.sign(output / name)
     pack_sdk(output)
     print(output)
 
@@ -333,7 +336,8 @@ def main():
     command.set_defaults(handler=sync)
     command = commands.add_parser("artifacts", help="copy, sign and pack lean-release lock inputs")
     command.add_argument("batch")
-    command.add_argument("--build", action="store_true", help="build the debug binaries first")
+    command.add_argument("--build", action="store_true", help="build the selected binaries first")
+    command.add_argument("--profile", choices=PROFILES, default="debug")
     command.set_defaults(handler=artifacts)
     command = commands.add_parser("locks", help="rewrite every generated lock and document in dependency order")
     command.add_argument("batch", nargs="?", help="batch whose artifacts feed the lean-release lock")

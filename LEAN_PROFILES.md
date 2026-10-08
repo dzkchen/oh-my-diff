@@ -308,7 +308,7 @@ GitHub (`dzkchen/oh-my-diff`, tag `vVERSION`) carries the archive and the `omd-r
 `lean_package pack` writes beside it: version, target, upstream Codex tag, mod API, Node and archive SHA-256. A
 release is compatible when its target matches, its Codex minor matches your upstream `codex` and your Node satisfies
 it; the newest compatible release on your channel is offered, and a newer incompatible one is reported with its
-requirement. No release is published yet (Batch 5c), so checks report that none is available.
+requirement. A channel with no published release reports that none is available.
 
 ```sh
 omd update                      # install the newest compatible release (or the pinned one)
@@ -316,11 +316,18 @@ omd update status               # installed and available versions, policy, open
 omd update check                # check now, ignoring the cadence
 omd update enable | disable     # automatic updates (off by default)
 omd update checks on|off        # background checks (on by default)
-omd update channel stable|beta  # beta also offers GitHub pre-releases
+omd update channel stable|beta|nightly
 omd update cadence daily|weekly
 omd update pin VERSION|none     # hold an exact version
 omd update rollback             # return to the previous installation
 ```
+
+Stable offers tagged stable releases; beta includes tagged prereleases and excludes nightly builds.
+Nightly is a separate opt-in channel for builds that passed hosted validation. Install it with
+`sh install.sh --channel nightly --profile platform` (OMD Core) or `--profile full` (OMD+), or switch an
+existing installation with `omd update channel nightly`. The archive and release manifest carry matching
+versions and SHA-256 checksums. Automatic updates remain off until you enable them. Switch back with
+`omd update channel stable`; `omd update rollback` restores the previous installation.
 
 The launcher starts a detached check at most once per cadence and never waits for it; the result is cached in
 `ROOT/update/state.json` and shown by the `omd_update` mod (`/update`, and once a day in a fresh session's welcome

@@ -83,6 +83,41 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(sorted(reversed(ordered), key=self.module.version_key), ordered)
         self.assertIsNone(self.module.version_key("v1.0"))
 
+    def test_nightly_is_explicit_and_cached_nightlies_follow_channel_changes(self):
+        self.published = [release("0.1.0-nightly.20261009070000.100.1", prerelease=True),
+                          release("0.1.0-nightly.20261008070000.99.1", prerelease=True),
+                          release("0.2.0-beta.1", prerelease=True), release("0.1.1")]
+        self.assertEqual(self.check()["available"]["version"], "0.1.1")
+        self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
+        self.assertEqual(self.check(channel="nightly")["available"]["version"], "0.1.0-nightly.20261009070000.100.1")
+        self.published = OSError("offline")
+        self.assertIsNone(self.check(channel="beta")["available"])
+        self.assertTrue(self.module.eligible({"channel": "nightly"}, {"version": "0.1.0-nightly.20261009070000.100.1"},
+                                             "0.1.0-nightly.20261008070000.99.1"))
+        self.assertFalse(self.module.eligible({"channel": "nightly"}, {"version": "0.1.0-nightly.20261008070000.99.1"},
+                                              "0.1.0-nightly.20261009070000.100.1"))
+
+    def test_fresh_nightly_install_discovers_and_pins_the_archive_digest_and_policy(self):
+        self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
+        args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
+                                     channel="nightly", session=None)
+        with patch.object(self.module.platform, "system", return_value="Darwin"), \
+                patch.object(self.module.platform, "machine", return_value="arm64"), \
+                patch.object(self.module, "profile_choice", return_value="platform"), \
+                patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download") as download, \
+                patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
+                patch("builtins.print"):
+            self.module.install(args, self.root, self.current)
+        self.assertEqual(download.call_args.args[:2], ("https://example.test/0.1.0-nightly.20261008070000.99.1/oh-my-diff-0.1.0-nightly.20261008070000.99.1.tar.xz", "a" * 64))
+        self.assertEqual(policy.call_args.args[-2:], ("channel", "nightly"))
+
+    def test_nightly_pages_do_not_hide_stable_releases(self):
+        newest = [release(f"0.1.0-nightly.20261008.{number}.1", prerelease=True) for number in range(20)]
+        with patch.object(self.module, "fetch_json", side_effect=[newest, [release("0.1.1")]]) as fetch:
+            listed = self.module.releases("https://example.test/releases?per_page=20")
+        self.assertEqual(fetch.call_args.args[0], "https://example.test/releases?per_page=20&page=2")
+        self.assertTrue(any(item["version"] == "0.1.1" for item in listed))
+
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
             for failed_name in self.module.LINKS:

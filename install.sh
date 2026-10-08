@@ -37,7 +37,7 @@ RELEASE_MANIFEST = "omd-release.json"
 TARGET = "aarch64-apple-darwin"
 UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
-POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta"), "cadence": ("daily", "weekly")}
+POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta", "nightly"), "cadence": ("daily", "weekly")}
 RELEASE_URL = ""
 RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
@@ -313,15 +313,26 @@ def install(args, root, current):
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     if not url:
-        fail("No Oh My Diff release is published yet; nothing was installed. Pass --asset-url and --asset-sha256 for a local package.")
+        listed = releases(args.releases_url or RELEASES_URL)
+        candidates = [item for item in listed if on_channel(args.channel, item)]
+        if not candidates:
+            fail(f"No Oh My Diff {args.channel} release is published yet; nothing was installed.")
+        manifest = release_manifest(candidates[0])
+        if manifest["target"] != TARGET:
+            fail(f"release is built for {manifest['target']}")
+        url, expected = manifest["url"], manifest["sha256"]
     profile = profile_choice(args)
-    upstream = upstream_binary(args, current, UPSTREAM_MINOR)
-    node = node_binary(args)
+    upstream = upstream_binary(args, current, minor_of(manifest) if not args.asset_url and not RELEASE_URL else UPSTREAM_MINOR)
+    node = node_binary(args, manifest["node"]) if not args.asset_url and not RELEASE_URL else node_binary(args)
     refuse_sessions(root, args.session)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         archive = Path(temporary) / "package.tar.xz"
         download(url, expected, archive)
-        print(json.dumps(transaction(args, root, current, archive, url, expected, profile, upstream, node), indent=2))
+        result = transaction(args, root, current, archive, url, expected, profile, upstream, node)
+        if args.channel != "stable":
+            _, record, _ = installation(root, pointer(root, "current"))
+            set_policy(root, record, "channel", args.channel)
+        print(json.dumps(result, indent=2))
 
 
 class SessionsOpen(ValueError):
@@ -582,6 +593,19 @@ def releases(url):
     listed = fetch_json(url, 2_000_000)
     if not isinstance(listed, list):
         fail("release list is malformed")
+    parsed = urllib.parse.urlsplit(url)
+    query = dict(urllib.parse.parse_qsl(parsed.query))
+    page_size = int(query.get("per_page", "30"))
+    page = int(query.get("page", "1"))
+    while len(listed) >= page_size and not any(
+            isinstance(item, dict) and not item.get("draft") and not item.get("prerelease") for item in listed):
+        page += 1
+        following = fetch_json(urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query | {"page": page}))), 2_000_000)
+        if not isinstance(following, list):
+            fail("release list is malformed")
+        listed.extend(following)
+        if len(following) < page_size:
+            break
     found = []
     for item in listed:
         tag = item.get("tag_name") if isinstance(item, dict) else None
@@ -593,6 +617,15 @@ def releases(url):
             found.append({"version": version, "prerelease": bool(item.get("prerelease")), "notes": text(item.get("body"), 1500),
                           "page": text(item.get("html_url"), 300), "assets": assets})
     return sorted(found, key=lambda item: version_key(item["version"]), reverse=True)
+
+
+def on_channel(channel, item):
+    is_nightly = "-nightly." in item["version"]
+    return is_nightly if channel == "nightly" else not is_nightly and (channel == "beta" or not item.get("prerelease"))
+
+
+def channel_newer(channel, version, installed):
+    return version != installed if channel == "nightly" and "-nightly." not in installed else version_key(version) > version_key(installed)
 
 
 def release_manifest(release):
@@ -680,8 +713,8 @@ def probe(args, root, current):
         if pin and not any(item["version"] == pin for item in listed):
             result["error"] = f"pinned version {pin} is not published"
         candidates = ([item for item in listed if item["version"] == pin != record["version"]] if pin else
-                      [item for item in listed if (settings["channel"] == "beta" or not item["prerelease"])
-                       and version_key(item["version"]) > version_key(record["version"])])
+                      [item for item in listed if on_channel(settings["channel"], item)
+                       and channel_newer(settings["channel"], item["version"], record["version"])])
         for item in candidates[:5]:
             try:
                 manifest = release_manifest(item)
@@ -704,8 +737,8 @@ def eligible(settings, available, installed):
         return False
     pin = str(settings.get("pin") or "").strip()
     return (available["version"] == pin != installed if pin else
-            (settings["channel"] == "beta" or not available.get("prerelease"))
-            and version_key(available["version"]) > version_key(installed))
+            on_channel(settings["channel"], available)
+            and channel_newer(settings["channel"], available["version"], installed))
 
 
 def recorded_check(root, version, result, settings):
@@ -945,7 +978,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Install, update and roll back the Apple Silicon Oh My Diff release candidate",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
-               "omd update channel stable|beta, omd update cadence daily|weekly, omd update pin VERSION|none")
+               "omd update channel stable|beta|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
     parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall", "update", "tick", "launch"),
                         default="install")
     parser.add_argument("action", nargs="?", choices=("now", "status", "check", "enable", "disable", "rollback", "pin", *POLICY),
@@ -955,6 +988,7 @@ def main():
     parser.add_argument("--asset-url")
     parser.add_argument("--asset-sha256")
     parser.add_argument("--releases-url", help="release list to check for updates (GitHub releases API format)")
+    parser.add_argument("--channel", choices=POLICY["channel"], default="stable", help="release channel for installation")
     parser.add_argument("--yes", action="store_true", help="update even when enabled mods do not support the new mod API")
     parser.add_argument("--upstream", type=Path)
     parser.add_argument("--node", type=Path)

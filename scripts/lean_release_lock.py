@@ -100,7 +100,10 @@ def selected_plugins(index, package_mode):
     return lock, selected
 
 
-def build(artifact_dir, package_mode=False):
+def build(artifact_dir, package_mode=False, version=None):
+    product_version = version or (json.loads(OUTPUT.read_text())["version"] if OUTPUT.is_file() else VERSION)
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", product_version):
+        raise ValueError("invalid release version")
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
     if support.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
@@ -147,7 +150,7 @@ def build(artifact_dir, package_mode=False):
     return {
         "schema": 1,
         "product": "oh-my-diff-lean-package-candidate-v1",
-        "version": VERSION,
+        "version": product_version,
         "upstream_tag": upstream["tag"],
         "upstream_commit": upstream["commit"],
         "target": TARGET,
@@ -175,8 +178,9 @@ def main():
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--package-mode", action="store_true")
+    parser.add_argument("--version", help="version recorded in the release manifest")
     args = parser.parse_args()
-    result = json.dumps(build(args.artifact_dir.resolve(), args.package_mode), indent=2, sort_keys=True) + "\n"
+    result = json.dumps(build(args.artifact_dir.resolve(), args.package_mode, args.version), indent=2, sort_keys=True) + "\n"
     if args.write:
         OUTPUT.write_text(result)
         print(f"wrote {OUTPUT.relative_to(ROOT)}")

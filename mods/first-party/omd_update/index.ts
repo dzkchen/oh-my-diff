@@ -14,7 +14,7 @@ type Saved = {
 const EMPTY: Saved = { info: null, open: false, notice: null, banner: [], overrides: {}, snoozed: null, skipped: null, shown: null, seen: 0, requests: 0, mark: null };
 const DAY = 86_400_000;
 const VARIABLE = 'OH_MY_DIFF_UPDATE=';
-const CHOICES: Record<string, string[]> = { checks: ['on', 'off'], auto: ['off', 'on'], channel: ['stable', 'beta'], cadence: ['daily', 'weekly'] };
+const CHOICES: Record<string, string[]> = { checks: ['on', 'off'], auto: ['off', 'on'], channel: ['stable', 'beta', 'nightly'], cadence: ['daily', 'weekly'] };
 
 export default function activate(api: ModAPI) {
   const saved = (): Saved => ({ ...EMPTY, ...(api.state.get() as Partial<Saved> | null ?? {}) });
@@ -48,7 +48,7 @@ export default function activate(api: ModAPI) {
       && !(state.shown?.version === available.version && now - state.shown.at < DAY);
     if (due) banner.push(info?.pending?.version === available.version
       ? `Oh My Diff ${visible(available.version, 40)} is downloaded and installs the next time OMD starts with no other session open.`
-      : `Oh My Diff ${visible(available.version, 40)}${available.prerelease ? ' (beta)' : ''} is out; you have ${visible(info?.installed, 40)}. Run omd update in a shell, or /update for the notes.`);
+      : `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out; you have ${visible(info?.installed, 80)}. Run omd update in a shell, or /update for the notes.`);
     save({ info, banner, overrides, notice: null, open: false, mark: { shown: due ? { version: available.version, at: now } : state.shown,
       seen: Math.max(state.seen, info?.last?.at ?? 0, info?.failed?.at ?? 0) } });
     const request = info?.request_done ? api.host.tryCall('store.get', { key: 'request', scope: 'user' }) : null;
@@ -102,7 +102,7 @@ export default function activate(api: ModAPI) {
   const when = (seconds: number | null | undefined) => seconds ? new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ') : 'never';
 
   const release = (state: Saved, available: Release): TerminalComponent[] => [
-    line('available', 'Available', `Oh My Diff ${visible(available.version, 40)}${available.prerelease ? ' (beta)' : ''} is out. To install it, quit OMD and run:`, 'accent', 2),
+    line('available', 'Available', `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out. To install it, quit OMD and run:`, 'accent', 2),
     { type: 'code', id: 'omd_update_command', label: 'Update command', text: 'omd update', language: 'sh' },
     ...(available.notes ? [line('notes', 'Release notes', available.notes, 'normal', 8)] : []),
     ...(available.page ? [line('page', 'Release page', available.page, 'muted', 2)] : []),
@@ -131,7 +131,7 @@ export default function activate(api: ModAPI) {
       line('settings', 'Settings', `Checks ${checks}, ${cadence} · channel ${channel} · automatic updates ${auto} · pin ${visible(api.settings.pin, 40) || 'none'}`, 'muted', 2),
       button(`checks ${checks === 'off' ? 'on' : 'off'}`, checks === 'off' ? 'Turn update checks on' : 'Turn update checks off'),
       button(`auto ${auto === 'on' ? 'off' : 'on'}`, auto === 'on' ? 'Turn automatic updates off' : 'Turn automatic updates on'),
-      button(`channel ${channel === 'beta' ? 'stable' : 'beta'}`, channel === 'beta' ? 'Use stable releases only' : 'Include beta releases'),
+      ...CHOICES.channel.filter(value => value !== channel).map(value => button(`channel ${value}`, `Use ${value} releases`)),
       button(`cadence ${cadence === 'weekly' ? 'daily' : 'weekly'}`, cadence === 'weekly' ? 'Check daily' : 'Check weekly'),
       line('help', 'More', 'Automatic updates download in the background and install when OMD starts with no other session open; they never touch mods you installed. Pin a version with omd update pin VERSION or in /mods. omd update rollback restores the previous version.', 'muted', 4),
       button('close', 'Close'),

@@ -14,6 +14,21 @@ spec.loader.exec_module(nightly)
 
 
 class SummarizeTests(unittest.TestCase):
+    def test_hosted_validation_keeps_the_checkout_and_reports_skipped_steps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.multiple(nightly, ROOT=root, WORK=root / "work", REPO=root / "unused"), \
+                    mock.patch("sys.argv", ["nightly", "--hosted"]), \
+                    mock.patch.object(nightly.subprocess, "run", return_value=SimpleNamespace(stdout="23b63db\n")) as child, \
+                    mock.patch.object(nightly, "run", return_value={"name": "setup", "status": 1, "seconds": 0, "log": "setup", "tail": []}), \
+                    mock.patch("builtins.print"):
+                self.assertEqual(nightly.main(), 1)
+                self.assertEqual(nightly.REPO, root)
+                self.assertFalse(any("worktree" in call.args[0] or "clean" in call.args[0] for call in child.call_args_list))
+            report = (root / "work/report.md").read_text()
+            self.assertIn("Skipped:", report)
+            self.assertIn("filtered_host_additional_permissions", report)
+
     def test_clippy_covers_patched_sources_and_preserves_cargo_failures(self):
         paths = ["omd/src/mods.rs", "ext/omd/src/lib.rs", "tui/src/mod_components.rs", "core/src/compact_remote_v2.rs"]
         with tempfile.TemporaryDirectory() as directory:
