@@ -340,12 +340,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
 
 fn component_change(kind: &Value, to: &Value) -> bool {
     match kind.as_str() {
-        Some("focus") => {
-            to.is_null()
-                || to
-                    .as_str()
-                    .is_some_and(|id| super::view::mod_component_id(id))
-        }
+        Some("focus") => to.is_null() || to.as_str().is_some_and(super::view::mod_component_id),
         Some("scroll") => to
             .as_u64()
             .is_some_and(|offset| offset <= u64::from(u16::MAX)),

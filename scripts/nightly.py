@@ -14,8 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = Path("/private/tmp/omd-nightly")
 REPO = WORK / "repo"
 BATCH = "nightly"
-CRATES = ["-p", "codex-omd", "-p", "codex-omd-extension", "-p", "codex-tui"]
-OMD_PATHS = re.compile(r"--> (omd|ext/omd)/")
+CRATES = ["-p", "codex-omd", "-p", "codex-omd-extension", "-p", "codex-tui",
+          "-p", "codex-core-plugins", "-p", "codex-git-utils"]
+SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
 
 
 def cargo(log, *args):
@@ -30,10 +31,10 @@ STEPS = [
     ("setup", ["python3", "scripts/batch_tree.py", "setup", BATCH]),
     ("patch sync", ["python3", "scripts/batch_tree.py", "sync", BATCH]),
     ("patch matches checkout", drift("runtime", "upstream.lock.json")),
-    ("cargo test omd, extension, tui", cargo("test", "test", *CRATES, "--", "--test-threads=1")),
+    ("cargo test native crates", cargo("test", "test", *CRATES, "--", "--test-threads=1")),
     ("cargo test core lib", cargo("core", "test", "-p", "codex-core", "--lib", "--", "--test-threads=1")),
     ("clippy omd paths", cargo("clippy", "clippy", *CRATES, "--tests")),
-    ("rustfmt", cargo("fmt", "fmt", "-p", "codex-omd", "-p", "codex-omd-extension", "--", "--check")),
+    ("rustfmt", cargo("fmt", "fmt", *CRATES, "-p", "codex-core", "--", "--check")),
     ("native ownership", ["mise", "run", "native:ownership"]),
     ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--build"]),
     ("locks", ["python3", "scripts/batch_tree.py", "locks", BATCH]),
@@ -65,7 +66,10 @@ def run(name, argv):
     text = log.read_text(errors="replace")
     if name == "clippy omd paths":
         cargo_log = WORK / "logs" / "clippy.cargo.log"
-        warnings = [line for line in cargo_log.read_text(errors="replace").splitlines() if OMD_PATHS.search(line)]
+        files = json.loads((REPO / "runtime/patches/manifest.json").read_text())["files"]
+        paths = {path.removeprefix("codex-rs/") for path in files if path.endswith(".rs")}
+        warnings = [line for line in cargo_log.read_text(errors="replace").splitlines()
+                    if (match := SOURCE_PATH.search(line)) and match[1] in paths]
         status = status or (1 if warnings else 0)
         text += "\n" + "\n".join(warnings)
     tail = [line for line in text.splitlines() if line.strip()][-6:]

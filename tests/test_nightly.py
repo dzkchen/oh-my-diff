@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,25 @@ spec.loader.exec_module(nightly)
 
 
 class SummarizeTests(unittest.TestCase):
+    def test_clippy_covers_patched_sources_and_preserves_cargo_failures(self):
+        paths = ["omd/src/mods.rs", "ext/omd/src/lib.rs", "tui/src/mod_components.rs", "core/src/compact_remote_v2.rs"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "logs").mkdir()
+            (root / "runtime/patches").mkdir(parents=True)
+            (root / "runtime/patches/manifest.json").write_text(json.dumps({
+                "files": {f"codex-rs/{path}": {} for path in paths},
+            }))
+            with mock.patch.multiple(nightly, WORK=root, REPO=root), \
+                 mock.patch.object(nightly.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as child:
+                for path in [*paths, "core/src/unpatched.rs", "/registry/dependency/src/lib.rs"]:
+                    with self.subTest(path=path):
+                        (root / "logs/clippy.cargo.log").write_text(f"warning: fixture\n   --> {path}:167:1\n")
+                        result = nightly.run("clippy omd paths", ["cargo", "clippy"])
+                        self.assertEqual(result["status"], int(path in paths))
+                child.return_value.returncode = 101
+                self.assertEqual(nightly.run("clippy omd paths", ["cargo", "clippy"])["status"], 101)
+
     def test_launchd_limits_are_raised_for_children_without_exceeding_the_hard_limit(self):
         for hard, target in ((nightly.resource.RLIM_INFINITY, 8192), (1024, 1024)):
             with self.subTest(hard=hard), mock.patch.object(nightly.resource, "getrlimit", return_value=(256, hard)), \

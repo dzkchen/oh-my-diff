@@ -741,16 +741,17 @@ fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
 }
 
 async fn background_call(core: &Core, lead: &Lead, operation: &str, arguments: Value) -> Value {
-    let runtime = core.runtime.lock().unwrap();
-    let caller = Caller {
-        id: "observer",
-        source: "source",
-        grants: runtime.grants("observer"),
-        generation: runtime.generation(),
-        origin: Origin::Event,
-        record_changes: false,
+    let caller = {
+        let runtime = core.runtime.lock().unwrap();
+        Caller {
+            id: "observer",
+            source: "source",
+            grants: runtime.grants("observer"),
+            generation: runtime.generation(),
+            origin: Origin::Event,
+            record_changes: false,
+        }
     };
-    drop(runtime);
     dispatch(
         core,
         lead,

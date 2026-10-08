@@ -527,7 +527,8 @@ impl Accounts {
         let mut applied = Vec::new();
         for round in 0..2 {
             // Cached segments are matched by digest; only the ones a policy still has to read are copied into JSON.
-            let (segments, opaque, opaque_total) = codex_omd::model_request::send_segment_refs(value);
+            let (segments, opaque, opaque_total) =
+                codex_omd::model_request::send_segment_refs(value);
             let mut edits = BTreeMap::<String, Edits>::new();
             let mut keys = Vec::new();
             let mut pending = Vec::new();

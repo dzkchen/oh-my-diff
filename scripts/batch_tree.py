@@ -158,6 +158,7 @@ def sync(args):
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))
     manifest_path = ROOT / "runtime/patches/manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    manifest["baseline"] = "Run scripts/normalize_upstream_lock.py before applying the runtime patch."
     manifest["files"] = {}
     for name in sorted(changed):
         prior = subprocess.run(["git", "show", f"{base}:{name}"], cwd=source, capture_output=True)
