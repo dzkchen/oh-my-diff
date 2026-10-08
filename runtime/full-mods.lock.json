@@ -383,11 +383,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "8956995f237411a87045a08b8e97a4840782375b4e072c247cbb12737509c5b7",
-        "mod.json": "9015cbc94b9eb5f2a4e39906dc883b4d3054691f52f637fc260b9a632cb7c4a5"
+        "index.ts": "1f91332d98ca58af28abd3ec075f0e296300c4a18fd4f0d05044feb10f5ee883",
+        "mod.json": "e511616bb5ef077ec9f63501b312a190f9b81e1b6801f93af8f05df223127bdd"
       },
       "id": "omd_minefield",
-      "package_sha256": "39989327e8f3099cef202055529efd0c3166d466bd548777c8eee6673bb135ae",
+      "package_sha256": "708a0c9764eec9c7f1f4b6fe11b10d265f812a610bd06952e18a0fe71bad2f18",
       "source": "mods/first-party/omd_minefield",
       "version": "0.1.0-preview.1"
     },

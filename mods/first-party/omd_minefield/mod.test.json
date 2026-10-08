@@ -8,11 +8,15 @@
       {"generation": 10, "packages": [], "reload_error": null},
       {"generation": 11, "packages": [], "reload_error": null}
     ],
-    "events.publish": [{"delivered": 1, "dropped": 0}]
+    "events.publish": [{"delivered": 0, "dropped": 0}, {"delivered": 1, "dropped": 0}]
   },
   "steps": [
     {"type": "invoke", "mod": "omd_minefield", "event": "terminal", "name": "", "payload": {"event": "idle"}, "expect": null},
-    {"type": "event", "event": "channel", "payload": {"publisher": "omd_minefield", "channel": "omd_minefield/play", "sequence": 1, "data": {"action": "new", "seed": 15}}},
+    {"type": "invoke", "mod": "omd_minefield", "event": "command", "name": "minefield", "payload": "new 15"},
+    {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "client": {"columns": 110, "rows": 55, "graphics": "cells"}}},
+    {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "client": {"columns": 80, "rows": 30, "graphics": "cells"}}},
+    {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "client": {"columns": 80, "rows": 24, "graphics": "cells"}}},
+    {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "client": {"columns": 110, "rows": 55, "graphics": "text"}}},
     {"type": "terminal_mount", "mod": "omd_minefield", "payload": {"event": "idle", "presentation": {"surface": "inline"}, "client": {"columns": 20, "rows": 16}}},
     {"type": "event", "event": "component_event", "payload": {"component": "minefield_board", "kind": "input", "events": [{"key": "Enter", "text": null}]}},
     {"type": "event", "event": "channel", "payload": {"publisher": "omd_minefield", "channel": "omd_minefield/play", "sequence": 2, "data": {"action": "keys", "board": 2, "keys": [{"action": "reveal"}]}}},

@@ -13,11 +13,15 @@ chords. Flags are explicit set/remove operations, so repeating an input cannot
 accidentally undo a flag. Chording requires exactly the displayed number of
 adjacent flags; incorrect flags can lose the game. Reveal all 71 safe cells to win.
 
-The board shows four rows in the interactive header, with the window following
-the cursor; narrow terminals also window columns. Text and ASCII symbols give
-color-independent cues: `#` covered, `F` flagged, `0` empty, `1`–`8` adjacent
-mines, `*` mine and `!` incorrect flag. Brackets mark the cursor. The status names
-its row, column and contents. Below 16 terminal rows or eight columns, use
+The graphical panel shows all 9×9 cells: raised beveled covered tiles, flat
+revealed tiles, distinct number colors, `⚑` flags, `✹` mines and `✕` incorrect
+flags. A gold highlight marks the cursor. Larger terminals use three terminal
+rows per tile; smaller panels use compact tiles. These graphics use terminal
+colors and Unicode shapes. The status names the selected row, column and contents.
+Below 48 columns or 20 rows, a compact four-row header follows the cursor and
+windows columns. `NO_COLOR` retains the accessible ASCII cues: `#` covered,
+`F` flagged, `0` empty, `1`–`8` adjacent mines, `*` mine and `!` incorrect flag.
+Below 16 terminal rows or eight columns, use
 `/minefield reveal ROW COL`, `flag ROW COL`, `unflag ROW COL` or `chord ROW COL`
 with 1-based coordinates. `/minefield pause`, `resume` and `close` also work.
 Native approvals and ordinary composer input keep their normal controls.

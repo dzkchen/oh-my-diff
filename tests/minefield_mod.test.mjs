@@ -20,6 +20,10 @@ function session(state = null) {
   const calls = [];
   const host = call => {
     assert.ok(['events.schedule', 'events.cancel', 'events.publish', 'packages.list'].includes(call.operation), call.operation);
+    if (call.operation === 'events.publish') {
+      assert.match(call.arguments.channel, /^[a-z0-9_.-]{1,64}$/);
+      assert.ok(manifest.subscriptions.channels.includes(`${manifest.id}/${call.arguments.channel}`));
+    }
     calls.push(call);
     return call.operation === 'events.publish' ? { delivered: 1, dropped: 0 } : call.operation === 'events.cancel' ? { cancelled: true } : call.operation === 'packages.list' ? { generation, packages: [], reload_error: null } : call.arguments;
   };
@@ -38,6 +42,24 @@ function session(state = null) {
 }
 const adjacent = cell => Array.from({ length: 81 }, (_, other) => other).filter(other => other !== cell && Math.abs(other % 9 - cell % 9) <= 1 && Math.abs(Math.floor(other / 9) - Math.floor(cell / 9)) <= 1);
 const currentToken = state => `${state.board.id}_${state.revision}`;
+
+test('opening commits the board even when the startup publication has no recipient', () => {
+  const first = run('command', 'new 42', null, 'minefield', call => {
+    assert.equal(call.operation, 'events.publish');
+    assert.deepEqual(call.arguments, { channel: 'play', data: { action: 'ready' } });
+    return { delivered: 0, dropped: 0 };
+  });
+  assert.equal(first.state.open, true);
+  assert.equal(first.state.board.seed, 42);
+  assert.equal(first.state.clock, null);
+  assert.equal(first.state.last, null);
+  const view = run('terminal', { event: 'idle', client: { columns: 110, rows: 55 } }, first.state).value;
+  assert.equal(view.keybindings.F6.focus, 'minefield_board');
+  assert.equal(view.sites.dialog.components[0].children[1].children[0].lines.length, 27);
+  const reopened = run('command', '', { ...first.state, open: false }, 'minefield', () => ({ delivered: 0, dropped: 0 }));
+  assert.equal(reopened.state.open, true);
+  assert.deepEqual(reopened.state.board, first.state.board);
+});
 
 test('seeded generation is deterministic at every opening and excludes its neighbours', () => {
   for (let cell = 0; cell < 81; cell++) {
@@ -168,18 +190,46 @@ test('inactive callbacks have zero host calls and views stay bounded and readabl
     assert.equal(reply.state, null);
   }
   const game = session(); game.command('');
-  for (const [columns, rows] of [[100, 40], [48, 16], [20, 16], [8, 16], [40, 12], [7, 10], [1, 1]]) {
+  for (const [columns, rows] of [[100, 40], [80, 30], [80, 24], [48, 20], [48, 16], [20, 16], [8, 16], [40, 12], [7, 10], [1, 1]]) {
     const view = game.step('terminal', { event: 'idle', presentation: { surface: 'inline' }, client: { columns, rows } }).value;
-    const text = view.sites.above_composer.components[0].text;
+    const popup = columns >= 48 && rows >= 20;
+    const text = popup ? view.sites.dialog.components[0].children[0].text : view.sites.above_composer.components[0].text;
     assert.ok(Buffer.byteLength(text) <= 4096);
     assert.ok(text.split('\n').every(line => line.length <= columns));
     assert.match(text.replaceAll('\n', ''), /R5 C5: covered/);
-    assert.equal(Boolean(view.sites.header), rows >= 16 && columns >= 8);
+    assert.equal(Boolean(view.sites.header), !popup && rows >= 16 && columns >= 8);
     assert.equal(view.layout, undefined);
-    assert.equal(view.sites.dialog, undefined);
+    assert.equal(Boolean(view.sites.dialog), popup);
+    const board = popup ? view.sites.dialog.components[0].children[1].children[0] : view.sites.header?.components[0].children[0];
+    if (board) {
+      assert.ok(board.lines.every(line => line.length <= 12));
+      assert.ok(board.lines.some(line => line.some(span => span.bg)));
+      assert.ok(board.lines.every(line => line.map(span => span.text).join('').length <= columns));
+      if (popup) assert.equal(board.lines.length, rows >= 40 ? 27 : rows >= 30 ? 18 : 9);
+    }
   }
   assert.equal(manifest.capabilities.some(cap => ['model', 'http', 'exec', 'autonomous', 'fs.write'].includes(cap)), false);
   for (const args of ['new -1', 'new 4294967296', 'new potato', 'reveal 0 1', 'flag 1 10', 'close extra']) assert.equal(run('command', args, game.state, 'minefield').calls.length, 0);
+});
+
+test('graphical tiles cover the whole board, map pointer tile geometry, and dismiss without losing the save', () => {
+  const game = session(); game.command('new 42');
+  let view = game.step('terminal', { client: { columns: 110, rows: 55, graphics: 'cells' } }).value;
+  const box = view.sites.dialog.components[0].children[1];
+  const doc = box.children[0];
+  assert.equal(doc.lines.length, 27);
+  assert.ok(doc.lines[0].some(span => span.text === '▛▀▀▀▀▜' && span.bg));
+  assert.ok(!doc.lines.flat().some(span => span.text.includes('#')));
+  game.step('component_event', { component: box.id, kind: 'pointer', pointer: { action: 'down', button: 'right', column: 5 + 8 * 6, row: 8 * 3 + 1 } });
+  assert.deepEqual(game.state.board.flags, [80]);
+  view = game.step('terminal', { client: { columns: 110, rows: 55, graphics: 'cells' } }).value;
+  assert.ok(view.sites.dialog.components[0].children[1].children[0].lines.flat().some(span => span.text.includes('⚑')));
+  const saved = clone(game.state.board);
+  const text = game.step('terminal', { client: { columns: 110, rows: 55, graphics: 'text' } }).value;
+  assert.ok(text.sites.dialog.components[0].children[1].children[0].lines.flat().some(span => span.text.includes('F')));
+  game.step('component_event', { component: 'minefield_dialog', kind: 'close' });
+  assert.equal(game.state.open, false);
+  assert.deepEqual(game.state.board, saved);
 });
 
 test('wall-time checkpoints include delayed ticks, pause excludes time, and rollback cannot count twice', () => {

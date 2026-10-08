@@ -10,5 +10,5 @@
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_minefield"},
   "capabilities": ["terminal", "commands", "store", "lifecycle", "events", "packages"],
   "subscriptions": {"channels": ["omd_minefield/play"]},
-  "compatibility": {"required_features": ["state_scopes_v1", "store_thread_v1", "terminal_render_sites_v1", "terminal_input_v1", "events_v1", "timers_v1", "package_controls_v1"]}
+  "compatibility": {"required_features": ["state_scopes_v1", "store_thread_v1", "terminal_render_sites_v1", "terminal_input_v1", "terminal_style_v1", "events_v1", "timers_v1", "package_controls_v1"]}
 }

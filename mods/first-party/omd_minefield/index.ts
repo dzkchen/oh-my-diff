@@ -5,6 +5,7 @@ type Game = { serial: number; revision: number; board: Board; best: number | nul
 type Intent = { action: string; token?: string; board?: number; cell?: number; seed?: number; dx?: number; dy?: number; keys?: Intent[] };
 const CHANNEL = 'omd_minefield/play';
 const DOC = 'minefield_board';
+const NUMBER_COLORS: TerminalSpan['fg'][] = ['#64748b', '#2563eb', '#15803d', '#dc2626', '#7c3aed', '#9f1239', '#0891b2', '#0f172a', '#475569'];
 const neighbours = (cell: number) => {
   const out: number[] = [];
   for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
@@ -53,7 +54,7 @@ export default function activate(api: ModAPI) {
   const now = Date.now();
   const state = () => api.state.get() as unknown as Game | null;
   const save = (game: Game) => api.state.set(game as unknown as Json);
-  const publish = (intent: Intent) => api.host.call('events.publish', { channel: CHANNEL, data: intent as unknown as Json });
+  const publish = (intent: Intent) => api.host.call('events.publish', { channel: 'play', data: intent as unknown as Json });
   const accrue = (game: Game) => {
     if (game.at !== null && game.open && game.focused && !game.paused && game.board.result === 'playing') game.board.elapsed_ms += Math.max(0, now - game.at);
     game.at = Math.max(now, game.at ?? now);
@@ -72,12 +73,12 @@ export default function activate(api: ModAPI) {
     game.clock = `mine-${game.board.id}-${++game.ticks}`;
     api.host.call('events.schedule', { key: game.clock, delay_ms: 1000 });
   };
-  const apply = (intent: Intent, sequence: number) => {
+  const apply = (intent: Intent, sequence: number | null) => {
     const game = state() ?? initial();
-    if (game.last !== null && sequence <= game.last || intent.token !== undefined && intent.token !== token(game) || intent.board !== undefined && intent.board !== game.board.id) return;
+    if (sequence !== null && game.last !== null && sequence <= game.last || intent.token !== undefined && intent.token !== token(game) || intent.board !== undefined && intent.board !== game.board.id) return;
     if (game.clock && api.host.call('packages.list', null).generation !== game.generation) { stop(game); game.focused = false; }
     accrue(game);
-    game.last = sequence;
+    if (sequence !== null) game.last = sequence;
     let changed = false;
     for (const item of intent.action === 'keys' ? (intent.keys ?? []).slice(0, 128) : [intent]) {
       const intent = item, action = intent.action;
@@ -138,7 +139,10 @@ export default function activate(api: ModAPI) {
     else if (['reveal', 'flag', 'unflag', 'chord'].includes(action) && words.length === 3 && /^[1-9]$/.test(words[1]) && /^[1-9]$/.test(words[2])) intent.cell = (Number(words[1]) - 1) * 9 + Number(words[2]) - 1;
     else return { display: 'Use /minefield [new SEED|resume|pause|close|reveal ROW COL|flag ROW COL|unflag ROW COL|chord ROW COL]. Rows and columns: 1–9; seed: 0–4294967295.' };
     intent.token = token(state() ?? initial());
-    publish(intent);
+    if (['open', 'new'].includes(action) && !state()?.clock) {
+      apply(intent, null);
+      publish({ action: 'ready' });
+    } else publish(intent);
     return { display: 'Minefield: F6 focuses the board; Esc closes. f flags, u unflags, c chords; p pauses, r resumes.' };
   }, { description: 'Open Minefield; new SEED, resume, pause, close, reveal/flag/unflag/chord ROW COL', immediate: true });
   const key = (name: string | null, text: string | null | undefined): Intent | null => {
@@ -159,10 +163,11 @@ export default function activate(api: ModAPI) {
       const keys = event.kind === 'key' ? [key(event.key ?? null, event.text)] : event.kind === 'input' ? (event.events ?? []).map(input => 'key' in input ? key(input.key, input.text) : null) : [];
       if (keys.some(Boolean)) publish({ action: 'keys', board: game.board.id, keys: keys.filter((item): item is Intent => item !== null) });
     }
-    const match = /^minefield_hit_(\d+_\d+)_(\d+)_(\d+)_(\d+)_(\d+)$/.exec(event.component);
+    if (event.component === 'minefield_dialog' && event.kind === 'close') publish({ action: 'close', board: game.board.id });
+    const match = /^minefield_hit_(\d+_\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)$/.exec(event.component);
     if (match && event.kind === 'pointer' && event.pointer?.action === 'down' && ['left', 'right', 'middle'].includes(event.pointer.button ?? '')) {
-      const [, expected, firstRow, firstCol, rows, cols] = match;
-      const col = Math.floor((event.pointer.column - 5) / 3), row = event.pointer.row;
+      const [, expected, firstRow, firstCol, rows, cols, tileWidth, tileHeight] = match;
+      const col = Math.floor((event.pointer.column - 5) / Number(tileWidth)), row = Math.floor(event.pointer.row / Number(tileHeight));
       if (event.pointer.column < 5 || col < 0 || col >= Number(cols) || row < 0 || row >= Number(rows)) return;
       publish({ action: event.pointer.button === 'left' ? 'reveal' : event.pointer.button === 'right' ? 'flag' : 'chord', token: expected, cell: (Number(firstRow) + row) * 9 + Number(firstCol) + col });
     }
@@ -203,30 +208,51 @@ export default function activate(api: ModAPI) {
     const game = state();
     if (!game?.open) return null;
     const width = Math.max(1, event.client?.columns ?? 80), height = event.client?.rows ?? 24;
-    const cols = Math.max(1, Math.min(9, Math.floor((width - 5) / 3))), rows = 4;
+    const dialog = width >= 48 && height >= 20;
+    const statusWidth = dialog ? Math.min(width - 4, 76) - 2 : width;
+    const tileHeight = dialog && event.client?.graphics !== 'text' ? height >= 40 && statusWidth >= 59 ? 3 : height >= 30 ? 2 : 1 : 1;
+    const tileWidth = tileHeight === 3 ? 6 : tileHeight === 2 ? 4 : 3;
+    const cols = dialog ? 9 : Math.max(1, Math.min(9, Math.floor((width - 5) / tileWidth))), rows = dialog ? 9 : 4;
     const firstRow = Math.min(9 - rows, Math.max(0, Math.floor(game.cursor / 9) - rows + 1));
     const firstCol = Math.min(9 - cols, Math.max(0, game.cursor % 9 - cols + 1));
-    const lines: TerminalSpan[][] = Array.from({ length: rows }, (_, row) => [{ text: `${firstRow + row + 1} ` }, ...Array.from({ length: cols }, (_, col): TerminalSpan => {
-      const cell = (firstRow + row) * 9 + firstCol + col;
-      const value = game.paused && game.board.result === 'playing' ? '#' : glyph(game.board, cell);
-      return { text: cell === game.cursor ? `[${value}]` : ` ${value} `, bold: cell === game.cursor, tone: cell === game.cursor ? 'accent' : 'normal' };
-    })]);
+    const lines: TerminalSpan[][] = Array.from({ length: rows * tileHeight }, (_, line) => {
+      const row = Math.floor(line / tileHeight), part = line % tileHeight;
+      const spans: TerminalSpan[] = [{ text: `${part === Math.floor(tileHeight / 2) ? firstRow + row + 1 : ' '} `, fg: '#94a3b8' }];
+      for (let col = 0; col < cols; col++) {
+        const cell = (firstRow + row) * 9 + firstCol + col;
+        const value = game.paused && game.board.result === 'playing' ? '#' : glyph(game.board, cell);
+        const selected = cell === game.cursor, raised = value === '#' || value === 'F';
+        const bg = selected ? '#fde68a' : raised ? '#94a3b8' : value === '*' || value === '!' ? '#fecaca' : '#e2e8f0';
+        const edge = selected ? '#92400e' : '#f8fafc';
+        const symbol = value === '#' ? ' ' : value === 'F' ? '⚑' : value === '*' ? '✹' : value === '!' ? '✕' : value === '0' ? '·' : value;
+        const fg = value === 'F' || value === '!' ? '#be123c' : value === '*' ? '#0f172a' : NUMBER_COLORS[Number(value)] ?? '#0f172a';
+        if (event.client?.graphics === 'text') spans.push({ text: selected ? `[${value}]`.padEnd(tileWidth) : ` ${value} `.padEnd(tileWidth), bold: selected });
+        else if (tileHeight > 1 && part === 0) spans.push({ text: selected ? `┌${'─'.repeat(tileWidth - 2)}┐` : raised ? `▛${'▀'.repeat(tileWidth - 2)}▜` : ' '.repeat(tileWidth), fg: edge, bg });
+        else if (tileHeight === 3 && part === 2) spans.push({ text: selected ? `└${'─'.repeat(tileWidth - 2)}┘` : raised ? `▙${'▄'.repeat(tileWidth - 2)}▟` : ' '.repeat(tileWidth), fg: selected ? edge : '#475569', bg });
+        else if (selected) spans.push({ text: tileHeight > 1 ? '│' : '▏', fg: edge, bg }, { text: `${' '.repeat(Math.floor((tileWidth - 3) / 2))}${symbol}`.padEnd(tileWidth - 2), fg, bg, bold: true }, { text: tileHeight > 1 ? '│' : '▕', fg: edge, bg });
+        else spans.push({ text: `${' '.repeat(Math.floor((tileWidth - 1) / 2))}${symbol}`.padEnd(tileWidth), fg, bg, bold: value !== '#' });
+      }
+      return spans;
+    });
     const cell = `R${Math.floor(game.cursor / 9) + 1} C${game.cursor % 9 + 1}: ${game.paused && game.board.result === 'playing' ? 'paused' : glyph(game.board, game.cursor) === '#' ? 'covered' : glyph(game.board, game.cursor) === 'F' ? 'flagged' : glyph(game.board, game.cursor)}`;
     const text = width < 40 ? [cell, `${game.board.result} F${game.board.flags.length}/10`, `${game.paused ? 'paused' : 'play'} ${Math.floor(game.board.elapsed_ms / 1000)}s`, 'F6 f/u/c p/r Esc'] : [`Minefield ${game.board.result} ${game.paused ? 'paused' : 'playing'}`,
       `${cell}; flags ${game.board.flags.length}/10`,
       `${(game.board.elapsed_ms / 1000).toFixed(1)}s; best ${game.best === null ? '-' : (game.best / 1000).toFixed(1)}s; wins ${game.wins}; seed ${game.board.seed}`,
       'F6 focus; arrows; Enter; f/u/c; p/r; Esc'];
-    if (height < 16 || width < 8) text.splice(3, 1, lines[Math.floor(game.cursor / 9) - firstRow].map(span => span.text).join(''), '/minefield help');
+    if (height < 16 || width < 8) text.splice(3, 1, lines[(Math.floor(game.cursor / 9) - firstRow) * tileHeight].map(span => span.text).join(''), '/minefield help');
     const wrapped = text.flatMap(line => {
       const out: string[] = [];
-      for (let offset = 0; offset < line.length; offset += width) out.push(line.slice(offset, offset + width));
+      for (let offset = 0; offset < line.length; offset += statusWidth) out.push(line.slice(offset, offset + statusWidth));
       return out;
     });
+    const boardView = { type: 'box' as const, id: `minefield_hit_${token(game)}_${firstRow}_${firstCol}_${rows}_${cols}_${tileWidth}_${tileHeight}`, label: 'Minefield graphical board', pointer: true,
+      children: [{ type: 'document' as const, id: DOC, label: 'Minefield board; arrows move; Enter reveals; f flags; u unflags; c chords; Escape closes', keys: true, lines, height: rows * tileHeight, selected: { start: (Math.floor(game.cursor / 9) - firstRow) * tileHeight + Math.floor(tileHeight / 2), end: (Math.floor(game.cursor / 9) - firstRow) * tileHeight + Math.floor(tileHeight / 2) } }] };
+    const status = { type: 'text' as const, id: 'minefield_status', label: 'Minefield status and keyboard help', text: wrapped.join('\n') };
     return {
       sites: {
-        ...(height >= 16 && width >= 8 ? { header: { mode: 'wrap' as const, components: [{ type: 'box' as const, id: `minefield_hit_${token(game)}_${firstRow}_${firstCol}_${rows}_${cols}`, label: 'Minefield board', pointer: true,
-          children: [{ type: 'document' as const, id: DOC, label: 'Minefield board; arrows move; Enter reveals; f flags; u unflags; c chords; Escape closes', keys: true, lines, height: rows }] }, { type: 'slot' as const }] } } : {}),
-        above_composer: { mode: 'wrap', components: [{ type: 'text', id: 'minefield_status', label: 'Minefield status and keyboard help', text: wrapped.join('\n') }, { type: 'slot' }] },
+        ...(dialog ? { dialog: { components: [{ type: 'dialog' as const, id: 'minefield_dialog', label: 'Minefield game', title: 'Minefield · 9 × 9 · 10 mines', children: [status, boardView] }] } }
+          : height >= 16 && width >= 8 ? { header: { mode: 'wrap' as const, components: [boardView, { type: 'slot' as const }] } } : {}),
+        ...(!dialog ? { above_composer: { mode: 'wrap' as const, components: [status, { type: 'slot' as const }] } } : {}),
       },
       ...(height >= 16 && width >= 8 ? { keybindings: { F6: { focus: DOC } } } : {}),
     };
