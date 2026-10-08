@@ -121,14 +121,18 @@ impl ManagedPolicy {
             list.iter()
                 .all(|capability| MOD_CAPABILITIES.contains(&capability.as_str()))
         };
-        let sha256 = |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let sha256 =
+            |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
         if policy.schema != 1 {
             return Err(invalid("schema must be 1"));
         }
         if policy.index.as_ref().is_some_and(|index| {
             !sha256(&index.sha256)
                 || index.locations.is_empty()
-                || !index.locations.iter().all(|location| location.is_absolute())
+                || !index
+                    .locations
+                    .iter()
+                    .all(|location| location.is_absolute())
         }) {
             return Err(invalid("index needs a sha256 and absolute locations"));
         }
@@ -154,7 +158,9 @@ impl ManagedPolicy {
             if !identifier(&package.id)
                 || !sha256(&package.sha256)
                 || !capabilities(&package.capabilities)
-                || package.percent.is_some_and(|percent| !(1..=100).contains(&percent))
+                || package
+                    .percent
+                    .is_some_and(|percent| !(1..=100).contains(&percent))
                 || package
                     .projects
                     .iter()
@@ -171,7 +177,12 @@ impl ManagedPolicy {
     }
 
     /// Why this policy refuses a user or project selection; `source` is its package-manager source, if any.
-    pub fn refusal(&self, id: &str, capabilities: &[String], source: Option<&str>) -> Option<String> {
+    pub fn refusal(
+        &self,
+        id: &str,
+        capabilities: &[String],
+        source: Option<&str>,
+    ) -> Option<String> {
         if self.deny.iter().any(|denied| denied == id) {
             return Some(format!(
                 "managed_denied: {id} is revoked by administrator policy"
@@ -260,7 +271,12 @@ pub fn load_managed_from(file: &Path, owner: u32) -> Result<Option<Managed>> {
                 && (metadata.mode() & 0o022 == 0 || folder && metadata.mode() & 0o1000 != 0)
         })
     };
-    if !trusted(&canonical, false) || !canonical.ancestors().skip(1).all(|folder| trusted(folder, true)) {
+    if !trusted(&canonical, false)
+        || !canonical
+            .ancestors()
+            .skip(1)
+            .all(|folder| trusted(folder, true))
+    {
         return Err(failure(format!(
             "managed_policy_untrusted: {} and its folders must be owned by root and writable only by their owner",
             file.display()

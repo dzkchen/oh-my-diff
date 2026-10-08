@@ -511,7 +511,8 @@ impl ModStore {
                         &resolved.locked.id,
                         &resolved.locked.capabilities,
                         &policy::source_reference(&resolved.locked.source),
-                        previous.is_some_and(|locked| locked.integrity != resolved.locked.integrity),
+                        previous
+                            .is_some_and(|locked| locked.integrity != resolved.locked.integrity),
                     )
                 }) {
                     return Err(failure(reason));
@@ -1069,7 +1070,8 @@ impl ModStore {
             }
         }
         if !failures.is_empty() {
-            let _ = self.record_security_event("managed_sync_refused", json!({"failures": failures}));
+            let _ =
+                self.record_security_event("managed_sync_refused", json!({"failures": failures}));
             return Err(failure(format!(
                 "managed_sync_incomplete: generation {} stays active: {}",
                 current.generation,
@@ -1078,7 +1080,9 @@ impl ModStore {
         }
         deployed.sort_by(|a, b| (&a.id, &a.sha256).cmp(&(&b.id, &b.sha256)));
         if deployed == current.packages && managed.sha256 == current.policy_sha256 {
-            return Ok(json!({"generation": current.generation, "changed": false, "packages": deployed}));
+            return Ok(
+                json!({"generation": current.generation, "changed": false, "packages": deployed}),
+            );
         }
         self.deploy_generation(current, managed.sha256, deployed)
     }

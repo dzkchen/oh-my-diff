@@ -279,9 +279,18 @@ class Candidate:
         version = target.removeprefix("rust-v")
         proposed = self.dir / "proposed"
         patch_name = f"runtime/patches/omd-{version}.patch"
-        patch_bytes = subprocess.run(["git", "diff", "--binary", normalized_commit, "HEAD"], cwd=checkout, capture_output=True, check=True).stdout
+        patch_bytes = subprocess.run(["git", "diff", "--binary", normalized_commit], cwd=checkout, capture_output=True, check=True).stdout
+        untracked = git(checkout, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+        untracked = [name for name in untracked if name]
+        for name in untracked:
+            added = subprocess.run(["git", "diff", "--no-index", "--binary", "--", "/dev/null", name], cwd=checkout, capture_output=True)
+            if added.returncode not in (0, 1):
+                raise CandidateError("git_failed", f"cannot diff untracked file {name}: {added.stderr.decode().strip()}")
+            patch_bytes += added.stdout
         files = {}
-        for name in git(checkout, "diff", "--name-only", "--no-renames", normalized_commit, "HEAD").splitlines():
+        for name in git(checkout, "diff", "--name-only", "--no-renames", "-z", normalized_commit).split("\0") + untracked:
+            if not name:
+                continue
             before = subprocess.run(["git", "show", f"{normalized_commit}:{name}"], cwd=checkout, capture_output=True)
             files[name] = {"before": sha256(before.stdout) if before.returncode == 0 else None, "after": file_sha(checkout / name)}
         overlay = {patch_name: patch_bytes}
@@ -361,8 +370,10 @@ class Candidate:
             raise CandidateError("review_required", f"replayed tree differs from the candidate: {drift[:5]}")
 
     def parity(self, fresh, candidate):
-        names = git(candidate, "ls-files").splitlines()
-        return [name for name in names if file_sha(fresh / name) != file_sha(candidate / name)]
+        names = set()
+        for tree in (fresh, candidate):
+            names.update(git(tree, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0"))
+        return [name for name in sorted(names) if name and file_sha(fresh / name) != file_sha(candidate / name)]
 
     def checks(self, checkout, changed):
         if self.args.check_command:

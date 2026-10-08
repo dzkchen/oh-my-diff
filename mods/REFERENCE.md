@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.160.1`. The package's
+`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.161.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and
@@ -602,8 +602,8 @@ transport retry resends the bytes that passed. A synthetic answer sends nothing
 and skips it.
 
 The input is one page: `request_id`, `attempt`, `scope`, `provider`,
-`route`, `model`, `page` and `pages` (1-based), `cached`, `segments` and
-`opaque`. `segments` are the non-empty string leaves of `instructions`,
+`route`, `model`, `page` and `pages` (1-based), `cached`, `segments`,
+`opaque` and `opaque_total`. `segments` are the non-empty string leaves of `instructions`,
 `input`, `tools` and `text`, except structural fields (`type`, `id`,
 `call_id`, `status`, `role`, `name`, `namespace`, `detail`, item metadata):
 `{id, kind, role, editable, text, bytes, sha256}`, where `id` is the JSON
@@ -615,8 +615,8 @@ pointer (`/input/3/content/0/text`), `kind` is the content kind
 arrives in pieces of up to 80 KiB, each with `offset` (where the piece starts in the whole text)
 and up to 1 KiB of read-only `before` and `after` context, so a match across a
 boundary is visible from both pieces. `opaque` names values that are not
-scanned: encrypted reasoning and compaction, images, audio and files (up to
-256). More than 128 pages refuses the request (`final_request_too_large`).
+scanned: images, audio and files first, then encrypted reasoning and
+compaction, up to 256 in all; `opaque_total` counts every one. More than 128 pages refuses the request (`final_request_too_large`).
 
 `next` resolves to `{edits}` from the policies beneath. A handler calls `next`
 and returns `{edits}` keeping all of those plus its own, or returns `{deny}`
@@ -1342,7 +1342,7 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
-| `assistant_message` | content digest | `text`, `first` (streamed chunks and the final message; the streaming tail is `live`) | — |
+| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
 | `tool_call` | call ID | `kind` (`mcp`/`dynamic`), `server`, `tool`, `arguments`, `status`, `duration_ms` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
 | `tool_group` | first call ID | `calls` of grouped exploration commands, `running` | — |
@@ -1516,14 +1516,15 @@ and dialogs (`ui_composition_v1`).
 Raster, pointer and overlays (`terminal_raster_v1`):
 
 - The `terminal` event carries `client: {kind: 'terminal', graphics, pointer,
-  reduced_motion, cell_px}`: `graphics` is `kitty` (pixel images),
+  reduced_motion, cell_px, columns, rows}`: `graphics` is `kitty` (pixel images),
   `cells` (half-block) or `text` (`NO_COLOR`); `pointer` is `half_cell`,
   `cell` or `none` (no mouse capture: tmux, `OMD_TUI_MOUSE=off`, inline
   viewport); `reduced_motion` follows `tui.animations` and the system
   setting, and mods that animate stop when it is true; `cell_px` is the
-  measured cell size or null. It is null without a terminal client. When
-  any of these change (the font is resized, animations are turned off) the
-  view renders again with the new `client`.
+  measured cell size or null; `columns` and `rows` are the terminal grid. It
+  is null without a terminal client. When any of these change (the window or
+  font is resized, animations are turned off) the view renders again with the
+  new `client`; a burst of changes renders once per render in progress.
 - `{type: 'raster', id, label, alt, width, height, pointer?}` is a keyed
   canvas of 1–200 × 1–40 cells that shows `alt` until its first frame and
   clips to the component's width. `terminal.blit {key, rect: {x, y, width,
@@ -1924,7 +1925,8 @@ move-right key at the end of the draft (so a remapped `editor.move_right`
 applies) or by clicking it, and dismisses it with Esc. Any draft change, a turn
 start, an open dialog or the owner's reload clears it; `{clear: true}` withdraws
 the caller's own. The `composer` event (capability `composer`) reports `{kind:
-'change', revision, origin}` to every subscriber, debounced to 250 ms, and
+'change', revision, attachments_revision, origin}` to every subscriber
+(`attachments_revision` advances only when the attached images change), debounced to 250 ms, and
 `{kind: 'suggestion', id, status: 'accepted' | 'dismissed' | 'cleared',
 reason?}` to the suggestion's owner.
 

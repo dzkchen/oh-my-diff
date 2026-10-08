@@ -282,7 +282,7 @@
       "path": "mods/first-party/omd_advisor",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns on-demand, triggered and completed-turn advice, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives."
+      "why_mod": "Owns on-demand, triggered and completed-turn advice, the opt-in important-output observer, independent review prompts, typed result and citation validation, deduplication and selected-context presentation through public accounted review primitives."
     },
     {
       "path": "mods/first-party/omd_research",
@@ -552,7 +552,7 @@
       "path": "mods/first-party/omd_preview",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+."
+      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog, inline Mermaid drawings of assistant messages and draft image thumbnails above the composer; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_mods",
@@ -625,6 +625,12 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the user prompt queue: thread-scoped entries, capture from the draft, edit/reorder/join/send commands, idle draining through host consents and pause on a stopped turn; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_privacy",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns secret and PII detection, sensitive-path rules, reviewed exemptions and salted placeholders as a required model_send policy and approval middleware over the generic final-request stage; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_usage",

@@ -53,7 +53,13 @@ impl Admin {
         }
     }
 
-    fn package(&self, directory: &str, id: &str, source: &str, capabilities: &[&str]) -> (PathBuf, String) {
+    fn package(
+        &self,
+        directory: &str,
+        id: &str,
+        source: &str,
+        capabilities: &[&str],
+    ) -> (PathBuf, String) {
         self.versioned(directory, id, "1.0.0", source, capabilities, json!({}))
     }
 
@@ -76,7 +82,11 @@ impl Admin {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
         std::fs::write(path.join("index.ts"), source).unwrap();
         let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
             .as_str()
@@ -107,7 +117,13 @@ impl Admin {
 
     fn host(&self, user: &str) -> ModHost {
         self.store(user);
-        let mut host = ModHost::open(self.root.join(format!("store-{user}")).canonicalize().unwrap()).unwrap();
+        let mut host = ModHost::open(
+            self.root
+                .join(format!("store-{user}"))
+                .canonicalize()
+                .unwrap(),
+        )
+        .unwrap();
         host.set_managed_policy(self.policy.clone(), self.owner, user)
             .unwrap();
         host
@@ -123,7 +139,8 @@ fn trust(store: &ModStore, path: &Path, sha256: &str, capabilities: &[&str], sco
 }
 
 fn entry(id: &str, source: &Path, sha256: &str, extra: Value) -> Value {
-    let mut entry = json!({"id": id, "source": source, "sha256": sha256, "capabilities": ["interception"]});
+    let mut entry =
+        json!({"id": id, "source": source, "sha256": sha256, "capabilities": ["interception"]});
     entry
         .as_object_mut()
         .unwrap()
@@ -148,7 +165,13 @@ fn active(host: &ModHost) -> Vec<String> {
         .unwrap()
         .iter()
         .filter(|m| m["error"].is_null())
-        .map(|m| format!("{}@{}", m["id"].as_str().unwrap(), m["version"].as_str().unwrap()))
+        .map(|m| {
+            format!(
+                "{}@{}",
+                m["id"].as_str().unwrap(),
+                m["version"].as_str().unwrap()
+            )
+        })
         .collect()
 }
 
@@ -162,7 +185,11 @@ fn deployed(store: &ModStore) -> Vec<String> {
         .collect()
 }
 
-fn tool(runtime: &Mutex<ModHost>, name: &str, calls: &mut Vec<Value>) -> std::io::Result<codex_omd::ModChain> {
+fn tool(
+    runtime: &Mutex<ModHost>,
+    name: &str,
+    calls: &mut Vec<Value>,
+) -> std::io::Result<codex_omd::ModChain> {
     codex_omd::intercept_shared(
         runtime,
         "tool",
@@ -179,7 +206,10 @@ fn tool(runtime: &Mutex<ModHost>, name: &str, calls: &mut Vec<Value>) -> std::io
 }
 
 fn cohort(user: &str, id: &str) -> u8 {
-    let hash = format!("{:x}", sha2::Sha256::digest(format!("{user}\0{id}").as_bytes()));
+    let hash = format!(
+        "{:x}",
+        sha2::Sha256::digest(format!("{user}\0{id}").as_bytes())
+    );
     (u64::from_str_radix(&hash[..8], 16).unwrap() % 100) as u8
 }
 
@@ -202,16 +232,31 @@ fn managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped() {
     let runtime = Mutex::new(admin.host("alice"));
     let mut calls = Vec::new();
     let chain = tool(&runtime, "exec", &mut calls).unwrap();
-    assert_eq!(chain.result, json!({"output": "ran G A P", "success": true}));
-    assert_eq!(calls, [json!({"tool": "exec", "arguments": {"p": true, "a": true}})]);
+    assert_eq!(
+        chain.result,
+        json!({"output": "ran G A P", "success": true})
+    );
+    assert_eq!(
+        calls,
+        [json!({"tool": "exec", "arguments": {"p": true, "a": true}})]
+    );
     calls.clear();
     let cached = tool(&runtime, "cached", &mut calls).unwrap();
-    assert_eq!(cached.answered_by, None, "a user answer cannot skip the managed guard");
-    assert_eq!(cached.result, json!({"output": "ran G A P", "success": true}));
+    assert_eq!(
+        cached.answered_by, None,
+        "a user answer cannot skip the managed guard"
+    );
+    assert_eq!(
+        cached.result,
+        json!({"output": "ran G A P", "success": true})
+    );
     assert_eq!(calls.len(), 1);
     calls.clear();
     let refused = tool(&runtime, "refused", &mut calls).unwrap();
-    assert_eq!(refused.result["deny"], "refused here", "a deny may still end the chain");
+    assert_eq!(
+        refused.result["deny"], "refused here",
+        "a deny may still end the chain"
+    );
     assert!(calls.is_empty());
     let blocked = tool(&runtime, "blocked", &mut calls).unwrap();
     assert_eq!(blocked.result["deny"], "blocked by guard");
@@ -224,16 +269,22 @@ fn managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped() {
 fn offline_scenarios_run_named_mods_in_a_managed_tier() {
     let admin = Admin::new();
     let store = admin.store("alice");
-    for (id, source) in [("transform", TRANSFORM), ("answer", ANSWER), ("guard", GUARD)] {
+    for (id, source) in [
+        ("transform", TRANSFORM),
+        ("answer", ANSWER),
+        ("guard", GUARD),
+    ] {
         let (path, sha256) = admin.package(id, id, source, &["interception"]);
         trust(&store, &path, &sha256, &["interception"], "user");
     }
     let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
     let cached = |host: &mut ModHost, tiers: Value| {
-        host.offline_test(json!({"schema": 1, "tiers": tiers, "steps": [{"type": "intercept",
+        host.offline_test(
+            json!({"schema": 1, "tiers": tiers, "steps": [{"type": "intercept",
             "surface": "tool", "payload": {"tool": "cached", "arguments": {}},
-            "core": [{"value": {"output": "ran", "success": true}}]}]}))
-            .unwrap()["steps"][0]["value"]
+            "core": [{"value": {"output": "ran", "success": true}}]}]}),
+        )
+        .unwrap()["steps"][0]["value"]
             .clone()
     };
     assert_eq!(cached(&mut host, json!({}))["answered_by"], "answer");
@@ -246,7 +297,10 @@ fn offline_scenarios_run_named_mods_in_a_managed_tier() {
         .iter()
         .map(|m| m["scope"].clone())
         .collect::<Vec<_>>();
-    assert!(scopes.iter().all(|scope| scope == "user"), "the tier lasts for the scenario only");
+    assert!(
+        scopes.iter().all(|scope| scope == "user"),
+        "the tier lasts for the scenario only"
+    );
     let unknown = host
         .offline_test(json!({"schema": 1, "tiers": {"absent": "prepend"}, "steps": []}))
         .unwrap_err()
@@ -272,7 +326,11 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     admin.administer(base.clone(), "alice");
     let host = admin.host("alice");
     assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
-    assert!(rejection(&host, "guard").starts_with("shadowed_by_managed_scope"), "{}", rejection(&host, "guard"));
+    assert!(
+        rejection(&host, "guard").starts_with("shadowed_by_managed_scope"),
+        "{}",
+        rejection(&host, "guard")
+    );
     assert!(rejection(&host, "denied").starts_with("managed_denied"));
     assert!(rejection(&host, "wide").starts_with("managed_capability_denied"));
     let status = store.selection_status().unwrap();
@@ -286,13 +344,30 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
             .clone()
     };
     assert_eq!(row("guard", "managed")["effective"], true);
-    assert_eq!(row("guard", "managed")["settings_origin"], json!({"mode": "managed"}));
-    assert_eq!(row("plain", "user")["settings_origin"], json!({"mode": "default"}));
-    assert_eq!(row("guard", "project")["reason"], "shadowed_by_managed_scope");
-    assert!(row("denied", "user")["error"].as_str().unwrap().starts_with("managed_denied"));
+    assert_eq!(
+        row("guard", "managed")["settings_origin"],
+        json!({"mode": "managed"})
+    );
+    assert_eq!(
+        row("plain", "user")["settings_origin"],
+        json!({"mode": "default"})
+    );
+    assert_eq!(
+        row("guard", "project")["reason"],
+        "shadowed_by_managed_scope"
+    );
+    assert!(
+        row("denied", "user")["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("managed_denied")
+    );
     assert_eq!(status["managed"]["origin"], json!(admin.policy));
     let deployed_guard = store.managed_deployment().unwrap().packages[0].path.clone();
-    let toggled = store.enable(&deployed_guard, false).unwrap_err().to_string();
+    let toggled = store
+        .enable(&deployed_guard, false)
+        .unwrap_err()
+        .to_string();
     assert!(toggled.starts_with("managed_by_policy"), "{toggled}");
 
     let mut sideload = base.clone();
@@ -302,7 +377,12 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     assert_eq!(active(&host), ["guard@1.0.0"]);
     assert!(rejection(&host, "plain").starts_with("managed_sideload_denied"));
     let refused = store
-        .trust(plain.clone(), &plain_sha, vec!["interception".into()], "user")
+        .trust(
+            plain.clone(),
+            &plain_sha,
+            vec!["interception".into()],
+            "user",
+        )
         .unwrap_err()
         .to_string();
     assert!(refused.starts_with("managed_sideload_denied"), "{refused}");
@@ -316,7 +396,11 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
 
     admin.write_policy(base);
     store.reset("mods.json").unwrap();
-    assert_eq!(active(&admin.host("alice")), ["guard@1.0.0"], "mod-only recovery keeps managed packages");
+    assert_eq!(
+        active(&admin.host("alice")),
+        ["guard@1.0.0"],
+        "mod-only recovery keeps managed packages"
+    );
 }
 
 #[test]
@@ -336,8 +420,14 @@ fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads
         .set_managed_policy(admin.policy.clone(), admin.owner, "alice")
         .unwrap_err()
         .to_string();
-    assert!(tampered.starts_with("managed_policy_untrusted"), "{tampered}");
-    assert!(active(&host).is_empty(), "an untrusted policy source loads no mods");
+    assert!(
+        tampered.starts_with("managed_policy_untrusted"),
+        "{tampered}"
+    );
+    assert!(
+        active(&host).is_empty(),
+        "an untrusted policy source loads no mods"
+    );
     assert!(
         store.selection_status().unwrap()["managed_error"]
             .as_str()
@@ -352,14 +442,22 @@ fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads
     admin.write_policy(json!({"schema": 1}));
     host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
         .unwrap();
-    assert_eq!(active(&host), ["plain@1.0.0"], "removing a package from policy revokes it at once");
+    assert_eq!(
+        active(&host),
+        ["plain@1.0.0"],
+        "removing a package from policy revokes it at once"
+    );
 
     let mut pinned = policy.clone();
     pinned["packages"][0]["sha256"] = json!("0".repeat(64));
     admin.write_policy(pinned);
     host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
         .unwrap();
-    assert_eq!(active(&host), ["plain@1.0.0"], "content the policy no longer lists stays unloaded");
+    assert_eq!(
+        active(&host),
+        ["plain@1.0.0"],
+        "content the policy no longer lists stays unloaded"
+    );
     assert!(rejection(&host, "guard").starts_with("managed_pending_sync"));
 
     admin.write_policy(policy);
@@ -403,8 +501,17 @@ fn user_selections_cannot_claim_the_managed_scope_or_a_tier() {
             .unwrap_or_default();
         assert!(reason.starts_with("unsupported_scope"), "{reason}");
     }
-    for row in store.selection_status().unwrap()["selections"].as_array().unwrap() {
-        assert!(row["error"].as_str().unwrap().starts_with("unsupported_scope"), "{row}");
+    for row in store.selection_status().unwrap()["selections"]
+        .as_array()
+        .unwrap()
+    {
+        assert!(
+            row["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("unsupported_scope"),
+            "{row}"
+        );
     }
 }
 
@@ -427,7 +534,10 @@ fn managed_targets_that_are_not_running_fail_their_surfaces_closed() {
         error
     };
     let pending = refused(admin.host("alice"));
-    assert!(pending.starts_with("intercept_required_failed: guard: managed_pending_sync"), "{pending}");
+    assert!(
+        pending.starts_with("intercept_required_failed: guard: managed_pending_sync"),
+        "{pending}"
+    );
     assert_eq!(admin.host("alice").intercepts("command"), Some(true));
 
     store.package_sync(false).unwrap();
@@ -435,22 +545,41 @@ fn managed_targets_that_are_not_running_fail_their_surfaces_closed() {
     assert!(tool(&runtime, "exec", &mut Vec::new()).is_ok());
     store.reset("managed.json").unwrap();
     let reset = refused(admin.host("alice"));
-    assert!(reset.starts_with("intercept_required_failed: guard: managed_pending_sync"), "{reset}");
+    assert!(
+        reset.starts_with("intercept_required_failed: guard: managed_pending_sync"),
+        "{reset}"
+    );
     std::fs::write(admin.root.join("store-alice/managed.json"), "{").unwrap();
     let corrupt = refused(admin.host("alice"));
-    assert!(corrupt.starts_with("intercept_required_failed: guard"), "{corrupt}");
+    assert!(
+        corrupt.starts_with("intercept_required_failed: guard"),
+        "{corrupt}"
+    );
     let status = store.selection_status().unwrap();
-    assert!(status["managed_error"].as_str().unwrap().starts_with("managed_deployment_unreadable"), "{status}");
+    assert!(
+        status["managed_error"]
+            .as_str()
+            .unwrap()
+            .starts_with("managed_deployment_unreadable"),
+        "{status}"
+    );
 
     store.reset("managed.json").unwrap();
     store.package_sync(false).unwrap();
     let mut host = admin.host("alice");
     std::fs::write(admin.root.join("store-alice/mods.json"), "{").unwrap();
     host.reload().unwrap();
-    assert_eq!(active(&host), ["guard@1.0.0", "wide@1.0.0"], "a broken mods.json drops only user mods");
+    assert_eq!(
+        active(&host),
+        ["guard@1.0.0", "wide@1.0.0"],
+        "a broken mods.json drops only user mods"
+    );
     let runtime = Mutex::new(host);
     let mut calls = Vec::new();
-    assert_eq!(tool(&runtime, "exec", &mut calls).unwrap().result["output"], "ran G");
+    assert_eq!(
+        tool(&runtime, "exec", &mut calls).unwrap().result["output"],
+        "ran G"
+    );
 }
 
 #[test]
@@ -459,8 +588,10 @@ fn managed_dependencies_load_with_their_target_and_resync_unchanged() {
     let (library, library_sha) = admin.package("alpha", "alpha", COMMAND, &["commands"]);
     std::fs::create_dir(admin.root.join("catalog")).unwrap();
     let index = admin.root.join("catalog/index.json");
-    let index_bytes = serde_json::to_vec(&json!({"schema": 1, "packages": {"alpha": [{"version": "1.0.0",
-        "source": {"kind": "local", "path": library}, "integrity": library_sha}]}}))
+    let index_bytes = serde_json::to_vec(
+        &json!({"schema": 1, "packages": {"alpha": [{"version": "1.0.0",
+        "source": {"kind": "local", "path": library}, "integrity": library_sha}]}}),
+    )
     .unwrap();
     std::fs::write(&index, &index_bytes).unwrap();
     let index_sha = format!("{:x}", sha2::Sha256::digest(&index_bytes));
@@ -478,10 +609,20 @@ fn managed_dependencies_load_with_their_target_and_resync_unchanged() {
             entry("alpha", &library, &library_sha, json!({"capabilities": ["commands"], "users": ["bob"]}))]}),
         "alice",
     );
-    assert_eq!(deployed(&admin.store("alice")), ["alpha@1.0.0", "zeta@1.0.0"]);
-    assert_eq!(active(&admin.host("alice")), ["alpha@1.0.0", "zeta@1.0.0"], "the dependency loads with its target");
+    assert_eq!(
+        deployed(&admin.store("alice")),
+        ["alpha@1.0.0", "zeta@1.0.0"]
+    );
+    assert_eq!(
+        active(&admin.host("alice")),
+        ["alpha@1.0.0", "zeta@1.0.0"],
+        "the dependency loads with its target"
+    );
     let again = admin.store("alice").package_sync(false).unwrap();
-    assert_eq!((again["generation"].clone(), again["changed"].clone()), (json!(1), json!(false)));
+    assert_eq!(
+        (again["generation"].clone(), again["changed"].clone()),
+        (json!(1), json!(false))
+    );
 }
 
 #[test]
@@ -506,14 +647,22 @@ fn project_entries_match_the_resolved_project_through_symlinks() {
 fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly() {
     let admin = Admin::new();
     let (guard, guard_sha) = admin.package("guard", "guard", GUARD, &["interception"]);
-    let (guard2, guard2_sha) =
-        admin.versioned("guard2", "guard", "2.0.0", GUARD, &["interception"], json!({}));
+    let (guard2, guard2_sha) = admin.versioned(
+        "guard2",
+        "guard",
+        "2.0.0",
+        GUARD,
+        &["interception"],
+        json!({}),
+    );
     let (tool_dir, tool_sha) = admin.package("tool", "tool", TRANSFORM, &["interception"]);
     let (mirror, mirror_sha) = admin.package("mirror", "mirrored", PREFIX, &["interception"]);
     std::fs::create_dir(admin.root.join("catalog")).unwrap();
     let index = admin.root.join("catalog/index.json");
-    let index_bytes = serde_json::to_vec(&json!({"schema": 1, "packages": {"tool": [{"version": "1.0.0",
-        "source": {"kind": "local", "path": tool_dir}, "integrity": tool_sha}]}}))
+    let index_bytes = serde_json::to_vec(
+        &json!({"schema": 1, "packages": {"tool": [{"version": "1.0.0",
+        "source": {"kind": "local", "path": tool_dir}, "integrity": tool_sha}]}}),
+    )
     .unwrap();
     std::fs::write(&index, &index_bytes).unwrap();
     let index_sha = format!("{:x}", sha2::Sha256::digest(&index_bytes));
@@ -526,10 +675,22 @@ fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cle
     } else {
         ("bob", "alice")
     };
-    let (canary_v2, canary_v2_sha) =
-        admin.versioned("canary2", &canary, "2.0.0", COMMAND, &["commands"], json!({}));
-    let (canary_v1, canary_v1_sha) =
-        admin.versioned("canary1", &canary, "1.0.0", COMMAND, &["commands"], json!({}));
+    let (canary_v2, canary_v2_sha) = admin.versioned(
+        "canary2",
+        &canary,
+        "2.0.0",
+        COMMAND,
+        &["commands"],
+        json!({}),
+    );
+    let (canary_v1, canary_v1_sha) = admin.versioned(
+        "canary1",
+        &canary,
+        "1.0.0",
+        COMMAND,
+        &["commands"],
+        json!({}),
+    );
     let percent = cohort("alice", &canary).max(cohort("bob", &canary));
     let commands = json!({"capabilities": ["commands"]});
     let mut extra = commands.as_object().unwrap().clone();
@@ -546,37 +707,71 @@ fn managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cle
     assert_eq!(alice["generation"], 1);
     admin.store("bob").package_sync(false).unwrap();
     let alice = deployed(&admin.store("alice"));
-    for package in ["guard@1.0.0", "tool@1.0.0", "mirrored@1.0.0", &format!("{canary}@1.0.0")] {
-        assert!(alice.contains(&package.to_owned()), "{package} in {alice:?}");
+    for package in [
+        "guard@1.0.0",
+        "tool@1.0.0",
+        "mirrored@1.0.0",
+        &format!("{canary}@1.0.0"),
+    ] {
+        assert!(
+            alice.contains(&package.to_owned()),
+            "{package} in {alice:?}"
+        );
     }
-    assert!(!deployed(&admin.store("bob")).contains(&"tool@1.0.0".to_owned()), "tool targets alice only");
+    assert!(
+        !deployed(&admin.store("bob")).contains(&"tool@1.0.0".to_owned()),
+        "tool targets alice only"
+    );
     assert!(deployed(&admin.store(early)).contains(&format!("{canary}@2.0.0")));
-    assert!(!deployed(&admin.store(late)).contains(&format!("{canary}@2.0.0")), "outside the rollout cohort");
+    assert!(
+        !deployed(&admin.store(late)).contains(&format!("{canary}@2.0.0")),
+        "outside the rollout cohort"
+    );
     assert!(active(&admin.host(early)).contains(&format!("{canary}@2.0.0")));
     assert!(active(&admin.host(late)).contains(&format!("{canary}@1.0.0")));
     assert!(active(&admin.host("alice")).contains(&"tool@1.0.0".to_owned()));
     assert!(!active(&admin.host("bob")).contains(&"tool@1.0.0".to_owned()));
     let unchanged = admin.store("alice").package_sync(false).unwrap();
-    assert_eq!((unchanged["generation"].clone(), unchanged["changed"].clone()), (json!(1), json!(false)));
+    assert_eq!(
+        (
+            unchanged["generation"].clone(),
+            unchanged["changed"].clone()
+        ),
+        (json!(1), json!(false))
+    );
 
     let mut upgraded = policy.clone();
     upgraded["packages"][0] = entry("guard", &guard2, &guard2_sha, json!({"tier": "append"}));
-    upgraded["packages"]
-        .as_array_mut()
-        .unwrap()
-        .push(entry("guard", &guard, &guard_sha, json!({"tier": "append"})));
+    upgraded["packages"].as_array_mut().unwrap().push(entry(
+        "guard",
+        &guard,
+        &guard_sha,
+        json!({"tier": "append"}),
+    ));
     admin.write_policy(upgraded);
-    assert!(active(&admin.host("alice")).contains(&"guard@1.0.0".to_owned()), "the listed fallback keeps running until sync");
-    assert_eq!(admin.store("alice").package_sync(false).unwrap()["generation"], 2);
+    assert!(
+        active(&admin.host("alice")).contains(&"guard@1.0.0".to_owned()),
+        "the listed fallback keeps running until sync"
+    );
+    assert_eq!(
+        admin.store("alice").package_sync(false).unwrap()["generation"],
+        2
+    );
     assert!(active(&admin.host("alice")).contains(&"guard@2.0.0".to_owned()));
-    assert_eq!(admin.store("alice").package_sync_rollback().unwrap()["generation"], 3);
+    assert_eq!(
+        admin.store("alice").package_sync_rollback().unwrap()["generation"],
+        3
+    );
     let host = admin.host("alice");
     assert!(active(&host).contains(&"guard@1.0.0".to_owned()));
     assert!(rejection(&host, "guard").starts_with("managed_pending_sync"));
     admin.write_policy(policy.clone());
     let fresh = admin.store("carol");
     let offline = fresh.package_sync(true).unwrap();
-    assert_eq!(offline["generation"], 1, "local folders, the catalog and mirrors deploy offline");
+    assert_eq!(
+        offline["generation"], 1,
+        "local folders, the catalog and mirrors deploy offline"
+    );
     assert!(deployed(&fresh).contains(&"mirrored@1.0.0".to_owned()));
 }
 
@@ -595,35 +790,77 @@ fn managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_g
     let policy = json!({"schema": 1, "packages": [entry("guard", &guard, &guard_sha, json!({}))]});
     admin.administer(policy.clone(), "alice");
     let mut unavailable = policy.clone();
-    unavailable["packages"]
-        .as_array_mut()
-        .unwrap()
-        .push(entry("remote", Path::new(UNREACHABLE), &guard_sha, json!({})));
+    unavailable["packages"].as_array_mut().unwrap().push(entry(
+        "remote",
+        Path::new(UNREACHABLE),
+        &guard_sha,
+        json!({}),
+    ));
     admin.write_policy(unavailable);
-    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
-    assert!(error.starts_with("managed_sync_incomplete: generation 1 stays active"), "{error}");
-    assert_eq!(admin.store("alice").managed_deployment().unwrap().generation, 1);
+    let error = admin
+        .store("alice")
+        .package_sync(false)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("managed_sync_incomplete: generation 1 stays active"),
+        "{error}"
+    );
+    assert_eq!(
+        admin
+            .store("alice")
+            .managed_deployment()
+            .unwrap()
+            .generation,
+        1
+    );
     assert!(active(&admin.host("alice")).contains(&"guard@1.0.0".to_owned()));
 
     let mut with_script = policy.clone();
-    with_script["packages"]
-        .as_array_mut()
-        .unwrap()
-        .push(entry("scripted", &scripted, &scripted_sha, json!({})));
+    with_script["packages"].as_array_mut().unwrap().push(entry(
+        "scripted",
+        &scripted,
+        &scripted_sha,
+        json!({}),
+    ));
     admin.write_policy(with_script.clone());
-    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
-    assert!(error.contains("managed_lifecycle_requires_approval"), "{error}");
+    let error = admin
+        .store("alice")
+        .package_sync(false)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("managed_lifecycle_requires_approval"),
+        "{error}"
+    );
     with_script["packages"][1]["lifecycle"] = json!(["install"]);
     admin.write_policy(with_script);
-    let error = admin.store("alice").package_sync(false).unwrap_err().to_string();
-    assert!(error.starts_with("managed_policy_invalid"), "policy can't grant install scripts: {error}");
+    let error = admin
+        .store("alice")
+        .package_sync(false)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("managed_policy_invalid"),
+        "policy can't grant install scripts: {error}"
+    );
 
     admin.write_policy(policy);
     std::fs::write(guard.join("index.ts"), TRANSFORM).unwrap();
-    let error = admin.store("bob").package_sync(false).unwrap_err().to_string();
+    let error = admin
+        .store("bob")
+        .package_sync(false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("managed_integrity_mismatch"), "{error}");
-    assert_eq!(admin.store("bob").managed_deployment().unwrap().generation, 0);
-    assert!(admin.store("alice").package_sync(false).is_ok(), "already deployed content stays verified in the cache");
+    assert_eq!(
+        admin.store("bob").managed_deployment().unwrap().generation,
+        0
+    );
+    assert!(
+        admin.store("alice").package_sync(false).is_ok(),
+        "already deployed content stays verified in the cache"
+    );
 }
 
 #[test]
@@ -631,7 +868,16 @@ fn managed_policy_refuses_user_installs_outside_allowed_sources_and_versions() {
     let admin = Admin::new();
     let (allowed, _) = admin.package("allowed", "allowed", TRANSFORM, &["interception"]);
     std::fs::create_dir(admin.root.join("elsewhere")).unwrap();
-    let outside = admin.versioned("elsewhere/outside", "outside", "1.0.0", TRANSFORM, &["interception"], json!({})).0;
+    let outside = admin
+        .versioned(
+            "elsewhere/outside",
+            "outside",
+            "1.0.0",
+            TRANSFORM,
+            &["interception"],
+            json!({}),
+        )
+        .0;
     let install = |path: &Path, id: &str| ModInstallRequest {
         action: None,
         source: ModPackageSource::Local {
@@ -671,6 +917,9 @@ fn managed_policy_refuses_user_installs_outside_allowed_sources_and_versions() {
         .unwrap_err()
         .to_string();
     assert!(update.starts_with("managed_updates_denied"), "{update}");
-    let rollback = store.package_rollback_plan("allowed").unwrap_err().to_string();
+    let rollback = store
+        .package_rollback_plan("allowed")
+        .unwrap_err()
+        .to_string();
     assert!(rollback.starts_with("managed_updates_denied"), "{rollback}");
 }

@@ -513,15 +513,17 @@ impl ModStore {
                             "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
                             selection.scope
                         ))
-                    } else if let Some(refusal) = managed.as_ref().filter(|_| !administered).and_then(
-                        |managed| {
+                    } else if let Some(refusal) = managed
+                        .as_ref()
+                        .filter(|_| !administered)
+                        .and_then(|managed| {
                             managed.policy.refusal(
                                 &manifest.id,
                                 &manifest.capabilities,
                                 source.as_deref(),
                             )
-                        },
-                    ) {
+                        })
+                    {
                         Some(refusal)
                     } else if manifest
                         .capabilities
@@ -582,9 +584,11 @@ impl ModStore {
             }));
         }
         for rejection in pending {
-            selections.push(json!({"id": rejection.id, "path": rejection.path, "scope": rejection.scope,
+            selections.push(
+                json!({"id": rejection.id, "path": rejection.path, "scope": rejection.scope,
                 "selected": true, "packaged": false, "error": rejection.reason, "effective": false,
-                "reason": "managed_pending_sync"}));
+                "reason": "managed_pending_sync"}),
+            );
         }
         let rank = |scope: &Value| match scope.as_str() {
             Some(super::MANAGED_SCOPE) => 2,
@@ -669,7 +673,10 @@ impl ModStore {
     }
 
     pub fn trust_all(&self, packages: Vec<Trust>) -> Result<()> {
-        if self.managed()?.is_some_and(|managed| !managed.policy.sideload) {
+        if self
+            .managed()?
+            .is_some_and(|managed| !managed.policy.sideload)
+        {
             return Err(failure(
                 "managed_sideload_denied: administrator policy loads mods only from installed packages",
             ));

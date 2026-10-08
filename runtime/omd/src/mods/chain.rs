@@ -341,12 +341,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
 
 fn component_change(kind: &Value, to: &Value) -> bool {
     match kind.as_str() {
-        Some("focus") => {
-            to.is_null()
-                || to
-                    .as_str()
-                    .is_some_and(|id| super::view::mod_component_id(id))
-        }
+        Some("focus") => to.is_null() || to.as_str().is_some_and(super::view::mod_component_id),
         Some("scroll") => to
             .as_u64()
             .is_some_and(|offset| offset <= u64::from(u16::MAX)),
@@ -1326,12 +1321,14 @@ pub(super) fn intercept(
     } else {
         OPTIONAL_WAIT
     };
-    let links = match access.bounded(wait).with(|runtime| match runtime.unserved_on(surface) {
-        Some((id, _, reason)) => Err(failure(format!(
-            "intercept_required_failed: {id}: {reason}"
-        ))),
-        None => Ok(runtime.links(surface)),
-    }) {
+    let links = match access
+        .bounded(wait)
+        .with(|runtime| match runtime.unserved_on(surface) {
+            Some((id, _, reason)) => Err(failure(format!(
+                "intercept_required_failed: {id}: {reason}"
+            ))),
+            None => Ok(runtime.links(surface)),
+        }) {
         Err(error) if !required && error.to_string().starts_with("mod_runtime_busy") => Vec::new(),
         links => links?,
     };
@@ -1562,10 +1559,9 @@ impl ModHost {
         }
         let unavailable = self.policies.iter().find_map(|path| {
             let shadowed = |rejection: &ModRejection| {
-                (&rejection.path == path
-                    && rejection.reason.starts_with("shadowed_by_"))
-                .then(|| self.loaded.get(rejection.id.as_deref()?))
-                .flatten()
+                (&rejection.path == path && rejection.reason.starts_with("shadowed_by_"))
+                    .then(|| self.loaded.get(rejection.id.as_deref()?))
+                    .flatten()
             };
             let Some(loaded) = self
                 .loaded
@@ -1674,12 +1670,14 @@ impl ModHost {
         for position in 0..3 {
             for (required, order) in [(false, &order), (true, &required_order)] {
                 for id in order {
-                    let Some(loaded) = self.loaded.get(id).filter(|loaded| tier(loaded) == position)
+                    let Some(loaded) = self
+                        .loaded
+                        .get(id)
+                        .filter(|loaded| tier(loaded) == position)
                     else {
                         continue;
                     };
-                    for (index, interceptor) in
-                        loaded.registrations.interceptors.iter().enumerate()
+                    for (index, interceptor) in loaded.registrations.interceptors.iter().enumerate()
                     {
                         if interceptor.required == required
                             && granted(loaded, &interceptor.pattern, surface)

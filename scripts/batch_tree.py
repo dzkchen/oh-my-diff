@@ -16,6 +16,7 @@ SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 WARM = Path(os.environ.get("OMD_WARM_TARGET", TMP / "omd-cache/warm-target"))
 MIN_FREE_GIB = 100
+PROFILES = ("debug", "release")
 BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
 BUILD = ["build", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd", "--bins"]
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
@@ -92,12 +93,14 @@ def setup(args):
     if not (tree / "mods").exists():
         (tree / "mods").symlink_to(ROOT / "mods")
     target = batch / "target"
-    if not target.exists() and (WARM / "debug").is_dir() and not args.cold:
-        target.mkdir()
-        run("cp", "-cR", WARM / "debug", target / "debug")
-        for pattern in ("codex-*", "v8-*"):
-            for stale in (target / "debug/.fingerprint").glob(pattern):
-                shutil.rmtree(stale)
+    if not target.exists() and not args.cold:
+        for profile in PROFILES:
+            if (WARM / profile).is_dir():
+                target.mkdir(exist_ok=True)
+                run("cp", "-cR", WARM / profile, target / profile)
+                for pattern in ("codex-*", "v8-*"):
+                    for stale in (target / profile / ".fingerprint").glob(pattern):
+                        shutil.rmtree(stale)
     if not V8.is_dir():
         print(f"missing {V8}: download the rusty-v8 assets from the openai/codex rusty-v8 release before building")
     print(json.dumps({"tree": str(tree), "target": str(target), "warm": target.exists(),
@@ -111,6 +114,9 @@ def cargo_env(batch):
         "CARGO_TARGET_DIR": str(batch / "target"),
         "CARGO_INCREMENTAL": os.environ.get("CARGO_INCREMENTAL", "1"),
         "CARGO_PROFILE_DEV_DEBUG": os.environ.get("CARGO_PROFILE_DEV_DEBUG", "0"),
+        "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
+        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "16"),
+        "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
         "OMD_TEST_NODE": run("mise", "which", "node", cwd=ROOT).decode().strip(),
         "RUST_MIN_STACK": "16777216",
         "RUSTY_V8_ARCHIVE": str(V8 / "librusty_v8_ptrcomp_sandbox_release_aarch64-apple-darwin.a.gz"),
@@ -158,6 +164,7 @@ def sync(args):
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))
     manifest_path = ROOT / "runtime/patches/manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    manifest["baseline"] = "Run scripts/normalize_upstream_lock.py before applying the runtime patch."
     manifest["files"] = {}
     for name in sorted(changed):
         prior = subprocess.run(["git", "show", f"{base}:{name}"], cwd=source, capture_output=True)
@@ -281,13 +288,15 @@ def clean(args):
     target = batch / "target"
     if target.is_dir():
         if args.keep_warm:
-            shutil.rmtree(WARM, ignore_errors=True)
-            target.rename(WARM)
-            prune_workspace_artifacts(WARM / "debug")
-            print(f"moved {target} to {WARM} without workspace crate artifacts; {du(WARM)}")
-        else:
-            shutil.rmtree(target)
-            print(f"removed {target}")
+            WARM.mkdir(parents=True, exist_ok=True)
+            for profile in PROFILES:
+                if (target / profile).is_dir():
+                    shutil.rmtree(WARM / profile, ignore_errors=True)
+                    (target / profile).rename(WARM / profile)
+                    prune_workspace_artifacts(WARM / profile)
+            print(f"moved {target} profiles to {WARM} without workspace crate artifacts; {du(WARM)}")
+        shutil.rmtree(target)
+        print(f"removed {target}")
     if args.tree and (batch / "codex").exists():
         git(SCRATCH, "worktree", "remove", "--force", batch / "codex")
         print(f"removed worktree {batch / 'codex'}")
@@ -331,7 +340,7 @@ def main():
     command.set_defaults(handler=locks)
     command = commands.add_parser("clean", help="delete the batch target (source tree and evidence stay)")
     command.add_argument("batch")
-    command.add_argument("--keep-warm", action="store_true", help=f"move the target to {WARM} for the next batch")
+    command.add_argument("--keep-warm", action="store_true", help=f"move the target's debug and release profiles to {WARM} for the next batch")
     command.add_argument("--tree", action="store_true", help="also remove the scratch worktree")
     command.set_defaults(handler=clean)
     command = commands.add_parser("status", help="free space, warm target and batch trees")

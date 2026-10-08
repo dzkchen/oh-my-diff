@@ -221,9 +221,11 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                 true => store.package_sync_rollback()?,
                 false => store.package_sync(offline)?,
             };
-            Ok(json!({"display": format!("Managed deployment generation {} is active{}.",
+            Ok(
+                json!({"display": format!("Managed deployment generation {} is active{}.",
                 synced["generation"], if synced["changed"] == true { "" } else { " and current" }),
-                "sync": synced}))
+                "sync": synced}),
+            )
         }
         "reset-lock" => {
             let aside = store.reset("packages.lock.json")?;

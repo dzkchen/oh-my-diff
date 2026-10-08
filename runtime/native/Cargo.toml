@@ -1,6 +1,6 @@
 [package]
 name = "codex-omd-extension"
-version = "0.160.1"
+version = "0.161.0"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -39,3 +39,6 @@ tiny_http = { workspace = true }
 tempfile = { workspace = true }
 codex-file-system = { workspace = true }
 codex-sandboxing = { workspace = true }
+
+[dev-dependencies]
+codex-login = { workspace = true }

@@ -13,13 +13,13 @@ These internal selectors, installation paths, schema-1 records and lock filename
 remain unchanged. They identify the same profiles; the public labels and status
 metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
-These are local Apple Silicon candidate profiles for the active Codex `0.160.1`
+These are local Apple Silicon candidate profiles for the active Codex `0.161.0`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `omd-mod`, `omd`, and `omd-contract` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node 24.18 or a
-later 24.x (`mise which node`); any upstream Codex `0.160.x` serves as the
+later 24.x (`mise which node`); any upstream Codex `0.161.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
@@ -75,7 +75,7 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod, the `omd_mods` control screen and the `omd_update` notices, all enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs forty-five first-party candidate mods. A fresh OMD+ store enables
+`--profile full` installs forty-six first-party candidate mods. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
@@ -153,6 +153,11 @@ theme's status-line segments ([details](mods/first-party/omd_usage/README.md)).
 `omd-package mod enable omd_prompt_queue` adds `/queue` and Alt+q: prompts you
 capture are kept per thread, can be edited, reordered and joined, and are sent
 as you, in order, when the session is idle ([details](mods/first-party/omd_prompt_queue/README.md)).
+
+`omd-package mod enable omd_privacy` turns on a fail-closed final-request policy:
+secrets and the PII rules you select become stable opaque placeholders in every
+provider-bound request, and shell reads of sensitive paths ask first; `/privacy`
+shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 
 Git mutations also need an explicit permission-profile grant for the repository's
 Git metadata and affected files. Codex's default `.git` protection is respected;
@@ -365,7 +370,7 @@ leaves them running. Policy fields, refusals and recovery are in
 [mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).
 
 The installer refuses removal if its
-launcher changed, no upstream Codex `0.160.x` remains on `PATH`, or the prefix
+launcher changed, no upstream Codex `0.161.x` remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
 fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,

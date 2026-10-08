@@ -271,7 +271,7 @@ test('external client example launches its renderer unsandboxed from a channel h
 
 test('composer examples suggest a recent prompt and tidy pastes through the edit chain', () => {
   const sent = run('ghost_history', 'prompt', { thread_id: 't', turn_id: 'u', original: 'run the tests', effective: 'run the tests', provenance: [] });
-  const change = { kind: 'change', revision: 4, origin: 'user' };
+  const change = { kind: 'change', revision: 4, attachments_revision: 1, origin: 'user' };
   const read = run('ghost_history', 'composer', change, { state: sent.state });
   assert.deepEqual(read.host_call, { operation: 'composer.read', arguments: null });
   const draft = { text: 'run t', cursor: 5, selection: null, revision: 4, attachments: [], suggestion: null };

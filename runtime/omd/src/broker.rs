@@ -739,12 +739,25 @@ mod platform {
         let pid = u32::from_ne_bytes([token[20], token[21], token[22], token[23]]) as libc::pid_t;
         let (mut flags, mut cdhash) = (0u32, [0u8; 20]);
         let known = unsafe {
-            csops_audittoken(pid, CS_OPS_STATUS, (&raw mut flags).cast(), 4, token.as_mut_ptr())
-                == 0
-                && csops_audittoken(pid, CS_OPS_CDHASH, cdhash.as_mut_ptr().cast(), 20, token.as_mut_ptr())
-                    == 0
+            csops_audittoken(
+                pid,
+                CS_OPS_STATUS,
+                (&raw mut flags).cast(),
+                4,
+                token.as_mut_ptr(),
+            ) == 0
+                && csops_audittoken(
+                    pid,
+                    CS_OPS_CDHASH,
+                    cdhash.as_mut_ptr().cast(),
+                    20,
+                    token.as_mut_ptr(),
+                ) == 0
         };
-        let cdhash = cdhash.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let cdhash = cdhash
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         if known && flags & CS_VALID != 0 && pins.contains(&cdhash.as_str()) {
             Ok(())
         } else {

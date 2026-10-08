@@ -199,6 +199,38 @@ class UpstreamCandidateTests(unittest.TestCase):
         git(self.repo, "apply", "-R", str(proposal))
         self.assert_active_unchanged()
 
+    def test_proposal_includes_uncommitted_reconciled_source(self):
+        proposal = candidate.Candidate.write_proposal
+        added = "codex-rs/core/src/reconciled.rs"
+        contents = "fn newly_reconciled() {}\n"
+
+        def reconcile(instance, checkout, *args):
+            path = checkout / "codex-rs/core/src/lib.rs"
+            path.write_text(path.read_text() + "fn reconciled() {}\n")
+            (checkout / added).write_text(contents)
+            index = git(checkout, "diff", "--cached", "--binary")
+            result = proposal(instance, checkout, *args)
+            self.assertEqual(git(checkout, "diff", "--cached", "--binary"), index)
+            self.assertIn(added, git(checkout, "ls-files", "--others", "--exclude-standard").splitlines())
+            return result
+
+        with mock.patch.object(candidate.Candidate, "write_proposal", reconcile):
+            code, summary, report = self.run_candidate("rust-v1.0.0", "rust-v1.1.0", extra=["--check-command", "true"])
+        self.assertEqual((code, summary["status"]), (0, "green"))
+        source = Path(report["candidate_dir"], "proposed/runtime/patches/omd-1.1.0.patch").read_text()
+        self.assertIn("fn reconciled() {}", source)
+        self.assertIn(contents.strip(), source)
+        root = Path(report["candidate_dir"])
+        manifest = json.loads((root / "proposed/runtime/patches/manifest.json").read_text())
+        self.assertEqual(manifest["files"][added], {"before": None, "after": hashlib.sha256(contents.encode()).hexdigest()})
+        fresh = root / "replay"
+        self.assertEqual((fresh / added).read_text(), contents)
+        (fresh / added).unlink()
+        self.assertEqual(candidate.Candidate.parity(None, fresh, root / "codex"), [added])
+        self.assertEqual(candidate.Candidate.parity(None, root / "codex", fresh), [added])
+        self.assertEqual(report["replay"]["source_parity"], "pass")
+        self.assert_active_unchanged()
+
     def test_duplicate_and_concurrent_runs_do_not_rebuild(self):
         first = self.run_candidate("rust-v1.0.0", "rust-v1.1.0", extra=["--check-command", "true"])
         second = self.run_candidate("rust-v1.0.0", "rust-v1.1.0", extra=["--check-command", "true"])

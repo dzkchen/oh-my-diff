@@ -147,7 +147,7 @@ class Host:
         if error:
             return found + [f"scenario: {error}"]
         return found + [f"scenario step {index}: {json.dumps(step['error'])[:300]}"
-                        for index, step in enumerate(output["steps"]) if "error" in step]
+                        for index, step in enumerate(output["steps"]) if "error" in step and "expect_error" not in scenario["steps"][index]]
 
 
 @functools.cache

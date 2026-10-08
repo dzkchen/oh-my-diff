@@ -110,7 +110,7 @@ pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 pub use store::Trust;
 
-pub const CODEX_HOST_RELEASE: &str = "0.160.1";
+pub const CODEX_HOST_RELEASE: &str = "0.161.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -2947,7 +2947,9 @@ impl ModHost {
         let hash = format!(
             "{sha256}:{}:{}:{}:{}",
             brokered.as_ref().map_or(0, |(generation, _)| *generation),
-            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
+            managed
+                .as_ref()
+                .map_or("", |managed| managed.sha256.as_str()),
             deployment.generation,
             self.project.as_deref().unwrap_or(Path::new("")).display()
         );
@@ -2956,10 +2958,12 @@ impl ModHost {
         }
         let configured = bytes
             .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
-            .and_then(|config| match config.schema != 1 || !config.node.is_absolute() {
-                true => Err(failure("invalid_mod_configuration")),
-                false => Ok(config),
-            });
+            .and_then(
+                |config| match config.schema != 1 || !config.node.is_absolute() {
+                    true => Err(failure("invalid_mod_configuration")),
+                    false => Ok(config),
+                },
+            );
         let mut rejected = Vec::new();
         let config = match configured {
             Ok(config) => config,
@@ -3269,7 +3273,10 @@ impl ModHost {
                     .map(|rejection| rejection.reason.clone())
                     .or_else(|| self.loaded.get(&target.id)?.error.clone())
                     .unwrap_or_else(|| {
-                        format!("managed_not_running: {}; see omd-mod policy explain", target.id)
+                        format!(
+                            "managed_not_running: {}; see omd-mod policy explain",
+                            target.id
+                        )
                     });
                 (target.id.clone(), target.capabilities.clone(), reason)
             })
@@ -3366,7 +3373,8 @@ impl ModHost {
                     )));
                 }
                 if !administered
-                    && grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
+                    && grants
+                        .is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
                 {
                     return Err(failure(format!(
                         "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
@@ -4990,7 +4998,7 @@ impl ModHost {
             ),
             (
                 "intercept.model_send",
-                json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only"}),
+                json!({"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","provider":"observe_only","route":"observe_only","model":"observe_only","page":"observe_only","pages":"observe_only","cached":"observe_only","segments":"observe_only","opaque":"observe_only","opaque_total":"observe_only"}),
             ),
             (
                 "intercept.agent_offers",
