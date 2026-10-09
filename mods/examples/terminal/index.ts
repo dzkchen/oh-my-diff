@@ -4,7 +4,7 @@ export default function activate(api: ModAPI) {
   api.command('layout', argument => ({ display: `Layout request: ${String(argument)}` }), {
     description: 'Apply an example component value',
   });
-  // A patch wraps the sites other mods (such as the default omd_workspace) render, so both stay visible.
+  // A patch wraps the sites other mods render, so both stay visible.
   api.on('terminal', ({ event }): TerminalPatch => ({
     title: 'My workspace',
     sidebar_width: 32,

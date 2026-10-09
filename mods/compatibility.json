@@ -28,6 +28,7 @@
       "terminal_render_sites_v1",
       "terminal_welcome_v1",
       "terminal_rich_line_v1",
+      "terminal_box_model_v1",
       "transactional_reload_v1",
       "task_tool_exposure_v1",
       "virtual_reads_v1",

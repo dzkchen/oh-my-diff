@@ -78,7 +78,7 @@ mod, the `omd_mods` control screen and the `omd_update` notices, all enabled, an
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
 `--profile full` installs the first-party launch collection. A fresh OMD+ store enables
-`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
+`omd_inspector`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
 `omd_plan_removal` and `omd_tool_lines`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
 intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
@@ -145,7 +145,7 @@ to plugins, skills and hooks. The OMD+ inspector moved to `/inspect`; direct
 mode has neither. To disable a broken first-party mod from a shell:
 
 ```sh
-/path/to/omd-bin/omd-package mod disable omd_workspace
+/path/to/omd-bin/omd-package mod disable omd_inspector
 ```
 
 `mod disable omd_logo` removes the logo in either profile;
