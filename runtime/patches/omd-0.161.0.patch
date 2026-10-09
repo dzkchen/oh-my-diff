@@ -52962,10 +52962,10 @@ index 000000000..0c9f8faf5
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..14ffcd990
+index 000000000..db618a5b7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1589 @@
+@@ -0,0 +1,1664 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -53009,6 +53009,7 @@ index 000000000..14ffcd990
 +const INPUT_MESSAGES: usize = 128;
 +const INPUT_BYTES: usize = 256 * 1024;
 +const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
++const EXCHANGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 +
 +#[derive(Default)]
 +struct InputQueue {
@@ -53276,19 +53277,25 @@ index 000000000..14ffcd990
 +    Ok(sha256)
 +}
 +
-+/// The newest frame waiting for the blit thread; older ones are dropped, `Null` stops the thread.
-+struct Frames(Arc<(Mutex<Option<Value>>, std::sync::Condvar)>);
++/// The newest frame waiting for the blit thread; older ones are dropped.
++struct Frames(Arc<(Mutex<Option<Option<Value>>>, std::sync::Condvar)>);
 +
 +impl Frames {
 +    fn offer(&self, image: Value) {
 +        let (slot, ready) = &*self.0;
-+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(image);
++        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Some(image));
++        ready.notify_one();
++    }
++
++    fn stop(&self) {
++        let (slot, ready) = &*self.0;
++        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(None);
 +        ready.notify_one();
 +    }
 +}
 +
 +fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::AtomicBool>) -> Frames {
-+    let shared = Arc::new((Mutex::new(None::<Value>), std::sync::Condvar::new()));
++    let shared = Arc::new((Mutex::new(None::<Option<Value>>), std::sync::Condvar::new()));
 +    let frames = shared.clone();
 +    std::thread::spawn(move || {
 +        let (slot, ready) = &*shared;
@@ -53303,9 +53310,9 @@ index 000000000..14ffcd990
 +                }
 +                slot.take().unwrap_or_default()
 +            };
-+            if image.is_null() {
++            let Some(image) = image else {
 +                return;
-+            }
++            };
 +            let wait = match sink(json!({"key": key, "image": image}), active.clone()) {
 +                Ok(reply) if reply["status"] == "backpressure" => Some(Duration::from_millis(
 +                    reply["retry_after_ms"].as_u64().unwrap_or(33).min(1_000),
@@ -53318,7 +53325,7 @@ index 000000000..14ffcd990
 +            if let Some(wait) = wait {
 +                slot.lock()
 +                    .unwrap_or_else(PoisonError::into_inner)
-+                    .get_or_insert(image);
++                    .get_or_insert(Some(image));
 +                std::thread::sleep(wait);
 +            }
 +        }
@@ -53862,7 +53869,7 @@ index 000000000..14ffcd990
 +                            if sender.send(result).is_err() || terminal {
 +                                alive.store(false, std::sync::atomic::Ordering::Release);
 +                                if let Some(frames) = &frames {
-+                                    frames.offer(Value::Null);
++                                    frames.stop();
 +                                }
 +                                if let Some(notifier) = &notifier {
 +                                    notifier(ProcessNotice {
@@ -53959,7 +53966,7 @@ index 000000000..14ffcd990
 +                    && let Err(error) = write_until(
 +                        &process.sender,
 +                        input.send,
-+                        Instant::now() + WRITE_TIMEOUT,
++                        Instant::now() + EXCHANGE_WRITE_TIMEOUT,
 +                        &active,
 +                    )
 +                {
@@ -54422,6 +54429,74 @@ index 000000000..14ffcd990
 +            std::thread::sleep(Duration::from_millis(20));
 +        }
 +        assert!(!alive(), "revoking the grant kills the whole process group");
++    }
++
++    #[test]
++    fn null_frames_do_not_stop_the_blit_worker() {
++        let (sender, receiver) = mpsc::channel();
++        let frames = blit_worker(
++            "frame".into(),
++            Arc::new(move |value, _| {
++                sender.send(value).unwrap();
++                Ok(Value::Null)
++            }),
++            Arc::new(std::sync::atomic::AtomicBool::new(true)),
++        );
++        frames.offer(Value::Null);
++        assert!(receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"].is_null());
++        frames.offer(json!({"media_type":"image/png","base64":"AA=="}));
++        assert_eq!(
++            receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"]["base64"],
++            "AA=="
++        );
++        frames.stop();
++        assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
++    }
++
++    #[test]
++    fn exchange_writes_allow_a_slow_reader() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let access = codex_omd::ModOsAccess {
++            programs: vec!["sh".into()],
++            network: false,
++        };
++        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
++        let owner = ProcessOwner {
++            thread: None,
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++            protected: &[],
++            os_access: Some(&access),
++            blit: None,
++        };
++        processes
++            .call(
++                owner,
++                "process.start",
++                json!({"session":"slow","name":"sh","path":sh,
++            "sha256":program_sha256(&sh).unwrap(),"sandbox":"none","framing":"ndjson",
++            "arguments":["-c","sleep 3; cat >/dev/null"]}),
++                || true,
++            )
++            .unwrap();
++        processes
++            .call(
++                owner,
++                "process.exchange",
++                json!({"session":"slow","send":[{"data":"x".repeat(256*1024)}],"wait_ms":0}),
++                || true,
++            )
++            .unwrap();
++        assert!(
++            processes
++                .call(owner, "process.status", json!({"session":"slow"}), || true)
++                .is_ok()
++        );
 +    }
 +
 +    #[test]
@@ -61277,10 +61352,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..92d0b6418
+index 000000000..1d08e3830
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,739 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -61352,6 +61427,7 @@ index 000000000..92d0b6418
 +    approval: AtomicBool,
 +    approval_result: AtomicBool,
 +    tool_specs: AtomicBool,
++    tool_inventory: AtomicBool,
 +    tool_specs_required: AtomicBool,
 +    inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
 +    tool_batch: AtomicBool,
@@ -61471,6 +61547,21 @@ index 000000000..92d0b6418
 +        self.approval
 +            .store(runtime.has_event("approval"), Ordering::Release);
 +        let tool_specs = runtime.intercepts("tool_specs");
++        self.tool_inventory.store(
++            tool_specs.is_some()
++                || runtime.intercepts("tool").is_some()
++                || runtime.owners().iter().any(|(id, _)| {
++                    runtime.grants(id).is_some_and(|grants| {
++                        grants.capabilities.iter().any(|cap| cap == "inventory")
++                    })
++                }),
++            Ordering::Release,
++        );
++        if !self.tool_inventory.load(Ordering::Acquire)
++            && let Ok(mut inventories) = self.inventories.lock()
++        {
++            inventories.clear();
++        }
 +        self.tool_specs
 +            .store(tool_specs.is_some(), Ordering::Release);
 +        self.tool_specs_required
@@ -63677,10 +63768,10 @@ index 000000000..b0a2320cb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
 new file mode 100644
-index 000000000..b5db98f82
+index 000000000..b6c43290b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,207 @@
 +use super::*;
 +use codex_extension_api::ToolInventoryEntry;
 +use codex_extension_api::ToolSpecAdjustment;
@@ -63793,7 +63884,7 @@ index 000000000..b5db98f82
 +    }
 +
 +    fn observing(&self, thread_store: &ExtensionData) -> bool {
-+        lead_thread(thread_store)
++        lead_thread(thread_store) && self.expansion.tool_inventory.load(Ordering::Acquire)
 +    }
 +
 +    fn observe_tool_inventory(
@@ -63804,11 +63895,14 @@ index 000000000..b5db98f82
 +        let Some(lead) = thread_store.get::<Lead>() else {
 +            return;
 +        };
-+        let snapshot = json!({"thread_id": lead.thread.to_string(),
-+            "tools": inventory.iter().take(SPEC_TOOLS).map(inventory_entry).collect::<Vec<_>>()});
 +        let Ok(mut inventories) = self.expansion.inventories.lock() else {
 +            return;
 +        };
++        if !self.expansion.tool_inventory.load(Ordering::Acquire) {
++            return;
++        }
++        let snapshot = json!({"thread_id": lead.thread.to_string(),
++            "tools": inventory.iter().take(SPEC_TOOLS).map(inventory_entry).collect::<Vec<_>>()});
 +        if inventories.get(&lead.thread) != Some(&snapshot) {
 +            let _ = codex_omd::tool_schema::write_inventory(&lead.host.root, &snapshot);
 +            inventories.insert(lead.thread, snapshot);
@@ -63887,10 +63981,10 @@ index 000000000..b5db98f82
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..e333ea714
+index 000000000..e29d930f2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3595 @@
+@@ -0,0 +1,3645 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -65526,11 +65620,49 @@ index 000000000..e333ea714
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn tool_inventory_observation_tracks_consumers() {
++    use codex_extension_api::ToolSpecContributor;
++    if let Some(empty) = fixture(&[]) {
++        let thread = ExtensionData::new("thread");
++        thread.insert(empty.lead.clone());
++        assert!(!mods(&empty.core).observing(&thread));
++    }
++    for (capabilities, source) in [
++        (vec!["inventory"], "export default api => {}"),
++        (
++            vec!["interception"],
++            "export default api => api.intercept('tool', (e, next) => next(e))",
++        ),
++        (
++            vec!["interception", "tools"],
++            "export default api => api.intercept('tool_specs', (e, next) => next(e))",
++        ),
++    ] {
++        let Some(fixture) = fixture(&[Package {
++            id: "consumer",
++            capabilities: &capabilities,
++            source,
++            manifest: json!({}),
++        }]) else {
++            return;
++        };
++        let thread = ExtensionData::new("thread");
++        thread.insert(fixture.lead.clone());
++        assert!(mods(&fixture.core).observing(&thread), "{source}");
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments() {
 +    use codex_extension_api::ToolInventoryEntry;
 +    use codex_extension_api::ToolInventoryView;
 +    use codex_extension_api::ToolSpecContributor;
-+    let Some(fixture) = fixture(&[]) else {
++    let Some(fixture) = fixture(&[Package {
++        id: "consumer",
++        capabilities: &["inventory"],
++        source: "export default api => {}",
++        manifest: json!({}),
++    }]) else {
 +        return;
 +    };
 +    let mods = mods(&fixture.core);
@@ -65594,6 +65726,18 @@ index 000000000..e333ea714
 +    );
 +    assert_eq!(validate("patch", json!("anything"), true), Ok(()));
 +    assert_eq!(validate("unknown", json!(1), true), Ok(()));
++    ModStore::open(fixture.lead.host.root.clone())
++        .unwrap()
++        .revoke("consumer")
++        .unwrap();
++    {
++        let mut runtime = fixture.core.runtime.lock().unwrap();
++        runtime.reload().unwrap();
++        fixture.core.expansion.refresh(&runtime);
++    }
++    assert!(!mods.observing(&thread_store));
++    mods.observe_tool_inventory(&thread_store, &tools);
++    assert_eq!(validate("loose", json!({}), false), Ok(()));
 +    mods.on_thread_stop(ThreadStopInput {
 +        session_store: &ExtensionData::new("session".to_owned()),
 +        thread_store: &thread_store,
@@ -77874,10 +78018,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..ec5e156e1
+index 000000000..829511e77
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,553 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -78088,9 +78232,10 @@ index 000000000..ec5e156e1
 +
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
-+        io::Error::other(
++        io::Error::other(concat!(
 +            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
-+        )
++            " | broker-grants-import STORE [SNAPSHOT_JSON]"
++        ))
 +    };
 +    match args {
 +        [command, root] if command == "plugin-component" => {
@@ -78276,6 +78421,13 @@ index 000000000..ec5e156e1
 +            Ok(Value::String(format!(
 +                "trusted {count} packages; disabled until explicitly enabled"
 +            )))
++        }
++        [command, root, rest @ ..] if command == "broker-grants-import" && rest.len() <= 1 => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?.broker_grants_import(
++                rest.first()
++                    .map(|snapshot| serde_json::from_str(snapshot))
++                    .transpose()?,
++            )
 +        }
 +        [command, root, path] if command == "enable" || command == "disable" => {
 +            let path = PathBuf::from(path);
@@ -79813,7 +79965,7 @@ index 000000000..a8f5a2022
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..ed3a604fc
+index 000000000..ea6bb778b
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
 @@ -0,0 +1,954 @@
@@ -79848,7 +80000,7 @@ index 000000000..ed3a604fc
 +    "Enter your macOS login password to change protected mod grants or credentials.";
 +const LINE_BYTES: u64 = 1 << 20;
 +const GRANTS_LIMIT: usize = 256;
-+const POLICY_VALUE_BYTES: usize = 16_384;
++const POLICY_VALUE_BYTES: usize = 65_536;
 +
 +fn failure(code: &str) -> io::Error {
 +    io::Error::other(code.to_owned())
@@ -80773,10 +80925,10 @@ index 000000000..ed3a604fc
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..843648fa4
+index 000000000..7d7b7d901
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,424 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -80930,6 +81082,14 @@ index 000000000..843648fa4
 +        .authorized("policy.put", json!({"key": "k", "value": 1}))
 +        .unwrap();
 +    assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
++    let large_policy = json!({"schema":1,"sources":["x".repeat(20_000)]});
++    client
++        .authorized("policy.put", json!({"key":"mods","value":large_policy}))
++        .unwrap();
++    assert_eq!(
++        client.call("policy.get", json!({"key":"mods"})).unwrap(),
++        large_policy
++    );
 +    client
 +        .authorized("policy.put", json!({"key": "k", "value": 2}))
 +        .unwrap();
@@ -80951,6 +81111,7 @@ index 000000000..843648fa4
 +            GRANT_RIGHT,
 +            GRANT_RIGHT,
 +            GRANT_RIGHT,
++            POLICY_RIGHT,
 +            POLICY_RIGHT,
 +            POLICY_RIGHT,
 +            POLICY_RIGHT,
@@ -81451,7 +81612,7 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..a23a44c59
+index 000000000..a7a6a63b7
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
 @@ -0,0 +1,1284 @@
@@ -82696,9 +82857,9 @@ index 000000000..a23a44c59
 +        Some(_) => return Err("terminal_blit_not_owned".into()),
 +        None => return Err("terminal_blit_unknown".into()),
 +    }
-+    let (width, height) = size.ok_or("terminal_blit_unknown")?;
 +    let content = match (rect, image) {
 +        (Some((rect, cells)), _) => {
++            let (width, height) = size.ok_or("terminal_blit_unknown")?;
 +            if rect.width == 0
 +                || rect.height == 0
 +                || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
@@ -82741,15 +82902,24 @@ index 000000000..a23a44c59
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..27c7ac015
+index 000000000..52afffc0b
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,639 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
 +
 +struct Echo;
++
++#[test]
++fn encoded_blits_need_ownership_but_not_cell_dimensions() {
++    let image = json!({"key":"frame","image":{"media_type":"image/png","base64":"AA=="}});
++    assert!(blit_request("owner", Some("owner"), None, &image).is_ok());
++    assert!(blit_request("other", Some("owner"), None, &image).is_err());
++    let cells = json!({"key":"frame","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]});
++    assert!(blit_request("owner", Some("owner"), None, &cells).is_err());
++}
 +
 +#[test]
 +fn dropping_a_pending_reply_revokes_queued_effects() {
@@ -90231,10 +90401,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..a005fb56e
+index 000000000..eb7165e04
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5092 @@
+@@ -0,0 +1,5106 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -93172,8 +93342,16 @@ index 000000000..a005fb56e
 +                    self.order.clear();
 +                    self.generation += 1;
 +                    self.dynamic_tools.clear();
-+                    self.publish_required_surfaces();
 +                }
++                self.unserved = vec![(
++                    "authority".to_owned(),
++                    MOD_CAPABILITIES
++                        .iter()
++                        .map(|capability| (*capability).to_owned())
++                        .collect(),
++                    format!("authority_unavailable: {error}"),
++                )];
++                self.publish_required_surfaces();
 +                self.configuration_sha256.clear();
 +                return Err(error);
 +            }
@@ -93226,7 +93404,6 @@ index 000000000..a005fb56e
 +            Err(error) => return Err(error),
 +        };
 +        let mut selections = Vec::new();
-+        let mut packaged = BTreeMap::new();
 +        let user = self.store.managed_user();
 +        if let Some(managed) = &managed {
 +            if let Some(reason) = unreadable {
@@ -93241,16 +93418,6 @@ index 000000000..a005fb56e
 +                managed.selections(&deployment, &user, self.project.as_deref());
 +            selections = administered;
 +            rejected.extend(pending);
-+            packaged = self
-+                .store
-+                .read_package_lock()
-+                .map(|lock| {
-+                    lock.packages
-+                        .into_values()
-+                        .map(|package| (package.path, policy::source_reference(&package.source)))
-+                        .collect()
-+                })
-+                .unwrap_or_default();
 +        }
 +        let administered = selections.len();
 +        selections.extend(config.mods.iter().cloned());
@@ -93261,12 +93428,13 @@ index 000000000..a005fb56e
 +            .map(|m| m.path.clone())
 +            .collect();
 +        self.publish_required_surfaces();
-+        let initial = self.configuration_sha256.is_empty();
++        let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
 +        let retained = self.loaded.len();
 +        self.loaded.retain(|_, loaded| {
 +            selections.iter().enumerate().any(|(index, m)| {
 +                m.enabled
 +                    && m.path == loaded.selection.path
++                    && m.sha256 == loaded.selection.sha256
 +                    && m.scope == loaded.selection.scope
 +                    && loaded
 +                        .package
@@ -93283,13 +93451,14 @@ index 000000000..a005fb56e
 +            self.generation += 1;
 +            self.dynamic_tools.clear();
 +        }
++        self.unserved = self.unserved_targets(&user);
++        self.publish_required_surfaces();
 +        let selected = Self::select(
 +            &selections,
 +            administered,
 +            initial,
 +            brokered.as_ref().map(|(_, grants)| grants),
 +            self.managed.as_ref().map(|managed| &managed.policy),
-+            &packaged,
 +            &mut rejected,
 +        )?;
 +        let adapters = Self::adapters(&selected);
@@ -93309,9 +93478,10 @@ index 000000000..a005fb56e
 +                next.insert(id, previous.clone());
 +                continue;
 +            }
-+            let assets = if package.assets.is_empty() {
-+                BTreeMap::new()
-+            } else {
++            let assets = (|| {
++                if package.assets.is_empty() {
++                    return Ok(BTreeMap::new());
++                }
 +                let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
 +                if hash != selection.sha256 {
 +                    return Err(failure(format!(
@@ -93325,13 +93495,26 @@ index 000000000..a005fb56e
 +                        package.id
 +                    )));
 +                }
-+                files
++                Ok(files
 +                    .into_iter()
 +                    .map(|(name, text)| {
 +                        let sha256 = digest(text.as_bytes());
 +                        (name, json!({"text": text, "sha256": sha256}))
 +                    })
-+                    .collect()
++                    .collect())
++            })();
++            let assets = match assets {
++                Ok(assets) => assets,
++                Err(error) => {
++                    reject(
++                        initial,
++                        &mut rejected,
++                        &selection,
++                        Some(&package.id),
++                        error.to_string(),
++                    )?;
++                    continue;
++                }
 +            };
 +            let adapter = package.adapter.as_deref().map(|name| {
 +                adapters
@@ -93462,7 +93645,9 @@ index 000000000..a005fb56e
 +        self.dynamic_tools.clear();
 +        self.reload_error = None;
 +        self.publish_required_surfaces();
-+        self.write_installed_service_types()?;
++        if let Err(error) = self.write_installed_service_types() {
++            self.reload_error = Some(format!("derived_types_unavailable: {error}"));
++        }
 +        Ok(true)
 +    }
 +
@@ -93590,7 +93775,6 @@ index 000000000..a005fb56e
 +        initial: bool,
 +        grants: Option<&BTreeSet<String>>,
 +        managed: Option<&ManagedPolicy>,
-+        packaged: &BTreeMap<PathBuf, String>,
 +        rejected: &mut Vec<ModRejection>,
 +    ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
 +        let rank = |scope: &str| match scope {
@@ -93660,7 +93844,7 @@ index 000000000..a005fb56e
 +                    policy.refusal(
 +                        &id,
 +                        &package.capabilities,
-+                        packaged.get(&selection.path).map(String::as_str),
++                        store::authenticated_source(selection, &id, grants).as_deref(),
 +                    )
 +                })
 +            {
@@ -96533,10 +96717,10 @@ index 000000000..e1499cf79
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..253476090
+index 000000000..713f6ca54
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1827 @@
+@@ -0,0 +1,1829 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -97427,7 +97611,9 @@ index 000000000..253476090
 +        }
 +        let last = |attempts: &Attempts| attempts.last.clone().and_then(std::result::Result::ok);
 +        let required_beneath = self.links[k + 1..].iter().any(|link| link.required);
-+        let guarded_beneath = self.links[k + 1..].iter().any(|link| link.guard);
++        let guarded_beneath = self.links[k + 1..]
++            .iter()
++            .any(|link| link.guard && (link.matcher.is_null() || may_match(&link.matcher, &input)));
 +        let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str, executed: bool| {
 +            reply.and_then(|reply| {
 +                let result = reply.get("result").cloned().unwrap_or(Value::Null);
@@ -98451,10 +98637,10 @@ index 000000000..4973a2bbb
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..6cadbe07b
+index 000000000..96d916b05
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2482 @@
+@@ -0,0 +1,2661 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -98911,13 +99097,13 @@ index 000000000..6cadbe07b
 +        }
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
-+        self.package_plan_locked(request, false, false)
++        self.package_plan_locked(request, false, None)
 +    }
 +
 +    pub fn package_requirements(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
 +        let _guard = self.lock()?;
 +        self.recover_package_transaction()?;
-+        self.package_plan_locked(request, true, false)
++        self.package_plan_locked(request, true, None)
 +    }
 +
 +    /// A `deployment` plan resolves administrator packages: the user's blocks and policy refusals do not apply.
@@ -98925,27 +99111,64 @@ index 000000000..6cadbe07b
 +        &self,
 +        request: ModInstallRequest,
 +        inspect: bool,
-+        deployment: bool,
++        deployment: Option<&policy::ManagedPackage>,
 +    ) -> Result<ModPackagePlan> {
 +        if !MOD_SCOPES.contains(&request.scope.as_str()) {
 +            return Err(failure("unsupported_scope: user or project"));
 +        }
-+        let existing = self.read_package_lock()?;
-+        let config = self.configuration()?;
-+        let managed = match deployment || inspect {
++        let (existing, config) = if deployment.is_some() {
++            (
++                ModPackageLock::default(),
++                ModConfiguration {
++                    schema: 1,
++                    revision: 0,
++                    node: PathBuf::new(),
++                    mods: Vec::new(),
++                },
++            )
++        } else {
++            (self.read_package_lock()?, self.configuration()?)
++        };
++        let managed = match deployment.is_some() || inspect {
 +            true => None,
 +            false => self.managed()?,
 +        };
 +        let mut resolved = BTreeMap::new();
 +        let mut visiting = Vec::new();
-+        let root = self.resolve_requested(
-+            &request.source,
-+            None,
-+            &request,
-+            &mut resolved,
-+            &mut visiting,
-+            inspect,
-+        )?;
++        let cached = deployment.map(|entry| {
++            self.root
++                .join("package-cache")
++                .join(&entry.id)
++                .join(&entry.sha256)
++        });
++        let root = match (deployment, cached) {
++            (Some(entry), Some(path))
++                if store::package(&path).is_ok_and(|(manifest, _, hash)| {
++                    manifest.id == entry.id && hash == entry.sha256
++                }) =>
++            {
++                self.resolve_materialized(
++                    path,
++                    request.source.clone(),
++                    Some(entry.sha256.clone()),
++                    None,
++                    &request,
++                    &existing,
++                    &mut resolved,
++                    &mut visiting,
++                    inspect,
++                )
++            }
++            _ => self.resolve_requested(
++                &request.source,
++                None,
++                &request,
++                &existing,
++                &mut resolved,
++                &mut visiting,
++                inspect,
++            ),
++        }?;
 +        let root_id = root.package.id.clone();
 +        resolved.insert(root_id.clone(), root);
 +        let mut packages = resolved
@@ -98955,7 +99178,7 @@ index 000000000..6cadbe07b
 +                    &resolved.locked.id,
 +                    &resolved.locked.version,
 +                    &resolved.locked.integrity,
-+                ) && !deployment
++                ) && deployment.is_none()
 +                {
 +                    return Err(failure(format!(
 +                        "package_blocked: {} {}: {reason}",
@@ -99040,7 +99263,8 @@ index 000000000..6cadbe07b
 +        request: ModInstallRequest,
 +        confirmation: &str,
 +    ) -> Result<ModPackageLock> {
-+        let plan = self.package_plan_locked(request, false, false)?;
++        let online = !request.offline;
++        let plan = self.package_plan_locked(request, false, None)?;
 +        if plan.confirmation != confirmation {
 +            return Err(failure("package_plan_changed: preview again"));
 +        }
@@ -99105,7 +99329,14 @@ index 000000000..6cadbe07b
 +            .ok_or_else(|| failure("revision_overflow"))?;
 +        let event =
 +            json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
-+        self.commit_package_transaction(lock, config, &lifecycle, &plan.action, event)
++        self.commit_package_transaction(
++            lock,
++            config,
++            &lifecycle,
++            &plan.action,
++            event,
++            if online { &plan.packages } else { &[] },
++        )
 +    }
 +
 +    pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -99172,7 +99403,7 @@ index 000000000..6cadbe07b
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
 +        let config = self.configuration()?;
-+        self.commit_package_transaction(lock, config, &[], "unblock", json!({"mod": id}))
++        self.commit_package_transaction(lock, config, &[], "unblock", json!({"mod": id}), &[])
 +    }
 +
 +    fn package_disable_blocking(&self, id: &str, block: Option<&str>) -> Result<ModPackageLock> {
@@ -99221,6 +99452,7 @@ index 000000000..6cadbe07b
 +                &[],
 +                "quarantine",
 +                json!({"package": event, "reason": reason}),
++                &[],
 +            ),
 +            None => self.commit_package_transaction(
 +                lock,
@@ -99228,6 +99460,7 @@ index 000000000..6cadbe07b
 +                &[],
 +                "disable",
 +                json!({"package": event}),
++                &[],
 +            ),
 +        }
 +    }
@@ -99291,7 +99524,7 @@ index 000000000..6cadbe07b
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
 +        let event = json!({"package": package_event(&lock.packages[id])});
-+        self.commit_package_transaction(lock, config, &[], "enable", event)
++        self.commit_package_transaction(lock, config, &[], "enable", event, &[])
 +    }
 +
 +    pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
@@ -99322,7 +99555,7 @@ index 000000000..6cadbe07b
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
 +        let event = json!({"package": package_event(&package)});
-+        self.commit_package_transaction(lock, config, &[], "uninstall", event)
++        self.commit_package_transaction(lock, config, &[], "uninstall", event, &[])
 +    }
 +
 +    pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -99425,7 +99658,7 @@ index 000000000..6cadbe07b
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
 +        let event = json!({"package": package_event(&plan.packages[0])});
-+        self.commit_package_transaction(lock, config, &[], "rollback", event)
++        self.commit_package_transaction(lock, config, &[], "rollback", event, &[])
 +    }
 +
 +    /// Runs `lifecycle` scripts and restores the previous lock and configuration on failure.
@@ -99436,6 +99669,7 @@ index 000000000..6cadbe07b
 +        lifecycle: &[(ModLockedPackage, &str)],
 +        event: &str,
 +        detail: Value,
++        provenance: &[ModLockedPackage],
 +    ) -> Result<ModPackageLock> {
 +        let old_lock = serde_json::to_value(self.read_package_lock()?)?;
 +        let old_config = serde_json::to_value(self.configuration()?)?;
@@ -99453,12 +99687,24 @@ index 000000000..6cadbe07b
 +                .flatten()
 +                .map(store::grant)
 +                .collect::<BTreeSet<_>>();
-+            let approved = config
++            let mut approved: BTreeSet<String> = config
 +                .mods
 +                .iter()
 +                .map(|selection| store::grant(&json!(selection)))
 +                .filter(|grant| !previous.contains(grant))
 +                .collect();
++            approved.extend(provenance.iter().map(store::package_provenance));
++            approved.extend(
++                config
++                    .mods
++                    .iter()
++                    .filter(|selection| {
++                        provenance.iter().any(|package| {
++                            package.path == selection.path && package.integrity == selection.sha256
++                        })
++                    })
++                    .map(|selection| store::grant(&json!(selection))),
++            );
 +            self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
 +            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
 +            std::fs::remove_file(self.root.join("package-transaction.json"))?;
@@ -99501,7 +99747,6 @@ index 000000000..6cadbe07b
 +            .ok_or_else(|| failure("managed_policy_absent: no administrator policy applies"))?;
 +        let user = self.managed_user();
 +        let _guard = self.lock()?;
-+        self.recover_package_transaction()?;
 +        let current = self.managed_deployment()?;
 +        let index = managed
 +            .policy
@@ -99683,7 +99928,7 @@ index 000000000..6cadbe07b
 +            settings: BTreeMap::from([(entry.id.clone(), entry.settings.clone())]),
 +        };
 +        let plan = self
-+            .package_plan_locked(request, false, true)
++            .package_plan_locked(request, false, Some(entry))
 +            .map_err(|error| {
 +                match error
 +                    .to_string()
@@ -99737,17 +99982,19 @@ index 000000000..6cadbe07b
 +            .collect()
 +    }
 +
++    #[allow(clippy::too_many_arguments)]
 +    fn resolve_requested(
 +        &self,
 +        source: &ModPackageSource,
 +        requirement: Option<(&str, &str)>,
 +        request: &ModInstallRequest,
++        lock: &ModPackageLock,
 +        resolved: &mut BTreeMap<String, ResolvedPackage>,
 +        visiting: &mut Vec<String>,
 +        inspect: bool,
 +    ) -> Result<ResolvedPackage> {
 +        let (path, normalized_source, expected_integrity) =
-+            self.materialize_source(source, request.offline)?;
++            self.materialize_source(source, request.offline, lock)?;
 +        let staged =
 +            path.starts_with(&self.root) && !path.starts_with(self.root.join("package-cache"));
 +        let result = self.resolve_materialized(
@@ -99756,6 +100003,7 @@ index 000000000..6cadbe07b
 +            expected_integrity,
 +            requirement,
 +            request,
++            lock,
 +            resolved,
 +            visiting,
 +            inspect,
@@ -99774,6 +100022,7 @@ index 000000000..6cadbe07b
 +        expected_integrity: Option<String>,
 +        requirement: Option<(&str, &str)>,
 +        request: &ModInstallRequest,
++        lock: &ModPackageLock,
 +        resolved: &mut BTreeMap<String, ResolvedPackage>,
 +        visiting: &mut Vec<String>,
 +        inspect: bool,
@@ -99899,6 +100148,7 @@ index 000000000..6cadbe07b
 +                &dependency_source,
 +                Some((&dependency.id, &dependency.version)),
 +                request,
++                lock,
 +                resolved,
 +                visiting,
 +                inspect,
@@ -99913,6 +100163,7 @@ index 000000000..6cadbe07b
 +        &self,
 +        source: &ModPackageSource,
 +        offline: bool,
++        lock: &ModPackageLock,
 +    ) -> Result<(PathBuf, ModPackageSource, Option<String>)> {
 +        match source {
 +            ModPackageSource::Local { path } => {
@@ -99938,10 +100189,10 @@ index 000000000..6cadbe07b
 +                    return Err(failure("repository_reference_invalid"));
 +                }
 +                let local = PathBuf::from(repository);
-+                let (repository_path, repository_source) = if local.exists() {
++                let (repository_path, repository_source, _repository_view) = if local.exists() {
 +                    let path = local.canonicalize()?;
 +                    let source = path.display().to_string();
-+                    (path, source)
++                    (path, source, None)
 +                } else {
 +                    if offline && !commit {
 +                        return Err(failure(
@@ -99949,10 +100200,9 @@ index 000000000..6cadbe07b
 +                        ));
 +                    }
 +                    if offline
-+                        && let Some(package) =
-+                            self.read_package_lock()?.packages.values().find(|package| {
-+                                package.source == *source && package.cache_path.exists()
-+                            })
++                        && let Some(package) = lock.packages.values().find(|package| {
++                            package.source == *source && package.cache_path.exists()
++                        })
 +                    {
 +                        return Ok((
 +                            package.cache_path.canonicalize()?,
@@ -99967,47 +100217,12 @@ index 000000000..6cadbe07b
 +                    std::fs::create_dir_all(&repositories)?;
 +                    let cached =
 +                        repositories.join(format!("{}.git", digest(repository.as_bytes())));
-+                    if !cached.exists() {
-+                        if offline {
-+                            return Err(failure("repository_unavailable_offline_and_not_cached"));
-+                        }
-+                        let staging = repositories.join(format!(
-+                            ".{}.{}.tmp",
-+                            digest(repository.as_bytes()),
-+                            std::process::id()
-+                        ));
-+                        let output = Command::new("git")
-+                            .args(["clone", "--bare", "--filter=blob:none", "--", repository])
-+                            .arg(&staging)
-+                            .env_clear()
-+                            .env("PATH", "/usr/bin:/bin")
-+                            .output()?;
-+                        if !output.status.success() {
-+                            let _ = std::fs::remove_dir_all(&staging);
-+                            return Err(failure(format!(
-+                                "repository_clone_failed: {}",
-+                                String::from_utf8_lossy(&output.stderr).trim()
-+                            )));
-+                        }
-+                        std::fs::rename(&staging, &cached)?;
-+                        std::fs::File::open(&repositories)?.sync_all()?;
++                    if offline && !cached.exists() {
++                        return Err(failure("repository_unavailable_offline_and_not_cached"));
 +                    }
-+                    if !offline {
-+                        let output = Command::new("git")
-+                            .arg("-C")
-+                            .arg(&cached)
-+                            .args(["fetch", "--force", "--no-tags", "origin", revision])
-+                            .env_clear()
-+                            .env("PATH", "/usr/bin:/bin")
-+                            .output()?;
-+                        if !output.status.success() {
-+                            return Err(failure(format!(
-+                                "repository_fetch_failed: {}",
-+                                String::from_utf8_lossy(&output.stderr).trim()
-+                            )));
-+                        }
-+                    }
-+                    (cached.canonicalize()?, repository.clone())
++                    let view =
++                        repository_view(&repositories, &cached, repository, revision, offline)?;
++                    (view.path().to_path_buf(), repository.clone(), Some(view))
 +                };
 +                let revision = if commit {
 +                    revision.to_lowercase()
@@ -100088,7 +100303,7 @@ index 000000000..6cadbe07b
 +                    Ok(index) => index,
 +                    Err(_error) if offline => {
 +                        if let Some(package) =
-+                            self.read_package_lock()?.packages.values().find(|package| {
++                            lock.packages.values().find(|package| {
 +                                matches!(&package.source,
 +                                    ModPackageSource::Package { index: locked_index, id: locked_id, version: locked_version }
 +                                    if locked_index == index && locked_id == id
@@ -100128,7 +100343,7 @@ index 000000000..6cadbe07b
 +                        }
 +                    })?;
 +                let (path, resolved, actual_expected) =
-+                    self.materialize_source(&release.source, offline)?;
++                    self.materialize_source(&release.source, offline, lock)?;
 +                if actual_expected
 +                    .as_deref()
 +                    .is_some_and(|value| value != release.integrity)
@@ -100151,7 +100366,7 @@ index 000000000..6cadbe07b
 +                version,
 +                registry,
 +                integrity,
-+            } => self.materialize_npm(package, version, registry, integrity, offline),
++            } => self.materialize_npm(package, version, registry, integrity, offline, lock),
 +        }
 +    }
 +
@@ -100162,6 +100377,7 @@ index 000000000..6cadbe07b
 +        registry: &str,
 +        pinned: &str,
 +        offline: bool,
++        lock: &ModPackageLock,
 +    ) -> Result<(PathBuf, ModPackageSource, Option<String>)> {
 +        let config = NpmConfig::load();
 +        let registry = if registry.is_empty() {
@@ -100178,7 +100394,6 @@ index 000000000..6cadbe07b
 +            return Err(failure("npm_reference_invalid"));
 +        }
 +        if offline {
-+            let lock = self.read_package_lock()?;
 +            let package = lock
 +                .packages
 +                .values()
@@ -100437,17 +100652,73 @@ index 000000000..6cadbe07b
 +    std::fs::write(target, bytes)
 +}
 +
++fn repository_view(
++    repositories: &Path,
++    cached: &Path,
++    repository: &str,
++    revision: &str,
++    offline: bool,
++) -> Result<tempfile::TempDir> {
++    std::fs::create_dir_all(cached.join("objects"))?;
++    let fresh = || -> Result<tempfile::TempDir> {
++        let view = tempfile::tempdir_in(repositories)?;
++        git(
++            repositories,
++            &[
++                "init",
++                "--bare",
++                "--template=",
++                &view.path().display().to_string(),
++            ],
++        )?;
++        Ok(view)
++    };
++    let view = fresh()?;
++    std::fs::remove_dir_all(view.path().join("objects"))?;
++    std::os::unix::fs::symlink(cached.join("objects"), view.path().join("objects"))?;
++    if !offline {
++        let fetched = fresh()?;
++        git(
++            fetched.path(),
++            &[
++                "fetch",
++                "--force",
++                "--no-tags",
++                "--",
++                repository,
++                &format!("{revision}:refs/heads/pinned"),
++            ],
++        )?;
++        git(
++            view.path(),
++            &[
++                "fetch",
++                "--force",
++                "--no-tags",
++                "--",
++                &fetched.path().display().to_string(),
++                "refs/heads/pinned",
++            ],
++        )?;
++        return Ok(fetched);
++    }
++    Ok(view)
++}
++
 +fn git(repository: &Path, arguments: &[&str]) -> Result<String> {
 +    String::from_utf8(git_bytes(repository, arguments)?).map_err(failure)
 +}
 +
 +fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
 +    let output = Command::new("git")
++        .arg("--no-replace-objects")
 +        .arg("-C")
 +        .arg(repository)
 +        .args(arguments)
 +        .env_clear()
 +        .env("PATH", "/usr/bin:/bin")
++        .env("GIT_CONFIG_NOSYSTEM", "1")
++        .env("GIT_CONFIG_GLOBAL", "/dev/null")
 +        .output()?;
 +    if !output.status.success() {
 +        return Err(failure(format!(
@@ -100937,6 +101208,100 @@ index 000000000..6cadbe07b
 +            |selection| selection.settings.clone(),
 +        )
 +}
++
++#[cfg(test)]
++mod repository_tests {
++    use super::*;
++
++    #[test]
++    fn online_repository_content_does_not_trust_cached_objects_or_origins() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap();
++        let origin = root.join("origin");
++        let other = root.join("other");
++        for (path, value) in [(&origin, "good"), (&other, "evil")] {
++            std::fs::create_dir(path).unwrap();
++            std::fs::write(path.join("value"), value).unwrap();
++            git(path, &["init"]).unwrap();
++            git(path, &["add", "."]).unwrap();
++            git(
++                path,
++                &[
++                    "-c",
++                    "user.name=Fixture",
++                    "-c",
++                    "user.email=fixture@example.com",
++                    "commit",
++                    "-m",
++                    "fixture",
++                ],
++            )
++            .unwrap();
++        }
++        let revision = git(&origin, &["rev-parse", "HEAD"])
++            .unwrap()
++            .trim()
++            .to_owned();
++        let other_revision = git(&other, &["rev-parse", "HEAD"])
++            .unwrap()
++            .trim()
++            .to_owned();
++        let cached = root.join("cached.git");
++        git(
++            &root,
++            &[
++                "clone",
++                "--bare",
++                "--no-hardlinks",
++                origin.to_str().unwrap(),
++                cached.to_str().unwrap(),
++            ],
++        )
++        .unwrap();
++        git(&cached, &["fetch", other.to_str().unwrap(), "HEAD"]).unwrap();
++        git(
++            &cached,
++            &[
++                "config",
++                &format!("url.{}.insteadOf", other.display()),
++                origin.to_str().unwrap(),
++            ],
++        )
++        .unwrap();
++        let blob = git(&origin, &["rev-parse", "HEAD:value"])
++            .unwrap()
++            .trim()
++            .to_owned();
++        let other_blob = git(&other, &["rev-parse", "HEAD:value"])
++            .unwrap()
++            .trim()
++            .to_owned();
++        std::fs::copy(
++            other
++                .join(".git/objects")
++                .join(&other_blob[..2])
++                .join(&other_blob[2..]),
++            cached.join("objects").join(&blob[..2]).join(&blob[2..]),
++        )
++        .unwrap();
++        assert!(
++            repository_view(
++                &root,
++                &cached,
++                origin.to_str().unwrap(),
++                &other_revision,
++                false
++            )
++            .is_err()
++        );
++        let online =
++            repository_view(&root, &cached, origin.to_str().unwrap(), &revision, false).unwrap();
++        assert_eq!(
++            git_bytes(online.path(), &["show", &format!("{revision}:value")]).unwrap(),
++            b"good"
++        );
++    }
++}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
 index 000000000..0446ee122
@@ -101190,10 +101555,10 @@ index 000000000..0446ee122
 +}
 diff --git a/codex-rs/omd/src/mods/policy.rs b/codex-rs/omd/src/mods/policy.rs
 new file mode 100644
-index 000000000..f6f359ed5
+index 000000000..f303e3e7e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/policy.rs
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,504 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -101317,8 +101682,7 @@ index 000000000..f6f359ed5
 +            list.iter()
 +                .all(|capability| MOD_CAPABILITIES.contains(&capability.as_str()))
 +        };
-+        let sha256 =
-+            |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
++        let sha256 = crate::contract_document::sha256_hex;
 +        if policy.schema != 1 {
 +            return Err(invalid("schema must be 1"));
 +        }
@@ -101399,6 +101763,9 @@ index 000000000..f6f359ed5
 +            ));
 +        }
 +        match source {
++            None if self.sources.is_some() => Some(format!(
++                "managed_source_unverified: {id} needs broker-protected package provenance; reinstall from a verified source"
++            )),
 +            None if !self.sideload => Some(format!(
 +                "managed_sideload_denied: administrator policy loads {id} only from an installed package"
 +            )),
@@ -101426,10 +101793,23 @@ index 000000000..f6f359ed5
 +    }
 +
 +    pub fn source_allowed(&self, reference: &str) -> bool {
++        if reference.split('/').any(|segment| {
++            let segment = segment.to_ascii_lowercase().replace("%2e", ".");
++            segment == "."
++                || segment == ".."
++                || segment.contains("%2f")
++                || segment.contains("%5c")
++                || segment.contains('\\')
++        }) {
++            return false;
++        }
 +        self.sources.as_ref().is_none_or(|allowed| {
-+            allowed
-+                .iter()
-+                .any(|prefix| reference.starts_with(prefix.as_str()))
++            allowed.iter().any(|prefix| {
++                reference == prefix
++                    || reference
++                        .strip_prefix(prefix.trim_end_matches('/'))
++                        .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('#'))
++            })
 +        })
 +    }
 +}
@@ -101604,6 +101984,15 @@ index 000000000..f6f359ed5
 +        let targets = self.targets(user, project);
 +        let mut loading: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
 +        let mut dependencies = Vec::new();
++        let verified_dependencies = |package: &ManagedPackage, deployed: &DeployedPackage| {
++            store::package(&deployed.path)
++                .ok()
++                .filter(|(manifest, _, hash)| {
++                    package.dependencies && *hash == package.sha256 && manifest.id == package.id
++                })
++                .map(|(manifest, _, _)| manifest.dependencies)
++                .unwrap_or_default()
++        };
 +        for target in targets {
 +            let chosen = self
 +                .policy
@@ -101629,15 +102018,22 @@ index 000000000..f6f359ed5
 +            }
 +            if let Some((package, deployed)) = chosen {
 +                selections.push(selection(package, deployed));
-+                dependencies.extend(&deployed.dependencies);
++                dependencies.extend(verified_dependencies(package, deployed));
 +            }
 +        }
-+        while let Some(sha256) = dependencies.pop() {
++        while let Some(dependency) = dependencies.pop() {
 +            let Some((package, deployed)) = self.policy.packages.iter().find_map(|package| {
++                if package.id != dependency.id {
++                    return None;
++                }
 +                let deployed = deployment.packages.iter().find(|deployed| {
 +                    deployed.id == package.id
 +                        && deployed.sha256 == package.sha256
-+                        && deployed.sha256 == *sha256
++                        && store::package(&deployed.path).is_ok_and(|(manifest, _, hash)| {
++                            hash == package.sha256
++                                && manifest.id == package.id
++                                && service_version_satisfies(&dependency.version, &manifest.version)
++                        })
 +                })?;
 +                Some((package, deployed))
 +            }) else {
@@ -101645,7 +102041,7 @@ index 000000000..f6f359ed5
 +            };
 +            if loading.insert(&package.id) {
 +                selections.push(selection(package, deployed));
-+                dependencies.extend(&deployed.dependencies);
++                dependencies.extend(verified_dependencies(package, deployed));
 +            }
 +        }
 +        (selections, pending)
@@ -103209,10 +103605,10 @@ index 000000000..67ab2eb55
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..4e2db4d17
+index 000000000..97ab1e5c0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,983 @@
+@@ -0,0 +1,1104 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -103250,6 +103646,60 @@ index 000000000..4e2db4d17
 +        grant["expires_at"] = expires_at.clone();
 +    }
 +    crate::broker::canonical(&grant)
++}
++
++pub(super) fn package_provenance(package: &super::package_manager::ModLockedPackage) -> String {
++    crate::broker::canonical(&json!({"package_source": {
++        "id": package.id, "path": package.path, "sha256": package.integrity,
++        "source": super::policy::source_reference(&package.source)
++    }}))
++}
++
++pub(super) fn authenticated_source(
++    selection: &ModSelection,
++    id: &str,
++    grants: Option<&BTreeSet<String>>,
++) -> Option<String> {
++    grants?.iter().find_map(|record| {
++        let record: Value = serde_json::from_str(record).ok()?;
++        let source = &record["package_source"];
++        (source["id"] == id
++            && source["path"] == json!(selection.path)
++            && source["sha256"] == selection.sha256)
++            .then(|| source["source"].as_str().map(str::to_owned))
++            .flatten()
++    })
++}
++
++#[cfg(test)]
++mod provenance_tests {
++    use super::*;
++
++    #[test]
++    fn source_provenance_is_bound_to_protected_content_identity() {
++        let selection: ModSelection = serde_json::from_value(json!({
++            "path":"/package", "sha256":"a".repeat(64), "enabled":true,
++            "capabilities":[], "settings":{}, "scope":"user"
++        }))
++        .unwrap();
++        let record = crate::broker::canonical(&json!({"package_source": {
++            "id":"package", "path":selection.path, "sha256":selection.sha256,
++            "source":"git+https://github.com/acme/package"
++        }}));
++        let grants = BTreeSet::from([record]);
++        assert_eq!(
++            authenticated_source(&selection, "package", Some(&grants)).as_deref(),
++            Some("git+https://github.com/acme/package")
++        );
++        assert!(authenticated_source(&selection, "package", None).is_none());
++        assert!(authenticated_source(&selection, "other", Some(&grants)).is_none());
++        let mut changed = selection.clone();
++        changed.sha256 = "b".repeat(64);
++        assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
++        changed = selection.clone();
++        changed.path = "/other".into();
++        assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
++    }
 +}
 +
 +pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
@@ -103541,9 +103991,27 @@ index 000000000..4e2db4d17
 +            .flatten()
 +            .map(grant)
 +            .collect::<BTreeSet<_>>();
++        let selected_record = |record: &String| {
++            if selected.contains(record) {
++                return true;
++            }
++            let Ok(record) = serde_json::from_str::<Value>(record) else {
++                return false;
++            };
++            let Some(source) = record.get("package_source") else {
++                return false;
++            };
++            value["mods"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .any(|selection| {
++                    source["path"] == selection["path"] && source["sha256"] == selection["sha256"]
++                })
++        };
 +        let added = approved
 +            .iter()
-+            .filter(|grant| selected.contains(*grant) && !current.contains(*grant))
++            .filter(|grant| selected_record(grant) && !current.contains(*grant))
 +            .cloned()
 +            .collect::<BTreeSet<_>>();
 +        self.write_staged(name, &bytes, || {
@@ -103558,9 +104026,10 @@ index 000000000..4e2db4d17
 +            }
 +            Ok(())
 +        })?;
-+        let kept = selected
-+            .into_iter()
-+            .filter(|grant| current.contains(grant) || added.contains(grant))
++        let kept = current
++            .union(&added)
++            .filter(|grant| selected_record(grant))
++            .cloned()
 +            .collect::<BTreeSet<_>>();
 +        if kept.len() != current.len() + added.len() {
 +            let _ = crate::broker::call(
@@ -103674,6 +104143,7 @@ index 000000000..4e2db4d17
 +    pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
 +        let configuration = self.configuration()?;
 +        let lock = self.package_lock()?;
++        let brokered = brokered_grants(&self.root)?;
 +        let (managed, mut managed_error) = match self.managed() {
 +            Ok(managed) => (managed, None),
 +            Err(error) => (None, Some(error.to_string())),
@@ -103713,11 +104183,11 @@ index 000000000..4e2db4d17
 +                        };
 +                        settings_origin.insert(key, origin);
 +                    }
-+                    let source = lock
-+                        .packages
-+                        .values()
-+                        .find(|item| item.path == selection.path && item.scope == selection.scope)
-+                        .map(|item| super::policy::source_reference(&item.source));
++                    let source = authenticated_source(
++                        selection,
++                        &manifest.id,
++                        brokered.as_ref().map(|(_, grants)| grants),
++                    );
 +                    let error = if integrity != selection.sha256 {
 +                        Some("source_changed: inspect and trust the new digest".to_owned())
 +                    } else if !administered
@@ -103962,6 +104432,53 @@ index 000000000..4e2db4d17
 +        Ok(())
 +    }
 +
++    pub fn broker_grants_import(&self, snapshot: Option<Value>) -> Result<Value> {
++        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
++        let config = self.configuration()?;
++        let current = serde_json::to_value(&config)?;
++        let Some(snapshot) = snapshot else {
++            return Ok(current);
++        };
++        if snapshot != current {
++            return Err(failure("broker_import_configuration_changed"));
++        }
++        let mut approved = BTreeSet::new();
++        let mut skipped = Vec::new();
++        for selection in &config.mods {
++            let eligible = (|| {
++                let (manifest, _, hash) = package(&selection.path)?;
++                if hash != selection.sha256
++                    || !super::MOD_SCOPES.contains(&selection.scope.as_str())
++                    || selection.tier.is_some()
++                    || manifest
++                        .capabilities
++                        .iter()
++                        .any(|capability| !selection.capabilities.contains(capability))
++                    || selection
++                        .capabilities
++                        .iter()
++                        .any(|capability| !super::MOD_CAPABILITIES.contains(&capability.as_str()))
++                {
++                    return Err(failure("broker_import_selection_changed"));
++                }
++                super::check_secret_environment(&manifest, &selection.secret_environment)?;
++                super::validate_settings(&manifest, &selection.settings)?;
++                Ok::<_, std::io::Error>(())
++            })();
++            match eligible {
++                Ok(()) => {
++                    approved.insert(grant(&json!(selection)));
++                }
++                Err(error) => {
++                    skipped.push(json!({"path":selection.path,"reason":error.to_string()}))
++                }
++            }
++        }
++        self.write_granting("mods.json", &current, &approved)?;
++        Ok(json!({"imported": approved.len(), "skipped": skipped}))
++    }
++
 +    /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
 +    pub fn revoke(&self, target: &str) -> Result<()> {
 +        let _lock = self.lock()?;
@@ -104001,7 +104518,7 @@ index 000000000..4e2db4d17
 +                .revision
 +                .checked_add(1)
 +                .ok_or_else(|| failure("revision_overflow"))?;
-+            self.commit_package_transaction(lock, config, &[], "revoke", event)?;
++            self.commit_package_transaction(lock, config, &[], "revoke", event, &[])?;
 +            Ok(())
 +        } else {
 +            self.write("mods.json", &serde_json::to_value(config)?)?;
@@ -109855,14 +110372,13 @@ index 000000000..bcc07501d
 +}
 diff --git a/codex-rs/omd/src/tool_schema.rs b/codex-rs/omd/src/tool_schema.rs
 new file mode 100644
-index 000000000..5926f3682
+index 000000000..ad434de31
 --- /dev/null
 +++ b/codex-rs/omd/src/tool_schema.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,331 @@
 +use serde_json::Value;
 +use std::io;
 +use std::io::Write;
-+use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +use std::path::PathBuf;
 +
@@ -110087,18 +110603,14 @@ index 000000000..5926f3682
 +    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
 +        return Ok(());
 +    }
-+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-+    let mut file = std::fs::OpenOptions::new()
-+        .create_new(true)
-+        .write(true)
-+        .mode(0o600)
-+        .open(&temporary)?;
-+    file.write_all(bytes)
-+        .and_then(|()| file.sync_all())
-+        .and_then(|()| std::fs::rename(&temporary, path))
-+        .inspect_err(|_| {
-+            let _ = std::fs::remove_file(&temporary);
-+        })
++    let mut file = tempfile::NamedTempFile::new_in(
++        path.parent()
++            .ok_or_else(|| io::Error::other("type_output_parent_missing"))?,
++    )?;
++    file.write_all(bytes)?;
++    file.as_file().sync_all()?;
++    file.persist(path).map_err(|error| error.error)?;
++    Ok(())
 +}
 +
 +pub fn write_inventory(root: &Path, inventory: &Value) -> io::Result<()> {
@@ -110129,6 +110641,24 @@ index 000000000..5926f3682
 +            "paths": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "number"}]}},
 +            "timeout": {"type": ["integer", "null"]}},
 +            "required": ["cmd"], "additionalProperties": false})
++    }
++
++    #[test]
++    fn derived_types_allow_concurrent_writers_and_stale_temporaries() {
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join(TYPES_FILE);
++        std::fs::write(
++            path.with_extension(format!("{}.tmp", std::process::id())),
++            "stale",
++        )
++        .unwrap();
++        std::thread::scope(|scope| {
++            for _ in 0..8 {
++                let path = &path;
++                scope.spawn(move || write_if_changed(path, b"types").unwrap());
++            }
++        });
++        assert_eq!(std::fs::read(path).unwrap(), b"types");
 +    }
 +
 +    #[test]
@@ -115511,10 +116041,10 @@ index 000000000..519c5c3d7
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 000000000..bf73f07c6
+index 000000000..976c84151
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,925 @@
+@@ -0,0 +1,1224 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
@@ -115945,6 +116475,12 @@ index 000000000..bf73f07c6
 +        active(&host).is_empty(),
 +        "an untrusted policy source loads no mods"
 +    );
++    assert_eq!(host.intercepts("tool"), Some(true));
++    let runtime = Mutex::new(host);
++    let mut calls = Vec::new();
++    assert!(tool(&runtime, "exec", &mut calls).is_err());
++    assert!(calls.is_empty());
++    let mut host = runtime.into_inner().unwrap();
 +    assert!(
 +        store.selection_status().unwrap()["managed_error"]
 +            .as_str()
@@ -115981,11 +116517,18 @@ index 000000000..bf73f07c6
 +    let cached = store.managed_deployment().unwrap().packages[0].path.clone();
 +    std::fs::write(cached.join("index.ts"), TRANSFORM).unwrap();
 +    let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
-+    let stale = host
-+        .set_managed_policy(admin.policy.clone(), admin.owner, "alice")
-+        .unwrap_err()
-+        .to_string();
++    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap();
++    let stale = host.status()["rejected"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .filter_map(|item| item["reason"].as_str())
++        .find(|reason| reason.starts_with("managed_content_stale"))
++        .unwrap()
++        .to_owned();
 +    assert!(stale.starts_with("managed_content_stale"), "{stale}");
++    assert_eq!(host.intercepts("tool"), Some(true));
 +}
 +
 +#[test]
@@ -116097,6 +116640,288 @@ index 000000000..bf73f07c6
 +        tool(&runtime, "exec", &mut calls).unwrap().result["output"],
 +        "ran G"
 +    );
++}
++
++#[test]
++fn policy_source_namespaces_do_not_include_siblings() {
++    let policy = codex_omd::ManagedPolicy::parse(
++        json!({"schema":1,"sources":["git+https://github.com/acme"]}),
++    )
++    .unwrap();
++    assert!(policy.source_allowed("git+https://github.com/acme/repo"));
++    assert!(!policy.source_allowed("git+https://github.com/acme-evil/repo"));
++    assert!(!policy.source_allowed("git+https://github.com/acme/../evil/repo"));
++    assert!(!policy.source_allowed("git+https://github.com/acme/%2e%2e/evil/repo"));
++}
++
++#[test]
++fn policy_hashes_use_canonical_lowercase() {
++    assert!(
++        codex_omd::ManagedPolicy::parse(
++            json!({"schema":1,"index":{"sha256":"A".repeat(64),"locations":["/index"]}})
++        )
++        .is_err()
++    );
++    assert!(codex_omd::ManagedPolicy::parse(json!({"schema":1,"packages":[{"id":"guard","source":"/guard","sha256":"A".repeat(64),"capabilities":[]}]})).is_err());
++}
++
++#[test]
++fn forged_deployment_dependencies_cannot_load_unassigned_packages() {
++    let admin = Admin::new();
++    let (app, app_sha) = admin.package("app", "app", TRANSFORM, &["interception"]);
++    let (hidden, hidden_sha) = admin.package("hidden", "hidden", COMMAND, &["commands"]);
++    admin.administer(json!({"schema":1,"packages":[
++        entry("app", &app, &app_sha, json!({"dependencies":true})),
++        entry("hidden", &hidden, &hidden_sha, json!({"capabilities":["commands"],"users":["bob"]}))
++    ]}), "bob");
++    let mut deployment = admin.store("bob").managed_deployment().unwrap();
++    deployment
++        .packages
++        .iter_mut()
++        .find(|package| package.id == "app")
++        .unwrap()
++        .dependencies
++        .push(hidden_sha);
++    admin.store("alice");
++    std::fs::write(
++        admin.root.join("store-alice/managed.json"),
++        serde_json::to_vec(&deployment).unwrap(),
++    )
++    .unwrap();
++    assert_eq!(active(&admin.host("alice")), ["app@1.0.0"]);
++}
++
++#[test]
++fn forged_deployment_versions_cannot_load_incompatible_dependencies() {
++    let admin = Admin::new();
++    let (library, library_sha) = admin.package("alpha", "alpha", COMMAND, &["commands"]);
++    let (other, other_sha) = admin.versioned(
++        "alpha2",
++        "alpha",
++        "2.0.0",
++        COMMAND,
++        &["commands"],
++        json!({}),
++    );
++    let index = admin.root.join("index.json");
++    let index_bytes = serde_json::to_vec(&json!({"schema":1,"packages":{"alpha":[{
++        "version":"1.0.0","source":{"kind":"local","path":library},"integrity":library_sha
++    }]}}))
++    .unwrap();
++    std::fs::write(&index, &index_bytes).unwrap();
++    let (app, app_sha) = admin.versioned(
++        "app",
++        "app",
++        "1.0.0",
++        TRANSFORM,
++        &["interception"],
++        json!({"dependencies":[{"id":"alpha","version":"1.0.0"}]}),
++    );
++    admin.administer(json!({"schema":1,"index":{
++        "sha256":format!("{:x}",sha2::Sha256::digest(&index_bytes)),"locations":[index]
++    },"packages":[
++        entry("app", &app, &app_sha, json!({"dependencies":true})),
++        entry("alpha", &other, &other_sha, json!({"capabilities":["commands"],"users":["bob"]})),
++        entry("alpha", &library, &library_sha, json!({"capabilities":["commands"],"users":["bob"]}))
++    ]}), "alice");
++    assert_eq!(active(&admin.host("alice")), ["alpha@1.0.0", "app@1.0.0"]);
++    let mut deployment = admin.store("alice").managed_deployment().unwrap();
++    let dependency = deployment
++        .packages
++        .iter_mut()
++        .find(|package| package.id == "alpha")
++        .unwrap();
++    dependency.path = other;
++    dependency.sha256 = other_sha;
++    dependency.version = "1.0.0".into();
++    std::fs::write(
++        admin.root.join("store-alice/managed.json"),
++        serde_json::to_vec(&deployment).unwrap(),
++    )
++    .unwrap();
++    assert!(!active(&admin.host("alice")).contains(&"alpha@2.0.0".to_owned()));
++}
++
++#[test]
++fn broker_import_preserves_exact_selections_under_sideload_restrictions() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (plain, sha) = admin.versioned(
++        "plain",
++        "plain",
++        "1.0.0",
++        "export default api => {}",
++        &["exec"],
++        json!({"exec_environment":["API_TOKEN", "PUBLIC_VALUE"]}),
++    );
++    store
++        .trust_with_secrets(
++            plain.clone(),
++            &sha,
++            vec!["exec".into()],
++            "project",
++            vec!["API_TOKEN".into()],
++        )
++        .unwrap();
++    store.enable(&plain, true).unwrap();
++    let config_path = admin.root.join("store-alice/mods.json");
++    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
++    config["mods"][0]["expires_at"] = json!(4_000_000_000u64);
++    std::fs::write(config_path, serde_json::to_vec(&config).unwrap()).unwrap();
++    let snapshot = store.broker_grants_import(None).unwrap();
++    admin.write_policy(json!({"schema":1,"sideload":false}));
++    store.broker_grants_import(Some(snapshot.clone())).unwrap();
++    assert_eq!(store.broker_grants_import(None).unwrap(), snapshot);
++    let mut changed = snapshot;
++    changed["mods"][0]["enabled"] = json!(false);
++    assert!(store.broker_grants_import(Some(changed)).is_err());
++    std::fs::write(plain.join("index.ts"), "stale").unwrap();
++    let snapshot = store.broker_grants_import(None).unwrap();
++    let imported = store.broker_grants_import(Some(snapshot.clone())).unwrap();
++    assert_eq!(imported["imported"], 0);
++    assert_eq!(imported["skipped"].as_array().unwrap().len(), 1);
++    assert_eq!(store.broker_grants_import(None).unwrap(), snapshot);
++}
++
++#[test]
++fn corrupt_inventory_does_not_prevent_host_open() {
++    let admin = Admin::new();
++    admin.store("alice");
++    std::fs::write(admin.root.join("store-alice/tool-inventory.json"), "{").unwrap();
++    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
++    assert!(
++        host.status()["reload_error"]
++            .as_str()
++            .unwrap()
++            .starts_with("derived_types_unavailable")
++    );
++}
++
++#[test]
++fn policy_refresh_survives_a_broken_user_mod() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (plain, sha) = admin.package("plain", "plain", TRANSFORM, &["interception"]);
++    trust(&store, &plain, &sha, &["interception"], "user");
++    admin.write_policy(json!({"schema": 1}));
++    let mut host = admin.host("alice");
++    std::fs::write(plain.join("index.ts"), "invalid").unwrap();
++    let (guard, sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    admin.administer(
++        json!({"schema": 1, "deny": ["plain"], "packages": [
++        entry("guard", &guard, &sha, json!({"tier":"append"}))]}),
++        "alice",
++    );
++    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
++        .unwrap();
++    assert_eq!(active(&host), ["guard@1.0.0"]);
++    let runtime = Mutex::new(host);
++    let mut calls = Vec::new();
++    assert_eq!(
++        tool(&runtime, "blocked", &mut calls).unwrap().result["deny"],
++        "blocked by guard"
++    );
++    assert!(calls.is_empty());
++}
++
++#[test]
++fn managed_sync_ignores_broken_user_configuration_and_lock() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (guard, sha) = admin.package("guard", "guard", GUARD, &["interception"]);
++    admin.write_policy(json!({"schema":1,"packages":[entry("guard", &guard, &sha, json!({}))]}));
++    std::fs::write(admin.root.join("store-alice/mods.json"), "{").unwrap();
++    std::fs::write(admin.root.join("store-alice/packages.lock.json"), "{").unwrap();
++    std::fs::write(admin.root.join("store-alice/package-transaction.json"), "{").unwrap();
++    store.package_sync(false).unwrap();
++    assert_eq!(deployed(&store), ["guard@1.0.0"]);
++    let remote = "https://127.0.0.1:9/managed.git";
++    let (library, library_sha) = admin.package("alpha", "alpha", COMMAND, &["commands"]);
++    let (app, app_sha) = admin.versioned(
++        "app",
++        "app",
++        "1.0.0",
++        TRANSFORM,
++        &["interception"],
++        json!({"dependencies":[{"id":"alpha","version":"1.0.0"}],
++            "provenance":{"maintainer":"Fixture Admin","source":remote}}),
++    );
++    let git = |arguments: &[&str]| {
++        let output = std::process::Command::new("git")
++            .arg("-C")
++            .arg(&app)
++            .args(arguments)
++            .output()
++            .unwrap();
++        assert!(
++            output.status.success(),
++            "{}",
++            String::from_utf8_lossy(&output.stderr)
++        );
++        String::from_utf8(output.stdout).unwrap().trim().to_owned()
++    };
++    git(&["init"]);
++    git(&["add", "."]);
++    git(&[
++        "-c",
++        "user.name=Fixture",
++        "-c",
++        "user.email=fixture@example.com",
++        "commit",
++        "-m",
++        "fixture",
++    ]);
++    let revision = git(&["rev-parse", "HEAD"]);
++    let repositories = admin.root.join("store-alice/repository-cache");
++    std::fs::create_dir_all(&repositories).unwrap();
++    let cached = repositories.join(format!("{:x}.git", sha2::Sha256::digest(remote.as_bytes())));
++    git(&[
++        "clone",
++        "--bare",
++        app.to_str().unwrap(),
++        cached.to_str().unwrap(),
++    ]);
++    let index = admin.root.join("index.json");
++    let index_bytes = serde_json::to_vec(&json!({"schema":1,"packages":{
++        "app":[{"version":"1.0.0","source":{"kind":"repository","repository":remote,
++            "revision":revision},"integrity":app_sha}],
++        "alpha":[{"version":"1.0.0","source":{"kind":"local","path":library},"integrity":library_sha}]
++    }})).unwrap();
++    std::fs::write(&index, &index_bytes).unwrap();
++    admin.write_policy(json!({"schema":1,"index":{
++        "sha256":format!("{:x}",sha2::Sha256::digest(&index_bytes)),"locations":[index]
++    },"packages":[
++        {"id":"app","source":"app@1.0.0","sha256":app_sha,"capabilities":["interception"],"dependencies":true},
++        entry("alpha", &library, &library_sha, json!({"capabilities":["commands"],"users":["bob"]}))
++    ]}));
++    store.package_sync(true).unwrap();
++    assert_eq!(deployed(&store), ["alpha@1.0.0", "app@1.0.0"]);
++    let mut policy: Value = serde_json::from_slice(&std::fs::read(&admin.policy).unwrap()).unwrap();
++    policy["packages"][0]["source"] = json!("npm:app@1.0.0");
++    policy["registry"] = json!("https://127.0.0.1:9");
++    admin.write_policy(policy);
++    store.package_sync(true).unwrap();
++    assert_eq!(deployed(&store), ["alpha@1.0.0", "app@1.0.0"]);
++}
++
++#[test]
++fn unmatched_managed_guard_allows_a_virtual_answer() {
++    let admin = Admin::new();
++    let store = admin.store("alice");
++    let (answer, sha) = admin.package("answer", "answer", ANSWER, &["interception"]);
++    trust(&store, &answer, &sha, &["interception"], "user");
++    let (guard, sha) = admin.package("guard", "guard", "export default api => api.intercept('tool', {required: true, match: {tool: ['other']}}, (e, next) => next(e))", &["interception"]);
++    admin.administer(
++        json!({"schema":1,"packages":[entry("guard", &guard, &sha, json!({"tier":"append"}))]}),
++        "alice",
++    );
++    let runtime = Mutex::new(admin.host("alice"));
++    let mut calls = Vec::new();
++    assert_eq!(
++        tool(&runtime, "cached", &mut calls).unwrap().result["output"],
++        "cached"
++    );
++    assert!(calls.is_empty());
 +}
 +
 +#[test]
@@ -116421,8 +117246,12 @@ index 000000000..bf73f07c6
 +    store
 +        .package_apply(install(&allowed, "allowed"), &plan.confirmation)
 +        .unwrap();
++    store.package_enable("allowed").unwrap();
 +    admin.write_policy(json!({"schema": 1, "updates": "managed",
 +        "sources": [admin.root.join("allowed").display().to_string()]}));
++    let host = admin.host("alice");
++    assert!(active(&host).is_empty());
++    assert!(rejection(&host, "allowed").starts_with("managed_source_unverified"));
 +    let refused = store
 +        .package_plan(install(&outside, "outside"))
 +        .unwrap_err()
@@ -120982,10 +121811,10 @@ index 000000000..ab4fc128d
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..fd8cee240
+index 000000000..62c4fee2e
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1596 @@
+@@ -0,0 +1,1651 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -120993,6 +121822,7 @@ index 000000000..fd8cee240
 +use codex_omd::ModPackageTrust;
 +use codex_omd::ModStore;
 +use serde_json::json;
++use sha2::Digest;
 +use std::collections::BTreeMap;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -121579,7 +122409,7 @@ index 000000000..fd8cee240
 +        action: None,
 +        source: ModPackageSource::Repository {
 +            repository: repository.display().to_string(),
-+            revision,
++            revision: revision.clone(),
 +            subdirectory: "repo_mod".into(),
 +        },
 +        index: None,
@@ -121639,6 +122469,60 @@ index 000000000..fd8cee240
 +                .contains("repository_reference_invalid")
 +        );
 +    }
++    std::fs::write(
++        repository.join("repo_mod/assets/helper.json"),
++        b"{\"value\":2}",
++    )
++    .unwrap();
++    git(&repository, &["add", "."]);
++    git(&repository, &["commit", "-m", "changed"]);
++    let replacement = git_output(&repository, &["rev-parse", "HEAD"]);
++    git(&repository, &["replace", &revision, &replacement]);
++    let replaced = store.package_plan(offline.clone()).unwrap();
++    git(&repository, &["replace", "--delete", &revision]);
++
++    let remote = "https://127.0.0.1:9/allowed.git";
++    manifest["provenance"]["source"] = json!(remote);
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    git(&repository, &["add", "."]);
++    git(&repository, &["commit", "-m", "claimed remote"]);
++    let remote_revision = git_output(&repository, &["rev-parse", "HEAD"]);
++    let repositories = root.join("store/repository-cache");
++    std::fs::create_dir_all(&repositories).unwrap();
++    let cached = repositories.join(format!("{:x}.git", sha2::Sha256::digest(remote.as_bytes())));
++    git(
++        &repository,
++        &[
++            "clone",
++            "--bare",
++            repository.to_str().unwrap(),
++            cached.to_str().unwrap(),
++        ],
++    );
++    git(
++        &cached,
++        &[
++            "config",
++            &format!("url.{}.insteadOf", repository.display()),
++            remote,
++        ],
++    );
++    let mut redirected = offline;
++    redirected.offline = false;
++    redirected.source = ModPackageSource::Repository {
++        repository: remote.into(),
++        revision: remote_revision,
++        subdirectory: "repo_mod".into(),
++    };
++    let redirected = store.package_plan(redirected);
++    assert_eq!(
++        (
++            replaced.packages[0].integrity == lock.packages["repo_mod"].integrity,
++            redirected.is_err()
++        ),
++        (true, true),
++        "pinned content ignores replacement refs and verified fetches ignore cached URL rewrites"
++    );
 +}
 +
 +#[test]

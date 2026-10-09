@@ -349,6 +349,11 @@ To protect credentials, grants and evidence from same-user processes on macOS, d
 
 While the broker is deployed, installing a package adds its binaries to the pins, and `install.sh` upgrades and rollbacks re-pin exactly the active and previous installations; each asks for sudo once. `install.sh uninstall` and `omd-package uninstall` refuse while the broker is deployed; pruning an older installation uses `omd-package uninstall --keep-broker`. The protection boundary is described in [mods/REFERENCE.md](mods/REFERENCE.md#protected-authority-macos).
 
+Broker installation imports the unchanged configuration's exact valid grants,
+including secret grants and expiry, without re-trusting or toggling selections.
+Stale selections are skipped. This import does not certify package origins;
+source-restricted packages need a verified reinstall after broker deployment.
+
 Organizations restrict and deploy mods with an administrator policy, on either profile:
 
 ```sh

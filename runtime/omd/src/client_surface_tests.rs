@@ -5,6 +5,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Echo;
 
 #[test]
+fn encoded_blits_need_ownership_but_not_cell_dimensions() {
+    let image = json!({"key":"frame","image":{"media_type":"image/png","base64":"AA=="}});
+    assert!(blit_request("owner", Some("owner"), None, &image).is_ok());
+    assert!(blit_request("other", Some("owner"), None, &image).is_err());
+    let cells = json!({"key":"frame","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]});
+    assert!(blit_request("owner", Some("owner"), None, &cells).is_err());
+}
+
+#[test]
 fn dropping_a_pending_reply_revokes_queued_effects() {
     let (reply, receiver) = sync_channel(1);
     let lifetime = CallLifetime::default();

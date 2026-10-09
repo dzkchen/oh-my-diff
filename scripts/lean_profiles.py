@@ -743,17 +743,10 @@ def broker(prefix, bin_dir, action, also=()):
         arguments += [f"--pin={path}" for path in sorted(pins)]
     if action == "install":
         arguments += ["--helper", record["broker"]["installed_path"]]
-    selections = [item for item in invoke(manager, "selection-status", record["store"])["selections"]
-                  if item.get("scope") in ("user", "project") and not item.get("error") and not item.get("expires_at")
-                  ] if action == "install" else []
+    snapshot = invoke(manager, "broker-grants-import", record["store"]) if action == "install" else None
     result = authority_broker.main(arguments)
     if action == "install":
-        if selections:
-            invoke(manager, "trust-all", record["store"], json.dumps([
-                {key: item[key] for key in ("path", "sha256", "capabilities", "scope")} for item in selections]))
-        for item in selections:
-            if item["selected"]:
-                invoke(manager, "enable", record["store"], item["path"])
+        invoke(manager, "broker-grants-import", record["store"], json.dumps(snapshot))
         invoke(manager, "reload", record["store"])
     return result
 

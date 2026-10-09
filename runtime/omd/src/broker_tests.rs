@@ -151,6 +151,14 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
         .authorized("policy.put", json!({"key": "k", "value": 1}))
         .unwrap();
     assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
+    let large_policy = json!({"schema":1,"sources":["x".repeat(20_000)]});
+    client
+        .authorized("policy.put", json!({"key":"mods","value":large_policy}))
+        .unwrap();
+    assert_eq!(
+        client.call("policy.get", json!({"key":"mods"})).unwrap(),
+        large_policy
+    );
     client
         .authorized("policy.put", json!({"key": "k", "value": 2}))
         .unwrap();
@@ -172,6 +180,7 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
             GRANT_RIGHT,
             GRANT_RIGHT,
             GRANT_RIGHT,
+            POLICY_RIGHT,
             POLICY_RIGHT,
             POLICY_RIGHT,
             POLICY_RIGHT,

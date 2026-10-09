@@ -41,6 +41,7 @@ type WriteRequest = (Vec<Value>, mpsc::SyncSender<Result<(), String>>);
 const INPUT_MESSAGES: usize = 128;
 const INPUT_BYTES: usize = 256 * 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+const EXCHANGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct InputQueue {
@@ -308,19 +309,25 @@ fn program_sha256(path: &Path) -> io::Result<String> {
     Ok(sha256)
 }
 
-/// The newest frame waiting for the blit thread; older ones are dropped, `Null` stops the thread.
-struct Frames(Arc<(Mutex<Option<Value>>, std::sync::Condvar)>);
+/// The newest frame waiting for the blit thread; older ones are dropped.
+struct Frames(Arc<(Mutex<Option<Option<Value>>>, std::sync::Condvar)>);
 
 impl Frames {
     fn offer(&self, image: Value) {
         let (slot, ready) = &*self.0;
-        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(image);
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Some(image));
+        ready.notify_one();
+    }
+
+    fn stop(&self) {
+        let (slot, ready) = &*self.0;
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(None);
         ready.notify_one();
     }
 }
 
 fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::AtomicBool>) -> Frames {
-    let shared = Arc::new((Mutex::new(None::<Value>), std::sync::Condvar::new()));
+    let shared = Arc::new((Mutex::new(None::<Option<Value>>), std::sync::Condvar::new()));
     let frames = shared.clone();
     std::thread::spawn(move || {
         let (slot, ready) = &*shared;
@@ -335,9 +342,9 @@ fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::Atomic
                 }
                 slot.take().unwrap_or_default()
             };
-            if image.is_null() {
+            let Some(image) = image else {
                 return;
-            }
+            };
             let wait = match sink(json!({"key": key, "image": image}), active.clone()) {
                 Ok(reply) if reply["status"] == "backpressure" => Some(Duration::from_millis(
                     reply["retry_after_ms"].as_u64().unwrap_or(33).min(1_000),
@@ -350,7 +357,7 @@ fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::Atomic
             if let Some(wait) = wait {
                 slot.lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .get_or_insert(image);
+                    .get_or_insert(Some(image));
                 std::thread::sleep(wait);
             }
         }
@@ -894,7 +901,7 @@ impl ManagedProcesses {
                             if sender.send(result).is_err() || terminal {
                                 alive.store(false, std::sync::atomic::Ordering::Release);
                                 if let Some(frames) = &frames {
-                                    frames.offer(Value::Null);
+                                    frames.stop();
                                 }
                                 if let Some(notifier) = &notifier {
                                     notifier(ProcessNotice {
@@ -991,7 +998,7 @@ impl ManagedProcesses {
                     && let Err(error) = write_until(
                         &process.sender,
                         input.send,
-                        Instant::now() + WRITE_TIMEOUT,
+                        Instant::now() + EXCHANGE_WRITE_TIMEOUT,
                         &active,
                     )
                 {
@@ -1454,6 +1461,74 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!alive(), "revoking the grant kills the whole process group");
+    }
+
+    #[test]
+    fn null_frames_do_not_stop_the_blit_worker() {
+        let (sender, receiver) = mpsc::channel();
+        let frames = blit_worker(
+            "frame".into(),
+            Arc::new(move |value, _| {
+                sender.send(value).unwrap();
+                Ok(Value::Null)
+            }),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+        frames.offer(Value::Null);
+        assert!(receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"].is_null());
+        frames.offer(json!({"media_type":"image/png","base64":"AA=="}));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"]["base64"],
+            "AA=="
+        );
+        frames.stop();
+        assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
+    }
+
+    #[test]
+    fn exchange_writes_allow_a_slow_reader() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let access = codex_omd::ModOsAccess {
+            programs: vec!["sh".into()],
+            network: false,
+        };
+        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let owner = ProcessOwner {
+            thread: None,
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            os_access: Some(&access),
+            blit: None,
+        };
+        processes
+            .call(
+                owner,
+                "process.start",
+                json!({"session":"slow","name":"sh","path":sh,
+            "sha256":program_sha256(&sh).unwrap(),"sandbox":"none","framing":"ndjson",
+            "arguments":["-c","sleep 3; cat >/dev/null"]}),
+                || true,
+            )
+            .unwrap();
+        processes
+            .call(
+                owner,
+                "process.exchange",
+                json!({"session":"slow","send":[{"data":"x".repeat(256*1024)}],"wait_ms":0}),
+                || true,
+            )
+            .unwrap();
+        assert!(
+            processes
+                .call(owner, "process.status", json!({"session":"slow"}), || true)
+                .is_ok()
+        );
     }
 
     #[test]

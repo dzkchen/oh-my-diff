@@ -121,8 +121,7 @@ impl ManagedPolicy {
             list.iter()
                 .all(|capability| MOD_CAPABILITIES.contains(&capability.as_str()))
         };
-        let sha256 =
-            |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let sha256 = crate::contract_document::sha256_hex;
         if policy.schema != 1 {
             return Err(invalid("schema must be 1"));
         }
@@ -203,6 +202,9 @@ impl ManagedPolicy {
             ));
         }
         match source {
+            None if self.sources.is_some() => Some(format!(
+                "managed_source_unverified: {id} needs broker-protected package provenance; reinstall from a verified source"
+            )),
             None if !self.sideload => Some(format!(
                 "managed_sideload_denied: administrator policy loads {id} only from an installed package"
             )),
@@ -230,10 +232,23 @@ impl ManagedPolicy {
     }
 
     pub fn source_allowed(&self, reference: &str) -> bool {
+        if reference.split('/').any(|segment| {
+            let segment = segment.to_ascii_lowercase().replace("%2e", ".");
+            segment == "."
+                || segment == ".."
+                || segment.contains("%2f")
+                || segment.contains("%5c")
+                || segment.contains('\\')
+        }) {
+            return false;
+        }
         self.sources.as_ref().is_none_or(|allowed| {
-            allowed
-                .iter()
-                .any(|prefix| reference.starts_with(prefix.as_str()))
+            allowed.iter().any(|prefix| {
+                reference == prefix
+                    || reference
+                        .strip_prefix(prefix.trim_end_matches('/'))
+                        .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('#'))
+            })
         })
     }
 }
@@ -408,6 +423,15 @@ impl Managed {
         let targets = self.targets(user, project);
         let mut loading: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
         let mut dependencies = Vec::new();
+        let verified_dependencies = |package: &ManagedPackage, deployed: &DeployedPackage| {
+            store::package(&deployed.path)
+                .ok()
+                .filter(|(manifest, _, hash)| {
+                    package.dependencies && *hash == package.sha256 && manifest.id == package.id
+                })
+                .map(|(manifest, _, _)| manifest.dependencies)
+                .unwrap_or_default()
+        };
         for target in targets {
             let chosen = self
                 .policy
@@ -433,15 +457,22 @@ impl Managed {
             }
             if let Some((package, deployed)) = chosen {
                 selections.push(selection(package, deployed));
-                dependencies.extend(&deployed.dependencies);
+                dependencies.extend(verified_dependencies(package, deployed));
             }
         }
-        while let Some(sha256) = dependencies.pop() {
+        while let Some(dependency) = dependencies.pop() {
             let Some((package, deployed)) = self.policy.packages.iter().find_map(|package| {
+                if package.id != dependency.id {
+                    return None;
+                }
                 let deployed = deployment.packages.iter().find(|deployed| {
                     deployed.id == package.id
                         && deployed.sha256 == package.sha256
-                        && deployed.sha256 == *sha256
+                        && store::package(&deployed.path).is_ok_and(|(manifest, _, hash)| {
+                            hash == package.sha256
+                                && manifest.id == package.id
+                                && service_version_satisfies(&dependency.version, &manifest.version)
+                        })
                 })?;
                 Some((package, deployed))
             }) else {
@@ -449,7 +480,7 @@ impl Managed {
             };
             if loading.insert(&package.id) {
                 selections.push(selection(package, deployed));
-                dependencies.extend(&deployed.dependencies);
+                dependencies.extend(verified_dependencies(package, deployed));
             }
         }
         (selections, pending)

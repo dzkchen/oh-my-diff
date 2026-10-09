@@ -110,7 +110,7 @@ impl ToolSpecContributor for Mods {
     }
 
     fn observing(&self, thread_store: &ExtensionData) -> bool {
-        lead_thread(thread_store)
+        lead_thread(thread_store) && self.expansion.tool_inventory.load(Ordering::Acquire)
     }
 
     fn observe_tool_inventory(
@@ -121,11 +121,14 @@ impl ToolSpecContributor for Mods {
         let Some(lead) = thread_store.get::<Lead>() else {
             return;
         };
-        let snapshot = json!({"thread_id": lead.thread.to_string(),
-            "tools": inventory.iter().take(SPEC_TOOLS).map(inventory_entry).collect::<Vec<_>>()});
         let Ok(mut inventories) = self.expansion.inventories.lock() else {
             return;
         };
+        if !self.expansion.tool_inventory.load(Ordering::Acquire) {
+            return;
+        }
+        let snapshot = json!({"thread_id": lead.thread.to_string(),
+            "tools": inventory.iter().take(SPEC_TOOLS).map(inventory_entry).collect::<Vec<_>>()});
         if inventories.get(&lead.thread) != Some(&snapshot) {
             let _ = codex_omd::tool_schema::write_inventory(&lead.host.root, &snapshot);
             inventories.insert(lead.thread, snapshot);

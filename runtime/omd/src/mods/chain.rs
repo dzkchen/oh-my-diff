@@ -888,7 +888,9 @@ impl Chain {
         }
         let last = |attempts: &Attempts| attempts.last.clone().and_then(std::result::Result::ok);
         let required_beneath = self.links[k + 1..].iter().any(|link| link.required);
-        let guarded_beneath = self.links[k + 1..].iter().any(|link| link.guard);
+        let guarded_beneath = self.links[k + 1..]
+            .iter()
+            .any(|link| link.guard && (link.matcher.is_null() || may_match(&link.matcher, &input)));
         let settled = |reply: Result<Value>, attempts: &Attempts, surface: &str, executed: bool| {
             reply.and_then(|reply| {
                 let result = reply.get("result").cloned().unwrap_or(Value::Null);

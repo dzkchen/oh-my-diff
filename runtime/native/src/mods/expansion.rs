@@ -69,6 +69,7 @@ pub(super) struct State {
     approval: AtomicBool,
     approval_result: AtomicBool,
     tool_specs: AtomicBool,
+    tool_inventory: AtomicBool,
     tool_specs_required: AtomicBool,
     inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
     tool_batch: AtomicBool,
@@ -188,6 +189,21 @@ impl State {
         self.approval
             .store(runtime.has_event("approval"), Ordering::Release);
         let tool_specs = runtime.intercepts("tool_specs");
+        self.tool_inventory.store(
+            tool_specs.is_some()
+                || runtime.intercepts("tool").is_some()
+                || runtime.owners().iter().any(|(id, _)| {
+                    runtime.grants(id).is_some_and(|grants| {
+                        grants.capabilities.iter().any(|cap| cap == "inventory")
+                    })
+                }),
+            Ordering::Release,
+        );
+        if !self.tool_inventory.load(Ordering::Acquire)
+            && let Ok(mut inventories) = self.inventories.lock()
+        {
+            inventories.clear();
+        }
         self.tool_specs
             .store(tool_specs.is_some(), Ordering::Release);
         self.tool_specs_required

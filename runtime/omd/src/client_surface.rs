@@ -1239,9 +1239,9 @@ pub fn blit_request(
         Some(_) => return Err("terminal_blit_not_owned".into()),
         None => return Err("terminal_blit_unknown".into()),
     }
-    let (width, height) = size.ok_or("terminal_blit_unknown")?;
     let content = match (rect, image) {
         (Some((rect, cells)), _) => {
+            let (width, height) = size.ok_or("terminal_blit_unknown")?;
             if rect.width == 0
                 || rect.height == 0
                 || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)

@@ -2935,8 +2935,16 @@ impl ModHost {
                     self.order.clear();
                     self.generation += 1;
                     self.dynamic_tools.clear();
-                    self.publish_required_surfaces();
                 }
+                self.unserved = vec![(
+                    "authority".to_owned(),
+                    MOD_CAPABILITIES
+                        .iter()
+                        .map(|capability| (*capability).to_owned())
+                        .collect(),
+                    format!("authority_unavailable: {error}"),
+                )];
+                self.publish_required_surfaces();
                 self.configuration_sha256.clear();
                 return Err(error);
             }
@@ -2989,7 +2997,6 @@ impl ModHost {
             Err(error) => return Err(error),
         };
         let mut selections = Vec::new();
-        let mut packaged = BTreeMap::new();
         let user = self.store.managed_user();
         if let Some(managed) = &managed {
             if let Some(reason) = unreadable {
@@ -3004,16 +3011,6 @@ impl ModHost {
                 managed.selections(&deployment, &user, self.project.as_deref());
             selections = administered;
             rejected.extend(pending);
-            packaged = self
-                .store
-                .read_package_lock()
-                .map(|lock| {
-                    lock.packages
-                        .into_values()
-                        .map(|package| (package.path, policy::source_reference(&package.source)))
-                        .collect()
-                })
-                .unwrap_or_default();
         }
         let administered = selections.len();
         selections.extend(config.mods.iter().cloned());
@@ -3024,12 +3021,13 @@ impl ModHost {
             .map(|m| m.path.clone())
             .collect();
         self.publish_required_surfaces();
-        let initial = self.configuration_sha256.is_empty();
+        let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
             selections.iter().enumerate().any(|(index, m)| {
                 m.enabled
                     && m.path == loaded.selection.path
+                    && m.sha256 == loaded.selection.sha256
                     && m.scope == loaded.selection.scope
                     && loaded
                         .package
@@ -3046,13 +3044,14 @@ impl ModHost {
             self.generation += 1;
             self.dynamic_tools.clear();
         }
+        self.unserved = self.unserved_targets(&user);
+        self.publish_required_surfaces();
         let selected = Self::select(
             &selections,
             administered,
             initial,
             brokered.as_ref().map(|(_, grants)| grants),
             self.managed.as_ref().map(|managed| &managed.policy),
-            &packaged,
             &mut rejected,
         )?;
         let adapters = Self::adapters(&selected);
@@ -3072,9 +3071,10 @@ impl ModHost {
                 next.insert(id, previous.clone());
                 continue;
             }
-            let assets = if package.assets.is_empty() {
-                BTreeMap::new()
-            } else {
+            let assets = (|| {
+                if package.assets.is_empty() {
+                    return Ok(BTreeMap::new());
+                }
                 let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
                 if hash != selection.sha256 {
                     return Err(failure(format!(
@@ -3088,13 +3088,26 @@ impl ModHost {
                         package.id
                     )));
                 }
-                files
+                Ok(files
                     .into_iter()
                     .map(|(name, text)| {
                         let sha256 = digest(text.as_bytes());
                         (name, json!({"text": text, "sha256": sha256}))
                     })
-                    .collect()
+                    .collect())
+            })();
+            let assets = match assets {
+                Ok(assets) => assets,
+                Err(error) => {
+                    reject(
+                        initial,
+                        &mut rejected,
+                        &selection,
+                        Some(&package.id),
+                        error.to_string(),
+                    )?;
+                    continue;
+                }
             };
             let adapter = package.adapter.as_deref().map(|name| {
                 adapters
@@ -3225,7 +3238,9 @@ impl ModHost {
         self.dynamic_tools.clear();
         self.reload_error = None;
         self.publish_required_surfaces();
-        self.write_installed_service_types()?;
+        if let Err(error) = self.write_installed_service_types() {
+            self.reload_error = Some(format!("derived_types_unavailable: {error}"));
+        }
         Ok(true)
     }
 
@@ -3353,7 +3368,6 @@ impl ModHost {
         initial: bool,
         grants: Option<&BTreeSet<String>>,
         managed: Option<&ManagedPolicy>,
-        packaged: &BTreeMap<PathBuf, String>,
         rejected: &mut Vec<ModRejection>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
         let rank = |scope: &str| match scope {
@@ -3423,7 +3437,7 @@ impl ModHost {
                     policy.refusal(
                         &id,
                         &package.capabilities,
-                        packaged.get(&selection.path).map(String::as_str),
+                        store::authenticated_source(selection, &id, grants).as_deref(),
                     )
                 })
             {

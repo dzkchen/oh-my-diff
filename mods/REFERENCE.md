@@ -2453,6 +2453,7 @@ supported.
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
+| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Imports no package-source provenance. |
 | `omd-mod selection-status STORE` | Show managed, project and user selections, precedence, administrator refusals, source errors, and each setting's origin without running mod code |
 | `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](#administrator-policy-and-managed-deployment)'s packages unattended, or reactivate the previous generation |
 | `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the administrator policy |
@@ -2917,7 +2918,7 @@ root-owned daemon plist exists,
 - accepts a mod selection only when the broker holds the same grant (path,
   digest, capabilities, scope and secret environment), otherwise
   `grant_not_brokered`; enabling, disabling and settings changes don't touch
-  the grant. Only `trust`, `trust-all` and package installs or updates add
+  the grant. `trust`, `trust-all`, exact broker grant import and package installs or updates add
   grants, and only for the selections they change, so an entry another process
   adds to `mods.json` is never granted by an unrelated change. Removing a
   selection revokes its grant without authorization. A running mod whose grant
@@ -2999,14 +3000,24 @@ never refused by them:
 | `deny` | `managed_denied`: the mod IDs are revoked. |
 | `managed_only` | `managed_only`: only managed packages load. |
 | `capabilities` | `managed_capability_denied`: a capability outside the list, for example `approve.override`, is withheld from every unmanaged mod. |
-| `sideload: false` | `managed_sideload_denied`: only package-manager installs load, and `trust` refuses. |
-| `sources` | `managed_source_denied`: installs and loads need a source reference with one of the prefixes: a folder path, `git+URL`, `index:PATH#ID` or `npm:REGISTRY/NAME`. |
+| `sideload: false` | `managed_sideload_denied`: user packages need broker-protected install provenance, and `trust` refuses. |
+| `sources` | `managed_source_denied`: installs and loads need an allowed source namespace: a folder path, `git+URL`, `index:PATH#ID` or `npm:REGISTRY/NAME`. Matching requires an exact reference or a `/` or `#` boundary; traversal segments are refused. Loads without protected provenance report `managed_source_unverified`. |
 | `updates: "managed"` | `managed_updates_denied`: users can't update or roll back installed packages. |
 
 These refusals apply at every reload, so revoking takes effect immediately, and
 `/omd` lists them. Approval floors stay in Codex's managed requirements, which
 `approve.override` never overrides; the capability list withholds approval
 authority itself.
+
+Package-source provenance binds the package ID, path and content hash in the
+broker's protected grants. Only a verified online package install records it;
+editable locks, offline cache claims and broker grant import cannot establish
+origin. Under source or sideload restrictions, user packages without this
+evidence stay unloaded, including file-policy deployments without a broker.
+Git verification reads fresh fetched objects with isolated configuration;
+cached URL rewrites, replacement refs and editable cached objects cannot certify origin.
+Reinstall from a verified source with the broker deployed to establish evidence.
+Managed packages use the administrator's pins directly.
 
 Each `packages` entry pins a package's exact content (`sha256`) and its grant
 (`capabilities`, `dependencies`, `secret_environment`); the policy is the grant,
@@ -3040,7 +3051,8 @@ refused. Only when every entry verifies does sync record a new generation in
 previous generation stays active. `--offline` uses the cache and local sources
 only, and `--rollback` makes the previous generation active again. At load, a
 target that is deployed runs; otherwise a deployed fallback keeps running and
-`managed_pending_sync` is reported. The deployed dependencies of a running entry
+`managed_pending_sync` is reported. Dependencies and their versions are read from hash-verified
+package manifests, never from editable deployment metadata. The dependencies of a running entry
 load with it under their own policy entry, even when that entry doesn't target
 the account or project. Content the policy no longer lists never runs, so
 removing an entry or changing its pin revokes it at once and an administrator's
@@ -3050,7 +3062,11 @@ offline. A target with nothing running (not deployed yet, a reset or unreadable
 interception surface its policy `capabilities` reach closed with
 `intercept_required_failed: ID: REASON` until `package-sync` deploys it, so
 tool calls stay blocked between installing a policy and its first sync; a
-broken `mods.json` then drops only user and project mods.
+broken `mods.json` then drops only user and project mods. Managed reloads reject
+broken selections individually so a user mod cannot prevent policy updates.
+If authority cannot be read or authenticated, interception fails closed until
+authority recovers. Generated type-file errors appear in `reload_error` and
+do not prevent host startup or policy enforcement.
 
 `omd-mod policy show` prints the effective policy and its origin,
 `policy check FILE` validates one, and `policy explain STORE [PROJECT_DIR]`

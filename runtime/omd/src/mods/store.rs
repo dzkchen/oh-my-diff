@@ -37,6 +37,60 @@ pub(super) fn grant(selection: &Value) -> String {
     crate::broker::canonical(&grant)
 }
 
+pub(super) fn package_provenance(package: &super::package_manager::ModLockedPackage) -> String {
+    crate::broker::canonical(&json!({"package_source": {
+        "id": package.id, "path": package.path, "sha256": package.integrity,
+        "source": super::policy::source_reference(&package.source)
+    }}))
+}
+
+pub(super) fn authenticated_source(
+    selection: &ModSelection,
+    id: &str,
+    grants: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    grants?.iter().find_map(|record| {
+        let record: Value = serde_json::from_str(record).ok()?;
+        let source = &record["package_source"];
+        (source["id"] == id
+            && source["path"] == json!(selection.path)
+            && source["sha256"] == selection.sha256)
+            .then(|| source["source"].as_str().map(str::to_owned))
+            .flatten()
+    })
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    #[test]
+    fn source_provenance_is_bound_to_protected_content_identity() {
+        let selection: ModSelection = serde_json::from_value(json!({
+            "path":"/package", "sha256":"a".repeat(64), "enabled":true,
+            "capabilities":[], "settings":{}, "scope":"user"
+        }))
+        .unwrap();
+        let record = crate::broker::canonical(&json!({"package_source": {
+            "id":"package", "path":selection.path, "sha256":selection.sha256,
+            "source":"git+https://github.com/acme/package"
+        }}));
+        let grants = BTreeSet::from([record]);
+        assert_eq!(
+            authenticated_source(&selection, "package", Some(&grants)).as_deref(),
+            Some("git+https://github.com/acme/package")
+        );
+        assert!(authenticated_source(&selection, "package", None).is_none());
+        assert!(authenticated_source(&selection, "other", Some(&grants)).is_none());
+        let mut changed = selection.clone();
+        changed.sha256 = "b".repeat(64);
+        assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
+        changed = selection.clone();
+        changed.path = "/other".into();
+        assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
+    }
+}
+
 pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
     if !crate::broker::deployed() {
         return Ok(None);
@@ -326,9 +380,27 @@ impl ModStore {
             .flatten()
             .map(grant)
             .collect::<BTreeSet<_>>();
+        let selected_record = |record: &String| {
+            if selected.contains(record) {
+                return true;
+            }
+            let Ok(record) = serde_json::from_str::<Value>(record) else {
+                return false;
+            };
+            let Some(source) = record.get("package_source") else {
+                return false;
+            };
+            value["mods"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|selection| {
+                    source["path"] == selection["path"] && source["sha256"] == selection["sha256"]
+                })
+        };
         let added = approved
             .iter()
-            .filter(|grant| selected.contains(*grant) && !current.contains(*grant))
+            .filter(|grant| selected_record(grant) && !current.contains(*grant))
             .cloned()
             .collect::<BTreeSet<_>>();
         self.write_staged(name, &bytes, || {
@@ -343,9 +415,10 @@ impl ModStore {
             }
             Ok(())
         })?;
-        let kept = selected
-            .into_iter()
-            .filter(|grant| current.contains(grant) || added.contains(grant))
+        let kept = current
+            .union(&added)
+            .filter(|grant| selected_record(grant))
+            .cloned()
             .collect::<BTreeSet<_>>();
         if kept.len() != current.len() + added.len() {
             let _ = crate::broker::call(
@@ -459,6 +532,7 @@ impl ModStore {
     pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
+        let brokered = brokered_grants(&self.root)?;
         let (managed, mut managed_error) = match self.managed() {
             Ok(managed) => (managed, None),
             Err(error) => (None, Some(error.to_string())),
@@ -498,11 +572,11 @@ impl ModStore {
                         };
                         settings_origin.insert(key, origin);
                     }
-                    let source = lock
-                        .packages
-                        .values()
-                        .find(|item| item.path == selection.path && item.scope == selection.scope)
-                        .map(|item| super::policy::source_reference(&item.source));
+                    let source = authenticated_source(
+                        selection,
+                        &manifest.id,
+                        brokered.as_ref().map(|(_, grants)| grants),
+                    );
                     let error = if integrity != selection.sha256 {
                         Some("source_changed: inspect and trust the new digest".to_owned())
                     } else if !administered
@@ -747,6 +821,53 @@ impl ModStore {
         Ok(())
     }
 
+    pub fn broker_grants_import(&self, snapshot: Option<Value>) -> Result<Value> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        let config = self.configuration()?;
+        let current = serde_json::to_value(&config)?;
+        let Some(snapshot) = snapshot else {
+            return Ok(current);
+        };
+        if snapshot != current {
+            return Err(failure("broker_import_configuration_changed"));
+        }
+        let mut approved = BTreeSet::new();
+        let mut skipped = Vec::new();
+        for selection in &config.mods {
+            let eligible = (|| {
+                let (manifest, _, hash) = package(&selection.path)?;
+                if hash != selection.sha256
+                    || !super::MOD_SCOPES.contains(&selection.scope.as_str())
+                    || selection.tier.is_some()
+                    || manifest
+                        .capabilities
+                        .iter()
+                        .any(|capability| !selection.capabilities.contains(capability))
+                    || selection
+                        .capabilities
+                        .iter()
+                        .any(|capability| !super::MOD_CAPABILITIES.contains(&capability.as_str()))
+                {
+                    return Err(failure("broker_import_selection_changed"));
+                }
+                super::check_secret_environment(&manifest, &selection.secret_environment)?;
+                super::validate_settings(&manifest, &selection.settings)?;
+                Ok::<_, std::io::Error>(())
+            })();
+            match eligible {
+                Ok(()) => {
+                    approved.insert(grant(&json!(selection)));
+                }
+                Err(error) => {
+                    skipped.push(json!({"path":selection.path,"reason":error.to_string()}))
+                }
+            }
+        }
+        self.write_granting("mods.json", &current, &approved)?;
+        Ok(json!({"imported": approved.len(), "skipped": skipped}))
+    }
+
     /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
     pub fn revoke(&self, target: &str) -> Result<()> {
         let _lock = self.lock()?;
@@ -786,7 +907,7 @@ impl ModStore {
                 .revision
                 .checked_add(1)
                 .ok_or_else(|| failure("revision_overflow"))?;
-            self.commit_package_transaction(lock, config, &[], "revoke", event)?;
+            self.commit_package_transaction(lock, config, &[], "revoke", event, &[])?;
             Ok(())
         } else {
             self.write("mods.json", &serde_json::to_value(config)?)?;

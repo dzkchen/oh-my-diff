@@ -1633,11 +1633,49 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tool_inventory_observation_tracks_consumers() {
+    use codex_extension_api::ToolSpecContributor;
+    if let Some(empty) = fixture(&[]) {
+        let thread = ExtensionData::new("thread");
+        thread.insert(empty.lead.clone());
+        assert!(!mods(&empty.core).observing(&thread));
+    }
+    for (capabilities, source) in [
+        (vec!["inventory"], "export default api => {}"),
+        (
+            vec!["interception"],
+            "export default api => api.intercept('tool', (e, next) => next(e))",
+        ),
+        (
+            vec!["interception", "tools"],
+            "export default api => api.intercept('tool_specs', (e, next) => next(e))",
+        ),
+    ] {
+        let Some(fixture) = fixture(&[Package {
+            id: "consumer",
+            capabilities: &capabilities,
+            source,
+            manifest: json!({}),
+        }]) else {
+            return;
+        };
+        let thread = ExtensionData::new("thread");
+        thread.insert(fixture.lead.clone());
+        assert!(mods(&fixture.core).observing(&thread), "{source}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments() {
     use codex_extension_api::ToolInventoryEntry;
     use codex_extension_api::ToolInventoryView;
     use codex_extension_api::ToolSpecContributor;
-    let Some(fixture) = fixture(&[]) else {
+    let Some(fixture) = fixture(&[Package {
+        id: "consumer",
+        capabilities: &["inventory"],
+        source: "export default api => {}",
+        manifest: json!({}),
+    }]) else {
         return;
     };
     let mods = mods(&fixture.core);
@@ -1701,6 +1739,18 @@ async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates
     );
     assert_eq!(validate("patch", json!("anything"), true), Ok(()));
     assert_eq!(validate("unknown", json!(1), true), Ok(()));
+    ModStore::open(fixture.lead.host.root.clone())
+        .unwrap()
+        .revoke("consumer")
+        .unwrap();
+    {
+        let mut runtime = fixture.core.runtime.lock().unwrap();
+        runtime.reload().unwrap();
+        fixture.core.expansion.refresh(&runtime);
+    }
+    assert!(!mods.observing(&thread_store));
+    mods.observe_tool_inventory(&thread_store, &tools);
+    assert_eq!(validate("loose", json!({}), false), Ok(()));
     mods.on_thread_stop(ThreadStopInput {
         session_store: &ExtensionData::new("session".to_owned()),
         thread_store: &thread_store,

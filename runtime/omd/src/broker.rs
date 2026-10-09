@@ -29,7 +29,7 @@ const PASSWORD_PROMPT: &str =
     "Enter your macOS login password to change protected mod grants or credentials.";
 const LINE_BYTES: u64 = 1 << 20;
 const GRANTS_LIMIT: usize = 256;
-const POLICY_VALUE_BYTES: usize = 16_384;
+const POLICY_VALUE_BYTES: usize = 65_536;
 
 fn failure(code: &str) -> io::Error {
     io::Error::other(code.to_owned())

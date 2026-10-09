@@ -428,6 +428,12 @@ fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads
         active(&host).is_empty(),
         "an untrusted policy source loads no mods"
     );
+    assert_eq!(host.intercepts("tool"), Some(true));
+    let runtime = Mutex::new(host);
+    let mut calls = Vec::new();
+    assert!(tool(&runtime, "exec", &mut calls).is_err());
+    assert!(calls.is_empty());
+    let mut host = runtime.into_inner().unwrap();
     assert!(
         store.selection_status().unwrap()["managed_error"]
             .as_str()
@@ -464,11 +470,18 @@ fn tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads
     let cached = store.managed_deployment().unwrap().packages[0].path.clone();
     std::fs::write(cached.join("index.ts"), TRANSFORM).unwrap();
     let mut host = ModHost::open(admin.root.join("store-alice")).unwrap();
-    let stale = host
-        .set_managed_policy(admin.policy.clone(), admin.owner, "alice")
-        .unwrap_err()
-        .to_string();
+    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
+        .unwrap();
+    let stale = host.status()["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["reason"].as_str())
+        .find(|reason| reason.starts_with("managed_content_stale"))
+        .unwrap()
+        .to_owned();
     assert!(stale.starts_with("managed_content_stale"), "{stale}");
+    assert_eq!(host.intercepts("tool"), Some(true));
 }
 
 #[test]
@@ -580,6 +593,288 @@ fn managed_targets_that_are_not_running_fail_their_surfaces_closed() {
         tool(&runtime, "exec", &mut calls).unwrap().result["output"],
         "ran G"
     );
+}
+
+#[test]
+fn policy_source_namespaces_do_not_include_siblings() {
+    let policy = codex_omd::ManagedPolicy::parse(
+        json!({"schema":1,"sources":["git+https://github.com/acme"]}),
+    )
+    .unwrap();
+    assert!(policy.source_allowed("git+https://github.com/acme/repo"));
+    assert!(!policy.source_allowed("git+https://github.com/acme-evil/repo"));
+    assert!(!policy.source_allowed("git+https://github.com/acme/../evil/repo"));
+    assert!(!policy.source_allowed("git+https://github.com/acme/%2e%2e/evil/repo"));
+}
+
+#[test]
+fn policy_hashes_use_canonical_lowercase() {
+    assert!(
+        codex_omd::ManagedPolicy::parse(
+            json!({"schema":1,"index":{"sha256":"A".repeat(64),"locations":["/index"]}})
+        )
+        .is_err()
+    );
+    assert!(codex_omd::ManagedPolicy::parse(json!({"schema":1,"packages":[{"id":"guard","source":"/guard","sha256":"A".repeat(64),"capabilities":[]}]})).is_err());
+}
+
+#[test]
+fn forged_deployment_dependencies_cannot_load_unassigned_packages() {
+    let admin = Admin::new();
+    let (app, app_sha) = admin.package("app", "app", TRANSFORM, &["interception"]);
+    let (hidden, hidden_sha) = admin.package("hidden", "hidden", COMMAND, &["commands"]);
+    admin.administer(json!({"schema":1,"packages":[
+        entry("app", &app, &app_sha, json!({"dependencies":true})),
+        entry("hidden", &hidden, &hidden_sha, json!({"capabilities":["commands"],"users":["bob"]}))
+    ]}), "bob");
+    let mut deployment = admin.store("bob").managed_deployment().unwrap();
+    deployment
+        .packages
+        .iter_mut()
+        .find(|package| package.id == "app")
+        .unwrap()
+        .dependencies
+        .push(hidden_sha);
+    admin.store("alice");
+    std::fs::write(
+        admin.root.join("store-alice/managed.json"),
+        serde_json::to_vec(&deployment).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(active(&admin.host("alice")), ["app@1.0.0"]);
+}
+
+#[test]
+fn forged_deployment_versions_cannot_load_incompatible_dependencies() {
+    let admin = Admin::new();
+    let (library, library_sha) = admin.package("alpha", "alpha", COMMAND, &["commands"]);
+    let (other, other_sha) = admin.versioned(
+        "alpha2",
+        "alpha",
+        "2.0.0",
+        COMMAND,
+        &["commands"],
+        json!({}),
+    );
+    let index = admin.root.join("index.json");
+    let index_bytes = serde_json::to_vec(&json!({"schema":1,"packages":{"alpha":[{
+        "version":"1.0.0","source":{"kind":"local","path":library},"integrity":library_sha
+    }]}}))
+    .unwrap();
+    std::fs::write(&index, &index_bytes).unwrap();
+    let (app, app_sha) = admin.versioned(
+        "app",
+        "app",
+        "1.0.0",
+        TRANSFORM,
+        &["interception"],
+        json!({"dependencies":[{"id":"alpha","version":"1.0.0"}]}),
+    );
+    admin.administer(json!({"schema":1,"index":{
+        "sha256":format!("{:x}",sha2::Sha256::digest(&index_bytes)),"locations":[index]
+    },"packages":[
+        entry("app", &app, &app_sha, json!({"dependencies":true})),
+        entry("alpha", &other, &other_sha, json!({"capabilities":["commands"],"users":["bob"]})),
+        entry("alpha", &library, &library_sha, json!({"capabilities":["commands"],"users":["bob"]}))
+    ]}), "alice");
+    assert_eq!(active(&admin.host("alice")), ["alpha@1.0.0", "app@1.0.0"]);
+    let mut deployment = admin.store("alice").managed_deployment().unwrap();
+    let dependency = deployment
+        .packages
+        .iter_mut()
+        .find(|package| package.id == "alpha")
+        .unwrap();
+    dependency.path = other;
+    dependency.sha256 = other_sha;
+    dependency.version = "1.0.0".into();
+    std::fs::write(
+        admin.root.join("store-alice/managed.json"),
+        serde_json::to_vec(&deployment).unwrap(),
+    )
+    .unwrap();
+    assert!(!active(&admin.host("alice")).contains(&"alpha@2.0.0".to_owned()));
+}
+
+#[test]
+fn broker_import_preserves_exact_selections_under_sideload_restrictions() {
+    let admin = Admin::new();
+    let store = admin.store("alice");
+    let (plain, sha) = admin.versioned(
+        "plain",
+        "plain",
+        "1.0.0",
+        "export default api => {}",
+        &["exec"],
+        json!({"exec_environment":["API_TOKEN", "PUBLIC_VALUE"]}),
+    );
+    store
+        .trust_with_secrets(
+            plain.clone(),
+            &sha,
+            vec!["exec".into()],
+            "project",
+            vec!["API_TOKEN".into()],
+        )
+        .unwrap();
+    store.enable(&plain, true).unwrap();
+    let config_path = admin.root.join("store-alice/mods.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    config["mods"][0]["expires_at"] = json!(4_000_000_000u64);
+    std::fs::write(config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+    let snapshot = store.broker_grants_import(None).unwrap();
+    admin.write_policy(json!({"schema":1,"sideload":false}));
+    store.broker_grants_import(Some(snapshot.clone())).unwrap();
+    assert_eq!(store.broker_grants_import(None).unwrap(), snapshot);
+    let mut changed = snapshot;
+    changed["mods"][0]["enabled"] = json!(false);
+    assert!(store.broker_grants_import(Some(changed)).is_err());
+    std::fs::write(plain.join("index.ts"), "stale").unwrap();
+    let snapshot = store.broker_grants_import(None).unwrap();
+    let imported = store.broker_grants_import(Some(snapshot.clone())).unwrap();
+    assert_eq!(imported["imported"], 0);
+    assert_eq!(imported["skipped"].as_array().unwrap().len(), 1);
+    assert_eq!(store.broker_grants_import(None).unwrap(), snapshot);
+}
+
+#[test]
+fn corrupt_inventory_does_not_prevent_host_open() {
+    let admin = Admin::new();
+    admin.store("alice");
+    std::fs::write(admin.root.join("store-alice/tool-inventory.json"), "{").unwrap();
+    let host = ModHost::open(admin.root.join("store-alice")).unwrap();
+    assert!(
+        host.status()["reload_error"]
+            .as_str()
+            .unwrap()
+            .starts_with("derived_types_unavailable")
+    );
+}
+
+#[test]
+fn policy_refresh_survives_a_broken_user_mod() {
+    let admin = Admin::new();
+    let store = admin.store("alice");
+    let (plain, sha) = admin.package("plain", "plain", TRANSFORM, &["interception"]);
+    trust(&store, &plain, &sha, &["interception"], "user");
+    admin.write_policy(json!({"schema": 1}));
+    let mut host = admin.host("alice");
+    std::fs::write(plain.join("index.ts"), "invalid").unwrap();
+    let (guard, sha) = admin.package("guard", "guard", GUARD, &["interception"]);
+    admin.administer(
+        json!({"schema": 1, "deny": ["plain"], "packages": [
+        entry("guard", &guard, &sha, json!({"tier":"append"}))]}),
+        "alice",
+    );
+    host.set_managed_policy(admin.policy.clone(), admin.owner, "alice")
+        .unwrap();
+    assert_eq!(active(&host), ["guard@1.0.0"]);
+    let runtime = Mutex::new(host);
+    let mut calls = Vec::new();
+    assert_eq!(
+        tool(&runtime, "blocked", &mut calls).unwrap().result["deny"],
+        "blocked by guard"
+    );
+    assert!(calls.is_empty());
+}
+
+#[test]
+fn managed_sync_ignores_broken_user_configuration_and_lock() {
+    let admin = Admin::new();
+    let store = admin.store("alice");
+    let (guard, sha) = admin.package("guard", "guard", GUARD, &["interception"]);
+    admin.write_policy(json!({"schema":1,"packages":[entry("guard", &guard, &sha, json!({}))]}));
+    std::fs::write(admin.root.join("store-alice/mods.json"), "{").unwrap();
+    std::fs::write(admin.root.join("store-alice/packages.lock.json"), "{").unwrap();
+    std::fs::write(admin.root.join("store-alice/package-transaction.json"), "{").unwrap();
+    store.package_sync(false).unwrap();
+    assert_eq!(deployed(&store), ["guard@1.0.0"]);
+    let remote = "https://127.0.0.1:9/managed.git";
+    let (library, library_sha) = admin.package("alpha", "alpha", COMMAND, &["commands"]);
+    let (app, app_sha) = admin.versioned(
+        "app",
+        "app",
+        "1.0.0",
+        TRANSFORM,
+        &["interception"],
+        json!({"dependencies":[{"id":"alpha","version":"1.0.0"}],
+            "provenance":{"maintainer":"Fixture Admin","source":remote}}),
+    );
+    let git = |arguments: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&app)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init"]);
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.com",
+        "commit",
+        "-m",
+        "fixture",
+    ]);
+    let revision = git(&["rev-parse", "HEAD"]);
+    let repositories = admin.root.join("store-alice/repository-cache");
+    std::fs::create_dir_all(&repositories).unwrap();
+    let cached = repositories.join(format!("{:x}.git", sha2::Sha256::digest(remote.as_bytes())));
+    git(&[
+        "clone",
+        "--bare",
+        app.to_str().unwrap(),
+        cached.to_str().unwrap(),
+    ]);
+    let index = admin.root.join("index.json");
+    let index_bytes = serde_json::to_vec(&json!({"schema":1,"packages":{
+        "app":[{"version":"1.0.0","source":{"kind":"repository","repository":remote,
+            "revision":revision},"integrity":app_sha}],
+        "alpha":[{"version":"1.0.0","source":{"kind":"local","path":library},"integrity":library_sha}]
+    }})).unwrap();
+    std::fs::write(&index, &index_bytes).unwrap();
+    admin.write_policy(json!({"schema":1,"index":{
+        "sha256":format!("{:x}",sha2::Sha256::digest(&index_bytes)),"locations":[index]
+    },"packages":[
+        {"id":"app","source":"app@1.0.0","sha256":app_sha,"capabilities":["interception"],"dependencies":true},
+        entry("alpha", &library, &library_sha, json!({"capabilities":["commands"],"users":["bob"]}))
+    ]}));
+    store.package_sync(true).unwrap();
+    assert_eq!(deployed(&store), ["alpha@1.0.0", "app@1.0.0"]);
+    let mut policy: Value = serde_json::from_slice(&std::fs::read(&admin.policy).unwrap()).unwrap();
+    policy["packages"][0]["source"] = json!("npm:app@1.0.0");
+    policy["registry"] = json!("https://127.0.0.1:9");
+    admin.write_policy(policy);
+    store.package_sync(true).unwrap();
+    assert_eq!(deployed(&store), ["alpha@1.0.0", "app@1.0.0"]);
+}
+
+#[test]
+fn unmatched_managed_guard_allows_a_virtual_answer() {
+    let admin = Admin::new();
+    let store = admin.store("alice");
+    let (answer, sha) = admin.package("answer", "answer", ANSWER, &["interception"]);
+    trust(&store, &answer, &sha, &["interception"], "user");
+    let (guard, sha) = admin.package("guard", "guard", "export default api => api.intercept('tool', {required: true, match: {tool: ['other']}}, (e, next) => next(e))", &["interception"]);
+    admin.administer(
+        json!({"schema":1,"packages":[entry("guard", &guard, &sha, json!({"tier":"append"}))]}),
+        "alice",
+    );
+    let runtime = Mutex::new(admin.host("alice"));
+    let mut calls = Vec::new();
+    assert_eq!(
+        tool(&runtime, "cached", &mut calls).unwrap().result["output"],
+        "cached"
+    );
+    assert!(calls.is_empty());
 }
 
 #[test]
@@ -904,8 +1199,12 @@ fn managed_policy_refuses_user_installs_outside_allowed_sources_and_versions() {
     store
         .package_apply(install(&allowed, "allowed"), &plan.confirmation)
         .unwrap();
+    store.package_enable("allowed").unwrap();
     admin.write_policy(json!({"schema": 1, "updates": "managed",
         "sources": [admin.root.join("allowed").display().to_string()]}));
+    let host = admin.host("alice");
+    assert!(active(&host).is_empty());
+    assert!(rejection(&host, "allowed").starts_with("managed_source_unverified"));
     let refused = store
         .package_plan(install(&outside, "outside"))
         .unwrap_err()

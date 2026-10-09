@@ -1,7 +1,6 @@
 use serde_json::Value;
 use std::io;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -226,18 +225,14 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
         return Ok(());
     }
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(&temporary)?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| std::fs::rename(&temporary, path))
-        .inspect_err(|_| {
-            let _ = std::fs::remove_file(&temporary);
-        })
+    let mut file = tempfile::NamedTempFile::new_in(
+        path.parent()
+            .ok_or_else(|| io::Error::other("type_output_parent_missing"))?,
+    )?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 pub fn write_inventory(root: &Path, inventory: &Value) -> io::Result<()> {
@@ -268,6 +263,24 @@ mod tests {
             "paths": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "number"}]}},
             "timeout": {"type": ["integer", "null"]}},
             "required": ["cmd"], "additionalProperties": false})
+    }
+
+    #[test]
+    fn derived_types_allow_concurrent_writers_and_stale_temporaries() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(TYPES_FILE);
+        std::fs::write(
+            path.with_extension(format!("{}.tmp", std::process::id())),
+            "stale",
+        )
+        .unwrap();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let path = &path;
+                scope.spawn(move || write_if_changed(path, b"types").unwrap());
+            }
+        });
+        assert_eq!(std::fs::read(path).unwrap(), b"types");
     }
 
     #[test]
