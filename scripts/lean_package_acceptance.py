@@ -79,12 +79,12 @@ def run(archive, sha256, upstream, output):
                 assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == sorted(expected_defaults())
                 assert {item["id"] for item in status["packages"] if item["active"]} == set(expected_defaults())
                 assert len(status["plugin_bundle"]["plugins"]) == 3
-                disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_workspace"], environment)
+                disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_inspector"], environment)
                 assert not next(item for item in disabled["packages"]
-                                if item["id"] == "omd_workspace")["enabled_in_store"]
-                enabled = call([bin_dir / "omd-package", "mod", "enable", "omd_workspace"], environment)
+                                if item["id"] == "omd_inspector")["enabled_in_store"]
+                enabled = call([bin_dir / "omd-package", "mod", "enable", "omd_inspector"], environment)
                 assert next(item for item in enabled["packages"]
-                            if item["id"] == "omd_workspace")["loaded_by_profile"]
+                            if item["id"] == "omd_inspector")["loaded_by_profile"]
             direct = call([bin_dir / "omd-package", "activate", "direct"], environment)
             assert direct["host_mode"] == "upstream_direct"
             removed = call([bin_dir / "omd-package", "uninstall"], environment)

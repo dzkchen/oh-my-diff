@@ -30,6 +30,8 @@ pub struct ModView {
     pub sidebar_width: u16,
     #[serde(default)]
     pub sidebar_side: ModSidebarSide,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_style: Option<ModBoxStyle>,
     #[serde(default)]
     pub panels: Vec<ModPanel>,
     #[serde(default)]
@@ -76,6 +78,8 @@ pub struct ModViewPatch {
     #[serde(default)]
     pub sidebar_side: Option<ModSidebarSide>,
     #[serde(default)]
+    pub sidebar_style: Option<ModBoxStyle>,
+    #[serde(default)]
     pub panels: Option<Vec<ModPanel>>,
     #[serde(default)]
     pub header: Option<ModPanel>,
@@ -118,6 +122,8 @@ pub enum ModSplit {
 #[serde(deny_unknown_fields)]
 pub struct ModLayoutLeaf {
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<ModBoxStyle>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -126,6 +132,8 @@ pub struct ModLayoutSplit {
     pub split: ModSplit,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ratio: Vec<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<u8>,
     pub children: Vec<ModLayout>,
 }
 
@@ -160,11 +168,19 @@ impl ModLayout {
         match self {
             Self::Leaf(leaf) => {
                 leaves.push(leaf.content.clone());
-                matches!(leaf.content.as_str(), "transcript" | "composer")
-                    || leaf.content.strip_prefix("site:").is_some_and(valid_site)
+                match leaf.content.strip_prefix("site:") {
+                    Some(site) => {
+                        valid_site(site) && leaf.style.as_ref().is_none_or(ModBoxStyle::still)
+                    }
+                    None => {
+                        matches!(leaf.content.as_str(), "transcript" | "composer")
+                            && leaf.style.is_none()
+                    }
+                }
             }
             Self::Split(split) => {
                 (2..=4).contains(&split.children.len())
+                    && split.gap.is_none_or(|gap| gap <= 4)
                     && (split.ratio.is_empty() || split.ratio.len() == split.children.len())
                     && split.ratio.iter().all(|ratio| (1..=100).contains(ratio))
                     && split
@@ -433,8 +449,116 @@ pub struct ModOverlay {
     pub z: u8,
     #[serde(default)]
     pub clip: ModOverlayClip,
-    #[serde(default)]
-    pub border: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<ModBoxStyle>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModBoxBorder {
+    None,
+    Plain,
+    Rounded,
+    Double,
+    Thick,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModDirection {
+    #[default]
+    Column,
+    Row,
+}
+
+/// Cells around a box: one value for every side, or `[vertical, horizontal]`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ModSpacing {
+    All(u8),
+    Axes([u8; 2]),
+}
+
+impl ModSpacing {
+    pub fn axes(self) -> (u16, u16) {
+        match self {
+            Self::All(all) => (u16::from(all), u16::from(all)),
+            Self::Axes([vertical, horizontal]) => (u16::from(vertical), u16::from(horizontal)),
+        }
+    }
+
+    fn valid(self) -> bool {
+        let (vertical, horizontal) = self.axes();
+        vertical <= 4 && horizontal <= 4
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ModPaint {
+    Tone(ModTone),
+    Color(ModColor),
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModBoxAccent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ModBoxBorder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<ModPaint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<ModPaint>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModBoxStyle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ModBoxBorder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padding: Option<ModSpacing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin: Option<ModSpacing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<ModPaint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<ModPaint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<ModDirection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hover: Option<ModBoxAccent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<ModBoxAccent>,
+}
+
+impl ModBoxStyle {
+    pub fn valid(&self) -> bool {
+        self.padding.is_none_or(ModSpacing::valid)
+            && self.margin.is_none_or(ModSpacing::valid)
+            && self.gap.is_none_or(|gap| gap <= 4)
+    }
+
+    pub fn still(&self) -> bool {
+        self.valid() && self.hover.is_none() && self.focus.is_none()
+    }
+
+    /// Fields set here win over `base`.
+    pub fn over(self, base: Self) -> Self {
+        Self {
+            border: self.border.or(base.border),
+            padding: self.padding.or(base.padding),
+            margin: self.margin.or(base.margin),
+            gap: self.gap.or(base.gap),
+            background: self.background.or(base.background),
+            foreground: self.foreground.or(base.foreground),
+            direction: self.direction.or(base.direction),
+            hover: self.hover.or(base.hover),
+            focus: self.focus.or(base.focus),
+        }
+    }
 }
 
 impl ModOverlay {
@@ -442,6 +566,7 @@ impl ModOverlay {
         (1..=200).contains(&self.width)
             && (1..=60).contains(&self.height)
             && self.z <= 9
+            && self.style.as_ref().is_none_or(ModBoxStyle::still)
             && self.offset.as_ref().is_none_or(|offset| {
                 offset.x.unsigned_abs() <= 500 && offset.y.unsigned_abs() <= 200
             })
@@ -468,6 +593,10 @@ pub enum ModComponent {
         max_width: Option<u16>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pointer: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<ModBoxStyle>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flex: Option<u8>,
     },
     Line {
         id: String,
@@ -552,6 +681,16 @@ pub enum ModComponent {
         keys: bool,
         #[serde(default)]
         children: Vec<ModComponent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_width: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_width: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<ModBoxStyle>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flex: Option<u8>,
     },
     Dialog {
         id: String,
@@ -559,6 +698,8 @@ pub enum ModComponent {
         title: String,
         #[serde(default)]
         children: Vec<ModComponent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<ModBoxStyle>,
     },
     List {
         id: String,
@@ -740,17 +881,32 @@ impl ModComponent {
         }
     }
 
-    pub fn fits(&self, width: u16) -> bool {
+    pub fn flex(&self) -> u16 {
+        match self {
+            Self::Box { flex, .. } | Self::Pane { flex, .. } => u16::from(flex.unwrap_or(1)),
+            _ => 1,
+        }
+    }
+
+    pub fn width_bounds(&self) -> (Option<u16>, Option<u16>) {
         match self {
             Self::Box {
                 min_width,
                 max_width,
                 ..
-            } => {
-                min_width.is_none_or(|min| width >= min) && max_width.is_none_or(|max| width <= max)
             }
-            _ => true,
+            | Self::Pane {
+                min_width,
+                max_width,
+                ..
+            } => (*min_width, *max_width),
+            _ => (None, None),
         }
+    }
+
+    pub fn fits(&self, width: u16) -> bool {
+        let (min_width, max_width) = self.width_bounds();
+        min_width.is_none_or(|min| width >= min) && max_width.is_none_or(|max| width <= max)
     }
 }
 
@@ -1247,6 +1403,19 @@ impl ModComponent {
                 children: nested,
                 min_width,
                 max_width,
+                style,
+                flex,
+                ..
+            }
+            | Self::Pane {
+                id,
+                label,
+                title,
+                children: nested,
+                min_width,
+                max_width,
+                style,
+                flex,
                 ..
             } => {
                 let bound =
@@ -1258,6 +1427,8 @@ impl ModComponent {
                     && min_width
                         .zip(*max_width)
                         .is_none_or(|(min, max)| min <= max)
+                    && style.as_ref().is_none_or(ModBoxStyle::valid)
+                    && flex.is_none_or(|flex| (1..=12).contains(&flex))
                     && children(nested, count, ids, slots)
             }
             Self::Line { id, label, spans } => {
@@ -1271,26 +1442,17 @@ impl ModComponent {
                         .sum::<usize>()
                         <= 256
             }
-            Self::Pane {
-                id,
-                label,
-                title,
-                children: nested,
-                ..
-            } => {
-                identified(id, label, ids)
-                    && title.as_ref().is_none_or(|title| visible(title, 128))
-                    && children(nested, count, ids, slots)
-            }
             Self::Dialog {
                 id,
                 label,
                 title,
                 children: nested,
+                style,
             } => {
                 identified(id, label, ids)
                     && !title.is_empty()
                     && visible(title, 128)
+                    && style.as_ref().is_none_or(ModBoxStyle::still)
                     && children(nested, count, ids, slots)
             }
             Self::Text {
@@ -1519,8 +1681,11 @@ pub fn invalid_render_tree(tree: &[ModComponent]) -> Option<String> {
         let presentational = !component.contains(&|component| {
             !matches!(
                 component,
-                ModComponent::Box { .. }
-                    | ModComponent::Line { .. }
+                ModComponent::Box {
+                    style: None,
+                    flex: None,
+                    ..
+                } | ModComponent::Line { .. }
                     | ModComponent::Text { .. }
                     | ModComponent::Markdown { .. }
                     | ModComponent::Code { .. }
@@ -1658,51 +1823,17 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
         .into_iter()
         .flat_map(|component| match component {
             ModComponent::Slot => current.to_vec(),
-            ModComponent::Box {
-                id,
-                label,
-                title,
-                children,
-                min_width,
-                max_width,
-                pointer,
-            } => vec![ModComponent::Box {
-                id,
-                label,
-                title,
-                children: replace_slot(children, current),
-                min_width,
-                max_width,
-                pointer,
-            }],
-            ModComponent::Pane {
-                id,
-                label,
-                title,
-                collapsed,
-                scroll,
-                keys,
-                children,
-            } => vec![ModComponent::Pane {
-                id,
-                label,
-                title,
-                collapsed,
-                scroll,
-                keys,
-                children: replace_slot(children, current),
-            }],
-            ModComponent::Dialog {
-                id,
-                label,
-                title,
-                children,
-            } => vec![ModComponent::Dialog {
-                id,
-                label,
-                title,
-                children: replace_slot(children, current),
-            }],
+            mut component @ (ModComponent::Box { .. }
+            | ModComponent::Pane { .. }
+            | ModComponent::Dialog { .. }) => {
+                if let ModComponent::Box { children, .. }
+                | ModComponent::Pane { children, .. }
+                | ModComponent::Dialog { children, .. } = &mut component
+                {
+                    *children = replace_slot(std::mem::take(children), current);
+                }
+                vec![component]
+            }
             component => vec![component],
         })
         .collect()
@@ -1760,6 +1891,13 @@ impl ModViewPatch {
             (
                 "sidebar_width",
                 patch.sidebar_width.is_some_and(|width| width > 60),
+            ),
+            (
+                "sidebar_style",
+                patch
+                    .sidebar_style
+                    .as_ref()
+                    .is_some_and(|style| !style.still()),
             ),
             (
                 "title",
@@ -1869,7 +2007,8 @@ impl ModViewPatch {
             title,
             foreground,
             background,
-            inline_sites
+            inline_sites,
+            sidebar_style
         );
         if let Some(width) = self.sidebar_width {
             candidate.sidebar_width = width;
@@ -1989,6 +2128,12 @@ impl ModView {
                     .is_some_and(|text| !visible(text, 256)),
             ),
             ("sidebar_width", view.sidebar_width > 60),
+            (
+                "sidebar_style",
+                view.sidebar_style
+                    .as_ref()
+                    .is_some_and(|style| !style.still()),
+            ),
             (
                 "panels",
                 view.panels.len() > 8 || view.panels.iter().any(|panel| !panel.valid(32)),

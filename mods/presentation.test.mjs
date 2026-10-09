@@ -79,21 +79,6 @@ test('logo follows host acceptance and installed identity without persistent tas
   assert.deepEqual(unreported.value.sites, {});
 });
 
-test('workspace uses the current ledger', () => {
-  const workspace = run('omd_workspace', { capabilities: ['terminal', 'commands', 'lifecycle', 'store', 'threads', 'config'], event: 'terminal', payload: { event: 'idle', ledger: { thread_id: '1234567890abcdef', cost: null } } });
-  assert.equal(workspace.value.sites.sidebar.components[0].title, 'Activity');
-  assert.doesNotMatch(JSON.stringify(workspace.value), /1234567890|"schema"/);
-  assert.equal(JSON.stringify(workspace.value).includes('No live workers'), false);
-  assert.deepEqual(workspace.value.sites.header.components[0].spans.map(span => span.text), ['Ready', '  Tab panels · Enter folds · F6 review · F7 layout']);
-  const capabilities = ['terminal', 'commands', 'lifecycle', 'store', 'threads', 'config'];
-  const notify = (state, thread, method, params) => run('omd_workspace', { capabilities, state, event: 'app_notification', payload: { method, params, thread_id: thread, coalesced: 0, dropped: 0 } }).state;
-  let state = notify(null, 'main', 'thread/settings/updated', { threadSettings: { model: 'gpt-6.1-sol', effort: 'high' } });
-  state = notify(state, 'main', 'thread/tokenUsage/updated', { tokenUsage: { last: { totalTokens: 200000 }, modelContextWindow: 258000 } });
-  state = notify(state, 'child', 'thread/settings/updated', { threadSettings: { model: 'helper' } });
-  const session = run('omd_workspace', { capabilities, state, event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'main', cost: { settled_task_charge_microusd: 1_500_000 } } } }).value.sites.sidebar.components[0];
-  assert.deepEqual(session.children.map(line => [line.text, line.tone]), [['gpt-6.1-sol · high', 'normal'], ['Context 78% of 258k', 'attention'], ['Paid API $1.50', 'muted']]);
-});
-
 test('inspector opens from live host status and fails visibly when status is unavailable', () => {
   const capabilities = ['agents', 'commands', 'contracts', 'store', 'terminal', 'events'];
   const receipts = [

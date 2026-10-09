@@ -27853,7 +27853,7 @@ index 45f586651..386c5fdd7 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 5dfc3ad7b..4076c9d35 100644
+index 5dfc3ad7b..de036a916 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -233,6 +233,10 @@ mod link_hover;
@@ -28012,18 +28012,32 @@ index 5dfc3ad7b..4076c9d35 100644
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1198,23 +1302,35 @@ impl App {
+@@ -1188,33 +1292,47 @@ impl App {
+             &mut self.agents_overview.rendered_full_screen,
+             dashboard_visible,
+         );
++        let mod_snapshot = crate::mod_ui::inline_snapshot(self.mod_render_snapshot());
++        let mod_dialog_visible = crate::mod_ui::dialog_visible(&mod_snapshot);
++        let screen = Rect::new(0, 0, screen_size.width, screen_size.height);
++        let header_rows = crate::mod_ui::header_rows(screen, &mod_snapshot);
++        let chat_width = crate::mod_ui::chat_area(screen, &mod_snapshot, header_rows).width;
+         // Full-height inline overlays scroll history off screen without a terminal resize.
+         // Rebuild it once when returning to a content-height chat viewport.
+         let restoring_inline_viewport = !tui.is_alt_screen_active()
++            && !mod_dialog_visible
+             && tui.terminal.viewport_area.height == screen_size.height
+-            && self.with_chat_widget_frame(screen_size.width, |height, _| height)
++            && self
++                .with_chat_widget_frame(chat_width, |height, _| height)
++                .saturating_add(header_rows)
+                 < screen_size.height;
+         if !dashboard_visible && (dashboard_was_visible || restoring_inline_viewport) {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
-+        let mod_snapshot = crate::mod_ui::inline_snapshot(self.mod_render_snapshot());
-+        let header_rows = crate::mod_ui::header_rows(
-+            Rect::new(0, 0, screen_size.width, screen_size.height),
-+            &mod_snapshot,
-+        );
-+        let mod_dialog_visible = crate::mod_ui::dialog_visible(&mod_snapshot);
-         self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
+-        self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
 -            let desired_height = if dashboard_visible {
++        self.with_chat_widget_frame(chat_width, |desired_height, chat_widget| {
 +            let desired_height = if dashboard_visible || mod_dialog_visible {
                  screen_size.height
              } else {
@@ -28721,7 +28735,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 3fcd0cd23..8dac4902d 100644
+index 3fcd0cd23..4323fb198 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -63,8 +63,9 @@ impl App {
@@ -28770,7 +28784,7 @@ index 3fcd0cd23..8dac4902d 100644
          let chat_widget = &self.chat_widget;
          let view = &mut self.transcript_view;
          let active_key = chat_widget.active_cell_transcript_key();
-@@ -112,10 +126,7 @@ impl App {
+@@ -112,17 +126,14 @@ impl App {
              tui.frame_requester().schedule_frame();
          }
          let footer_area = crate::bottom_pane::inset_footer_hint_area(Rect::new(
@@ -28781,7 +28795,18 @@ index 3fcd0cd23..8dac4902d 100644
 +            area.x, area.y, area.width, /*height*/ 1,
          ));
          let footer = view.footer_with_navigation(footer_area.width, motion, latest_navigation);
-         // Cap the whole composer (including padding and hints) at two-thirds of the screen,
+-        // Cap the whole composer (including padding and hints) at two-thirds of the screen,
+-        // but allow at least 8 rows on small screens, without exceeding the screen itself.
+-        let max_composer_height = ((u32::from(screen_size.height) * 2 / 3) as u16)
++        // Cap the whole composer (including padding and hints) at two-thirds of the chat area,
++        // but allow at least 8 rows on small screens, without exceeding the area itself.
++        let max_composer_height = ((u32::from(area.height) * 2 / 3) as u16)
+             .max(8)
+-            .min(screen_size.height);
++            .min(area.height);
+         let bottom =
+             chat_widget.bottom_pane_renderable(crate::bottom_pane::ComposerRenderOptions {
+                 max_height: Some(max_composer_height),
 @@ -140,20 +151,13 @@ impl App {
              .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
              .is_some();
@@ -28826,7 +28851,7 @@ index 3fcd0cd23..8dac4902d 100644
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -209,45 +208,42 @@ impl App {
+@@ -209,45 +208,44 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -28879,8 +28904,10 @@ index 3fcd0cd23..8dac4902d 100644
 +                    .empty_state_animation
 +                    .borrow_mut()
 +                    .render_first_screen(
++                        area,
 +                        Rect {
-+                            width: screen_size.width,
++                            x: area.x,
++                            width: area.width,
 +                            ..view.remaining_area()
 +                        },
 +                        frame.buffer,
@@ -28896,7 +28923,7 @@ index 3fcd0cd23..8dac4902d 100644
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -260,8 +256,8 @@ impl App {
+@@ -260,8 +258,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -28907,7 +28934,7 @@ index 3fcd0cd23..8dac4902d 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -270,7 +266,18 @@ impl App {
+@@ -270,16 +268,29 @@ impl App {
              .filter(|_| chat_widget.no_modal_or_popup_active());
              feedback_tick =
                  view.render_composer_gap(follow_area, composer_hint.as_ref(), frame.buffer, now);
@@ -28922,12 +28949,29 @@ index 3fcd0cd23..8dac4902d 100644
 +                &mod_snapshot,
 +            );
 +            if mod_welcome {
-+                crate::mod_ui::render_welcome(view.remaining_area(), frame.buffer, &mod_snapshot);
++                crate::mod_ui::render_welcome(
++                    Rect {
++                        x: area.x,
++                        width: area.width,
++                        ..view.remaining_area()
++                    },
++                    frame.buffer,
++                    &mod_snapshot,
++                );
 +            }
              let dialog = chat_widget.centered_dialog();
              let (foreground, foreground_area): (&dyn Renderable, Rect) =
                  if let Some(dialog) = &dialog {
-@@ -290,12 +297,20 @@ impl App {
+-                    let area = Rect::new(
+-                        /*x*/ 0,
+-                        /*y*/ 0,
+-                        screen_size.width,
+-                        screen_size.height,
+-                    );
+                     dialog.render(area, frame.buffer);
+                     (dialog, area)
+                 } else {
+@@ -290,12 +301,20 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
@@ -29089,7 +29133,7 @@ index 4c4119b34..558b42f47 100644
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index 026fe11ea..737672d72 100644
+index 026fe11ea..4af388195 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -29412,7 +29456,7 @@ index 026fe11ea..737672d72 100644
 +    assert_eq!((bottom.x, bottom.width), (24, 66));
 +    assert!(row(0).contains("± omd header"), "{}", row(0));
 +    assert!(
-+        row(0).starts_with("Mods") || row(1).contains("Git main"),
++        row(0).starts_with("Git main"),
 +        "{}\n{}",
 +        row(0),
 +        row(1)
@@ -35439,6 +35483,125 @@ index 395a8746e..98e4f1481 100644
      }
  }
 
+diff --git a/codex-rs/tui/src/empty_state_animation.rs b/codex-rs/tui/src/empty_state_animation.rs
+index 8003d2df7..535d66481 100644
+--- a/codex-rs/tui/src/empty_state_animation.rs
++++ b/codex-rs/tui/src/empty_state_animation.rs
+@@ -192,6 +192,7 @@ impl EmptyStateAnimation {
+     /// on clear, without restarting or scheduling animation.
+     pub(crate) fn render_first_screen(
+         &mut self,
++        screen: Rect,
+         available: Rect,
+         buffer: &mut Buffer,
+         composer: Option<ComposerState>,
+@@ -199,7 +200,6 @@ impl EmptyStateAnimation {
+     ) -> Option<Duration> {
+         const STAGE_ROWS: u16 = 21;
+         const MIN_STAGE_ROWS: u16 = 14;
+-        let screen = buffer.area;
+         let width = screen.width.saturating_sub(/*rhs*/ 4).min(MAX_COLUMNS);
+         let height = width * STAGE_ROWS / MAX_COLUMNS;
+         if motion == MotionMode::Reduced
+diff --git a/codex-rs/tui/src/empty_state_animation_tests.rs b/codex-rs/tui/src/empty_state_animation_tests.rs
+index 496116a5e..509b2c8f3 100644
+--- a/codex-rs/tui/src/empty_state_animation_tests.rs
++++ b/codex-rs/tui/src/empty_state_animation_tests.rs
+@@ -4,6 +4,53 @@ use super::*;
+ use crossterm::event::KeyModifiers;
+ use pretty_assertions::assert_eq;
+
++#[test]
++fn first_screen_centres_in_the_chat_rect() {
++    let mut animation = EmptyStateAnimation::default();
++    animation.start_fresh();
++    let mut buffer = Buffer::empty(Rect::new(
++        /*x*/ 0, /*y*/ 0, /*width*/ 140, /*height*/ 60,
++    ));
++    for (chat, stage) in [
++        (
++            Rect::new(
++                /*x*/ 40, /*y*/ 0, /*width*/ 100, /*height*/ 44,
++            ),
++            Rect::new(
++                /*x*/ 60, /*y*/ 11, /*width*/ 60, /*height*/ 21,
++            ),
++        ),
++        (
++            Rect::new(
++                /*x*/ 0, /*y*/ 0, /*width*/ 100, /*height*/ 44,
++            ),
++            Rect::new(
++                /*x*/ 20, /*y*/ 11, /*width*/ 60, /*height*/ 21,
++            ),
++        ),
++        (
++            Rect::new(
++                /*x*/ 0, /*y*/ 20, /*width*/ 140, /*height*/ 40,
++            ),
++            Rect::new(
++                /*x*/ 40, /*y*/ 29, /*width*/ 60, /*height*/ 21,
++            ),
++        ),
++    ] {
++        animation.render_first_screen(
++            chat,
++            Rect {
++                height: chat.height - 3,
++                ..chat
++            },
++            &mut buffer,
++            Some(ComposerState::Empty),
++            MotionMode::Animated,
++        );
++        assert_eq!(animation.stage, Some(stage));
++    }
++}
++
+ #[test]
+ fn first_screen_stage_ignores_notices_and_hides_instead_of_shrinking() {
+     let mut animation = EmptyStateAnimation::default();
+@@ -22,6 +69,7 @@ fn first_screen_stage_ignores_notices_and_hides_instead_of_shrinking() {
+         );
+         assert_eq!(
+             animation.render_first_screen(
++                screen,
+                 free,
+                 &mut buffer,
+                 Some(ComposerState::Empty),
+@@ -39,6 +87,7 @@ fn first_screen_stage_ignores_notices_and_hides_instead_of_shrinking() {
+     // Content which reaches the center must win; it must not move the stage down.
+     let free = Rect::new(screen.x, /*y*/ 20, screen.width, /*height*/ 24);
+     animation.render_first_screen(
++        screen,
+         free,
+         &mut buffer,
+         Some(ComposerState::Empty),
+@@ -50,6 +99,7 @@ fn first_screen_stage_ignores_notices_and_hides_instead_of_shrinking() {
+         let screen = Rect::new(/*x*/ 7, /*y*/ 3, width, height);
+         let mut buffer = Buffer::empty(screen);
+         animation.render_first_screen(
++            screen,
+             screen,
+             &mut buffer,
+             Some(ComposerState::Empty),
+@@ -75,7 +125,7 @@ fn first_screen_single_click_replays_the_visible_blossom() {
+     };
+     let draw = |animation: &mut EmptyStateAnimation, buffer: &mut Buffer, composer| {
+         buffer.reset();
+-        animation.render_first_screen(screen, buffer, composer, MotionMode::Animated)
++        animation.render_first_screen(screen, screen, buffer, composer, MotionMode::Animated)
+     };
+     assert_eq!(
+         draw(&mut animation, &mut buffer, Some(ComposerState::Empty)),
+@@ -193,6 +243,7 @@ fn first_screen_single_click_replays_the_visible_blossom() {
+     // Disabling motion removes both the logo and its click target.
+     buffer.reset();
+     animation.render_first_screen(
++        screen,
+         screen,
+         &mut buffer,
+         Some(ComposerState::Empty),
 diff --git a/codex-rs/tui/src/exec_cell/mod.rs b/codex-rs/tui/src/exec_cell/mod.rs
 index aaa32e195..503ae83f0 100644
 --- a/codex-rs/tui/src/exec_cell/mod.rs
@@ -37725,10 +37888,10 @@ index e0a4d5286..1d17de313 100644
              animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
              effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
-index da417ce52..6fe1da13c 100644
+index da417ce52..ef6b0e7ad 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
 +++ b/codex-rs/tui/src/startup_draft_layout.rs
-@@ -64,16 +64,29 @@ impl Renderable for OwnedStartupLayout<'_> {
+@@ -64,16 +64,30 @@ impl Renderable for OwnedStartupLayout<'_> {
          paragraph.render(header, buf);
          let message = match self.pump.session_action {
              StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => {
@@ -37760,6 +37923,7 @@ index da417ce52..6fe1da13c 100644
 -                            height: bottom.y.saturating_sub(header.bottom()),
 -                            ..area
 -                        },
++                        buf.area,
 +                        available,
                          buf,
                          composer,
@@ -90774,10 +90938,10 @@ index 000000000..84e30c368
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..8a4748f59
+index 000000000..d84cc5ca1
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,234 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -90910,6 +91074,12 @@ index 000000000..8a4748f59
 +pub use mods::ModBackdrop;
 +pub use mods::ModBackdropOffset;
 +pub use mods::ModBorder;
++pub use mods::ModBoxAccent;
++pub use mods::ModBoxBorder;
++pub use mods::ModBoxStyle;
++pub use mods::ModDirection;
++pub use mods::ModPaint;
++pub use mods::ModSpacing;
 +pub use mods::ModChain;
 +pub use mods::ModColor;
 +pub use mods::ModCommand;
@@ -92897,10 +93067,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..596a47caa
+index 000000000..13d514a35
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5106 @@
+@@ -0,0 +1,5113 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -92923,6 +93093,12 @@ index 000000000..596a47caa
 +pub use view::ModBackdrop;
 +pub use view::ModBackdropOffset;
 +pub use view::ModBorder;
++pub use view::ModBoxAccent;
++pub use view::ModBoxBorder;
++pub use view::ModBoxStyle;
++pub use view::ModDirection;
++pub use view::ModPaint;
++pub use view::ModSpacing;
 +pub use view::ModColor;
 +pub use view::ModCommandAction;
 +pub use view::ModComponent;
@@ -93155,6 +93331,7 @@ index 000000000..596a47caa
 +    "terminal_render_sites_v1",
 +    "terminal_welcome_v1",
 +    "terminal_rich_line_v1",
++    "terminal_box_model_v1",
 +    "transactional_reload_v1",
 +    "task_tool_exposure_v1",
 +    "virtual_reads_v1",
@@ -98009,10 +98186,10 @@ index 000000000..596a47caa
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..c40de7d97
+index 000000000..820477c93
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,852 @@
+@@ -0,0 +1,853 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -98607,6 +98784,7 @@ index 000000000..c40de7d97
 +                    if !matches!(
 +                        mounted,
 +                        ModComponent::Box { pointer: true, .. }
++                            | ModComponent::Pane { pointer: true, .. }
 +                            | ModComponent::Image { pointer: true, .. }
 +                            | ModComponent::Raster { pointer: true, .. }
 +                    ) {
@@ -107732,10 +107910,10 @@ index 000000000..97ab1e5c0
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..99d09d01f
+index 000000000..733c7a0dd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2105 @@
+@@ -0,0 +1,2250 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -107768,6 +107946,8 @@ index 000000000..99d09d01f
 +    pub sidebar_width: u16,
 +    #[serde(default)]
 +    pub sidebar_side: ModSidebarSide,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub sidebar_style: Option<ModBoxStyle>,
 +    #[serde(default)]
 +    pub panels: Vec<ModPanel>,
 +    #[serde(default)]
@@ -107814,6 +107994,8 @@ index 000000000..99d09d01f
 +    #[serde(default)]
 +    pub sidebar_side: Option<ModSidebarSide>,
 +    #[serde(default)]
++    pub sidebar_style: Option<ModBoxStyle>,
++    #[serde(default)]
 +    pub panels: Option<Vec<ModPanel>>,
 +    #[serde(default)]
 +    pub header: Option<ModPanel>,
@@ -107856,6 +108038,8 @@ index 000000000..99d09d01f
 +#[serde(deny_unknown_fields)]
 +pub struct ModLayoutLeaf {
 +    pub content: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub style: Option<ModBoxStyle>,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -107864,6 +108048,8 @@ index 000000000..99d09d01f
 +    pub split: ModSplit,
 +    #[serde(default, skip_serializing_if = "Vec::is_empty")]
 +    pub ratio: Vec<u16>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub gap: Option<u8>,
 +    pub children: Vec<ModLayout>,
 +}
 +
@@ -107898,11 +108084,19 @@ index 000000000..99d09d01f
 +        match self {
 +            Self::Leaf(leaf) => {
 +                leaves.push(leaf.content.clone());
-+                matches!(leaf.content.as_str(), "transcript" | "composer")
-+                    || leaf.content.strip_prefix("site:").is_some_and(valid_site)
++                match leaf.content.strip_prefix("site:") {
++                    Some(site) => {
++                        valid_site(site) && leaf.style.as_ref().is_none_or(ModBoxStyle::still)
++                    }
++                    None => {
++                        matches!(leaf.content.as_str(), "transcript" | "composer")
++                            && leaf.style.is_none()
++                    }
++                }
 +            }
 +            Self::Split(split) => {
 +                (2..=4).contains(&split.children.len())
++                    && split.gap.is_none_or(|gap| gap <= 4)
 +                    && (split.ratio.is_empty() || split.ratio.len() == split.children.len())
 +                    && split.ratio.iter().all(|ratio| (1..=100).contains(ratio))
 +                    && split
@@ -108171,8 +108365,116 @@ index 000000000..99d09d01f
 +    pub z: u8,
 +    #[serde(default)]
 +    pub clip: ModOverlayClip,
-+    #[serde(default)]
-+    pub border: bool,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub style: Option<ModBoxStyle>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModBoxBorder {
++    None,
++    Plain,
++    Rounded,
++    Double,
++    Thick,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModDirection {
++    #[default]
++    Column,
++    Row,
++}
++
++/// Cells around a box: one value for every side, or `[vertical, horizontal]`.
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(untagged)]
++pub enum ModSpacing {
++    All(u8),
++    Axes([u8; 2]),
++}
++
++impl ModSpacing {
++    pub fn axes(self) -> (u16, u16) {
++        match self {
++            Self::All(all) => (u16::from(all), u16::from(all)),
++            Self::Axes([vertical, horizontal]) => (u16::from(vertical), u16::from(horizontal)),
++        }
++    }
++
++    fn valid(self) -> bool {
++        let (vertical, horizontal) = self.axes();
++        vertical <= 4 && horizontal <= 4
++    }
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(untagged)]
++pub enum ModPaint {
++    Tone(ModTone),
++    Color(ModColor),
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ModBoxAccent {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub border: Option<ModBoxBorder>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub background: Option<ModPaint>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub foreground: Option<ModPaint>,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ModBoxStyle {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub border: Option<ModBoxBorder>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub padding: Option<ModSpacing>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub margin: Option<ModSpacing>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub gap: Option<u8>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub background: Option<ModPaint>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub foreground: Option<ModPaint>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub direction: Option<ModDirection>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub hover: Option<ModBoxAccent>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub focus: Option<ModBoxAccent>,
++}
++
++impl ModBoxStyle {
++    pub fn valid(&self) -> bool {
++        self.padding.is_none_or(ModSpacing::valid)
++            && self.margin.is_none_or(ModSpacing::valid)
++            && self.gap.is_none_or(|gap| gap <= 4)
++    }
++
++    pub fn still(&self) -> bool {
++        self.valid() && self.hover.is_none() && self.focus.is_none()
++    }
++
++    /// Fields set here win over `base`.
++    pub fn over(self, base: Self) -> Self {
++        Self {
++            border: self.border.or(base.border),
++            padding: self.padding.or(base.padding),
++            margin: self.margin.or(base.margin),
++            gap: self.gap.or(base.gap),
++            background: self.background.or(base.background),
++            foreground: self.foreground.or(base.foreground),
++            direction: self.direction.or(base.direction),
++            hover: self.hover.or(base.hover),
++            focus: self.focus.or(base.focus),
++        }
++    }
 +}
 +
 +impl ModOverlay {
@@ -108180,6 +108482,7 @@ index 000000000..99d09d01f
 +        (1..=200).contains(&self.width)
 +            && (1..=60).contains(&self.height)
 +            && self.z <= 9
++            && self.style.as_ref().is_none_or(ModBoxStyle::still)
 +            && self.offset.as_ref().is_none_or(|offset| {
 +                offset.x.unsigned_abs() <= 500 && offset.y.unsigned_abs() <= 200
 +            })
@@ -108206,6 +108509,10 @@ index 000000000..99d09d01f
 +        max_width: Option<u16>,
 +        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
 +        pointer: bool,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        style: Option<ModBoxStyle>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        flex: Option<u8>,
 +    },
 +    Line {
 +        id: String,
@@ -108290,6 +108597,16 @@ index 000000000..99d09d01f
 +        keys: bool,
 +        #[serde(default)]
 +        children: Vec<ModComponent>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        min_width: Option<u16>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        max_width: Option<u16>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        pointer: bool,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        style: Option<ModBoxStyle>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        flex: Option<u8>,
 +    },
 +    Dialog {
 +        id: String,
@@ -108297,6 +108614,8 @@ index 000000000..99d09d01f
 +        title: String,
 +        #[serde(default)]
 +        children: Vec<ModComponent>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        style: Option<ModBoxStyle>,
 +    },
 +    List {
 +        id: String,
@@ -108478,17 +108797,32 @@ index 000000000..99d09d01f
 +        }
 +    }
 +
-+    pub fn fits(&self, width: u16) -> bool {
++    pub fn flex(&self) -> u16 {
++        match self {
++            Self::Box { flex, .. } | Self::Pane { flex, .. } => u16::from(flex.unwrap_or(1)),
++            _ => 1,
++        }
++    }
++
++    pub fn width_bounds(&self) -> (Option<u16>, Option<u16>) {
 +        match self {
 +            Self::Box {
 +                min_width,
 +                max_width,
 +                ..
-+            } => {
-+                min_width.is_none_or(|min| width >= min) && max_width.is_none_or(|max| width <= max)
 +            }
-+            _ => true,
++            | Self::Pane {
++                min_width,
++                max_width,
++                ..
++            } => (*min_width, *max_width),
++            _ => (None, None),
 +        }
++    }
++
++    pub fn fits(&self, width: u16) -> bool {
++        let (min_width, max_width) = self.width_bounds();
++        min_width.is_none_or(|min| width >= min) && max_width.is_none_or(|max| width <= max)
 +    }
 +}
 +
@@ -108985,6 +109319,19 @@ index 000000000..99d09d01f
 +                children: nested,
 +                min_width,
 +                max_width,
++                style,
++                flex,
++                ..
++            }
++            | Self::Pane {
++                id,
++                label,
++                title,
++                children: nested,
++                min_width,
++                max_width,
++                style,
++                flex,
 +                ..
 +            } => {
 +                let bound =
@@ -108996,6 +109343,8 @@ index 000000000..99d09d01f
 +                    && min_width
 +                        .zip(*max_width)
 +                        .is_none_or(|(min, max)| min <= max)
++                    && style.as_ref().is_none_or(ModBoxStyle::valid)
++                    && flex.is_none_or(|flex| (1..=12).contains(&flex))
 +                    && children(nested, count, ids, slots)
 +            }
 +            Self::Line { id, label, spans } => {
@@ -109009,26 +109358,17 @@ index 000000000..99d09d01f
 +                        .sum::<usize>()
 +                        <= 256
 +            }
-+            Self::Pane {
-+                id,
-+                label,
-+                title,
-+                children: nested,
-+                ..
-+            } => {
-+                identified(id, label, ids)
-+                    && title.as_ref().is_none_or(|title| visible(title, 128))
-+                    && children(nested, count, ids, slots)
-+            }
 +            Self::Dialog {
 +                id,
 +                label,
 +                title,
 +                children: nested,
++                style,
 +            } => {
 +                identified(id, label, ids)
 +                    && !title.is_empty()
 +                    && visible(title, 128)
++                    && style.as_ref().is_none_or(ModBoxStyle::still)
 +                    && children(nested, count, ids, slots)
 +            }
 +            Self::Text {
@@ -109257,8 +109597,11 @@ index 000000000..99d09d01f
 +        let presentational = !component.contains(&|component| {
 +            !matches!(
 +                component,
-+                ModComponent::Box { .. }
-+                    | ModComponent::Line { .. }
++                ModComponent::Box {
++                    style: None,
++                    flex: None,
++                    ..
++                } | ModComponent::Line { .. }
 +                    | ModComponent::Text { .. }
 +                    | ModComponent::Markdown { .. }
 +                    | ModComponent::Code { .. }
@@ -109396,51 +109739,17 @@ index 000000000..99d09d01f
 +        .into_iter()
 +        .flat_map(|component| match component {
 +            ModComponent::Slot => current.to_vec(),
-+            ModComponent::Box {
-+                id,
-+                label,
-+                title,
-+                children,
-+                min_width,
-+                max_width,
-+                pointer,
-+            } => vec![ModComponent::Box {
-+                id,
-+                label,
-+                title,
-+                children: replace_slot(children, current),
-+                min_width,
-+                max_width,
-+                pointer,
-+            }],
-+            ModComponent::Pane {
-+                id,
-+                label,
-+                title,
-+                collapsed,
-+                scroll,
-+                keys,
-+                children,
-+            } => vec![ModComponent::Pane {
-+                id,
-+                label,
-+                title,
-+                collapsed,
-+                scroll,
-+                keys,
-+                children: replace_slot(children, current),
-+            }],
-+            ModComponent::Dialog {
-+                id,
-+                label,
-+                title,
-+                children,
-+            } => vec![ModComponent::Dialog {
-+                id,
-+                label,
-+                title,
-+                children: replace_slot(children, current),
-+            }],
++            mut component @ (ModComponent::Box { .. }
++            | ModComponent::Pane { .. }
++            | ModComponent::Dialog { .. }) => {
++                if let ModComponent::Box { children, .. }
++                | ModComponent::Pane { children, .. }
++                | ModComponent::Dialog { children, .. } = &mut component
++                {
++                    *children = replace_slot(std::mem::take(children), current);
++                }
++                vec![component]
++            }
 +            component => vec![component],
 +        })
 +        .collect()
@@ -109498,6 +109807,13 @@ index 000000000..99d09d01f
 +            (
 +                "sidebar_width",
 +                patch.sidebar_width.is_some_and(|width| width > 60),
++            ),
++            (
++                "sidebar_style",
++                patch
++                    .sidebar_style
++                    .as_ref()
++                    .is_some_and(|style| !style.still()),
 +            ),
 +            (
 +                "title",
@@ -109607,7 +109923,8 @@ index 000000000..99d09d01f
 +            title,
 +            foreground,
 +            background,
-+            inline_sites
++            inline_sites,
++            sidebar_style
 +        );
 +        if let Some(width) = self.sidebar_width {
 +            candidate.sidebar_width = width;
@@ -109728,6 +110045,12 @@ index 000000000..99d09d01f
 +            ),
 +            ("sidebar_width", view.sidebar_width > 60),
 +            (
++                "sidebar_style",
++                view.sidebar_style
++                    .as_ref()
++                    .is_some_and(|style| !style.still()),
++            ),
++            (
 +                "panels",
 +                view.panels.len() > 8 || view.panels.iter().any(|panel| !panel.valid(32)),
 +            ),
@@ -109843,10 +110166,10 @@ index 000000000..99d09d01f
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..4505bc6d9
+index 000000000..ce4f02ab8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,444 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -109857,6 +110180,71 @@ index 000000000..4505bc6d9
 +        .unwrap()
 +        .extend(extra.as_object().unwrap().clone());
 +    ModView::parse(value)
++}
++
++#[test]
++fn box_styles_are_bounded_and_render_hook_trees_refuse_them() {
++    let still = json!({"border": "thick", "padding": [0, 4], "margin": 1, "gap": 2, "background": "accent",
++        "foreground": "#c0ffee", "direction": "row"});
++    let mut card = still.clone();
++    card.as_object_mut().unwrap().extend(
++        json!({"hover": {"border": "double", "background": 238}, "focus": {"foreground": "muted"}})
++            .as_object()
++            .unwrap()
++            .clone(),
++    );
++    let pane = |style: Value, flex: Value| {
++        json!({"sites": {"sidebar": {"components": [{"type": "pane", "id": "p", "label": "P", "style": style,
++            "flex": flex, "min_width": 10, "max_width": 40, "pointer": true}]}}})
++    };
++    let parsed = view(pane(card.clone(), json!(12))).unwrap();
++    let ModComponent::Pane { style, .. } = &parsed.sites["sidebar"].components[0] else {
++        panic!("pane");
++    };
++    assert_eq!(
++        style.unwrap().background,
++        Some(ModPaint::Tone(ModTone::Accent))
++    );
++    assert_eq!(style.unwrap().padding.unwrap().axes(), (0, 4));
++    assert!(
++        view(json!({"sidebar_style": still.clone(), "layout": {"split": "horizontal", "gap": 4, "children": [
++            {"content": "site:a/b", "style": still.clone()},
++            {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}]},
++            "sites": {"dialog": {"components": [{"type": "dialog", "id": "d", "label": "D", "title": "D", "style": still}]}}}))
++        .is_ok()
++    );
++    for invalid in [
++        pane(json!({"padding": 5}), json!(1)),
++        pane(json!({"margin": [0, 5]}), json!(1)),
++        pane(json!({"gap": 5}), json!(1)),
++        pane(json!({"border": "dotted"}), json!(1)),
++        pane(json!({"background": "#12"}), json!(1)),
++        pane(json!({"hover": {"padding": 1}}), json!(1)),
++        pane(json!({}), json!(0)),
++        pane(json!({}), json!(13)),
++        json!({"sidebar_style": {"gap": 9}}),
++        json!({"sidebar_style": card.clone()}),
++        json!({"sites": {"dialog": {"components": [{"type": "dialog", "id": "d", "label": "D", "title": "D", "style": card.clone()}]}}}),
++        json!({"layout": {"split": "horizontal", "children": [{"content": "site:a/b", "style": card.clone()},
++            {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}]}}),
++        json!({"layout": {"split": "vertical", "gap": 5, "children": [{"content": "transcript"}, {"content": "composer"}]}}),
++        json!({"layout": {"split": "vertical", "children": [{"content": "transcript", "style": {}}, {"content": "composer"}]}}),
++    ] {
++        assert!(view(invalid.clone()).is_err(), "{invalid}");
++        assert!(ModViewPatch::parse(invalid).is_err());
++    }
++    let tree = |extra: Value| {
++        let mut component =
++            json!({"type": "box", "id": "b", "label": "B", "children": [{"type": "native"}]});
++        component
++            .as_object_mut()
++            .unwrap()
++            .extend(extra.as_object().unwrap().clone());
++        serde_json::from_value::<Vec<ModComponent>>(json!([component])).unwrap()
++    };
++    assert_eq!(invalid_render_tree(&tree(json!({}))), None);
++    assert!(invalid_render_tree(&tree(json!({"style": {"border": "plain"}}))).is_some());
++    assert!(invalid_render_tree(&tree(json!({"flex": 2}))).is_some());
 +}
 +
 +#[test]
@@ -110149,7 +110537,7 @@ index 000000000..4505bc6d9
 +            "components": [{"type": "box", "id": "tip", "label": "Tip", "pointer": true}]}}}))
 +    };
 +    let tooltip = json!({"anchor": {"component": "chart"}, "offset": {"x": 1, "y": -1},
-+        "width": 20, "height": 3, "z": 9, "clip": "anchor", "border": true});
++        "width": 20, "height": 3, "z": 9, "clip": "anchor", "style": {"border": "thick", "padding": [0, 1]}});
 +    assert!(overlay("charts/tip", tooltip.clone()).is_ok());
 +    assert!(
 +        overlay(
@@ -110179,6 +110567,14 @@ index 000000000..4505bc6d9
 +        (
 +            "charts/tip",
 +            json!({"anchor": "middle", "width": 10, "height": 3}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": "top_left", "width": 10, "height": 3, "style": {"padding": 5}}),
++        ),
++        (
++            "charts/tip",
++            json!({"anchor": "top_left", "width": 10, "height": 3, "border": true}),
 +        ),
 +        (
 +            "charts/tip",
@@ -138941,10 +139337,10 @@ index 000000000..52d0fb56f
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..e55f7c5b9
+index 000000000..2400497ed
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,310 @@
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -138960,6 +139356,7 @@ index 000000000..e55f7c5b9
 +pub(crate) struct Region {
 +    pub(crate) content: String,
 +    pub(crate) area: Rect,
++    pub(crate) style: Option<codex_omd::ModBoxStyle>,
 +}
 +
 +#[derive(Clone, Debug, PartialEq, Eq)]
@@ -139022,7 +139419,7 @@ index 000000000..e55f7c5b9
 +    run(guard.get_or_insert_with(State::default))
 +}
 +
-+fn distribute(total: u16, weights: &[u16]) -> Vec<u16> {
++pub(crate) fn distribute(total: u16, weights: &[u16]) -> Vec<u16> {
 +    let sum = weights
 +        .iter()
 +        .map(|weight| u32::from(*weight))
@@ -139044,6 +139441,7 @@ index 000000000..e55f7c5b9
 +        ModLayout::Leaf(leaf) => out.regions.push(Region {
 +            content: leaf.content.clone(),
 +            area,
++            style: leaf.style,
 +        }),
 +        ModLayout::Split(split) => {
 +            let count = split.children.len();
@@ -139058,12 +139456,15 @@ index 000000000..e55f7c5b9
 +                ModSplit::Horizontal => (area.x, area.width),
 +                ModSplit::Vertical => (area.y, area.height),
 +            };
-+            let sizes = distribute(total, &weights);
++            let gaps = u16::try_from(count - 1).unwrap_or(0);
++            let gap = u16::from(split.gap.unwrap_or(0))
++                .min(total.saturating_sub((gaps + 1) * MIN_CELLS) / gaps.max(1));
++            let sizes = distribute(total - gap * gaps, &weights);
 +            let mut starts = Vec::with_capacity(count);
 +            let mut cursor = origin;
 +            for size in &sizes {
 +                starts.push(cursor);
-+                cursor = cursor.saturating_add(*size);
++                cursor = cursor.saturating_add(*size + gap);
 +            }
 +            for (index, child) in split.children.iter().enumerate() {
 +                let rect = match split.split {
@@ -139156,12 +139557,13 @@ index 000000000..e55f7c5b9
 +}
 +
 +fn on_handle(handle: &Handle, column: u16, row: u16) -> bool {
-+    let boundary = handle.starts[handle.index + 1];
++    let end = handle.starts[handle.index] + handle.sizes[handle.index];
++    let next = handle.starts[handle.index + 1];
 +    let (along, across) = match handle.split {
 +        ModSplit::Horizontal => (row, column),
 +        ModSplit::Vertical => (column, row),
 +    };
-+    along >= handle.span.0 && along < handle.span.1 && across.abs_diff(boundary) <= 1
++    along >= handle.span.0 && along < handle.span.1 && across + 1 >= end && across <= next + 1
 +}
 +
 +pub(crate) fn pointer(event: MouseEvent) -> bool {
@@ -139208,13 +139610,14 @@ index 000000000..e55f7c5b9
 +            };
 +            let start = handle.starts[index];
 +            let end = handle.starts[index + 1] + handle.sizes[index + 1];
++            let gap = handle.starts[index + 1].saturating_sub(start + handle.sizes[index]);
 +            let boundary = position.clamp(
 +                start + MIN_CELLS,
-+                end.saturating_sub(MIN_CELLS).max(start + MIN_CELLS),
++                end.saturating_sub(MIN_CELLS + gap).max(start + MIN_CELLS),
 +            );
 +            let mut sizes = handle.sizes;
 +            sizes[index] = boundary - start;
-+            sizes[index + 1] = end.saturating_sub(boundary);
++            sizes[index + 1] = end.saturating_sub(boundary + gap);
 +            state
 +                .ratios
 +                .insert(path, sizes.into_iter().map(|size| size.max(1)).collect());
@@ -139250,10 +139653,10 @@ index 000000000..e55f7c5b9
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 000000000..346f5fa4a
+index 000000000..0d6e33f22
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,115 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -139262,6 +139665,7 @@ index 000000000..346f5fa4a
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn splits_tabs_and_chat_union_place_regions() {
 +    let layout = layout(serde_json::json!({
 +        "split": "horizontal", "ratio": [1, 3],
@@ -139324,6 +139728,43 @@ index 000000000..346f5fa4a
 +        70,
 +        10
 +    )));
++}
++
++#[test]
++#[serial_test::serial]
++fn split_gaps_leave_cells_between_children_and_their_handle() {
++    let layout = layout(
++        serde_json::json!({"split": "horizontal", "gap": 2, "children": [
++        {"content": "site:files/tree", "style": {"border": "thick"}}, {"content": "transcript"}]}),
++    );
++    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    assert_eq!(
++        placement.regions[0],
++        Region {
++            content: "site:files/tree".into(),
++            area: Rect::new(0, 0, 20, 10),
++            style: Some(codex_omd::ModBoxStyle {
++                border: Some(codex_omd::ModBoxBorder::Thick),
++                ..Default::default()
++            }),
++        }
++    );
++    assert_eq!(placement.area("transcript"), Some(Rect::new(22, 0, 20, 10)));
++    let narrow = place(&layout, Rect::new(0, 0, 7, 10));
++    assert_eq!(narrow.area("transcript"), Some(Rect::new(4, 0, 3, 10)));
++    place(&layout, Rect::new(0, 0, 42, 10));
++    let at = |kind, column| MouseEvent {
++        kind,
++        column,
++        row: 4,
++        modifiers: crossterm::event::KeyModifiers::NONE,
++    };
++    assert!(pointer(at(MouseEventKind::Down(MouseButton::Left), 21)));
++    assert!(pointer(at(MouseEventKind::Drag(MouseButton::Left), 30)));
++    assert!(pointer(at(MouseEventKind::Up(MouseButton::Left), 30)));
++    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    assert_eq!(placement.area("site:files/tree"), Some(Rect::new(0, 0, 30, 10)));
++    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +}
 +
 +#[test]
@@ -141794,10 +142235,10 @@ index 000000000..9c07cf291
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..4efb44883
+index 000000000..332792184
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1368 @@
+@@ -0,0 +1,1372 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -142421,7 +142862,11 @@ index 000000000..4efb44883
 +    snapshot.conflicts = terminal.conflicts;
 +    snapshot.contributors = terminal.contributors;
 +    snapshot.component_owners = terminal.component_owners;
-+    snapshot.diagnostics.extend(terminal.diagnostics);
++    for diagnostic in terminal.diagnostics {
++        if !snapshot.diagnostics.contains(&diagnostic) {
++            snapshot.diagnostics.push(diagnostic);
++        }
++    }
 +    snapshot.diagnostics.truncate(16);
 +    snapshot.input["ledger"] = serde_json::json!({
 +        "thread_id": context.thread_id.map(|id| id.to_string()),
@@ -145599,25 +146044,29 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..5c92cc891
+index 000000000..75adb37c2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,3795 @@
+@@ -0,0 +1,4508 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
++use codex_omd::ModBoxBorder;
++use codex_omd::ModBoxStyle;
 +use codex_omd::ModColor;
 +use codex_omd::ModCommandAction;
 +use codex_omd::ModComponent;
 +use codex_omd::ModComponentAction;
 +use codex_omd::ModDensity;
++use codex_omd::ModDirection;
 +use codex_omd::ModIcons;
 +use codex_omd::ModKeyAction;
++use codex_omd::ModPaint;
 +use codex_omd::ModPanel;
 +use codex_omd::ModRenderSite;
 +use codex_omd::ModSidebarSide;
-+use codex_omd::ModTheme;
++use codex_omd::ModSpacing;
 +use codex_omd::ModTone;
 +use codex_omd::ModView;
 +use codex_omd::ModViewSnapshot;
@@ -145637,7 +146086,6 @@ index 000000000..5c92cc891
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
 +use ratatui::widgets::Block;
-+use ratatui::widgets::BorderType;
 +use ratatui::widgets::Borders;
 +use ratatui::widgets::Clear;
 +use ratatui::widgets::Paragraph;
@@ -145709,6 +146157,8 @@ index 000000000..5c92cc891
 +    area: Rect,
 +    top: u16,
 +    layer: u16,
++    events: bool,
++    hover: bool,
 +}
 +
 +const DIALOG_LAYER: u16 = u16::MAX;
@@ -145720,6 +146170,7 @@ index 000000000..5c92cc891
 +    ids: BTreeSet<String>,
 +    targets: BTreeMap<String, ComponentTarget>,
 +    order: Vec<String>,
++    columns: Vec<Vec<String>>,
 +    hitboxes: Vec<HitBox>,
 +    input_values: BTreeMap<String, String>,
 +    input_cursor: BTreeMap<String, usize>,
@@ -145748,19 +146199,524 @@ index 000000000..5c92cc891
 +    captured: Option<String>,
 +}
 +
++#[derive(Default)]
 +struct ComponentRow {
 +    id: Option<String>,
 +    label: Option<String>,
 +    links: Vec<TerminalHyperlink>,
 +    line: Line<'static>,
 +    target: Option<ComponentTarget>,
-+    /// Boxes holding this row: id, the box's indent, this row's offset in it, and whether it takes the pointer.
-+    regions: Vec<(String, u16, u16, bool)>,
++    /// Boxes holding this row, outermost first.
++    regions: Vec<Held>,
 +    indent: u16,
++    /// This row's own width from `indent`, fixed once a frame or column redraws `line`.
++    cells: Option<u16>,
++    /// Rows of later columns drawn into `line`, each keeping its own targets.
++    beside: Vec<ComponentRow>,
++}
++
++/// A box holding a row: its left cell and width, this row's offset in it, and whether the
++/// box reports pointer events or only restyles on hover.
++struct Held {
++    id: String,
++    x: u16,
++    top: u16,
++    width: u16,
++    events: bool,
++    hover: bool,
++}
++
++impl ComponentRow {
++    fn own(&self) -> u16 {
++        self.cells.unwrap_or_else(|| {
++            u16::try_from(self.line.width())
++                .unwrap_or(u16::MAX)
++                .saturating_sub(self.indent)
++        })
++    }
++
++    fn shift(&mut self, by: u16) {
++        self.cells = Some(self.own());
++        self.indent = self.indent.saturating_add(by);
++        for held in &mut self.regions {
++            held.x = held.x.saturating_add(by);
++        }
++        for link in &mut self.links {
++            link.columns = link.columns.start + usize::from(by)..link.columns.end + usize::from(by);
++        }
++        for row in &mut self.beside {
++            row.shift(by);
++        }
++    }
 +}
 +
 +fn cells(indent: usize) -> u16 {
 +    u16::try_from(indent).unwrap_or(u16::MAX)
++}
++
++const ASCII_BORDER: ratatui::symbols::border::Set<'static> = ratatui::symbols::border::Set {
++    top_left: "+",
++    top_right: "+",
++    bottom_left: "+",
++    bottom_right: "+",
++    vertical_left: "|",
++    vertical_right: "|",
++    horizontal_top: "-",
++    horizontal_bottom: "-",
++};
++
++/// A box's resolved look. Hover and focus accents restyle it but never add or remove the
++/// border, so its geometry stays put.
++#[derive(Clone, Copy)]
++struct Frame {
++    border: Option<ratatui::symbols::border::Set<'static>>,
++    padding: (u16, u16),
++    margin: (u16, u16),
++    gap: u16,
++    background: Option<Color>,
++    foreground: Style,
++    direction: ModDirection,
++}
++
++fn look() -> (ModBorder, ModIcons) {
++    with_cache(|cache| {
++        (
++            cache.snapshot.view.theme.border,
++            cache.snapshot.view.theme.icons,
++        )
++    })
++    .unwrap_or_default()
++}
++
++fn card(border: ModBorder) -> ModBoxStyle {
++    ModBoxStyle {
++        border: Some(match border {
++            ModBorder::Plain => ModBoxBorder::Plain,
++            ModBorder::Rounded => ModBoxBorder::Rounded,
++            ModBorder::Double => ModBoxBorder::Double,
++        }),
++        padding: Some(ModSpacing::Axes([0, 1])),
++        ..ModBoxStyle::default()
++    }
++}
++
++fn paint(paint: ModPaint) -> Style {
++    match paint {
++        ModPaint::Tone(tone) => tone_style(tone),
++        ModPaint::Color(value) => Style::default().fg(color(value)),
++    }
++}
++
++impl Frame {
++    fn new(style: ModBoxStyle, look: (ModBorder, ModIcons), hovered: bool, focused: bool) -> Self {
++        let mut border = style.border.unwrap_or(ModBoxBorder::None);
++        let (mut background, mut foreground) = (style.background, style.foreground);
++        for accent in [
++            style.hover.filter(|_| hovered),
++            style.focus.filter(|_| focused),
++        ]
++        .into_iter()
++        .flatten()
++        {
++            if border != ModBoxBorder::None {
++                border = accent
++                    .border
++                    .filter(|accent| *accent != ModBoxBorder::None)
++                    .unwrap_or(border);
++            }
++            background = accent.background.or(background);
++            foreground = accent.foreground.or(foreground);
++        }
++        Self {
++            border: match border {
++                ModBoxBorder::None => None,
++                _ if look.1 == ModIcons::Ascii => Some(ASCII_BORDER),
++                ModBoxBorder::Plain => Some(ratatui::symbols::border::PLAIN),
++                ModBoxBorder::Rounded => Some(ratatui::symbols::border::ROUNDED),
++                ModBoxBorder::Double => Some(ratatui::symbols::border::DOUBLE),
++                ModBoxBorder::Thick => Some(ratatui::symbols::border::THICK),
++            },
++            padding: style.padding.map_or((0, 0), ModSpacing::axes),
++            margin: style.margin.map_or((0, 0), ModSpacing::axes),
++            gap: style.gap.map_or(0, u16::from),
++            background: background.and_then(|value| paint(value).fg),
++            foreground: foreground.map(paint).unwrap_or_default(),
++            direction: style.direction.unwrap_or_default(),
++        }
++    }
++
++    fn edge(&self) -> u16 {
++        u16::from(self.border.is_some())
++    }
++
++    fn left(&self) -> u16 {
++        self.margin.1 + self.edge() + self.padding.1
++    }
++
++    fn inner(&self, width: u16) -> u16 {
++        width.saturating_sub(self.left() * 2).max(1)
++    }
++
++    /// Rows around the content; a title takes its own row only without a border.
++    fn rows(&self, title: bool) -> u16 {
++        (self.margin.0 + self.edge() + self.padding.0) * 2
++            + u16::from(title && self.border.is_none())
++    }
++
++    fn style(&self) -> Style {
++        match self.background {
++            Some(background) => self.foreground.bg(background),
++            None => self.foreground,
++        }
++    }
++
++    /// Draws margin, border, fill and padding into `area`; returns the content rect.
++    fn draw(&self, area: Rect, title: Option<Line<'static>>, buffer: &mut Buffer) -> Rect {
++        let area = area.inner(ratatui::layout::Margin::new(self.margin.1, self.margin.0));
++        let mut block =
++            Block::default()
++                .style(self.style())
++                .padding(ratatui::widgets::Padding::symmetric(
++                    self.padding.1,
++                    self.padding.0,
++                ));
++        if let Some(set) = self.border {
++            block = block.borders(Borders::ALL).border_set(set);
++        }
++        if let Some(title) = title {
++            block = block.title(Line::from(
++                [vec![" ".into()], title.spans, vec![" ".into()]].concat(),
++            ));
++        }
++        let inner = block.inner(area);
++        block.render(area, buffer);
++        inner
++    }
++}
++
++/// `line` cut or padded to exactly `width` cells over `base`.
++fn fit(line: Line<'static>, width: u16, base: Style) -> Vec<ratatui::text::Span<'static>> {
++    let base = base.patch(line.style);
++    let line = crate::line_truncation::truncate_line_to_width(line, usize::from(width));
++    let room = usize::from(width).saturating_sub(line.width());
++    let mut spans = line
++        .spans
++        .into_iter()
++        .map(|span| {
++            let style = base.patch(span.style);
++            span.style(style)
++        })
++        .collect::<Vec<_>>();
++    spans.push(ratatui::text::Span::styled(" ".repeat(room), base));
++    spans
++}
++
++/// Draws `frame` around `body` in rows `width` cells wide; `head` titles the top edge, or
++/// leads the content when the frame has no border.
++fn framed(
++    frame: &Frame,
++    width: u16,
++    head: Option<ComponentRow>,
++    body: Vec<ComponentRow>,
++) -> Vec<ComponentRow> {
++    use ratatui::text::Span;
++    let (vertical, horizontal) = frame.margin;
++    let span = usize::from(width.saturating_sub(horizontal * 2));
++    let style = frame.style();
++    let margin = || Span::raw(" ".repeat(usize::from(horizontal)));
++    let pad = || Span::styled(" ".repeat(usize::from(frame.padding.1)), style);
++    let wrap = |mut row: ComponentRow| {
++        row.shift(frame.left());
++        let line = std::mem::take(&mut row.line);
++        let mut spans = vec![margin()];
++        spans.extend(
++            frame
++                .border
++                .map(|set| Span::styled(set.vertical_left, style)),
++        );
++        spans.push(pad());
++        if frame.border.is_some() || frame.background.is_some() {
++            spans.extend(fit(line, frame.inner(width), style));
++            spans.push(pad());
++            spans.extend(
++                frame
++                    .border
++                    .map(|set| Span::styled(set.vertical_right, style)),
++            );
++        } else {
++            let base = style.patch(line.style);
++            spans.extend(line.spans.into_iter().map(|span| {
++                let style = base.patch(span.style);
++                span.style(style)
++            }));
++        }
++        row.line = Line::from(spans);
++        row
++    };
++    let edge =
++        |set: ratatui::symbols::border::Set<'static>, head: Option<ComponentRow>, top: bool| {
++            let (open, fill, close) = if top {
++                (set.top_left, set.horizontal_top, set.top_right)
++            } else {
++                (set.bottom_left, set.horizontal_bottom, set.bottom_right)
++            };
++            let mut row = head.unwrap_or_default();
++            let title = std::mem::take(&mut row.line);
++            let mut spans = vec![margin(), Span::styled(open, style)];
++            let mut used = 1;
++            let room = span.saturating_sub(4);
++            if room > 0 && title.width() > 0 {
++                row.shift(horizontal + 2);
++                let title = crate::line_truncation::truncate_line_to_width(title, room);
++                used += title.width() + 2;
++                spans.push(Span::styled(" ", style));
++                let base = style.patch(title.style);
++                spans.extend(title.spans.into_iter().map(|span| {
++                    let style = base.patch(span.style);
++                    span.style(style)
++                }));
++                spans.push(Span::styled(" ", style));
++            }
++            spans.push(Span::styled(
++                fill.repeat(span.saturating_sub(used + 1)),
++                style,
++            ));
++            spans.push(Span::styled(close, style));
++            row.line = Line::from(spans);
++            row
++        };
++    let mut head = head;
++    let mut rows = (0..vertical)
++        .map(|_| ComponentRow::default())
++        .collect::<Vec<_>>();
++    if let Some(set) = frame.border {
++        rows.push(edge(set, head.take(), true));
++    }
++    rows.extend((0..frame.padding.0).map(|_| wrap(ComponentRow::default())));
++    rows.extend(head.into_iter().chain(body).map(wrap));
++    rows.extend((0..frame.padding.0).map(|_| wrap(ComponentRow::default())));
++    if let Some(set) = frame.border {
++        rows.push(edge(set, None, false));
++    }
++    rows.extend((0..vertical).map(|_| ComponentRow::default()));
++    rows
++}
++
++/// Marks the framed rows, margins excluded, as held by box `id`.
++fn hold(rows: &mut [ComponentRow], id: &str, frame: &Frame, width: u16, events: bool, hover: bool) {
++    let (vertical, horizontal) = frame.margin;
++    let end = rows.len().saturating_sub(usize::from(vertical));
++    for (top, row) in rows[..end]
++        .iter_mut()
++        .skip(usize::from(vertical))
++        .enumerate()
++    {
++        row.regions.insert(
++            0,
++            Held {
++                id: id.to_owned(),
++                x: horizontal,
++                top: u16::try_from(top).unwrap_or(u16::MAX),
++                width: width.saturating_sub(horizontal * 2),
++                events,
++                hover,
++            },
++        );
++    }
++}
++
++fn natural_width(component: &ModComponent) -> Option<u16> {
++    let width = match component {
++        ModComponent::Button { text, .. } => text.width() + 4,
++        ModComponent::Text { text, .. } => text.lines().map(UnicodeWidthStr::width).max().unwrap_or(0),
++        ModComponent::Line { spans, .. } => spans.iter().map(|span| span.text.width()).sum(),
++        _ => return None,
++    };
++    Some(u16::try_from(width).unwrap_or(u16::MAX))
++}
++
++/// Places a row's children: buttons, text and lines take their natural width and the other
++/// children share the rest by `flex`; each drawn width is capped by `max_width`, and a child
++/// narrower than its `min_width` drops out and the rest share its room.
++fn columns(children: &[ModComponent], width: u16, gap: u16) -> Vec<(&ModComponent, u16, u16)> {
++    let mut shown = children
++        .iter()
++        .filter(|child| !matches!(child, ModComponent::Slot | ModComponent::Native { .. }))
++        .collect::<Vec<_>>();
++    loop {
++        let gaps = gap * u16::try_from(shown.len().saturating_sub(1)).unwrap_or(0);
++        let mut room = width.saturating_sub(gaps);
++        let natural = shown
++            .iter()
++            .map(|child| {
++                natural_width(child).map(|natural| {
++                    let slot = natural.min(room);
++                    room -= slot;
++                    slot
++                })
++            })
++            .collect::<Vec<_>>();
++        let mut shares = crate::mod_layout::distribute(
++            room,
++            &shown
++                .iter()
++                .zip(&natural)
++                .filter(|(_, natural)| natural.is_none())
++                .map(|(child, _)| child.flex())
++                .collect::<Vec<_>>(),
++        )
++        .into_iter();
++        let slots = natural
++            .iter()
++            .map(|slot| slot.unwrap_or_else(|| shares.next().unwrap_or(0)))
++            .collect::<Vec<_>>();
++        let drawn = shown
++            .iter()
++            .zip(&slots)
++            .map(|(child, slot)| child.width_bounds().1.map_or(*slot, |max| max.min(*slot)))
++            .collect::<Vec<_>>();
++        if let Some(index) = shown
++            .iter()
++            .zip(&drawn)
++            .position(|(child, width)| !child.fits(*width))
++        {
++            shown.remove(index);
++            continue;
++        }
++        let mut x = 0;
++        return shown
++            .into_iter()
++            .zip(slots.into_iter().zip(drawn))
++            .map(|(child, (slot, drawn))| {
++                let at = x;
++                x += slot + gap;
++                (child, at, drawn)
++            })
++            .collect();
++    }
++}
++
++/// Lays children out in a column or a row with `gap` cells between them.
++fn stack(
++    children: &[ModComponent],
++    width: u16,
++    frame: &Frame,
++    interaction: &mut Interaction,
++) -> Vec<ComponentRow> {
++    use ratatui::text::Span;
++    match frame.direction {
++        ModDirection::Column => {
++            let mut rows = Vec::new();
++            for child in children {
++                let child_rows = component_rows(std::slice::from_ref(child), width, interaction, 0);
++                if child_rows.is_empty() {
++                    continue;
++                }
++                if !rows.is_empty() {
++                    rows.extend((0..frame.gap).map(|_| ComponentRow::default()));
++                }
++                rows.extend(child_rows);
++            }
++            rows
++        }
++        ModDirection::Row => {
++            let mut placed = columns(children, width, frame.gap)
++                .into_iter()
++                .map(|(child, x, width)| {
++                    let rows = component_rows(std::slice::from_ref(child), width, interaction, 0);
++                    (x, width, rows.into_iter())
++                })
++                .collect::<Vec<_>>();
++            let mut ids = Vec::new();
++            for (_, _, rows) in &placed {
++                targets(rows.as_slice(), &mut ids);
++            }
++            if ids.len() > 1 {
++                interaction.columns.push(ids);
++            }
++            let height = placed
++                .iter()
++                .map(|(_, _, rows)| rows.len())
++                .max()
++                .unwrap_or(0);
++            (0..height)
++                .map(|_| {
++                    let (mut merged, mut spans, mut cursor) = (None::<ComponentRow>, Vec::new(), 0);
++                    for (x, width, rows) in &mut placed {
++                        let mut row = rows.next().unwrap_or_default();
++                        row.shift(*x);
++                        spans.push(Span::raw(" ".repeat(usize::from(*x - cursor))));
++                        spans.extend(fit(std::mem::take(&mut row.line), *width, Style::default()));
++                        cursor = *x + *width;
++                        match &mut merged {
++                            Some(first) => first.beside.push(row),
++                            None => merged = Some(row),
++                        }
++                    }
++                    let mut row = merged.unwrap_or_default();
++                    row.line = Line::from(spans);
++                    row
++                })
++                .collect()
++        }
++    }
++}
++
++fn targets(rows: &[ComponentRow], ids: &mut Vec<String>) {
++    for row in rows {
++        if let (Some(_), Some(id)) = (&row.target, &row.id)
++            && !ids.contains(id)
++        {
++            ids.push(id.clone());
++        }
++        targets(&row.beside, ids);
++    }
++}
++
++/// Rows interleave a row box's columns; focus visits one column at a time, outer boxes first.
++fn column_order(interaction: &mut Interaction) {
++    for group in std::mem::take(&mut interaction.columns).into_iter().rev() {
++        let order = &mut interaction.order;
++        let ids = group
++            .into_iter()
++            .filter(|id| order.contains(id))
++            .collect::<Vec<_>>();
++        let mut slots = ids
++            .iter()
++            .filter_map(|id| order.iter().position(|held| held == id))
++            .collect::<Vec<_>>();
++        slots.sort_unstable();
++        for (slot, id) in slots.into_iter().zip(ids) {
++            order[slot] = id;
++        }
++    }
++}
++
++fn stack_height(children: &[ModComponent], width: u16, frame: &Frame) -> u16 {
++    match frame.direction {
++        ModDirection::Column => {
++            let heights = children
++                .iter()
++                .map(|child| component_height(std::slice::from_ref(child), width))
++                .filter(|height| *height > 0)
++                .collect::<Vec<_>>();
++            heights.iter().sum::<u16>()
++                + frame.gap * u16::try_from(heights.len().saturating_sub(1)).unwrap_or(0)
++        }
++        ModDirection::Row => columns(children, width, frame.gap)
++            .into_iter()
++            .map(|(child, _, width)| component_height(std::slice::from_ref(child), width))
++            .max()
++            .unwrap_or(0),
++    }
++}
++
++fn focus_within(component: &ModComponent, interaction: &Interaction) -> bool {
++    interaction.focused.as_ref().is_some_and(|focused| {
++        let mut all = Vec::new();
++        component.descendants(&mut all);
++        all.iter().any(|held| held.id() == Some(focused.as_str()))
++    })
 +}
 +
 +fn span_line(
@@ -145784,10 +146740,17 @@ index 000000000..5c92cc891
 +    (Line::from(line), links)
 +}
 +
++fn row_links(row: &ComponentRow) -> Vec<&TerminalHyperlink> {
++    row.links
++        .iter()
++        .chain(row.beside.iter().flat_map(row_links))
++        .collect()
++}
++
 +fn mark_links(buffer: &mut Buffer, area: Rect, rows: &[ComponentRow]) {
 +    for (row, links) in rows
 +        .iter()
-+        .map(|row| &row.links)
++        .map(row_links)
 +        .enumerate()
 +        .take(usize::from(area.height))
 +    {
@@ -145835,6 +146798,7 @@ index 000000000..5c92cc891
 +    ids: BTreeSet::new(),
 +    targets: BTreeMap::new(),
 +    order: Vec::new(),
++    columns: Vec::new(),
 +    hitboxes: Vec::new(),
 +    input_values: BTreeMap::new(),
 +    input_cursor: BTreeMap::new(),
@@ -146459,12 +147423,26 @@ index 000000000..5c92cc891
 +    with_cache(|cache| cache.snapshot.clone()).unwrap_or_default()
 +}
 +
-+pub(crate) fn dialog_visible(snapshot: &ModViewSnapshot) -> bool {
-+    site(&snapshot.view, "dialog").is_some_and(|dialog| !dialog.components.is_empty())
++fn dialog_key(dialog: &ModRenderSite) -> String {
++    codex_omd::component_ids_of(&dialog.components)
++        .into_iter()
++        .collect::<Vec<_>>()
++        .join("\n")
 +}
 +
-+fn sidebar_panels(snapshot: &ModViewSnapshot) -> Vec<ModPanel> {
-+    let mut panels = snapshot.view.panels.clone();
++pub(crate) fn dialog_visible(snapshot: &ModViewSnapshot) -> bool {
++    site(&snapshot.view, "dialog").is_some_and(|dialog| {
++        !dialog.components.is_empty()
++            && INTERACTION
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner)
++                .dismissed
++                != Some(dialog_key(dialog))
++    })
++}
++
++fn native_panels(snapshot: &ModViewSnapshot) -> Vec<ModPanel> {
++    let mut panels = Vec::new();
 +    if let Some(progress) = &snapshot.progress {
 +        panels.push(ModPanel {
 +            title: format!("Progress · {}", progress.title),
@@ -146480,6 +147458,61 @@ index 000000000..5c92cc891
 +    panels
 +}
 +
++fn panel_text(prefix: &str, lines: Vec<String>) -> Vec<ModComponent> {
++    lines
++        .into_iter()
++        .enumerate()
++        .map(|(line, text)| ModComponent::Text {
++            id: format!("{prefix}_{line}"),
++            label: format!("Native panel line {}", line + 1),
++            text,
++            tone: ModTone::Normal,
++        })
++        .collect()
++}
++
++fn native_cards(snapshot: &ModViewSnapshot) -> Option<ModComponent> {
++    const LINES: usize = 4;
++    let cards = native_panels(snapshot)
++        .into_iter()
++        .enumerate()
++        .map(|(index, panel)| {
++            let mut lines = panel.lines;
++            let more = lines.len().saturating_sub(LINES);
++            lines.truncate(LINES);
++            if more > 0 {
++                lines.push(format!("+{more} more"));
++            }
++            ModComponent::Box {
++                id: format!("@native_card_{index}"),
++                label: panel.title.clone(),
++                title: Some(panel.title),
++                children: panel_text(&format!("@native_card_{index}"), lines),
++                min_width: None,
++                max_width: None,
++                pointer: false,
++                style: Some(card(snapshot.view.theme.border)),
++                flex: None,
++            }
++        })
++        .collect::<Vec<_>>();
++    (!cards.is_empty()).then(|| ModComponent::Box {
++        id: "@native_cards".into(),
++        label: "Mod status".into(),
++        title: None,
++        children: cards,
++        min_width: None,
++        max_width: None,
++        pointer: false,
++        style: Some(ModBoxStyle {
++            direction: Some(ModDirection::Row),
++            gap: Some(1),
++            ..ModBoxStyle::default()
++        }),
++        flex: None,
++    })
++}
++
 +fn site<'a>(view: &'a ModView, name: &str) -> Option<&'a ModRenderSite> {
 +    view.sites.get(name)
 +}
@@ -146488,20 +147521,46 @@ index 000000000..5c92cc891
 +    components
 +        .iter()
 +        .map(|component| match component {
-+            ModComponent::Box { .. } if !component.fits(width) => 0,
++            ModComponent::Box { .. } | ModComponent::Pane { .. } if !component.fits(width) => 0,
 +            ModComponent::Box {
-+                title, children, ..
-+            } => u16::from(title.is_some()) + component_height(children, width),
-+            ModComponent::Dialog { children, .. } => 1 + component_height(children, width),
++                title,
++                children,
++                style,
++                ..
++            } => {
++                let frame = Frame::new(style.unwrap_or_default(), look(), false, false);
++                frame.rows(title.is_some()) + stack_height(children, frame.inner(width), &frame)
++            }
++            ModComponent::Dialog {
++                children, style, ..
++            } => {
++                let look = look();
++                let frame = Frame::new(
++                    style.unwrap_or_default().over(card(look.0)),
++                    look,
++                    false,
++                    false,
++                );
++                frame.rows(true) + stack_height(children, frame.inner(width), &frame)
++            }
 +            ModComponent::Pane {
 +                collapsed,
 +                children,
++                style,
 +                ..
 +            } => {
++                let look = look();
++                let mut frame = Frame::new(
++                    style.unwrap_or_default().over(card(look.0)),
++                    look,
++                    false,
++                    false,
++                );
 +                if *collapsed {
-+                    1
++                    frame.padding.0 = 0;
++                    frame.rows(true)
 +                } else {
-+                    1 + component_height(children, width).min(8)
++                    frame.rows(true) + stack_height(children, frame.inner(width), &frame).min(8)
 +                }
 +            }
 +            ModComponent::Line { .. } => 1,
@@ -146566,7 +147625,7 @@ index 000000000..5c92cc891
 +    }
 +    if let Some(header) = site(&snapshot.view, "header") {
 +        let width = column(screen, snapshot).width;
-+        return component_height(&header.components, width).clamp(1, 4) + 1;
++        return component_height(&header.components, width).clamp(1, 6) + 1;
 +    }
 +    match &snapshot.view.header {
 +        Some(header) => u16::try_from(header.lines.len()).unwrap_or(3).min(3) + 2,
@@ -146584,7 +147643,7 @@ index 000000000..5c92cc891
 +fn has_sidebar(snapshot: &ModViewSnapshot) -> bool {
 +    site(&snapshot.view, "sidebar").is_some_and(|site| !site.components.is_empty())
 +        || named_sites(&snapshot.view).any(|site| !site.components.is_empty())
-+        || !sidebar_panels(snapshot).is_empty()
++        || !snapshot.view.panels.is_empty()
 +}
 +
 +fn sidebar(area: Rect, snapshot: &ModViewSnapshot) -> Option<Rect> {
@@ -146668,6 +147727,7 @@ index 000000000..5c92cc891
 +    theme_color(slot)
 +        .map(|color| Style::default().fg(color))
 +        .unwrap_or_else(|| match tone {
++            ModTone::Accent => Style::default().fg(Color::Cyan),
 +            ModTone::Success => Style::default().fg(Color::Green),
 +            ModTone::Failure => Style::default().fg(Color::Red),
 +            ModTone::Attention => Style::default().fg(Color::Yellow),
@@ -146722,10 +147782,21 @@ index 000000000..5c92cc891
 +        }
 +    }
 +    select(components, list_selected, &mut interaction);
-+    component_rows(components, width, &mut interaction, 0)
++    unregistered_rows(components, width, &mut interaction)
 +        .into_iter()
 +        .map(|row| row.line)
 +        .collect()
++}
++
++fn unregistered_rows(
++    components: &[ModComponent],
++    width: u16,
++    interaction: &mut Interaction,
++) -> Vec<ComponentRow> {
++    let groups = interaction.columns.len();
++    let rows = component_rows(components, width, interaction, 0);
++    interaction.columns.truncate(groups);
++    rows
 +}
 +
 +fn push_region_rows(
@@ -146748,16 +147819,19 @@ index 000000000..5c92cc891
 +                line,
 +                target: None,
 +                regions: if pointer {
-+                    vec![(
-+                        id.to_owned(),
-+                        indent,
-+                        u16::try_from(row).unwrap_or(u16::MAX),
-+                        true,
-+                    )]
++                    vec![Held {
++                        id: id.to_owned(),
++                        x: indent,
++                        top: u16::try_from(row).unwrap_or(u16::MAX),
++                        width: u16::MAX,
++                        events: true,
++                        hover: false,
++                    }]
 +                } else {
 +                    Vec::new()
 +                },
 +                indent,
++                ..ComponentRow::default()
 +            }),
 +    );
 +}
@@ -146772,32 +147846,37 @@ index 000000000..5c92cc891
 +    let prefix = " ".repeat(indent);
 +    for component in components {
 +        match component {
-+            ModComponent::Box { .. } if !component.fits(width) => {}
++            ModComponent::Box { .. } | ModComponent::Pane { .. } if !component.fits(width) => {}
 +            ModComponent::Box {
 +                id,
 +                title,
 +                children,
 +                pointer,
++                style,
 +                ..
 +            } => {
++                let style = style.unwrap_or_default();
++                let frame = Frame::new(
++                    style,
++                    look(),
++                    interaction.hovered.contains_key(id),
++                    focus_within(component, interaction),
++                );
++                let head = title.as_ref().map(|title| ComponentRow {
++                    line: Line::from(title.clone()).bold(),
++                    ..ComponentRow::default()
++                });
++                let body = stack(children, frame.inner(width), &frame, interaction);
 +                let start = rows.len();
-+                if let Some(title) = title {
-+                    rows.push(ComponentRow {
-+                        id: None,
-+                        label: None,
-+                        links: Vec::new(),
-+                        line: Line::from(format!("{prefix}{title}")).bold(),
-+                        target: None,
-+                        regions: Vec::new(),
-+                        indent: cells(indent),
-+                    });
-+                }
-+                rows.extend(component_rows(children, width, interaction, indent + 1));
-+                for (offset, row) in rows[start..].iter_mut().enumerate() {
-+                    let offset = u16::try_from(offset).unwrap_or(u16::MAX);
-+                    row.regions
-+                        .insert(0, (id.clone(), cells(indent), offset, *pointer));
-+                }
++                rows.extend(framed(&frame, width, head, body));
++                hold(
++                    &mut rows[start..],
++                    id,
++                    &frame,
++                    width,
++                    *pointer,
++                    style.hover.is_some(),
++                );
 +            }
 +            ModComponent::Text {
 +                id,
@@ -146814,6 +147893,7 @@ index 000000000..5c92cc891
 +                        target: None,
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -146827,6 +147907,7 @@ index 000000000..5c92cc891
 +                    target: None,
 +                    regions: Vec::new(),
 +                    indent: cells(indent),
++                    ..ComponentRow::default()
 +                });
 +            }
 +            ModComponent::Button {
@@ -146843,6 +147924,7 @@ index 000000000..5c92cc891
 +                target: Some(ComponentTarget::Button(action.clone())),
 +                regions: Vec::new(),
 +                indent: cells(indent),
++                ..ComponentRow::default()
 +            }),
 +            ModComponent::Input {
 +                id,
@@ -146876,6 +147958,7 @@ index 000000000..5c92cc891
 +                    target: Some(ComponentTarget::Input(action.clone())),
 +                    regions: Vec::new(),
 +                    indent: cells(indent),
++                    ..ComponentRow::default()
 +                });
 +            }
 +            ModComponent::Select {
@@ -146910,6 +147993,7 @@ index 000000000..5c92cc891
 +                    }),
 +                    regions: Vec::new(),
 +                    indent: cells(indent),
++                    ..ComponentRow::default()
 +                });
 +            }
 +            ModComponent::Multiselect {
@@ -146940,6 +148024,7 @@ index 000000000..5c92cc891
 +                    target: None,
 +                    regions: Vec::new(),
 +                    indent: cells(indent),
++                    ..ComponentRow::default()
 +                });
 +                for (index, option) in options.iter().enumerate() {
 +                    let mark = if checked.contains(&option.value) {
@@ -146964,6 +148049,7 @@ index 000000000..5c92cc891
 +                        }),
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -146986,6 +148072,7 @@ index 000000000..5c92cc891
 +                        target: None,
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -147004,6 +148091,7 @@ index 000000000..5c92cc891
 +                        target: None,
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +                for line in text.lines() {
@@ -147015,6 +148103,7 @@ index 000000000..5c92cc891
 +                        target: None,
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -147026,59 +148115,80 @@ index 000000000..5c92cc891
 +                scroll,
 +                keys,
 +                children,
++                pointer,
++                style,
++                ..
 +            } => {
 +                if *keys {
 +                    interaction.key_panes.insert(id.clone());
 +                }
-+                let collapsed = interaction
++                let collapsed = *interaction
 +                    .collapsed
 +                    .entry(id.clone())
 +                    .or_insert(*collapsed);
-+                let marker = if *collapsed {
-+                    if crate::omd::ligatures_enabled() {
-+                        "▸"
-+                    } else {
-+                        ">"
-+                    }
-+                } else if crate::omd::ligatures_enabled() {
-+                    "▾"
-+                } else {
-+                    "v"
++                let style = style.unwrap_or_default();
++                let look = look();
++                let mut frame = Frame::new(
++                    style.over(card(look.0)),
++                    look,
++                    interaction.hovered.contains_key(id),
++                    focus_within(component, interaction),
++                );
++                let unicode = crate::omd::ligatures_enabled() && look.1 != ModIcons::Ascii;
++                let marker = match (collapsed, unicode) {
++                    (true, true) => "▸",
++                    (true, false) => ">",
++                    (false, true) => "▾",
++                    (false, false) => "v",
 +                };
-+                rows.push(ComponentRow {
++                let head = ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
-+                    links: Vec::new(),
-+                    line: Line::from(format!(
-+                        "{prefix}{marker} {}",
-+                        title.as_deref().unwrap_or(label)
-+                    ))
-+                    .bold(),
++                    line: Line::from(format!("{marker} {}", title.as_deref().unwrap_or(label)))
++                        .bold(),
 +                    target: Some(ComponentTarget::Pane),
-+                    regions: Vec::new(),
-+                    indent: cells(indent),
-+                });
-+                if !*collapsed {
-+                    let nested = component_rows(children, width, interaction, indent + 1);
++                    ..ComponentRow::default()
++                };
++                let body = if collapsed {
++                    frame.padding.0 = 0;
++                    Vec::new()
++                } else {
++                    let nested = stack(children, frame.inner(width), &frame, interaction);
 +                    let offset =
 +                        usize::from(*interaction.scroll.entry(id.clone()).or_insert(*scroll))
 +                            .min(nested.len().saturating_sub(1));
-+                    rows.extend(nested.into_iter().skip(offset).take(8));
-+                }
++                    nested.into_iter().skip(offset).take(8).collect()
++                };
++                let start = rows.len();
++                rows.extend(framed(&frame, width, Some(head), body));
++                hold(
++                    &mut rows[start..],
++                    id,
++                    &frame,
++                    width,
++                    *pointer,
++                    style.hover.is_some(),
++                );
 +            }
 +            ModComponent::Dialog {
-+                title, children, ..
++                title,
++                children,
++                style,
++                ..
 +            } => {
-+                rows.push(ComponentRow {
-+                    id: None,
-+                    label: None,
-+                    links: Vec::new(),
-+                    line: Line::from(format!("{prefix}{title}")).bold(),
-+                    target: None,
-+                    regions: Vec::new(),
-+                    indent: cells(indent),
-+                });
-+                rows.extend(component_rows(children, width, interaction, indent));
++                let look = look();
++                let frame = Frame::new(
++                    style.unwrap_or_default().over(card(look.0)),
++                    look,
++                    false,
++                    false,
++                );
++                let head = ComponentRow {
++                    line: Line::from(title.clone()).bold(),
++                    ..ComponentRow::default()
++                };
++                let body = stack(children, frame.inner(width), &frame, interaction);
++                rows.extend(framed(&frame, width, Some(head), body));
 +            }
 +            ModComponent::List {
 +                id,
@@ -147098,6 +148208,7 @@ index 000000000..5c92cc891
 +                        target: None,
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                    continue;
 +                }
@@ -147141,6 +148252,7 @@ index 000000000..5c92cc891
 +                        }),
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -147190,6 +148302,7 @@ index 000000000..5c92cc891
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -147228,6 +148341,7 @@ index 000000000..5c92cc891
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -147257,6 +148371,7 @@ index 000000000..5c92cc891
 +                        target: Some(ComponentTarget::Terminal(session.clone(), binding.clone())),
 +                        regions: Vec::new(),
 +                        indent: cells(indent),
++                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
@@ -147336,49 +148451,22 @@ index 000000000..5c92cc891
 +    style: Style,
 +    buffer: &mut Buffer,
 +    interaction: &mut Interaction,
-+    block: Option<Block<'static>>,
-+    comfortable_spacing: bool,
++    frame: Frame,
++    title: Option<Line<'static>>,
 +) {
 +    if area.is_empty() {
 +        return;
 +    }
-+    let inner = block
-+        .as_ref()
-+        .map(|block| block.inner(area))
-+        .unwrap_or(area);
-+    let rows = component_rows(components, inner.width.max(1), interaction, 0);
-+    let rows = if comfortable_spacing
-+        && with_cache(|cache| cache.snapshot.view.theme.density) == Some(ModDensity::Comfortable)
-+    {
-+        let mut spaced = Vec::new();
-+        let mut rows = rows.into_iter().peekable();
-+        while let Some(row) = rows.next() {
-+            // Picture rows (images, rasters) of one component stay contiguous.
-+            let picture = row.target.is_none()
-+                && row.id.is_some()
-+                && rows.peek().is_some_and(|next| next.id == row.id);
-+            spaced.push(row);
-+            if !picture {
-+                spaced.push(ComponentRow {
-+                    id: None,
-+                    label: None,
-+                    links: Vec::new(),
-+                    line: Line::from(""),
-+                    target: None,
-+                    regions: Vec::new(),
-+                    indent: 0,
-+                });
-+            }
-+        }
-+        spaced
-+    } else {
-+        rows
-+    };
++    let inner = frame.draw(area, title, buffer);
++    let rows = stack(components, inner.width.max(1), &frame, interaction);
 +    let focused_row = interaction.focused.as_ref().and_then(|focused| {
 +        let cursor = interaction.selected.get(focused).copied();
 +        let mut own = rows
 +            .iter()
 +            .enumerate()
++            .flat_map(|(index, row)| {
++                std::iter::once((index, row)).chain(row.beside.iter().map(move |row| (index, row)))
++            })
 +            .filter(|(_, row)| row.target.is_some() && row.id.as_ref() == Some(focused));
 +        let first = own.next();
 +        std::iter::once(first)
@@ -147400,11 +148488,9 @@ index 000000000..5c92cc891
 +        .skip(scroll)
 +        .map(|row| row.line.clone())
 +        .collect::<Vec<_>>();
-+    let paragraph = Paragraph::new(lines).style(style);
-+    match block {
-+        Some(block) => paragraph.block(block).render(area, buffer),
-+        None => paragraph.render(area, buffer),
-+    }
++    Paragraph::new(lines)
++        .style(style.patch(frame.style()))
++        .render(inner, buffer);
 +    mark_links(buffer, inner, &rows[scroll.min(rows.len())..]);
 +    register_component_targets(inner, rows, scroll, interaction);
 +}
@@ -147422,72 +148508,88 @@ index 000000000..5c92cc891
 +            .and_then(|offset| u16::try_from(offset).ok())
 +            .filter(|offset| *offset < inner.height)
 +            .map(|offset| inner.y + offset);
-+        let area = row_top.map(|y| Rect::new(inner.x, y, inner.width, 1));
-+        let beside = |indent: u16, width: u16| {
-+            let room = inner.width.saturating_sub(indent);
-+            row_top.map(|y| Rect::new(inner.x + indent, y, width.clamp(1, room.max(1)), 1))
-+        };
-+        let own = beside(
-+            row.indent,
-+            u16::try_from(row.line.width())
-+                .unwrap_or(u16::MAX)
-+                .saturating_sub(row.indent),
-+        );
-+        for (id, indent, top, pointer) in row.regions {
-+            let Some(area) = beside(indent, u16::MAX)
-+                .map(|held| own.filter(|_| row.id.as_ref() == Some(&id)).unwrap_or(held))
-+            else {
-+                continue;
-+            };
-+            interaction
-+                .anchors
-+                .entry(id.clone())
-+                .and_modify(|anchor| *anchor = anchor.union(area))
-+                .or_insert(area);
-+            if !pointer {
-+                continue;
-+            }
-+            let layer = interaction.layer;
-+            match interaction
-+                .regions
-+                .iter_mut()
-+                .find(|region| region.id == id && region.layer == layer)
-+            {
-+                Some(region) => region.area = region.area.union(area),
-+                None => interaction.regions.push(Region {
-+                    id,
-+                    area,
-+                    top,
-+                    layer,
-+                }),
-+            }
-+        }
-+        if let (Some(id), Some(area)) = (&row.id, own) {
-+            interaction
-+                .anchors
-+                .entry(id.clone())
-+                .and_modify(|anchor| *anchor = anchor.union(area))
-+                .or_insert(area);
-+        }
-+        let Some(target) = row.target else {
++        let whole = row.beside.is_empty();
++        register_row(inner, row_top, row, whole, interaction);
++    }
++    column_order(interaction);
++}
++
++/// A row sharing its line with columns gets a hitbox over its own cells, not the whole line.
++fn register_row(
++    inner: Rect,
++    row_top: Option<u16>,
++    mut row: ComponentRow,
++    whole: bool,
++    interaction: &mut Interaction,
++) {
++    let beside = |indent: u16, width: u16| {
++        let room = inner.width.saturating_sub(indent);
++        row_top.map(|y| Rect::new(inner.x + indent, y, width.clamp(1, room.max(1)), 1))
++    };
++    let own = beside(row.indent, row.own());
++    let area = if whole {
++        row_top.map(|y| Rect::new(inner.x, y, inner.width, 1))
++    } else {
++        own
++    };
++    for held in std::mem::take(&mut row.regions) {
++        let Some(area) = beside(held.x, held.width).map(|box_area| {
++            own.filter(|_| row.id.as_ref() == Some(&held.id))
++                .unwrap_or(box_area)
++        }) else {
 +            continue;
 +        };
++        interaction
++            .anchors
++            .entry(held.id.clone())
++            .and_modify(|anchor| *anchor = anchor.union(area))
++            .or_insert(area);
++        if !held.events && !held.hover {
++            continue;
++        }
++        let layer = interaction.layer;
++        match interaction
++            .regions
++            .iter_mut()
++            .find(|region| region.id == held.id && region.layer == layer)
++        {
++            Some(region) => region.area = region.area.union(area),
++            None => interaction.regions.push(Region {
++                id: held.id,
++                area,
++                top: held.top,
++                layer,
++                events: held.events,
++                hover: held.hover,
++            }),
++        }
++    }
++    if let (Some(id), Some(area)) = (&row.id, own) {
++        interaction
++            .anchors
++            .entry(id.clone())
++            .and_modify(|anchor| *anchor = anchor.union(area))
++            .or_insert(area);
++    }
++    if let Some(target) = row.target {
 +        let id = row.id.unwrap_or_default();
 +        let label = row.label.unwrap_or_else(|| id.clone());
 +        interaction.targets.insert(id.clone(), target.clone());
 +        if !interaction.order.contains(&id) {
 +            interaction.order.push(id.clone());
 +        }
-+        let Some(area) = area else {
-+            continue;
-+        };
-+        interaction.hitboxes.push(HitBox {
-+            id,
-+            label,
-+            area,
-+            target,
-+            layer: interaction.layer,
-+        });
++        if let Some(area) = area {
++            interaction.hitboxes.push(HitBox {
++                id,
++                label,
++                area,
++                target,
++                layer: interaction.layer,
++            });
++        }
++    }
++    for column in row.beside {
++        register_row(inner, row_top, column, false, interaction);
 +    }
 +}
 +
@@ -147514,6 +148616,7 @@ index 000000000..5c92cc891
 +        .unwrap_or(u16::MAX)
 +        .min(available.width);
 +    if width == 0 || height > available.height {
++        interaction.columns.clear();
 +        return;
 +    }
 +    let stage = Rect::new(
@@ -147527,17 +148630,6 @@ index 000000000..5c92cc891
 +        .render(stage, buffer);
 +    mark_links(buffer, stage, &rows);
 +    register_component_targets(stage, rows, 0, &mut interaction);
-+}
-+
-+fn border_type(theme: &ModTheme) -> BorderType {
-+    if !crate::omd::ligatures_enabled() || theme.icons == ModIcons::Ascii {
-+        return BorderType::Plain;
-+    }
-+    match theme.border {
-+        ModBorder::Plain => BorderType::Plain,
-+        ModBorder::Rounded => BorderType::Rounded,
-+        ModBorder::Double => BorderType::Double,
-+    }
 +}
 +
 +pub(crate) fn render_inline(
@@ -147575,6 +148667,7 @@ index 000000000..5c92cc891
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
++    interaction.columns.clear();
 +    interaction.hitboxes.clear();
 +    interaction.regions.clear();
 +    interaction.layers.clear();
@@ -147590,7 +148683,7 @@ index 000000000..5c92cc891
 +        for named in named_sites(&snapshot.view) {
 +            components.extend(named.components.iter().cloned());
 +        }
-+        for (index, panel) in sidebar_panels(snapshot).into_iter().enumerate() {
++        for (index, panel) in snapshot.view.panels.iter().cloned().enumerate() {
 +            components.push(ModComponent::Pane {
 +                id: format!("@native_panel_{index}"),
 +                label: panel.title.clone(),
@@ -147598,59 +148691,74 @@ index 000000000..5c92cc891
 +                collapsed: false,
 +                scroll: 0,
 +                keys: false,
-+                children: panel
-+                    .lines
-+                    .into_iter()
-+                    .enumerate()
-+                    .map(|(line, text)| ModComponent::Text {
-+                        id: format!("@native_panel_{index}_{line}"),
-+                        label: format!("Native panel line {}", line + 1),
-+                        text,
-+                        tone: ModTone::Normal,
-+                    })
-+                    .collect(),
++                children: panel_text(&format!("@native_panel_{index}"), panel.lines),
++                min_width: None,
++                max_width: None,
++                pointer: false,
++                style: None,
++                flex: None,
 +            });
 +        }
-+        let borders = match snapshot.view.sidebar_side {
-+            ModSidebarSide::Left => Borders::RIGHT,
-+            ModSidebarSide::Right => Borders::LEFT,
-+        };
-+        let block = Block::default()
-+            .borders(borders)
-+            .border_type(border_type(&snapshot.view.theme))
-+            .title(snapshot.view.title.clone().unwrap_or_else(|| "Mods".into()));
++        let theme = &snapshot.view.theme;
++        let frame = Frame::new(
++            snapshot
++                .view
++                .sidebar_style
++                .unwrap_or_default()
++                .over(ModBoxStyle {
++                    gap: Some(u8::from(theme.density == ModDensity::Comfortable)),
++                    ..ModBoxStyle::default()
++                }),
++            (theme.border, theme.icons),
++            false,
++            false,
++        );
++        let title = frame
++            .border
++            .map(|_| Line::from(snapshot.view.title.clone().unwrap_or_else(|| "Mods".into())));
 +        render_site(
 +            bar,
 +            &components,
 +            style,
 +            buffer,
 +            &mut interaction,
-+            Some(block),
-+            true,
++            frame,
++            title,
 +        );
 +    }
 +    let column = column(area, snapshot);
 +    let height = chat.y.saturating_sub(column.y);
 +    if height > 0 {
++        let look = (snapshot.view.theme.border, snapshot.view.theme.icons);
++        let rule = Block::default().borders(Borders::BOTTOM).border_set(
++            Frame::new(card(look.0), look, false, false)
++                .border
++                .unwrap_or_default(),
++        );
 +        if let Some(header) = site(&snapshot.view, "header") {
++            let area = Rect { height, ..column };
++            rule.render(area, buffer);
 +            render_site(
-+                Rect { height, ..column },
++                Rect {
++                    height: height - 1,
++                    ..area
++                },
 +                &header.components,
 +                style,
 +                buffer,
 +                &mut interaction,
-+                Some(Block::default().borders(Borders::BOTTOM)),
-+                false,
++                Frame::new(ModBoxStyle::default(), look, false, false),
++                None,
 +            );
 +        } else if let Some(header) = &snapshot.view.header {
 +            Paragraph::new(panel_lines(header))
 +                .style(style)
-+                .block(Block::default().borders(Borders::BOTTOM))
++                .block(rule)
 +                .render(Rect { height, ..column }, buffer);
 +        }
 +    }
 +    render_overlays(area, snapshot, style, buffer, &mut interaction);
-+    render_dialog(area, snapshot, style, buffer, &mut interaction);
++    render_dialog(area, chat, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
 +}
 +
@@ -147765,18 +148873,20 @@ index 000000000..5c92cc891
 +        interaction.layer = u16::try_from(index + 1).unwrap_or(DIALOG_LAYER - 1);
 +        interaction.layers.push((area, interaction.layer));
 +        Clear.render(area, buffer);
++        let theme = &snapshot.view.theme;
 +        render_site(
 +            area,
 +            &site.components,
 +            style,
 +            buffer,
 +            interaction,
-+            overlay.border.then(|| {
-+                Block::default()
-+                    .borders(Borders::ALL)
-+                    .border_type(border_type(&snapshot.view.theme))
-+            }),
-+            false,
++            Frame::new(
++                overlay.style.unwrap_or_default(),
++                (theme.border, theme.icons),
++                false,
++                false,
++            ),
++            None,
 +        );
 +    }
 +    interaction.layer = 0;
@@ -147784,6 +148894,7 @@ index 000000000..5c92cc891
 +
 +fn render_dialog(
 +    area: Rect,
++    chat: Rect,
 +    snapshot: &ModViewSnapshot,
 +    style: Style,
 +    buffer: &mut Buffer,
@@ -147795,10 +148906,7 @@ index 000000000..5c92cc891
 +        interaction.dialog_area = None;
 +        return;
 +    };
-+    let key = codex_omd::component_ids_of(&dialog.components)
-+        .into_iter()
-+        .collect::<Vec<_>>()
-+        .join("\n");
++    let key = dialog_key(dialog);
 +    if interaction.dismissed.as_ref() == Some(&key) {
 +        interaction.dialog_area = None;
 +        return;
@@ -147819,13 +148927,40 @@ index 000000000..5c92cc891
 +    }
 +    {
 +        let dialog_start = interaction.order.len();
-+        let width = area.width.saturating_sub(4).min(76);
-+        let height = component_height(&dialog.components, width)
-+            .saturating_add(2)
-+            .clamp(8, area.height.saturating_sub(2));
++        let stage = if chat.width >= 48 && chat.height >= 14 {
++            chat
++        } else {
++            area
++        };
++        let (title, dialog_style, components) = match dialog.components.as_slice() {
++            [
++                ModComponent::Dialog {
++                    title,
++                    style,
++                    children,
++                    ..
++                },
++            ] => (
++                Some(Line::from(title.clone()).bold()),
++                *style,
++                children.as_slice(),
++            ),
++            components => (None, None, components),
++        };
++        let theme = &snapshot.view.theme;
++        let frame = Frame::new(
++            dialog_style.unwrap_or_default().over(card(theme.border)),
++            (theme.border, theme.icons),
++            false,
++            false,
++        );
++        let width = stage.width.saturating_sub(4).min(76);
++        let height = (frame.rows(title.is_some())
++            + stack_height(components, frame.inner(width), &frame))
++        .min(stage.height.saturating_sub(2));
 +        let dialog_area = Rect::new(
-+            area.x + (area.width - width) / 2,
-+            area.y + (area.height - height) / 2,
++            stage.x + (stage.width - width) / 2,
++            stage.y + (stage.height - height) / 2,
 +            width,
 +            height,
 +        );
@@ -147833,16 +148968,12 @@ index 000000000..5c92cc891
 +        interaction.layer = DIALOG_LAYER;
 +        render_site(
 +            dialog_area,
-+            &dialog.components,
++            components,
 +            style,
 +            buffer,
 +            interaction,
-+            Some(
-+                Block::default()
-+                    .borders(Borders::ALL)
-+                    .border_type(border_type(&snapshot.view.theme)),
-+            ),
-+            false,
++            frame,
++            title,
 +        );
 +        interaction.layer = 0;
 +        interaction
@@ -148122,6 +149253,7 @@ index 000000000..5c92cc891
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
++    interaction.columns.clear();
 +    interaction.hitboxes.clear();
 +    interaction.regions.clear();
 +    interaction.layers.clear();
@@ -148137,10 +149269,17 @@ index 000000000..5c92cc891
 +        let mut components = site(&snapshot.view, name)
 +            .map(|site| site.components.clone())
 +            .unwrap_or_default();
++        let theme = &snapshot.view.theme;
++        let frame = Frame::new(
++            region.style.unwrap_or_default().over(card(theme.border)),
++            (theme.border, theme.icons),
++            false,
++            false,
++        );
 +        fill_heights(
 +            &mut components,
-+            region.area.width.saturating_sub(2),
-+            region.area.height.saturating_sub(2),
++            frame.inner(region.area.width),
++            region.area.height.saturating_sub(frame.rows(true)),
 +        );
 +        render_site(
 +            region.area,
@@ -148148,13 +149287,8 @@ index 000000000..5c92cc891
 +            style,
 +            buffer,
 +            &mut interaction,
-+            Some(
-+                Block::default()
-+                    .borders(Borders::ALL)
-+                    .border_type(border_type(&snapshot.view.theme))
-+                    .title(name.to_owned()),
-+            ),
-+            false,
++            frame,
++            Some(Line::from(name.to_owned())),
 +        );
 +    }
 +    for bar in &placement.tabs {
@@ -148171,14 +149305,14 @@ index 000000000..5c92cc891
 +        Paragraph::new(Line::from(spans)).render(bar.area, buffer);
 +    }
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
-+    render_dialog(screen, snapshot, style, buffer, &mut interaction);
++    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
 +}
 +
 +pub(crate) fn footer_hyperlink_lines(width: u16) -> Vec<HyperlinkLine> {
 +    let snapshot = snapshot();
 +    let style = panel_style(&snapshot.view);
-+    let mut lines = if let Some(site) = site(&snapshot.view, "above_composer") {
++    let rows = |components: &[ModComponent]| -> Vec<HyperlinkLine> {
 +        let mut interaction = INTERACTION
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -148186,13 +149320,16 @@ index 000000000..5c92cc891
 +        interaction.thread = snapshot.input["ledger"]["thread_id"]
 +            .as_str()
 +            .map(str::to_owned);
-+        component_rows(&site.components, width, &mut interaction, 0)
++        unregistered_rows(components, width, &mut interaction)
 +            .into_iter()
 +            .map(|row| HyperlinkLine {
 +                hyperlinks: row.links,
 +                ..HyperlinkLine::new(row.line.patch_style(style))
 +            })
 +            .collect()
++    };
++    let mut lines = if let Some(site) = site(&snapshot.view, "above_composer") {
++        rows(&site.components)
 +    } else if let Some(footer) = &snapshot.view.footer {
 +        panel_lines(footer)
 +            .into_iter()
@@ -148201,6 +149338,9 @@ index 000000000..5c92cc891
 +    } else {
 +        Vec::new()
 +    };
++    if let Some(cards) = native_cards(&snapshot) {
++        lines.extend(rows(std::slice::from_ref(&cards)));
++    }
 +    lines.extend(
 +        live_notices(NoticePlacement::Toast)
 +            .into_iter()
@@ -148873,8 +150013,15 @@ index 000000000..5c92cc891
 +        .iter()
 +        .map(|region| (region.id.clone(), region.clone()))
 +        .collect::<BTreeMap<_, _>>();
++    let restyled = hovered
++        .values()
++        .chain(interaction.hovered.values())
++        .any(|region| {
++            region.hover
++                && hovered.contains_key(&region.id) != interaction.hovered.contains_key(&region.id)
++        });
 +    for (id, last) in &interaction.hovered {
-+        if !hovered.contains_key(id) {
++        if last.events && !hovered.contains_key(id) {
 +            let region = interaction
 +                .regions
 +                .iter()
@@ -148885,12 +150032,16 @@ index 000000000..5c92cc891
 +    }
 +    for entered in here
 +        .iter()
-+        .filter(|region| !interaction.hovered.contains_key(&region.id))
++        .filter(|region| region.events && !interaction.hovered.contains_key(&region.id))
 +    {
 +        events.push(region_event(entered, event, "enter", None));
 +    }
 +    interaction.hovered = hovered;
-+    let innermost = here.iter().min_by_key(|region| region.area.area()).cloned();
++    let innermost = here
++        .iter()
++        .filter(|region| region.events)
++        .min_by_key(|region| region.area.area())
++        .cloned();
 +    let captured = interaction.captured.as_ref().and_then(|id| {
 +        interaction
 +            .regions
@@ -148899,9 +150050,12 @@ index 000000000..5c92cc891
 +            .cloned()
 +    });
 +    let consumed = match event.kind {
-+        MouseEventKind::Moved => innermost
-+            .map(|region| events.push(region_event(&region, event, "move", None)))
-+            .is_some(),
++        MouseEventKind::Moved => {
++            innermost
++                .map(|region| events.push(region_event(&region, event, "move", None)))
++                .is_some()
++                || restyled
++        }
 +        MouseEventKind::Drag(button) => captured
 +            .map(|region| events.push(region_event(&region, event, "drag", Some(button))))
 +            .is_some(),
@@ -149016,7 +150170,11 @@ index 000000000..5c92cc891
 +            Some(ModPointer::Consumed)
 +        }
 +        MouseEventKind::Up(MouseButton::Left) => {
-+            interaction.focused = Some(hit.id.clone());
++            interaction.focused = (!matches!(
++                hit.target,
++                ComponentTarget::Button(_) | ComponentTarget::Pane
++            ))
++            .then(|| hit.id.clone());
 +            if let ComponentTarget::Multiselect { index, .. } = hit.target {
 +                interaction.selected.insert(hit.id.clone(), index);
 +                toggle(&mut interaction, &hit.id, &hit.target);
@@ -149400,10 +150558,10 @@ index 000000000..5c92cc891
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..a2c137779
+index 000000000..babeb4306
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2090 @@
+@@ -0,0 +1,2329 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -149628,7 +150786,7 @@ index 000000000..a2c137779
 +
 +#[test]
 +#[serial_test::serial]
-+fn left_sidebar_header_progress_and_diagnostics_share_the_layout() {
++fn left_sidebar_and_header_share_the_layout_and_host_panels_sit_above_the_prompt() {
 +    preview(ModViewSnapshot::default());
 +    let mut snapshot = snapshot(serde_json::json!({
 +        "title":"Left","sidebar_side":"left","sidebar_width":24,
@@ -149657,6 +150815,24 @@ index 000000000..a2c137779
 +        ),
 +        Rect::new(24, 0, 66, 12)
 +    );
++    snapshot.diagnostics = (1..=6).map(|line| format!("conflict {line}")).collect();
++    preview(snapshot.clone());
++    let notes = footer_hyperlink_lines(66)
++        .iter()
++        .map(|line| line.line.to_string())
++        .collect::<Vec<_>>();
++    assert_eq!(notes.len(), 7, "{notes:#?}");
++    let notes = notes.join("\n");
++    assert!(
++        notes.contains("Progress · Echo")
++            && notes.contains("conflict 4")
++            && !notes.contains("conflict 5")
++            && notes.contains("+2 more"),
++        "{notes}"
++    );
++    snapshot.view.panels.clear();
++    assert_eq!(sidebar(area, &snapshot), None);
++    preview(ModViewSnapshot::default());
 +}
 +
 +#[test]
@@ -149726,6 +150902,7 @@ index 000000000..a2c137779
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn modal_preview_survives_older_renders_but_yields_to_newer_ones_and_recovery() {
 +    let mut preview = snapshot(serde_json::json!({
 +        "sites":{"dialog":{"components":[{
@@ -149856,7 +151033,10 @@ index 000000000..a2c137779
 +        }
 +        _ => panic!("pointer activation missing"),
 +    }
-+    assert_eq!(border_type(&snapshot.view.theme), BorderType::Plain);
++    assert!(
++        input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).is_none(),
++        "a clicked button leaves Enter to the composer"
++    );
 +    let narrow = Rect::new(0, 0, 40, 12);
 +    render(narrow, narrow, &mut Buffer::empty(narrow), &snapshot);
 +    assert!(focus("review"));
@@ -150163,9 +151343,14 @@ index 000000000..a2c137779
 +    );
 +    hidden.view.sites.clear();
 +    hidden.diagnostics = vec!["boom".into()];
-+    let mut buffer = Buffer::empty(area);
-+    render_inline(area, area, &mut buffer, &hidden);
-+    assert!(rows(&buffer, area).contains("boom"));
++    assert_eq!(sidebar(area, &hidden), None);
++    preview(hidden);
++    assert!(
++        footer_hyperlink_lines(area.width)
++            .iter()
++            .any(|line| line.line.to_string().contains("boom"))
++    );
++    preview(ModViewSnapshot::default());
 +}
 +
 +#[test]
@@ -150261,6 +151446,14 @@ index 000000000..a2c137779
 +        assert!(
 +            matches!(input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
 +            Some(ModInput::Interaction(_, ModKeyAction::Command { command, .. })) if command == "theme:close")
++        );
++        assert!(matches!(
++            input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
++            Some(ModInput::Consumed)
++        ));
++        assert!(
++            !dialog_visible(&current),
++            "a dismissed dialog no longer holds the inline viewport"
 +        );
 +
 +        preview(ModViewSnapshot::default());
@@ -150913,7 +152106,7 @@ index 000000000..a2c137779
 +    let mut view = snapshot(
 +        serde_json::json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
 +            {"type":"text","id":"intro","label":"Intro","text":"hello"},
-+            {"type":"box","id":"frame","label":"Frame","title":"Frame","children":[
++            {"type":"box","id":"frame","label":"Frame","title":"Frame","style":{"padding":[0,1]},"children":[
 +                {"type":"text","id":"inner","label":"Inner","text":"nested"},
 +                {"type":"raster","id":"nested_chart","label":"Chart","alt":"cpu chart","width":6,"height":2,"pointer":true}
 +            ]}
@@ -151360,7 +152553,7 @@ index 000000000..a2c137779
 +    assert_eq!(line(0, 6), "abcdef");
 +    assert_eq!(
 +        line(1, 10),
-+        "gh peak 92",
++        "ghpeak 92%",
 +        "the overlay draws over the raster"
 +    );
 +    assert_eq!(line(2, 6), "mnopqr");
@@ -151493,6 +152686,210 @@ index 000000000..a2c137779
 +        at(serde_json::json!({"anchor":"top_left","offset":{"x":50,"y":0},"width":8,"height":3})),
 +        None
 +    );
++}
++
++fn box_model() -> serde_json::Value {
++    serde_json::json!({"sidebar_width": 40, "sidebar_side": "left", "sites": {"sidebar": {"components": [
++        {"type": "pane", "id": "card", "label": "Card", "title": "Card", "children": [
++            {"type": "box", "id": "metrics", "label": "Metrics", "style": {"direction": "row", "gap": 1}, "children": [
++                {"type": "box", "id": "cpu", "label": "CPU", "title": "CPU", "min_width": 10,
++                    "style": {"border": "rounded", "padding": [0, 1], "hover": {"border": "thick"}},
++                    "children": [{"type": "text", "id": "cpu_value", "label": "CPU value", "text": "12%"}]},
++                {"type": "box", "id": "memory", "label": "Memory", "title": "Memory", "flex": 2, "style": {"border": "double"},
++                    "children": [{"type": "button", "id": "free", "label": "Free", "text": "Free memory", "action": {"command": "m:free"}}]}]}]},
++        {"type": "pane", "id": "flat", "label": "Flat", "title": "Flat", "style": {"border": "none", "background": 236, "padding": [0, 1], "focus": {"background": 238}},
++            "children": [{"type": "button", "id": "flat_button", "label": "Go", "text": "Go", "action": {"command": "m:go"}}]},
++        {"type": "box", "id": "live", "label": "Live", "pointer": true, "style": {"hover": {"background": "accent"}},
++            "children": [{"type": "text", "id": "live_text", "label": "Live", "text": "hover me"}]}]}}})
++}
++
++#[test]
++#[serial_test::serial]
++fn box_model_draws_cards_flat_panels_and_rows_at_every_width() {
++    let snapshot = snapshot(box_model());
++    preview(snapshot.clone());
++    let components = snapshot.view.sites["sidebar"].components.clone();
++    let frame = Frame::new(
++        ModBoxStyle {
++            gap: Some(1),
++            ..ModBoxStyle::default()
++        },
++        look(),
++        false,
++        false,
++    );
++    for width in [60, 80, 120, 200] {
++        let area = Rect::new(0, 0, width, 16);
++        let mut buffer = Buffer::empty(area);
++        let mut interaction = Interaction::default();
++        let drawn = stack(&components, width, &frame, &mut interaction).len();
++        assert_eq!(
++            u16::try_from(drawn).unwrap(),
++            stack_height(&components, width, &frame)
++        );
++        render_site(
++            area,
++            &components,
++            Style::default(),
++            &mut buffer,
++            &mut interaction,
++            frame,
++            None,
++        );
++        insta::assert_snapshot!(format!("mod_box_model_{width}"), rows(&buffer, area));
++        let free = interaction
++            .hitboxes
++            .iter()
++            .find(|hitbox| hitbox.id == "free")
++            .unwrap()
++            .area;
++        let covered = (free.x..free.right())
++            .map(|x| buffer[(x, free.y)].symbol())
++            .collect::<String>();
++        assert!(covered.contains("Free memory") && free.x > 0, "{covered}");
++        assert_eq!(interaction.order, ["card", "free", "flat", "flat_button"]);
++    }
++    let narrow = Rect::new(0, 0, 24, 16);
++    let mut buffer = Buffer::empty(narrow);
++    render_site(
++        narrow,
++        &components,
++        Style::default(),
++        &mut buffer,
++        &mut Interaction::default(),
++        frame,
++        None,
++    );
++    assert!(
++        !rows(&buffer, narrow).contains("CPU"),
++        "a column below its min_width drops out"
++    );
++    assert!(rows(&buffer, narrow).contains("Memory"));
++    let mut ascii = box_model();
++    ascii["theme"] = serde_json::json!({"icons": "ascii"});
++    preview(self::snapshot(ascii.clone()));
++    let area = Rect::new(0, 0, 60, 16);
++    let mut buffer = Buffer::empty(area);
++    render_site(
++        area,
++        &components,
++        Style::default(),
++        &mut buffer,
++        &mut Interaction::default(),
++        Frame::new(ModBoxStyle::default(), look(), false, false),
++        None,
++    );
++    let drawn = rows(&buffer, area);
++    assert!(
++        drawn.contains("+ v Card -") && drawn.contains("| | 12%"),
++        "{drawn}"
++    );
++    assert!(!drawn.contains('─') && !drawn.contains('╭'));
++    ascii["sites"]["header"] = serde_json::json!({"components": [
++        {"type": "text", "id": "head", "label": "Head", "text": "HEAD"}]});
++    let snapshot = self::snapshot(ascii);
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 100, 20);
++    let chat = chat_area(area, &snapshot, header_rows(area, &snapshot));
++    let mut buffer = Buffer::empty(area);
++    render(area, chat, &mut buffer, &snapshot);
++    let drawn = rows(&buffer, area);
++    assert!(drawn.contains("HEAD") && drawn.contains("-----"), "{drawn}");
++    assert!(!drawn.contains('─'), "{drawn}");
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn hover_and_focus_accents_restyle_without_events_or_moving_rows() {
++    let snapshot = snapshot(box_model());
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 130, 24);
++    let chat = chat_area(area, &snapshot, 0);
++    let draw = || {
++        let mut buffer = Buffer::empty(area);
++        render(area, chat, &mut buffer, &snapshot);
++        buffer
++    };
++    let before = draw();
++    let regions = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .regions
++        .clone();
++    let region = |id: &str| regions.iter().find(|region| region.id == id).cloned();
++    let (cpu, live) = (region("cpu").expect("cpu"), region("live").expect("live"));
++    assert!(!cpu.events && live.events);
++    assert_eq!(before[(cpu.area.x, cpu.area.y)].symbol(), "╭");
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, cpu.area.x + 2, cpu.area.y + 1),
++        (true, events(&[])),
++        "a hover-only box restyles but sends nothing"
++    );
++    let hovered = draw();
++    assert_eq!(hovered[(cpu.area.x, cpu.area.y)].symbol(), "┏");
++    assert_eq!(
++        rows(&before, area).lines().count(),
++        rows(&hovered, area).lines().count()
++    );
++    assert_eq!(
++        pointer_events(MouseEventKind::Moved, live.area.x + 1, live.area.y),
++        (true, events(&[("live", "enter 1 0"), ("live", "move 1 0")]))
++    );
++    let on_live = draw();
++    assert_eq!(on_live[(cpu.area.x, cpu.area.y)].symbol(), "╭");
++    assert_eq!(on_live[(live.area.x, live.area.y)].bg, Color::Cyan);
++    let flat = INTERACTION.lock().unwrap().anchors["flat"];
++    assert_eq!(before[(flat.x, flat.y)].bg, Color::Indexed(236));
++    INTERACTION.lock().unwrap().focused = Some("flat_button".into());
++    assert_eq!(draw()[(flat.x, flat.y)].bg, Color::Indexed(238));
++    INTERACTION.lock().unwrap().focused = None;
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn row_boxes_take_focus_one_column_at_a_time() {
++    let button = |id: &str| {
++        serde_json::json!({"type": "button", "id": id, "label": id, "text": id, "action": {"command": "demo:go"}})
++    };
++    let snapshot = snapshot(serde_json::json!({"sidebar_width": 40, "sites": {"sidebar": {"components": [
++        {"type": "box", "id": "row", "label": "Row", "style": {"direction": "row"}, "children": [
++            {"type": "box", "id": "a", "label": "A", "children": [button("a1"), button("a2")]},
++            {"type": "box", "id": "b", "label": "B", "children": [button("b1"), button("b2")]}]}]}}}));
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 100, 20);
++    let chat = chat_area(area, &snapshot, 0);
++    render(area, chat, &mut Buffer::empty(area), &snapshot);
++    assert_eq!(INTERACTION.lock().unwrap().order, ["a1", "a2", "b1", "b2"]);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn dialogs_centre_in_the_chat_column_fit_their_content_and_size_buttons_naturally() {
++    let snapshot = snapshot(
++        serde_json::json!({"sidebar_width": 30, "sidebar_side": "left",
++        "sites": {"sidebar": {"components": [{"type": "text", "id": "note", "label": "Note", "text": "beside"}]},
++            "dialog": {"components": [{"type": "dialog", "id": "settings", "label": "Settings", "title": "Settings", "style": {"border": "double"},
++                "children": [{"type": "box", "id": "buttons", "label": "Buttons", "style": {"direction": "row", "gap": 1}, "children": [
++                    {"type": "button", "id": "ok", "label": "OK", "text": "OK", "action": {"command": "m:ok"}},
++                    {"type": "button", "id": "cancel", "label": "Cancel", "text": "Cancel", "action": {"command": "m:cancel"}}]}]}]}}}),
++    );
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 120, 30);
++    let chat = chat_area(area, &snapshot, 0);
++    assert_eq!(chat, Rect::new(30, 0, 90, 30));
++    let mut buffer = Buffer::empty(area);
++    render(area, chat, &mut buffer, &snapshot);
++    let dialog = INTERACTION.lock().unwrap().dialog_area.unwrap();
++    assert_eq!((dialog.x, dialog.width, dialog.height), (37, 76, 3));
++    let row = |y| (0..120).map(|x| buffer[(x, y)].symbol()).collect::<String>();
++    let top = row(dialog.y);
++    assert!(top.contains("╔ Settings ═"), "{top}");
++    let buttons = row(dialog.y + 1);
++    assert!(buttons.contains("║ [ OK ] [ Cancel ]   "), "{buttons}");
++    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
 new file mode 100644
@@ -152390,9 +153787,90 @@ index 000000000..af0c120cb
 +ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
 +ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
 +> draft   with   spaces
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap
+new file mode 100644
+index 000000000..c1c65cecf
+--- /dev/null
++++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap
+@@ -0,0 +1,14 @@
++---
++source: tui/src/mod_ui_tests.rs
++expression: "rows(&buffer, area)"
++---
++┌ v Card ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
++│ ╭ CPU ───────────────────────────────╮ ╔ Memory ═══════════════════════════════════════════════════════════════════╗ │
++│ │ 12%                                │ ║[ Free memory ]                                                            ║ │
++│ ╰────────────────────────────────────╯ ╚═══════════════════════════════════════════════════════════════════════════╝ │
++└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
++                                                                                                                        
++ v Flat                                                                                                                 
++ [ Go ]                                                                                                                 
++                                                                                                                        
++hover me
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_200.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_200.snap
+new file mode 100644
+index 000000000..8364360ba
+--- /dev/null
++++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_200.snap
+@@ -0,0 +1,14 @@
++---
++source: tui/src/mod_ui_tests.rs
++expression: "rows(&buffer, area)"
++---
++┌ v Card ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
++│ ╭ CPU ──────────────────────────────────────────────────────────╮ ╔ Memory ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗ │
++│ │ 12%                                                           │ ║[ Free memory ]                                                                                                                 ║ │
++│ ╰───────────────────────────────────────────────────────────────╯ ╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝ │
++└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
++                                                                                                                                                                                                        
++ v Flat                                                                                                                                                                                                 
++ [ Go ]                                                                                                                                                                                                 
++                                                                                                                                                                                                        
++hover me
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_60.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_60.snap
+new file mode 100644
+index 000000000..921d92c9c
+--- /dev/null
++++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_60.snap
+@@ -0,0 +1,15 @@
++---
++source: tui/src/mod_ui_tests.rs
++assertion_line: 2138
++expression: "rows(&buffer, area)"
++---
++┌ v Card ──────────────────────────────────────────────────┐
++│ ╭ CPU ───────────╮ ╔ Memory ═══════════════════════════╗ │
++│ │ 12%            │ ║[ Free memory ]                    ║ │
++│ ╰────────────────╯ ╚═══════════════════════════════════╝ │
++└──────────────────────────────────────────────────────────┘
++                                                            
++ v Flat                                                     
++ [ Go ]                                                     
++                                                            
++hover me
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_80.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_80.snap
+new file mode 100644
+index 000000000..b5a571dc8
+--- /dev/null
++++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_80.snap
+@@ -0,0 +1,14 @@
++---
++source: tui/src/mod_ui_tests.rs
++expression: "rows(&buffer, area)"
++---
++┌ v Card ──────────────────────────────────────────────────────────────────────┐
++│ ╭ CPU ──────────────────╮ ╔ Memory ════════════════════════════════════════╗ │
++│ │ 12%                   │ ║[ Free memory ]                                 ║ │
++│ ╰───────────────────────╯ ╚════════════════════════════════════════════════╝ │
++└──────────────────────────────────────────────────────────────────────────────┘
++                                                                                
++ v Flat                                                                         
++ [ Go ]                                                                         
++                                                                                
++hover me
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_narrow.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_narrow.snap
 new file mode 100644
-index 000000000..b42a5bbab
+index 000000000..c9f41aff9
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_narrow.snap
 @@ -0,0 +1,7 @@
@@ -152400,72 +153878,56 @@ index 000000000..b42a5bbab
 +source: tui/src/mod_ui_tests.rs
 +expression: "rows(&buffer, Rect::new(0, 0, width, header))"
 +---
-+ ± omd  Full · v0.157.0                           
++± omd  Full · v0.157.0                            
 +full · left sidebar                               
 +──────────────────────────────────────────────────
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_wide.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_wide.snap
 new file mode 100644
-index 000000000..0e158adfc
+index 000000000..8ace6778a
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_wide.snap
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,10 @@
 +---
 +source: tui/src/mod_ui_tests.rs
++assertion_line: 499
 +expression: "rows(&buffer, Rect::new(0, 0, width, header))"
 +---
-+ + mark   oh my diff                                                                      
-+ + mark   External profile · mod host on                                                  
-+ + mark   Codex v0.157.0                                                                  
+++ mark   oh my diff                                                                       
+++ mark   External profile · mod host on                                                   
+++ mark   Codex v0.157.0                                                                   
 +full · left sidebar                                                                       
 +──────────────────────────────────────────────────────────────────────────────────────────
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 new file mode 100644
-index 000000000..c94a2108b
+index 000000000..4950f39d4
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,7 @@
 +---
 +source: tui/src/mod_ui_tests.rs
-+assertion_line: 62
 +expression: "rows(&buffer, area)"
 +---
-+Left                   │Build                                                             
-+v Agents               │main · clean                                                      
-+                       │──────────────────────────────────────────────────────────────────
-+ 2 running             │                                                                  
-+                       │                                                                  
-+v Progress · Echo      │                                                                  
-+                       │                                                                  
-+ almost done           │                                                                  
-+                       │                                                                  
-+v Mod diagnostics      │                                                                  
-+                       │                                                                  
-+ Ctrl+t conflicts      │                                                                  
-+                       │                                                                  
-+                       │                                                                  
-+                       │                                                                  
-+                       │                                                                  
-+                       │                                                                  
-+                       │
++┌ v Agents ────────────┐Build                                                             
++│ 2 running            │main · clean                                                      
++└──────────────────────┘──────────────────────────────────────────────────────────────────
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
 new file mode 100644
-index 000000000..652f2a7e3
+index 000000000..6087ba9da
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,12 @@
 +---
 +source: tui/src/mod_ui_tests.rs
-+assertion_line: 39
 +expression: "rows(&buffer, area)"
 +---
-+                                                            │Workspace                    
-+                                                            │v Worker                     
-+                                                            │                             
-+                                                            │ running                     
-+                                                            │                             
-+                                                            │                             
-+                                                            │                             
-+ X                                                          │
++                                                            ┌ v Worker ──────────────────┐
++                                                            │ running                    │
++                                                            └────────────────────────────┘
++                                                                                          
++                                                                                          
++                                                                                          
++                                                                                          
++ X
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_omd_profile_narrow.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_omd_profile_narrow.snap
 new file mode 100644
 index 000000000..7f4062c52

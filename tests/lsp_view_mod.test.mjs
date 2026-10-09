@@ -52,19 +52,26 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     state = invoke(state, 'channel', { publisher: 'omd_lsp_sync', channel: 'omd_lsp_sync/status', correlation: null, sequence: 1, dropped: 0,
       data: [{ adapter: 'python', server: 'pylsp', status: 'synced', reason: '', documents: 2, errors: ['box.py:3:5 bad size'] }, { adapter: 'rust', server: null, status: 'fallback', reason: 'rust_server_absent', documents: 0, errors: [] }] }).state;
     state = invoke(state, 'command', 'pane', 'lsp').state;
-    const sites = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites;
-    view = sites['omd_lsp_view/lsp'].components;
+    let patch = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value;
+    assert.deepEqual([Object.keys(patch), Object.keys(patch.sites)], [['sites'], ['above_composer']]);
+    view = patch.sites.above_composer.components[1].children;
     assert.equal(view[0].text, 'box.py:2 · 1 errors');
-    assert.deepEqual(view[2].action, { command: 'omd_lsp_view:lsp', args: 'editor box.py:2' });
-    assert.deepEqual(view[4].rows.map(row => row.value), ['box.py:3']);
-    assert.deepEqual(sites.sidebar.components[1].children.map(item => item.text), ['python pylsp · 2 open · 1 errors', '  box.py:3:5 bad size', 'rust: rust server absent']);
+    assert.deepEqual(view[2].rows.map(row => row.value), ['box.py:3']);
+    assert.deepEqual(view[3].children.map(button => button.action.args), ['editor box.py:2', 'back', 'pane', 'close']);
+    state = invoke(state, 'command', 'servers', 'lsp').state;
+    const servers = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[2].children;
+    const text = box => box.children.map(child => child.spans ? child.spans.map(span => span.text).join('') : child.text);
+    assert.deepEqual(servers.map(text), [['python pylsp', '2 open · 1 errors', 'box.py:3:5 bad size'], ['rust rust server absent']]);
     assert.deepEqual(invoke(state, 'command', 'back', 'lsp').state.view.items.map(item => item.value), ['box.py:2']);
     answer = 'service_provider_missing: omd.lsp';
     state = invoke(state, 'channel', { publisher: 'omd_lsp_view', channel: 'omd_lsp_view/request', data: request.data, correlation: null, sequence: 3, dropped: 0 }).state;
     assert.equal(state.view.message, 'enable omd_lsp_sync, which runs the language servers');
     state = invoke(state, 'command', 'close', 'lsp').state;
-    assert.deepEqual(Object.keys(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites), ['sidebar']);
+    const closed = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value;
+    assert.deepEqual([Object.keys(closed), Object.keys(closed.sites)], [['sites'], ['above_composer']]);
     state = invoke(state, 'channel', { publisher: 'omd_lsp_sync', channel: 'omd_lsp_sync/status', data: [], correlation: null, sequence: 2, dropped: 0 }).state;
+    assert.equal(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[1].children[0].text, 'No server running; /lsp open PATH starts one');
+    state = invoke(state, 'command', 'servers', 'lsp').state;
     assert.equal(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value, null);
   } finally {
     rmSync(repository, { recursive: true, force: true });

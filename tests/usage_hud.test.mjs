@@ -177,19 +177,21 @@ test('compaction, rewind and route switches mark the context reading stale; cate
   assert.match(dialog(first.state).text, /Assembled request 0m ago: ~2.5k tokens \(bytes\/4, approximate\) · system 40% · context 30% · tool output 20% · user 10%/);
 });
 
-test('sidebar shows usage, allowance, tasks and workers', () => {
+test('the line above the prompt shows usage, allowance, tasks and workers', () => {
   let state = start();
   state = feed(state, [['model_response', response('r1')],
     ['agent', { phase: 'start', agent: { agent_id: 'agent-123456789', thread_id: 'child', parent: { thread_id: 'lead', agent_id: null }, origin: 'model', owner: null, definition: null, role: 'explorer', status: 'running' } }],
     ['tool_call', { call_id: 'c1', agent_id: null, tool: 'exec_command', arguments: {} }],
     ['app_notification', { method: 'turn/plan/updated', params: { threadId: 'lead', plan: [{ step: 'Read', status: 'completed' }, { step: 'Fix', status: 'inProgress' }, { step: 'Test', status: 'pending' }] }, thread_id: 'lead', coalesced: 0, dropped: 0 }]]);
   state.allowance = { used: 1_200_000, limit: 5_000_000, requests: 3, max: 100 };
-  const sidebar = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings: hud }).value;
-  const panes = sidebar.sites.sidebar.components;
-  assert.equal(panes[0].type, 'slot');
-  assert.deepEqual(panes[1].children.map(child => child.text), ['Cache 80% hit', '1 included', '[##--------] $1.20/$5.00']);
-  assert.deepEqual(panes[2].children.map(child => child.text), ['Tasks 1/3 · Fix', 'explorer · agent-12', 'running exec_command']);
-  assert.deepEqual(sidebar.keybindings, { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } });
+  const view = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings: hud }).value;
+  assert.equal(view.sites.sidebar, undefined);
+  const [slot, row] = view.sites.above_composer.components;
+  assert.equal(slot.type, 'slot');
+  assert.deepEqual(row.style, { direction: 'row', gap: 2, padding: [0, 1] });
+  const text = line => line.spans.map(span => span.text).join('');
+  assert.deepEqual(row.children.map(text), ['Cache 80% hit · 1 included · [##--------] $1.20/$5.00', 'Tasks 1/3 · Fix · explorer · agent-12 · running exec_command']);
+  assert.deepEqual(view.keybindings, { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } });
   const toggled = call(usageMod, { event: 'command', name: 'hud', payload: 'toggle', state: { ...state, open: true }, settings: hud }).state;
   assert.equal(toggled.open, false);
 });

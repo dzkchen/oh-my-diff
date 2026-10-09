@@ -233,14 +233,14 @@ def run(artifact_dir, upstream, output, managed_policy=False):
             assert any(item.get("name") == identifier for item in listed["installed"])
             call([base / "full-bin/codex", "plugin", "remove", f"{identifier}@oh-my-diff"], env, False)
         assert call([base / "full-bin/codex", "plugin", "list", "--json"], env)["installed"] == []
-        disabled = command("full", "mod", "disable", "omd_workspace")
-        assert not next(item for item in disabled["packages"] if item["id"] == "omd_workspace")["enabled_in_store"]
+        disabled = command("full", "mod", "disable", "omd_inspector")
+        assert not next(item for item in disabled["packages"] if item["id"] == "omd_inspector")["enabled_in_store"]
         side_by_side = command("full-upgrade", *(install + ["--attach-store"]))
-        assert not next(item for item in side_by_side["packages"] if item["id"] == "omd_workspace")["enabled_in_store"]
+        assert not next(item for item in side_by_side["packages"] if item["id"] == "omd_inspector")["enabled_in_store"]
         command("full-upgrade", "uninstall")
         assert (base / "full-bin/codex").is_file()
         assert not next(item for item in command("full", "status", "--json")["packages"]
-                        if item["id"] == "omd_workspace")["enabled_in_store"]
+                        if item["id"] == "omd_inspector")["enabled_in_store"]
         activated = command("full", "activate", "full")
         assert activated["host_mode"] == "omd"
         direct = command("full", "activate", "direct")
@@ -264,9 +264,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
-        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_workspace"})
-        enabled = command("full", "mod", "enable", "omd_workspace")
-        assert next(item for item in enabled["packages"] if item["id"] == "omd_workspace")["loaded_by_profile"]
+        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_inspector"})
+        enabled = command("full", "mod", "enable", "omd_inspector")
+        assert next(item for item in enabled["packages"] if item["id"] == "omd_inspector")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         observations["full"] = {"installed_mods": [item["id"] for item in full["packages"]],
                                 "default_active": active, "staged_plugins": full["plugin_bundle"]["plugins"],
