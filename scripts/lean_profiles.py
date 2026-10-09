@@ -38,7 +38,7 @@ ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
-                    "runtime/preview-v1.lock.json", "upstream.lock.json", "LEAN_PROFILES.md", "install.sh")
+                    "runtime/preview-v1.lock.json", "upstream.lock.json", "docs/install.md", "install.sh")
 
 
 def invoke(*arguments):

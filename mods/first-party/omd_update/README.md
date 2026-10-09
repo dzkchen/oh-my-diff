@@ -17,7 +17,7 @@ The mod never reaches the network and never replaces a running session.
 
 Updates install only when OMD starts while no other OMD session is open, through the installer's verified transaction
 (checksum, compatibility preflight, atomic switch, automatic rollback on failure). Automatic updates are off by default,
-stop retrying a release that failed once, and never update mods you installed yourself. See `LEAN_PROFILES.md`.
+stop retrying a release that failed once, and never update mods you installed yourself. See [docs/install.md](../../../docs/install.md#update).
 
 At launch, staged releases must still match the current pin, channel and runtime requirements.
 Automatic staging also rechecks automatic-update policy and enabled user-mod compatibility.

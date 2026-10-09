@@ -17,7 +17,6 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
-VERSION = "0.1.0-alpha.1"
 TARGET = "aarch64-apple-darwin"
 BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
 HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
@@ -31,7 +30,7 @@ SOURCES = (
     "runtime/preview-v1.lock.json", "runtime/plugin-v1.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
-    "LEAN_PROFILES.md", "install.sh",
+    "docs/install.md", "install.sh",
     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
 ) + full_mods_lock.sources()
 
@@ -64,7 +63,7 @@ SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
 def build(artifact_dir, package_mode=False, version=None):
-    product_version = VERSION if version is None else version
+    product_version = json.loads(OUTPUT.read_text())["version"] if version is None else version
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", product_version):
         raise ValueError("invalid release version")
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())

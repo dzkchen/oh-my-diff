@@ -9,8 +9,8 @@
       "sha256": "fd1cb41004792a8146902a9ea9a4373f1213ac6577ace1972fae4c52cee570f7"
     },
     "mod-api.tgz": {
-      "bytes": 134436,
-      "sha256": "5e8ece0dbcfe9e9d45dba503499e96de7434831b2762d97173de96d5b8167739"
+      "bytes": 134427,
+      "sha256": "f4a7a70fc5e85b95bc27d8651102ac5d2714bb9e7d4c517a7dfd76ed1d5ea9d0"
     },
     "omd": {
       "bytes": 5508192,
@@ -96,12 +96,12 @@
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "source_sha256": {
-    "LEAN_PROFILES.md": "11df22f1adb349f1cebeb5df3d4cf29dc1d95da56ef568a20ecc17638da8a9f6",
+    "docs/install.md": "3e3b8b68946e073cda0604bca286d8e1216f79b15f2452e386cb8380e27e913f",
     "extensions/index.json": "a7b669780a7675072ba6cdb043504e175ccb2c07daa8e4390a86c552dab01f12",
-    "install.sh": "63de9c89bd397681c8d4b585e29cdf4d3f59bebb7191a8d9aab46ac5accf9ac9",
+    "install.sh": "126cdfff50a46f06ee813cba15b7ed9d917b66e2b1142ab9df17c8397bd5ec18",
     "mods/EXTENSION_TYPES.md": "f03974de84dac9d2d255691aa764e846db681f169a1beb42333f9a5cbf49d280",
-    "mods/README.md": "f7314b7ef7cd5e17a37913bd773baa1db82302ce0ba7297517f9d064d5df0e61",
-    "mods/REFERENCE.md": "70b00dd404f0de554f2112ea80202c5957ff8aca01e3b1b4c7b6aa11ba2bd1f0",
+    "mods/README.md": "663a89fef78bb0cb7aeac70d344fadd4f6f3d957d540efd2823472d662364dd8",
+    "mods/REFERENCE.md": "fefcf2b3b50f4b884c854b44e05547e2bc645c2e363a67fb847a20d40cb4c0b3",
     "mods/api.d.ts": "1c73d0cbfe50051bfd0c0331bf2f8e20442393f508f132eaf35d45abf28fc979",
     "mods/author/cli.mjs": "9c6104dea989705ca2985c86c33afcdf6b0f00d189539cc5e66ab06261f11284",
     "mods/author/client.mjs": "76056095c30eef507d1350b539c96ec1438e01ccdbd422f18a5dcecee549d731",
@@ -189,14 +189,14 @@
     "runtime/full-mods.lock.json": "64fcf09e7bfc8150b12dcd41beec244e46074708dd5777ef92377677ee5b1a8f",
     "runtime/hardened-entitlements.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
     "runtime/patches/manifest.json": "84d02e56129d8ba1e6928cbb631f53cd9082b62c616f35c091458cd1bc4a0eb1",
-    "runtime/plugin-v1.lock.json": "db74aadca4cda4984b5d6109b8d859921982a0805cfd50de3bdd5b6df7bfee8c",
+    "runtime/plugin-v1.lock.json": "eb004dc86105109bba8288df5ad307c1a6b9fcc4acf4e5ace0efabe4d43dfa89",
     "runtime/preview-v1.lock.json": "adffce4ee1379b005fd731564cdd227af09eebaf5a3c2ca5f27762cd153180ca",
     "scripts/authority_broker.py": "1bafc4ba23312c6720454a54733d6aa6b00fb8073b9e9ea6673aab787e1a8f4b",
     "scripts/full_mods_lock.py": "8d142cc5c21d9122121a39e701ea7306a4d7cbcaec79d026bc94d4f69b808a50",
     "scripts/install_support.py": "b23fad328eeb12ed10ad530b86db0c19a41f9dd49112d8c6844a6d068dafc054",
     "scripts/lean_package.py": "8bcdbc8ac05b694a3384815cbda32cbd28ac7fa4d2abc02dc37cc9eaf0b1e7ec",
-    "scripts/lean_profiles.py": "699d4efb0c6e4dba14794ed0fd4a8524274815a19bc9970819cfb25cd98a0691",
-    "scripts/lean_release_lock.py": "b0cd5d0a07aa7bd081a358e7e71b096e89bd701298336666b5bb182d3382d558",
+    "scripts/lean_profiles.py": "61ec58940160776b4e156c60c6904dc9502ad03b67ed079298a0cf89c3f9ea29",
+    "scripts/lean_release_lock.py": "444212259da568753af37856ea033b2e675b1c43fe806b98a3801a63231e23c4",
     "scripts/preview_lock.py": "96260c4fbdabe43e338f87c289a7834b667a65aa07bd51aedb7ea493743a0c31",
     "upstream.lock.json": "6419a927b1e5947fae19482b27ac5f8a0acff03fb206dfd7b2e869ed1af61fa7"
   },

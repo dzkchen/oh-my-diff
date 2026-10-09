@@ -22,7 +22,7 @@ mentions a first-party package ID.
 only an explicitly selected schema-2 contract, route grants, permissions and
 receipts. `omd-contract` selects a contract; enabling the package alone selects
 none and authorizes no provider. Installation is described in
-[`LEAN_PROFILES.md`](../LEAN_PROFILES.md).
+[`docs/install.md`](../docs/install.md).
 
 Apply the patch to an exact pinned checkout after lock normalization:
 
@@ -32,7 +32,7 @@ python3 scripts/apply_runtime_patch.py /path/to/codex
 ```
 
 For development, `scripts/batch_tree.py` creates a patched scratch tree and
-regenerates the patch, manifest and these mirrors; see [`AGENTS.md`](../AGENTS.md).
+regenerates the patch, manifest and these mirrors; see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 `patches/manifest.json` binds every before/after file hash. Application is
 idempotent, rejects modified destinations, and leaves unrelated files and the

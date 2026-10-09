@@ -36,7 +36,7 @@ author checks do not make paid requests. `pnpm test` also runs any
 `*.test.ts` or `*.test.mjs` file beside `mod.test.json` with `node --test`;
 `@oh-my-diff/mod-api/testing` supplies scenario, mock, view-query and
 interaction helpers for them, and the assertions are `node:assert`.
-`pnpm watch -- /absolute/scratch-store` re-inspects an edited local source,
+`pnpm watch /absolute/scratch-store` re-inspects an edited local source,
 approves its digest in that store, queues a reload for the next turn boundary
 (or `/omd` reload) and copies the store's declarations, including
 `tool-types.d.ts` when that store's session has listed its tools, into `.omd/`.
@@ -53,7 +53,7 @@ rationale for every package.
 For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
-installer in [LEAN_PROFILES.md](../LEAN_PROFILES.md) stages candidate packages
+installer ([docs/install.md](../docs/install.md)) stages candidate packages
 inactive except eight default packages (`omd_inspector`, `omd_logo`,
 `omd_model_picker`, `omd_mods`, `omd_plan_removal`, `omd_tool_lines`, `omd_update` and
 `omd_workspace`). Its `omd_workflow` package
@@ -62,7 +62,7 @@ separately with `/omd_workflow:contract ID@VERSION` or `omd-package contract sel
 
 Packages deferred from the launch collection are not in this tree. They can be
 restored from the `pre-launch-collection` Git tag and return in post-launch waves
-([LEAN_PROFILES.md](../LEAN_PROFILES.md)).
+([the collection](../docs/collection.md)).
 
 ## Validation
 

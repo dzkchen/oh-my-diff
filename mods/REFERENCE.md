@@ -2331,7 +2331,7 @@ has no host maximum, so a provider's context window is configuration.
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
-| `pnpm watch -- STORE` | Re-inspects unchanged capabilities, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
+| `pnpm watch STORE` | Re-inspects unchanged capabilities, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
@@ -2422,7 +2422,7 @@ conformance harness (`scripts/client_acceptance.py`) or a real terminal check.
 ### Watch and reload
 
 Interactive: while a mod is written, `omd-mod-author watch DIR STORE` (or
-`pnpm watch -- STORE`) inspects the directory, approves its current digest in
+`pnpm watch STORE`) inspects the directory, approves its current digest in
 `STORE` as the user would with `omd-mod trust`, then queues a reload of that
 store's host and refreshes `.omd/`; saving an entry point, asset or lifecycle
 file reloads again after 100 ms and reports a half-written file instead of

@@ -5,7 +5,7 @@ three Codex plugins. The OMD+ package stages all three as inert source
 packages. Staging a plugin does not install or enable it in Codex.
 
 Plugins outside this launch collection are not shipped; see the
-[restore and wave note](../LEAN_PROFILES.md).
+[launch collection](../docs/collection.md).
 
 - `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
   PDF, and Jupyter notebook reading through existing approved host tools. Its

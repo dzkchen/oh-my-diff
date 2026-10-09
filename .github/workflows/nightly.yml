@@ -14,68 +14,7 @@ concurrency:
 
 jobs:
   validate:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 360
-    env:
-      CARGO_INCREMENTAL: '0'
-      CARGO_BUILD_JOBS: '2'
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_PROFILE_TEST_DEBUG: '0'
-      CARGO_PROFILE_RELEASE_LTO: 'off'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
-      CARGO_PROFILE_RELEASE_DEBUG: '0'
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
-        with:
-          install_args: node python@3.14.6
-      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996
-        with:
-          package_json_file: mods/package.json
-      - name: Linux build dependencies and fixture paths
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libcap-dev libasound2-dev libssl-dev
-          sudo mkdir -p /private/tmp
-          sudo chmod 1777 /private/tmp
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Install pinned Rust toolchain
-        run: |
-          OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
-          rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
-          rustup default "$OMD_RUST_TOOLCHAIN"
-      - name: Full hosted validation
-        run: mise run nightly -- --hosted
-      - name: Build and validate nightly package
-        if: runner.os == 'macOS'
-        run: python3 scripts/nightly_ci.py package
-      - name: Upload validated nightly package
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: nightly-package
-          path: /private/tmp/omd-nightly/release/
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-      - name: Preserve validation logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: nightly-report-${{ matrix.os }}
-          path: |
-            /private/tmp/omd-nightly/report.md
-            /private/tmp/omd-nightly/logs/
-            /private/tmp/omd-nightly/profile-acceptance.json
-            /private/tmp/omd-bnightly/logs/
-          retention-days: 14
+    uses: ./.github/workflows/validate.yml
 
   publish:
     needs: validate
@@ -89,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: nightly-package
+          name: package
           path: release
       - name: Publish passing prerelease
         env:
@@ -110,7 +49,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          pattern: nightly-report-*
+          pattern: validation-report-*
           path: reports
       - name: Open or update one issue per failed run
         if: always()

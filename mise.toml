@@ -1,4 +1,5 @@
 [tools]
+git-cliff = "2.14.2"
 node = "24.18.0"
 
 [tasks."mods:check"]
@@ -36,3 +37,12 @@ run = "python3 scripts/batch_brief.py"
 
 [tasks."nightly"]
 run = "python3 scripts/nightly.py"
+
+[tasks."release"]
+run = "python3 scripts/release.py prepare"
+
+[tasks."release:check"]
+run = "python3 scripts/release.py check"
+
+[tasks."github:settings"]
+run = "python3 scripts/github_settings.py"

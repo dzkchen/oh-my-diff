@@ -159,7 +159,7 @@ class HostedNightlyTests(unittest.TestCase):
                           "upstream_tag": "rust-v0.161.0", "run_url": "https://example.test/run"}
             manifest = {"version": version, "archive": archive.name, "target": "aarch64-apple-darwin",
                         "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
-            (root / "nightly-provenance.json").write_text(json.dumps(provenance))
+            (root / "provenance.json").write_text(json.dumps(provenance))
             (root / "omd-release.json").write_text(json.dumps(manifest))
             (root / "SHA256SUMS").write_text("\n".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in root.iterdir()))
             environment = {"GITHUB_SHA": "a" * 40, "GITHUB_REPOSITORY": "dzkchen/oh-my-diff"}
@@ -176,6 +176,37 @@ class HostedNightlyTests(unittest.TestCase):
                 gh.assert_not_called()
                 with mock.patch.dict(os.environ, {"GITHUB_SHA": "b" * 40}), self.assertRaisesRegex(ValueError, "provenance"):
                     nightly_ci.publish(root)
+
+    def test_stable_release_publishes_only_from_its_tag_and_dry_run_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "release"
+            root.mkdir()
+            notes = Path(temporary) / "notes.md"
+            notes.write_text("notes\n")
+            archive = root / "oh-my-diff-1.0.0-aarch64-apple-darwin.tar.xz"
+            archive.write_bytes(b"verified package")
+            (root / "provenance.json").write_text(json.dumps({"commit": "a" * 40, "version": "1.0.0", "profile": "release"}))
+            (root / "omd-release.json").write_text(json.dumps({"version": "1.0.0", "archive": archive.name, "target": "aarch64-apple-darwin",
+                                                               "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}))
+            (root / "SHA256SUMS").write_text("\n".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in root.iterdir()))
+            environment = {"GITHUB_SHA": "a" * 40, "GITHUB_REPOSITORY": "dzkchen/oh-my-diff", "GITHUB_REF": "refs/heads/main"}
+            with mock.patch.dict(os.environ, environment), mock.patch.object(nightly_ci, "command") as gh:
+                with self.assertRaisesRegex(ValueError, "must be published from tag v1.0.0"):
+                    nightly_ci.publish(root, notes)
+                nightly_ci.publish(root, notes, dry_run=True)
+                gh.assert_not_called()
+                with mock.patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v1.0.0"}):
+                    nightly_ci.publish(root, notes)
+                create, edit = (call.args for call in gh.call_args_list)
+                self.assertIn("--latest", create)
+                self.assertNotIn("--prerelease", create)
+                self.assertIn(archive, create)
+                self.assertEqual(edit[-2:], ("--draft=false", "--latest"))
+
+    def test_nightly_base_follows_the_committed_release(self):
+        with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "1"}):
+            self.assertTrue(nightly_ci.nightly_version("1.0.0").startswith("1.0.1-nightly."))
+            self.assertTrue(nightly_ci.nightly_version("1.1.0-rc.2").startswith("1.1.0-nightly."))
 
     def test_failed_reruns_update_one_issue_and_recovered_runs_close_it(self):
         environment = {"GITHUB_RUN_ID": "99", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_REPOSITORY": "dzkchen/oh-my-diff", "GITHUB_SHA": "a" * 40,

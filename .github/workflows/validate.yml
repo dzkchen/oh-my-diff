@@ -1,0 +1,79 @@
+name: Validate
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Stable release version to package; empty packages a nightly
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: node python@3.14.6
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996
+        with:
+          package_json_file: mods/package.json
+      - name: Linux build dependencies and fixture paths
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libcap-dev libasound2-dev libssl-dev
+          sudo mkdir -p /private/tmp
+          sudo chmod 1777 /private/tmp
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install pinned Rust toolchain
+        run: |
+          OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
+          rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
+          rustup default "$OMD_RUST_TOOLCHAIN"
+      - name: Full hosted validation
+        run: mise run nightly -- --hosted
+      - name: Build and validate package
+        if: runner.os == 'macOS'
+        env:
+          OMD_RELEASE_VERSION: ${{ inputs.version }}
+        run: python3 scripts/nightly_ci.py package ${OMD_RELEASE_VERSION:+--version "$OMD_RELEASE_VERSION"}
+      - name: Upload validated package
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: package
+          path: /private/tmp/omd-nightly/release/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Preserve validation logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: validation-report-${{ matrix.os }}
+          path: |
+            /private/tmp/omd-nightly/report.md
+            /private/tmp/omd-nightly/logs/
+            /private/tmp/omd-nightly/profile-acceptance.json
+            /private/tmp/omd-bnightly/logs/
+          retention-days: 14

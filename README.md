@@ -1,31 +1,49 @@
 # Oh My Diff
 
-Oh My Diff (`oh-my-diff`, identifier prefix `omd`) is a focused patch set for
-the open-source Codex CLI/runtime. It keeps `codex` as the launch command and
-shares Codex configuration, authentication, instructions, and compatible
-sessions.
+Codex CLI, extended with TypeScript mods.
 
-The target product makes Codex deeply moddable in TypeScript and ships a curated
-set of useful, replaceable mods. Users should be able to reshape coordination,
-context, tools, and the terminal experience without maintaining their own Codex
-fork. The intended lasting advantage is a useful mod ecosystem, dependable API
-compatibility, good author tools, and integrations maintained across upgrades.
+Oh My Diff (OMD) is a patched [Codex CLI](https://github.com/openai/codex). Mods can change its commands, tools,
+context and screen. OMD ships with a small set of mods, and you can write your own. You still start it with
+`codex`, and it keeps your Codex settings, sign-in and sessions.
 
-The native foundation, [experimental TypeScript mod API and author tools](mods/README.md),
-and a [reviewed extension candidate index](extensions/README.md) are implemented.
-Public release qualification and curated distribution remain in progress. Cost reduction is
-one intended benefit of bundled policies, not an established performance claim
-or the entire product promise.
+## Quickstart
 
-The initial audience is Codex CLI power users who have hit a concrete
-customization limit. Development starts with signature workflows and a small
-private preview for user and author feedback. The public release will still
-include the curated first-party bundle, polished setup, and mod controls.
+You need an Apple Silicon Mac with Codex `0.162.x`, Node 24.18+ and Python 3.12+ installed.
 
-The two install choices are **OMD Core**, the modding ecosystem with user-selected
-extensions, and **OMD+**, the selected first-party collection. Installed packages
-and active behavior are separate; opt-in packages stay inactive until selected.
+1. Install OMD with its mod collection:
 
-[Maintained integration coverage for this release](INTEGRATION.md)
+   ```sh
+   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
+   ```
 
-[Local OMD Core and OMD+ candidate profiles](LEAN_PROFILES.md)
+2. Start it:
+
+   ```sh
+   codex
+   ```
+
+3. Type `/mods` to see which mods are on and to turn others on.
+
+For the minimal install, other options, updates and removal, see [Install Oh My Diff](docs/install.md).
+
+## Learn more
+
+- [Mods included with OMD+](docs/collection.md)
+- [Install and manage mods](docs/manage-mods.md)
+- [Write your first mod](docs/write-a-mod.md)
+- [Mod API reference](mods/REFERENCE.md)
+
+## Project status
+
+OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
+If something breaks, please [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+
+OMD exists because small, everyday workflow improvements get less attention than bigger AI-lab priorities. After
+release, the maintainer plans to focus mainly on critical fixes. If you'd like to take over maintenance, get in
+touch.
+
+Oh My Diff is not affiliated with or endorsed by OpenAI.
+
+[Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
+[Code of conduct](CODE_OF_CONDUCT.md) · [MIT License](LICENSE) ([Codex patch notice](NOTICE)) ·
+[Third-party notices](THIRD_PARTY_NOTICES.md)

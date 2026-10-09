@@ -187,10 +187,10 @@ def profile_choice(args):
         return args.profile
     try:
         with open("/dev/tty", "r+") as terminal:
-            terminal.write("Oh My Diff candidate\n"
-                           "1) OMD Core: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
-                           "2) OMD+: the selected first-party collection and staged plugin sources.\n"
-                           "   The inspector, logo, model picker and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
+            terminal.write("Oh My Diff\n"
+                           "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
+                           "2) OMD+: also the first-party mod collection and staged plugin sources.\n"
+                           "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
             terminal.flush()

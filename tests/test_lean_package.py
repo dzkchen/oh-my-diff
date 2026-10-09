@@ -56,14 +56,13 @@ class SourceBuildTests(unittest.TestCase):
                     lean_package.install_archive(args)
                 verification = run.call_args_list[0].args
                 self.assertEqual(verification[verification.index("--version") + 1], product_version)
-                with patch.object(release, "VERSION", "0.2.0-alpha.1"):
-                    expected = release.build(root)
-                    self.assertEqual(expected["version"], "0.2.0-alpha.1")
-                    lock.write_text(json.dumps(expected, indent=2, sort_keys=True) + "\n")
-                    with patch("sys.argv", ["lean_release_lock", "--artifact-dir", str(root)]), \
-                            patch.object(release, "VERSION", "0.2.0-alpha.2"):
-                        with self.assertRaisesRegex(SystemExit, "lean release lock differs"):
-                            release.main()
+                lock.write_text(json.dumps({"version": "0.2.0-alpha.1"}))
+                expected = release.build(root)
+                self.assertEqual(expected["version"], "0.2.0-alpha.1")
+                lock.write_text(json.dumps(expected, indent=2, sort_keys=True) + "\n")
+                with patch("sys.argv", ["lean_release_lock", "--artifact-dir", str(root), "--version", "0.2.0-alpha.2"]):
+                    with self.assertRaisesRegex(SystemExit, "lean release lock differs"):
+                        release.main()
 
     def test_fresh_source_build_selects_every_copied_binary(self):
         with tempfile.TemporaryDirectory() as directory:

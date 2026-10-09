@@ -1,0 +1,14 @@
+[changelog]
+body = "{% for group, commits in commits | group_by(attribute=\"group\") %}{{ group }}\n{% for commit in commits %}- {{ commit.message | upper_first }}\n{% endfor %}{% endfor %}"
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+filter_commits = true
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+(-rc\\.[0-9]+)?$"
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^feat", group = "New" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^(perf|refactor|docs|revert)", group = "Changed" },
+]
