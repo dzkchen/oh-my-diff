@@ -34,9 +34,10 @@ def labels(settings, dry_run):
 
 
 def repository(settings, dry_run):
-    print("repository merge settings and main branch protection")
+    print("repository merge settings, private vulnerability reporting and main branch protection")
     if not dry_run:
         gh("api", "--method", "PATCH", f"repos/{REPOSITORY}", "--input", "-", payload=settings["repository"])
+        gh("api", "--method", "PUT", f"repos/{REPOSITORY}/private-vulnerability-reporting")
         protection = dict(settings["branch_protection"])
         branch = protection.pop("branch")
         gh("api", "--method", "PUT", f"repos/{REPOSITORY}/branches/{branch}/protection", "--input", "-", payload=protection)

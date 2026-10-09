@@ -1,5 +1,7 @@
 # Oh My Diff
 
+![Oh My Diff. Keep Codex. Mod everything.](docs/banner.png)
+
 Codex CLI, extended with TypeScript mods.
 
 Oh My Diff (OMD) is a patched [Codex CLI](https://github.com/openai/codex). Mods can change its commands, tools,
