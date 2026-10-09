@@ -27,32 +27,9 @@ class PluginLockTests(unittest.TestCase):
     def test_pinned_bundle_matches_plugin_sources(self):
         lock = install_support.plugin_sources()
         self.assertEqual(lock["marketplace"], "oh-my-diff")
-        self.assertEqual(set(lock["plugins"]),
-                         {"omd-guidance-hooks", "omd-review-policy", "omd-application-bridges",
-                          "omd-artifact-reading", "omd-code-execution"})
-        self.assertEqual(
-            lock["plugins"]["omd-guidance-hooks"]["extension_types"],
-            ["plugin", "skill", "hook"],
-        )
-        self.assertFalse(lock["plugins"]["omd-guidance-hooks"]["mod_required"])
-        self.assertEqual(
-            lock["plugins"]["omd-review-policy"]["extension_types"],
-            ["plugin", "skill", "hook"],
-        )
-        self.assertFalse(lock["plugins"]["omd-review-policy"]["mod_required"])
-        self.assertEqual(
-            lock["plugins"]["omd-application-bridges"]["extension_types"],
-            ["plugin", "mcp", "hook"],
-        )
-        self.assertFalse(lock["plugins"]["omd-application-bridges"]["mod_required"])
-        self.assertEqual(
-            lock["plugins"]["omd-artifact-reading"]["extension_types"],
-            ["plugin", "skill"],
-        )
-        self.assertFalse(lock["plugins"]["omd-artifact-reading"]["mod_required"])
-        self.assertEqual(lock["plugins"]["omd-code-execution"]["extension_types"],
-                         ["plugin", "skill"])
-        self.assertFalse(lock["plugins"]["omd-code-execution"]["mod_required"])
+        self.assertEqual({name: (plugin["extension_types"], plugin["mod_required"]) for name, plugin in lock["plugins"].items()},
+                         {name: (["plugin", "skill"], False)
+                          for name in ("omd-anchored-edit", "omd-artifact-reading", "omd-code-execution")})
 
 
 class ShippedPatchTests(unittest.TestCase):

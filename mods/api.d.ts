@@ -79,6 +79,19 @@ export type ModelResponse = {
 };
 
 export type ToolSpec = { name: string; label?: string; description: string; parameters: { type: 'object'; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean }; task_scoped?: boolean };
+/** Original argument types by tool name; a store's generated `tool-types.d.ts` fills it from the host's actual tool inventory. */
+export interface ToolArguments {}
+/** A tool call: any tool until `ToolArguments` lists the inventory, then exactly one of its tools. */
+export type ToolCall = keyof ToolArguments extends never
+  ? { tool: string; arguments: Json }
+  : { [T in keyof ToolArguments]: { tool: T; arguments: ToolArguments[T] } }[keyof ToolArguments];
+/** `effective` is null when a `tool_specs` interceptor hid the tool; `deferred` tools are reachable through tool search. */
+export type ToolInventoryEntry = {
+  name: string; kind: 'builtin' | 'mcp' | 'extension' | 'dynamic'; server: string | null;
+  original: { description: string; parameters: Json | null; freeform: boolean };
+  effective: { description: string; parameters: Json | null; deferred: boolean } | null;
+};
+export type ToolInventory = { thread_id: string; tools: ToolInventoryEntry[] };
 export type VirtualReadRequest = { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number };
 export type VirtualReadResponse = { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean };
 export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; handle: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean };
@@ -137,7 +150,7 @@ export type TerminalComponent =
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
   /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
-  | { type: 'raster'; id: string; label: string; alt: string; width: number; height: number; pointer?: boolean }
+  | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
   | { type: 'slot' }
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
@@ -169,7 +182,7 @@ export interface TerminalTheme {
   glyphs?: Record<string, string>;
 }
 export type TerminalClient = {
-  kind: 'terminal'; graphics: 'kitty' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
+  kind: 'terminal'; graphics: 'kitty' | 'iip' | 'cells' | 'text'; pointer: 'half_cell' | 'cell' | 'none'; reduced_motion: boolean;
   cell_px: { width: number; height: number } | null; columns: number; rows: number;
 };
 /** An external client attached over `omd/client/attach`; `viewport` is null until the client reports one. */
@@ -192,17 +205,24 @@ export interface TerminalView {
 export type TerminalPatch = TerminalView;
 export type TerminalConflict = { field: string; owner: string; rejected: string; origin: string };
 export type RenderToolStatus = 'running' | 'completed' | 'failed' | 'interrupted';
-export type RenderExecCall = { call_id: string; command: string; exit_code: number | null; duration_ms: number | null; output_lines: number; output_tail: string | null; user_shell: boolean };
+export type RenderParsedCommand = { type: 'read'; cmd: string; name: string; path: string } | { type: 'list_files'; cmd: string; path: string | null }
+  | { type: 'search'; cmd: string; query: string | null; path: string | null } | { type: 'unknown'; cmd: string };
+export type RenderExecCall = { call_id: string; kind: 'exec'; command: string; parsed: RenderParsedCommand[]; status: RenderToolStatus; exit_code: number | null; duration_ms: number | null; output_lines: number; output_tail: string | null; user_shell: boolean };
+/** One agent tool row with its arguments, status and output summary. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. */
+export type RenderToolCall = { expanded: boolean } & (RenderExecCall
+  | { call_id: string; kind: 'explore'; status: RenderToolStatus; duration_ms: number | null; calls: RenderExecCall[] }
+  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
+  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
+  | { call_id: string; kind: 'agent'; tool: 'spawn_agent' | 'send_input' | 'resume_agent' | 'wait' | 'close_agent' | 'agent'; status: RenderToolStatus; duration_ms: null; agents: string[]; prompt: string }
+  | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
+  | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
+  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: null; path: string | null; prompt: string | null });
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
   assistant_message: { text: string; first: boolean; truncated: boolean };
-  tool_call: { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null }
-    | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null };
+  tool_call: RenderToolCall;
   tool_result: { call_id: string; tool: string; success: boolean | null; text: string };
-  tool_group: { kind: 'exec'; calls: RenderExecCall[]; running: boolean };
-  tool_progress: RenderProps['tool_call'] | (RenderExecCall & { kind: 'exec' });
-  command_output: RenderExecCall & { kind: 'exec' };
   spinner: { header: string; elapsed_seconds: number; details: string | null; message: string | null; interrupt_hint: boolean };
   turn_duration: { seconds: number | null; completed_at_ms: number | null };
   notice: { kind: 'info' | 'warning' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
@@ -332,7 +352,8 @@ export interface HostOperations {
   'turns.queued': { arguments: null; result: { paused: boolean; started: number; spent_microusd: number; entries: TurnQueueEntry[] } };
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none' }; result: { session: string; running: true } };
+  /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. */
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string }; result: { session: string; running: true } };
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -351,8 +372,9 @@ export interface HostOperations {
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
   'tools.undefine': { arguments: { name: string }; result: { removed: boolean } };
-  'tools.invoke': { arguments: { tool: string; arguments: Json }; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
-  'tools.check': { arguments: { tool: string; arguments: Json }; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
+  'tools.list': { arguments: null; result: ToolInventory };
+  'tools.invoke': { arguments: ToolCall; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
+  'tools.check': { arguments: ToolCall; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -391,7 +413,7 @@ export interface HostOperations {
   'terminal.panes': { arguments: Record<string, never>; result: { panes: { id: string; visible: boolean; collapsed: boolean; focused: boolean; scroll: number }[] } };
   'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
     result: { shown: true; model?: boolean } | { cleared: boolean } };
-  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] };
+  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } };
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
@@ -463,10 +485,10 @@ export type HttpResponse = { status: number; url: string; headers: Record<string
 export type CommandRow = { command: string; description: string; owner: string | null; hidden: boolean; args_hint: string | null; immediate: boolean; protected: boolean };
 export type ConfigRow = { key: string; label: string; value: Json; source: string; version: string | null; scope: 'codex' | 'mod'; editable: boolean; managed: boolean; secret: boolean; hidden: boolean; type?: string; enum?: Json[] | null };
 export type AdmissionPackage = { id: string; version: string; sha256: string; source: string; scope: string; capabilities: string[]; dependencies: { id: string; version: string }[]; requires: string[]; services: Json; registrations: Json; source_use: Json };
-export type ToolSpecEntry = { name: string; description: string; parameters: Json; deferred: boolean };
+export type ToolSpecEntry = { name: string; description: string; parameters: Json | null; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
+  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };

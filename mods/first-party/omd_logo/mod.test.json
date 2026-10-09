@@ -9,7 +9,7 @@
         "presentation": { "thread_id": "fresh-logo-fixture", "phase": "fresh" },
         "ledger": null,
         "identity": {
-          "codex_version": "0.161.0",
+          "codex_version": "0.162.0",
           "install_profile": "full",
           "mode": "omd",
           "mods": { "installed": 6, "enabled": 2, "active": 2 }

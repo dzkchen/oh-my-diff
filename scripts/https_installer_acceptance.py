@@ -3,7 +3,6 @@ import argparse
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import os
 from pathlib import Path
 import shutil
 import ssl
@@ -11,6 +10,11 @@ import subprocess
 import tempfile
 import tomllib
 from threading import Thread
+
+try:
+    from scripts.lean_profile_acceptance import expected_defaults, isolated_environment
+except ModuleNotFoundError:
+    from lean_profile_acceptance import expected_defaults, isolated_environment
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,9 +73,8 @@ def run(archive, upstream, output):
         install_root = base / "managed"
         bin_dir = base / "bin"
         node = Path(subprocess.check_output(["mise", "which", "node"], text=True).strip())
-        env = os.environ.copy()
-        env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home), SSL_CERT_FILE=str(cert),
-                   PATH=f"{upstream.parent}{os.pathsep}{env['PATH']}")
+        env = isolated_environment(base, home, upstream)
+        env["SSL_CERT_FILE"] = str(cert)
         fixed = ["--root", str(install_root), "--bin-dir", str(bin_dir),
                  "--upstream", str(upstream), "--node", str(node)]
         asset = ["--asset-url", f"{url}/package.tar.xz", "--asset-sha256", digest(archive)]
@@ -117,9 +120,9 @@ def run(archive, upstream, output):
             assert full["installed"] == "full"
             full_status = command("status", *fixed)["profile"]
             assert full_status["profile"] == "full"
-            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace"}
+            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == set(expected_defaults())
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
-            assert len(full_status["plugin_bundle"]["plugins"]) == 10
+            assert len(full_status["plugin_bundle"]["plugins"]) == 3
             registered = json.loads(subprocess.check_output([bin_dir / "omd-package", "plugins"], env=env, text=True))
             assert registered["source"] == str(install_root.resolve() / "current/prefix/bundles/oh-my-diff")
             registered_generation = Path(registered["source"]).resolve()

@@ -49,6 +49,7 @@ class SummarizeTests(unittest.TestCase):
                 calls = {call.args[0]: call.args[1] for call in child.call_args_list}
                 self.assertEqual(calls["host check with scenarios"][calls["host check with scenarios"].index("--omd-mod") + 1], str(manager))
                 self.assertEqual(calls["client acceptance"][-1], str(manager.parent))
+                self.assertEqual(calls["host binaries"][-1], "--release")
 
     def test_hosted_validation_keeps_the_checkout_and_reports_skipped_steps(self):
         with tempfile.TemporaryDirectory() as directory:

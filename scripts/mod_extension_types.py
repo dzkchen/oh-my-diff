@@ -10,7 +10,7 @@ REGISTRY = ROOT / "mods/extension-types.json"
 DOCUMENT = ROOT / "mods/EXTENSION_TYPES.md"
 ROLES = {"bundled", "candidate", "author_example", "conformance_fixture"}
 EXTENSION_TYPES = {"hook", "mod", "plugin", "skill"}
-PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party", ROOT / "mods/exercise")
+PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party")
 
 
 def package_paths():

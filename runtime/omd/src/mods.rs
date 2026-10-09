@@ -64,6 +64,16 @@ pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
 mod package_manager;
+mod policy;
+pub use policy::MANAGED_POLICY_FILE;
+pub use policy::MANAGED_POLICY_KEY;
+pub use policy::MANAGED_SCOPE;
+pub use policy::Managed;
+pub use policy::ManagedPolicy;
+pub use policy::ManagedTier;
+pub use policy::load_managed;
+pub use policy::load_managed_from;
+pub use policy::managed;
 mod process;
 pub use bridge::ModHostCall;
 mod resources;
@@ -100,7 +110,7 @@ pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 pub use store::Trust;
 
-pub const CODEX_HOST_RELEASE: &str = "0.161.0";
+pub const CODEX_HOST_RELEASE: &str = "0.162.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -270,6 +280,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "builtins_v1",
     "contracts_v2",
     "framed_process_v1",
+    "process_raster_v1",
     "kernels_v1",
     "terminal_lists_v1",
     "adapters_v1",
@@ -425,6 +436,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "session.info",
     "ledger.settle",
     "time.sleep",
+    "tools.list",
     "tools.define",
     "tools.invoke",
     "tools.check",
@@ -2096,6 +2108,8 @@ pub struct ModSelection {
     pub secret_environment: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<ManagedTier>,
 }
 
 impl ModSelection {
@@ -2332,6 +2346,11 @@ const MOD_FAULT_LIMIT: u32 = 5;
 const BROKER_REFRESH: Duration = Duration::from_secs(2);
 
 type Brokered = Option<(u64, BTreeSet<String>)>;
+type Authority = (
+    Brokered,
+    Option<Managed>,
+    std::result::Result<policy::ManagedDeployment, String>,
+);
 
 impl Loaded {
     fn fault(&mut self, error: String) {
@@ -2394,9 +2413,12 @@ pub struct ModHost {
     chains: Vec<Value>,
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
-    brokered: Option<(Instant, String, Brokered)>,
+    brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     policies: Vec<PathBuf>,
+    managed: Option<Managed>,
+    unserved: Vec<(String, Vec<String>, String)>,
+    project: Option<PathBuf>,
 }
 
 enum Access<'a> {
@@ -2838,6 +2860,9 @@ impl ModHost {
             brokered: None,
             required_surfaces: Arc::default(),
             policies: Vec::new(),
+            managed: None,
+            unserved: Vec::new(),
+            project: None,
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -2848,6 +2873,7 @@ impl ModHost {
 
     /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
     pub fn set_checkout(&mut self, repository: &Path) {
+        self.project = repository.canonicalize().ok();
         self.checkout = repository
             .ancestors()
             .find_map(|directory| {
@@ -2899,65 +2925,133 @@ impl ModHost {
 
     pub fn reload(&mut self) -> Result<bool> {
         let path = self.store.root.join("mods.json");
-        let bytes = store::read(&path, 65_536)?;
-        let sha256 = digest(&bytes);
-        let brokered = match self.brokered_grants(&sha256) {
-            Ok(brokered) => brokered,
+        let bytes = store::read(&path, 65_536);
+        let sha256 = digest(bytes.as_deref().unwrap_or_default());
+        let (brokered, managed, deployment) = match self.authority(&sha256) {
+            Ok(authority) => authority,
             Err(error) => {
                 if !self.loaded.is_empty() {
                     self.loaded.clear();
                     self.order.clear();
                     self.generation += 1;
                     self.dynamic_tools.clear();
-                    self.publish_required_surfaces();
                 }
+                self.unserved = vec![(
+                    "authority".to_owned(),
+                    MOD_CAPABILITIES
+                        .iter()
+                        .map(|capability| (*capability).to_owned())
+                        .collect(),
+                    format!("authority_unavailable: {error}"),
+                )];
+                self.publish_required_surfaces();
                 self.configuration_sha256.clear();
                 return Err(error);
             }
         };
+        let (deployment, unreadable) = match deployment {
+            Ok(deployment) => (deployment, None),
+            Err(error) => (policy::ManagedDeployment::default(), Some(error)),
+        };
         let hash = format!(
-            "{sha256}:{}",
-            brokered.as_ref().map_or(0, |(generation, _)| *generation)
+            "{sha256}:{}:{}:{}:{}",
+            brokered.as_ref().map_or(0, |(generation, _)| *generation),
+            managed
+                .as_ref()
+                .map_or("", |managed| managed.sha256.as_str()),
+            deployment.generation,
+            self.project.as_deref().unwrap_or(Path::new("")).display()
         );
         if hash == self.configuration_sha256 {
             return Ok(false);
         }
-        let config = ModConfiguration::parse(&bytes, &path)?;
-        if config.schema != 1 || !config.node.is_absolute() {
-            return Err(failure("invalid_mod_configuration"));
+        let configured = bytes
+            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
+            .and_then(
+                |config| match config.schema != 1 || !config.node.is_absolute() {
+                    true => Err(failure("invalid_mod_configuration")),
+                    false => Ok(config),
+                },
+            );
+        let mut rejected = Vec::new();
+        let config = match configured {
+            Ok(config) => config,
+            Err(error) if managed.is_some() => {
+                // Administrator policy still loads when the user's configuration is broken.
+                rejected.push(ModRejection {
+                    path: path.clone(),
+                    id: None,
+                    scope: user_scope(),
+                    reason: format!("invalid_mod_configuration: {error}"),
+                });
+                ModConfiguration {
+                    schema: 1,
+                    revision: 0,
+                    node: Some(self.node.clone())
+                        .filter(|node| node.is_file())
+                        .or_else(node_on_path)
+                        .unwrap_or_default(),
+                    mods: Vec::new(),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        let mut selections = Vec::new();
+        let user = self.store.managed_user();
+        if let Some(managed) = &managed {
+            if let Some(reason) = unreadable {
+                rejected.push(ModRejection {
+                    path: self.store.root.join("managed.json"),
+                    id: None,
+                    scope: MANAGED_SCOPE.to_owned(),
+                    reason,
+                });
+            }
+            let (administered, pending) =
+                managed.selections(&deployment, &user, self.project.as_deref());
+            selections = administered;
+            rejected.extend(pending);
         }
-        self.policies = config
-            .mods
+        let administered = selections.len();
+        selections.extend(config.mods.iter().cloned());
+        self.managed = managed;
+        self.policies = selections
             .iter()
             .filter(|m| m.enabled && m.capabilities.iter().any(|c| c == "request_policy"))
             .map(|m| m.path.clone())
             .collect();
         self.publish_required_surfaces();
-        let initial = self.configuration_sha256.is_empty();
+        let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
-            config.mods.iter().any(|m| {
+            selections.iter().enumerate().any(|(index, m)| {
                 m.enabled
                     && m.path == loaded.selection.path
+                    && m.sha256 == loaded.selection.sha256
+                    && m.scope == loaded.selection.scope
                     && loaded
                         .package
                         .capabilities
                         .iter()
                         .all(|cap| m.capabilities.contains(cap))
-                    && brokered
-                        .as_ref()
-                        .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m))))
+                    && (index < administered
+                        || brokered
+                            .as_ref()
+                            .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m)))))
             })
         });
         if self.loaded.len() != retained {
             self.generation += 1;
             self.dynamic_tools.clear();
         }
-        let mut rejected = Vec::new();
+        self.unserved = self.unserved_targets(&user);
+        self.publish_required_surfaces();
         let selected = Self::select(
-            &config,
+            &selections,
+            administered,
             initial,
             brokered.as_ref().map(|(_, grants)| grants),
+            self.managed.as_ref().map(|managed| &managed.policy),
             &mut rejected,
         )?;
         let adapters = Self::adapters(&selected);
@@ -2977,9 +3071,10 @@ impl ModHost {
                 next.insert(id, previous.clone());
                 continue;
             }
-            let assets = if package.assets.is_empty() {
-                BTreeMap::new()
-            } else {
+            let assets = (|| {
+                if package.assets.is_empty() {
+                    return Ok(BTreeMap::new());
+                }
                 let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
                 if hash != selection.sha256 {
                     return Err(failure(format!(
@@ -2993,13 +3088,26 @@ impl ModHost {
                         package.id
                     )));
                 }
-                files
+                Ok(files
                     .into_iter()
                     .map(|(name, text)| {
                         let sha256 = digest(text.as_bytes());
                         (name, json!({"text": text, "sha256": sha256}))
                     })
-                    .collect()
+                    .collect())
+            })();
+            let assets = match assets {
+                Ok(assets) => assets,
+                Err(error) => {
+                    reject(
+                        initial,
+                        &mut rejected,
+                        &selection,
+                        Some(&package.id),
+                        error.to_string(),
+                    )?;
+                    continue;
+                }
             };
             let adapter = package.adapter.as_deref().map(|name| {
                 adapters
@@ -3124,12 +3232,15 @@ impl ModHost {
         }
         self.rejected = rejected;
         self.admit();
+        self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;
         self.publish_required_surfaces();
-        self.write_installed_service_types()?;
+        if let Err(error) = self.write_installed_service_types() {
+            self.reload_error = Some(format!("derived_types_unavailable: {error}"));
+        }
         Ok(true)
     }
 
@@ -3152,18 +3263,71 @@ impl ModHost {
         }
     }
 
-    /// Re-asks the broker when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
-    fn brokered_grants(&mut self, digest: &str) -> Result<Brokered> {
-        if let Some((at, cached, grants)) = &self.brokered
+    /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
+    fn unserved_targets(&self, user: &str) -> Vec<(String, Vec<String>, String)> {
+        let Some(managed) = &self.managed else {
+            return Vec::new();
+        };
+        managed
+            .targets(user, self.project.as_deref())
+            .into_iter()
+            .filter(|target| {
+                !self.loaded.get(&target.id).is_some_and(|loaded| {
+                    loaded.selection.scope == MANAGED_SCOPE
+                        && (loaded.error.is_none()
+                            || loaded.registrations != Registrations::default())
+                })
+            })
+            .map(|target| {
+                let reason = self
+                    .rejected
+                    .iter()
+                    .find(|rejection| {
+                        rejection.scope == MANAGED_SCOPE
+                            && rejection.id.as_ref() == Some(&target.id)
+                    })
+                    .map(|rejection| rejection.reason.clone())
+                    .or_else(|| self.loaded.get(&target.id)?.error.clone())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "managed_not_running: {}; see omd-mod policy explain",
+                            target.id
+                        )
+                    });
+                (target.id.clone(), target.capabilities.clone(), reason)
+            })
+            .collect()
+    }
+
+    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json`
+    /// changes or the last answer is older than `BROKER_REFRESH`.
+    fn authority(&mut self, digest: &str) -> Result<Authority> {
+        if let Some((at, cached, authority)) = &self.brokered
             && cached == digest
             && at.elapsed() < BROKER_REFRESH
         {
-            return Ok(grants.clone());
+            return Ok(authority.clone());
         }
         self.brokered = None;
         let grants = store::brokered_grants(&self.store.root)?;
-        self.brokered = Some((Instant::now(), digest.to_owned(), grants.clone()));
-        Ok(grants)
+        let managed = self.store.managed()?;
+        let deployment = match managed {
+            Some(_) => self
+                .store
+                .managed_deployment()
+                .map_err(|error| error.to_string()),
+            None => Ok(policy::ManagedDeployment::default()),
+        };
+        let authority = (grants, managed, deployment);
+        self.brokered = Some((Instant::now(), digest.to_owned(), authority.clone()));
+        Ok(authority)
+    }
+
+    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated hosts.
+    pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) -> Result<bool> {
+        self.store.set_managed_policy(file, owner, user);
+        self.brokered = None;
+        self.reload()
     }
 
     fn adapters(
@@ -3196,20 +3360,37 @@ impl ModHost {
             .collect()
     }
 
-    /// Trusted, enabled selections keyed by mod ID after scope precedence.
+    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence;
+    /// the first `administered` selections come from the policy.
     fn select(
-        config: &ModConfiguration,
+        selections: &[ModSelection],
+        administered: usize,
         initial: bool,
         grants: Option<&BTreeSet<String>>,
+        managed: Option<&ManagedPolicy>,
         rejected: &mut Vec<ModRejection>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
+        let rank = |scope: &str| match scope {
+            MANAGED_SCOPE => 2,
+            "project" => 1,
+            _ => 0,
+        };
         let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
-        for selection in config.mods.iter().filter(|m| m.enabled) {
+        for (index, selection) in selections.iter().enumerate().filter(|(_, m)| m.enabled) {
+            let administered = index < administered;
             let loaded = (|| {
-                if !MOD_SCOPES.contains(&selection.scope.as_str()) {
-                    return Err(failure(format!("unsupported_scope: {}", selection.scope)));
+                if !administered
+                    && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
+                {
+                    return Err(failure(format!(
+                        "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
+                        selection.scope
+                    )));
                 }
-                if grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection)))) {
+                if !administered
+                    && grants
+                        .is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
+                {
                     return Err(failure(format!(
                         "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
                         selection.path.display()
@@ -3217,10 +3398,17 @@ impl ModHost {
                 }
                 let (package, source, hash) = store::package(&selection.path)?;
                 if hash != selection.sha256 {
-                    return Err(failure(format!(
-                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-                        package.id
-                    )));
+                    return Err(failure(if administered {
+                        format!(
+                            "managed_content_stale: {} differs from the administrator-pinned sha256; run omd-mod package-sync",
+                            package.id
+                        )
+                    } else {
+                        format!(
+                            "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                            package.id
+                        )
+                    }));
                 }
                 let granted: BTreeSet<_> = selection.capabilities.iter().collect();
                 if package.capabilities.iter().any(|c| !granted.contains(c))
@@ -3243,25 +3431,46 @@ impl ModHost {
                 }
             };
             let id = package.id.clone();
+            // Policy refusals apply on every reload: the user cannot repair them.
+            if !administered
+                && let Some(reason) = managed.and_then(|policy| {
+                    policy.refusal(
+                        &id,
+                        &package.capabilities,
+                        store::authenticated_source(selection, &id, grants).as_deref(),
+                    )
+                })
+            {
+                rejected.push(ModRejection {
+                    path: selection.path.clone(),
+                    id: Some(id),
+                    scope: selection.scope.clone(),
+                    reason,
+                });
+                continue;
+            }
             let Some((previous, ..)) = selected.get(&id) else {
                 selected.insert(id, (selection.clone(), package, source));
                 continue;
             };
             if previous.scope != selection.scope {
-                let (loser, winner) = match selection.scope.as_str() {
-                    "project" => {
-                        let (previous, ..) = selected
-                            .insert(id.clone(), (selection.clone(), package, source))
-                            .expect("checked above");
-                        (previous, selection.path.clone())
-                    }
-                    _ => (selection.clone(), previous.path.clone()),
+                let (loser, winner) = if rank(&selection.scope) > rank(&previous.scope) {
+                    let (previous, ..) = selected
+                        .insert(id.clone(), (selection.clone(), package, source))
+                        .expect("checked above");
+                    (previous, selection.clone())
+                } else {
+                    (selection.clone(), previous.clone())
                 };
                 rejected.push(ModRejection {
                     path: loser.path,
                     id: Some(id),
                     scope: loser.scope,
-                    reason: format!("shadowed_by_project_scope: {}", winner.display()),
+                    reason: format!(
+                        "shadowed_by_{}_scope: {}",
+                        winner.scope,
+                        winner.path.display()
+                    ),
                 });
                 continue;
             }
@@ -4763,7 +4972,8 @@ impl ModHost {
             literal(MOD_HOST_OPERATIONS),
         );
         self.store
-            .write_bytes("active-host.d.ts", output.as_bytes())
+            .write_bytes("active-host.d.ts", output.as_bytes())?;
+        crate::tool_schema::write_types(&self.store.root)
     }
 
     pub fn field_policies() -> Value {
@@ -4874,6 +5084,11 @@ impl ModHost {
                     "exposure": authority_exposure(&m.package.capabilities)});
                 status }).collect::<Vec<_>>()});
         status["access"] = json!(self.access);
+        status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
+        status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
+            "origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy,
+            "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
+                .collect::<Vec<_>>()})));
         status
     }
 }

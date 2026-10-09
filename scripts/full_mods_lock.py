@@ -11,11 +11,9 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/full-mods.lock.json"
-PACKAGES = ("omd_advisor", "omd_checks", "omd_claude_cli", "omd_continue", "omd_cursor", "omd_git", "omd_graph_navigator",
-            "omd_guideline_governance", "omd_herdr", "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_lsp_view", "omd_mcp", "omd_model_picker",
-            "omd_frecency", "omd_mods", "omd_muse", "omd_notes", "omd_panes", "omd_plan_panel", "omd_plan_removal", "omd_preview", "omd_profiles", "omd_programmable_context", "omd_project_pi_prompts",
-            "omd_reactive_rules", "omd_repository_analysis", "omd_research", "omd_source_knowledge", "omd_task_tools",
-            "omd_theme", "omd_typed_tasks", "omd_layout", "omd_worktree", "omd_editor", "omd_shared_checkout", "omd_mini", "omd_usage", "omd_prompt_queue", "omd_update", "omd_privacy")
+PACKAGES = ("omd_advisor", "omd_claude_cli", "omd_frecency", "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_lsp_view",
+            "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_preview", "omd_privacy", "omd_profiles",
+            "omd_tool_lines", "omd_update", "omd_usage")
 
 
 def source_files(identifier):

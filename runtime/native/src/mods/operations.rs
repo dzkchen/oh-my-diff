@@ -60,6 +60,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "store.list"
                         | "routes.list"
                         | "session.info"
+                        | "tools.list"
                         | "task.status"
                         | "contract.status"
                         | "workspace.fingerprint"
@@ -73,6 +74,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "model.complete"
                         | "model.fork"
                         | "session.info"
+                        | "tools.list"
                         | "turns.activity"
                         | "events.publish"
                         | "credentials.list"
@@ -439,15 +441,22 @@ async fn run(
             .grants
             .as_ref()
             .and_then(|grants| grants.os_access.clone());
+        let blit = started
+            .as_ref()
+            .filter(|arguments| arguments.get("raster").is_some())
+            .and_then(|_| super::expansion::blit_sink(lead, &caller));
+        let thread = lead.thread.to_string();
         let result = tokio::task::spawn_blocking(move || {
             processes.call(
                 crate::managed_process::ProcessOwner {
+                    thread: Some(&thread),
                     id: &id,
                     generation,
                     repository: &authority.repository,
                     policy: &authority.policy,
                     protected: &protected,
                     os_access: os_access.as_ref(),
+                    blit: blit.as_ref(),
                 },
                 &request.operation,
                 request.arguments,

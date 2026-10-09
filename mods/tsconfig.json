@@ -3,6 +3,6 @@
     "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
     "strict": true, "noEmit": true, "allowImportingTsExtensions": true
   },
-  "include": ["api.d.ts", "jsx-runtime.d.ts", "client.d.ts", "examples/**/*.ts", "first-party/**/*.ts", "optional/**/*.ts"],
+  "include": ["api.d.ts", "jsx-runtime.d.ts", "client.d.ts", "testing.d.ts", "examples/**/*.ts", "first-party/**/*.ts", "optional/**/*.ts"],
   "exclude": ["exercise/**/*.ts"]
 }

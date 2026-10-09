@@ -1,9 +1,9 @@
 # OMD extension index
 
 [`index.json`](index.json) is the repository-backed index of reviewed release
-candidates. [`development.json`](development.json) keeps experiments and author
-exercises separate. As of September 29, 2026, no entry has passed the full
-Phase 11/12 release support gates, so none is labeled `supported`. The twelve
+candidates. [`development.json`](development.json) keeps experiments
+separate. As of September 29, 2026, no entry has passed the full
+Phase 11/12 release support gates, so none is labeled `supported`. The
 reviewed entries are candidates, not an active bundle, a public compatibility
 promise, or evidence of independent community adoption. The OMD+ installed
 collection may grow with every qualified package; only a measured low-overhead
@@ -48,20 +48,15 @@ the versioned cache directory.
 | Reviewed candidate | Type | Capability | Intended placement |
 | --- | --- | --- | --- |
 | `omd_claude_cli` | mod | Official Claude CLI route and `ask_claude` delegation | OMD+, installed inactive |
-| `omd_cursor` | mod | Cursor subscription route over the official Cursor SDK, OMD tools only | OMD+, installed inactive |
-| `omd_muse` | mod | Muse route and research subagent over `muse serve` | OMD+, installed inactive |
-| `omd_coordination` | mod | Live task routing and worker context | OMD+, inactive candidate |
-| `omd_recovery` | mod | Failure-aware recovery choices | OMD+, inactive candidate |
 | `omd_workspace` | mod | Live terminal task workspace | OMD+, provisional active default |
-| `omd_typed_tasks` | mod | Bounded workers with typed results | OMD+, installed inactive |
 | `omd_logo` | mod | Oh My Diff terminal logo and launch status | Both profiles, active by default |
 | `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | OMD+, active by default |
+| `omd_tool_lines` | mod | One line per agent tool call | OMD+, active by default |
 | `omd_update` | mod | Update notices and `/update` controls | Both profiles, active by default |
-| `omd_git` | mod | Git sidebar with confirmed source-control actions and read-only GitHub PR and CI status | OMD+, installed inactive |
-| `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | OMD+, inactive candidate |
-| `omd-review-policy` | plugin with skills and hook | Review cadence and final review prompts | OMD+, inactive candidate |
-| `omd-application-bridges` | plugin with hook | Application diagnostics | OMD+, inactive source candidate |
 | `omd-artifact-reading` | plugin with skill | Source-anchored artifact reading | OMD+, inactive source candidate |
+
+The table summarizes representative entries; [`index.json`](index.json) lists
+every reviewed entry.
 
 Each reviewed row records an extension type, capability, exact tested host
 versions and compatibility conditions, source, license, maintainer, evidence,
@@ -163,11 +158,7 @@ the recovery path if a mod fails.
 Run `python3 scripts/extension_index.py` from the repository root before
 submitting metadata. It checks every indexed source and evidence link, exact
 manifest identity/license/version, plugin components, release pins, and
-candidate/development separation. To replay the index-free mod lifecycle,
-build `omd-mod` with
-`cargo +1.95.0 build --locked --manifest-path runtime/omd/Cargo.toml -p codex-omd --bin omd-mod`,
-then run `python3 scripts/extension_index_smoke.py`. The smoke uses an isolated
-temporary store and makes no provider request.
+candidate/development separation.
 
 ## Workflow gap routing
 
@@ -178,11 +169,10 @@ code by default.
 
 | Gap or need | Smallest current route | Catalog decision |
 | --- | --- | --- |
-| Task instructions and reusable procedure | Native instructions or skill | Guidance skills are reviewed candidates; promote new procedures only after reuse evidence |
-| Tool-result or stop lifecycle reaction | Native Codex hook | Reviewed guidance/review hooks stay selected and host-gated |
-| Repository graph, health, semantic navigation, artifact reading, application diagnostics | Existing native operations plus optional plugin tools | Reviewed on-demand plugin candidates, with separate dependency and task gates |
-| Task-sensitive optional tool/context exposure | Public `0.2.0-experimental.5` mod API | Internal `task_scope` author exercise; first-party task value remains open |
-| Live route, recovery or terminal replacement | Public mod API with native authority | Selected first-party candidates; public support remains unqualified |
-| Long-session policy or stage-dependent workflow | Native checkpoints/contract or skill first, then mod only for a proven live gap | `session_anchor` remains development-only; Phase 11 package trial is separate |
-| Structural edit, debugger, patch recovery, subagent guidance | Configured tools, plugin, skill or hook trial | No supported package until each selected slate gate passes |
+| Task instructions and reusable procedure | Native instructions or skill | Native skills first; promote new procedures only after reuse evidence |
+| Tool-result or stop lifecycle reaction | Native Codex hook | Hooks stay host-gated; no first-party hook plugin is shipped |
+| Semantic navigation, artifact reading | Existing native operations plus optional plugin tools | Reviewed on-demand candidates, with separate dependency and task gates |
+| Live route or terminal replacement | Public mod API with native authority | Selected first-party candidates; public support remains unqualified |
+| Long-session policy or stage-dependent workflow | Native checkpoints/contract or skill first, then mod only for a proven live gap | No catalog package selected |
+| Structural edit, patch recovery, subagent guidance | Configured tools, plugin, skill or hook trial | No supported package until each selected slate gate passes |
 | Provider credentials, broad always-on services, embedded shell replacement | Existing native/configured surface | No catalog package selected |

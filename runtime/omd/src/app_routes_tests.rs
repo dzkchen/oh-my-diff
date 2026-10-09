@@ -133,6 +133,8 @@ fn authority_fields_are_refused_but_null_is_absent() {
         "permissions",
         "toolOutput",
         "serviceTier",
+        "parentTurnId",
+        "rootTurnId",
         "futureAuthority",
     ] {
         assert_eq!(

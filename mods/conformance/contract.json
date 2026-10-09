@@ -959,7 +959,7 @@
       "id": "terminal.rendering",
       "group": "terminal",
       "decision": "Render hooks on native components",
-      "observe": "typed props, stable identity, surface, viewport and lifecycle of each user and assistant message, tool call, result, group and progress row, command output, spinner, turn duration, notice, session mode, composer hint, question and list",
+      "observe": "typed props, stable identity, surface, viewport and lifecycle of each user and assistant message, agent tool row (shell, grouped reads, patch, web search, agent, MCP, dynamic and image calls with status, output summary and whether the user expanded it), MCP result, spinner, turn duration, notice, session mode, composer hint, question and list",
       "alter": "`api.intercept('render', …)` restyles the native drawing (`{type: 'native', style}`), wraps it in a component tree, replaces or hides it (`{tree: []}`), and may rewrite spinner `header`, notice `text`, session-mode `label` and composer `placeholder` through `next`; `inline_sites: 'hidden'` keeps sites out of the inline viewport",
       "replace": null,
       "timing": "live components redraw asynchronously and keep their last tree until the new answer arrives; inline scrollback waits once per cell; trees are cached until the state keys their hooks read change",
@@ -1300,12 +1300,12 @@
       "id": "tool.specs",
       "group": "tool",
       "decision": "Model-visible tool descriptions",
-      "observe": "`intercept('tool_specs')` with the route and the model-visible tools",
+      "observe": "`intercept('tool_specs')` with the route and the model-visible tools; `tools.list` with every tool's original and effective description and schema, hidden and deferred state, and the declarations generated from it",
       "alter": "drop, defer behind tool search or re-describe tools; interceptors compose in continuation order; execution identity is unchanged",
       "replace": null,
       "timing": "when the tool router is built for a turn",
       "ownership": "mod: descriptions and visibility; host: execution, schemas it accepts and admission",
-      "limits": "a handler can only drop, defer or re-describe tools it was given and must call `next`; a model without tool search keeps deferred tools visible; calls still pass through the tool interceptors",
+      "limits": "a handler can only drop, defer or re-describe tools it was given and must call `next`; a model without tool search keeps deferred tools visible; calls still pass through the tool interceptors; the final arguments of a rewritten call, or of a call to a tool whose schema was replaced, are validated against the original schema (`tool_arguments_invalid`); `tools.list` is bounded to 512 tools, 4096-character descriptions and 16 KiB schemas",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -1314,12 +1314,18 @@
         "intercepts": [
           "tool_specs"
         ],
-        "operations": []
+        "operations": [
+          "tools.list"
+        ]
       },
       "evidence": [
         "patch:adjustments_hide_and_redescribe_by_model_visible_name",
         "patch:tool_specs_interceptors_compose_hide_defer_and_redescribe",
-        "patch:spec_contributors_defer_direct_tools_behind_tool_search"
+        "patch:spec_contributors_defer_direct_tools_behind_tool_search",
+        "patch:spec_contributors_observe_original_and_effective_tools_with_hidden_and_deferred_state",
+        "patch:tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments",
+        "patch:validation_refuses_with_a_pointer_and_reason",
+        "patch:types_convert_the_schema_subset_and_default_to_json"
       ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
@@ -1622,6 +1628,7 @@
       },
       "evidence": [
         "rust:sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views",
+        "rust:offline_scenarios_mock_environment_pointer_clients_and_pending_waits",
         "rust:time_sleep_releases_the_runtime_and_wakes_on_cancellation"
       ],
       "replace_note": null
@@ -2129,7 +2136,7 @@
     },
     {
       "id": "first_party_parity",
-      "rule": "First-party mods use the published API only. `omd_coordination`, `omd_workspace`, and `omd_recovery` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
+      "rule": "First-party mods use the published API only. `omd_workflow` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
       "evidence": [
         "python:test_first_party_mods_use_only_the_published_api"
       ]

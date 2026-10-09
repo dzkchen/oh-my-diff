@@ -90,7 +90,7 @@ def package():
     batch = batch_tree.batch_dir(nightly.BATCH)
     shutil.rmtree(batch / "target")
     artifact_dir = batch / "artifacts"
-    command(sys.executable, "scripts/batch_tree.py", "artifacts", nightly.BATCH, "--build", "--profile", "release")
+    command(sys.executable, "scripts/batch_tree.py", "artifacts", nightly.BATCH, "--release")
     frozen = json.loads(lean_release_lock.OUTPUT.read_text())
     base = frozen["version"].split("-", 1)[0]
     version = f"{base}-nightly.{datetime.datetime.now(datetime.UTC):%Y%m%d%H%M%S}.{os.environ['GITHUB_RUN_ID']}.{os.environ['GITHUB_RUN_ATTEMPT']}"

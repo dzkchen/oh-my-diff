@@ -23,7 +23,7 @@ class SourceBuildTests(unittest.TestCase):
             (root / "runtime/patches/manifest.json").write_text(json.dumps({"patch": {"path": "patch", "sha256": release.support.digest(root / "patch")}}))
             (root / "mods/package.json").write_text("{}")
             (root / "extensions").mkdir()
-            (root / "extensions/index.json").write_text(json.dumps({"release_pin": {"codex": "0.161.0", "mod_api": "api", "node": "24"}}))
+            (root / "extensions/index.json").write_text(json.dumps({"release_pin": {"codex": pin["tag"].removeprefix("rust-v"), "mod_api": "api", "node": "24"}}))
             with tarfile.open(root / "mod-api.tgz", "w:gz") as packed:
                 member = tarfile.TarInfo("package/package.json")
                 member.size = 2
@@ -36,9 +36,9 @@ class SourceBuildTests(unittest.TestCase):
                     patch.object(release.support, "preview_sources", return_value={"mod_api": "api", "node": "24", "packages": {}}), \
                     patch.object(release.full_mods_lock, "load", return_value={"packages": {}}), \
                     patch.object(release.full_mods_lock, "build", return_value={"packages": {}}), \
-                    patch.object(release, "selected_plugins", return_value=(None, [])), \
+                    patch.object(release.support, "plugin_sources", return_value={"plugins": {}}), \
                     patch.object(release, "sdk_sources", return_value=()), \
-                    patch.object(release.support, "binary_identity", return_value={"version": "codex-cli 0.161.0", "path": "/usr/bin/true"}):
+                    patch.object(release.support, "binary_identity", return_value={"version": "codex-cli " + pin["tag"].removeprefix("rust-v"), "path": "/usr/bin/true"}):
                 self.assertEqual(release.build(root, version=product_version)["version"], product_version)
                 self.assertEqual(release.build(root, version="0.1.0")["version"], "0.1.0")
                 frozen = release.build(root, version=product_version)

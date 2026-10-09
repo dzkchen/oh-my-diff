@@ -1,6 +1,6 @@
 # Plan-mode removal
 
-`omd_plan_removal` removes Codex plan mode through public built-in controls. It is installed inactive in OMD+ and can be installed explicitly in OMD Core. The whole mod is one registration, needing only the `builtins` capability:
+`omd_plan_removal` removes Codex plan mode through public built-in controls. It is enabled by default in OMD+ and can be installed explicitly in OMD Core. Run `omd-package mod disable omd_plan_removal` to restore plan mode in OMD+. The whole mod is one registration, needing only the `builtins` capability:
 
 ```ts
 api.builtins({ commands: { hide: ['plan'] }, modes: { disable: ['plan'] } });

@@ -18,6 +18,45 @@ function run(source, extra = {}) {
   assert.ifError(result.error);
   return JSON.parse(result.stdout);
 }
+
+test('render callbacks cannot mutate activation registrations', () => {
+  const input = { component: 'tool_call' };
+  for (const mutation of ["api.on('terminal', () => {})", "api.middleware('approval', () => {})", "api.replace('completion', () => {})", "api.tool({name:'late'}, () => {})", "api.command('late', () => {})"]) {
+    const reply = run(`export default api => api.intercept('render', () => { ${mutation}; return {}; });`, {
+      capabilities: ['terminal', 'middleware', 'approvals', 'tools', 'commands'], event: 'intercept', name: '0',
+      payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } },
+    });
+    assert.match(reply.error ?? '', /registration_outside_activation/, mutation);
+  }
+});
+
+test('classic hooks cannot register handlers during callbacks', () => {
+  const reply = run(`export default api => api.hook('PostToolUse', () => {
+    api.hook('PostToolUse', () => api.state.set({ late: true }));
+  });`, { capabilities: ['lifecycle', 'store'], event: 'tool_result', payload: { tool: 'read_file', outcome: 'succeeded' } });
+  assert.match(reply.error ?? '', /hook_registration_outside_activation/);
+});
+
+test('warm renders and continuation replays restore post-activation atoms', () => {
+  const input = { component: 'tool_call' };
+  const request = { source: `export default api => { const value = api.atom('value', 0); value.set(value.get() + 1);
+    api.intercept('render', (e, next) => e.replay ? next({ ...e, value: value.get() }) : { value: value.get() }); };`,
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface: currentSurface,
+    event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
+  const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
+  const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
+  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+    input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
+  });
+  const replies = result.stdout.trim().split('\n').map(JSON.parse);
+  assert.equal(replies.length, 4);
+  assert.equal(replies[0].value.result.value, 1);
+  assert.equal(replies[1].value.result.value, 1);
+  assert.deepEqual(replies[2].host_call, receipt.call);
+  assert.equal(replies[3].value.result.value, 1);
+  for (const reply of replies) assert.deepEqual(reply.state, { value: 0 });
+  assert.equal(result.status, 0, result.stderr);
+});
 test('typed module context callback', () => {
   const reply = run('export default (api: any) => api.on("context", () => ({text:"hello"}))', { capabilities: ['context'], event: 'context' });
   assert.deepEqual(reply.value, { text: 'hello' });
@@ -387,172 +426,6 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   const cross = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
     payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
-});
-const debuggerSource = readFileSync(new URL('../plugins/optional/plugins/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
-const debugpyProbe = { exit_code: 0, stdout: '1.8.22\n', stderr: '' };
-test('optional API 0.2 debugger: DAP control and inspection on managed process calls', () => {
-  const source = debuggerSource;
-  const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
-  const calls = [];
-  const server = call => {
-    calls.push(call);
-    if (call.operation === 'process.which') return { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] };
-    if (call.operation === 'exec.run') return debugpyProbe;
-    if (call.operation === 'process.start') return { session: 'debug', running: true };
-    if (call.operation === 'process.status') return { session: 'debug', running: true, idle_ms: 0 };
-    if (call.operation === 'process.stop') return { stopped: true };
-    if (call.operation === 'process.exchange') {
-      const request = call.arguments.send?.[0];
-      if (!request) return { session: 'debug', running: true, messages: [] };
-      const body = request.command === 'setBreakpoints' ? { breakpoints: [{ verified: true, line: 4 }] }
-        : request.command === 'stackTrace' ? { stackFrames: [{ id: 7, name: 'main', source: { path: '/tmp/project/bug.py' }, line: 4, column: 1 }], totalFrames: 1 }
-          : request.command === 'scopes' ? { scopes: [{ name: 'Locals', variablesReference: 4, expensive: false }] }
-            : request.command === 'variables' ? { variables: [{ name: 'denominator', value: '0', type: 'int', variablesReference: 0 }] }
-              : request.command === 'evaluate' ? { result: '0', type: 'int', variablesReference: 0 } : {};
-      const events = request.command === 'launch' ? [{ type: 'event', event: 'initialized' }]
-        : request.command === 'configurationDone' || request.command === 'next' ? [{ type: 'event', event: 'stopped', body: { threadId: 3, reason: 'breakpoint' } }] : [];
-      return { session: 'debug', running: true, messages: [{ type: 'response', request_seq: request.seq, success: true, body }, ...events] };
-    }
-    throw new Error(`unexpected ${call.operation}`);
-  };
-  const replay = (name, payload, state = null) => {
-    const receipts = [];
-    for (let index = 0; index < 20; index++) {
-      const output = run(source, { capabilities, event: 'tool', name, payload, state, receipts, hook_budget_ms: 500 });
-      assert.equal(output.error, undefined, output.error);
-      if (!output.host_call) return output;
-      receipts.push({ call: output.host_call, value: server(output.host_call) });
-    }
-    assert.fail('debugger mod did not finish');
-  };
-  const opened = replay('open', { adapter: 'debugpy' });
-  assert.deepEqual(opened.value, { adapter: 'debugpy', status: 'initialized', python: '/usr/bin/python3', debugpy: '1.8.22' });
-  const started = replay('start', { mode: 'launch', program: '/tmp/project/bug.py' }, opened.state);
-  assert.equal(started.state.ready, true);
-  const breakpoint = replay('breakpoints', { source: '/tmp/project/bug.py', lines: [4] }, started.state);
-  assert.equal(breakpoint.value.result.breakpoints[0].verified, true);
-  const configured = replay('configure', {}, breakpoint.state);
-  assert.equal(configured.state.phase, 'stopped');
-  const frames = replay('inspect', { command: 'stackTrace' }, configured.state);
-  assert.equal(frames.value.result.frames[0].line, 4);
-  const scopes = replay('inspect', { command: 'scopes', frame_id: 7 }, frames.state);
-  assert.equal(scopes.value.result.scopes[0].variablesReference, 4);
-  const variables = replay('inspect', { command: 'variables', variables_reference: 4 }, scopes.state);
-  assert.equal(variables.value.result.variables[0].name, 'denominator');
-  const evaluated = replay('inspect', { command: 'evaluate', frame_id: 7, expression: 'denominator' }, variables.state);
-  assert.equal(evaluated.value.result.result, '0');
-  const stepped = replay('control', { command: 'next' }, evaluated.state);
-  assert.equal(stepped.state.phase, 'stopped');
-  const detached = replay('detach', {}, stepped.state);
-  assert.equal(detached.state.running, false);
-  assert.equal(calls.find(call => call.operation === 'process.start').arguments.framing, 'content-length');
-  assert.equal(calls.find(call => call.operation === 'process.start').arguments.network, 'loopback');
-  assert.equal(calls.at(-1).operation, 'process.stop');
-  assert.equal(calls.some(call => call.operation === 'process.exchange' && call.arguments.send?.[0]?.command === 'attach'), false);
-  assert.deepEqual(run(source, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'lldb' } }).value, { error: 'invalid_adapter' });
-  assert.deepEqual(replay('start', { mode: 'attach', process_id: 42 }, opened.state).value, { error: 'invalid_mode' });
-});
-test('optional API 0.2 debugger: stop events after the control response', () => {
-  const source = debuggerSource;
-  const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
-  let queued = [];
-  const server = call => {
-    if (call.operation !== 'process.exchange') throw new Error(`unexpected ${call.operation}`);
-    const request = call.arguments.send?.[0];
-    if (!request) {
-      const messages = queued;
-      queued = [];
-      return { session: 'debug', running: true, messages };
-    }
-    if (['configurationDone', 'next', 'continue'].includes(request.command)) {
-      queued = [{ type: 'event', event: 'continued', body: { threadId: 3 } }, { type: 'event', event: 'stopped', body: { threadId: 3, reason: 'step' } }];
-    }
-    const body = request.command === 'stackTrace' ? { stackFrames: [{ id: 7, name: 'main', source: { path: '/tmp/bug.py' }, line: 5, column: 1 }], totalFrames: 1 } : {};
-    return { session: 'debug', running: true, messages: [{ type: 'response', request_seq: request.seq, success: true, body }] };
-  };
-  const replay = (name, payload, state) => {
-    const receipts = [];
-    for (let index = 0; index < 24; index++) {
-      const output = run(source, { capabilities, event: 'tool', name, payload, state, receipts, hook_budget_ms: 500 });
-      assert.equal(output.error, undefined, output.error);
-      if (!output.host_call) return output;
-      receipts.push({ call: output.host_call, value: server(output.host_call) });
-    }
-    assert.fail('debugger mod did not finish');
-  };
-  const configuring = { adapter: 'debugpy', executable: '/usr/bin/python3', running: true, ready: true, mode: 'launch', phase: 'configuring', next_seq: 3, launch_seq: null, thread_id: null, reason: '' };
-  const configured = replay('configure', {}, configuring);
-  assert.equal(configured.state.phase, 'stopped');
-  const stepped = replay('control', { command: 'next' }, configured.state);
-  assert.equal(stepped.state.phase, 'stopped');
-  assert.equal(stepped.state.reason, 'step');
-  queued = [{ type: 'event', event: 'stopped', body: { threadId: 3, reason: 'breakpoint' } }];
-  const running = { ...stepped.state, phase: 'active' };
-  const frames = replay('inspect', { command: 'stackTrace' }, running);
-  assert.equal(frames.value.result.frames[0].line, 5);
-  assert.equal(frames.state.reason, 'breakpoint');
-});
-test('optional API 0.2 debugger: refused asynchronous launch', () => {
-  const source = debuggerSource;
-  const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
-  const initial = { adapter: 'debugpy', executable: '/usr/bin/python3', running: true, ready: false, mode: null, phase: 'initialized', next_seq: 2, launch_seq: null, thread_id: null, reason: '' };
-  const sent = run(source, { capabilities, event: 'tool', name: 'start', payload: { mode: 'launch', program: '/repo/bug.py' }, state: initial,
-    receipts: [{ call: { operation: 'process.exchange', arguments: { session: 'debug', send: [{ seq: 2, type: 'request', command: 'launch', arguments: { program: '/repo/bug.py', python: '/usr/bin/python3', args: [], stopOnEntry: true, justMyCode: false, redirectOutput: false } }], wait_ms: 0 } }, value: { session: 'debug', running: true, messages: [] } }] });
-  assert.equal(sent.state.launch_seq, 2);
-  assert.equal(sent.state.phase, 'configuring');
-  const response = { type: 'response', request_seq: 2, command: 'launch', success: false, message: 'TOP_SECRET' };
-  const first = run(source, { capabilities, event: 'tool', name: 'status', payload: {}, state: sent.state });
-  assert.deepEqual(first.host_call, { operation: 'process.exchange', arguments: { session: 'debug', send: [], wait_ms: 250 } });
-  const second = run(source, { capabilities, event: 'tool', name: 'status', payload: {}, state: sent.state, receipts: [{ call: first.host_call, value: { session: 'debug', running: true, messages: [response] } }] });
-  assert.deepEqual(second.host_call, { operation: 'process.stop', arguments: { session: 'debug' } });
-  const stopped = run(source, { capabilities, event: 'tool', name: 'status', payload: {}, state: sent.state, receipts: [
-    { call: first.host_call, value: { session: 'debug', running: true, messages: [response] } },
-    { call: second.host_call, value: { stopped: true } },
-  ] });
-  assert.equal(stopped.state.running, false);
-  assert.equal(stopped.value.reason, 'adapter_launch_refused');
-  assert.equal(JSON.stringify(stopped).includes('TOP_SECRET'), false);
-  const receipts = [];
-  let reopened;
-  for (let attempt = 0; attempt < 8; attempt++) {
-    reopened = run(source, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'debugpy' }, state: stopped.state, receipts });
-    if (!reopened.host_call) break;
-    const call = reopened.host_call;
-    const value = call.operation === 'process.which' ? { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] }
-      : call.operation === 'exec.run' ? debugpyProbe
-      : call.operation === 'process.start' ? { session: 'debug', running: true }
-        : { session: 'debug', running: true, messages: [{ type: 'response', request_seq: 1, command: 'initialize', success: true, body: {} }] };
-    receipts.push({ call, value });
-  }
-  assert.equal(reopened.value.status, 'initialized');
-  assert.equal(reopened.state.running, true);
-  assert.equal(reopened.state.reason, '');
-  assert.deepEqual(receipts.map(receipt => receipt.call.operation), ['process.which', 'exec.run', 'process.start', 'process.exchange']);
-});
-test('optional API 0.2 debugger: setup, cancellation, turn end and resume', () => {
-  const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
-  const which = { call: { operation: 'process.which', arguments: { names: ['python3'] } }, value: { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] } };
-  const probe = run(debuggerSource, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'debugpy' }, receipts: [which] }).host_call;
-  const missing = run(debuggerSource, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'debugpy' },
-    receipts: [which, { call: probe, value: { exit_code: 1, stdout: '', stderr: "ModuleNotFoundError: No module named 'debugpy' TOP_SECRET" } }] });
-  assert.deepEqual(missing.value, { error: 'adapter_dependency_absent', adapter: 'debugpy', dependency: 'debugpy', python: '/usr/bin/python3' });
-  assert.ok(!missing.host_call);
-  const live = { adapter: 'debugpy', executable: '/usr/bin/python3', debugpy: '1.8.22', running: true, ready: true, mode: 'launch', next_seq: 9, launch_seq: null, thread_id: 3 };
-  const lifecycle = (event, payload, phase, messages = []) => {
-    const state = { ...live, phase, reason: '' };
-    const receipts = [];
-    for (;;) {
-      const output = run(debuggerSource, { capabilities, event, payload, state, receipts });
-      if (!output.host_call) return output.state ?? state;
-      const { operation } = output.host_call;
-      receipts.push({ call: output.host_call, value: operation === 'process.exchange' ? { session: 'debug', running: true, messages } : { stopped: false } });
-    }
-  };
-  assert.equal(lifecycle('idle', { cause: 'Completed' }, 'stopped').running, true);
-  assert.equal(lifecycle('idle', { cause: 'Completed' }, 'active').reason, 'target_running_at_turn_end');
-  assert.equal(lifecycle('idle', { cause: 'Completed' }, 'active', [{ type: 'event', event: 'stopped', body: { threadId: 3, reason: 'breakpoint' } }]).phase, 'stopped');
-  assert.equal(lifecycle('idle', { cause: 'Interrupted' }, 'stopped').reason, 'cancelled');
-  assert.equal(lifecycle('resume', { thread_id: 't', last_turn: null, restarted: true }, 'stopped').reason, 'session_resumed');
 });
 test('workspace layout writes bare toggles and dialog select values as settings', () => {
   const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');

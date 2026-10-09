@@ -211,11 +211,12 @@ test('render hook examples draw a spinner, frame tool calls, annotate messages a
     assert.equal(first.host_call.operation, 'continuation.next');
     return render(component, index, props, { lifecycle, receipts: [{ call: first.host_call, value: { result: native, trace: [] } }] }).value.result.tree;
   };
-  const tool = after(1, 'tool_call', { call_id: 'one', kind: 'mcp', server: 'docs', tool: 'search', arguments: {}, status: 'failed', duration_ms: 3 });
+  const tool = after(1, 'tool_call', { call_id: 'one', kind: 'mcp', server: 'docs', tool: 'search', arguments: {}, status: 'failed', duration_ms: 3, output_lines: null, expanded: false });
   assert.equal(tool[0].title, '✗ docs.search');
   assert.deepEqual(tool[0].children, [{ type: 'native' }]);
-  const command = after(1, 'command_output', { call_id: 'one', kind: 'exec', command: 'echo hi', exit_code: 0, duration_ms: 1, output_lines: 1, output_tail: 'hi', user_shell: false });
+  const command = after(1, 'tool_call', { call_id: 'one', kind: 'exec', command: 'echo hi', parsed: [], status: 'completed', exit_code: 0, duration_ms: 1, output_lines: 1, output_tail: 'hi', user_shell: false, expanded: false });
   assert.equal(command[0].title, '⚙ echo hi');
+  assert.deepEqual(after(1, 'tool_call', { call_id: 'one', kind: 'exec', command: 'echo hi', parsed: [], status: 'completed', exit_code: 0, duration_ms: 1, output_lines: 1, output_tail: 'hi', user_shell: false, expanded: true }), native.tree);
   const message = after(2, 'assistant_message', { text: 'three short words', first: true });
   assert.deepEqual(message.map(node => node.text ?? node.type), ['3 words', 'native']);
   const question = after(3, 'question', { questions: [], current: 0, queued: 0 }, 'live');

@@ -32,12 +32,12 @@ class CleanTests(unittest.TestCase):
                     mock.patch.object(batch_tree, "cargo_run", return_value=0) as cargo, \
                     mock.patch.object(batch_tree, "pack_sdk"), mock.patch.object(lean_release_lock, "sign") as sign:
                 with mock.patch.object(batch_tree.sys, "platform", "linux"):
-                    batch_tree.artifacts(SimpleNamespace(batch="x", build=True, profile="release"))
+                    batch_tree.artifacts(SimpleNamespace(batch="x", release=True))
                     sign.assert_not_called()
                 self.assertIn("--release", cargo.call_args.args[-1])
                 self.assertEqual((root / "omd-bx/artifacts/codex").read_bytes(), b"codex")
                 with mock.patch.object(batch_tree.sys, "platform", "darwin"):
-                    batch_tree.artifacts(SimpleNamespace(batch="x", build=False, profile="release"))
+                    batch_tree.artifacts(SimpleNamespace(batch="x", release=False))
                 self.assertEqual(sign.call_count, len(lean_release_lock.HARDENED))
 
     def test_keep_warm_replaces_only_the_profiles_the_batch_built(self):
@@ -53,6 +53,41 @@ class CleanTests(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in (warm / "debug/deps").iterdir()), ["libserde.rlib"])
             self.assertTrue((warm / "release/codex").is_file())
             self.assertFalse((root / "omd-bx/target").exists())
+
+
+class ArtifactTests(unittest.TestCase):
+    def test_artifacts_build_sign_and_copy_the_release_profile(self):
+        from scripts import lean_release_lock
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch = root / "omd-bx"
+            for profile in batch_tree.PROFILES:
+                built = batch / "target" / profile
+                built.mkdir(parents=True)
+                for name in batch_tree.BINARIES:
+                    (built / name).write_text(profile)
+            with mock.patch.object(batch_tree, "TMP", root), \
+                    mock.patch.object(batch_tree, "cargo_run", return_value=0) as cargo, \
+                    mock.patch.object(batch_tree, "pack_sdk") as pack, \
+                    mock.patch.object(lean_release_lock, "sign") as sign:
+                batch_tree.artifacts(SimpleNamespace(batch="x", release=True))
+            cargo.assert_called_once_with(batch, "build-artifacts", [*batch_tree.BUILD, "--release"])
+            pack.assert_called_once_with(batch / "artifacts")
+            self.assertCountEqual(sign.call_args_list,
+                                  [mock.call(batch / "artifacts" / name) for name in lean_release_lock.HARDENED])
+            for name in batch_tree.BINARIES:
+                self.assertEqual((batch / "artifacts" / name).read_text(), "release")
+
+    def test_artifacts_refuse_a_debug_only_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            built = root / "omd-bx/target/debug"
+            built.mkdir(parents=True)
+            for name in batch_tree.BINARIES:
+                (built / name).touch()
+            with mock.patch.object(batch_tree, "TMP", root), self.assertRaisesRegex(SystemExit, "--release"):
+                batch_tree.artifacts(SimpleNamespace(batch="x", release=False))
 
 
 if __name__ == "__main__":

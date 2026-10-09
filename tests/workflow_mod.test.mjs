@@ -607,82 +607,6 @@ test('operation receipts stay bounded and an evicted replay is stale instead of 
   assert.deepEqual(run.state.get('task').value.remaining_work, work(8));
 });
 
-const typedSource = readFileSync(new URL('../mods/first-party/omd_typed_tasks/index.ts', import.meta.url), 'utf8');
-const typedManifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_typed_tasks/mod.json', import.meta.url), 'utf8'));
-const resultSchema = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false };
-const typedSettings = { max_fan_out: 4, check: { program: 'check', argv: [] }, review_route: 'reviewer', task_types: {
-  read: { role: 'investigator', route: 'contributor', tools: 'read_search', result_schema: resultSchema },
-  edit: { role: 'editor', route: 'contributor', tools: 'workspace_edit', result_schema: resultSchema },
-} };
-const typedResult = { status: 'completed', text: JSON.stringify({ result: { answer: 'observed' }, sources: [{ ref: 'source.ts:1', why: 'inspected' }] }), candidate_sha256: candidate, evidence: { reference: 'native-thread:typed', sha256: digest('typed') } };
-const typed = (name, payload, run) => invoke(name, payload, call => call.operation === 'mods.service' ? run.state.get('task').value : run.host(call),
-  { source: typedSource, capabilities: typedManifest.capabilities, settings: typedSettings, store: run.state, key: 'batch' });
-
-test('typed tasks validate all results before checks and independently review edits before host integration', () => {
-  const run = fixture({ 'agents.wait': call => call.arguments.handle === 'worker-3'
-    ? { ...typedResult, text: JSON.stringify({ assessments: verdict.assessments, findings: [] }) } : typedResult });
-  begin(run.host);
-  assert.equal(typed('run', { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect' }, { id: 'edit', type: 'edit', prompt: 'Edit' }] }, run).value.status, 'running');
-  typed('advance', {}, run);
-  assert.ok(!run.calls.some(call => call.operation === 'exec.run'));
-  for (let step = 0; step < 5; step++) typed('advance', {}, run);
-  assert.equal(run.state.get('batch').value.status, 'completed');
-  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review', 'workspace_integration']);
-  assert.equal(run.calls.filter(call => call.operation === 'workspace.integrate').length, 1);
-  const edits = run.calls.filter(call => call.operation === 'agents.spawn');
-  assert.deepEqual(edits.map(call => call.arguments.workspace), ['read_only', 'isolated_worktree', 'read_only']);
-  assert.ok(edits[0].arguments.snapshot);
-});
-
-test('typed fanout stays bounded while workers run, and explicit cancellation never reverts integrated work', () => {
-  const run = fixture({ 'agents.wait': () => ({ status: 'running' }) });
-  begin(run.host);
-  typed('run', { tasks: [1, 2, 3, 4].map(id => ({ id: String(id), type: 'read', prompt: 'Inspect' })) }, run);
-  for (let step = 0; step < 3; step++) assert.equal(typed('advance', {}, run).value.status, 'running');
-  assert.equal(run.calls.filter(call => call.operation === 'agents.wait').length, 3);
-  assert.equal(typed('cancel', {}, run).value.status, 'cancelled');
-  assert.equal(run.calls.filter(call => call.operation === 'agents.cancel').length, 4);
-  assert.ok(!run.calls.some(call => call.operation === 'workspace.restore'));
-});
-
-test('typed schemas require own properties in results and schema declarations', () => {
-  for (const name of ['constructor', 'toString', '__proto__']) {
-    const schema = { type: 'object', properties: { [name]: { type: 'string' } }, required: [name], additionalProperties: false };
-    const settings = { ...typedSettings, task_types: { read: { ...typedSettings.task_types.read, result_schema: schema } } };
-    for (const result of [{}, { [name]: 'owned' }]) {
-      const run = fixture({ 'agents.wait': () => ({ ...typedResult, text: JSON.stringify({ result, sources: [{ ref: 'source.ts:1', why: 'inspected' }] }) }) });
-      begin(run.host);
-      const call = (name, payload) => invoke(name, payload, hostCall => hostCall.operation === 'mods.service' ? run.state.get('task').value : run.host(hostCall),
-        { source: typedSource, capabilities: typedManifest.capabilities, settings, store: run.state, key: 'batch' });
-      call('run', { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect' }] });
-      if (Object.hasOwn(result, name)) {
-        call('advance', {});
-        assert.equal(call('advance', {}).value.status, 'completed');
-      }
-      else assert.throws(() => call('advance', {}), /worker_result_schema_mismatch/);
-    }
-    const invalid = { ...settings, task_types: { read: { ...settings.task_types.read, result_schema: { ...schema, properties: {} } } } };
-    assert.throws(() => invoke('status', {}, fixture().host, { source: typedSource, capabilities: typedManifest.capabilities, settings: invalid }), /task_type_invalid/);
-  }
-});
-
-test('typed malformed output, host refusal and vanished handles stay interrupted without respawning', () => {
-  for (const kind of ['malformed', 'refused', 'missing']) {
-    const run = fixture({ 'agents.wait': call => {
-      if (kind === 'missing') throw new Error('unknown_or_foreign_agent');
-      if (kind === 'malformed') return { ...typedResult, text: '{}' };
-      return call.arguments.handle === 'worker-1' ? typedResult : { ...typedResult, text: JSON.stringify({ assessments: verdict.assessments, findings: [] }) };
-    }, 'workspace.integrate': () => ({ status: 'refused', missing: ['required receipt'] }) });
-    begin(run.host);
-    typed('run', { tasks: [{ id: 'edit', type: 'edit', prompt: 'Edit' }] }, run);
-    assert.throws(() => { for (let step = 0; step < 5; step++) typed('advance', {}, run); }, /worker_result_schema_mismatch|unknown_or_foreign_agent|typed_integration_refused/);
-    assert.equal(run.state.get('batch').value.status, 'interrupted');
-    const spawns = run.calls.filter(call => call.operation === 'agents.spawn').length;
-    assert.equal(typed('advance', {}, run).value.status, 'interrupted');
-    assert.equal(run.calls.filter(call => call.operation === 'agents.spawn').length, spawns);
-  }
-});
-
 test('explicit workflow cancellation releases pending reviewer and writer without integration or resetting acceptance', () => {
   const run = fixture();
   begin(run.host);
@@ -695,30 +619,4 @@ test('explicit workflow cancellation releases pending reviewer and writer withou
   assert.equal(run.calls.some(call => call.operation === 'workspace.integrate'), false);
   assert.deepEqual(run.state.get('task').value.acceptance, acceptance);
   assert.equal(invoke('advance', {}, run.host).value.status, 'idle');
-});
-
-test('typed batches bind the workflow revision, replay committed runs and resolve an interrupted admission without respawning', () => {
-  const run = fixture({ 'agents.wait': () => ({ status: 'running' }) });
-  const rules = {};
-  const host = call => {
-    if (call.operation === 'mods.service') return run.state.get('task').value;
-    if (call.operation === 'agents.inventory') return { agents: [...run.agents.keys()].map(handle => ({ agent_id: handle, origin: 'mod', owner: 'omd_typed_tasks', parent: { thread_id: 'thread-1', agent_id: null }, status: 'running' })) };
-    return crashing(run, rules)(call);
-  };
-  const call = (name, payload) => invoke(name, payload, host, { source: typedSource, capabilities: typedManifest.capabilities, settings: typedSettings, store: run.state, key: 'batch', refusals: true }).value;
-  begin(run.host);
-  const first = { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect' }], operation_id: 'run-1', expected_revision: 0 };
-  const started = call('run', first);
-  assert.deepEqual([started.status, started.workflow_revision, started.revision], ['running', 1, 1]);
-  assert.match(run.calls.find(item => item.operation === 'agents.spawn').arguments.prompt, /workflow revision 1/);
-  assert.deepEqual(call('run', first), started);
-  call('cancel', {});
-  const second = { tasks: [{ id: 'read', type: 'read', prompt: 'Inspect again' }], operation_id: 'run-2', expected_revision: 2 };
-  rules.after = item => item.operation === 'agents.spawn';
-  assert.throws(() => call('run', second), /process_crashed/);
-  assert.match(call('advance', {}).reason, /operation_in_progress: run-2/);
-  const resolved = call('run', second);
-  assert.deepEqual([resolved.status, resolved.reason, run.agents.size], ['interrupted', 'operation_interrupted', 0]);
-  assert.deepEqual(call('run', second), resolved);
-  assert.equal(run.calls.filter(item => item.operation === 'agents.spawn').length, 2);
 });

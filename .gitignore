@@ -1,11 +1,7 @@
 .env
 __pycache__/
 *.py[cod]
-/benchmark-results/
 /runtime/**/target/
-/bridge/rust/target/
-/bridge/java/out/
-/bridge/connection.json
 .DS_Store
 /.omd/
 /.omd-tmp/
@@ -17,14 +13,6 @@ __pycache__/
 /pnpm-workspace.yaml
 /mods/node_modules/
 /mods/first-party/*/node_modules/
-/mods/exercise/*/node_modules/
-/mods/exercise/*/.omd/
-/browser/node_modules/
-/browser/browsers/
-/browser/runtime/
-/browser/artifacts/
-/browser/bundle.json
-/browser/*.tar.xz
 /node_modules/
 /package.json
 /pnpm-lock.yaml

@@ -14,6 +14,7 @@ LABEL = "dev.ohmydiff.broker"
 DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
 SOCKET = "/var/run/dev.ohmydiff.broker.sock"
 ROOT = Path("/Library/Application Support/OhMyDiff/broker")
+POLICY = ROOT.parent / "policy.json" if sys.platform == "darwin" else Path("/etc/oh-my-diff/policy.json")
 HELPER = Path("/Library/PrivilegedHelperTools/dev.ohmydiff.broker")
 ACCOUNT = "_omdbroker"
 RIGHTS = {
@@ -131,6 +132,32 @@ def uninstall():
     return {"deployed": False}
 
 
+def policy(action, source=None):
+    previous = POLICY.with_name("policy.json.previous")
+    current = POLICY.read_bytes() if POLICY.is_file() else None
+    if action == "policy-install":
+        data = Path(source).read_bytes()
+        json.loads(data)
+        POLICY.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        os.chown(POLICY.parent, 0, 0)
+        os.chmod(POLICY.parent, 0o755)
+    elif action == "policy-rollback":
+        if not previous.is_file():
+            raise ValueError("no previous administrator policy file")
+        data = previous.read_bytes()
+    else:
+        data = None
+    if current is not None:
+        write_root(previous, current, 0o644)
+    elif action == "policy-rollback":
+        previous.unlink()
+    if data is None:
+        POLICY.unlink(missing_ok=True)
+    else:
+        write_root(POLICY, data, 0o644)
+    return {"policy": str(POLICY), "installed": data is not None}
+
+
 def status():
     loaded = run("/bin/launchctl", "print", f"system/{LABEL}", check=False).returncode == 0
     return {"deployed": deployed(), "loaded": loaded, "socket": SOCKET,
@@ -149,6 +176,10 @@ def main(argv=None):
     commands.add_parser("status", help="show whether the broker is deployed")
     commands.add_parser("reset", help="remove grants and evidence anchors, keep credentials (sudo)")
     commands.add_parser("uninstall", help="remove the broker, its account and all broker state (sudo)")
+    commands.add_parser("policy-install", help="install the root-owned administrator policy file (sudo)").add_argument(
+        "source", type=Path)
+    commands.add_parser("policy-rollback", help="swap the administrator policy file with the one it replaced (sudo)")
+    commands.add_parser("policy-remove", help="remove the administrator policy file, keeping it as previous (sudo)")
     args = parser.parse_args(argv)
     if args.command == "status":
         return status()
@@ -161,6 +192,8 @@ def main(argv=None):
         return install(args.helper.resolve(), [path.resolve() for path in args.pin])
     if args.command == "pin":
         return {"pins": write_pins([path.resolve() for path in args.pin], args.add)}
+    if args.command.startswith("policy-"):
+        return policy(args.command, getattr(args, "source", None))
     return reset() if args.command == "reset" else uninstall()
 
 

@@ -28,6 +28,4 @@ and active behavior are separate; opt-in packages stay inactive until selected.
 
 [Maintained integration coverage for this release](INTEGRATION.md)
 
-[Comparison measurement tools and offline validation](benchmarks/README.md)
-
 [Local OMD Core and OMD+ candidate profiles](LEAN_PROFILES.md)

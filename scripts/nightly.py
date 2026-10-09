@@ -50,7 +50,7 @@ def hosted_steps():
     ]
     position = next(index for index, (name, _) in enumerate(steps) if name == "mods install")
     steps[position:position] = [
-        ("host binaries", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--build"]),
+        ("host binaries", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--release"]),
         ("locks", ["python3", "scripts/batch_tree.py", "locks"]),
         ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
     ]
@@ -70,12 +70,12 @@ STEPS = [
     ("clippy omd paths", cargo("clippy", "clippy", *CRATES, "--tests")),
     ("rustfmt", cargo("fmt", "fmt", *CRATES, "-p", "codex-core", "--", "--check")),
     ("native ownership", ["mise", "run", "native:ownership"]),
-    ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--build"]),
+    ("artifacts", ["python3", "scripts/batch_tree.py", "artifacts", BATCH, "--release"]),
     ("locks", ["python3", "scripts/batch_tree.py", "locks", BATCH]),
     ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
     ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
     ("mods typecheck", ["mise", "run", "mods:check"]),
-    ("mods tests", ["mise", "run", "mods:test"]),
+    ("mods tests", ["env", f"OMD_MOD_BIN=/private/tmp/omd-b{BATCH}/artifacts/omd-mod", "mise", "run", "mods:test"]),
     ("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]),
     ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod",
                                    str(batch_tree.batch_dir(BATCH) / "artifacts/omd-mod"), "--scenarios"]),

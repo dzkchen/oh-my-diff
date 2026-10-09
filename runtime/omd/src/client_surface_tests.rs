@@ -5,6 +5,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Echo;
 
 #[test]
+fn encoded_blits_need_ownership_but_not_cell_dimensions() {
+    let image = json!({"key":"frame","image":{"media_type":"image/png","base64":"AA=="}});
+    assert!(blit_request("owner", Some("owner"), None, &image).is_ok());
+    assert!(blit_request("other", Some("owner"), None, &image).is_err());
+    let cells = json!({"key":"frame","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]});
+    assert!(blit_request("owner", Some("owner"), None, &cells).is_err());
+}
+
+#[test]
 fn dropping_a_pending_reply_revokes_queued_effects() {
     let (reply, receiver) = sync_channel(1);
     let lifetime = CallLifetime::default();
@@ -434,6 +443,49 @@ fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
 }
 
 #[test]
+fn global_attachment_owner_lookup_requires_account_user_confirmation() {
+    let _serial = hub_test();
+    let _registration = register(Arc::new(Echo));
+    let dir = tempfile::tempdir().unwrap();
+    let arguments = json!({"method": "thread/attachmentOwner/list", "params": {
+        "attachmentType": "file", "identityKey": "shared", "archived": true,
+        "cursor": "foreign-thread-cursor", "limit": 10
+    }});
+    let request = |capability: &str, context| {
+        app_request(
+            "m",
+            &[capability.to_owned()],
+            context,
+            false,
+            None,
+            dir.path(),
+            &[],
+            arguments.clone(),
+            Arc::new(|| true),
+        )
+    };
+    for capability in ["sessions", "threads", "inventory"] {
+        assert_eq!(
+            request(capability, InvocationContext::User).unwrap_err(),
+            "app_capability_missing: account"
+        );
+    }
+    assert_eq!(
+        request("account", InvocationContext::Event).unwrap_err(),
+        "app_context_user_only: thread/attachmentOwner/list"
+    );
+    let value = request("account", InvocationContext::User).unwrap();
+    assert_eq!(value["arguments"], arguments);
+    assert_eq!(
+        value["confirm"],
+        format!(
+            "Mod m requests thread/attachmentOwner/list with {}.",
+            arguments["params"]
+        )
+    );
+}
+
+#[test]
 fn confirmations_name_the_exact_request() {
     assert_eq!(
         confirmation(
@@ -606,4 +658,25 @@ fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
             "{arguments}"
         );
     }
+}
+
+#[test]
+fn image_frames_become_full_raster_half_block_cells_for_cell_clients() {
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(8, 2, image::Rgb([255, 0, 0]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let arguments =
+        json!({"key": "r", "image": {"media_type": "image/png", "base64": STANDARD.encode(png)}});
+    let cells = frame_cells(&arguments, (4, 2)).unwrap();
+    assert_eq!(
+        cells["rect"],
+        json!({"x": 0, "y": 0, "width": 4, "height": 2})
+    );
+    let red = serde_json::to_value(crate::ModColor::Rgb(255, 0, 0)).unwrap();
+    let black = serde_json::to_value(crate::ModColor::Rgb(0, 0, 0)).unwrap();
+    assert_eq!(cells["cells"][0], json!(["▀", red, black]));
+    assert_eq!(cells["cells"][4], json!(" "));
+    assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
+    assert!(frame_cells(&json!({"key": "r"}), (4, 2)).is_none());
 }
