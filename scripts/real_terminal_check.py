@@ -34,7 +34,7 @@ PROBE_SOURCE = """export default function activate(api) {
     const last = s.pointer.at(-1);
     const facts = `probe ${input.client?.graphics} ${input.client?.pointer} last ${last ? `${last.action} ${last.column},${last.row} half ${last.half}` : 'none'}`;
     return { sites: { header: { components: [
-      ...(s.image ? [{ type: 'image', id: 'probe_image', label: 'Probe', image: s.image, alt: 'probe image', height: 4, pointer: true }] : []),
+      ...(s.image ? [{ type: 'image', id: 'probe_image', label: 'Probe', image: s.image, alt: 'probe image', height: 1, pointer: true }] : []),
       { type: 'text', id: 'probe_facts', label: 'Probe facts', text: facts },
       { type: 'pane', id: 'probe_pane', label: 'Probe pane', title: 'Probe pane', children: [
         { type: 'input', id: 'probe_note', label: 'Probe note', value: s.note ?? '', autofocus: true, action: { command: 'terminal_probe:note' } },
