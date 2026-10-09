@@ -2,12 +2,12 @@
   "schema": 1,
   "as_of": "2026-10-08",
   "release": {
-    "codex": "0.161.0",
+    "codex": "0.162.0",
     "omd": "0.1.0",
     "mod_api": "0.2.0-experimental.5",
     "package_schema": 1,
-    "upstream_tag": "rust-v0.161.0",
-    "upstream_commit": "979011409de0a60b52f179721948e65531d26144",
+    "upstream_tag": "rust-v0.162.0",
+    "upstream_commit": "c1382380de69521303b416720a52f42d51af6248",
     "target": "aarch64-apple-darwin",
     "node": "24.18.0"
   },
@@ -17,7 +17,7 @@
       "area": "host",
       "name": "OMD host runtime",
       "owner": "OMD runtime (runtime/omd, runtime/native)",
-      "version": "0.1.0 on Codex 0.161.0",
+      "version": "0.1.0 on Codex 0.162.0",
       "features": [
         "author_diagnostics_v1",
         "author_offline_runner_v1",
@@ -63,6 +63,7 @@
         "builtins_v1",
         "contracts_v2",
         "framed_process_v1",
+        "process_raster_v1",
         "kernels_v1",
         "terminal_lists_v1",
         "adapters_v1",
@@ -195,6 +196,24 @@
       "removal": "`omd-mod` disable, uninstall, revoke and package-quarantine work without any control mod; disable and uninstall restore the previous lock and preserve edited sources and explicit settings, and quarantine blocks the installed version while keeping its data."
     },
     {
+      "id": "managed_policy",
+      "area": "host",
+      "name": "Administrator policy and managed deployment",
+      "owner": "OMD mod host (runtime/omd/src/mods/policy.rs, package_manager.rs)",
+      "version": "policy schema 1",
+      "status": "supported",
+      "fixtures": [
+        "rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped",
+        "rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance",
+        "rust:omd/tests/managed.rs::tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads",
+        "rust:omd/tests/managed.rs::managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly",
+        "rust:omd/tests/managed.rs::managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation",
+        "rust:omd/tests/managed.rs::managed_policy_refuses_user_installs_outside_allowed_sources_and_versions"
+      ],
+      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/lean_profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
+      "removal": "An administrator clears or rolls back the policy (`omd-mod policy clear|rollback`, `omd-package policy remove|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running."
+    },
+    {
       "id": "omd_workspace",
       "area": "first_party_mod",
       "name": "omd_workspace",
@@ -221,7 +240,7 @@
       "area": "native",
       "name": "Codex plugins (plugin.json)",
       "owner": "upstream Codex",
-      "version": "0.161.0",
+      "version": "0.162.0",
       "status": "supported",
       "fixtures": [
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique",
@@ -235,7 +254,7 @@
       "area": "native",
       "name": "Codex hooks",
       "owner": "upstream Codex",
-      "version": "0.161.0",
+      "version": "0.162.0",
       "hooks": [
         "pre_tool_use",
         "permission_request",
@@ -444,7 +463,7 @@
       "area": "optional",
       "name": "Remote control",
       "owner": "upstream Codex",
-      "version": "0.161.0 native",
+      "version": "0.162.0 native",
       "status": "removed",
       "fixtures": [],
       "limitations": "The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained.",
@@ -748,6 +767,23 @@
         "rust:omd/tests/examples.rs::host_feature_examples_load_and_register_together",
         "script:tests/examples_api.test.mjs"
       ]
+    },
+    {
+      "id": "managed_packages_beside_user_mods",
+      "components": [
+        "managed_policy",
+        "mod_package_lifecycle",
+        "omd_host"
+      ],
+      "boundaries": [
+        "duplicate_tools",
+        "shared_state_store"
+      ],
+      "result": "Administrator-managed packages deployed per account run beside user and project mods: a same-ID user or project copy is shadowed, refused user mods unload at once, user answers cannot skip a managed required guard, and resetting user mods leaves managed packages running.",
+      "evidence": [
+        "rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped",
+        "rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance"
+      ]
     }
   ],
   "regression": [
@@ -777,7 +813,7 @@
     {
       "id": "pinned_codex_baseline",
       "retained_for": [
-        "0.161.0"
+        "0.162.0"
       ],
       "case": "The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces.",
       "evidence": [
@@ -844,7 +880,7 @@
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",
     "pnpm --dir mods test"
   ],
-  "qualification": "Development pin: the 0.161.0 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-0161-20261007.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
+  "qualification": "Development pin: the 0.162.0 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-0162-20261008.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
   "profiles": {
     "platform": {
       "label": "OMD Core",
@@ -978,7 +1014,8 @@
     ],
     "notes": [
       "Restoring source also requires reintegrating and testing its dependencies and contracts; for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.",
-      "Wave 1 also upgrades omd_profiles with an account switcher."
+      "Wave 1 also upgrades omd_profiles with an account switcher.",
+      "The wave 2 `omd-mod-authoring` plugin arrived after `pre-launch-collection`; restore it with `git checkout cd7f92c467f61af03490f396b6614eaa6af073a6 -- plugins/optional/plugins/omd-mod-authoring`. The author CLI, testing SDK and typed host tools remain shipped."
     ],
     "entries": [
       {
@@ -1444,6 +1481,12 @@
         "id": "browser",
         "kind": "tree",
         "path": "browser",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-mod-authoring",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-mod-authoring",
         "disposition": "wave_2"
       }
     ]

@@ -298,12 +298,14 @@ impl WorkspaceAuthority {
                     }
                     operation if operation.starts_with("process.") => processes.call(
                         crate::managed_process::ProcessOwner {
+                            thread: None,
                             id,
                             generation,
                             repository: &self.repository,
                             policy: &self.policy,
                             protected,
                             os_access: None,
+                            blit: None,
                         },
                         operation,
                         call.arguments,

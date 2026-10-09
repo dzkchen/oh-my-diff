@@ -1,6 +1,6 @@
 # TypeScript mods
 
-The current pinned Codex `0.161.0` OMD host exposes API
+The current pinned Codex `0.162.0` OMD host exposes API
 `0.2.0-experimental.5` on Apple Silicon macOS and Node `24.18.0`. Mods are
 editable, hash-approved TypeScript packages; Node 24.18 or a later 24.x also works. The API remains experimental;
 local author and host fixtures do not complete independent preview feedback or
@@ -32,9 +32,19 @@ pnpm run package
 lockfile offline. `pnpm check` validates syntax and, once TypeScript is added
 (`pnpm add -D typescript@5.9.3`), types against the exact SDK.
 `pnpm test` is owned by the OMD engine and refuses unmocked host operations, so
-author checks do not make paid requests. `pnpm watch -- /absolute/mod-store`
-re-inspects an edited local source, retains the exact declared capability set,
-and queues a safe-boundary reload. The author package ships the executable
+author checks do not make paid requests. `pnpm test` also runs any
+`*.test.ts` or `*.test.mjs` file beside `mod.test.json` with `node --test`;
+`@oh-my-diff/mod-api/testing` supplies scenario, mock, view-query and
+interaction helpers for them, and the assertions are `node:assert`.
+`pnpm watch -- /absolute/scratch-store` re-inspects an edited local source,
+approves its digest in that store, queues a reload for the next turn boundary
+(or `/omd` reload) and copies the store's declarations, including
+`tool-types.d.ts` when that store's session has listed its tools, into `.omd/`.
+Use a scratch store for it: code an agent wrote is never trusted automatically, and the
+user approves it in a real store with `/omd` or `omd-mod trust`. `watch DIR
+STORE --once` reloads once and exits, and `pnpm test` is the offline CI check.
+See [Typed tool declarations, TypeScript tests and Watch and
+reload](REFERENCE.md#typed-tool-declarations). The author package ships the executable
 live-replacement examples with `omd-mod-author examples DIR`. Small
 demonstrations remain repository-only conformance fixtures.
 [EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and

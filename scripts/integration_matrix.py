@@ -349,8 +349,8 @@ def render(matrix):
         rows.append(tuple(row))
     out += [
         "## Launch cut inventory", "",
-        f"Every package outside the launch collection is preserved at the `{cut['tag']}` tag and is not shipped,",
-        f"selected or tested here. Restore a path with `{cut['restore']}`.",
+        f"Deferred packages are preserved at the `{cut['tag']}` tag unless a different revision is noted below;",
+        f"they are not shipped, selected or tested here. Restore a tagged path with `{cut['restore']}`.",
         "Launch entries exist on disk; wave entries are deleted until their wave restores them.",
         *[f"{note}" for note in cut["notes"]],
         f"Deleted and not restored: {', '.join(f'`{path}/`' for path in cut['not_restored'])}.", "",

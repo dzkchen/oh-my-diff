@@ -129,7 +129,7 @@ fn store(args: &[String]) -> io::Result<Value> {
     )
 }
 
-const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
+const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock | sync [--offline|--rollback] (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
 
 const APPROVAL_REQUIRED: &str = "package_approval_required";
 
@@ -140,11 +140,14 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
     let mut scope = "user".to_owned();
     let mut version = None;
     let mut yes = false;
+    let (mut offline, mut rollback) = (false, false);
     let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
     let mut remaining = args.iter();
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
             "--yes" => yes = true,
+            "--offline" => offline = true,
+            "--rollback" => rollback = true,
             "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
             "--version" => version = Some(remaining.next().ok_or_else(usage)?.clone()),
             "--store" => root = Some(PathBuf::from(remaining.next().ok_or_else(usage)?)),
@@ -213,6 +216,17 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             })
         }
         "events" => Ok(Value::Array(store.security_events()?)),
+        "sync" => {
+            let synced = match rollback {
+                true => store.package_sync_rollback()?,
+                false => store.package_sync(offline)?,
+            };
+            Ok(
+                json!({"display": format!("Managed deployment generation {} is active{}.",
+                synced["generation"], if synced["changed"] == true { "" } else { " and current" }),
+                "sync": synced}),
+            )
+        }
         "reset-lock" => {
             let aside = store.reset("packages.lock.json")?;
             done(format!(

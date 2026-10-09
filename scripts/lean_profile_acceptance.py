@@ -44,7 +44,52 @@ def isolated_environment(base, home, upstream, source=None):
     return env
 
 
-def run(artifact_dir, upstream, output):
+def managed_recovery(base, profile, store, env, command, mode):
+    manager = base / f"{profile}-prefix/artifacts/omd-mod"
+    package = base / f"{profile}-managed"
+    shutil.copytree(ROOT / "mods/examples/counter", package)
+    manifest = json.loads((package / "mod.json").read_text())
+    manifest["id"] = "managed_counter"
+    (package / "mod.json").write_text(json.dumps(manifest))
+    digest = call([manager, "inspect", package], env)["sha256"]
+    policy = base / f"{profile}-policy.json"
+    policy.write_text(json.dumps({"schema": 1, "packages": [{
+        "id": "managed_counter", "source": str(package), "sha256": digest,
+        "capabilities": manifest["capabilities"], "projects": [str(base)], "tier": "append"}]}))
+    if mode == "broker":
+        command(profile, "broker", "install")
+        call([manager, "policy", "set", policy], env)
+    else:
+        command(profile, "policy", "install", policy)
+    origin = call([manager, "policy", "show"], env)["origin"]
+    assert origin == ("broker" if mode == "broker" else "/Library/Application Support/OhMyDiff/policy.json")
+    synced = call([base / f"{profile}-bin/omd", "mods", "sync", "--store", store], env, False)
+    assert synced == "Managed deployment generation 1 is active.", synced
+
+    def managed():
+        rows = call([manager, "policy", "explain", store, base], env)["selections"]
+        return next((row for row in rows if row["id"] == "managed_counter" and row["scope"] == "managed"
+                     and row["effective"]), None)
+
+    deployed = managed()
+    assert deployed and deployed["tier"] == "append"
+    refused = subprocess.run([str(manager), "disable", str(store), deployed["path"]], capture_output=True, text=True)
+    assert refused.returncode and "managed_by_policy" in refused.stderr + refused.stdout
+    command(profile, "mod", "disable", "omd_logo")
+    assert managed(), "mod-only recovery keeps the managed package"
+    command(profile, "mod", "enable", "omd_logo")
+    if mode == "broker":
+        call([manager, "policy", "rollback"], env)
+        assert call([manager, "policy", "show"], env) is None
+        command(profile, "broker", "uninstall")
+    else:
+        command(profile, "policy", "remove")
+    assert not managed()
+    return {"policy_store": mode, "sync_generation": 1, "disable_refused": True,
+            "managed_after_mod_recovery": True, "removed": True}
+
+
+def run(artifact_dir, upstream, output, managed_policy=False):
     if output.exists():
         raise ValueError("evidence output already exists")
     started = time.monotonic()
@@ -84,6 +129,8 @@ def run(artifact_dir, upstream, output):
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
         assert call([base / "platform-bin/codex", "--version"], env, False) == f"codex-cli {version}"
+        if managed_policy:
+            observations["platform_managed"] = managed_recovery(base, "platform", platform_store, env, command, "file")
         call([base / "platform-bin/omd-mod-author", "examples", base / "author-examples"], env, False)
         assert (base / "author-examples/coordination/mod.json").is_file()
         package = base / "user-counter"
@@ -143,8 +190,11 @@ def run(artifact_dir, upstream, output):
         assert not next(item for item in full["packages"] if item["id"] == "omd_usage")["active"]
         assert set(full["installed_tools"]) == {"omd", "omd-contract", "omd-mod"}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
+        if managed_policy:
+            observations["full_managed"] = managed_recovery(base, "full", full_store, env, command, "broker")
         bundle = Path(full["plugin_bundle"]["marketplace"])
         assert full["plugin_bundle"]["plugins"] == ["omd-anchored-edit", "omd-artifact-reading", "omd-code-execution"]
+        assert not (base / "full-prefix/browser").exists()
         host = base / "full-prefix/artifacts/codex-code-mode-host"
         assert host.is_file() and private.digest(host) == private.digest(artifact_dir / "codex-code-mode-host")
         staged_skills = {}
@@ -232,7 +282,8 @@ def run(artifact_dir, upstream, output):
         assert {str(path.relative_to(home)): private.digest(path)
                 for path in (sentinel, auth, session)} == shared_hashes
     result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
-              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", "omd", "mod-api.tgz")},
+              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in (
+                  "codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -245,8 +296,10 @@ def main():
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--managed-policy", action="store_true",
+                        help="also deploy and remove a machine-wide administrator policy and the broker (sudo, dialogs)")
     args = parser.parse_args()
-    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve())
+    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve(), args.managed_policy)
 
 
 if __name__ == "__main__":

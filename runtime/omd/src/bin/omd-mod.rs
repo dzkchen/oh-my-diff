@@ -1,6 +1,10 @@
+use codex_omd::MANAGED_POLICY_FILE;
+use codex_omd::MANAGED_POLICY_KEY;
+use codex_omd::Managed;
 use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
+use codex_omd::load_managed;
 use serde_json::Value;
 use serde_json::json;
 use sha2::Digest;
@@ -127,11 +131,87 @@ fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Res
     }))
 }
 
+fn policy(action: &str, rest: &[String]) -> io::Result<Value> {
+    let summary = |managed: Option<Managed>| {
+        json!(managed.map(|managed| json!({"origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy})))
+    };
+    let broker = |op: &str, value: Value| {
+        if !codex_omd::broker::deployed() {
+            return Err(io::Error::other(format!(
+                "policy_requires_broker: without the OS-separated broker, install the root-owned {MANAGED_POLICY_FILE} with omd-package policy install FILE"
+            )));
+        }
+        codex_omd::broker::authorized(op, value)
+    };
+    let file = |path: &str| -> io::Result<Managed> {
+        codex_omd::managed(
+            serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?,
+            path.to_owned(),
+        )
+    };
+    match (action, rest) {
+        ("show", []) => Ok(summary(load_managed()?)),
+        ("check", [path]) => Ok(summary(Some(file(path)?))),
+        ("set", [path]) => {
+            let managed = file(path)?;
+            broker(
+                "policy.put",
+                json!({"key": MANAGED_POLICY_KEY, "value": managed.policy}),
+            )?;
+            Ok(summary(load_managed()?))
+        }
+        ("clear", []) => {
+            broker(
+                "policy.put",
+                json!({"key": MANAGED_POLICY_KEY, "value": null}),
+            )?;
+            Ok(summary(load_managed()?))
+        }
+        ("rollback", []) => {
+            broker("policy.rollback", json!({"key": MANAGED_POLICY_KEY}))?;
+            Ok(summary(load_managed()?))
+        }
+        ("explain", [root, project @ ..]) if project.len() <= 1 => {
+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let project = project
+                .first()
+                .map(|project| PathBuf::from(project).canonicalize())
+                .transpose()?;
+            let user = store.managed_user();
+            let deployment = store.managed_deployment().unwrap_or_default();
+            let targets = match store.managed() {
+                Ok(Some(managed)) => managed
+                    .targets(&user, project.as_deref())
+                    .into_iter()
+                    .map(|target| {
+                        json!({"id": target.id, "version": target.version, "sha256": target.sha256,
+                            "source": target.source, "tier": target.tier,
+                            "deployed": deployment.packages.iter().any(|deployed|
+                                deployed.id == target.id && deployed.sha256 == target.sha256)})
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let mut status = store.selection_status_in(project.as_deref())?;
+            status["user"] = json!(user);
+            status["targets"] = json!(targets);
+            status["deployment"] = json!({"generation": deployment.generation,
+                "policy_sha256": deployment.policy_sha256, "packages": deployment.packages,
+                "previous_generation": deployment.previous.map(|previous| previous.generation)});
+            Ok(status)
+        }
+        _ => Err(io::Error::other(
+            "usage: omd-mod policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR]",
+        )),
+    }
+}
+
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
-        io::Error::other(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
-        )
+        io::Error::other(concat!(
+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            " | broker-grants-import STORE [SNAPSHOT_JSON]"
+        ))
     };
     match args {
         [command, root] if command == "plugin-component" => {
@@ -318,6 +398,13 @@ fn run(args: &[String]) -> io::Result<Value> {
                 "trusted {count} packages; disabled until explicitly enabled"
             )))
         }
+        [command, root, rest @ ..] if command == "broker-grants-import" && rest.len() <= 1 => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.broker_grants_import(
+                rest.first()
+                    .map(|snapshot| serde_json::from_str(snapshot))
+                    .transpose()?,
+            )
+        }
         [command, root, path] if command == "enable" || command == "disable" => {
             let path = PathBuf::from(path);
             ModStore::open(PathBuf::from(root).canonicalize()?)?
@@ -379,6 +466,18 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root] if command == "selection-status" => {
             ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
         }
+        [command, action, rest @ ..] if command == "policy" => policy(action, rest),
+        [command, root, flags @ ..] if command == "package-sync" && flags.len() <= 1 => {
+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            match flags {
+                [] => store.package_sync(false),
+                [flag] if flag == "--offline" => store.package_sync(true),
+                [flag] if flag == "--rollback" => store.package_sync_rollback(),
+                _ => Err(io::Error::other(
+                    "usage: omd-mod package-sync STORE [--offline|--rollback]",
+                )),
+            }
+        }
         [command, root] if command == "report" => {
             let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
             Ok(
@@ -398,7 +497,8 @@ fn run(args: &[String]) -> io::Result<Value> {
             let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
             Ok(
                 serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
-                "installed_contracts":status["installed_contract_types"]}),
+                "installed_contracts":status["installed_contract_types"],
+                "tool_types":status["tool_types"]}),
             )
         }
         [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {

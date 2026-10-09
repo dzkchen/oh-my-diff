@@ -468,7 +468,7 @@ fn recovery_entries(selections: &Value, status: &Value) -> Vec<Value> {
                 });
             let error = failure.or(selection["error"].as_str());
             json!({"id": selection["id"], "path": selection["path"], "scope": selection["scope"],
-                "enabled": selection["selected"] == true, "managed": selection["managed"] == true,
+                "enabled": selection["selected"] == true, "packaged": selection["packaged"] == true,
                 "failing": failure.is_some(), "error": error})
         })
         .collect()

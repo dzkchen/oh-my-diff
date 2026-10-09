@@ -85,10 +85,23 @@ def driver(mode, url, repo, env, answer):
     return result["timings"]
 
 
+def launch_client(tui, store):
+    launched = store / "state-external_client.json"
+    before = json.loads(launched.read_text())["value"].get("picked")
+    assert tui.command("/external_client:launch", "Launching the text client"), "launch command"
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and json.loads(launched.read_text())["value"].get("picked") == before:
+        tui.pump(0.05)
+    value = json.loads(launched.read_text())["value"]
+    assert value["ui"] == "running" and value["picked"] != before, f"mod-launched client attached and acted: {value}"
+    return value["picked"]
+
+
 def main():
     parser = argparse.ArgumentParser(description="External-client acceptance: two author examples drive patched codex hosts "
                                                  "over omd-client/1 with a scripted provider (local, no paid calls).")
     parser.add_argument("--binaries", type=Path, required=True, help="directory with the patched codex and omd-mod")
+    parser.add_argument("--hop-only", action="store_true", help="check the command-to-channel hop before the first provider turn")
     args = parser.parse_args()
     codex, manager = (args.binaries / name for name in ["codex", "omd-mod"])
     base = fresh("client")
@@ -107,20 +120,44 @@ def main():
     (mods / "broken_fixture/index.ts").write_text(BROKEN_SOURCE)
     results = {"run": str(base)}
 
-    empty = base / "store-empty"
-    store_with(manager, empty, [])
-    env = environment(base, args.binaries, repo, empty, url, name="bare")
-    host = Host(codex, repo, env, base / "bare.sock", base / "bare.log")
-    try:
-        results["bare"] = driver("bare", f"unix://{base / 'bare.sock'}", repo, env, lambda need: None)
-    finally:
-        host.stop()
-
     store = base / "store"
     store_with(manager, store, [mods / "external_client", mods / "approval_desk", mods / "broken_fixture"])
     call([manager, "settings", store, mods / "external_client", json.dumps({
         "listen_url": f"unix://{base / 'tui.sock'}", "token_file": "", "client_path": str(ROOT / "mods/examples/external_client/client.mjs")})], ROOT)
     env = environment(base, args.binaries, repo, store, url)
+    if args.hop_only:
+        started = time.monotonic()
+        tui = Session(codex, repo, env, args=("--listen", f"unix://{base / 'tui.sock'}"))
+        try:
+            assert tui.ready(), "TUI did not start"
+            results["tui_ready_s"] = round(time.monotonic() - started, 2)
+            mark = len(tui.raw)
+            typed = time.monotonic()
+            tui.keys(b"draft-marker", settle=0)
+            while time.monotonic() - typed < 3 and "draft-marker" not in tui.text(mark):
+                tui.pump(0.005)
+            assert "draft-marker" in tui.text(mark), "release TUI did not render typed input"
+            results["typeable_input_ms"] = round((time.monotonic() - typed) * 1000)
+            tui.keys(b"\x15")
+            results["mod_launched_client"] = launch_client(tui, store)
+            assert not server.RequestHandlerClass.requests, "hop check must precede every provider turn"
+            results["provider_requests"] = 0
+        finally:
+            tui.close(base / "tui.trace")
+            server.shutdown()
+        (base / "results.json").write_text(json.dumps(results, indent=2))
+        print(json.dumps(results, indent=2))
+        return
+
+    empty = base / "store-empty"
+    store_with(manager, empty, [])
+    bare_env = environment(base, args.binaries, repo, empty, url, name="bare")
+    host = Host(codex, repo, bare_env, base / "bare.sock", base / "bare.log")
+    try:
+        results["bare"] = driver("bare", f"unix://{base / 'bare.sock'}", repo, bare_env, lambda need: None)
+    finally:
+        host.stop()
+
     host = Host(codex, repo, env, base / "omd.sock", base / "headless.log")
     desk_source = (mods / "approval_desk/index.ts").read_text()
 
@@ -168,16 +205,7 @@ def main():
                 assert tui.wait("FIXTURE_DONE", 60, mark), "TUI keeps working after the client vanished"
 
         results["coattach"] = driver("coattach", f"unix://{base / 'tui.sock'}", repo, env, coattach)
-        mark = len(tui.raw)
-        launched = store / "state-external_client.json"
-        before = json.loads(launched.read_text())["value"].get("picked")
-        assert tui.command("/external_client:launch", "Launching the text client"), "launch command"
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and json.loads(launched.read_text())["value"].get("picked") == before:
-            tui.pump(0.5)
-        value = json.loads(launched.read_text())["value"]
-        assert value["ui"] == "running" and value["picked"] != before, f"mod-launched client attached and acted: {value}"
-        results["mod_launched_client"] = value["picked"]
+        results["mod_launched_client"] = launch_client(tui, store)
         mark = len(tui.raw)
         tui.pump(5)
         results["tui_idle_bytes_5s_mods"] = len(tui.raw) - mark

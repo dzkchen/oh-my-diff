@@ -4,7 +4,7 @@ Copyright (c) 2026 David Chen
 Oh My Diff is licensed under the MIT License (see LICENSE), except for the
 OpenAI Codex patch set and the crates that build inside the Codex workspace:
 runtime/patches/, runtime/omd/ and runtime/native/. These modify and extend
-OpenAI Codex rust-v0.161.0 and are licensed under the Apache License,
+OpenAI Codex rust-v0.162.0 and are licensed under the Apache License,
 Version 2.0 (see LICENSE-APACHE).
 
 Credits for third-party projects that OMD packages adapt or port are in

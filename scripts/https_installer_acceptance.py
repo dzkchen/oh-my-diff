@@ -3,7 +3,6 @@ import argparse
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import os
 from pathlib import Path
 import shutil
 import ssl
@@ -13,9 +12,9 @@ import tomllib
 from threading import Thread
 
 try:
-    from scripts.lean_profile_acceptance import expected_defaults
+    from scripts.lean_profile_acceptance import expected_defaults, isolated_environment
 except ModuleNotFoundError:
-    from lean_profile_acceptance import expected_defaults
+    from lean_profile_acceptance import expected_defaults, isolated_environment
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,9 +73,8 @@ def run(archive, upstream, output):
         install_root = base / "managed"
         bin_dir = base / "bin"
         node = Path(subprocess.check_output(["mise", "which", "node"], text=True).strip())
-        env = os.environ.copy()
-        env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home), SSL_CERT_FILE=str(cert),
-                   PATH=f"{upstream.parent}{os.pathsep}{env['PATH']}")
+        env = isolated_environment(base, home, upstream)
+        env["SSL_CERT_FILE"] = str(cert)
         fixed = ["--root", str(install_root), "--bin-dir", str(bin_dir),
                  "--upstream", str(upstream), "--node", str(node)]
         asset = ["--asset-url", f"{url}/package.tar.xz", "--asset-sha256", digest(archive)]
