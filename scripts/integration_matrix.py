@@ -231,7 +231,6 @@ def launch_problems(cut, source):
     if not cut:
         return ["launch_cut is missing"]
     problems = []
-    pending = set(cut.get("pending", []))
     seen = set()
     launched = {"mod": set(), "plugin": set()}
     active = set()
@@ -249,7 +248,7 @@ def launch_problems(cut, source):
         elif disposition == "launch":
             if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(lean_profiles.PROFILE_LABELS) or not entry.get("profiles"):
                 problems.append(f"launch_cut {name}: needs a launch tier and profiles")
-            if name not in pending and not (ROOT / entry["path"]).exists():
+            if not (ROOT / entry["path"]).exists():
                 problems.append(f"launch_cut {name}: launch path {entry['path']} is missing")
             if entry.get("kind") in launched:
                 launched[entry["kind"]].add(name)
@@ -262,9 +261,9 @@ def launch_problems(cut, source):
             problems.append(f"launch_cut: {path} should stay deleted")
     if not cut.get("tag") or "<path>" not in cut.get("restore", ""):
         problems.append("launch_cut: needs the restore tag and a restore command")
-    if launched["mod"] - pending != set(lean_profiles.PACKAGES):
+    if launched["mod"] != set(lean_profiles.PACKAGES):
         problems.append("launch_cut mods differ from the selected package source inventory")
-    if active - pending != set(lean_profiles.DEFAULT_ACTIVE):
+    if active != set(lean_profiles.DEFAULT_ACTIVE):
         problems.append("launch_cut default-active mods differ from the fresh-install default selection")
     if launched["plugin"] != set(source["plugin"]["plugins"]):
         problems.append("launch_cut plugins differ from the plugin lock")
@@ -343,7 +342,7 @@ def render(matrix):
         row = [f"`{entry['id']}`", entry["kind"], "—", "—", "—", f"`{entry['path']}`"]
         if entry["disposition"] == "launch":
             where = " + ".join(lean_profiles.PROFILE_LABELS[profile] for profile in entry["profiles"])
-            row[2] = f"{entry['tier']} ({where})" + (" — pending" if entry["id"] in cut["pending"] else "")
+            row[2] = f"{entry['tier']} ({where})"
         else:
             row[stage[entry["disposition"]]] = "restore"
         rows.append(tuple(row))

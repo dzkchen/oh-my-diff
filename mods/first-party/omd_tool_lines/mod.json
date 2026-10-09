@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "omd_tool_lines",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "One transcript line per agent tool call with its name, short arguments and result; open a row for the full native drawing",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_lines"},
+  "capabilities": ["terminal"],
+  "compatibility": {"required_features": ["render_hooks_v1"]}
+}

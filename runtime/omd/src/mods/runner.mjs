@@ -76,9 +76,21 @@ function track(key) {
 }
 const rendering = request.event === 'intercept' && request.payload?.surface === 'render';
 let activating = true;
+let activatedState;
 let pending = null;
 const calls = [];
-const receipts = request.receipts ?? [];
+let receipts = request.receipts ?? [];
+// A warm render runner answers the next render with the activated mod, from that render's own input.
+function serve(line) {
+  const next = JSON.parse(line);
+  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
+  receipts = request.receipts;
+  state = structuredCloneFallback(activatedState);
+  reads.clear();
+  calls.length = 0;
+  updates.length = 0;
+  pending = null;
+}
 const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
@@ -331,6 +343,7 @@ function envelope(name, native, input, subject, next, delivery) {
     original: next ? next.original : input, effective: input, delivery });
 }
 function hook(name, options, handler) {
+  if (!activating) throw new Error('hook_registration_outside_activation');
   if (handler === undefined) [options, handler] = [{}, options];
   const entry = Object.hasOwn(CLASSIC, name) ? CLASSIC[name] : undefined;
   if (!entry) throw new Error('unsupported_classic_hook: ' + name);
@@ -418,6 +431,7 @@ const api = Object.freeze({
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
+    if (!activating) throw new Error('event_registration_outside_activation');
     const capability = Object.hasOwn(surface.events, event) ? surface.events[event] : undefined;
     if (!capability) throw new Error('unsupported_event: ' + event);
     requireCapability(capability);
@@ -425,6 +439,7 @@ const api = Object.freeze({
     registrations.events.push(event);
   },
   middleware(event, handler) {
+    if (!activating) throw new Error('middleware_registration_outside_activation');
     if (!surface.middleware.includes(event)) throw new Error('unsupported_middleware_event: ' + event);
     requireCapability('middleware');
     if (event === 'approval') requireCapability('approvals');
@@ -458,6 +473,7 @@ const api = Object.freeze({
     return tagged('glob', pattern);
   }, not: matcher => tagged('not', matcher) }),
   replace(point, handler) {
+    if (!activating) throw new Error('replacement_registration_outside_activation');
     if (!surface.replacements.includes(point)) throw new Error('unsupported_replacement_point: ' + point);
     api.on(point, handler);
     registrations.replacements.push(point);
@@ -496,9 +512,10 @@ const api = Object.freeze({
     registrations.agents.push(structuredCloneFallback(definition));
   },
   tool(spec, handler) {
+    if (!activating) throw new Error('tool_registration_outside_activation');
     requireCapability('tools');
     unique(tools, spec.name, handler);
-    registrations.tools.push(spec);
+    registrations.tools.push(structuredCloneFallback(spec));
   },
   virtualRead(definition, handler) {
     requireCapability('virtual_reads');
@@ -508,6 +525,7 @@ const api = Object.freeze({
     registrations.virtual_reads.push(structuredCloneFallback(definition));
   },
   command(name, handler, options = {}) {
+    if (!activating) throw new Error('command_registration_outside_activation');
     requireCapability('commands');
     for (const key of Object.keys(options ?? {})) if (!['description', 'cli', 'args_hint', 'immediate'].includes(key)) throw new Error('unsupported_command_option: ' + key);
     unique(commands, name, handler);
@@ -634,7 +652,7 @@ const api = Object.freeze({
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => rendering ? request.state : state, request, calls,
-  pending: () => pending, ready: () => { activating = false; }, suspension };
+  pending: () => pending, ready: () => { activatedState = structuredCloneFallback(state); activating = false; }, suspension, serve };
 `;
 try {
   const setup = new SourceTextModule(bootstrap, { context });
@@ -695,7 +713,34 @@ try {
   await dispatch.link(() => { throw new Error('unsupported_import'); });
   await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
   if (context.__result.length > 262144) throw new Error('output_limit');
-  process.stdout.write(context.__result);
+  if (!request.serve) process.stdout.write(context.__result);
+  if (request.serve) {
+    const step = new SourceTextModule(`
+      const omd = globalThis.__omd;
+      globalThis.__step = async line => {
+        omd.serve(line);
+        let value = null;
+        try {
+          value = await omd.intercept(omd.request.payload) ?? null;
+          if (omd.pending()) throw new Error('swallowed_host_suspension');
+        } catch (error) {
+          if (error !== omd.suspension) throw error;
+        }
+        if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
+        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
+      };
+    `, { context });
+    await step.link(() => { throw new Error('unsupported_import'); });
+    await step.evaluate();
+    let result = context.__result;
+    for (;;) {
+      writeSync(1, result + '\n');
+      const line = readLine();
+      if (!line) break;
+      result = await context.__step(line);
+      if (result.length > 262144) throw new Error('output_limit');
+    }
+  }
 } catch (error) {
   const files = [request.filename, request.surface?.adapter?.filename,
     ...Object.values(request.surface?.adapter?.aliases ?? {}).map(module => module.filename)].filter(Boolean);

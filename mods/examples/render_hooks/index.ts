@@ -10,11 +10,12 @@ export default function activate(api: ModAPI) {
       { text: header }, { text: ` · ${elapsed_seconds}s`, tone: 'muted' }] }] };
   });
 
-  api.intercept('render', { match: { component: ['tool_call', 'command_output'] } }, async (event, next) => {
-    const { props } = event as RenderEvent<'tool_call' | 'command_output'>;
-    const name = props.kind === 'exec' ? props.command : props.kind === 'mcp' ? `${props.server}.${props.tool}` : props.tool;
-    const failed = props.kind === 'exec' ? props.exit_code !== 0 : props.status === 'failed';
+  api.intercept('render', { match: { component: 'tool_call', props: { kind: ['exec', 'mcp', 'dynamic'] } } }, async (event, next) => {
+    const { props } = event as RenderEvent<'tool_call'>;
     const inner = await next(event);
+    if (props.expanded) return inner;
+    const name = props.kind === 'exec' ? props.command : props.kind === 'mcp' ? `${props.server}.${props.tool}` : props.kind === 'dynamic' ? props.tool : props.kind;
+    const failed = props.status === 'failed';
     return { tree: [{ type: 'box', id: 'render_hooks_tool', label: `Tool ${name}`.slice(0, 128), title: `${failed ? '✗' : '⚙'} ${name}`.slice(0, 128),
       children: inner.tree }] };
   });

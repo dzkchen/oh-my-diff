@@ -271,6 +271,21 @@
       "source": "mods/first-party/omd_profiles",
       "version": "0.1.0-preview.2"
     },
+    "omd_tool_lines": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "1e97c7ec2974acd074ca017f0a745915dc617f977a9192c33127731bd06792f4",
+        "mod.json": "a380088a8348550c17d44cf93a0d6605c8a0551e6e37233ea9494d02bc75b20f"
+      },
+      "id": "omd_tool_lines",
+      "package_sha256": "fcfe48871bfb3f50799ef7061f921ee53afa01b1781bfbb480f8a372baed3e33",
+      "source": "mods/first-party/omd_tool_lines",
+      "version": "0.1.0-preview.1"
+    },
     "omd_update": {
       "api": "0.2.0-experimental.5",
       "capabilities": [

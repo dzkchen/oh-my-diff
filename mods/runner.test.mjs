@@ -18,6 +18,45 @@ function run(source, extra = {}) {
   assert.ifError(result.error);
   return JSON.parse(result.stdout);
 }
+
+test('render callbacks cannot mutate activation registrations', () => {
+  const input = { component: 'tool_call' };
+  for (const mutation of ["api.on('terminal', () => {})", "api.middleware('approval', () => {})", "api.replace('completion', () => {})", "api.tool({name:'late'}, () => {})", "api.command('late', () => {})"]) {
+    const reply = run(`export default api => api.intercept('render', () => { ${mutation}; return {}; });`, {
+      capabilities: ['terminal', 'middleware', 'approvals', 'tools', 'commands'], event: 'intercept', name: '0',
+      payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } },
+    });
+    assert.match(reply.error ?? '', /registration_outside_activation/, mutation);
+  }
+});
+
+test('classic hooks cannot register handlers during callbacks', () => {
+  const reply = run(`export default api => api.hook('PostToolUse', () => {
+    api.hook('PostToolUse', () => api.state.set({ late: true }));
+  });`, { capabilities: ['lifecycle', 'store'], event: 'tool_result', payload: { tool: 'read_file', outcome: 'succeeded' } });
+  assert.match(reply.error ?? '', /hook_registration_outside_activation/);
+});
+
+test('warm renders and continuation replays restore post-activation atoms', () => {
+  const input = { component: 'tool_call' };
+  const request = { source: `export default api => { const value = api.atom('value', 0); value.set(value.get() + 1);
+    api.intercept('render', (e, next) => e.replay ? next({ ...e, value: value.get() }) : { value: value.get() }); };`,
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface: currentSurface,
+    event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
+  const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
+  const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
+  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+    input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
+  });
+  const replies = result.stdout.trim().split('\n').map(JSON.parse);
+  assert.equal(replies.length, 4);
+  assert.equal(replies[0].value.result.value, 1);
+  assert.equal(replies[1].value.result.value, 1);
+  assert.deepEqual(replies[2].host_call, receipt.call);
+  assert.equal(replies[3].value.result.value, 1);
+  for (const reply of replies) assert.deepEqual(reply.state, { value: 0 });
+  assert.equal(result.status, 0, result.stderr);
+});
 test('typed module context callback', () => {
   const reply = run('export default (api: any) => api.on("context", () => ({text:"hello"}))', { capabilities: ['context'], event: 'context' });
   assert.deepEqual(reply.value, { text: 'hello' });
