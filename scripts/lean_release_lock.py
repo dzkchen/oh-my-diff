@@ -8,10 +8,11 @@ import tarfile
 
 try:
     from scripts import install_support as support
-    from scripts import full_mods_lock
+    from scripts import full_mods_lock, lean_profiles
 except ModuleNotFoundError:
     import install_support as support
     import full_mods_lock
+    import lean_profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,8 +126,7 @@ def build(artifact_dir, package_mode=False):
             "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods", "omd_update"], "first_party_default_active": ["omd_logo", "omd_mods", "omd_update"],
                          "plugin_sources": []},
             "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal",
-                                                    "omd_update", "omd_workspace"],
+                     "first_party_default_active": sorted(lean_profiles.DEFAULT_ACTIVE),
                      "plugin_sources": plugins},
         },
         "qualification": "development package candidate; supported collection and default pending",

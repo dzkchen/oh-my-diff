@@ -196,10 +196,10 @@
       "extension_type": "mod",
       "files": {
         "index.ts": "14e230306ae1267844a66c5eb22b325ffc5793a96ed0ff272d946d1b3b2669bd",
-        "mod.json": "f28d73f6451cd5530f54f953258f9671419cd6fb5fba3716f9972fc6d1bc9643"
+        "mod.json": "bd132032bc9d08f685f9f9c6af420fe2247238edea80a60c1f7fdb35596e6152"
       },
       "id": "omd_plan_removal",
-      "package_sha256": "a1fee99a04bf958c2456ad116c90ee6e1667eaa15e856d69dcb99a215ede9749",
+      "package_sha256": "c97fbef8c63605d1939d90f958b953926384978df703f2375d355b6b067cfd70",
       "source": "mods/first-party/omd_plan_removal",
       "version": "0.1.0-preview.1"
     },

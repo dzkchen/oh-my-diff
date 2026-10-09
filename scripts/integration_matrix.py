@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 
 try:
-    from scripts import lean_profiles
+    from scripts import lean_profiles, install_support
 except ModuleNotFoundError:
     import lean_profiles
+    import install_support
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
@@ -38,7 +39,7 @@ def sources():
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
     preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
     packages = {**preview["packages"], **json.loads((ROOT / "runtime/full-mods.lock.json").read_text())["packages"]}
-    plugin = json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text())
+    plugin = install_support.plugin_lock()
     plugins = sorted(plugin["plugins"])
     view = (ROOT / "runtime/omd/src/mods/view.rs").read_text()
     site_validation = view[view.index("fn valid_site("):view.index("fn valid_action(")]
@@ -224,7 +225,6 @@ def check(matrix):
 
 LAUNCH_TIERS = ("default-active", "opt-in", "staged")
 DISPOSITIONS = ("launch", "wave_1", "wave_2")
-PROFILE_NAMES = {"platform": "OMD Core", "full": "OMD+"}
 
 
 def launch_problems(cut, source):
@@ -247,7 +247,7 @@ def launch_problems(cut, source):
         if disposition not in DISPOSITIONS:
             problems.append(f"launch_cut {name}: unknown disposition {disposition!r}")
         elif disposition == "launch":
-            if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(PROFILE_NAMES) or not entry.get("profiles"):
+            if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(lean_profiles.PROFILE_LABELS) or not entry.get("profiles"):
                 problems.append(f"launch_cut {name}: needs a launch tier and profiles")
             if name not in pending and not (ROOT / entry["path"]).exists():
                 problems.append(f"launch_cut {name}: launch path {entry['path']} is missing")
@@ -342,7 +342,7 @@ def render(matrix):
     for entry in cut["entries"]:
         row = [f"`{entry['id']}`", entry["kind"], "—", "—", "—", f"`{entry['path']}`"]
         if entry["disposition"] == "launch":
-            where = " + ".join(PROFILE_NAMES[profile] for profile in entry["profiles"])
+            where = " + ".join(lean_profiles.PROFILE_LABELS[profile] for profile in entry["profiles"])
             row[2] = f"{entry['tier']} ({where})" + (" — pending" if entry["id"] in cut["pending"] else "")
         else:
             row[stage[entry["disposition"]]] = "restore"
@@ -351,6 +351,8 @@ def render(matrix):
         "## Launch cut inventory", "",
         f"Every package outside the launch collection is preserved at the `{cut['tag']}` tag and is not shipped,",
         f"selected or tested here. Restore a path with `{cut['restore']}`.",
+        "Restoring source also requires reintegrating and testing its dependencies and contracts;",
+        "for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.",
         "Launch entries exist on disk; wave entries are deleted until their wave restores them.",
         *[f"{note}" for note in cut["notes"]],
         f"Deleted and not restored: {', '.join(f'`{path}/`' for path in cut['not_restored'])}.", "",
@@ -440,6 +442,8 @@ def render(matrix):
 def main():
     matrix = json.loads(MATRIX.read_text())
     problems = check(matrix)
+    if problems:
+        raise SystemExit("\n".join(problems))
     rendered = render(matrix)
     if "--write" in sys.argv[1:]:
         DOCUMENT.write_text(rendered)

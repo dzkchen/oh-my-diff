@@ -106,6 +106,9 @@ deferred package) and return in post-launch waves. Wave 1 is `omd_source_knowled
 `omd_mini`, `omd_plan_panel`, `omd_cursor`, `omd_programmable_context`, `omd_continue`
 and the `omd_profiles` account-switcher upgrade; wave 2 is the remaining deferred
 mods and plugins, `bridge/` and `browser/`.
+Restoring a path retrieves its source, not a working integration. Deferred packages
+also need their dependencies and contracts reintegrated and tested; for example,
+`omd_verification_gate` needs its contract admitted by `omd_workflow` again.
 
 Enable the installed synchronization mod explicitly with
 `/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It claims Python,

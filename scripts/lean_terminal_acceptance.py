@@ -18,10 +18,11 @@ import termios
 import time
 
 try:
-    from scripts import install_support as support
+    from scripts import install_support as support, lean_profiles
     from scripts.lean_profile_acceptance import isolated_environment
 except ModuleNotFoundError:
     import install_support as support
+    import lean_profiles
     from lean_profile_acceptance import isolated_environment
 
 
@@ -34,6 +35,17 @@ def call(args, env):
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout)[-1200:])
     return json.loads(result.stdout)
+
+
+def native_blossom_visible(screen):
+    return sum(1 for line in screen for char in line if "\u2801" <= char <= "\u28ff") >= 40
+
+
+def disable_first_party(command, manager, store, env):
+    for identifier in lean_profiles.DEFAULT_ACTIVE:
+        call(command + ["mod", "disable", identifier], env)
+    status = call([manager, "status", store], env)
+    assert not status["mods"] and not status["rejected"] and status["reload_error"] is None, status
 
 
 def terminal(binary, repo, env, width, version, profile=None, *,
@@ -80,16 +92,13 @@ def terminal(binary, repo, env, width, version, profile=None, *,
         return (all(visible(row) for row in ascii_mark) if ascii_logo else
                 all(visible(row) for row in mark) or all(visible(row) for row in ascii_mark))
 
-    def native_blossom_visible():
-        return sum(1 for line in screen.display for char in line if "\u2801" <= char <= "\u28ff") >= 40
-
     def empty_state_visible():
-        return native_blossom_visible() or (welcome and visible("mods on."))
+        return native_blossom_visible(screen.display) or (welcome and visible("mods on."))
 
     def appearance(settled=True):
         return (visible(title) and mark_visible() == logo
                 and (empty_state_visible() if blossom else
-                     not native_blossom_visible() or (early_blossom and not settled))
+                     not native_blossom_visible(screen.display) or (early_blossom and not settled))
                 and (not backdrop or not settled or visible(backdrop))
                 and all(not visible(phrase) for phrase in absent))
 
@@ -373,8 +382,7 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
                    status=None if diagnostic_only else "Oh My Diff",
                    status_selector="platform_only" if profile == "platform" else "full",
                    live_mods=() if diagnostic_only else (("omd_logo", "omd_mods", "omd_update") if profile == "platform" else
-                       ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_update",
-                        "omd_workspace")),
+                       lean_profiles.DEFAULT_ACTIVE),
                    startup_seconds=30 if diagnostic_only else 10)
             if diagnostic_only:
                 call(command + ["uninstall"], env)
@@ -467,10 +475,11 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
                     "profile": expected, "backdrop": budget_line,
                 })
                 call(command + ["mod", "disable", "omd_usage"], env)
-                for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update",
-                                   "omd_workspace"):
-                    call(command + ["mod", "disable", identifier], env)
+                disable_first_party(command, manager, store, env)
                 launch("full_zero_first_party", logo=False, blossom=True)
+                status = [event for event in observations["full_zero_first_party"]["cache_events"]
+                          if event["file"] == "mod-status.json" and event["modified_after_launch"]][-1]
+                assert not status["mods"] and not status["rejected"] and status["reload_error"] is None, status
             call(command + ["activate", "direct"], env)
             launch(f"{profile}_direct", logo=False, blossom=True, status="upstream-style direct",
                    status_selector="platform_only" if profile == "platform" else "full")

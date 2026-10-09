@@ -1,7 +1,7 @@
 {
-  "extends": "../../../../mods/tsconfig.json",
+  "extends": "../../../../../mods/tsconfig.json",
   "compilerOptions": {
-    "baseUrl": "../../../..",
+    "baseUrl": "../../../../..",
     "paths": {
       "@oh-my-diff/mod-api": [
         "mods/api.d.ts"

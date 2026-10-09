@@ -62,6 +62,8 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 
 Every package outside the launch collection is preserved at the `pre-launch-collection` tag and is not shipped,
 selected or tested here. Restore a path with `git checkout pre-launch-collection -- <path>`.
+Restoring source also requires reintegrating and testing its dependencies and contracts;
+for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.
 Launch entries exist on disk; wave entries are deleted until their wave restores them.
 Wave 1 also upgrades omd_profiles with an account switcher.
 Deleted and not restored: `benchmarks/`.

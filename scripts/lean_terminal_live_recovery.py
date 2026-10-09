@@ -8,9 +8,17 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from scripts import install_support as support
+from scripts import install_support as support, lean_profiles
 from scripts.lean_profile_acceptance import isolated_environment
-from scripts.lean_terminal_acceptance import ROOT, call, terminal
+from scripts.lean_terminal_acceptance import ROOT, call, terminal, native_blossom_visible
+
+
+FIXTURE_ERROR = "intentional isolated live appearance fixture"
+
+
+def fixture_failed(status):
+    return any(item["id"] == "omd_usage" and FIXTURE_ERROR in (item["error"] or "")
+               for item in status["mods"])
 
 
 def run(artifacts, upstream, output):
@@ -77,8 +85,9 @@ def run(artifacts, upstream, output):
                 return (visible(f"OpenAI Codex (v{version})")
                     and visible("| OMD+") and visible("Budget $0.00 of $") == theme
                     and (not note or visible(note))
-                    and (not broken or visible("1 failed"))
-                    and not sum(1 for line in capture()["screen"] for char in line if "\u2801" <= char <= "\u28ff") >= 40)
+                    and (not broken or (visible("1 failed") and
+                         fixture_failed(json.loads((store / "mod-status.json").read_text()))))
+                    and not native_blossom_visible(capture()["screen"]))
 
             def boundary(label, theme=True, note=None, broken=False,
                          invocation="omd_inspector:inspect close"):
@@ -124,11 +133,10 @@ def run(artifacts, upstream, output):
                 return inspected["sha256"]
 
             try:
-                entry.write_text("throw new Error('intentional isolated live appearance fixture');\n")
+                entry.write_text(f"throw new Error('{FIXTURE_ERROR}');\n")
                 broken_digest = trust_reload()
                 status = boundary(identifier + "_live_broken", theme=False, broken=True)
-                failed = next(item for item in status["mods"] if item["id"] == identifier)
-                assert failed["error"], "trusted broken package did not fail"
+                assert fixture_failed(status), "trusted package did not report the fixture error"
                 operations[-1]["trusted_source_sha256"] = broken_digest
             finally:
                 entry.write_bytes(original)
@@ -145,8 +153,7 @@ def run(artifacts, upstream, output):
             result["check"] = terminal(bin_dir / "codex", repo, env, 80, version,
                 profile="OMD+", backdrop="Budget $0.00 of $7.77",
                 cache_store=store, startup_seconds=15,
-                live_mods=("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_update",
-                           "omd_usage", "omd_workspace"),
+                live_mods=(*lean_profiles.DEFAULT_ACTIVE, "omd_usage"),
                 trace_path=output.with_suffix(".trace"), live_recovery=exercise)
             result["status"] = "pass"
         except Exception as error:
