@@ -1,8 +1,10 @@
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
+import tarfile
 import unittest
 from unittest import mock
 
@@ -13,27 +15,58 @@ class HostedNightlyTests(unittest.TestCase):
     def test_archive_reinstall_uses_a_new_generation_and_uninstalls_both(self):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "package.tar.xz"
-            archive.write_bytes(b"package")
+            script = (
+                "import argparse\nfrom pathlib import Path\n"
+                "parser = argparse.ArgumentParser()\nparser.add_argument('command')\nparser.add_argument('--prefix')\n"
+                "args, _ = parser.parse_known_args()\nprefix = Path(args.prefix)\n"
+                "if args.command == 'install':\n    prefix.mkdir()\n    (prefix / 'installer').write_text(__file__)\n"
+                "else:\n    (prefix / 'installer').unlink()\n    prefix.rmdir()\n"
+            ).encode()
+            files = {"scripts/lean_package.py": script, "scripts/lean_profiles.py": script}
+            manifest = {"schema": 1, "files": {name: {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+                                               for name, data in files.items()}}
+            files["package-manifest.json"] = json.dumps(manifest).encode()
+            with tarfile.open(archive, "w:xz") as packed:
+                for name, data in files.items():
+                    member = tarfile.TarInfo(f"payload/{name}")
+                    member.size = len(data)
+                    packed.addfile(member, io.BytesIO(data))
             installed, removed = [], []
+            run = nightly_ci.subprocess.run
 
             def child(argv, **kwargs):
+                payload = Path(kwargs["cwd"])
+                self.assertEqual((payload / "scripts/lean_package.py").read_bytes(), script)
+                if "install" in argv:
+                    self.assertTrue(Path(argv[argv.index("--archive") + 1]).is_absolute())
+                    self.assertTrue(Path(argv[argv.index("--upstream") + 1]).is_absolute())
                 prefix = Path(argv[argv.index("--prefix") + 1])
                 if "install" in argv:
                     self.assertFalse(prefix.exists())
                     if "--previous" in argv:
                         self.assertTrue(Path(argv[argv.index("--previous") + 1]).exists())
                         self.assertIn("--attach-store", argv)
-                    prefix.mkdir()
+                    run(argv, **kwargs)
+                    self.assertEqual((prefix / "installer").read_text(), str(payload / "scripts/lean_package.py"))
                     installed.append(prefix)
                 else:
                     self.assertTrue(prefix.exists())
+                    run(argv, **kwargs)
+                    self.assertFalse(prefix.exists())
                     removed.append(prefix)
 
             with mock.patch.object(nightly_ci, "command", return_value="/usr/bin/node"), \
                     mock.patch.object(nightly_ci.subprocess, "run", side_effect=child):
-                nightly_ci.archive_acceptance(archive, Path("/usr/bin/codex"))
+                nightly_ci.archive_acceptance(Path(os.path.relpath(archive)), Path("fixtures/codex"))
             self.assertEqual(len(set(installed)), 4)
             self.assertEqual(set(installed), set(removed))
+
+    def test_workflow_concurrency_keeps_dispatch_refs_independent(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nightly.yml").read_text()
+        group = next(line.split("group:", 1)[1].strip() for line in workflow.splitlines() if "group:" in line)
+        main = group.replace("${{ github.ref }}", "refs/heads/main")
+        branch = group.replace("${{ github.ref }}", "refs/heads/ci/nightly")
+        self.assertNotEqual(main, branch)
 
     def test_all_test_targets_run_serially_and_finished_executables_are_pruned(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -42,6 +75,11 @@ class HostedNightlyTests(unittest.TestCase):
             deps.mkdir(parents=True)
             library = deps / "libcore.rlib"
             library.write_text("keep")
+            helper = deps / "helper-abcdef"
+            helper.write_text("required binary")
+            helper.chmod(0o755)
+            outside = root / "unrelated-executable"
+            outside.write_text("keep")
             metadata = {"packages": [{"name": "codex-core", "targets": [
                 {"name": "core", "kind": ["lib"], "test": True},
                 {"name": "all", "kind": ["test"], "test": True},
@@ -49,23 +87,35 @@ class HostedNightlyTests(unittest.TestCase):
             ]}]}
 
             def cargo(batch, log, args):
+                self.assertTrue(helper.exists(), "ordinary bin outputs must survive each target")
                 self.assertFalse((deps / "finished-test").exists())
                 binary = deps / "finished-test"
                 binary.write_text("test")
                 binary.chmod(0o755)
                 self.assertIn("--test-threads=1", args)
+                log.parent.mkdir(parents=True, exist_ok=True)
+                records = [{"reason": "compiler-artifact", "profile": {"test": False}, "executable": str(helper)},
+                           {"reason": "compiler-artifact", "profile": {"test": True}, "executable": str(binary)},
+                           {"reason": "compiler-artifact", "profile": {"test": True}, "executable": str(outside)},
+                           {"reason": "build-finished", "success": True},
+                           {"reason": "compiler-artifact", "profile": {"test": True}, "executable": str(helper)}]
+                log.write_text("\n".join(map(json.dumps, records)) + "\n")
                 return int("--test" in args)
 
             with mock.patch.object(nightly_ci.batch_tree, "TMP", root), \
+                    mock.patch.object(nightly_ci.nightly, "WORK", root / "work"), \
                     mock.patch.object(nightly_ci.batch_tree, "run", return_value=json.dumps(metadata)), \
                     mock.patch.object(nightly_ci.batch_tree, "cargo_run", side_effect=cargo) as child:
                 with self.assertRaises(SystemExit) as stopped:
                     nightly_ci.cargo_tests("core")
             self.assertEqual(stopped.exception.code, 1)
             self.assertEqual(len(child.call_args_list), 4)
-            self.assertEqual({tuple(call.args[2][4:call.args[2].index("--")]) for call in child.call_args_list},
+            self.assertEqual({tuple(arg for arg in call.args[2][4:call.args[2].index("--")] if not arg.startswith("--message-format="))
+                              for call in child.call_args_list},
                              {("--lib",), ("--test", "all"), ("--bin", "helper"), ("--doc",)})
             self.assertTrue(library.exists())
+            self.assertTrue(helper.exists())
+            self.assertTrue(outside.exists())
             self.assertFalse((deps / "finished-test").exists())
 
     def test_v8_verifies_the_tracked_manifest_before_downloading_assets(self):

@@ -53,8 +53,8 @@ def copy_sources(destination):
 
 
 def archive_payload(artifact_dir, destination, source_rebuild=False):
-    record = release.build(artifact_dir)
     frozen = json.loads(release.OUTPUT.read_text())
+    record = release.build(artifact_dir, version=frozen["version"])
     if source_rebuild:
         for name in set(record) | set(frozen):
             if name != "artifacts" and record.get(name) != frozen.get(name):
@@ -135,7 +135,7 @@ def install_archive(args):
     with tempfile.TemporaryDirectory(prefix="omd-package-install-", dir="/private/tmp") as temporary:
         payload = checked_extract(archive_path, args.sha256, Path(temporary))
         run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
-            "--package-mode",
+            "--package-mode", "--version", json.loads((payload / "runtime/lean-release.lock.json").read_text())["version"],
             cwd=payload)
         command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
                    "--bin-dir", args.bin_dir, "install", "--profile", args.profile,

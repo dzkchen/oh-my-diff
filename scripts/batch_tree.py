@@ -117,7 +117,7 @@ def cargo_env(batch):
         "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
         "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "16"),
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
-        "OMD_TEST_NODE": run("mise", "which", "node", cwd=ROOT).decode().strip(),
+        "OMD_TEST_NODE": env.get("OMD_TEST_NODE") or run("mise", "which", "node", cwd=ROOT).decode().strip(),
         "RUST_MIN_STACK": "16777216",
     })
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]

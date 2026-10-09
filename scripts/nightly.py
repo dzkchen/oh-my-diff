@@ -11,6 +11,11 @@ import subprocess
 import time
 from pathlib import Path
 
+try:
+    from scripts import batch_tree
+except ModuleNotFoundError:
+    import batch_tree
+
 ROOT = Path(__file__).resolve().parents[1]
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 REPO = WORK / "repo"
@@ -31,6 +36,11 @@ def hosted_steps():
              ("verified V8", ["python3", "scripts/nightly_ci.py", "v8"])]
     steps += [(name, argv) for name, argv in STEPS[1:]
               if name not in ("artifacts", "locks", "locks match checkout", "cargo test core lib")]
+    artifact_dir = batch_tree.batch_dir(BATCH) / "artifacts"
+    steps = [(name, ["python3", "scripts/mod_host_check.py", "--omd-mod", str(artifact_dir / "omd-mod"), "--scenarios"]
+              if name == "host check with scenarios" else
+              ["python3", "scripts/client_acceptance.py", "--binaries", str(artifact_dir)]
+              if name == "client acceptance" else argv) for name, argv in steps]
     steps = [(name, ["python3", "scripts/nightly_ci.py", "tests", "--suite", "native"]
               if name == "cargo test native crates" else argv) for name, argv in steps]
     position = next(index for index, (name, _) in enumerate(steps) if name == "clippy omd paths")
@@ -68,8 +78,8 @@ STEPS = [
     ("mods tests", ["mise", "run", "mods:test"]),
     ("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]),
     ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod",
-                                   f"/private/tmp/omd-b{BATCH}/artifacts/omd-mod", "--scenarios"]),
-    ("client acceptance", ["python3", "scripts/client_acceptance.py", "--binaries", f"/private/tmp/omd-b{BATCH}/artifacts"]),
+                                   str(batch_tree.batch_dir(BATCH) / "artifacts/omd-mod"), "--scenarios"]),
+    ("client acceptance", ["python3", "scripts/client_acceptance.py", "--binaries", str(batch_tree.batch_dir(BATCH) / "artifacts")]),
 ]
 
 
@@ -87,6 +97,7 @@ def run(name, argv):
     started = time.monotonic()
     environment = os.environ | {"TMPDIR": "/private/tmp/"}
     if name == "cargo test core":
+        environment["OMD_TEST_NODE"] = subprocess.check_output(["mise", "which", "node"], cwd=REPO, text=True).strip()
         home = WORK / "core-test-home"
         home.mkdir(exist_ok=True)
         environment.update(HOME=str(home), CARGO_HOME=os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")),
@@ -146,9 +157,9 @@ def main():
         for name, argv in steps:
             results.append(run(name, argv))
             if args.hosted and name == "host binaries" and not results[-1]["status"]:
-                manager = f"/private/tmp/omd-b{BATCH}/artifacts/omd-mod"
+                manager = str(batch_tree.batch_dir(BATCH) / "artifacts/omd-mod")
                 os.environ.update(OMD_TEST_MOD_BIN=manager, OMD_TEST_MANAGER=manager,
-                                  OMD_TEST_NODE=shutil.which("node") or "node")
+                                  OMD_TEST_NODE=subprocess.check_output(["mise", "which", "node"], cwd=REPO, text=True).strip())
             if name in ("setup", "verified V8") and results[-1]["status"]:
                 break
     finally:

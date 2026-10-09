@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import time
 import types
+import urllib.error
+import urllib.parse
 import unittest
 from unittest.mock import patch
 
@@ -111,12 +113,78 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(download.call_args.args[:2], ("https://example.test/0.1.0-nightly.20261008070000.99.1/oh-my-diff-0.1.0-nightly.20261008070000.99.1.tar.xz", "a" * 64))
         self.assertEqual(policy.call_args.args[-2:], ("channel", "nightly"))
 
-    def test_nightly_pages_do_not_hide_stable_releases(self):
-        newest = [release(f"0.1.0-nightly.20261008.{number}.1", prerelease=True) for number in range(20)]
-        with patch.object(self.module, "fetch_json", side_effect=[newest, [release("0.1.1")]]) as fetch:
-            listed = self.module.releases("https://example.test/releases?per_page=20")
-        self.assertEqual(fetch.call_args.args[0], "https://example.test/releases?per_page=20&page=2")
-        self.assertTrue(any(item["version"] == "0.1.1" for item in listed))
+    def test_install_keeps_saved_channel_and_explicit_stable_replaces_it(self):
+        self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
+        self.settings = {"channel": "nightly"}
+        self.write_settings()
+        for channel, selected in ((None, "nightly"), ("stable", "stable")):
+            with self.subTest(channel=channel):
+                args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
+                                             channel=channel, session=None)
+                with patch.object(self.module.platform, "system", return_value="Darwin"), \
+                        patch.object(self.module.platform, "machine", return_value="arm64"), \
+                        patch.object(self.module, "profile_choice", return_value="platform"), \
+                        patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download") as download, \
+                        patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
+                        patch("builtins.print"):
+                    self.module.install(args, self.root, self.current)
+                expected = self.published[0 if selected == "nightly" else 1]
+                self.assertEqual(download.call_args.args[0], expected["assets"][1]["browser_download_url"])
+                self.assertEqual(policy.call_args.args[-2:], ("channel", selected))
+
+    def test_channel_changes_reject_older_bases_and_allow_same_base_transitions(self):
+        for channel, candidate, installed, expected in (
+                ("nightly", "0.1.0-nightly.20261008.99.1", "0.2.0", False),
+                ("nightly", "0.2.0-nightly.20261008.99.1", "0.2.0", True),
+                ("beta", "0.2.0-beta.1", "0.2.0-nightly.20261008.99.1", True),
+                ("beta", "0.1.0-beta.1", "0.2.0-nightly.20261008.99.1", False),
+                ("stable", "0.2.0", "0.2.0-nightly.20261008.99.1", True),
+                ("nightly", "0.2.0-nightly.20261008.99.1", "0.2.0-nightly.20261009.100.1", False)):
+            with self.subTest(channel=channel, candidate=candidate, installed=installed):
+                self.assertEqual(self.module.eligible({"channel": channel},
+                                                     {"version": candidate, "prerelease": "-" in candidate}, installed), expected)
+
+    def test_release_discovery_is_bounded_when_only_nightlies_exist(self):
+        url = "https://api.github.com/repos/example/omd/releases?per_page=20"
+        refs = [{"ref": f"refs/tags/v0.1.0-nightly.20261008.{number}.1"} for number in range(300)]
+        for channel, requests in (("stable", 1), ("nightly", 6)):
+            with self.subTest(channel=channel):
+                def fetch(address, limit):
+                    if "/git/matching-refs/" in address:
+                        return refs
+                    if "/releases/tags/" in address:
+                        return release(address.rsplit("/v", 1)[1], prerelease=True)
+                    page = int(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(address).query)).get("page", "1"))
+                    return [release(item["ref"].removeprefix("refs/tags/v"), prerelease=True)
+                            for item in refs[(page - 1) * 20:page * 20]]
+                with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
+                    listed = self.module.releases(url, **({"channel": channel} if channel != "stable" else {}))
+                self.assertEqual(fetched.call_count, requests)
+                self.assertEqual(len(listed), 0 if channel == "stable" else 5)
+
+    def test_old_pins_and_beta_releases_are_not_hidden_by_stable_or_nightly_history(self):
+        url = "https://api.github.com/repos/example/omd/releases?per_page=20"
+        versions = ["0.3.0-beta.1", "0.2.0", "0.1.0"]
+        refs = [{"ref": f"refs/tags/v0.4.0-nightly.20261008.{number}.1"} for number in range(300)]
+        refs += [{"ref": f"refs/tags/v{version}"} for version in versions]
+        def fetch(address, limit):
+            if "/git/matching-refs/" in address:
+                return refs
+            if "/releases/tags/" in address:
+                version = address.rsplit("/v", 1)[1]
+                if version == "0.9.9":
+                    raise urllib.error.HTTPError(address, 404, "not found", {}, None)
+                return release(version, prerelease="-" in version)
+            self.fail(f"unexpected history scan: {address}")
+        with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
+            self.assertEqual([item["version"] for item in self.module.releases(url, channel="beta")], versions)
+            self.assertEqual(fetched.call_count, 4)
+            fetched.reset_mock()
+            self.assertEqual(self.module.releases(url, pin="0.1.0")[0]["version"], "0.1.0")
+            self.assertEqual(fetched.call_count, 1)
+            self.assertEqual(self.module.releases(url, pin="0.9.9"), [])
+            with self.assertRaisesRegex(ValueError, "pinned version is malformed"):
+                self.module.releases(url, pin="bad pin")
 
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):

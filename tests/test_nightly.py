@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,41 @@ spec.loader.exec_module(nightly)
 
 
 class SummarizeTests(unittest.TestCase):
+    def test_core_tests_resolve_node_before_isolating_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "logs").mkdir()
+            original = Path.home()
+            with mock.patch.multiple(nightly, WORK=root, REPO=root), \
+                    mock.patch.object(nightly.subprocess, "check_output", return_value="/real/node\n") as node, \
+                    mock.patch.object(nightly.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as child:
+                nightly.run("cargo test core", ["cargo", "test"])
+            environment = child.call_args.kwargs["env"]
+            self.assertEqual(environment["HOME"], str(root / "core-test-home"))
+            self.assertNotEqual(environment["HOME"], str(original))
+            self.assertEqual(environment["OMD_TEST_NODE"], "/real/node")
+            self.assertEqual(node.call_args.args[0], ["mise", "which", "node"])
+
+    def test_hosted_consumers_use_the_configured_batch_root(self):
+        from scripts import batch_tree
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(batch_tree, "TMP", root / "batches"), \
+                    mock.patch.multiple(nightly, ROOT=root, WORK=root / "work", REPO=root), \
+                    mock.patch("sys.argv", ["nightly", "--hosted"]), \
+                    mock.patch.object(nightly.subprocess, "run", return_value=SimpleNamespace(stdout="23b63db\n")), \
+                    mock.patch.object(nightly.subprocess, "check_output", return_value="/real/node\n"), \
+                    mock.patch.object(nightly, "run", side_effect=lambda name, _: {
+                        "name": name, "status": 0, "seconds": 0, "log": name, "tail": [],
+                    }) as child, mock.patch.dict(os.environ), mock.patch("builtins.print"):
+                self.assertEqual(nightly.main(), 0)
+                manager = root / "batches/omd-bnightly/artifacts/omd-mod"
+                self.assertEqual(os.environ["OMD_TEST_MOD_BIN"], str(manager))
+                self.assertEqual(os.environ["OMD_TEST_MANAGER"], str(manager))
+                calls = {call.args[0]: call.args[1] for call in child.call_args_list}
+                self.assertEqual(calls["host check with scenarios"][calls["host check with scenarios"].index("--omd-mod") + 1], str(manager))
+                self.assertEqual(calls["client acceptance"][-1], str(manager.parent))
+
     def test_hosted_validation_keeps_the_checkout_and_reports_skipped_steps(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

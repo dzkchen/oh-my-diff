@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts import batch_tree, lean_profile_acceptance, lean_release_lock, nightly
+from scripts import batch_tree, lean_package, lean_profile_acceptance, lean_release_lock, nightly
 
 
 def command(*args):
@@ -66,13 +66,23 @@ def cargo_tests(suite):
     targets.add(("--doc",))
     failed = False
     for index, flags in enumerate(sorted(targets)):
-        args = ["test", "--locked", *crates, *flags, "--", "--test-threads=1"]
+        args = ["test", "--locked", *crates, *flags, "--message-format=json-render-diagnostics", "--", "--test-threads=1"]
         if suite == "core":
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
-        failed |= batch_tree.cargo_run(batch, nightly.WORK / "logs" / f"{suite}-{index}.cargo.log", args) != 0
-        for path in (batch / "target/debug/deps").glob("*"):
-            if path.is_file() and not path.suffix and os.access(path, os.X_OK):
-                path.unlink()
+        log = nightly.WORK / "logs" / f"{suite}-{index}.cargo.log"
+        failed |= batch_tree.cargo_run(batch, log, args) != 0
+        for line in log.read_text().splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict) and item.get("reason") == "build-finished":
+                break
+            if (isinstance(item, dict) and item.get("reason") == "compiler-artifact"
+                    and item.get("profile", {}).get("test") and item.get("executable")):
+                path = Path(item["executable"])
+                if path.resolve().parent == (batch / "target/debug/deps").resolve():
+                    path.unlink(missing_ok=True)
     raise SystemExit(int(failed))
 
 
@@ -112,6 +122,7 @@ def package():
 
 
 def archive_acceptance(archive, upstream):
+    archive, upstream = archive.resolve(), upstream.resolve()
     with tempfile.TemporaryDirectory(prefix="omd-nightly-install-", dir="/private/tmp") as temporary:
         base = Path(temporary)
         home = base / "home"
@@ -121,20 +132,21 @@ def archive_acceptance(archive, upstream):
         environment = lean_profile_acceptance.isolated_environment(base, home, upstream)
         node = command("mise", "which", "node")
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        payload = lean_package.checked_extract(archive, digest, base)
         for profile in ("platform", "full"):
             prefix, bin_dir = base / f"{profile}-prefix", base / f"{profile}-bin"
             install = [sys.executable, "-m", "scripts.lean_package", "install", "--archive", archive,
                        "--sha256", digest, "--profile", profile, "--prefix", prefix, "--bin-dir", bin_dir,
                        "--store", base / f"{profile}-store", "--node", node, "--upstream", upstream]
-            subprocess.run(list(map(str, install)), env=environment, check=True)
+            subprocess.run(list(map(str, install)), cwd=payload, env=environment, check=True)
             next_prefix, next_bin = base / f"{profile}-next-prefix", base / f"{profile}-next-bin"
             reinstall = list(install)
             reinstall[reinstall.index("--prefix") + 1] = next_prefix
             reinstall[reinstall.index("--bin-dir") + 1] = next_bin
-            subprocess.run(list(map(str, [*reinstall, "--attach-store", "--previous", prefix])), env=environment, check=True)
+            subprocess.run(list(map(str, [*reinstall, "--attach-store", "--previous", prefix])), cwd=payload, env=environment, check=True)
             for installed, launchers in ((next_prefix, next_bin), (prefix, bin_dir)):
                 subprocess.run([sys.executable, "-m", "scripts.lean_profiles", "--prefix", str(installed),
-                                "--bin-dir", str(launchers), "uninstall"], env=environment, check=True)
+                                "--bin-dir", str(launchers), "uninstall"], cwd=payload, env=environment, check=True)
             if sentinel.read_text() != 'model = "preserve-user-choice"\n':
                 raise ValueError("archive installation changed shared Codex configuration")
 

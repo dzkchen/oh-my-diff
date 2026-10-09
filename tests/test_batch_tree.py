@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,14 @@ spec.loader.exec_module(batch_tree)
 
 
 class CleanTests(unittest.TestCase):
+    def test_cargo_environment_keeps_the_node_resolved_before_home_isolation(self):
+        with mock.patch.dict(os.environ, {"HOME": "/isolated-home", "OMD_TEST_NODE": "/real/node"}), \
+                mock.patch.object(batch_tree, "run", return_value=b"host: fixture-target\n") as child:
+            env = batch_tree.cargo_env(Path("/batch"))
+        self.assertEqual(env["OMD_TEST_NODE"], "/real/node")
+        self.assertEqual(env["HOME"], "/isolated-home")
+        self.assertFalse(any(call.args[0] == "mise" for call in child.call_args_list))
+
     def test_release_artifacts_build_and_copy_release_binaries_with_platform_signing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

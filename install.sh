@@ -27,6 +27,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -312,11 +313,12 @@ def install(args, root, current):
         fail("This release candidate supports Apple Silicon macOS only.")
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
+    channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
     if not url:
-        listed = releases(args.releases_url or RELEASES_URL)
-        candidates = [item for item in listed if on_channel(args.channel, item)]
+        listed = releases(args.releases_url or RELEASES_URL, channel=channel)
+        candidates = [item for item in listed if on_channel(channel, item)]
         if not candidates:
-            fail(f"No Oh My Diff {args.channel} release is published yet; nothing was installed.")
+            fail(f"No Oh My Diff {channel} release is published yet; nothing was installed.")
         manifest = release_manifest(candidates[0])
         if manifest["target"] != TARGET:
             fail(f"release is built for {manifest['target']}")
@@ -329,9 +331,8 @@ def install(args, root, current):
         archive = Path(temporary) / "package.tar.xz"
         download(url, expected, archive)
         result = transaction(args, root, current, archive, url, expected, profile, upstream, node)
-        if args.channel != "stable":
-            _, record, _ = installation(root, pointer(root, "current"))
-            set_policy(root, record, "channel", args.channel)
+        _, record, _ = installation(root, pointer(root, "current"))
+        set_policy(root, record, "channel", channel)
         print(json.dumps(result, indent=2))
 
 
@@ -589,23 +590,34 @@ def version_key(value):
     return int(found[1]), int(found[2]), int(found[3]), not found[4], pre
 
 
-def releases(url):
-    listed = fetch_json(url, 2_000_000)
-    if not isinstance(listed, list):
-        fail("release list is malformed")
+def releases(url, channel="stable", pin=""):
+    if pin and not version_key(pin):
+        fail("pinned version is malformed")
     parsed = urllib.parse.urlsplit(url)
-    query = dict(urllib.parse.parse_qsl(parsed.query))
-    page_size = int(query.get("per_page", "30"))
-    page = int(query.get("page", "1"))
-    while len(listed) >= page_size and not any(
-            isinstance(item, dict) and not item.get("draft") and not item.get("prerelease") for item in listed):
-        page += 1
-        following = fetch_json(urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query | {"page": page}))), 2_000_000)
-        if not isinstance(following, list):
+    if re.fullmatch(r"/repos/[^/]+/[^/]+/releases/?", parsed.path):
+        base = urllib.parse.urlunsplit(parsed._replace(path=parsed.path.rstrip("/"), query="", fragment=""))
+        versions = [pin] if pin else []
+        if not pin:
+            refs = fetch_json(base.removesuffix("/releases") + "/git/matching-refs/tags/v", 2_000_000)
+            if not isinstance(refs, list):
+                fail("release tags are malformed")
+            for item in refs:
+                tag = item.get("ref") if isinstance(item, dict) else None
+                version = tag.removeprefix("refs/tags/v") if isinstance(tag, str) and tag.startswith("refs/tags/v") else None
+                if version_key(version) and on_channel(channel, {"version": version, "prerelease": "-" in version}):
+                    versions.append(version)
+        listed = []
+        for version in sorted(set(versions), key=version_key, reverse=True)[:5]:
+            try:
+                listed.append(fetch_json(base + "/tags/v" + urllib.parse.quote(version, safe=""), 2_000_000))
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                error.close()
+    else:
+        listed = fetch_json(url, 2_000_000)
+        if not isinstance(listed, list):
             fail("release list is malformed")
-        listed.extend(following)
-        if len(following) < page_size:
-            break
     found = []
     for item in listed:
         tag = item.get("tag_name") if isinstance(item, dict) else None
@@ -625,7 +637,13 @@ def on_channel(channel, item):
 
 
 def channel_newer(channel, version, installed):
-    return version != installed if channel == "nightly" and "-nightly." not in installed else version_key(version) > version_key(installed)
+    candidate, current = version_key(version), version_key(installed)
+    if candidate[:3] != current[:3]:
+        return candidate[:3] > current[:3]
+    if (channel == "nightly" and "-nightly." not in installed
+            or channel == "beta" and "-nightly." in installed):
+        return version != installed
+    return candidate > current
 
 
 def release_manifest(release):
@@ -708,8 +726,8 @@ def probe(args, root, current):
     settings = policy(store)
     result = {"available": None, "blocked": None, "error": None}
     try:
-        listed = releases(details.get("releases_url") or RELEASES_URL)
         pin = str(settings.get("pin") or "").strip()
+        listed = releases(details.get("releases_url") or RELEASES_URL, channel=settings["channel"], pin=pin)
         if pin and not any(item["version"] == pin for item in listed):
             result["error"] = f"pinned version {pin} is not published"
         candidates = ([item for item in listed if item["version"] == pin != record["version"]] if pin else
@@ -988,7 +1006,7 @@ def main():
     parser.add_argument("--asset-url")
     parser.add_argument("--asset-sha256")
     parser.add_argument("--releases-url", help="release list to check for updates (GitHub releases API format)")
-    parser.add_argument("--channel", choices=POLICY["channel"], default="stable", help="release channel for installation")
+    parser.add_argument("--channel", choices=POLICY["channel"], help="release channel for installation (saved policy or stable)")
     parser.add_argument("--yes", action="store_true", help="update even when enabled mods do not support the new mod API")
     parser.add_argument("--upstream", type=Path)
     parser.add_argument("--node", type=Path)

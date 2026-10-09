@@ -101,7 +101,7 @@ def selected_plugins(index, package_mode):
 
 
 def build(artifact_dir, package_mode=False, version=None):
-    product_version = version or (json.loads(OUTPUT.read_text())["version"] if OUTPUT.is_file() else VERSION)
+    product_version = VERSION if version is None else version
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", product_version):
         raise ValueError("invalid release version")
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())

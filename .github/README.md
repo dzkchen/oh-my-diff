@@ -11,12 +11,12 @@ client acceptance. Core tests use an empty test home and exclude the recorded up
 `filtered_host_additional_permissions` baseline. Provider credentials and administrator broker deployment are not used.
 
 Hosted builds use two Cargo workers, no incremental artifacts and no debug information. Rust test targets run
-serially; completed test executables are removed while dependency libraries remain. A shallow upstream checkout
+serially; Cargo identifies completed test executables for removal while ordinary binaries and dependency libraries remain. A shallow upstream checkout
 avoids downloading its entire history. The debug target is removed before the release build, so both profiles do
 not occupy runner disk together. No Cargo target cache is restored: patch replay always starts clean.
 
 The macOS job builds hardened signed release binaries, packages the same archive for OMD Core and OMD+, exercises
-both profiles' install/reinstall/uninstall and recovery, and checks the installer's archive size limit. Both hosted
+both profiles' install/reinstall/uninstall from the unpacked archive and recovery, and checks the installer's archive size limit. Both hosted
 jobs must pass before the publication job receives a write token. It verifies provenance and checksums, uploads all
 assets to a draft, then exposes the prerelease. Versions are `BASE-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT` and tags are
 `vVERSION`; these builds never become GitHub's latest stable release. Assets are the Apple Silicon archive,

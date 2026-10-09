@@ -309,6 +309,8 @@ GitHub (`dzkchen/oh-my-diff`, tag `vVERSION`) carries the archive and the `omd-r
 release is compatible when its target matches, its Codex minor matches your upstream `codex` and your Node satisfies
 it; the newest compatible release on your channel is offered, and a newer incompatible one is reported with its
 requirement. A channel with no published release reports that none is available.
+GitHub checks discover version tags and fetch at most five candidate releases and five manifests;
+an exact pin looks up its tag directly, so nightly history does not hide older stable or beta versions.
 
 ```sh
 omd update                      # install the newest compatible release (or the pinned one)
@@ -328,6 +330,9 @@ Nightly is a separate opt-in channel for builds that passed hosted validation. I
 existing installation with `omd update channel nightly`. The archive and release manifest carry matching
 versions and SHA-256 checksums. Automatic updates remain off until you enable them. Switch back with
 `omd update channel stable`; `omd update rollback` restores the previous installation.
+Re-running `install.sh` keeps the saved channel unless `--channel` is supplied; `--channel stable`
+also saves stable policy. Channel changes can select another build of the same base version, but
+do not offer older base versions; an exact pin can deliberately select an older release.
 
 The launcher starts a detached check at most once per cadence and never waits for it; the result is cached in
 `ROOT/update/state.json` and shown by the `omd_update` mod (`/update`, and once a day in a fresh session's welcome
