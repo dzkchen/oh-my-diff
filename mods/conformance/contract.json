@@ -959,7 +959,7 @@
       "id": "terminal.rendering",
       "group": "terminal",
       "decision": "Render hooks on native components",
-      "observe": "typed props, stable identity, surface, viewport and lifecycle of each user and assistant message, tool call, result, group and progress row, command output, spinner, turn duration, notice, session mode, composer hint, question and list",
+      "observe": "typed props, stable identity, surface, viewport and lifecycle of each user and assistant message, agent tool row (shell, grouped reads, patch, web search, agent, MCP, dynamic and image calls with status, output summary and whether the user expanded it), MCP result, spinner, turn duration, notice, session mode, composer hint, question and list",
       "alter": "`api.intercept('render', …)` restyles the native drawing (`{type: 'native', style}`), wraps it in a component tree, replaces or hides it (`{tree: []}`), and may rewrite spinner `header`, notice `text`, session-mode `label` and composer `placeholder` through `next`; `inline_sites: 'hidden'` keeps sites out of the inline viewport",
       "replace": null,
       "timing": "live components redraw asynchronously and keep their last tree until the new answer arrives; inline scrollback waits once per cell; trees are cached until the state keys their hooks read change",

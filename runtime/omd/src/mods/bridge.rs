@@ -214,12 +214,26 @@ pub(super) fn run(
         "adapter": loaded.adapter,
     });
     request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
+    // Renders cannot call the host or write state, so one activated runner serves every render of
+    // this package revision, settings and state.
+    let warm = (event == "intercept" && request["payload"]["surface"] == "render").then(|| {
+        request["serve"] = Value::Bool(true);
+        // `entrypoint_sha256` stands for the source.
+        let mut key = Sha256::new();
+        for (field, value) in request.as_object().into_iter().flatten() {
+            if !["source", "name", "payload", "receipts"].contains(&field.as_str()) {
+                key.update(field);
+                key.update(value.to_string());
+            }
+        }
+        format!("{}:{:x}", node.display(), key.finalize())
+    });
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
     let mut reply: Reply = loop {
         request["receipts"] = Value::Array(receipts.clone());
-        let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
+        let mut answer = |frame: Value| -> Result<Value> {
             if event == "inspect" {
                 return Err(failure("invalid_host_call_sequence"));
             }
@@ -250,8 +264,16 @@ pub(super) fn run(
             }
             scope.check_execution(started.elapsed().saturating_sub(waited))?;
             Ok(receipt)
-        });
-        let reply: Reply = serde_json::from_value(evaluated?)?;
+        };
+        let evaluated = match &warm {
+            Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
+            None => process::evaluate(node, &request, budget, active, &mut answer),
+        };
+        let reply: Reply = serde_json::from_value(evaluated?).inspect_err(|_| {
+            if let Some(key) = &warm {
+                process::invalidate_warm(key);
+            }
+        })?;
         let Some(call) = reply
             .host_call
             .clone()
@@ -286,9 +308,15 @@ pub(super) fn run(
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
     if event != "inspect" && reply.registrations != loaded.registrations {
+        if let Some(key) = &warm {
+            process::invalidate_warm(key);
+        }
         return Err(failure("registration_changed_during_callback"));
     }
     if reply.host_call.is_some() || reply.calls != expected {
+        if let Some(key) = &warm {
+            process::invalidate_warm(key);
+        }
         return Err(failure("invalid_host_call_receipts"));
     }
     forward(event, &reply.updates, &mut forwarded, progress)?;

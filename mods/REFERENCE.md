@@ -978,7 +978,8 @@ arrays, regular expressions, `api.match.glob(pattern)` and
 Interceptor-backed hooks may be `required` and may return an answer such as
 `{deny}` or `{continue}`; returning nothing passes the call on. Event-backed
 hooks are delivered best-effort (`delivery: 'optional'`); a mod that uses a hook
-cannot also register the same native event itself.
+cannot also register the same native event itself. Hooks may be registered only
+during activation, including when their native event is already registered.
 
 ### Framed processes
 
@@ -1380,11 +1381,8 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
 | `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
-| `tool_call` | call ID | `kind` (`mcp`/`dynamic`), `server`, `tool`, `arguments`, `status`, `duration_ms` | — |
+| `tool_call` | call ID (row ID for agent rows; `explore:<first call ID>` for an exploration group) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
-| `tool_group` | first call ID | `calls` of grouped exploration commands, `running` | — |
-| `tool_progress` | call ID | a running command, MCP or dynamic call (`tool_call` or `command_output` props) | — |
-| `command_output` | call ID | `command`, `exit_code`, `duration_ms`, `output_lines`, `output_tail`, `user_shell` | — |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
 | `turn_duration` | `turn-<completed ms>` | `seconds`, `completed_at_ms` | — |
 | `notice` | content digest | `kind` (`info`/`warning`/`error`), `text`, `hint` | `text` |
@@ -1393,8 +1391,23 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `question` | item ID or content digest | `questions` (`id`, `header`, `question`, `secret`, option labels), then `current`, `queued` (live) or `answered`, `interrupted` (final) | — |
 | `list` | view ID | `view_id`, `title`, `subtitle`, `items`, `selected` | — |
 
+Exploration groups contain at most 32 calls; larger sequences split into additional
+rows without dropping calls. Patch `files` contains at most 32 details; `file_count`,
+`added` and `removed` are complete totals across all changed files.
+Grouped exploration and computer activity offer each member through `tool_call`
+as `exec` or `mcp`. When those member hooks replace the drawing, each member has
+its own focus, pointer region and `expanded` flag; `next` draws a collapsed
+member as its compact row, and Find searches every member expanded. Native
+grouping remains when no member is replaced. Aggregate exploration rendering remains available on the
+group when member rendering does not replace it.
+
 Text props carry at most 4 KiB; a content digest is stable across resume and
-reflow, so equal content draws identically. Approval overlays have no render
+reflow, so equal content draws identically. Tool rows are offered from live cells
+and committed history. In the fullscreen transcript a hooked tool row needs no control row: F4
+focuses it and Enter, →/← or a click opens and closes it, and `expanded` is
+`true` while it is open and for every row of the full transcript (Ctrl+T), so a
+hook that shortens rows returns `next(e)` then. Selection copies what is drawn;
+raw mode never runs hooks. Approval overlays have no render
 hook: their identity, decision text, options, focus and grants stay native, and
 `surface_styles.approval` only paints the frame. A question hook changes the
 presentation only; answers, focus and keys stay with the native dialog. The
@@ -1402,7 +1415,12 @@ existing panes, `above_composer` band and named sites stay declarative views.
 
 Render callbacks get no host operations and cannot write state
 (`render_side_effect_refused`; a write during activation stays local to that
-render); read `api.state` or atoms instead. A tree
+render); read `api.state` or atoms instead. Renders run in a runner that stays
+activated while the package revision, settings and persisted state stay unchanged.
+Changing state requires a new activation; stateless renders can reuse the runner
+across rows, including renders that call `next`. Activation-local state is
+restored before each reused render.
+Module variables may survive between renders, so never draw from them. A tree
 lives until its input changes or a state key its hooks read changes: live
 components redraw asynchronously and keep their last tree until the new one
 arrives, fullscreen transcript cells redraw the same way, and inline scrollback,
