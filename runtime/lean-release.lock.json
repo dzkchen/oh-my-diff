@@ -1,32 +1,32 @@
 {
   "artifacts": {
     "codex": {
-      "bytes": 381138832,
-      "sha256": "2075e607cfd61f5e39aa77a0d09f4ee36633523df0e67f7c0599119664a0fffa"
+      "bytes": 381328480,
+      "sha256": "40883deefbf48137a1a04e8e2716bb935183664eec0521a548974c1ce100672c"
     },
     "codex-code-mode-host": {
       "bytes": 87373064,
-      "sha256": "17229ab204a9fd6f382203059725d18b9aaeb85996132ad7c00a4f11df0a129b"
+      "sha256": "fd1cb41004792a8146902a9ea9a4373f1213ac6577ace1972fae4c52cee570f7"
     },
     "mod-api.tgz": {
-      "bytes": 134361,
-      "sha256": "d02a3aa82c0cd8e5f27d35c70263eff1beb05c54c93eb4b49f716e19190d7b2f"
+      "bytes": 134436,
+      "sha256": "5e8ece0dbcfe9e9d45dba503499e96de7434831b2762d97173de96d5b8167739"
     },
     "omd": {
-      "bytes": 5508656,
-      "sha256": "d2e29ca6c8f4ae5e7dd3ae19cb4ffa9ea6d95e82ca59b07206764aef33eb3341"
+      "bytes": 5508192,
+      "sha256": "f2c07b29eae794a9a6a1311e272b4748f25a67fc1598072960ce8a4d9c858071"
     },
     "omd-broker": {
-      "bytes": 1350480,
-      "sha256": "17371cf82e804f24f29517f974cb2135ee49cbe5d742dda55c6a73981f7539d8"
+      "bytes": 1351824,
+      "sha256": "0bfc94d9e2e4830a650bd672d84251b577ae25844e9d8f3686441e11f49b46b1"
     },
     "omd-contract": {
-      "bytes": 3712112,
-      "sha256": "129afb979f442bd48598197d053ee26182d18932e1ac8256c130595564afa679"
+      "bytes": 3707312,
+      "sha256": "249729e96413d5dfb7248a8fb1a5c9b7ccbd99ba84d5df492b1abcbe1108ded1"
     },
     "omd-mod": {
-      "bytes": 5969280,
-      "sha256": "4100b522e7041dc1225636bd657d42c4bc317dc0259f5c10a1209f92ee8890ff"
+      "bytes": 5969056,
+      "sha256": "6739fae1b51b058438a9bf158cb87cbe4b3a3b4b346ad8ec434099fa0b6c2883"
     }
   },
   "mod_api": "0.2.0-experimental.5",
@@ -92,7 +92,7 @@
     }
   },
   "qualification": "development package candidate; supported collection and default pending",
-  "runtime_patch_sha256": "8fc7c8134224c3929d0a88957523c221c97814d8cb5209bb0bd0c36059bfd555",
+  "runtime_patch_sha256": "ae4194ceb4b765b5a3a4be16dca905f62350a8fe59e2733799b2c963bacb2324",
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "source_sha256": {
@@ -101,7 +101,7 @@
     "install.sh": "c396d13a949f4ba0213538934a24b197137768f7e520283315e0e17d6b4862f3",
     "mods/EXTENSION_TYPES.md": "f03974de84dac9d2d255691aa764e846db681f169a1beb42333f9a5cbf49d280",
     "mods/README.md": "f7314b7ef7cd5e17a37913bd773baa1db82302ce0ba7297517f9d064d5df0e61",
-    "mods/REFERENCE.md": "a443fc5c387d90b28c6b21905ed86e33106aa32d1c26edff41de40181d1932c1",
+    "mods/REFERENCE.md": "70b00dd404f0de554f2112ea80202c5957ff8aca01e3b1b4c7b6aa11ba2bd1f0",
     "mods/api.d.ts": "1c73d0cbfe50051bfd0c0331bf2f8e20442393f508f132eaf35d45abf28fc979",
     "mods/author/cli.mjs": "9c6104dea989705ca2985c86c33afcdf6b0f00d189539cc5e66ab06261f11284",
     "mods/author/client.mjs": "76056095c30eef507d1350b539c96ec1438e01ccdbd422f18a5dcecee549d731",
@@ -177,7 +177,7 @@
     "mods/first-party/omd_profiles/mod.json": "f8d4b57cbac78ff640025db460c7a74911117a8dc4f11769aefd8789bfc64dae",
     "mods/first-party/omd_profiles/router.mjs": "bde883b098a9ab4ca0aba361fc14c9cec26b6ff639adebf369a8a74e193730e4",
     "mods/first-party/omd_profiles/setup.mjs": "a5b650ce0568401142c7abf3c84b86b6f5e5f77a762a51e67a0838242c9993f4",
-    "mods/first-party/omd_tool_lines/index.ts": "7acaeaffe7514ab1947192a04a6e00be9eb6d5711e0587925a6ed79df1881fe3",
+    "mods/first-party/omd_tool_lines/index.ts": "1e97c7ec2974acd074ca017f0a745915dc617f977a9192c33127731bd06792f4",
     "mods/first-party/omd_tool_lines/mod.json": "a380088a8348550c17d44cf93a0d6605c8a0551e6e37233ea9494d02bc75b20f",
     "mods/first-party/omd_update/index.ts": "751107f4084f3b55ae8b67b0bb02933af5853e9a38cf7f0262184a3723de720e",
     "mods/first-party/omd_update/mod.json": "004fc3824d559c7c972f6e17bbab84d5e5716ba6003e3ee4e964c0315b062ed6",
@@ -186,9 +186,9 @@
     "mods/jsx-runtime.d.ts": "c5edd81178515aa515eeaf19c308b15f09402ecfa2e06846504927861234f5a5",
     "mods/package.json": "dcf5561d70c18e3b90b6649668cdb3d0ce6a82853e8566ea10e3d7ae33186756",
     "mods/testing.d.ts": "d2e3ae71e18e46850d31bf7d152570503176b00a507db0347fede9264cd3c35e",
-    "runtime/full-mods.lock.json": "9a4e0914cfc6ec688067a0816ca9fb6d0c3e3a25fef72d5eef8c806eb1ba520d",
+    "runtime/full-mods.lock.json": "98b9952ac1cad83673b13a476da4c550e5f924aa27fe0a20b2c031a4c8a61036",
     "runtime/hardened-entitlements.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
-    "runtime/patches/manifest.json": "fe7770de24aeb5be0d6f9a5d835a1e5b6f2bf963caa4247395cfd1151d69b5fe",
+    "runtime/patches/manifest.json": "84d02e56129d8ba1e6928cbb631f53cd9082b62c616f35c091458cd1bc4a0eb1",
     "runtime/plugin-v1.lock.json": "db74aadca4cda4984b5d6109b8d859921982a0805cfd50de3bdd5b6df7bfee8c",
     "runtime/preview-v1.lock.json": "adffce4ee1379b005fd731564cdd227af09eebaf5a3c2ca5f27762cd153180ca",
     "scripts/authority_broker.py": "1bafc4ba23312c6720454a54733d6aa6b00fb8073b9e9ea6673aab787e1a8f4b",
@@ -198,7 +198,7 @@
     "scripts/lean_profiles.py": "699d4efb0c6e4dba14794ed0fd4a8524274815a19bc9970819cfb25cd98a0691",
     "scripts/lean_release_lock.py": "184f0be7c3ea278134423c0d824e00ec215d3270242b5ff7588cbb4e675a800f",
     "scripts/preview_lock.py": "96260c4fbdabe43e338f87c289a7834b667a65aa07bd51aedb7ea493743a0c31",
-    "upstream.lock.json": "f789b23f934737e3b52526218a3dc89c7c44747a4df0568aff1c80f08d8ad01c"
+    "upstream.lock.json": "6419a927b1e5947fae19482b27ac5f8a0acff03fb206dfd7b2e869ed1af61fa7"
   },
   "target": "aarch64-apple-darwin",
   "upstream_commit": "c1382380de69521303b416720a52f42d51af6248",

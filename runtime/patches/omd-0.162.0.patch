@@ -30647,6 +30647,26 @@ index 16862db0f..9b263f235 100644
          tui.set_owned_screen(/*owned*/ false)?;
          server.shutdown().await?;
      }
+diff --git a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
+index b6e4a48db..a2af5ab9f 100644
+--- a/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
++++ b/codex-rs/tui/src/app/tests/fork_workspace_roots_tests.rs
+@@ -9,12 +9,15 @@ use app_test_support::create_fake_rollout;
+ use codex_app_server_client::AppServerEvent;
+ use pretty_assertions::assert_eq;
+
++// Serial: OMD mod tests set `OMD_MODE` process-wide, which would install the OMD extension here.
+ #[tokio::test]
++#[serial_test::serial]
+ async fn remote_fork_dispatch_preserves_server_workspace_roots() -> Result<()> {
+     check_fork_dispatch(ThreadParamsMode::Remote).await
+ }
+
+ #[tokio::test]
++#[serial_test::serial]
+ async fn local_daemon_fork_dispatch_preserves_idle_source_and_children() -> Result<()> {
+     check_fork_dispatch(ThreadParamsMode::Embedded).await
+ }
 diff --git a/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs b/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
 index 398a9c1df..164b8cac7 100644
 --- a/codex-rs/tui/src/app/tests/navigation_reconnect_tests.rs
