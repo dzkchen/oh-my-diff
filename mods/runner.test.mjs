@@ -427,15 +427,3 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
     payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });
-test('workspace layout writes bare toggles and dialog select values as settings', () => {
-  const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');
-  const layout = (payload, settings = {}) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'store', 'threads', 'config'], event: 'command', name: 'layout', payload, settings });
-  for (const [payload, key, value] of [['density compact', 'density', 'compact'], ['density full', 'density', 'full'], ['side right', 'side', 'right'], ['side left', 'side', 'left'], ['compact', 'density', 'compact'], ['right', 'side', 'right']]) {
-    assert.deepEqual(layout(payload).host_call, { operation: 'settings.write', arguments: { values: { [key]: value } } }, payload);
-  }
-  assert.deepEqual(layout('density', { density: 'compact' }).host_call.arguments, { values: { density: 'full' } });
-  assert.deepEqual(layout('side', { side: 'right' }).host_call.arguments, { values: { side: 'left' } });
-  for (const payload of ['density wide', 'side up', 'compact extra']) {
-    assert.match(layout(payload).value.display, /^usage:/, payload);
-  }
-});

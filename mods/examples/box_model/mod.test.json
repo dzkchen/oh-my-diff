@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "steps": [
+    {"type": "terminal_mount", "mod": "box_model", "payload": {"event": "idle", "ledger": null},
+      "expect": {"sidebar_side": "right", "sidebar_width": 40, "sidebar_style": {"gap": 1}, "sites": {"sidebar": {"mode": "wrap", "components": [
+        {"type": "slot"},
+        {"type": "pane", "id": "box_model_card", "label": "Bordered card", "title": "Bordered card", "children": [
+          {"type": "box", "id": "box_model_metrics", "label": "Metrics", "style": {"direction": "row", "gap": 1}, "children": [
+            {"type": "box", "id": "box_model_cpu", "label": "CPU", "title": "CPU", "flex": 1, "min_width": 10,
+              "style": {"border": "rounded", "padding": [0, 1], "hover": {"border": "thick", "foreground": "accent"}},
+              "children": [{"type": "text", "id": "box_model_cpu_value", "label": "CPU value", "text": "12%"}]},
+            {"type": "box", "id": "box_model_memory", "label": "Memory", "title": "Memory", "flex": 2, "min_width": 10,
+              "style": {"border": "rounded", "padding": [0, 1], "hover": {"border": "thick", "foreground": "accent"}},
+              "children": [{"type": "text", "id": "box_model_memory_value", "label": "Memory value", "text": "3.1 GB"}]}]}]},
+        {"type": "pane", "id": "box_model_panel", "label": "Flat panel", "title": "Flat panel",
+          "style": {"border": "none", "background": 236, "padding": [0, 1], "focus": {"background": 238}}, "children": [
+          {"type": "box", "id": "box_model_status", "label": "Hover target", "pointer": true, "style": {"hover": {"background": "accent", "foreground": 0}},
+            "children": [{"type": "text", "id": "box_model_entered", "label": "Pointer entries", "text": "Pointer entered 0 times"}]},
+          {"type": "button", "id": "box_model_side", "label": "Move the sidebar", "text": "Move left", "action": {"command": "box_model:box", "args": "side"}}]}]}}}},
+    {"type": "terminal_interact", "mod": "box_model", "payload": {"event": "idle", "ledger": null}, "component": "box_model_status",
+      "pointer": {"column": 2, "row": 0, "half": null, "action": "enter", "button": null},
+      "expect": {"event": {"component": "box_model_status", "kind": "pointer", "pointer": {"column": 2, "row": 0, "half": null, "action": "enter", "button": null}, "origin": "user"}, "result": null}},
+    {"type": "invoke", "mod": "box_model", "event": "command", "name": "box", "payload": "split", "expect": null},
+    {"type": "terminal_mount", "mod": "box_model", "payload": {"event": "idle", "ledger": null},
+      "expect": {"layout": {"split": "horizontal", "ratio": [2, 1], "gap": 1, "children": [
+        {"split": "vertical", "ratio": [4, 1], "children": [{"content": "transcript"}, {"content": "composer"}]},
+        {"content": "site:box_model/cards", "style": {"border": "double", "padding": 1, "gap": 1}}]},
+      "sites": {"box_model/cards": {"mode": "replace", "components": [
+        {"type": "pane", "id": "box_model_card", "label": "Bordered card", "title": "Bordered card", "children": [
+          {"type": "box", "id": "box_model_metrics", "label": "Metrics", "style": {"direction": "row", "gap": 1}, "children": [
+            {"type": "box", "id": "box_model_cpu", "label": "CPU", "title": "CPU", "flex": 1, "min_width": 10,
+              "style": {"border": "rounded", "padding": [0, 1], "hover": {"border": "thick", "foreground": "accent"}},
+              "children": [{"type": "text", "id": "box_model_cpu_value", "label": "CPU value", "text": "12%"}]},
+            {"type": "box", "id": "box_model_memory", "label": "Memory", "title": "Memory", "flex": 2, "min_width": 10,
+              "style": {"border": "rounded", "padding": [0, 1], "hover": {"border": "thick", "foreground": "accent"}},
+              "children": [{"type": "text", "id": "box_model_memory_value", "label": "Memory value", "text": "3.1 GB"}]}]}]},
+        {"type": "pane", "id": "box_model_panel", "label": "Flat panel", "title": "Flat panel",
+          "style": {"border": "none", "background": 236, "padding": [0, 1], "focus": {"background": 238}}, "children": [
+          {"type": "box", "id": "box_model_status", "label": "Hover target", "pointer": true, "style": {"hover": {"background": "accent", "foreground": 0}},
+            "children": [{"type": "text", "id": "box_model_entered", "label": "Pointer entries", "text": "Pointer entered 1 times"}]},
+          {"type": "button", "id": "box_model_side", "label": "Move the sidebar", "text": "Move left", "action": {"command": "box_model:box", "args": "side"}}]}]}}}}
+  ]
+}

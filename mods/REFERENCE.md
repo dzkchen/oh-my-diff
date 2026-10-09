@@ -1539,8 +1539,9 @@ The mod owns the buffer, cursor and selection and draws them as spans; a key
 `document` keeps its scroll across content changes and scrolls to `selected`.
 A paste into a focused `terminal` component goes to the PTY, bracketed when
 the program asked for it. In a layout
-region, `terminal`, `document`, `diff` and `list` components without a
-`height` share the rows left after the region's other components. Releasing a
+region, `terminal`, `document`, `diff`, `list` and `raster` components without a
+`height` share the rows left after the region's other components and gaps.
+In a row layout each gets the region's full inner height. Releasing a
 mouse drag on a split border sends `component_event {kind: 'resize',
 component, ratio}`, where `component` is the split's path (`r` for the root,
 then `.N` per child index) and `ratio` its new percentages, so a mod can keep
@@ -1602,7 +1603,7 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   `rect`/`cells` is `terminal_blit_invalid`; both refuse before queueing.
   External clients whose renderer `formats` include the media type receive
   the frame as sent, other clients with `cells` receive half-block cells.
-- `box`, `image` and `raster` accept `pointer: true`. The owner then receives
+- `box`, `pane`, `image` and `raster` accept `pointer: true`. The owner then receives
   `component_event {kind: 'pointer'}` with `action` `enter`, `leave`,
   `move`, `down`, `up` and `drag`, `column`/`row` relative to the
   component's first cell (a nested box counts its title and children), and
@@ -1613,7 +1614,7 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   component: a slow callback sees the newest position, never a backlog.
   Views without pointer components add no pointer work.
 - A mod-named site (`mod/site`) with `overlay: {anchor, offset?, width,
-  height, z?, clip?, border?}` draws above the layout instead of in the
+  height, z?, clip?, style?}` draws above the layout instead of in the
   sidebar: `anchor` is a screen corner (`top_left`, `top_right`,
   `bottom_left`, `bottom_right`) or `center`, or `{component}` (the
   component's top-left cell; the overlay is skipped while that component is
@@ -1626,6 +1627,43 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   are not exclusive: when several patches set one for the same site, the patch
   that composes last wins, and a `wrap` patch overrides another mod's overlay
   without a claim or a `terminal.conflicts` entry.
+
+Box model (`terminal_box_model_v1`). One `style: TerminalBoxStyle` object
+styles a `box`, `pane` or `dialog`, an overlay, a layout `site:` leaf and,
+as `sidebar_style`, the sidebar:
+
+- `border`: `none`, `plain`, `rounded`, `double` or `thick`; a title sits in
+  the top edge. Under the theme's `icons: 'ascii'`, `OMD_TUI_ASCII=1`, or a
+  non-Unicode locale, every border draws as
+  `+`, `-` and `|`.
+- `padding` and `margin`: cells on every side, or `[vertical, horizontal]`,
+  each 0–4. `gap` (0–4) separates children: rows in a column, cells in a row.
+- `background` and `foreground`: a tone (`accent`, `muted`, ...) or a color
+  (0–255 or `#rrggbb`). A filled or bordered box pads its rows to its width,
+  so the fill reaches the edge; other boxes leave rows unpadded.
+- `direction: 'row'` lays children side by side. A `button`, `text` or `line`
+  takes its natural width; every other child gets a share of the rest by its
+  `flex` weight (1–12, default 1). When natural widths exceed the available
+  space, shorter children keep their width and longer children share the
+  remaining columns. `max_width` caps a child's
+  width and a child with fewer columns than its `min_width` drops out. In a
+  column, `min_width`/`max_width` hide the box outside its bounds.
+- `hover` and `focus` take `{border?, background?, foreground?}` on a `box`
+  or `pane`; other surfaces refuse them. `hover` applies while the pointer is
+  over the box (no `pointer: true` needed; events still need it); `focus`
+  applies while the box or a descendant has focus. Accents never add or
+  remove a border, so geometry stays put.
+
+Unstyled panes, dialogs and layout sites are cards: the theme `border`,
+`padding: [0, 1]` and the title in the top edge. A pane with `border: 'none'`
+is a flat panel whose title row leads its content. Unstyled boxes and
+overlays draw no frame. The sidebar has no padding, one row between
+its components under the comfortable density, and no border unless
+`sidebar_style` sets one, which then carries the view `title`. A split's
+`gap` (0–4) leaves cells between its children. Render hook trees refuse
+`style` and `flex`. The host's progress and mod diagnostics draw as cards
+above the prompt (four lines each, then `+N more`), so the sidebar opens
+only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 Operations:
 
@@ -2792,7 +2830,7 @@ enabled, active and failed mod counts. Upstream-style direct mode loads no mods.
 `terminal_rich_line_v1` adds a one-row `line` component with up to 12 styled
 `spans` (`text`, `tone`, `bold`; 256 characters in total), whose `label` is
 the accessible text, and optional `min_width`/`max_width` (1–500 columns) on
-`box`. Native draws a bounded box only when the site's inner width fits, and
+`box` and `pane`. Native draws a bounded box only when the site's inner width fits, and
 header height counts only drawn boxes. Header rows are never spaced by the
 comfortable density.
 
