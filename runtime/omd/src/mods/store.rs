@@ -37,6 +37,60 @@ pub(super) fn grant(selection: &Value) -> String {
     crate::broker::canonical(&grant)
 }
 
+pub(super) fn package_provenance(package: &super::package_manager::ModLockedPackage) -> String {
+    crate::broker::canonical(&json!({"package_source": {
+        "id": package.id, "path": package.path, "sha256": package.integrity,
+        "source": super::policy::source_reference(&package.source)
+    }}))
+}
+
+pub(super) fn authenticated_source(
+    selection: &ModSelection,
+    id: &str,
+    grants: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    grants?.iter().find_map(|record| {
+        let record: Value = serde_json::from_str(record).ok()?;
+        let source = &record["package_source"];
+        (source["id"] == id
+            && source["path"] == json!(selection.path)
+            && source["sha256"] == selection.sha256)
+            .then(|| source["source"].as_str().map(str::to_owned))
+            .flatten()
+    })
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    #[test]
+    fn source_provenance_is_bound_to_protected_content_identity() {
+        let selection: ModSelection = serde_json::from_value(json!({
+            "path":"/package", "sha256":"a".repeat(64), "enabled":true,
+            "capabilities":[], "settings":{}, "scope":"user"
+        }))
+        .unwrap();
+        let record = crate::broker::canonical(&json!({"package_source": {
+            "id":"package", "path":selection.path, "sha256":selection.sha256,
+            "source":"git+https://github.com/acme/package"
+        }}));
+        let grants = BTreeSet::from([record]);
+        assert_eq!(
+            authenticated_source(&selection, "package", Some(&grants)).as_deref(),
+            Some("git+https://github.com/acme/package")
+        );
+        assert!(authenticated_source(&selection, "package", None).is_none());
+        assert!(authenticated_source(&selection, "other", Some(&grants)).is_none());
+        let mut changed = selection.clone();
+        changed.sha256 = "b".repeat(64);
+        assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
+        changed = selection.clone();
+        changed.path = "/other".into();
+        assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
+    }
+}
+
 pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
     if !crate::broker::deployed() {
         return Ok(None);
@@ -132,6 +186,8 @@ pub(super) fn package_with_assets(
 
 pub struct ModStore {
     pub(super) root: PathBuf,
+    policy: (PathBuf, u32),
+    user: Option<String>,
 }
 
 pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
@@ -243,7 +299,10 @@ impl ModStore {
     /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset
     /// `packages.lock.json` leaves its packages as plain trusted selections.
     pub fn reset(&self, name: &str) -> Result<PathBuf> {
-        if !matches!(name, "mods.json" | "host.json" | "packages.lock.json") {
+        if !matches!(
+            name,
+            "mods.json" | "host.json" | "packages.lock.json" | "managed.json"
+        ) {
             return Err(failure("store_file_not_resettable"));
         }
         let path = self.root.join(name);
@@ -271,7 +330,25 @@ impl ModStore {
         if !root.is_absolute() || root.canonicalize()? != root || !root.is_dir() {
             return Err(failure("canonical_store_path_required"));
         }
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            policy: (PathBuf::from(super::MANAGED_POLICY_FILE), 0),
+            user: None,
+        })
+    }
+
+    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated stores.
+    pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) {
+        self.policy = (file, owner);
+        self.user = Some(user.to_owned());
+    }
+
+    pub fn managed(&self) -> Result<Option<super::Managed>> {
+        super::load_managed_from(&self.policy.0, self.policy.1)
+    }
+
+    pub fn managed_user(&self) -> String {
+        self.user.clone().unwrap_or_else(super::policy::login)
     }
 
     pub(super) fn lock(&self) -> Result<File> {
@@ -303,9 +380,27 @@ impl ModStore {
             .flatten()
             .map(grant)
             .collect::<BTreeSet<_>>();
+        let selected_record = |record: &String| {
+            if selected.contains(record) {
+                return true;
+            }
+            let Ok(record) = serde_json::from_str::<Value>(record) else {
+                return false;
+            };
+            let Some(source) = record.get("package_source") else {
+                return false;
+            };
+            value["mods"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|selection| {
+                    source["path"] == selection["path"] && source["sha256"] == selection["sha256"]
+                })
+        };
         let added = approved
             .iter()
-            .filter(|grant| selected.contains(*grant) && !current.contains(*grant))
+            .filter(|grant| selected_record(grant) && !current.contains(*grant))
             .cloned()
             .collect::<BTreeSet<_>>();
         self.write_staged(name, &bytes, || {
@@ -320,9 +415,10 @@ impl ModStore {
             }
             Ok(())
         })?;
-        let kept = selected
-            .into_iter()
-            .filter(|grant| current.contains(grant) || added.contains(grant))
+        let kept = current
+            .union(&added)
+            .filter(|grant| selected_record(grant))
+            .cloned()
             .collect::<BTreeSet<_>>();
         if kept.len() != current.len() + added.len() {
             let _ = crate::broker::call(
@@ -416,19 +512,93 @@ impl ModStore {
         }
     }
 
+    pub fn managed_deployment(&self) -> Result<super::policy::ManagedDeployment> {
+        match read(&self.root.join("managed.json"), 524_288) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+                failure(format!(
+                    "managed_deployment_unreadable: {error}; run omd-mod reset STORE managed.json, then omd-mod package-sync"
+                ))
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn selection_status(&self) -> Result<Value> {
+        self.selection_status_in(None)
+    }
+
+    /// Selections after administrator policy; `project` scopes project-targeted managed packages.
+    pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
+        let brokered = brokered_grants(&self.root)?;
+        let (managed, mut managed_error) = match self.managed() {
+            Ok(managed) => (managed, None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let mut entries = configuration.mods.clone();
+        let mut pending = Vec::new();
+        let mut administered = 0;
+        if let Some(managed) = &managed {
+            let deployment = self.managed_deployment().unwrap_or_else(|error| {
+                managed_error = Some(error.to_string());
+                Default::default()
+            });
+            let (selections, unsynced) =
+                managed.selections(&deployment, &self.managed_user(), project);
+            administered = selections.len();
+            entries.splice(0..0, selections);
+            pending = unsynced;
+        }
         let mut selections: Vec<Value> = Vec::new();
         let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-        for selection in &configuration.mods {
+        for (index, selection) in entries.iter().enumerate() {
+            let administered = index < administered;
             let inspected = package(&selection.path);
+            let mut settings_origin = BTreeMap::new();
             let (mut id, error, environment) = match inspected {
                 Ok((manifest, _, integrity)) => {
+                    for key in super::effective_settings(
+                        manifest.settings_schema.as_ref(),
+                        &selection.settings,
+                    )
+                    .into_keys()
+                    {
+                        let origin = match selection.settings.contains_key(&key) {
+                            false => "default",
+                            true if administered => "managed",
+                            true => "user",
+                        };
+                        settings_origin.insert(key, origin);
+                    }
+                    let source = authenticated_source(
+                        selection,
+                        &manifest.id,
+                        brokered.as_ref().map(|(_, grants)| grants),
+                    );
                     let error = if integrity != selection.sha256 {
                         Some("source_changed: inspect and trust the new digest".to_owned())
-                    } else if !super::MOD_SCOPES.contains(&selection.scope.as_str()) {
-                        Some(format!("unsupported_scope: {}", selection.scope))
+                    } else if !administered
+                        && (!super::MOD_SCOPES.contains(&selection.scope.as_str())
+                            || selection.tier.is_some())
+                    {
+                        Some(format!(
+                            "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
+                            selection.scope
+                        ))
+                    } else if let Some(refusal) = managed
+                        .as_ref()
+                        .filter(|_| !administered)
+                        .and_then(|managed| {
+                            managed.policy.refusal(
+                                &manifest.id,
+                                &manifest.capabilities,
+                                source.as_deref(),
+                            )
+                        })
+                    {
+                        Some(refusal)
                     } else if manifest
                         .capabilities
                         .iter()
@@ -455,7 +625,7 @@ impl ModStore {
                     .find(|item| item.path == selection.path && item.scope == selection.scope)
                     .map(|item| item.id.clone());
             }
-            let managed = id
+            let packaged = id
                 .as_ref()
                 .and_then(|id| lock.packages.get(id))
                 .is_some_and(|item| item.path == selection.path && item.scope == selection.scope);
@@ -470,8 +640,10 @@ impl ModStore {
                 "id": id,
                 "path": selection.path,
                 "scope": selection.scope,
+                "tier": selection.tier,
                 "selected": selection.enabled,
-                "managed": managed,
+                "packaged": packaged,
+                "settings_origin": settings_origin,
                 "sha256": selection.sha256,
                 "capabilities": selection.capabilities,
                 "exec_environment": environment,
@@ -485,23 +657,41 @@ impl ModStore {
                 "reason": if selection.enabled { "pending_runtime_validation" } else { "disabled" },
             }));
         }
+        for rejection in pending {
+            selections.push(
+                json!({"id": rejection.id, "path": rejection.path, "scope": rejection.scope,
+                "selected": true, "packaged": false, "error": rejection.reason, "effective": false,
+                "reason": "managed_pending_sync"}),
+            );
+        }
+        let rank = |scope: &Value| match scope.as_str() {
+            Some(super::MANAGED_SCOPE) => 2,
+            Some("project") => 1,
+            _ => 0,
+        };
         for indices in groups.values() {
-            let project = indices
+            let top = indices
+                .iter()
+                .map(|index| rank(&selections[*index]["scope"]))
+                .max()
+                .unwrap_or_default();
+            let candidates = indices
                 .iter()
                 .copied()
-                .filter(|index| selections[*index]["scope"] == "project")
+                .filter(|index| rank(&selections[*index]["scope"]) == top)
                 .collect::<Vec<_>>();
-            let candidates = if project.is_empty() {
-                indices.clone()
-            } else {
-                project
-            };
+            let shadow = format!(
+                "shadowed_by_{}_scope",
+                selections[candidates[0]]["scope"]
+                    .as_str()
+                    .unwrap_or_default()
+            );
             if candidates.len() != 1 {
                 for index in indices {
                     selections[*index]["reason"] = if candidates.contains(index) {
                         json!("duplicate_scope_conflict")
                     } else {
-                        json!("shadowed_by_project_scope_conflict")
+                        json!(format!("{shadow}_conflict"))
                     };
                 }
                 continue;
@@ -510,14 +700,16 @@ impl ModStore {
             selections[winner]["effective"] = json!(true);
             selections[winner]["reason"] = json!("selected");
             for index in indices.iter().copied().filter(|index| *index != winner) {
-                selections[index]["reason"] = json!("shadowed_by_project_scope");
+                selections[index]["reason"] = json!(shadow);
             }
         }
         Ok(json!({
             "revision": configuration.revision,
-            "precedence": "valid enabled project selection over valid enabled user selection; runtime conflicts can still reject activation",
+            "precedence": "valid enabled managed selection over project over user; administrator policy refuses user and project selections it does not allow; runtime conflicts can still reject activation",
+            "managed": managed.map(|managed| json!({"origin": managed.origin, "sha256": managed.sha256, "policy": managed.policy})),
+            "managed_error": managed_error,
             "selections": selections,
-            "managed_packages": lock.packages.keys().collect::<Vec<_>>(),
+            "packaged": lock.packages.keys().collect::<Vec<_>>(),
         }))
     }
 
@@ -555,6 +747,14 @@ impl ModStore {
     }
 
     pub fn trust_all(&self, packages: Vec<Trust>) -> Result<()> {
+        if self
+            .managed()?
+            .is_some_and(|managed| !managed.policy.sideload)
+        {
+            return Err(failure(
+                "managed_sideload_denied: administrator policy loads mods only from installed packages",
+            ));
+        }
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         let mut config = self.configuration()?;
@@ -597,6 +797,7 @@ impl ModStore {
                 scope,
                 secret_environment: package.secret_environment(),
                 expires_at,
+                tier: None,
             });
         }
         config.revision = config
@@ -618,6 +819,53 @@ impl ModStore {
         self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)?;
         let _ = self.record_security_event("trust", event);
         Ok(())
+    }
+
+    pub fn broker_grants_import(&self, snapshot: Option<Value>) -> Result<Value> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        let config = self.configuration()?;
+        let current = serde_json::to_value(&config)?;
+        let Some(snapshot) = snapshot else {
+            return Ok(current);
+        };
+        if snapshot != current {
+            return Err(failure("broker_import_configuration_changed"));
+        }
+        let mut approved = BTreeSet::new();
+        let mut skipped = Vec::new();
+        for selection in &config.mods {
+            let eligible = (|| {
+                let (manifest, _, hash) = package(&selection.path)?;
+                if hash != selection.sha256
+                    || !super::MOD_SCOPES.contains(&selection.scope.as_str())
+                    || selection.tier.is_some()
+                    || manifest
+                        .capabilities
+                        .iter()
+                        .any(|capability| !selection.capabilities.contains(capability))
+                    || selection
+                        .capabilities
+                        .iter()
+                        .any(|capability| !super::MOD_CAPABILITIES.contains(&capability.as_str()))
+                {
+                    return Err(failure("broker_import_selection_changed"));
+                }
+                super::check_secret_environment(&manifest, &selection.secret_environment)?;
+                super::validate_settings(&manifest, &selection.settings)?;
+                Ok::<_, std::io::Error>(())
+            })();
+            match eligible {
+                Ok(()) => {
+                    approved.insert(grant(&json!(selection)));
+                }
+                Err(error) => {
+                    skipped.push(json!({"path":selection.path,"reason":error.to_string()}))
+                }
+            }
+        }
+        self.write_granting("mods.json", &current, &approved)?;
+        Ok(json!({"imported": approved.len(), "skipped": skipped}))
     }
 
     /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
@@ -659,7 +907,7 @@ impl ModStore {
                 .revision
                 .checked_add(1)
                 .ok_or_else(|| failure("revision_overflow"))?;
-            self.commit_package_transaction(lock, config, &[], "revoke", event)?;
+            self.commit_package_transaction(lock, config, &[], "revoke", event, &[])?;
             Ok(())
         } else {
             self.write("mods.json", &serde_json::to_value(config)?)?;
@@ -684,11 +932,18 @@ impl ModStore {
             }));
         }
         let mut config = self.configuration()?;
-        let selection = config
-            .mods
-            .iter_mut()
-            .find(|m| m.path == path)
-            .ok_or_else(|| failure("package_not_trusted"))?;
+        let Some(selection) = config.mods.iter_mut().find(|m| m.path == path) else {
+            return Err(failure(
+                if self
+                    .managed_deployment()
+                    .is_ok_and(|deployment| deployment.packages.iter().any(|p| p.path == path))
+                {
+                    "managed_by_policy: administrator policy requires this mod; ask your administrator to change the policy"
+                } else {
+                    "package_not_trusted"
+                },
+            ));
+        };
         if enabled {
             let (manifest, _, hash) = package(path)?;
             if hash != selection.sha256 {

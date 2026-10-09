@@ -1925,6 +1925,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if lead.owner != "lead" {
                 return;
             }
+            self.expansion.forget_inventory(lead.thread);
             self.agents.cleanup_session(&lead.session).await;
             self.agents.cleanup_snapshots(lead.thread);
             self.services.cleanup_session(&lead.session).await;
@@ -2059,9 +2060,17 @@ impl ToolLifecycleContributor for Mods {
             .map_err(|e| e.to_string())??;
             let Some(required) = intercepting else {
                 self.cleanup_failed(Some(&lead)).await;
+                if !spawn {
+                    self.expansion.validate_call(
+                        lead.thread,
+                        &original_tool.to_string(),
+                        &arguments,
+                        false,
+                    )?;
+                }
                 return Ok(ToolInterception::Continue(None));
             };
-            let lead_thread_id = lead.thread.to_string();
+            let (thread_id, lead_thread_id) = (lead.thread, lead.thread.to_string());
             let cancelled = Arc::new(AtomicBool::new(false));
             let cancellation = Cancellation(cancelled.clone());
             let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -2096,6 +2105,15 @@ impl ToolLifecycleContributor for Mods {
                             "continuation_retry_unavailable: this turn has no tool dispatch",
                         )
                     })?;
+                    core.expansion
+                        .validate_call(
+                            thread_id,
+                            effective["tool"].as_str().unwrap_or_default(),
+                            &effective["arguments"],
+                            effective["tool"] != spawn_before["tool"]
+                                || effective["arguments"] != spawn_before["arguments"],
+                        )
+                        .map_err(std::io::Error::other)?;
                     retries += 1;
                     let call_id = format!("{base_call}:retry{retries}");
                     if let Ok(mut invoked) = core.expansion.invoked.lock() {
@@ -2164,6 +2182,19 @@ impl ToolLifecycleContributor for Mods {
                 executor,
             ));
             if let Ok(effective) = reached_at_executor.await {
+                if !spawn
+                    && let Err(error) = self.expansion.validate_call(
+                        thread_id,
+                        effective["tool"].as_str().unwrap_or_default(),
+                        &effective["arguments"],
+                        effective["tool"] != payload["tool"]
+                            || effective["arguments"] != payload["arguments"],
+                    )
+                {
+                    let _ = result.send(Err(error.clone()));
+                    let _ = chain.await;
+                    return Err(error);
+                }
                 if let Ok(mut pending) = self.pending.lock() {
                     pending.insert(
                         input.call_id.to_owned(),

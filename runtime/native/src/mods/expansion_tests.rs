@@ -707,6 +707,81 @@ async fn background_delivery_wakes_on_publish_and_client_wake() {
     assert_eq!(ignored["delivered"], 0);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn declared_subscriptions_receive_publications_before_any_delivery_round() {
+    let Some(fixture) = fixture(&[Package {
+        id: "preheard",
+        capabilities: &["events"],
+        manifest: json!({"subscriptions": {"channels": ["prespeaker/news"]}}),
+        source: "export default function (api) { api.on('channel', () => {}); }\n",
+    }]) else {
+        return;
+    };
+    let delivery = codex_omd::event_bus::global()
+        .lock()
+        .unwrap()
+        .publish(
+            "prespeaker",
+            "news",
+            json!("early"),
+            None,
+            &fixture.lead.thread.to_string(),
+        )
+        .unwrap();
+    assert_eq!(delivery.delivered, 1);
+    let mut bus = codex_omd::event_bus::global().lock().unwrap();
+    assert_eq!(bus.drain("preheard", 1)[0].data, json!("early"));
+    bus.unsubscribe("preheard");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn busy_queue_and_subscriber_do_not_starve_other_channel_subscribers() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "flooded",
+            capabilities: &["events"],
+            manifest: json!({"subscriptions": {"channels": ["floodgate/busy"]}}),
+            source: "export default function (api) { api.on('channel', () => {}); }\n",
+        },
+        Package {
+            id: "starved",
+            capabilities: &["events", "store", "commands"],
+            manifest: json!({"subscriptions": {"channels": ["floodgate/quiet"]}}),
+            source: "export default function (api) {\n  api.on('channel', event => { api.state.set(event.data); });\n  api.command('seen', () => api.state.get());\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let core = &fixture.core;
+    let elsewhere = ThreadId::new();
+    for session in (0..2 * 64).map(|index| ["a", "b"][index % 2]) {
+        delivery::push(
+            &core.expansion,
+            delivery::Pending::Process {
+                thread: elsewhere,
+                owner: "flooded".into(),
+                session: session.into(),
+                bytes: Some(1),
+            },
+        );
+    }
+    for (channel, data) in std::iter::repeat_n(("busy", "noise"), 64).chain([("quiet", "go")]) {
+        delivery::publish(
+            core,
+            &fixture.lead,
+            "floodgate",
+            json!({"channel": channel, "data": data}),
+        )
+        .unwrap();
+    }
+    assert!(delivery::deliver(core).await);
+    let mut bus = codex_omd::event_bus::global().lock().unwrap();
+    bus.unsubscribe("flooded");
+    bus.unsubscribe("starved");
+    drop(bus);
+    assert_eq!(command(core, "starved", "seen"), json!("go"));
+}
+
 fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
     let thread = ThreadId::new();
     let session = first.host.open_session(thread, false).unwrap();
@@ -1554,6 +1629,235 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     );
     assert!(
         !adjustment.describe.contains_key("forged") && !adjustment.hide.contains(&"forged".into())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_inventory_observation_tracks_consumers() {
+    use codex_extension_api::ToolSpecContributor;
+    if let Some(empty) = fixture(&[]) {
+        let thread = ExtensionData::new("thread");
+        thread.insert(empty.lead.clone());
+        assert!(!mods(&empty.core).observing(&thread));
+    }
+    for (capabilities, source) in [
+        (vec!["inventory"], "export default api => {}"),
+        (
+            vec!["interception"],
+            "export default api => api.intercept('tool', (e, next) => next(e))",
+        ),
+        (
+            vec!["interception", "tools"],
+            "export default api => api.intercept('tool_specs', (e, next) => next(e))",
+        ),
+    ] {
+        let Some(fixture) = fixture(&[Package {
+            id: "consumer",
+            capabilities: &capabilities,
+            source,
+            manifest: json!({}),
+        }]) else {
+            return;
+        };
+        let thread = ExtensionData::new("thread");
+        thread.insert(fixture.lead.clone());
+        assert!(mods(&fixture.core).observing(&thread), "{source}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments() {
+    use codex_extension_api::ToolInventoryEntry;
+    use codex_extension_api::ToolInventoryView;
+    use codex_extension_api::ToolSpecContributor;
+    let Some(fixture) = fixture(&[Package {
+        id: "consumer",
+        capabilities: &["inventory"],
+        source: "export default api => {}",
+        manifest: json!({}),
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let thread_store = ExtensionData::new("thread".to_owned());
+    assert!(!mods.observing(&thread_store));
+    thread_store.insert(fixture.lead.clone());
+    assert!(mods.observing(&thread_store));
+    let schema =
+        json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
+    let entry =
+        |name: &str, parameters: &Value, effective: Option<(&Value, bool)>| ToolInventoryEntry {
+            name: name.to_owned(),
+            kind: "builtin",
+            server: None,
+            description: "d".into(),
+            freeform: parameters.is_null(),
+            parameters: parameters.clone(),
+            effective: effective.map(|(parameters, deferred)| ToolInventoryView {
+                description: "d".into(),
+                parameters: parameters.clone(),
+                deferred,
+            }),
+        };
+    let replaced = json!({"type": "object"});
+    let tools = [
+        entry("run", &schema, Some((&schema, false))),
+        entry("hidden", &schema, None),
+        entry("later", &schema, Some((&schema, true))),
+        entry("patch", &Value::Null, Some((&Value::Null, false))),
+        entry("loose", &schema, Some((&replaced, false))),
+    ];
+    mods.observe_tool_inventory(&thread_store, &tools);
+    let listed = tool_specs::list(&fixture.core, &fixture.lead).unwrap();
+    assert_eq!(listed["thread_id"], fixture.lead.thread.to_string());
+    assert_eq!(listed["tools"][1]["effective"], Value::Null);
+    assert_eq!(listed["tools"][2]["effective"]["deferred"], true);
+    assert_eq!(listed["tools"][3]["original"]["freeform"], true);
+    let stored = fixture.lead.host.root.join("tool-inventory.json");
+    assert_eq!(
+        std::fs::read(&stored).unwrap(),
+        serde_json::to_vec(&listed).unwrap()
+    );
+    std::fs::write(&stored, "sentinel").unwrap();
+    mods.observe_tool_inventory(&thread_store, &tools);
+    assert_eq!(std::fs::read(&stored).unwrap(), b"sentinel");
+    let validate = |tool: &str, arguments: Value, rewritten: bool| {
+        fixture
+            .core
+            .expansion
+            .validate_call(fixture.lead.thread, tool, &arguments, rewritten)
+    };
+    assert_eq!(validate("run", json!({"cmd": "ls"}), true), Ok(()));
+    assert_eq!(
+        validate("run", json!({"cmd": 1}), true),
+        Err("tool_arguments_invalid: run: /cmd: expected string, got number".into())
+    );
+    assert_eq!(validate("run", json!({"cmd": 1}), false), Ok(()));
+    assert_eq!(
+        validate("loose", json!({}), false),
+        Err("tool_arguments_invalid: loose: /cmd: required".into())
+    );
+    assert_eq!(validate("patch", json!("anything"), true), Ok(()));
+    assert_eq!(validate("unknown", json!(1), true), Ok(()));
+    ModStore::open(fixture.lead.host.root.clone())
+        .unwrap()
+        .revoke("consumer")
+        .unwrap();
+    {
+        let mut runtime = fixture.core.runtime.lock().unwrap();
+        runtime.reload().unwrap();
+        fixture.core.expansion.refresh(&runtime);
+    }
+    assert!(!mods.observing(&thread_store));
+    mods.observe_tool_inventory(&thread_store, &tools);
+    assert_eq!(validate("loose", json!({}), false), Ok(()));
+    mods.on_thread_stop(ThreadStopInput {
+        session_store: &ExtensionData::new("session".to_owned()),
+        thread_store: &thread_store,
+    })
+    .await;
+    assert!(
+        tool_specs::list(&fixture.core, &fixture.lead)
+            .unwrap_err()
+            .starts_with("tools_unavailable"),
+        "a closed thread drops its tool snapshot"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_rewritten_tool_arguments_settle_the_chain_with_their_cause() {
+    use codex_extension_api::ToolInventoryEntry;
+    use codex_extension_api::ToolInventoryView;
+    use codex_extension_api::ToolSpecContributor;
+    let Some(fixture) = fixture(&[Package {
+        id: "rewrite",
+        capabilities: &["interception"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'run' } }, (e, next) => next({ ...e, arguments: { cmd: 1 } }));\n  api.intercept('tool', { match: { tool: 'again' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { cmd: 2 } });\n  });\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let invoker = Arc::new(RecordingInvoker::default());
+    thread_store
+        .get_or_init(codex_extension_api::ToolInvokerSlot::default)
+        .set("turn-1", invoker.clone());
+    let schema =
+        json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
+    let tools = ["run", "again"].map(|name| ToolInventoryEntry {
+        name: name.to_owned(),
+        kind: "builtin",
+        server: None,
+        description: "d".into(),
+        freeform: false,
+        parameters: schema.clone(),
+        effective: Some(ToolInventoryView {
+            description: "d".into(),
+            parameters: schema.clone(),
+            deferred: false,
+        }),
+    });
+    mods.observe_tool_inventory(&thread_store, &tools);
+    let payload = codex_tools::ToolPayload::Function {
+        arguments: r#"{"cmd":"ls"}"#.to_owned(),
+    };
+    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        root_turn_id: None,
+        call_id,
+        originating_item_id: None,
+        tool_name: tool,
+        mcp_tool: None,
+        permissions: Box::pin(async { None }),
+        payload: &payload,
+        conversation_history: Arc::new(NoHistory),
+        source: codex_extension_api::ToolCallSource::Direct,
+    };
+    static RUN: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("run"));
+    static AGAIN: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("again"));
+    let error = mods
+        .intercept_tool(start("call-1", &RUN))
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("tool_arguments_invalid: run"), "{error}");
+    let chains = || fixture.core.runtime.lock().unwrap().status()["chains"].to_string();
+    assert!(chains().contains("tool_arguments_invalid"), "{}", chains());
+    assert!(!chains().contains("callback_cancelled"), "{}", chains());
+
+    assert_eq!(
+        mods.intercept_tool(start("call-2", &AGAIN)).await.unwrap(),
+        ToolInterception::Continue(None)
+    );
+    mods.replace_tool_output(codex_extension_api::ToolOutputInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        call_id: "call-2",
+        tool_name: &AGAIN,
+        arguments: Some(r#"{"cmd":"ls"}"#),
+        success: false,
+        text: "first attempt failed",
+    })
+    .await;
+    assert!(
+        invoker.0.lock().unwrap().is_empty(),
+        "an invalid retry is never dispatched"
+    );
+    assert!(
+        chains().contains("tool_arguments_invalid: again"),
+        "{}",
+        chains()
     );
 }
 
@@ -2881,7 +3185,26 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         .with(&thread, |queue| queue.started.clear())
         .unwrap();
     poll().await;
-    let last = settle(|| Some(state("last")).filter(|last| last["status"] == "failed")).await;
+    let last = settle(|| {
+        let queued = core
+            .autonomy
+            .call(
+                core,
+                &fixture.lead,
+                &caller(core, "monitor"),
+                ModHostCall {
+                    operation: "turns.queued".into(),
+                    arguments: Value::Null,
+                },
+            )
+            .unwrap();
+        Some(state("last")).filter(|last| {
+            last["status"] == "failed"
+                && queued["entries"].as_array().unwrap().is_empty()
+                && core.autonomy.running(&thread).is_none()
+        })
+    })
+    .await;
     assert!(
         last["reason"]
             .as_str()

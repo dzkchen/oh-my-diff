@@ -15,10 +15,12 @@ metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
 These are local Apple Silicon candidate profiles for the active Codex `0.162.0`
 patch. They are not a public release or a qualified default. Build the patched
-`codex`, `omd-mod`, `omd`, and `omd-contract` executables from
-`upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
-SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
-and copy that archive to `/path/to/release/mod-api.tgz`. Use Node 24.18 or a
+`codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
+executables from `upstream.lock.json` and `runtime/patches/manifest.json` after
+`mise run batch setup BATCH`, with
+`python3 scripts/batch_tree.py artifacts BATCH --release`. It copies and signs
+`target/release` binaries and packs the typed author SDK as `mod-api.tgz` in
+`/private/tmp/omd-bBATCH/artifacts`; tests keep the debug target. Use Node 24.18 or a
 later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
@@ -346,6 +348,33 @@ To protect credentials, grants and evidence from same-user processes on macOS, d
 ```
 
 While the broker is deployed, installing a package adds its binaries to the pins, and `install.sh` upgrades and rollbacks re-pin exactly the active and previous installations; each asks for sudo once. `install.sh uninstall` and `omd-package uninstall` refuse while the broker is deployed; pruning an older installation uses `omd-package uninstall --keep-broker`. The protection boundary is described in [mods/REFERENCE.md](mods/REFERENCE.md#protected-authority-macos).
+
+Broker installation imports the unchanged configuration's exact valid grants,
+including secret grants and expiry, without re-trusting or toggling selections.
+Stale selections are skipped. This import does not certify package origins;
+source-restricted packages need a verified reinstall after broker deployment.
+
+Organizations restrict and deploy mods with an administrator policy, on either profile:
+
+```sh
+/path/to/omd-bin/omd-package policy install policy.json  # sudo; root-owned policy file, keeps the previous one
+/path/to/omd-bin/omd-package policy rollback             # sudo; swap back to the previous file
+/path/to/omd-bin/omd-package policy remove               # sudo
+/path/to/omd-bin/omd-package policy explain              # targets, deployment generation and each mod's scope and refusal
+/path/to/omd-bin/omd mods sync [--offline|--rollback]    # deploy the policy's packages to this account's store
+```
+
+With the broker deployed, an administrator can keep the policy in the broker instead
+(`omd-mod policy set FILE`, one administrator dialog). Existing deployment tools fit
+around these commands: an MDM profile or configuration-management run installs OMD and
+the policy file as root, then runs `omd mods sync --store STORE` as each user (for example
+from a launch agent) against the organization's own folders, Git hosts, npm registry or
+mirrored catalog; no hosted fleet service or provider secret is involved. Until that sync
+deploys a policy package, every surface the package could intercept fails closed, so
+run it right after installing the policy. Mods the policy
+deploys can't be turned off in `/mods` or `/omd`; disabling or resetting user mods there
+leaves them running. Policy fields, refusals and recovery are in
+[mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).
 
 The installer refuses removal if its
 launcher changed, no upstream Codex `0.162.x` remains on `PATH`, or the prefix

@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "5842a6bedd053bdb4311872d8322e5598dfd64965a9e6284815f6dbd265de193"
+    "sha256": "2b718f9cc13920bb146543d4d6ddf04a6c44a26abcce957186d44991ff5b9bf6"
   },
   "plugins": {
     "omd-guidance-hooks": {

@@ -7,7 +7,21 @@ struct OfflineHost {
     calls: Vec<Value>,
     now_ms: u64,
     timers: BTreeMap<(String, String), u64>,
+    environment: Option<BTreeMap<String, String>>,
+    clients: Vec<Value>,
+    attached: u64,
 }
+
+const POINTER_ACTIONS: [&str; 8] = [
+    "down",
+    "up",
+    "scroll_up",
+    "scroll_down",
+    "move",
+    "drag",
+    "enter",
+    "leave",
+];
 
 impl OfflineHost {
     fn from_scenario(scenario: &Value, now_ms: u64) -> Result<Self> {
@@ -15,6 +29,27 @@ impl OfflineHost {
             now_ms,
             ..Self::default()
         };
+        if let Some(environment) = scenario.get("environment") {
+            let mut values = BTreeMap::new();
+            for (name, value) in environment
+                .as_object()
+                .ok_or_else(|| failure("offline_environment_must_be_an_object"))?
+            {
+                if crate::host::secret_like(name) {
+                    return Err(failure(format!("offline_environment_secret_name: {name}")));
+                }
+                let value = value.as_str().filter(|value| value.len() <= 4096);
+                values.insert(
+                    name.clone(),
+                    value
+                        .ok_or_else(|| {
+                            failure(format!("offline_environment_value_invalid: {name}"))
+                        })?
+                        .to_owned(),
+                );
+            }
+            host.environment = Some(values);
+        }
         let Some(operations) = scenario.get("host_operations") else {
             return Ok(host);
         };
@@ -46,6 +81,28 @@ impl OfflineHost {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        if call.operation == "environment.read"
+            && let Some(environment) = &self.environment
+        {
+            let names = call.arguments["names"]
+                .as_array()
+                .filter(|names| (1..=16).contains(&names.len()))
+                .ok_or_else(|| failure("environment_names_invalid"))?;
+            let values = names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|name| {
+                    let value = environment.get(name);
+                    let entry = if crate::host::secret_like(name) {
+                        json!({"set": value.is_some()})
+                    } else {
+                        json!({"set": value.is_some(), "value": value})
+                    };
+                    (name.to_owned(), entry)
+                })
+                .collect::<serde_json::Map<_, _>>();
+            return Ok(json!({"values": values}));
+        }
         match call.operation.as_str() {
             "events.schedule" => {
                 let delay = call.arguments["delay_ms"]
@@ -175,57 +232,39 @@ impl ModHost {
         if steps.len() > 256 {
             return Err(failure("offline_step_limit"));
         }
-        let mut outputs = Vec::new();
-        for (index, step) in steps.iter().enumerate() {
-            let kind = step
-                .get("type")
-                .and_then(Value::as_str)
-                .ok_or_else(|| failure("offline_step_type_required"))?;
-            let cancelled = step
-                .get("cancelled")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            self.virtual_time_ms = Some(now_ms);
-            host.now_ms = now_ms;
-            let result = self.offline_step(kind, step, !cancelled, &mut host, &mut now_ms);
-            let output = match result {
-                Ok(value) => {
-                    if let Some(expected) = step.get("expect")
-                        && &value != expected
-                    {
-                        self.virtual_time_ms = None;
-                        return Err(failure(format!(
-                            "offline_expectation_failed at step {index}: expected {expected}, got {value}"
-                        )));
-                    }
-                    if step.get("expect_error").is_some() {
-                        self.virtual_time_ms = None;
-                        return Err(failure(format!(
-                            "offline_expected_error_missing at step {index}"
-                        )));
-                    }
-                    json!({"index":index,"type":kind,"at_ms":now_ms,"value":value})
-                }
-                Err(error) => {
-                    let text = error.to_string();
-                    let Some(expected) = step.get("expect_error").and_then(Value::as_str) else {
-                        self.virtual_time_ms = None;
-                        return Err(failure(format!(
-                            "offline_step_failed at step {index}: {text}"
-                        )));
-                    };
-                    if !text.contains(expected) {
-                        self.virtual_time_ms = None;
-                        return Err(failure(format!(
-                            "offline_error_mismatch at step {index}: expected {expected}, got {text}"
-                        )));
-                    }
-                    json!({"index":index,"type":kind,"at_ms":now_ms,"error":text})
-                }
-            };
-            outputs.push(output);
+        let mut tiers = BTreeMap::new();
+        for (id, tier) in scenario
+            .get("tiers")
+            .map(|tiers| {
+                tiers
+                    .as_object()
+                    .ok_or_else(|| failure("offline_tiers_must_be_an_object"))
+            })
+            .transpose()?
+            .into_iter()
+            .flatten()
+        {
+            let tier: ManagedTier = serde_json::from_value(tier.clone())
+                .map_err(|_| failure(format!("offline_tier_invalid: {id}")))?;
+            let loaded = self
+                .loaded
+                .get(id)
+                .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
+            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
+        }
+        let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
+        for (id, (_, selection)) in tiers {
+            if let Some(loaded) = self
+                .loaded
+                .get_mut(&id)
+                .filter(|loaded| loaded.selection.scope == MANAGED_SCOPE)
+            {
+                loaded.selection.scope = selection.scope;
+                loaded.selection.tier = selection.tier;
+            }
         }
         self.virtual_time_ms = None;
+        let outputs = result?;
         let remaining = host
             .replies
             .iter()
@@ -237,6 +276,69 @@ impl ModHost {
             "steps":outputs,"host_calls":host.calls,"unused_mock_replies":remaining,
             "status":self.status()}),
         )
+    }
+
+    /// Runs the steps with `tiers` mods simulated as administrator-managed packages in that tier.
+    fn offline_steps(
+        &mut self,
+        steps: &[Value],
+        tiers: &BTreeMap<String, (ManagedTier, ModSelection)>,
+        host: &mut OfflineHost,
+        now_ms: &mut u64,
+    ) -> Result<Vec<Value>> {
+        let mut outputs = Vec::new();
+        for (index, step) in steps.iter().enumerate() {
+            for (id, (tier, _)) in tiers {
+                if let Some(loaded) = self.loaded.get_mut(id) {
+                    loaded.selection.scope = MANAGED_SCOPE.to_owned();
+                    loaded.selection.tier = Some(*tier);
+                }
+            }
+            let kind = step
+                .get("type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| failure("offline_step_type_required"))?;
+            let cancelled = step
+                .get("cancelled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            self.virtual_time_ms = Some(*now_ms);
+            host.now_ms = *now_ms;
+            let result = self.offline_step(kind, step, !cancelled, host, now_ms);
+            let output = match result {
+                Ok(value) => {
+                    if let Some(expected) = step.get("expect")
+                        && &value != expected
+                    {
+                        return Err(failure(format!(
+                            "offline_expectation_failed at step {index}: expected {expected}, got {value}"
+                        )));
+                    }
+                    if step.get("expect_error").is_some() {
+                        return Err(failure(format!(
+                            "offline_expected_error_missing at step {index}"
+                        )));
+                    }
+                    json!({"index":index,"type":kind,"at_ms":*now_ms,"value":value})
+                }
+                Err(error) => {
+                    let text = error.to_string();
+                    let Some(expected) = step.get("expect_error").and_then(Value::as_str) else {
+                        return Err(failure(format!(
+                            "offline_step_failed at step {index}: {text}"
+                        )));
+                    };
+                    if !text.contains(expected) {
+                        return Err(failure(format!(
+                            "offline_error_mismatch at step {index}: expected {expected}, got {text}"
+                        )));
+                    }
+                    json!({"index":index,"type":kind,"at_ms":*now_ms,"error":text})
+                }
+            };
+            outputs.push(output);
+        }
+        Ok(outputs)
     }
 
     fn offline_step(
@@ -292,6 +394,69 @@ impl ModHost {
                     value["timers"] = json!(fired);
                 }
                 Ok(value)
+            }
+            "wait_until" => {
+                let check = step
+                    .get("check")
+                    .ok_or_else(|| failure("offline_wait_check_required"))?;
+                let until = step
+                    .get("until")
+                    .ok_or_else(|| failure("offline_wait_until_required"))?;
+                let every_ms = step.get("every_ms").and_then(Value::as_u64).unwrap_or(1000);
+                let max_ms = step
+                    .get("max_ms")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| failure("offline_wait_max_ms_required"))?;
+                if every_ms == 0 || max_ms / every_ms > 256 {
+                    return Err(failure("offline_wait_limit"));
+                }
+                let start = *now_ms;
+                loop {
+                    self.virtual_time_ms = Some(*now_ms);
+                    host.now_ms = *now_ms;
+                    let value = self.offline_step(
+                        required_string(check, "type")?,
+                        check,
+                        active,
+                        host,
+                        now_ms,
+                    )?;
+                    if &value == until {
+                        return Ok(json!({"waited_ms": *now_ms - start, "value": value}));
+                    }
+                    if *now_ms - start >= max_ms {
+                        return Err(failure(format!(
+                            "offline_wait_timeout: {until} not reached in {max_ms} ms, last {value}"
+                        )));
+                    }
+                    let delta = every_ms.min(max_ms - (*now_ms - start));
+                    self.offline_step("advance_time", &json!({"ms": delta}), active, host, now_ms)?;
+                }
+            }
+            "client_attach" => {
+                host.attached += 1;
+                let mut renderer = json!({"kind": "gui", "formats": [], "pointer": "none", "reduced_motion": false});
+                if let (Some(renderer), Some(given)) = (
+                    renderer.as_object_mut(),
+                    step.get("renderer").and_then(Value::as_object),
+                ) {
+                    renderer.extend(given.clone());
+                }
+                let id = format!("client-{}", host.attached);
+                host.clients.push(json!({"id": id, "name": required_string(step, "name")?,
+                    "renderer": renderer,
+                    "viewport": step.get("viewport").cloned().unwrap_or(Value::Null),
+                    "focused": step["focused"].as_bool().unwrap_or(false), "attached_ms": *now_ms}));
+                Ok(json!({"id": id, "clients": host.clients}))
+            }
+            "client_detach" => {
+                let id = required_string(step, "id")?;
+                let before = host.clients.len();
+                host.clients.retain(|client| client["id"] != id);
+                if host.clients.len() == before {
+                    return Err(failure("offline_client_not_attached"));
+                }
+                Ok(json!({"clients": host.clients}))
             }
             "status" => Ok(self.status()),
             "reload" => {
@@ -398,6 +563,12 @@ impl ModHost {
             }
             "terminal_mount" | "terminal_interact" => {
                 let id = required_string(step, "mod")?;
+                let mut payload = payload;
+                if let Some(input) = payload.as_object_mut() {
+                    input
+                        .entry("clients")
+                        .or_insert_with(|| json!(host.clients));
+                }
                 let view = self.invoke_scoped_with(
                     id,
                     self.generation,
@@ -410,6 +581,57 @@ impl ModHost {
                 let parsed = ModView::parse(view.clone())?;
                 if kind == "terminal_mount" {
                     return Ok(view);
+                }
+                if let Some(pointer) = step.get("pointer") {
+                    let component = required_string(step, "component")?;
+                    let mounted = parsed
+                        .sites
+                        .values()
+                        .find_map(|site| terminal_component(&site.components, component))
+                        .ok_or_else(|| failure("offline_terminal_component_not_mounted"))?;
+                    if !matches!(
+                        mounted,
+                        ModComponent::Box { pointer: true, .. }
+                            | ModComponent::Image { pointer: true, .. }
+                            | ModComponent::Raster { pointer: true, .. }
+                    ) {
+                        return Err(failure("offline_terminal_component_not_pointer"));
+                    }
+                    let valid = pointer["column"].is_i64()
+                        && pointer["row"].is_i64()
+                        && pointer["action"]
+                            .as_str()
+                            .is_some_and(|action| POINTER_ACTIONS.contains(&action))
+                        && (pointer["half"].is_null()
+                            || matches!(pointer["half"].as_u64(), Some(0 | 1)))
+                        && (pointer["button"].is_null()
+                            || matches!(
+                                pointer["button"].as_str(),
+                                Some("left" | "right" | "middle")
+                            ));
+                    if !valid {
+                        return Err(failure("offline_terminal_pointer_invalid"));
+                    }
+                    let mut event = json!({"component": component, "kind": "pointer",
+                        "pointer": {"column": pointer["column"], "row": pointer["row"], "half": pointer["half"],
+                            "action": pointer["action"], "button": pointer["button"]}});
+                    match step.get("client").and_then(Value::as_str) {
+                        Some(client) if host.clients.iter().any(|entry| entry["id"] == client) => {
+                            event["client"] = json!(client);
+                        }
+                        Some(_) => return Err(failure("offline_client_not_attached")),
+                        None => event["origin"] = json!("user"),
+                    }
+                    let result = self.invoke_scoped_with(
+                        id,
+                        self.generation,
+                        "component_event",
+                        "",
+                        event.clone(),
+                        || active,
+                        |caller, call| host.call(caller, call),
+                    )?;
+                    return Ok(json!({"event": event, "result": result}));
                 }
                 let action = if let Some(component) = step.get("component").and_then(Value::as_str)
                 {

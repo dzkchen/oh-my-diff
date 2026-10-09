@@ -1,10 +1,79 @@
 use super::*;
+use codex_extension_api::ToolInventoryEntry;
 use codex_extension_api::ToolSpecAdjustment;
 use codex_extension_api::ToolSpecContributor;
 use codex_extension_api::ToolSpecView;
 
 const SPEC_TOOLS: usize = 512;
 const PARAMETER_BYTES: usize = 16 * 1024;
+
+fn bounded_description(text: &str) -> String {
+    text.chars().take(4096).collect()
+}
+
+fn bounded_parameters(parameters: &Value) -> Value {
+    if parameters.to_string().len() <= PARAMETER_BYTES {
+        parameters.clone()
+    } else {
+        Value::Null
+    }
+}
+
+fn inventory_entry(tool: &ToolInventoryEntry) -> Value {
+    json!({"name": tool.name, "kind": tool.kind, "server": tool.server,
+        "original": {"description": bounded_description(&tool.description),
+            "parameters": bounded_parameters(&tool.parameters), "freeform": tool.freeform},
+        "effective": tool.effective.as_ref().map(|view| json!({
+            "description": bounded_description(&view.description),
+            "parameters": bounded_parameters(&view.parameters), "deferred": view.deferred}))})
+}
+
+pub(super) fn list(core: &Core, lead: &Lead) -> Result<Value, String> {
+    core.expansion
+        .inventories
+        .lock()
+        .map_err(|_| "tool_inventory_poisoned")?
+        .get(&lead.thread)
+        .cloned()
+        .ok_or_else(|| "tools_unavailable: this thread has not built its tools".into())
+}
+
+impl State {
+    pub(in crate::mods) fn validate_call(
+        &self,
+        thread: ThreadId,
+        tool: &str,
+        arguments: &Value,
+        rewritten: bool,
+    ) -> Result<(), String> {
+        let inventories = self
+            .inventories
+            .lock()
+            .map_err(|_| "tool_inventory_poisoned")?;
+        let Some(entry) = inventories
+            .get(&thread)
+            .and_then(|inventory| inventory["tools"].as_array())
+            .and_then(|tools| tools.iter().find(|entry| entry["name"] == tool))
+        else {
+            return Ok(());
+        };
+        let schema = &entry["original"]["parameters"];
+        if schema.is_null()
+            || entry["original"]["freeform"] == true
+            || !rewritten && entry["effective"]["parameters"] == *schema
+        {
+            return Ok(());
+        }
+        codex_omd::tool_schema::validate(schema, arguments)
+            .map_err(|reason| format!("tool_arguments_invalid: {tool}: {reason}"))
+    }
+
+    pub(in crate::mods) fn forget_inventory(&self, thread: ThreadId) {
+        if let Ok(mut inventories) = self.inventories.lock() {
+            inventories.remove(&thread);
+        }
+    }
+}
 
 /// Turns the composed tool list into hide, defer and re-describe decisions against the original.
 pub(super) fn adjustment(original: &[Value], tools: &Value) -> ToolSpecAdjustment {
@@ -38,6 +107,32 @@ impl ToolSpecContributor for Mods {
     fn adjusting(&self, thread_store: &ExtensionData) -> bool {
         self.expansion.tool_specs.load(Ordering::Acquire) && lead_thread(thread_store)
             || thread_store.get::<roles::AgentTools>().is_some()
+    }
+
+    fn observing(&self, thread_store: &ExtensionData) -> bool {
+        lead_thread(thread_store) && self.expansion.tool_inventory.load(Ordering::Acquire)
+    }
+
+    fn observe_tool_inventory(
+        &self,
+        thread_store: &ExtensionData,
+        inventory: &[ToolInventoryEntry],
+    ) {
+        let Some(lead) = thread_store.get::<Lead>() else {
+            return;
+        };
+        let Ok(mut inventories) = self.expansion.inventories.lock() else {
+            return;
+        };
+        if !self.expansion.tool_inventory.load(Ordering::Acquire) {
+            return;
+        }
+        let snapshot = json!({"thread_id": lead.thread.to_string(),
+            "tools": inventory.iter().take(SPEC_TOOLS).map(inventory_entry).collect::<Vec<_>>()});
+        if inventories.get(&lead.thread) != Some(&snapshot) {
+            let _ = codex_omd::tool_schema::write_inventory(&lead.host.root, &snapshot);
+            inventories.insert(lead.thread, snapshot);
+        }
     }
 
     fn adjust_tool_specs(
@@ -74,13 +169,8 @@ impl ToolSpecContributor for Mods {
             .iter()
             .take(SPEC_TOOLS)
             .map(|spec| {
-                let parameters = if spec.parameters.to_string().len() <= PARAMETER_BYTES {
-                    spec.parameters.clone()
-                } else {
-                    Value::Null
-                };
-                json!({"name": spec.name, "description": spec.description.chars().take(4096).collect::<String>(),
-                    "parameters": parameters, "deferred": false})
+                json!({"name": spec.name, "description": bounded_description(&spec.description),
+                    "parameters": bounded_parameters(&spec.parameters), "deferred": false})
             })
             .collect::<Vec<_>>();
         let payload = json!({"thread_id": lead.thread.to_string(), "route": route, "tools": tools});

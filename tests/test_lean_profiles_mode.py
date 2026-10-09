@@ -15,6 +15,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LeanProfileModeTests(unittest.TestCase):
+    def test_broker_install_imports_exact_grants_without_retrusting(self):
+        snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
+                              "sha256": "a" * 64, "capabilities": ["exec"],
+                              "secret_environment": ["API_TOKEN"], "expires_at": 4000000000}]}
+        record = {"store": "/store", "broker": {"installed_path": "/broker"}}
+        calls = []
+
+        def invoke(manager, command, store, *args):
+            calls.append((command, args))
+            if command == "selection-status":
+                return {"selections": [{**snapshot["mods"][0], "selected": True}]}
+            if command == "broker-grants-import" and not args:
+                return snapshot
+            if command == "broker-grants-import":
+                self.assertEqual(json.loads(args[0]), snapshot)
+            return {}
+
+        with patch.object(lean_profiles, "load", return_value=record), \
+                patch.object(lean_profiles, "check", return_value=(None, "/manager")), \
+                patch.object(lean_profiles, "pinned_binaries", return_value=set()), \
+                patch.object(lean_profiles, "invoke", side_effect=invoke), \
+                patch.object(lean_profiles.authority_broker, "main", return_value={"installed": True}):
+            lean_profiles.broker(Path("/prefix"), Path("/bin"), "install")
+        self.assertEqual([command for command, _ in calls],
+                         ["broker-grants-import", "broker-grants-import", "reload"])
+
     def test_cli_advertises_only_current_activation_choices(self):
         result = subprocess.run(
             [sys.executable, "-m", "scripts.lean_profiles", "--prefix", "/tmp/omd-unused-prefix",
@@ -81,8 +107,7 @@ class LeanProfileModeTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("OMD_TEST_MOD_BIN"), "set OMD_TEST_MOD_BIN for native offline coverage")
     def test_task_tools_enable_requires_workflow_in_isolated_store(self):
         manager = Path(os.environ["OMD_TEST_MOD_BIN"]).resolve()
-        node = shutil.which("node")
-        self.assertIsNotNone(node)
+        node = subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()
         with tempfile.TemporaryDirectory(prefix="omd-profile-selection-", dir="/private/tmp") as temporary:
             base = Path(temporary)
             store = base / "store"

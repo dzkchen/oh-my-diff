@@ -454,35 +454,78 @@ impl ModStore {
         }
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
-        self.package_plan_locked(request, false)
+        self.package_plan_locked(request, false, None)
     }
 
     pub fn package_requirements(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
-        self.package_plan_locked(request, true)
+        self.package_plan_locked(request, true, None)
     }
 
+    /// A `deployment` plan resolves administrator packages: the user's blocks and policy refusals do not apply.
     fn package_plan_locked(
         &self,
         request: ModInstallRequest,
         inspect: bool,
+        deployment: Option<&policy::ManagedPackage>,
     ) -> Result<ModPackagePlan> {
         if !MOD_SCOPES.contains(&request.scope.as_str()) {
             return Err(failure("unsupported_scope: user or project"));
         }
-        let existing = self.read_package_lock()?;
-        let config = self.configuration()?;
+        let (existing, config) = if deployment.is_some() {
+            (
+                ModPackageLock::default(),
+                ModConfiguration {
+                    schema: 1,
+                    revision: 0,
+                    node: PathBuf::new(),
+                    mods: Vec::new(),
+                },
+            )
+        } else {
+            (self.read_package_lock()?, self.configuration()?)
+        };
+        let managed = match deployment.is_some() || inspect {
+            true => None,
+            false => self.managed()?,
+        };
         let mut resolved = BTreeMap::new();
         let mut visiting = Vec::new();
-        let root = self.resolve_requested(
-            &request.source,
-            None,
-            &request,
-            &mut resolved,
-            &mut visiting,
-            inspect,
-        )?;
+        let cached = deployment.map(|entry| {
+            self.root
+                .join("package-cache")
+                .join(&entry.id)
+                .join(&entry.sha256)
+        });
+        let root = match (deployment, cached) {
+            (Some(entry), Some(path))
+                if store::package(&path).is_ok_and(|(manifest, _, hash)| {
+                    manifest.id == entry.id && hash == entry.sha256
+                }) =>
+            {
+                self.resolve_materialized(
+                    path,
+                    request.source.clone(),
+                    Some(entry.sha256.clone()),
+                    None,
+                    &request,
+                    &existing,
+                    &mut resolved,
+                    &mut visiting,
+                    inspect,
+                )
+            }
+            _ => self.resolve_requested(
+                &request.source,
+                None,
+                &request,
+                &existing,
+                &mut resolved,
+                &mut visiting,
+                inspect,
+            ),
+        }?;
         let root_id = root.package.id.clone();
         resolved.insert(root_id.clone(), root);
         let mut packages = resolved
@@ -492,13 +535,25 @@ impl ModStore {
                     &resolved.locked.id,
                     &resolved.locked.version,
                     &resolved.locked.integrity,
-                ) {
+                ) && deployment.is_none()
+                {
                     return Err(failure(format!(
                         "package_blocked: {} {}: {reason}",
                         resolved.locked.id, resolved.locked.version
                     )));
                 }
                 let previous = existing.packages.get(&resolved.package.id);
+                if let Some(reason) = managed.as_ref().and_then(|managed| {
+                    managed.policy.install_refusal(
+                        &resolved.locked.id,
+                        &resolved.locked.capabilities,
+                        &policy::source_reference(&resolved.locked.source),
+                        previous
+                            .is_some_and(|locked| locked.integrity != resolved.locked.integrity),
+                    )
+                }) {
+                    return Err(failure(reason));
+                }
                 let settings = request
                     .settings
                     .get(&resolved.package.id)
@@ -565,7 +620,8 @@ impl ModStore {
         request: ModInstallRequest,
         confirmation: &str,
     ) -> Result<ModPackageLock> {
-        let plan = self.package_plan_locked(request, false)?;
+        let online = !request.offline;
+        let plan = self.package_plan_locked(request, false, None)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
         }
@@ -610,6 +666,7 @@ impl ModStore {
                 scope: package.scope.clone(),
                 secret_environment: package.trust.secret_environment.clone(),
                 expires_at: None,
+                tier: None,
             };
             if let Some(selection) = selection {
                 config.mods[selection] = next;
@@ -629,7 +686,14 @@ impl ModStore {
             .ok_or_else(|| failure("revision_overflow"))?;
         let event =
             json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
-        self.commit_package_transaction(lock, config, &lifecycle, &plan.action, event)
+        self.commit_package_transaction(
+            lock,
+            config,
+            &lifecycle,
+            &plan.action,
+            event,
+            if online { &plan.packages } else { &[] },
+        )
     }
 
     pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -696,7 +760,7 @@ impl ModStore {
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         let config = self.configuration()?;
-        self.commit_package_transaction(lock, config, &[], "unblock", json!({"mod": id}))
+        self.commit_package_transaction(lock, config, &[], "unblock", json!({"mod": id}), &[])
     }
 
     fn package_disable_blocking(&self, id: &str, block: Option<&str>) -> Result<ModPackageLock> {
@@ -745,6 +809,7 @@ impl ModStore {
                 &[],
                 "quarantine",
                 json!({"package": event, "reason": reason}),
+                &[],
             ),
             None => self.commit_package_transaction(
                 lock,
@@ -752,6 +817,7 @@ impl ModStore {
                 &[],
                 "disable",
                 json!({"package": event}),
+                &[],
             ),
         }
     }
@@ -815,7 +881,7 @@ impl ModStore {
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         let event = json!({"package": package_event(&lock.packages[id])});
-        self.commit_package_transaction(lock, config, &[], "enable", event)
+        self.commit_package_transaction(lock, config, &[], "enable", event, &[])
     }
 
     pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
@@ -846,7 +912,7 @@ impl ModStore {
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         let event = json!({"package": package_event(&package)});
-        self.commit_package_transaction(lock, config, &[], "uninstall", event)
+        self.commit_package_transaction(lock, config, &[], "uninstall", event, &[])
     }
 
     pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -856,6 +922,14 @@ impl ModStore {
     }
 
     fn package_rollback_plan_locked(&self, id: &str) -> Result<ModPackagePlan> {
+        if self
+            .managed()?
+            .is_some_and(|managed| managed.policy.updates == policy::ManagedUpdates::Managed)
+        {
+            return Err(failure(format!(
+                "managed_updates_denied: administrator policy manages package versions; {id} stays as installed"
+            )));
+        }
         let lock = self.read_package_lock()?;
         let current = lock
             .packages
@@ -934,13 +1008,14 @@ impl ModStore {
             scope: previous.scope,
             secret_environment: previous.trust.secret_environment,
             expires_at: None,
+            tier: None,
         };
         config.revision = config
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         let event = json!({"package": package_event(&plan.packages[0])});
-        self.commit_package_transaction(lock, config, &[], "rollback", event)
+        self.commit_package_transaction(lock, config, &[], "rollback", event, &[])
     }
 
     /// Runs `lifecycle` scripts and restores the previous lock and configuration on failure.
@@ -951,6 +1026,7 @@ impl ModStore {
         lifecycle: &[(ModLockedPackage, &str)],
         event: &str,
         detail: Value,
+        provenance: &[ModLockedPackage],
     ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
         let old_config = serde_json::to_value(self.configuration()?)?;
@@ -968,12 +1044,24 @@ impl ModStore {
                 .flatten()
                 .map(store::grant)
                 .collect::<BTreeSet<_>>();
-            let approved = config
+            let mut approved: BTreeSet<String> = config
                 .mods
                 .iter()
                 .map(|selection| store::grant(&json!(selection)))
                 .filter(|grant| !previous.contains(grant))
                 .collect();
+            approved.extend(provenance.iter().map(store::package_provenance));
+            approved.extend(
+                config
+                    .mods
+                    .iter()
+                    .filter(|selection| {
+                        provenance.iter().any(|package| {
+                            package.path == selection.path && package.integrity == selection.sha256
+                        })
+                    })
+                    .map(|selection| store::grant(&json!(selection))),
+            );
             self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
             self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
             std::fs::remove_file(self.root.join("package-transaction.json"))?;
@@ -1008,17 +1096,262 @@ impl ModStore {
         std::fs::File::open(&self.root)?.sync_all()
     }
 
+    /// Installs every package administrator policy assigns to this account and records a new
+    /// deployment generation only when all of them verify; otherwise the active generation stays.
+    pub fn package_sync(&self, offline: bool) -> Result<Value> {
+        let managed = self
+            .managed()?
+            .ok_or_else(|| failure("managed_policy_absent: no administrator policy applies"))?;
+        let user = self.managed_user();
+        let _guard = self.lock()?;
+        let current = self.managed_deployment()?;
+        let index = managed
+            .policy
+            .index
+            .as_ref()
+            .map(policy::ManagedIndex::location)
+            .transpose()
+            .map_err(|error| error.to_string());
+        let mut deployed: Vec<policy::DeployedPackage> = Vec::new();
+        let mut failures = BTreeMap::new();
+        for entry in managed.deployable(&user) {
+            match self.deploy(entry, &managed, &index, offline) {
+                Ok(packages) => {
+                    for package in packages {
+                        if !deployed.contains(&package) {
+                            deployed.push(package);
+                        }
+                    }
+                }
+                Err(error) => {
+                    failures.insert(format!("{} {}", entry.id, entry.sha256), error.to_string());
+                }
+            }
+        }
+        if !failures.is_empty() {
+            let _ =
+                self.record_security_event("managed_sync_refused", json!({"failures": failures}));
+            return Err(failure(format!(
+                "managed_sync_incomplete: generation {} stays active: {}",
+                current.generation,
+                serde_json::to_string(&failures)?
+            )));
+        }
+        deployed.sort_by(|a, b| (&a.id, &a.sha256).cmp(&(&b.id, &b.sha256)));
+        if deployed == current.packages && managed.sha256 == current.policy_sha256 {
+            return Ok(
+                json!({"generation": current.generation, "changed": false, "packages": deployed}),
+            );
+        }
+        self.deploy_generation(current, managed.sha256, deployed)
+    }
+
+    /// Makes the previous deployment generation active again; policy still decides what loads.
+    pub fn package_sync_rollback(&self) -> Result<Value> {
+        let _guard = self.lock()?;
+        let current = self.managed_deployment()?;
+        let previous = current
+            .previous
+            .clone()
+            .ok_or_else(|| failure("managed_rollback_unavailable: no previous generation"))?;
+        self.deploy_generation(current, previous.policy_sha256, previous.packages)
+    }
+
+    fn deploy_generation(
+        &self,
+        current: policy::ManagedDeployment,
+        policy_sha256: String,
+        packages: Vec<policy::DeployedPackage>,
+    ) -> Result<Value> {
+        let next = policy::ManagedDeployment {
+            generation: current.generation + 1,
+            policy_sha256,
+            packages,
+            previous: Some(Box::new(policy::ManagedDeployment {
+                previous: None,
+                ..current
+            })),
+        };
+        self.write("managed.json", &serde_json::to_value(&next)?)?;
+        let packages = next
+            .packages
+            .iter()
+            .map(|package| json!({"id": package.id, "version": package.version, "sha256": package.sha256}))
+            .collect::<Vec<_>>();
+        let _ = self.record_security_event(
+            "managed_deploy",
+            json!({"generation": next.generation, "packages": packages}),
+        );
+        Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
+    }
+
+    /// The pinned content from the cache, else from the source or the first mirror that verifies,
+    /// with its dependencies, which only the resolver finds.
+    fn deploy(
+        &self,
+        entry: &policy::ManagedPackage,
+        managed: &policy::Managed,
+        index: &std::result::Result<Option<PathBuf>, String>,
+        offline: bool,
+    ) -> Result<Vec<policy::DeployedPackage>> {
+        let cached = self
+            .root
+            .join("package-cache")
+            .join(&entry.id)
+            .join(&entry.sha256);
+        if let Ok(path) = cached.canonicalize()
+            && let Ok((package, _, sha256)) = store::package(&path)
+            && sha256 == entry.sha256
+            && package.dependencies.is_empty()
+        {
+            if !package.lifecycle.is_empty() {
+                return Err(lifecycle_refused(&entry.id));
+            }
+            return Ok(vec![policy::DeployedPackage {
+                id: package.id,
+                version: package.version,
+                sha256,
+                path,
+                dependencies: Vec::new(),
+            }]);
+        }
+        let mut errors = Vec::new();
+        for reference in std::iter::once(&entry.source).chain(&entry.mirrors) {
+            let indexed = !(reference.starts_with('/')
+                || reference.starts_with("npm:")
+                || reference.starts_with("git+"));
+            let attempt = match index {
+                Err(error) if indexed => Err(failure(error)),
+                index => self.deploy_from(
+                    reference,
+                    entry,
+                    managed,
+                    index.clone().ok().flatten(),
+                    offline,
+                ),
+            };
+            match attempt {
+                Ok(packages) => return Ok(packages),
+                Err(error) => errors.push(format!("{reference}: {error}")),
+            }
+        }
+        Err(failure(errors.join("; ")))
+    }
+
+    fn deploy_from(
+        &self,
+        reference: &str,
+        entry: &policy::ManagedPackage,
+        managed: &policy::Managed,
+        index: Option<PathBuf>,
+        offline: bool,
+    ) -> Result<Vec<policy::DeployedPackage>> {
+        let mut source = ModPackageSource::parse(reference, index.clone())?;
+        if !entry.version.is_empty()
+            && matches!(
+                source,
+                ModPackageSource::Package { .. } | ModPackageSource::Npm { .. }
+            )
+        {
+            source = source.with_version(&entry.version)?;
+        }
+        if let (ModPackageSource::Npm { registry, .. }, Some(admin)) =
+            (&mut source, &managed.policy.registry)
+            && registry.is_empty()
+        {
+            registry.clone_from(admin);
+        }
+        let grant = |package: &policy::ManagedPackage| ModPackageGrant {
+            capabilities: package.capabilities.clone(),
+            dependencies: package.dependencies,
+            lifecycle: Vec::new(),
+            secret_environment: package.secret_environment.clone(),
+        };
+        let mut packages: BTreeMap<String, ModPackageGrant> = managed
+            .policy
+            .packages
+            .iter()
+            .rev()
+            .map(|package| (package.id.clone(), grant(package)))
+            .collect();
+        packages.insert(entry.id.clone(), grant(entry));
+        let request = ModInstallRequest {
+            action: None,
+            source,
+            index,
+            scope: "user".to_owned(),
+            offline,
+            trust: ModPackageTrust { packages },
+            settings: BTreeMap::from([(entry.id.clone(), entry.settings.clone())]),
+        };
+        let plan = self
+            .package_plan_locked(request, false, Some(entry))
+            .map_err(|error| {
+                match error
+                    .to_string()
+                    .strip_prefix("explicit_exact_lifecycle_trust_required: ")
+                {
+                    Some(id) => lifecycle_refused(id),
+                    None => error,
+                }
+            })?;
+        if !plan
+            .packages
+            .iter()
+            .any(|locked| locked.id == entry.id && locked.integrity == entry.sha256)
+        {
+            return Err(failure(format!(
+                "managed_integrity_mismatch: {reference} does not hold the {} content administrator policy pins",
+                entry.id
+            )));
+        }
+        plan.packages
+            .iter()
+            .map(|locked| {
+                if !managed
+                    .policy
+                    .packages
+                    .iter()
+                    .any(|listed| listed.id == locked.id && listed.sha256 == locked.integrity)
+                {
+                    return Err(failure(format!(
+                        "managed_integrity_mismatch: dependency {} {} is not pinned by administrator policy",
+                        locked.id, locked.integrity
+                    )));
+                }
+                Ok(policy::DeployedPackage {
+                    id: locked.id.clone(),
+                    version: locked.version.clone(),
+                    sha256: locked.integrity.clone(),
+                    path: locked.cache_path.clone(),
+                    dependencies: locked
+                        .dependencies
+                        .iter()
+                        .filter_map(|dependency| {
+                            plan.packages
+                                .iter()
+                                .find(|resolved| resolved.id == dependency.id)
+                                .map(|resolved| resolved.integrity.clone())
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn resolve_requested(
         &self,
         source: &ModPackageSource,
         requirement: Option<(&str, &str)>,
         request: &ModInstallRequest,
+        lock: &ModPackageLock,
         resolved: &mut BTreeMap<String, ResolvedPackage>,
         visiting: &mut Vec<String>,
         inspect: bool,
     ) -> Result<ResolvedPackage> {
         let (path, normalized_source, expected_integrity) =
-            self.materialize_source(source, request.offline)?;
+            self.materialize_source(source, request.offline, lock)?;
         let staged =
             path.starts_with(&self.root) && !path.starts_with(self.root.join("package-cache"));
         let result = self.resolve_materialized(
@@ -1027,6 +1360,7 @@ impl ModStore {
             expected_integrity,
             requirement,
             request,
+            lock,
             resolved,
             visiting,
             inspect,
@@ -1045,6 +1379,7 @@ impl ModStore {
         expected_integrity: Option<String>,
         requirement: Option<(&str, &str)>,
         request: &ModInstallRequest,
+        lock: &ModPackageLock,
         resolved: &mut BTreeMap<String, ResolvedPackage>,
         visiting: &mut Vec<String>,
         inspect: bool,
@@ -1170,6 +1505,7 @@ impl ModStore {
                 &dependency_source,
                 Some((&dependency.id, &dependency.version)),
                 request,
+                lock,
                 resolved,
                 visiting,
                 inspect,
@@ -1184,6 +1520,7 @@ impl ModStore {
         &self,
         source: &ModPackageSource,
         offline: bool,
+        lock: &ModPackageLock,
     ) -> Result<(PathBuf, ModPackageSource, Option<String>)> {
         match source {
             ModPackageSource::Local { path } => {
@@ -1209,10 +1546,10 @@ impl ModStore {
                     return Err(failure("repository_reference_invalid"));
                 }
                 let local = PathBuf::from(repository);
-                let (repository_path, repository_source) = if local.exists() {
+                let (repository_path, repository_source, _repository_view) = if local.exists() {
                     let path = local.canonicalize()?;
                     let source = path.display().to_string();
-                    (path, source)
+                    (path, source, None)
                 } else {
                     if offline && !commit {
                         return Err(failure(
@@ -1220,10 +1557,9 @@ impl ModStore {
                         ));
                     }
                     if offline
-                        && let Some(package) =
-                            self.read_package_lock()?.packages.values().find(|package| {
-                                package.source == *source && package.cache_path.exists()
-                            })
+                        && let Some(package) = lock.packages.values().find(|package| {
+                            package.source == *source && package.cache_path.exists()
+                        })
                     {
                         return Ok((
                             package.cache_path.canonicalize()?,
@@ -1238,47 +1574,12 @@ impl ModStore {
                     std::fs::create_dir_all(&repositories)?;
                     let cached =
                         repositories.join(format!("{}.git", digest(repository.as_bytes())));
-                    if !cached.exists() {
-                        if offline {
-                            return Err(failure("repository_unavailable_offline_and_not_cached"));
-                        }
-                        let staging = repositories.join(format!(
-                            ".{}.{}.tmp",
-                            digest(repository.as_bytes()),
-                            std::process::id()
-                        ));
-                        let output = Command::new("git")
-                            .args(["clone", "--bare", "--filter=blob:none", "--", repository])
-                            .arg(&staging)
-                            .env_clear()
-                            .env("PATH", "/usr/bin:/bin")
-                            .output()?;
-                        if !output.status.success() {
-                            let _ = std::fs::remove_dir_all(&staging);
-                            return Err(failure(format!(
-                                "repository_clone_failed: {}",
-                                String::from_utf8_lossy(&output.stderr).trim()
-                            )));
-                        }
-                        std::fs::rename(&staging, &cached)?;
-                        std::fs::File::open(&repositories)?.sync_all()?;
+                    if offline && !cached.exists() {
+                        return Err(failure("repository_unavailable_offline_and_not_cached"));
                     }
-                    if !offline {
-                        let output = Command::new("git")
-                            .arg("-C")
-                            .arg(&cached)
-                            .args(["fetch", "--force", "--no-tags", "origin", revision])
-                            .env_clear()
-                            .env("PATH", "/usr/bin:/bin")
-                            .output()?;
-                        if !output.status.success() {
-                            return Err(failure(format!(
-                                "repository_fetch_failed: {}",
-                                String::from_utf8_lossy(&output.stderr).trim()
-                            )));
-                        }
-                    }
-                    (cached.canonicalize()?, repository.clone())
+                    let view =
+                        repository_view(&repositories, &cached, repository, revision, offline)?;
+                    (view.path().to_path_buf(), repository.clone(), Some(view))
                 };
                 let revision = if commit {
                     revision.to_lowercase()
@@ -1359,7 +1660,7 @@ impl ModStore {
                     Ok(index) => index,
                     Err(_error) if offline => {
                         if let Some(package) =
-                            self.read_package_lock()?.packages.values().find(|package| {
+                            lock.packages.values().find(|package| {
                                 matches!(&package.source,
                                     ModPackageSource::Package { index: locked_index, id: locked_id, version: locked_version }
                                     if locked_index == index && locked_id == id
@@ -1399,7 +1700,7 @@ impl ModStore {
                         }
                     })?;
                 let (path, resolved, actual_expected) =
-                    self.materialize_source(&release.source, offline)?;
+                    self.materialize_source(&release.source, offline, lock)?;
                 if actual_expected
                     .as_deref()
                     .is_some_and(|value| value != release.integrity)
@@ -1422,7 +1723,7 @@ impl ModStore {
                 version,
                 registry,
                 integrity,
-            } => self.materialize_npm(package, version, registry, integrity, offline),
+            } => self.materialize_npm(package, version, registry, integrity, offline, lock),
         }
     }
 
@@ -1433,6 +1734,7 @@ impl ModStore {
         registry: &str,
         pinned: &str,
         offline: bool,
+        lock: &ModPackageLock,
     ) -> Result<(PathBuf, ModPackageSource, Option<String>)> {
         let config = NpmConfig::load();
         let registry = if registry.is_empty() {
@@ -1449,7 +1751,6 @@ impl ModStore {
             return Err(failure("npm_reference_invalid"));
         }
         if offline {
-            let lock = self.read_package_lock()?;
             let package = lock
                 .packages
                 .values()
@@ -1693,6 +1994,12 @@ impl ModStore {
     }
 }
 
+fn lifecycle_refused(id: &str) -> std::io::Error {
+    failure(format!(
+        "managed_lifecycle_requires_approval: {id} runs install scripts; install it interactively"
+    ))
+}
+
 fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {
     let bytes = store::package_read(source, relative, limit)?;
     let target = destination.join(relative);
@@ -1702,17 +2009,73 @@ fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> R
     std::fs::write(target, bytes)
 }
 
+fn repository_view(
+    repositories: &Path,
+    cached: &Path,
+    repository: &str,
+    revision: &str,
+    offline: bool,
+) -> Result<tempfile::TempDir> {
+    std::fs::create_dir_all(cached.join("objects"))?;
+    let fresh = || -> Result<tempfile::TempDir> {
+        let view = tempfile::tempdir_in(repositories)?;
+        git(
+            repositories,
+            &[
+                "init",
+                "--bare",
+                "--template=",
+                &view.path().display().to_string(),
+            ],
+        )?;
+        Ok(view)
+    };
+    let view = fresh()?;
+    std::fs::remove_dir_all(view.path().join("objects"))?;
+    std::os::unix::fs::symlink(cached.join("objects"), view.path().join("objects"))?;
+    if !offline {
+        let fetched = fresh()?;
+        git(
+            fetched.path(),
+            &[
+                "fetch",
+                "--force",
+                "--no-tags",
+                "--",
+                repository,
+                &format!("{revision}:refs/heads/pinned"),
+            ],
+        )?;
+        git(
+            view.path(),
+            &[
+                "fetch",
+                "--force",
+                "--no-tags",
+                "--",
+                &fetched.path().display().to_string(),
+                "refs/heads/pinned",
+            ],
+        )?;
+        return Ok(fetched);
+    }
+    Ok(view)
+}
+
 fn git(repository: &Path, arguments: &[&str]) -> Result<String> {
     String::from_utf8(git_bytes(repository, arguments)?).map_err(failure)
 }
 
 fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
+        .arg("--no-replace-objects")
         .arg("-C")
         .arg(repository)
         .args(arguments)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()?;
     if !output.status.success() {
         return Err(failure(format!(
@@ -2201,4 +2564,98 @@ fn selected_settings(
             || locked.settings.clone(),
             |selection| selection.settings.clone(),
         )
+}
+
+#[cfg(test)]
+mod repository_tests {
+    use super::*;
+
+    #[test]
+    fn online_repository_content_does_not_trust_cached_objects_or_origins() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let origin = root.join("origin");
+        let other = root.join("other");
+        for (path, value) in [(&origin, "good"), (&other, "evil")] {
+            std::fs::create_dir(path).unwrap();
+            std::fs::write(path.join("value"), value).unwrap();
+            git(path, &["init"]).unwrap();
+            git(path, &["add", "."]).unwrap();
+            git(
+                path,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.com",
+                    "commit",
+                    "-m",
+                    "fixture",
+                ],
+            )
+            .unwrap();
+        }
+        let revision = git(&origin, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_owned();
+        let other_revision = git(&other, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_owned();
+        let cached = root.join("cached.git");
+        git(
+            &root,
+            &[
+                "clone",
+                "--bare",
+                "--no-hardlinks",
+                origin.to_str().unwrap(),
+                cached.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        git(&cached, &["fetch", other.to_str().unwrap(), "HEAD"]).unwrap();
+        git(
+            &cached,
+            &[
+                "config",
+                &format!("url.{}.insteadOf", other.display()),
+                origin.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let blob = git(&origin, &["rev-parse", "HEAD:value"])
+            .unwrap()
+            .trim()
+            .to_owned();
+        let other_blob = git(&other, &["rev-parse", "HEAD:value"])
+            .unwrap()
+            .trim()
+            .to_owned();
+        std::fs::copy(
+            other
+                .join(".git/objects")
+                .join(&other_blob[..2])
+                .join(&other_blob[2..]),
+            cached.join("objects").join(&blob[..2]).join(&blob[2..]),
+        )
+        .unwrap();
+        assert!(
+            repository_view(
+                &root,
+                &cached,
+                origin.to_str().unwrap(),
+                &other_revision,
+                false
+            )
+            .is_err()
+        );
+        let online =
+            repository_view(&root, &cached, origin.to_str().unwrap(), &revision, false).unwrap();
+        assert_eq!(
+            git_bytes(online.path(), &["show", &format!("{revision}:value")]).unwrap(),
+            b"good"
+        );
+    }
 }

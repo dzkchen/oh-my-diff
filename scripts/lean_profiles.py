@@ -743,9 +743,27 @@ def broker(prefix, bin_dir, action, also=()):
         arguments += [f"--pin={path}" for path in sorted(pins)]
     if action == "install":
         arguments += ["--helper", record["broker"]["installed_path"]]
+    snapshot = invoke(manager, "broker-grants-import", record["store"]) if action == "install" else None
     result = authority_broker.main(arguments)
     if action == "install":
+        invoke(manager, "broker-grants-import", record["store"], json.dumps(snapshot))
         invoke(manager, "reload", record["store"])
+    return result
+
+
+def administrator_policy(prefix, bin_dir, action, source=None):
+    record = load(prefix)
+    _, manager = check(record, bin_dir)
+    if action == "explain":
+        return invoke(manager, "policy", "explain", record["store"])
+    arguments = [f"policy-{action}"]
+    if action == "install":
+        if source is None:
+            raise ValueError("usage: omd-package policy install FILE")
+        invoke(manager, "policy", "check", source.resolve())
+        arguments.append(str(source.resolve()))
+    result = authority_broker.main(arguments)
+    invoke(manager, "reload", record["store"])
     return result
 
 
@@ -760,8 +778,9 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
+    catalog = package_sources(support.preview_lock())
     managed.update(prefix / "sources" / identifier / name
-                   for identifier, package in record["packages"].items() for name in package["files"])
+                   for identifier in PACKAGES for name in catalog[identifier]["files"])
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -837,6 +856,9 @@ def main():
     broker_parser.add_argument("action", choices=("install", "pin", "status", "reset", "uninstall"))
     broker_parser.add_argument("--also", type=Path, action="append", default=[],
                                help="also pin the binaries of another installation prefix")
+    policy_parser = commands.add_parser("policy", help="install, roll back, remove or explain the administrator policy file (sudo)")
+    policy_parser.add_argument("action", choices=("install", "rollback", "remove", "explain"))
+    policy_parser.add_argument("file", type=Path, nargs="?")
     uninstall_parser = commands.add_parser("uninstall", help="remove this installation and its launchers")
     uninstall_parser.add_argument("--keep-broker", action="store_true",
                                   help="remove this installation while another one keeps using the authority broker")
@@ -867,6 +889,8 @@ def main():
         result = register_plugins(prefix, bin_dir)
     elif args.command == "broker":
         result = broker(prefix, bin_dir, args.action, args.also)
+    elif args.command == "policy":
+        result = administrator_policy(prefix, bin_dir, args.action, args.file)
     else:
         result = uninstall(prefix, bin_dir, args.keep_broker)
     print(json.dumps(result, indent=2, sort_keys=True))

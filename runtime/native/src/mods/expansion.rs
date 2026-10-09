@@ -51,6 +51,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "packages.preview",
     "packages.reload",
     "settings.write",
+    "tools.list",
     "tools.define",
     "tools.undefine",
     "tools.invoke",
@@ -68,7 +69,9 @@ pub(super) struct State {
     approval: AtomicBool,
     approval_result: AtomicBool,
     tool_specs: AtomicBool,
+    tool_inventory: AtomicBool,
     tool_specs_required: AtomicBool,
+    inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
     tool_batch: AtomicBool,
     gates: Mutex<std::collections::VecDeque<(String, String)>>,
     current: Mutex<Option<LeadHandle>>,
@@ -80,6 +83,7 @@ pub(super) struct State {
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
     subscribed: Mutex<BTreeSet<String>>,
+    bus_cursor: Mutex<String>,
     subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
     wake: Arc<tokio::sync::Notify>,
     delivery: Mutex<Option<Delivery>>,
@@ -185,6 +189,21 @@ impl State {
         self.approval
             .store(runtime.has_event("approval"), Ordering::Release);
         let tool_specs = runtime.intercepts("tool_specs");
+        self.tool_inventory.store(
+            tool_specs.is_some()
+                || runtime.intercepts("tool").is_some()
+                || runtime.owners().iter().any(|(id, _)| {
+                    runtime.grants(id).is_some_and(|grants| {
+                        grants.capabilities.iter().any(|cap| cap == "inventory")
+                    })
+                }),
+            Ordering::Release,
+        );
+        if !self.tool_inventory.load(Ordering::Acquire)
+            && let Ok(mut inventories) = self.inventories.lock()
+        {
+            inventories.clear();
+        }
         self.tool_specs
             .store(tool_specs.is_some(), Ordering::Release);
         self.tool_specs_required
@@ -197,6 +216,9 @@ impl State {
             .store(runtime.has_event("approval_result"), Ordering::Release);
         if let Ok(mut subscriptions) = self.subscriptions.lock() {
             *subscriptions = runtime.subscriptions();
+        }
+        if !delivery::sync_bus(self).is_empty() {
+            self.wake.notify_one();
         }
         if let Ok(mut definitions) = self.definitions.lock() {
             *definitions = runtime.agent_definitions();
@@ -458,6 +480,7 @@ pub(super) async fn dispatch(
         "events.cancel" => delivery::cancel(core, lead, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
+        "tools.list" => tool_specs::list(core, lead),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
         "tools.define" | "tools.undefine" => {
             let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
@@ -576,6 +599,42 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
         selections.remove(thread);
     }
     Some(route)
+}
+
+/// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
+pub(in crate::mods) fn blit_sink(
+    lead: &Lead,
+    caller: &Caller<'_>,
+) -> Option<crate::managed_process::BlitSink> {
+    let grants = caller.grants.as_ref()?;
+    if !grants
+        .capabilities
+        .iter()
+        .any(|capability| capability == "terminal")
+    {
+        return None;
+    }
+    let remote = REMOTE.try_with(|remote| *remote).unwrap_or(false);
+    let (id, source, generation, thread) = (
+        caller.id.to_owned(),
+        caller.source.to_owned(),
+        caller.generation,
+        lead.thread.to_string(),
+    );
+    Some(Arc::new(move |arguments, active| {
+        codex_omd::client_surface::with_admission(&source, generation, None, || {
+            codex_omd::client_surface::call(
+                &id,
+                "terminal.blit",
+                arguments,
+                InvocationContext::Event,
+                remote,
+                Some(&thread),
+                None,
+                active,
+            )
+        })
+    }))
 }
 
 async fn surface(

@@ -1,7 +1,7 @@
 # First-party Codex plugin collection
 
 The source marketplace contains five Codex plugins. The current provisional
-OMD+ package stages four of them plus the six selected local plugins as inactive source candidates;
+OMD+ package stages four of them plus the seven selected local plugins as inactive source candidates;
 `omd-code-execution` remains outside that package. Staging a plugin does not
 install or enable it in Codex.
 
@@ -34,8 +34,11 @@ install or enable it in Codex.
 - `omd-browser` supplies browsing guidance and a prompt-approved MCP server that
   drives persistent, policy-guarded sessions over the managed browser bundle,
   with live handoff and an opt-in login vault and CAPTCHA helpers.
+- `omd-mod-authoring` supplies one skill for writing a mod in a scratch
+  directory with typed host tools and offline tests; it has no component, and
+  the user approves any mod it helps write.
 
-The current OMD+ candidate stages all ten selected plugins at
+The current OMD+ candidate stages all eleven selected plugins at
 `$OMD_PREFIX/bundles/oh-my-diff` without editing shared Codex state. After
 inspecting the staged sources, installation into Codex is a separate operator
 action. `omd-package plugins` adds the marketplace through the installer's
@@ -50,10 +53,10 @@ codex plugin add omd-application-bridges@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
 ```
 
-The six local packages retain their source homes under `plugins/optional/plugins`
+The seven local packages retain their source homes under `plugins/optional/plugins`
 and are available from the staged `oh-my-diff` marketplace too. Install one only
 when selected, for example `codex plugin add omd-session-review@oh-my-diff`.
-Their `mod/` components require a separate exact inspection, capability grant,
+Their `mod/` components (all but `omd-mod-authoring` and `omd-browser` have one) require a separate exact inspection, capability grant,
 trust and enable step; installing the parent plugin does not run the component.
 Follow the staged package's README. The curation hook also requires its explicit
 configuration. OMD Core users can add the source marketplace or packages by the

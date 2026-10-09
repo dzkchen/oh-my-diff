@@ -115,7 +115,7 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
             let locked = lock
                 .packages
                 .get(id)
-                .filter(|_| selection["managed"] == true);
+                .filter(|_| selection["packaged"] == true);
             let manifest = selection["path"]
                 .as_str()
                 .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
@@ -408,7 +408,7 @@ fn selected(store: &ModStore, arguments: &Arguments) -> io::Result<(String, Sele
         .find(|item| {
             item["id"] == id.as_str()
                 && item["scope"] == arguments.scope.as_str()
-                && item["managed"] != true
+                && item["packaged"] != true
         })
         .ok_or_else(|| failure(format!("package_not_installed: {id}")))?;
     let current = Selection {

@@ -1,6 +1,10 @@
 use crate::app_routes::InvocationContext;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use serde::Serialize;
 use serde_json::Value;
+use sha2::Digest as _;
+use sha2::Sha256;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -1077,17 +1081,139 @@ pub struct BlitRect {
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WireImage {
+    media_type: String,
+    base64: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WireBlit {
     key: String,
-    rect: BlitRect,
-    cells: Vec<WireCell>,
+    rect: Option<BlitRect>,
+    cells: Option<Vec<WireCell>>,
+    image: Option<WireImage>,
+}
+
+pub enum BlitContent {
+    Cells {
+        rect: BlitRect,
+        cells: Vec<BlitCell>,
+    },
+    Encoded {
+        media_type: String,
+        base64: String,
+    },
+    Image {
+        sha256: String,
+        bytes: Arc<[u8]>,
+    },
 }
 
 pub struct Blit {
     pub key: String,
-    pub rect: BlitRect,
-    pub cells: Vec<BlitCell>,
+    pub content: BlitContent,
     pub bytes: usize,
+}
+
+pub const IMAGE_PIXELS: u32 = 4096;
+
+pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("backdrop_image_too_large".into());
+    }
+    let format = image::guess_format(bytes).map_err(|_| "backdrop_format_unsupported")?;
+    if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
+        return Err("backdrop_format_unsupported".into());
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(IMAGE_PIXELS);
+    limits.max_image_height = Some(IMAGE_PIXELS);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+        .decode()
+        .map_err(|_| "backdrop_image_invalid_or_too_large".into())
+}
+
+/// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
+pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<Vec<BlitCell>> {
+    let pixels = image
+        .resize(
+            u32::from(width),
+            u32::from(height) * 2,
+            image::imageops::FilterType::Triangle,
+        )
+        .to_rgb8();
+    let color = |x: u32, y: u32| {
+        let [r, g, b] = pixels
+            .get_pixel_checked(x, y)
+            .map_or([0, 0, 0], |pixel| pixel.0);
+        Some(crate::ModColor::Rgb(r, g, b))
+    };
+    (0..pixels.height().div_ceil(2))
+        .map(|row| {
+            (0..pixels.width())
+                .map(|x| BlitCell {
+                    symbol: "▀".to_owned(),
+                    fg: color(x, row * 2),
+                    bg: color(x, row * 2 + 1),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The image frame of mirrored `terminal.blit` arguments as a cells blit over the whole `size` raster.
+pub fn frame_cells(arguments: &Value, size: (u16, u16)) -> Option<Value> {
+    let image = arguments.get("image")?;
+    let bytes = STANDARD.decode(image["base64"].as_str()?).ok()?;
+    let rows = half_block(&decode_image(&bytes).ok()?, size.0, size.1);
+    let cells = (0..usize::from(size.1)).flat_map(|y| {
+        let rows = &rows;
+        (0..usize::from(size.0)).map(move |x| {
+            rows.get(y).and_then(|row| row.get(x)).map_or_else(
+                || serde_json::json!(" "),
+                |cell| serde_json::json!([cell.symbol, cell.fg, cell.bg]),
+            )
+        })
+    });
+    Some(serde_json::json!({
+        "key": arguments["key"],
+        "rect": {"x": 0, "y": 0, "width": size.0, "height": size.1},
+        "cells": cells.collect::<Vec<_>>(),
+    }))
+}
+
+impl Blit {
+    /// Image frames are only header-checked here; pixels are decoded when first drawn.
+    pub fn checked(mut self) -> Result<Self, String> {
+        if let BlitContent::Encoded { media_type, base64 } = &self.content {
+            let format = match media_type.as_str() {
+                "image/png" => image::ImageFormat::Png,
+                "image/jpeg" => image::ImageFormat::Jpeg,
+                _ => return Err("terminal_blit_image_invalid".into()),
+            };
+            let bytes = STANDARD.decode(base64).ok().filter(|bytes| {
+                let reader =
+                    image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format();
+                reader.is_ok_and(|reader| {
+                    reader.format() == Some(format)
+                        && reader.into_dimensions().is_ok_and(|(width, height)| {
+                            (1..=IMAGE_PIXELS).contains(&width)
+                                && (1..=IMAGE_PIXELS).contains(&height)
+                        })
+                })
+            });
+            let bytes = bytes.ok_or("terminal_blit_image_invalid")?;
+            self.content = BlitContent::Image {
+                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                bytes: bytes.into(),
+            };
+        }
+        Ok(self)
+    }
 }
 
 /// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
@@ -1103,38 +1229,52 @@ pub fn blit_request(
     }
     let blit: WireBlit =
         serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
+    let (rect, image) = match (blit.rect, blit.cells, blit.image) {
+        (Some(rect), Some(cells), None) => (Some((rect, cells)), None),
+        (None, None, Some(image)) => (None, Some(image)),
+        _ => return Err("terminal_blit_invalid".into()),
+    };
     match owner {
         Some(owner) if owner == caller => {}
         Some(_) => return Err("terminal_blit_not_owned".into()),
         None => return Err("terminal_blit_unknown".into()),
     }
-    let (width, height) = size.ok_or("terminal_blit_unknown")?;
-    let rect = blit.rect;
-    if rect.width == 0
-        || rect.height == 0
-        || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
-        || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
-        || blit.cells.len() != usize::from(rect.width) * usize::from(rect.height)
-    {
-        return Err("terminal_blit_invalid".into());
-    }
-    let cells = blit
-        .cells
-        .into_iter()
-        .map(|cell| {
-            let (symbol, fg, bg) = match cell {
-                WireCell::Glyph(symbol) => (symbol, None, None),
-                WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
-            };
-            (!symbol.is_empty() && symbol.len() <= 16 && !symbol.chars().any(char::is_control))
-                .then_some(BlitCell { symbol, fg, bg })
-        })
-        .collect::<Option<Vec<_>>>()
-        .ok_or("terminal_blit_invalid")?;
+    let content = match (rect, image) {
+        (Some((rect, cells)), _) => {
+            let (width, height) = size.ok_or("terminal_blit_unknown")?;
+            if rect.width == 0
+                || rect.height == 0
+                || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
+                || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
+                || cells.len() != usize::from(rect.width) * usize::from(rect.height)
+            {
+                return Err("terminal_blit_invalid".into());
+            }
+            let cells = cells
+                .into_iter()
+                .map(|cell| {
+                    let (symbol, fg, bg) = match cell {
+                        WireCell::Glyph(symbol) => (symbol, None, None),
+                        WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
+                    };
+                    (!symbol.is_empty()
+                        && symbol.len() <= 16
+                        && !symbol.chars().any(char::is_control))
+                    .then_some(BlitCell { symbol, fg, bg })
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or("terminal_blit_invalid")?;
+            BlitContent::Cells { rect, cells }
+        }
+        (None, Some(image)) => BlitContent::Encoded {
+            media_type: image.media_type,
+            base64: image.base64,
+        },
+        (None, None) => return Err("terminal_blit_invalid".into()),
+    };
     Ok(Blit {
         key: blit.key,
-        rect,
-        cells,
+        content,
         bytes,
     })
 }

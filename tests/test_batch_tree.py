@@ -26,5 +26,40 @@ class CleanTests(unittest.TestCase):
             self.assertFalse((root / "omd-bx/target").exists())
 
 
+class ArtifactTests(unittest.TestCase):
+    def test_artifacts_build_sign_and_copy_the_release_profile(self):
+        from scripts import lean_release_lock
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch = root / "omd-bx"
+            for profile in batch_tree.PROFILES:
+                built = batch / "target" / profile
+                built.mkdir(parents=True)
+                for name in batch_tree.BINARIES:
+                    (built / name).write_text(profile)
+            with mock.patch.object(batch_tree, "TMP", root), \
+                    mock.patch.object(batch_tree, "cargo_run", return_value=0) as cargo, \
+                    mock.patch.object(batch_tree, "pack_sdk") as pack, \
+                    mock.patch.object(lean_release_lock, "sign") as sign:
+                batch_tree.artifacts(SimpleNamespace(batch="x", release=True))
+            cargo.assert_called_once_with(batch, "build-artifacts", [*batch_tree.BUILD, "--release"])
+            pack.assert_called_once_with(batch / "artifacts")
+            self.assertCountEqual(sign.call_args_list,
+                                  [mock.call(batch / "artifacts" / name) for name in lean_release_lock.HARDENED])
+            for name in batch_tree.BINARIES:
+                self.assertEqual((batch / "artifacts" / name).read_text(), "release")
+
+    def test_artifacts_refuse_a_debug_only_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            built = root / "omd-bx/target/debug"
+            built.mkdir(parents=True)
+            for name in batch_tree.BINARIES:
+                (built / name).touch()
+            with mock.patch.object(batch_tree, "TMP", root), self.assertRaisesRegex(SystemExit, "--release"):
+                batch_tree.artifacts(SimpleNamespace(batch="x", release=False))
+
+
 if __name__ == "__main__":
     unittest.main()

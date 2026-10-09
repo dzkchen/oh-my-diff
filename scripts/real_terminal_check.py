@@ -30,6 +30,7 @@ PROBE_SOURCE = """export default function activate(api) {
   api.on('terminal', input => {
     const s = read();
     if (JSON.stringify(input.client) !== JSON.stringify(s.client)) write({ client: input.client });
+    if (s.note_at_ms && s.rendered_note !== s.note) write({ rendered_note: s.note, component_to_view_ms: Date.now() - s.note_at_ms });
     const last = s.pointer.at(-1);
     const facts = `probe ${input.client?.graphics} ${input.client?.pointer} last ${last ? `${last.action} ${last.column},${last.row} half ${last.half}` : 'none'}`;
     return { sites: { header: { components: [
@@ -47,7 +48,7 @@ PROBE_SOURCE = """export default function activate(api) {
   api.intercept('component_change', (e, next) => (e.kind === 'focus' && e.from === 'probe_note' && e.to !== null ? { deny: 'probe keeps focus' } : next(e)));
   api.on('component_event', ({ component, kind, pointer, value, origin }) => {
     if (component === 'probe_image' && kind === 'pointer') write({ pointer: [...read().pointer, pointer].slice(-60) });
-    if (component === 'probe_note' && kind === 'change') write({ note: value });
+    if (component === 'probe_note' && kind === 'change') write({ note: value, note_at_ms: Date.now() });
     if (component === 'probe_note' && kind === 'focus') write({ focused_by: origin });
   });
 }
@@ -156,6 +157,21 @@ class Ghostty(Terminal):
         call(["kill", self.pid()], ROOT, check=False)
 
 
+class Orca(Terminal):
+    drives_keys = False
+
+    def start(self, env):
+        print(f"Run in an Orca terminal: sh {shlex.quote(str(self.script))}", flush=True)
+        wait("Orca terminal launch", lambda: (self.base / "codex.pid").exists(), 600)
+
+    def pid(self):
+        return int((self.base / "codex.pid").read_text().strip())
+
+    def close(self):
+        if (self.base / "codex.pid").is_file():
+            call(["kill", self.pid()], ROOT, check=False)
+
+
 def state(store, mod):
     path = store / f"state-{mod}.json"
     return json.loads(path.read_text())["value"] if path.exists() else {}
@@ -172,10 +188,10 @@ def wait(label, check, seconds=30):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Real-terminal check: drives Kitty, Ghostty or WezTerm running the patched codex "
-                                                 "with example mods and a scripted local provider; moves the mouse and types.")
+    parser = argparse.ArgumentParser(description="Real-terminal check: runs patched codex with example mods and a scripted local provider; "
+                                                 "Orca is launched and inspected through computer use.")
     parser.add_argument("--binaries", type=Path, required=True)
-    parser.add_argument("--terminal", choices=["kitty", "ghostty", "wezterm"], required=True)
+    parser.add_argument("--terminal", choices=["kitty", "ghostty", "wezterm", "orca"], required=True)
     parser.add_argument("--reduced-motion", action="store_true")
     parser.add_argument("--keep-open", action="store_true", help="leave the terminal running for pointer checks driven by hand or computer use")
     args = parser.parse_args()
@@ -198,28 +214,33 @@ def main():
     try:
         env = environment(base, args.binaries, repo, store, url)
         env.pop("TERM")
+        env.pop("NO_COLOR", None)
+        env.pop("FORCE_COLOR", None)
         script = base / "run.sh"
         overrides = ["-c", "tui.animations=false"] if args.reduced_motion else []
-        script.write_text("#!/bin/sh\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env.items())
+        script.write_text("#!/bin/sh\nunset NO_COLOR FORCE_COLOR\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env.items())
                           + f"cd {shlex.quote(str(repo))}\nprintf '%s\\n' \"$$\" > {shlex.quote(str(base / 'codex.pid'))}\n"
                           + f"exec {shlex.quote(str(args.binaries / 'codex'))} {' '.join(overrides)} -C {shlex.quote(str(repo))}\n")
-        terminal = {"kitty": Kitty, "ghostty": Ghostty, "wezterm": WezTerm}[args.terminal](base, script)
+        terminal = {"kitty": Kitty, "ghostty": Ghostty, "wezterm": WezTerm, "orca": Orca}[args.terminal](base, script)
         results = {"terminal": args.terminal, "run": str(base)}
         terminal.start({key: value for key, value in os.environ.items()
-                        if not key.startswith(("TERM_PROGRAM", "LC_TERMINAL", "COLORTERM", "TMUX", "KITTY_", "WEZTERM_", "GHOSTTY_"))})
+                        if not key.startswith(("TERM_PROGRAM", "LC_TERMINAL", "COLORTERM", "TMUX", "KITTY_", "WEZTERM_", "GHOSTTY_", "NO_COLOR", "FORCE_COLOR"))})
         client = wait("probe saw the terminal", lambda: state(store, "terminal_probe").get("client"), 90)
         image = wait("probe image written", lambda: state(store, "terminal_probe").get("image"))
         results["client"] = client
         results["pid"] = terminal.pid()
-        shot = lambda name: call(["screencapture", "-x", "-o", "-l", str(terminal.bounds()["id"]), base / f"{name}.png"], ROOT, check=False)
+        shot = lambda name: None if isinstance(terminal, Orca) else call(
+            ["screencapture", "-x", "-o", "-l", str(terminal.bounds()["id"]), base / f"{name}.png"], ROOT, check=False)
         time.sleep(3)
         shot("start")
         lines = terminal.screen().splitlines()
         results["screen_start"] = "\n".join(lines)[-4000:]
         results["raster_client"] = state(store, "raster_canvas").get("client")
         if terminal.drives_keys:
+            typed = time.monotonic()
             terminal.send("probe")
-            time.sleep(0.4)
+            wait("probe accepts typing", lambda: state(store, "terminal_probe").get("note") == "probe")
+            results["typeable_input_ms"] = round((time.monotonic() - typed) * 1000)
             terminal.send("\t")
             time.sleep(0.4)
             terminal.send("!")
