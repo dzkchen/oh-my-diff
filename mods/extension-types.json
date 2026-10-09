@@ -117,6 +117,12 @@
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
     },
     {
+      "path": "mods/first-party/omd_tool_lines",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns a render hook on the generic tool_call site that draws one line per agent tool call; the host keeps the native row, its expansion and copy; active by default in OMD+."
+    },
+    {
       "path": "mods/examples/workspace",
       "extension_type": "mod",
       "role": "author_example",

@@ -205,17 +205,24 @@ export interface TerminalView {
 export type TerminalPatch = TerminalView;
 export type TerminalConflict = { field: string; owner: string; rejected: string; origin: string };
 export type RenderToolStatus = 'running' | 'completed' | 'failed' | 'interrupted';
-export type RenderExecCall = { call_id: string; command: string; exit_code: number | null; duration_ms: number | null; output_lines: number; output_tail: string | null; user_shell: boolean };
+export type RenderParsedCommand = { type: 'read'; cmd: string; name: string; path: string } | { type: 'list_files'; cmd: string; path: string | null }
+  | { type: 'search'; cmd: string; query: string | null; path: string | null } | { type: 'unknown'; cmd: string };
+export type RenderExecCall = { call_id: string; kind: 'exec'; command: string; parsed: RenderParsedCommand[]; status: RenderToolStatus; exit_code: number | null; duration_ms: number | null; output_lines: number; output_tail: string | null; user_shell: boolean };
+/** One agent tool row with its arguments, status and output summary. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. */
+export type RenderToolCall = { expanded: boolean } & (RenderExecCall
+  | { call_id: string; kind: 'explore'; status: RenderToolStatus; duration_ms: number | null; calls: RenderExecCall[] }
+  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
+  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
+  | { call_id: string; kind: 'agent'; tool: 'spawn_agent' | 'send_input' | 'resume_agent' | 'wait' | 'close_agent' | 'agent'; status: RenderToolStatus; duration_ms: null; agents: string[]; prompt: string }
+  | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
+  | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
+  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: null; path: string | null; prompt: string | null });
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
   assistant_message: { text: string; first: boolean; truncated: boolean };
-  tool_call: { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null }
-    | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null };
+  tool_call: RenderToolCall;
   tool_result: { call_id: string; tool: string; success: boolean | null; text: string };
-  tool_group: { kind: 'exec'; calls: RenderExecCall[]; running: boolean };
-  tool_progress: RenderProps['tool_call'] | (RenderExecCall & { kind: 'exec' });
-  command_output: RenderExecCall & { kind: 'exec' };
   spinner: { header: string; elapsed_seconds: number; details: string | null; message: string | null; interrupt_hint: boolean };
   turn_duration: { seconds: number | null; completed_at_ms: number | null };
   notice: { kind: 'info' | 'warning' | 'error'; text: string; hint: string | null } | { kind: 'warning'; text: string };
