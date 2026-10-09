@@ -11,13 +11,16 @@ client; enable both.
 /lsp diagnostics                every tracked file
 /lsp workspace QUERY            workspace symbols from running servers
 /lsp open PATH:LINE | editor PATH:LINE | pane | back | close
+/lsp servers                    show or hide the Language servers card
 ```
 
 Lines and columns are 1-based. Slash commands cannot call framed processes or
 services, so `/lsp` shows "Asking the language server…", publishes the request
 on `omd_lsp_view/request`, and the mod's own channel callback calls
 `omd.lsp`'s `query` method and republishes the view. Results open in a popup;
-Pin to pane moves them to the `omd_lsp_view/lsp` site. Enter on a location
+Pin (`/lsp pane`) moves them to a Code intelligence card above the prompt.
+Its controls remain clickable and keyboard-focusable; focused controls scroll
+into view when the available height is limited. Enter on a location
 shows the surrounding lines with Open in editor (the host's `editor` setting)
 and Back; Enter on a code action applies it after a confirmation. Formatting also
 confirms first. Without an enabled `omd_lsp_sync` the host keeps this mod
@@ -26,9 +29,10 @@ view says to enable it.
 
 `/lsp open PATH:LINE` is a file view: it also asks for that file's
 diagnostics, which starts its server on demand, and lists the file's errors
-under the excerpt (Enter jumps). A Language servers pane in the sidebar shows
-each running or failed server, its open documents and current errors from
-`omd_lsp_sync/status`.
+under the excerpt (Enter jumps). The mod draws nothing until asked: `/lsp
+servers` toggles a Language servers card above the prompt with each running
+or failed server side by side, its open documents and up to three current
+errors from `omd_lsp_sync/status`. Neither card opens a sidebar.
 
 Capabilities: `commands`, `terminal`, `store`, `events` (the request hop),
 `exec` (`pwd` and `awk` for excerpts) and `services` (imports `omd.lsp`

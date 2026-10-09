@@ -35,7 +35,7 @@ export default function activate(api: ModAPI) {
     if (JSON.stringify(client) !== JSON.stringify(g.client)) api.state.set({ ...g, client });
     const tip = g.hover && {
       mode: 'replace' as const,
-      overlay: { anchor: { component: 'canvas_graph' }, offset: { x: g.hover.column + 1, y: g.hover.row + 1 }, width: 16, height: 3, z: 1, border: true },
+      overlay: { anchor: { component: 'canvas_graph' }, offset: { x: g.hover.column + 1, y: g.hover.row + 1 }, width: 16, height: 3, z: 1, style: { border: 'rounded' as const } },
       components: [{ type: 'text' as const, id: 'graph_tip', label: 'Value under pointer', text: `x ${g.hover.column + g.pan} = ${sample(g.hover.column + g.pan, g.phase)}` }],
     };
     return {

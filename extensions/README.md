@@ -48,7 +48,6 @@ the versioned cache directory.
 | Reviewed candidate | Type | Capability | Intended placement |
 | --- | --- | --- | --- |
 | `omd_claude_cli` | mod | Official Claude CLI route and `ask_claude` delegation | OMD+, installed inactive |
-| `omd_workspace` | mod | Live terminal task workspace | OMD+, provisional active default |
 | `omd_logo` | mod | Oh My Diff terminal logo and launch status | Both profiles, active by default |
 | `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | OMD+, active by default |
 | `omd_tool_lines` | mod | One line per agent tool call | OMD+, active by default |

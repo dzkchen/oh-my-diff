@@ -1,7 +1,7 @@
 # omd_usage
 
 Opt-in provider usage HUD, installed inactive in OMD+ (`omd-package mod enable
-omd_usage`). It adds Usage and Workers panels to the sidebar, a Usage dialog
+omd_usage`). It adds a usage line above the prompt box, a Usage dialog
 (Alt+a or `/omd_usage:hud`) and publishes cache, quota and spend summaries
 on `omd_usage/hud`. `/omd_usage:budget 5` sets an optional
 soft budget in USD (`0` removes it) and `/omd_usage:categories on` adds the
@@ -56,13 +56,13 @@ request category drilldown; both apply from the next turn. Settings:
   readings in the current period spanning at least 5 minutes or a tenth of the
   window; otherwise it says the data is insufficient. After the reset time
   passes the window reads stale until a new reading arrives.
-- **Surfaces.** The Usage panel shows cache, quota windows, spend, the paid
-  allowance bar from `task.status` limits and the soft budget; the Workers panel
-  shows plan progress, running sub-agents and running tools. The dialog's
-  Expanded view adds a tokens-per-request sparkline and the 40 most recent
-  records. The summary is published on `omd_usage/hud`. Glyphs
-  are ASCII so the HUD reads the same without color or Unicode; inline (mini)
-  sessions hide the sidebar.
+- **Surfaces.** The line above the prompt (the `above_composer` site, a
+  two-column row box) shows cache, quota windows, spend, the paid allowance
+  bar from `task.status` limits and the soft budget on the left, and plan
+  progress, running sub-agents and running tools on the right while any run.
+  The dialog's Expanded view adds a tokens-per-request sparkline and the 40
+  most recent records. The summary is published on `omd_usage/hud`. Glyphs
+  are ASCII so the HUD reads the same without color or Unicode.
 - **Budget.** Spend at 80% of the soft budget turns the cost segment to
   attention and at 100% to failure. It is a warning only: the host's limits
   remain the spending authority.
