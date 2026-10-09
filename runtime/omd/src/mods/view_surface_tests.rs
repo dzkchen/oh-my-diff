@@ -11,6 +11,71 @@ fn view(extra: Value) -> Result<ModView> {
 }
 
 #[test]
+fn box_styles_are_bounded_and_render_hook_trees_refuse_them() {
+    let still = json!({"border": "thick", "padding": [0, 4], "margin": 1, "gap": 2, "background": "accent",
+        "foreground": "#c0ffee", "direction": "row"});
+    let mut card = still.clone();
+    card.as_object_mut().unwrap().extend(
+        json!({"hover": {"border": "double", "background": 238}, "focus": {"foreground": "muted"}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    let pane = |style: Value, flex: Value| {
+        json!({"sites": {"sidebar": {"components": [{"type": "pane", "id": "p", "label": "P", "style": style,
+            "flex": flex, "min_width": 10, "max_width": 40, "pointer": true}]}}})
+    };
+    let parsed = view(pane(card.clone(), json!(12))).unwrap();
+    let ModComponent::Pane { style, .. } = &parsed.sites["sidebar"].components[0] else {
+        panic!("pane");
+    };
+    assert_eq!(
+        style.unwrap().background,
+        Some(ModPaint::Tone(ModTone::Accent))
+    );
+    assert_eq!(style.unwrap().padding.unwrap().axes(), (0, 4));
+    assert!(
+        view(json!({"sidebar_style": still.clone(), "layout": {"split": "horizontal", "gap": 4, "children": [
+            {"content": "site:a/b", "style": still.clone()},
+            {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}]},
+            "sites": {"dialog": {"components": [{"type": "dialog", "id": "d", "label": "D", "title": "D", "style": still}]}}}))
+        .is_ok()
+    );
+    for invalid in [
+        pane(json!({"padding": 5}), json!(1)),
+        pane(json!({"margin": [0, 5]}), json!(1)),
+        pane(json!({"gap": 5}), json!(1)),
+        pane(json!({"border": "dotted"}), json!(1)),
+        pane(json!({"background": "#12"}), json!(1)),
+        pane(json!({"hover": {"padding": 1}}), json!(1)),
+        pane(json!({}), json!(0)),
+        pane(json!({}), json!(13)),
+        json!({"sidebar_style": {"gap": 9}}),
+        json!({"sidebar_style": card.clone()}),
+        json!({"sites": {"dialog": {"components": [{"type": "dialog", "id": "d", "label": "D", "title": "D", "style": card.clone()}]}}}),
+        json!({"layout": {"split": "horizontal", "children": [{"content": "site:a/b", "style": card.clone()},
+            {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}]}}),
+        json!({"layout": {"split": "vertical", "gap": 5, "children": [{"content": "transcript"}, {"content": "composer"}]}}),
+        json!({"layout": {"split": "vertical", "children": [{"content": "transcript", "style": {}}, {"content": "composer"}]}}),
+    ] {
+        assert!(view(invalid.clone()).is_err(), "{invalid}");
+        assert!(ModViewPatch::parse(invalid).is_err());
+    }
+    let tree = |extra: Value| {
+        let mut component =
+            json!({"type": "box", "id": "b", "label": "B", "children": [{"type": "native"}]});
+        component
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value::<Vec<ModComponent>>(json!([component])).unwrap()
+    };
+    assert_eq!(invalid_render_tree(&tree(json!({}))), None);
+    assert!(invalid_render_tree(&tree(json!({"style": {"border": "plain"}}))).is_some());
+    assert!(invalid_render_tree(&tree(json!({"flex": 2}))).is_some());
+}
+
+#[test]
 fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() {
     let welcome = json!({"greeting":"", "session_title_suffix":" | Project tools",
         "welcome":{"show_while_composing":true},
@@ -300,7 +365,7 @@ fn rasters_and_overlays_are_bounded_and_overlays_survive_wraps() {
             "components": [{"type": "box", "id": "tip", "label": "Tip", "pointer": true}]}}}))
     };
     let tooltip = json!({"anchor": {"component": "chart"}, "offset": {"x": 1, "y": -1},
-        "width": 20, "height": 3, "z": 9, "clip": "anchor", "border": true});
+        "width": 20, "height": 3, "z": 9, "clip": "anchor", "style": {"border": "thick", "padding": [0, 1]}});
     assert!(overlay("charts/tip", tooltip.clone()).is_ok());
     assert!(
         overlay(
@@ -330,6 +395,14 @@ fn rasters_and_overlays_are_bounded_and_overlays_survive_wraps() {
         (
             "charts/tip",
             json!({"anchor": "middle", "width": 10, "height": 3}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 10, "height": 3, "style": {"padding": 5}}),
+        ),
+        (
+            "charts/tip",
+            json!({"anchor": "top_left", "width": 10, "height": 3, "border": true}),
         ),
         (
             "charts/tip",

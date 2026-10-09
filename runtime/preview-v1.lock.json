@@ -28,31 +28,12 @@
       "package_sha256": "dcf1fce2b0fc84dfa24e9e0cac51d3e5e0adb4f3ef88976bcca0f9702e023140",
       "source": "mods/first-party/omd_workflow",
       "version": "0.2.0-preview.2"
-    },
-    "omd_workspace": {
-      "api": "0.2.0-experimental.5",
-      "capabilities": [
-        "terminal",
-        "commands",
-        "lifecycle",
-        "store",
-        "threads",
-        "config"
-      ],
-      "extension_type": "mod",
-      "files": {
-        "index.ts": "0d6679d89c93eebd4e192197d88d069eb6f498fe3d9284b8c868b25048a2c706",
-        "mod.json": "54beea0ea73f1498297bb17d433259d7b2167a20391afb99f5b7e5974c0b6a23"
-      },
-      "package_sha256": "b83d10e5399b68a95b11a0a1204ceccb1a2bbaebdb842223c50e5ef0fe123071",
-      "source": "mods/first-party/omd_workspace",
-      "version": "0.2.0-preview.5"
     }
   },
   "product": "oh-my-diff-private-preview-v1",
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "1c73d0cbfe50051bfd0c0331bf2f8e20442393f508f132eaf35d45abf28fc979"
+    "sha256": "8cdc5a8ac5c43d625e9532da068e5fa3e81db3a050339dccca12c482d3c05280"
   }
 }

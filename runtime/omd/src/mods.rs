@@ -20,6 +20,12 @@ pub use view::ModAsciiBackdrop;
 pub use view::ModBackdrop;
 pub use view::ModBackdropOffset;
 pub use view::ModBorder;
+pub use view::ModBoxAccent;
+pub use view::ModBoxBorder;
+pub use view::ModBoxStyle;
+pub use view::ModDirection;
+pub use view::ModPaint;
+pub use view::ModSpacing;
 pub use view::ModColor;
 pub use view::ModCommandAction;
 pub use view::ModComponent;
@@ -252,6 +258,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_render_sites_v1",
     "terminal_welcome_v1",
     "terminal_rich_line_v1",
+    "terminal_box_model_v1",
     "transactional_reload_v1",
     "task_tool_exposure_v1",
     "virtual_reads_v1",

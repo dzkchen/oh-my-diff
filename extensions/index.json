@@ -64,24 +64,6 @@
       "review": "extensions/REVIEWS.md"
     },
     {
-      "id": "omd_workspace",
-      "version": "0.2.0-preview.5",
-      "extension_type": "mod",
-      "capability": "Live terminal task and worker workspace",
-      "source": "mods/first-party/omd_workspace",
-      "license": "MIT",
-      "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
-      "tested_versions": [
-        "Codex 0.156.1",
-        "OMD 0.1.0",
-        "mod API 0.1.0-experimental.8",
-        "Node 24.18.0"
-      ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
-    },
-    {
       "id": "omd_logo",
       "version": "0.2.0-preview.1",
       "extension_type": "mod",

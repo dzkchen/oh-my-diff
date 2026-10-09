@@ -874,7 +874,7 @@
         "operations": []
       },
       "evidence": [
-        "patch:left_sidebar_header_progress_and_diagnostics_share_the_layout",
+        "patch:left_sidebar_and_header_share_the_layout_and_host_panels_sit_above_the_prompt",
         "patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize"
       ],
       "replace_note": null
@@ -1006,6 +1006,35 @@
         "rust:terminal_identity_reports_profile_mode_and_mod_counts",
         "patch:width_bounded_boxes_and_styled_lines_follow_the_header_width",
         "patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript"
+      ],
+      "replace_note": "presentation fields in the terminal view or patch"
+    },
+    {
+      "id": "terminal.box_model",
+      "group": "terminal",
+      "decision": "One box model for components and host chrome; content centred in the area panes leave",
+      "observe": "none",
+      "alter": "a `style` (border, padding, margin, gap, background, foreground, row or column direction, hover and focus accents) on `box`, `pane`, `dialog`, overlays, layout site leaves and `sidebar_style`; `flex` and width bounds on boxes and panes; `gap` on splits",
+      "replace": null,
+      "timing": "every terminal redraw; hover restyles on pointer motion without component events",
+      "ownership": "host: geometry, border glyphs, ASCII fallback, hit regions and centring the logo, welcome and dialogs in the chat area; mod: presentation choice",
+      "limits": "padding, margin and gaps 0-4; flex 1-12; accents never add or remove a border; render hook trees refuse `style` and `flex`",
+      "native": "native plugins cannot draw terminal presentation",
+      "covers": {
+        "capabilities": [
+          "terminal"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:box_styles_are_bounded_and_render_hook_trees_refuse_them",
+        "patch:box_model_draws_cards_flat_panels_and_rows_at_every_width",
+        "patch:hover_and_focus_accents_restyle_without_events_or_moving_rows",
+        "patch:dialogs_centre_in_the_chat_column_fit_their_content_and_size_buttons_naturally",
+        "patch:split_gaps_leave_cells_between_children_and_their_handle",
+        "patch:first_screen_centres_in_the_chat_rect"
       ],
       "replace_note": "presentation fields in the terminal view or patch"
     },
@@ -2136,7 +2165,7 @@
     },
     {
       "id": "first_party_parity",
-      "rule": "First-party mods use the published API only. `omd_workflow` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
+      "rule": "First-party mods use the published API only. `omd_workflow` declares ordinary capabilities, carries no private symbol and no per-mod Rust patch, and runs under the same package and conformance rules as outside packages.",
       "evidence": [
         "python:test_first_party_mods_use_only_the_published_api"
       ]

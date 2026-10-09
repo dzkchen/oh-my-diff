@@ -13,7 +13,6 @@ contains only the packages labeled `bundled` below.
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
 | `omd_workflow@0.2.0-preview.2` | `mod` | `mods/first-party/omd_workflow` | Owns live workflow selection, contract gates, candidate checks, and task decisions through generic host services and bounded receipts. |
-| `omd_workspace@0.2.0-preview.5` | `mod` | `mods/first-party/omd_workspace` | Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation. |
 
 ## Unqualified first-party candidates
 
@@ -31,8 +30,8 @@ contains only the packages labeled `bundled` below.
 | `omd_mods@0.1.0-preview.1` | `mod` | `mods/first-party/omd_mods` | Owns the /mods screen, its actions and the first-run card over public package controls and terminal sites; native code keeps trust, confirmation, package authority and /omd recovery; enabled by default in both profiles. |
 | `omd_update@0.1.0-preview.1` | `mod` | `mods/first-party/omd_update` | Owns the update notice, the /update dialog, snooze and skip state and the update policy settings (checks, channel, cadence, pin, automatic updates); the installer reads those settings and does the network check and installation; active in OMD Core and OMD+. |
 | `omd_privacy@0.1.0-preview.1` | `mod` | `mods/first-party/omd_privacy` | Owns secret and PII detection, sensitive-path rules, reviewed exemptions and salted placeholders as a required model_send policy and approval middleware over the generic final-request stage; installed inactive in OMD+. |
-| `omd_usage@0.1.0-preview.1` | `mod` | `mods/first-party/omd_usage` | Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the Usage and Workers sidebar panels, the usage dialog and the summary the theme draws; installed inactive in OMD+. |
-| `omd_lsp_view@0.2.0-preview.1` | `mod` | `mods/first-party/omd_lsp_view` | Owns the user-invoked code-intelligence view, its request hop, result navigation over the omd.lsp service, file-view diagnostics and the language-server sidebar pane; installed inactive in OMD+. |
+| `omd_usage@0.1.0-preview.1` | `mod` | `mods/first-party/omd_usage` | Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage and workers row above the composer, the usage dialog and the summary the theme draws; installed inactive in OMD+. |
+| `omd_lsp_view@0.2.0-preview.1` | `mod` | `mods/first-party/omd_lsp_view` | Owns the user-invoked code-intelligence view, its request hop, result navigation over the omd.lsp service, file-view diagnostics and the on-demand language-server pane; installed inactive in OMD+. |
 | `omd_frecency@0.1.0-preview.2` | `mod` | `mods/first-party/omd_frecency` | Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+. |
 | `omd_profiles@0.1.0-preview.2` | `mod` | `mods/first-party/omd_profiles` | Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+. |
 
@@ -86,6 +85,7 @@ contains only the packages labeled `bundled` below.
 | `image_preview@1.0.0` | `mod` | `mods/examples/image_preview` | Renders an imported image inside a live terminal render site and opens links after native confirmation. |
 | `layout_explorer@1.0.0` | `mod` | `mods/examples/layout_explorer` | Replaces the live terminal layout with splits, tabs, documents and diffs. |
 | `raster_canvas@1.0.0` | `mod` | `mods/examples/raster_canvas` | Draws an animated raster with pointer hover, drag and an anchored overlay. |
+| `box_model@1.0.0` | `mod` | `mods/examples/box_model` | Draws bordered cards, flat filled panels, flex rows, hover and focus accents and a gapped split layout with the box model. |
 | `external_client@1.0.0` | `mod` | `mods/examples/external_client` | Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol. |
 | `approval_desk@1.0.0` | `mod` | `mods/examples/approval_desk` | Keeps a filterable approval desk beside other sidebars, with a client adapter that answers approvals over the client protocol. |
 | `notification_bridge@1.0.0` | `mod` | `mods/examples/notification_bridge` | Turns live app-server notifications into terminal notifications with focus state. |

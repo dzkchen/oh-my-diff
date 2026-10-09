@@ -35,6 +35,7 @@
         "terminal_render_sites_v1",
         "terminal_welcome_v1",
         "terminal_rich_line_v1",
+        "terminal_box_model_v1",
         "transactional_reload_v1",
         "task_tool_exposure_v1",
         "virtual_reads_v1",
@@ -212,28 +213,6 @@
       ],
       "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/lean_profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
       "removal": "An administrator clears or rolls back the policy (`omd-mod policy clear|rollback`, `omd-package policy remove|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running."
-    },
-    {
-      "id": "omd_workspace",
-      "area": "first_party_mod",
-      "name": "omd_workspace",
-      "extension_type": "mod",
-      "owner": "OMD first-party bundle (mods/first-party/omd_workspace)",
-      "version": "0.2.0-preview.5",
-      "capabilities": [
-        "commands",
-        "config",
-        "lifecycle",
-        "store",
-        "terminal",
-        "threads"
-      ],
-      "status": "supported",
-      "fixtures": [
-        "python:test_first_party_mods_use_only_the_published_api"
-      ],
-      "limitations": "API 0.2 mod supplies terminal components. Native terminal parity and feature-code retirement remain open.",
-      "removal": "Disable the mod to remove its layout; generic terminal controls remain."
     },
     {
       "id": "upstream_plugins",
@@ -552,7 +531,7 @@
     {
       "id": "first_party_mods_on_the_published_api",
       "components": [
-        "omd_workspace",
+        "omd_workflow",
         "mod_api"
       ],
       "boundaries": [],
@@ -614,8 +593,7 @@
       "id": "streamed_work_with_reload",
       "components": [
         "omd_host",
-        "mod_api",
-        "omd_workspace"
+        "mod_api"
       ],
       "boundaries": [
         "streaming_reload"
@@ -915,8 +893,7 @@
         "omd_tool_lines",
         "omd_update",
         "omd_usage",
-        "omd_workflow",
-        "omd_workspace"
+        "omd_workflow"
       ],
       "first_party_default_active": [
         "omd_inspector",
@@ -925,8 +902,7 @@
         "omd_mods",
         "omd_plan_removal",
         "omd_tool_lines",
-        "omd_update",
-        "omd_workspace"
+        "omd_update"
       ],
       "plugin_sources": [
         "omd-anchored-edit",
@@ -1003,10 +979,6 @@
     "omd_workflow": {
       "version": "0.2.0-preview.2",
       "source": "mods/first-party/omd_workflow"
-    },
-    "omd_workspace": {
-      "version": "0.2.0-preview.5",
-      "source": "mods/first-party/omd_workspace"
     }
   },
   "launch_cut": {
@@ -1058,16 +1030,6 @@
         "id": "omd_inspector",
         "kind": "mod",
         "path": "mods/first-party/omd_inspector",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_workspace",
-        "kind": "mod",
-        "path": "mods/first-party/omd_workspace",
         "disposition": "launch",
         "tier": "default-active",
         "profiles": [
