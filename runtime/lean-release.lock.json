@@ -9,8 +9,8 @@
       "sha256": "da7ac2eace371f877baa68e8186ab8a94c10a389ffdc16a30de0cb108a1de54a"
     },
     "mod-api.tgz": {
-      "bytes": 133193,
-      "sha256": "a75250f12cc51ad9fde6f0750ea180ec551a84785d4d36580ac4bb22dc4b90ef"
+      "bytes": 134130,
+      "sha256": "16451d72a6583ba7dbd22ba27d351336539f06a914286275dc365302bdfc25e9"
     },
     "omd": {
       "bytes": 5428160,
@@ -99,9 +99,9 @@
     "install.sh": "c396d13a949f4ba0213538934a24b197137768f7e520283315e0e17d6b4862f3",
     "mods/EXTENSION_TYPES.md": "36507fc59bacdad7a5cf0684b4c1c1fba0da48501fd5863a2be908ac93f8d265",
     "mods/README.md": "041438548ba9eab172f9123605381d9fdd1f76bb217c510e38ba4bc688778f8b",
-    "mods/REFERENCE.md": "5527a8ad6a2cac11b49801628b17d7c387f4597d536985f693f99d1e921dbef7",
+    "mods/REFERENCE.md": "5abab9bb0151a36ec7713f158e29cf442c8ce02d8ce74cf1a9f2408d6dd79e86",
     "mods/api.d.ts": "1a5e606a0c8acc045af335a0a667ba8316e1ddf6c73f4e8e7ebb2f2acad3781f",
-    "mods/author/cli.mjs": "9c6104dea989705ca2985c86c33afcdf6b0f00d189539cc5e66ab06261f11284",
+    "mods/author/cli.mjs": "cb5953e43162930c11ef27a6e0904d3d8b97bbab59352b67e1d40aa2a7da7ba0",
     "mods/author/client.mjs": "76056095c30eef507d1350b539c96ec1438e01ccdbd422f18a5dcecee549d731",
     "mods/author/jsx-runtime.mjs": "93789c4d8a28b0e34f2d29e8ff310f6c1d81a22693e19732cf19599d0e965d89",
     "mods/author/testing.mjs": "a6c3c448a13c8e194922411cb1b6505a19c4f45daba6da90585176778b84f12d",
