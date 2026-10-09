@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "as_of": "2026-10-07",
+  "as_of": "2026-10-08",
   "release": {
-    "codex": "0.161.0",
+    "codex": "0.162.0",
     "omd": "0.1.0",
     "mod_api": "0.2.0-experimental.5",
     "package_schema": 1,
-    "upstream_tag": "rust-v0.161.0",
-    "upstream_commit": "979011409de0a60b52f179721948e65531d26144",
+    "upstream_tag": "rust-v0.162.0",
+    "upstream_commit": "c1382380de69521303b416720a52f42d51af6248",
     "target": "aarch64-apple-darwin",
     "node": "24.18.0"
   },
@@ -17,7 +17,7 @@
       "area": "host",
       "name": "OMD host runtime",
       "owner": "OMD runtime (runtime/omd, runtime/native)",
-      "version": "0.1.0 on Codex 0.161.0",
+      "version": "0.1.0 on Codex 0.162.0",
       "features": [
         "author_diagnostics_v1",
         "author_offline_runner_v1",
@@ -63,6 +63,7 @@
         "builtins_v1",
         "contracts_v2",
         "framed_process_v1",
+        "process_raster_v1",
         "kernels_v1",
         "terminal_lists_v1",
         "adapters_v1",
@@ -195,56 +196,22 @@
       "removal": "`omd-mod` disable, uninstall, revoke and package-quarantine work without any control mod; disable and uninstall restore the previous lock and preserve edited sources and explicit settings, and quarantine blocks the installed version while keeping its data."
     },
     {
-      "id": "omd_coordination",
-      "area": "first_party_mod",
-      "name": "omd_coordination",
-      "extension_type": "mod",
-      "owner": "OMD first-party bundle (mods/first-party/omd_coordination)",
-      "version": "0.2.0-preview.1",
-      "capabilities": [
-        "agents",
-        "commands",
-        "context",
-        "fs.read",
-        "lifecycle",
-        "model",
-        "services",
-        "store",
-        "tools"
-      ],
+      "id": "managed_policy",
+      "area": "host",
+      "name": "Administrator policy and managed deployment",
+      "owner": "OMD mod host (runtime/omd/src/mods/policy.rs, package_manager.rs)",
+      "version": "policy schema 1",
       "status": "supported",
       "fixtures": [
-        "python:test_first_party_mods_use_only_the_published_api"
+        "rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped",
+        "rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance",
+        "rust:omd/tests/managed.rs::tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads",
+        "rust:omd/tests/managed.rs::managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly",
+        "rust:omd/tests/managed.rs::managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation",
+        "rust:omd/tests/managed.rs::managed_policy_refuses_user_installs_outside_allowed_sources_and_versions"
       ],
-      "limitations": "API 0.2 service and command own delegation choices. The generic host enforces route, permission, snapshot and ledger boundaries; reviewed workflow parity remains under qualification.",
-      "removal": "Disable the mod to remove its delegation policy; the generic host does not supply a hidden replacement policy."
-    },
-    {
-      "id": "omd_recovery",
-      "area": "first_party_mod",
-      "name": "omd_recovery",
-      "extension_type": "mod",
-      "owner": "OMD first-party bundle (mods/first-party/omd_recovery)",
-      "version": "0.2.0-preview.2",
-      "capabilities": [
-        "agents",
-        "commands",
-        "fs.read",
-        "interception",
-        "lifecycle",
-        "middleware",
-        "model",
-        "services",
-        "sessions",
-        "store",
-        "tools"
-      ],
-      "status": "supported",
-      "fixtures": [
-        "python:test_first_party_mods_use_only_the_published_api"
-      ],
-      "limitations": "API 0.2 mod chooses bounded escalation and outage fallback from structured host results. Live provider quality and full resume parity remain open.",
-      "removal": "Disable the mod to remove its recovery policy; generic host limits and contract restrictions remain."
+      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/lean_profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
+      "removal": "An administrator clears or rolls back the policy (`omd-mod policy clear|rollback`, `omd-package policy remove|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running."
     },
     {
       "id": "omd_workspace",
@@ -273,11 +240,11 @@
       "area": "native",
       "name": "Codex plugins (plugin.json)",
       "owner": "upstream Codex",
-      "version": "0.161.0",
+      "version": "0.162.0",
       "status": "supported",
       "fixtures": [
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique",
-        "rust:omd/tests/mods.rs::pi_and_native_discovery_preserve_project_precedence_without_trust"
+        "rust:omd/tests/mods.rs::native_discovery_prefers_project_packages_without_trust"
       ],
       "limitations": "Plugin discovery, MCP servers and hook execution stay upstream-owned and unmodified; OMD adds no plugin transport and does not sandbox plugin hooks.",
       "removal": "Remove the plugin from the Codex plugin directory; no OMD state refers to it."
@@ -287,7 +254,7 @@
       "area": "native",
       "name": "Codex hooks",
       "owner": "upstream Codex",
-      "version": "0.161.0",
+      "version": "0.162.0",
       "hooks": [
         "pre_tool_use",
         "permission_request",
@@ -311,69 +278,24 @@
       "removal": "Remove the hook file from the Codex configuration; mod interception is registered separately and is unaffected."
     },
     {
-      "id": "omd_guidance_hooks",
+      "id": "omd_anchored_edit",
       "area": "native",
-      "name": "OMD guidance and hooks plugin",
+      "name": "OMD anchored edit plugin",
       "extension_type": [
         "plugin",
-        "skill",
-        "hook"
+        "skill"
       ],
       "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
-      "version": "0.1.0",
+      "version": "0.2.0-preview.1",
       "status": "opt_in",
       "fixtures": [
-        "python:test_lead_success_writes_exact_hook_marker",
-        "python:test_incomplete_structured_report_blocks_completion",
-        "python:test_plain_worker_mode_does_not_validate_report",
-        "rust:native/src/lib.rs::exact_lead_and_worker_markers_are_accepted",
-        "python:test_pinned_bundle_matches_plugin_sources"
-      ],
-      "limitations": "Explicitly installed and hash-trusted; skill selection is not a release default. PostToolUse records successful host results only. Its API 0.2 migration has local tests; live cadence and parity qualification remain open.",
-      "removal": "Remove omd-guidance-hooks from Codex and the marketplace. Generic host contracts enforce only a document the user selected."
-    },
-    {
-      "id": "omd_review_policy",
-      "area": "native",
-      "name": "OMD review policy plugin",
-      "extension_type": [
-        "plugin",
-        "skill",
-        "hook"
-      ],
-      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
-      "version": "0.1.0+codex.20260927022545",
-      "status": "opt_in",
-      "fixtures": [
-        "python:test_review_skills_cover_all_cadences_and_retain_native_authority",
-        "python:test_every_turn_stop_blocks_until_native_review_succeeds",
-        "python:test_other_tools_and_unselected_policy_do_not_satisfy_or_enforce_cadence",
         "python:test_pinned_bundle_matches_plugin_sources",
-        "python:test_advisor_owns_completed_turn_cadence_without_manual_stop_guard"
+        "node:hashline edits apply atomically across files with byte fidelity and fresh anchors",
+        "node:denied, oversized, missing, generated and malformed edits never write",
+        "script:scripts/lean_profile_acceptance.py"
       ],
-      "limitations": "Explicitly installed and hash-trusted. Skills select prompts and cadence; hooks require a mod-owned review receipt when selected. Generic contracts enforce selected receipts and completion gates. Live review parity remains open.",
-      "removal": "Remove omd-review-policy from Codex; unselected review prompts and hook cadence stop, while any user-selected generic contract remains enforced."
-    },
-    {
-      "id": "omd_application_bridges",
-      "area": "native",
-      "name": "OMD application bridges plugin",
-      "extension_type": [
-        "plugin",
-        "mcp",
-        "hook"
-      ],
-      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
-      "version": "0.1.0",
-      "status": "opt_in",
-      "fixtures": [
-        "python:test_manifest_registers_prompt_gated_managed_mcp",
-        "python:test_launcher_requires_exact_enabled_external_policy",
-        "python:test_plugin_surface_scopes_each_adapter_and_keeps_control_separate",
-        "python:test_pinned_bundle_matches_plugin_sources"
-      ],
-      "limitations": "Explicitly installed, hash-trusted and default-off. Adapter tools use generic host permissions and explicit service grants; full API 0.2 provider acceptance remains open.",
-      "removal": "Remove omd-application-bridges from Codex and disable application_bridge. The managed browser bundle and dormant adapter sources remain until the private OMD installation is removed."
+      "limitations": "Staged in OMD+ as inert plugin files and guidance. The TypeScript component (tools, fs.read, fs.write, exec) stays disabled until the user trusts and enables it; the ordinary patch tool is unaffected. Offline runner tests cover anchored reads, edits, search and refusals; live-session parity and edit quality remain unqualified.",
+      "removal": "Remove omd-anchored-edit from Codex and disable its trusted component separately; plugin removal alone does not disable the component."
     },
     {
       "id": "omd_artifact_reading",
@@ -408,8 +330,8 @@
       "version": "0.2.0",
       "status": "opt_in",
       "fixtures": [
-        "python:test_pinned_v8_assets_reject_changed_inputs",
-        "rust:codex-code-mode-host/tests/stdio.rs"
+        "python:test_pinned_bundle_matches_plugin_sources",
+        "script:tests/code_kernel.test.mjs"
       ],
       "limitations": "Experimental code mode requires explicit user configuration. JavaScript tool calls and optional managed Python stay under native permission, sandbox, process, output, cancellation and accounting controls. Python has no separate direct Codex tool API.",
       "removal": "Remove omd-code-execution from Codex; disable features.code_mode to hide the native JavaScript tool."
@@ -422,30 +344,8 @@
       "version": "pi-0.74-resources-v2",
       "status": "removed",
       "fixtures": [],
-      "limitations": "The API 0.1 pi.discover/pi.expand host bridge and its parser are deleted; Pi prompts and skills are served by the omd_project_pi_prompts mod.",
+      "limitations": "The API 0.1 pi.discover/pi.expand host bridge and its parser are deleted; no Pi prompt or skill resource ships in the launch collection.",
       "removal": "No active API 0.2 Pi resource bridge remains to disable."
-    },
-    {
-      "id": "browser_bundle",
-      "area": "browser",
-      "name": "Bundled browser tooling",
-      "owner": "OMD browser bundle (scripts/browser_bundle.py)",
-      "version": "Playwright MCP with a pinned Chromium",
-      "versions": {
-        "node": "24.21.0",
-        "pnpm": "11.14.0",
-        "@playwright/mcp": "0.0.83",
-        "playwright": "1.64.0-alpha-1790635538000",
-        "chromium": "155.0.8059.12"
-      },
-      "status": "supported",
-      "fixtures": [
-        "python:test_launcher_selects_the_bundled_browser_and_keeps_its_sandbox",
-        "python:test_prebuilt_archive_installs_the_same_verified_tree",
-        "python:test_failed_post_swap_update_restores_the_verified_bundle"
-      ],
-      "limitations": "Apple Silicon macOS only, injected into OMD alone, prompt-gated by default; browser and MCP network effects are outside the shell sandbox.",
-      "removal": "`scripts/browser_bundle.py` removes the managed tree atomically; Codex and OMD keep working without it."
     },
     {
       "id": "lsp_rust",
@@ -537,96 +437,6 @@
       "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
     },
     {
-      "id": "bridge_browser",
-      "area": "bridge",
-      "name": "Browser bridge adapter",
-      "owner": "OMD application bridge plugin over bridge/client.mjs",
-      "source": "bridge/client.mjs",
-      "version": "policy schema 1, fetch client",
-      "status": "default_off",
-      "fixtures": [
-        "python:test_all_five_adapters_exchange_events_and_exposed_state",
-        "python:test_client_sources_compile_and_javascript_executes"
-      ],
-      "limitations": "Console and window-error capture is explicit; only policy-allowlisted origins and state names are served and no DOM or expression access exists.",
-      "removal": "Stop calling `connect`; host teardown rotates the token and removes the connection file."
-    },
-    {
-      "id": "bridge_node",
-      "area": "bridge",
-      "name": "Node bridge adapter",
-      "owner": "OMD application bridge plugin over bridge/node-client.mjs",
-      "source": "bridge/node-client.mjs",
-      "version": "policy schema 1, Node file and process hooks",
-      "status": "default_off",
-      "fixtures": [
-        "python:test_all_five_adapters_exchange_events_and_exposed_state",
-        "python:test_authorization_version_redaction_bounds_state_and_teardown"
-      ],
-      "limitations": "Process-error hooks are opt-in and installed by the application, not by the adapter.",
-      "removal": "Close the client during application shutdown; the host teardown clears retained evidence."
-    },
-    {
-      "id": "bridge_python",
-      "area": "bridge",
-      "name": "Python bridge adapter",
-      "owner": "OMD application bridge plugin over bridge/python/omd_bridge.py",
-      "source": "bridge/python/omd_bridge.py",
-      "version": "policy schema 1, standard library only",
-      "status": "default_off",
-      "fixtures": [
-        "python:test_all_five_adapters_exchange_events_and_exposed_state",
-        "python:test_authorization_version_redaction_bounds_state_and_teardown"
-      ],
-      "limitations": "Owns only its optional daemon polling thread; it installs no logging or exception handler.",
-      "removal": "Close the client; teardown rejects pending state requests and clears in-memory evidence."
-    },
-    {
-      "id": "bridge_rust",
-      "area": "bridge",
-      "name": "Rust bridge adapter",
-      "owner": "OMD application bridge plugin over bridge/rust",
-      "source": "bridge/rust/Cargo.toml",
-      "version": "policy schema 1, blocking loopback client",
-      "status": "default_off",
-      "fixtures": [
-        "python:test_all_five_adapters_exchange_events_and_exposed_state",
-        "python:test_client_sources_compile_and_javascript_executes"
-      ],
-      "limitations": "Serde is pinned and no async runtime is required or taken over; the caller starts any polling thread.",
-      "removal": "Drop the client; the host removes the connection file on teardown."
-    },
-    {
-      "id": "bridge_java",
-      "area": "bridge",
-      "name": "Java bridge adapter",
-      "owner": "OMD application bridge plugin over bridge/java",
-      "source": "bridge/java/src/main/java/dev/ohmydiff/bridge/BridgeClient.java",
-      "version": "policy schema 1, JDK 11 or newer",
-      "status": "default_off",
-      "fixtures": [
-        "python:test_all_five_adapters_exchange_events_and_exposed_state",
-        "python:test_authorization_version_redaction_bounds_state_and_teardown"
-      ],
-      "limitations": "Uses `HttpClient` with an optional daemon polling thread; no logging framework or uncaught-exception handler is installed.",
-      "removal": "Close the client during shutdown; teardown is identical for every adapter."
-    },
-    {
-      "id": "application_bridge",
-      "area": "optional",
-      "name": "Application bridge capability",
-      "owner": "OMD host (runtime/native)",
-      "version": "policy schema 1, external SHA-256 bound policy",
-      "status": "default_off",
-      "fixtures": [
-        "python:test_authorization_version_redaction_bounds_state_and_teardown",
-        "python:test_bridge_launcher_uses_the_managed_node_runtime"
-      ],
-      "limitations": "Development-only and off by default. Host configuration and plugin startup fail closed if the external policy is missing or changed; API 0.2 parity is under qualification.",
-      "removal": "Remove omd-application-bridges and disable `application_bridge`; the wrapper never injects a replacement MCP server.",
-      "plugin_setting": "application_bridge"
-    },
-    {
       "id": "provider_sidecars",
       "area": "optional",
       "name": "Approved provider routes and local sidecars",
@@ -653,7 +463,7 @@
       "area": "optional",
       "name": "Remote control",
       "owner": "upstream Codex",
-      "version": "0.161.0 native",
+      "version": "0.162.0 native",
       "status": "removed",
       "fixtures": [],
       "limitations": "The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained.",
@@ -740,6 +550,18 @@
   ],
   "combinations": [
     {
+      "id": "first_party_mods_on_the_published_api",
+      "components": [
+        "omd_workspace",
+        "mod_api"
+      ],
+      "boundaries": [],
+      "result": "Every bundled mod declares the current API, requests only capabilities the host publishes, imports only the published type surface, touches no host-private symbol and is not named in host source.",
+      "evidence": [
+        "python:test_first_party_mods_use_only_the_published_api"
+      ]
+    },
+    {
       "id": "colliding_tool_and_terminal_slots",
       "components": [
         "omd_host",
@@ -769,23 +591,6 @@
         "rust:omd/tests/integration.rs::terminal_patches_bind_keys_that_may_target_another_mods_command",
         "rust:omd/tests/mods.rs::terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
         "patch:native_escape_and_cancel_keys_cannot_be_intercepted"
-      ]
-    },
-    {
-      "id": "first_party_pair_with_contenders",
-      "components": [
-        "omd_coordination",
-        "omd_recovery",
-        "omd_workspace",
-        "mod_api"
-      ],
-      "boundaries": [
-        "duplicate_keybindings",
-        "shared_context_budget"
-      ],
-      "result": "The bundled mods run with a contending terminal mod, a broken mod and a user/project duplicate: the contenders fail closed with source-located errors, coordination supplies bounded delegation preparation to recovery, and the remaining first-party behavior keeps working.",
-      "evidence": [
-        "python:test_first_party_mods_use_only_the_published_api"
       ]
     },
     {
@@ -839,40 +644,6 @@
       ]
     },
     {
-      "id": "guidance_hooks_with_native_guards",
-      "components": [
-        "omd_guidance_hooks",
-        "upstream_hooks",
-        "omd_host"
-      ],
-      "boundaries": [
-        "upstream_plugin_coexistence"
-      ],
-      "result": "The optional plugin exposes three separately selected skills and validates structured subagent output only when selected. The native reactive-guard marker projection was removed with the controlled host on 2026-09-27; the hooks run again in the default OMD session in Batch 2.55.",
-      "evidence": [
-        "python:test_lead_success_writes_exact_hook_marker",
-        "python:test_plain_worker_mode_does_not_validate_report",
-        "python:test_incomplete_structured_report_blocks_completion"
-      ]
-    },
-    {
-      "id": "review_policy_with_native_ledger",
-      "components": [
-        "omd_review_policy",
-        "upstream_hooks",
-        "omd_host"
-      ],
-      "boundaries": [
-        "upstream_plugin_coexistence"
-      ],
-      "result": "Explicit skills select review prompts; the selected hook requires a successful mod-owned review receipt. Generic contract gates still enforce their selected document independently.",
-      "evidence": [
-        "python:test_review_skills_cover_all_cadences_and_retain_native_authority",
-        "python:test_every_turn_stop_blocks_until_mod_review_receipt_succeeds",
-        "python:test_other_tools_and_unselected_policy_do_not_satisfy_or_enforce_cadence"
-      ]
-    },
-    {
       "id": "shared_event_and_store_boundaries",
       "components": [
         "omd_host",
@@ -887,45 +658,6 @@
         "rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries",
         "rust:omd/tests/mods.rs::project_scope_takes_precedence_over_user_scope_without_sharing_state",
         "rust:omd/tests/mods.rs::mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates"
-      ]
-    },
-    {
-      "id": "browser_with_host",
-      "components": [
-        "browser_bundle",
-        "omd_host"
-      ],
-      "boundaries": [
-        "optional_integration_isolation"
-      ],
-      "result": "The managed bundle is injected into OMD alone, launches the exact bundled executable with its own profile, and a failed post-swap update restores the verified tree with no stray process.",
-      "evidence": [
-        "python:test_launcher_selects_the_bundled_browser_and_keeps_its_sandbox",
-        "python:test_failed_post_swap_update_restores_the_verified_bundle",
-        "python:test_verify_detects_changes_but_ignores_bounded_artifacts"
-      ]
-    },
-    {
-      "id": "five_bridge_adapters_on_one_session",
-      "components": [
-        "application_bridge",
-        "omd_application_bridges",
-        "bridge_browser",
-        "bridge_node",
-        "bridge_python",
-        "bridge_rust",
-        "bridge_java"
-      ],
-      "boundaries": [
-        "optional_integration_isolation"
-      ],
-      "result": "The plugin exposes five prompt-approved adapter-scoped tools over one managed session. All adapters exchange events and exposed state; cross-adapter requests, unauthorized applications, oversized payloads and stale versions are refused, and teardown rotates the token, clears evidence and removes the connection file.",
-      "evidence": [
-        "python:test_plugin_surface_scopes_each_adapter_and_keeps_control_separate",
-        "python:test_launcher_requires_exact_enabled_external_policy",
-        "python:test_all_five_adapters_exchange_events_and_exposed_state",
-        "python:test_authorization_version_redaction_bounds_state_and_teardown",
-        "python:test_client_sources_compile_and_javascript_executes"
       ]
     },
     {
@@ -953,9 +685,10 @@
       ]
     },
     {
-      "id": "reading_and_code_execution_skill_packages",
+      "id": "bundled_skill_plugins",
       "components": [
         "upstream_plugins",
+        "omd_anchored_edit",
         "omd_artifact_reading",
         "omd_code_execution"
       ],
@@ -963,7 +696,7 @@
         "upstream_plugin_coexistence",
         "optional_integration_isolation"
       ],
-      "result": "Both opt-in skill plugins are pinned in the same marketplace and install into an isolated Codex home without claiming a tool namespace. The artifact helper does not execute notebook cells; code execution uses the separate native host. Combined live task use remains untested.",
+      "result": "The three bundled plugins are pinned in one marketplace and install into an isolated Codex home as inert files without claiming a tool namespace. The anchored-edit and artifact-reading components stay disabled until separately trusted; the artifact helper does not execute notebook cells and code execution uses the separate native host. Combined live task use remains untested.",
       "evidence": [
         "python:test_pinned_bundle_matches_plugin_sources",
         "python:test_notebook_cell_and_figure_are_versioned_without_execution"
@@ -1004,38 +737,52 @@
       ]
     },
     {
-      "id": "outside_author_packages_with_examples",
-      "components": [
-        "omd_host",
-        "mod_api",
-        "mod_package_lifecycle"
-      ],
-      "boundaries": [
-        "duplicate_keybindings",
-        "disabled_dependencies",
-        "host_upgrade"
-      ],
-      "result": "Two outside-author packages that replace coordination, context and the terminal run in one live session beside two repository-only conformance fixtures; the terminal's cross-mod keys reach both other packages, the context replacement drops evidence outside the declared scope before the worker sees it, and the same four packages install, upgrade from mod API `.5` to `.6` with a state migration, roll back and re-upgrade through the package manager.",
-      "evidence": [
-        "script:scripts/mod_full_api_exercise.py"
-      ]
-    },
-    {
-      "id": "reviewed_workflow_with_coordination",
+      "id": "reviewed_workflow_with_host",
       "components": [
         "omd_workflow",
-        "omd_coordination",
         "omd_host"
       ],
       "boundaries": [
         "shared_context_budget",
         "shared_state_store"
       ],
-      "result": "The workflow and coordination mods compose through generic host services, checked integration and completion with local scripted providers; live provider qualification remains open.",
+      "result": "The workflow mod uses generic host services for checked integration and completion with local scripted providers; live provider qualification remains open.",
       "evidence": [
         "script:tests/workflow_mod.test.mjs",
-        "script:tests/coordination_mod.test.mjs",
         "rust:omd/tests/generic_host.rs::finding_receipt_replay_requires_explicit_independent_resolution"
+      ]
+    },
+    {
+      "id": "example_packages_with_host_features",
+      "components": [
+        "omd_host",
+        "mod_api",
+        "mod_package_lifecycle"
+      ],
+      "boundaries": [
+        "host_upgrade"
+      ],
+      "result": "The repository example packages load, inspect and register together against the published host features, and their events, operations and capabilities stay inside the published API.",
+      "evidence": [
+        "rust:omd/tests/examples.rs::host_feature_examples_load_and_register_together",
+        "script:tests/examples_api.test.mjs"
+      ]
+    },
+    {
+      "id": "managed_packages_beside_user_mods",
+      "components": [
+        "managed_policy",
+        "mod_package_lifecycle",
+        "omd_host"
+      ],
+      "boundaries": [
+        "duplicate_tools",
+        "shared_state_store"
+      ],
+      "result": "Administrator-managed packages deployed per account run beside user and project mods: a same-ID user or project copy is shadowed, refused user mods unload at once, user answers cannot skip a managed required guard, and resetting user mods leaves managed packages running.",
+      "evidence": [
+        "rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped",
+        "rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance"
       ]
     }
   ],
@@ -1066,7 +813,7 @@
     {
       "id": "pinned_codex_baseline",
       "retained_for": [
-        "0.161.0"
+        "0.162.0"
       ],
       "case": "The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces.",
       "evidence": [
@@ -1095,16 +842,6 @@
       "reason": "isolated Codex installation and separate host fixtures establish package coexistence and runtime controls; a live provider task has not been authorized or run."
     },
     {
-      "id": "browser_driven_by_a_mod",
-      "combination": "A mod driving the bundled browser inside a live task",
-      "reason": "browser tooling is prompt-gated MCP tooling outside the mod capability surface; no fixture runs a mod and the browser together."
-    },
-    {
-      "id": "bridge_with_mods",
-      "combination": "Application-bridge adapters and mods in one enabled session",
-      "reason": "the bridge is development-only and default-off, and its evidence is host-level; mod capabilities are not exercised against it."
-    },
-    {
       "id": "lsp_with_mods",
       "combination": "Semantic LSP edits requested from a mod",
       "reason": "language-server access is not a published mod capability; LSP coverage stays native-only."
@@ -1112,7 +849,7 @@
     {
       "id": "third_party_mod_set",
       "combination": "Independently authored mods combined with the first-party bundle",
-      "reason": "no independent-author trial has run; Phase 12 retains the participant requirement, so no third-party composition is claimed."
+      "reason": "no independent-author trial has run; the human author trial is now W1c, so no third-party composition is claimed."
     },
     {
       "id": "real_release_upgrade",
@@ -1131,7 +868,7 @@
     },
     {
       "id": "exhaustive_combinations",
-      "combination": "Every possible combination of mods, adapters and optional integrations",
+      "combination": "Every possible combination of mods, plugins and optional integrations",
       "reason": "the space is combinatorially unbounded; this matrix maintains representative combinations and names what is not covered instead."
     }
   ],
@@ -1143,7 +880,7 @@
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",
     "pnpm --dir mods test"
   ],
-  "qualification": "Development pin: the 0.161.0 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-0161-20261007.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
+  "qualification": "Development pin: the 0.162.0 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-0162-20261008.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
   "profiles": {
     "platform": {
       "label": "OMD Core",
@@ -1163,73 +900,38 @@
       "label": "OMD+",
       "first_party_installed": [
         "omd_advisor",
-        "omd_checks",
         "omd_claude_cli",
-        "omd_continue",
-        "omd_coordination",
-        "omd_cursor",
-        "omd_editor",
         "omd_frecency",
-        "omd_git",
-        "omd_graph_navigator",
-        "omd_guideline_governance",
-        "omd_herdr",
         "omd_inspector",
-        "omd_layout",
         "omd_logo",
         "omd_lsp_sync",
         "omd_lsp_view",
-        "omd_mcp",
-        "omd_mini",
         "omd_model_picker",
         "omd_mods",
-        "omd_muse",
-        "omd_notes",
-        "omd_panes",
-        "omd_plan_panel",
         "omd_plan_removal",
         "omd_preview",
         "omd_privacy",
         "omd_profiles",
-        "omd_programmable_context",
-        "omd_project_pi_prompts",
-        "omd_prompt_queue",
-        "omd_reactive_rules",
-        "omd_recovery",
-        "omd_repository_analysis",
-        "omd_research",
-        "omd_shared_checkout",
-        "omd_source_knowledge",
-        "omd_task_tools",
-        "omd_theme",
         "omd_tool_lines",
-        "omd_typed_tasks",
         "omd_update",
         "omd_usage",
         "omd_workflow",
-        "omd_workspace",
-        "omd_worktree"
+        "omd_workspace"
       ],
       "first_party_default_active": [
         "omd_inspector",
         "omd_logo",
         "omd_model_picker",
         "omd_mods",
+        "omd_plan_removal",
         "omd_tool_lines",
         "omd_update",
         "omd_workspace"
       ],
       "plugin_sources": [
         "omd-anchored-edit",
-        "omd-application-bridges",
         "omd-artifact-reading",
-        "omd-browser",
-        "omd-curated-memory",
-        "omd-debugger",
-        "omd-guidance-hooks",
-        "omd-procedures",
-        "omd-review-policy",
-        "omd-session-review"
+        "omd-code-execution"
       ]
     }
   },
@@ -1238,57 +940,17 @@
       "version": "0.4.0-preview.1",
       "source": "mods/first-party/omd_advisor"
     },
-    "omd_checks": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_checks"
-    },
     "omd_claude_cli": {
       "version": "0.2.0-preview.3",
       "source": "mods/first-party/omd_claude_cli"
-    },
-    "omd_continue": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_continue"
-    },
-    "omd_coordination": {
-      "version": "0.2.0-preview.1",
-      "source": "mods/first-party/omd_coordination"
-    },
-    "omd_cursor": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_cursor"
-    },
-    "omd_editor": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_editor"
     },
     "omd_frecency": {
       "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_frecency"
     },
-    "omd_git": {
-      "version": "0.2.0-preview.4",
-      "source": "mods/first-party/omd_git"
-    },
-    "omd_graph_navigator": {
-      "version": "0.2.0-preview.2",
-      "source": "mods/first-party/omd_graph_navigator"
-    },
-    "omd_guideline_governance": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_guideline_governance"
-    },
-    "omd_herdr": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_herdr"
-    },
     "omd_inspector": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_inspector"
-    },
-    "omd_layout": {
-      "version": "0.1.0-preview.2",
-      "source": "mods/first-party/omd_layout"
     },
     "omd_logo": {
       "version": "0.2.0-preview.1",
@@ -1302,14 +964,6 @@
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_lsp_view"
     },
-    "omd_mcp": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_mcp"
-    },
-    "omd_mini": {
-      "version": "0.1.0-preview.3",
-      "source": "mods/first-party/omd_mini"
-    },
     "omd_model_picker": {
       "version": "0.3.0-preview.2",
       "source": "mods/first-party/omd_model_picker"
@@ -1317,22 +971,6 @@
     "omd_mods": {
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_mods"
-    },
-    "omd_muse": {
-      "version": "0.1.0-preview.2",
-      "source": "mods/first-party/omd_muse"
-    },
-    "omd_notes": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_notes"
-    },
-    "omd_panes": {
-      "version": "0.1.0-preview.3",
-      "source": "mods/first-party/omd_panes"
-    },
-    "omd_plan_panel": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_plan_panel"
     },
     "omd_plan_removal": {
       "version": "0.1.0-preview.1",
@@ -1350,57 +988,9 @@
       "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_profiles"
     },
-    "omd_programmable_context": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_programmable_context"
-    },
-    "omd_project_pi_prompts": {
-      "version": "0.1.0-preview.2",
-      "source": "mods/first-party/omd_project_pi_prompts"
-    },
-    "omd_prompt_queue": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_prompt_queue"
-    },
-    "omd_reactive_rules": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_reactive_rules"
-    },
-    "omd_recovery": {
-      "version": "0.2.0-preview.2",
-      "source": "mods/first-party/omd_recovery"
-    },
-    "omd_repository_analysis": {
-      "version": "0.1.0-preview.2",
-      "source": "mods/first-party/omd_repository_analysis"
-    },
-    "omd_research": {
-      "version": "0.2.0-preview.1",
-      "source": "mods/first-party/omd_research"
-    },
-    "omd_shared_checkout": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_shared_checkout"
-    },
-    "omd_source_knowledge": {
-      "version": "0.1.0-preview.3",
-      "source": "mods/first-party/omd_source_knowledge"
-    },
-    "omd_task_tools": {
-      "version": "0.2.0-preview.1",
-      "source": "mods/first-party/omd_task_tools"
-    },
-    "omd_theme": {
-      "version": "0.4.0-candidate.3",
-      "source": "mods/first-party/omd_theme"
-    },
     "omd_tool_lines": {
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_tool_lines"
-    },
-    "omd_typed_tasks": {
-      "version": "0.2.0-preview.1",
-      "source": "mods/first-party/omd_typed_tasks"
     },
     "omd_update": {
       "version": "0.1.0-preview.1",
@@ -1417,10 +1007,491 @@
     "omd_workspace": {
       "version": "0.2.0-preview.5",
       "source": "mods/first-party/omd_workspace"
-    },
-    "omd_worktree": {
-      "version": "0.1.0-preview.1",
-      "source": "mods/first-party/omd_worktree"
     }
+  },
+  "launch_cut": {
+    "tag": "pre-launch-collection",
+    "restore": "git checkout pre-launch-collection -- <path>",
+    "not_restored": [
+      "benchmarks"
+    ],
+    "notes": [
+      "Restoring source also requires reintegrating and testing its dependencies and contracts; for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.",
+      "Wave 1 also upgrades omd_profiles with an account switcher.",
+      "The wave 2 `omd-mod-authoring` plugin arrived after `pre-launch-collection`; restore it with `git checkout cd7f92c467f61af03490f396b6614eaa6af073a6 -- plugins/optional/plugins/omd-mod-authoring`. The author CLI, testing SDK and typed host tools remain shipped."
+    ],
+    "entries": [
+      {
+        "id": "omd_logo",
+        "kind": "mod",
+        "path": "mods/first-party/omd_logo",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "platform",
+          "full"
+        ]
+      },
+      {
+        "id": "omd_mods",
+        "kind": "mod",
+        "path": "mods/first-party/omd_mods",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "platform",
+          "full"
+        ]
+      },
+      {
+        "id": "omd_update",
+        "kind": "mod",
+        "path": "mods/first-party/omd_update",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "platform",
+          "full"
+        ]
+      },
+      {
+        "id": "omd_inspector",
+        "kind": "mod",
+        "path": "mods/first-party/omd_inspector",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_workspace",
+        "kind": "mod",
+        "path": "mods/first-party/omd_workspace",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_model_picker",
+        "kind": "mod",
+        "path": "mods/first-party/omd_model_picker",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_plan_removal",
+        "kind": "mod",
+        "path": "mods/first-party/omd_plan_removal",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_tool_lines",
+        "kind": "mod",
+        "path": "mods/first-party/omd_tool_lines",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_preview",
+        "kind": "mod",
+        "path": "mods/first-party/omd_preview",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_lsp_sync",
+        "kind": "mod",
+        "path": "mods/first-party/omd_lsp_sync",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_lsp_view",
+        "kind": "mod",
+        "path": "mods/first-party/omd_lsp_view",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_claude_cli",
+        "kind": "mod",
+        "path": "mods/first-party/omd_claude_cli",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_profiles",
+        "kind": "mod",
+        "path": "mods/first-party/omd_profiles",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_workflow",
+        "kind": "mod",
+        "path": "mods/first-party/omd_workflow",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_frecency",
+        "kind": "mod",
+        "path": "mods/first-party/omd_frecency",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_privacy",
+        "kind": "mod",
+        "path": "mods/first-party/omd_privacy",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_usage",
+        "kind": "mod",
+        "path": "mods/first-party/omd_usage",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_advisor",
+        "kind": "mod",
+        "path": "mods/first-party/omd_advisor",
+        "disposition": "launch",
+        "tier": "opt-in",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd-anchored-edit",
+        "kind": "plugin",
+        "path": "plugins/bundled/oh-my-diff/plugins/omd-anchored-edit",
+        "disposition": "launch",
+        "tier": "staged",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd-artifact-reading",
+        "kind": "plugin",
+        "path": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
+        "disposition": "launch",
+        "tier": "staged",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd-code-execution",
+        "kind": "plugin",
+        "path": "plugins/bundled/oh-my-diff/plugins/omd-code-execution",
+        "disposition": "launch",
+        "tier": "staged",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_source_knowledge",
+        "kind": "mod",
+        "path": "mods/first-party/omd_source_knowledge",
+        "disposition": "wave_1"
+      },
+      {
+        "id": "omd_mini",
+        "kind": "mod",
+        "path": "mods/first-party/omd_mini",
+        "disposition": "wave_1"
+      },
+      {
+        "id": "omd_plan_panel",
+        "kind": "mod",
+        "path": "mods/first-party/omd_plan_panel",
+        "disposition": "wave_1"
+      },
+      {
+        "id": "omd_cursor",
+        "kind": "mod",
+        "path": "mods/first-party/omd_cursor",
+        "disposition": "wave_1"
+      },
+      {
+        "id": "omd_programmable_context",
+        "kind": "mod",
+        "path": "mods/first-party/omd_programmable_context",
+        "disposition": "wave_1"
+      },
+      {
+        "id": "omd_continue",
+        "kind": "mod",
+        "path": "mods/first-party/omd_continue",
+        "disposition": "wave_1"
+      },
+      {
+        "id": "omd_checks",
+        "kind": "mod",
+        "path": "mods/first-party/omd_checks",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_coordination",
+        "kind": "mod",
+        "path": "mods/first-party/omd_coordination",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_editor",
+        "kind": "mod",
+        "path": "mods/first-party/omd_editor",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_git",
+        "kind": "mod",
+        "path": "mods/first-party/omd_git",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_graph_navigator",
+        "kind": "mod",
+        "path": "mods/first-party/omd_graph_navigator",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_guideline_governance",
+        "kind": "mod",
+        "path": "mods/first-party/omd_guideline_governance",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_herdr",
+        "kind": "mod",
+        "path": "mods/first-party/omd_herdr",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_layout",
+        "kind": "mod",
+        "path": "mods/first-party/omd_layout",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_mcp",
+        "kind": "mod",
+        "path": "mods/first-party/omd_mcp",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_muse",
+        "kind": "mod",
+        "path": "mods/first-party/omd_muse",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_notes",
+        "kind": "mod",
+        "path": "mods/first-party/omd_notes",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_panes",
+        "kind": "mod",
+        "path": "mods/first-party/omd_panes",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_project_pi_prompts",
+        "kind": "mod",
+        "path": "mods/first-party/omd_project_pi_prompts",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_prompt_queue",
+        "kind": "mod",
+        "path": "mods/first-party/omd_prompt_queue",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_reactive_rules",
+        "kind": "mod",
+        "path": "mods/first-party/omd_reactive_rules",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_recovery",
+        "kind": "mod",
+        "path": "mods/first-party/omd_recovery",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_repository_analysis",
+        "kind": "mod",
+        "path": "mods/first-party/omd_repository_analysis",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_research",
+        "kind": "mod",
+        "path": "mods/first-party/omd_research",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_session_anchor",
+        "kind": "mod",
+        "path": "mods/first-party/omd_session_anchor",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_shared_checkout",
+        "kind": "mod",
+        "path": "mods/first-party/omd_shared_checkout",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_task_tools",
+        "kind": "mod",
+        "path": "mods/first-party/omd_task_tools",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_theme",
+        "kind": "mod",
+        "path": "mods/first-party/omd_theme",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_typed_tasks",
+        "kind": "mod",
+        "path": "mods/first-party/omd_typed_tasks",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_verification_gate",
+        "kind": "mod",
+        "path": "mods/first-party/omd_verification_gate",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_worktree",
+        "kind": "mod",
+        "path": "mods/first-party/omd_worktree",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd_focus_flow",
+        "kind": "mod",
+        "path": "mods/optional/omd_focus_flow",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-application-bridges",
+        "kind": "plugin",
+        "path": "plugins/bundled/oh-my-diff/plugins/omd-application-bridges",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-guidance-hooks",
+        "kind": "plugin",
+        "path": "plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-review-policy",
+        "kind": "plugin",
+        "path": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-browser",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-browser",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-curated-memory",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-curated-memory",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-debugger",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-debugger",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-procedures",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-procedures",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-session-review",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-session-review",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "bridge",
+        "kind": "tree",
+        "path": "bridge",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "browser",
+        "kind": "tree",
+        "path": "browser",
+        "disposition": "wave_2"
+      },
+      {
+        "id": "omd-mod-authoring",
+        "kind": "plugin",
+        "path": "plugins/optional/plugins/omd-mod-authoring",
+        "disposition": "wave_2"
+      }
+    ]
   }
 }

@@ -77,22 +77,6 @@ def plugin_lock():
     return lock
 
 
-SELECTED_OPTIONAL_PLUGINS = ("omd-anchored-edit", "omd-browser", "omd-curated-memory", "omd-debugger", "omd-procedures",
-                             "omd-session-review")
-
-
-def optional_plugin_sources():
-    files = []
-    for identifier in SELECTED_OPTIONAL_PLUGINS:
-        source = ROOT / "plugins/optional/plugins" / identifier
-        manifest = json.loads((source / ".codex-plugin/plugin.json").read_text())
-        if manifest["name"] != identifier:
-            raise ValueError(f"selected plugin identity changed: {identifier}")
-        files.extend(path.relative_to(ROOT).as_posix() for path in source.rglob("*")
-                     if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
-    return tuple(sorted(files))
-
-
 def plugin_sources(lock=None):
     lock = lock or plugin_lock()
     source = ROOT / lock["source"]

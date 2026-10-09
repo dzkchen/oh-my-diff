@@ -334,7 +334,7 @@ impl Queues {
             .await
             .map_err(|e| e.to_string())?
         {
-            StartIfIdleSubmission::Started { turn_id } => Ok(Some(turn_id)),
+            StartIfIdleSubmission::Started { turn_id, .. } => Ok(Some(turn_id)),
             StartIfIdleSubmission::NotSubmitted { .. } => Ok(None),
         }
     }

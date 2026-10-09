@@ -2,52 +2,6 @@
   "mod_api": "0.2.0-experimental.5",
   "node": "24.18.0",
   "packages": {
-    "omd_coordination": {
-      "api": "0.2.0-experimental.5",
-      "capabilities": [
-        "agents",
-        "commands",
-        "context",
-        "fs.read",
-        "lifecycle",
-        "model",
-        "services",
-        "store",
-        "tools"
-      ],
-      "extension_type": "mod",
-      "files": {
-        "index.ts": "3b5dd1c19390d0c4f42c272eae25459c883d9a0384cea52a1c7bf9bbe5ef38a5",
-        "mod.json": "a1576d49a6f755400998778360c67236d8052f252ee0e502f7433a204ad820f2"
-      },
-      "package_sha256": "1e3adce63f3a2c71b4a05b81ed38a32b7ff42fbb1d92c55a42f046c821efd329",
-      "source": "mods/first-party/omd_coordination",
-      "version": "0.2.0-preview.1"
-    },
-    "omd_recovery": {
-      "api": "0.2.0-experimental.5",
-      "capabilities": [
-        "agents",
-        "commands",
-        "interception",
-        "lifecycle",
-        "model",
-        "services",
-        "sessions",
-        "store",
-        "fs.read",
-        "tools",
-        "middleware"
-      ],
-      "extension_type": "mod",
-      "files": {
-        "index.ts": "33ada563bfa58cd6a6d1b931a1c937db7caa8c95e9d4c6ec8b7e3987ebd26b21",
-        "mod.json": "cab50fe10a6194c0c6357c08f8b140c434ba820ee1002cedf74358c9c5a2ee07"
-      },
-      "package_sha256": "a0249c739be8bf98849386e95292bfe385a034ecd9e103280ae2568ca906ee61",
-      "source": "mods/first-party/omd_recovery",
-      "version": "0.2.0-preview.2"
-    },
     "omd_workflow": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -68,10 +22,10 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "3e7770ea2d231435e62475285b4c18b5967dc6a359d57f5f3b7608d1e16f5db5",
+        "index.ts": "fbb75a007dfc68e73ebc113418aa53e5319fa638f8d50315a3b0358d32b40409",
         "mod.json": "c628972d085c36d327ad864b931bb0f86194e239860f73f8f163ffcc3ad7847a"
       },
-      "package_sha256": "f2478110b4bbac01cde3f3a774bc1f43890df5fd9daf52e9327789cc2f0e3087",
+      "package_sha256": "dcf1fce2b0fc84dfa24e9e0cac51d3e5e0adb4f3ef88976bcca0f9702e023140",
       "source": "mods/first-party/omd_workflow",
       "version": "0.2.0-preview.2"
     },
@@ -99,6 +53,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "ea0af0a39e66d544d9a2b3853a52d7f113ea0ad74df0cb3f1bf887f3a9e2e202"
+    "sha256": "1c73d0cbfe50051bfd0c0331bf2f8e20442393f508f132eaf35d45abf28fc979"
   }
 }

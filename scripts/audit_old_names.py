@@ -10,10 +10,6 @@ SKIP_FILES = {".DS_Store", ".env"}
 ALLOWED_LINES = {
     "README.md": ("previously called",),
     ".docs/ROADMAP.md": ("Rename the project throughout", "Rename audit:"),
-    "benchmarks/compare.py": ("LEGACY_OMD_ARM",),
-    "benchmarks/curate.py": ("FROZEN_SELECTION_SALT",),
-    "benchmarks/corpus/freeze.json": ('"c' + 'ai"',),
-    "tests/test_controlled.py": ('"C' + 'AI_SUBSCRIPTION_',),
     ".docs/audits/controlled-contributor.md": ("frozen manifest expected `C" + "AI_SUBSCRIPTION_*`",),
 }
 
@@ -39,7 +35,7 @@ def main():
         for line_number, line in enumerate(contents.splitlines(), 1):
             for match in PATTERN.finditer(line):
                 if any(marker in line for marker in allowed):
-                    category = "frozen_identifier" if name.startswith("benchmarks/") or name == "tests/test_controlled.py" or name == ".docs/audits/controlled-contributor.md" else "documented_mapping"
+                    category = "frozen_identifier" if name == ".docs/audits/controlled-contributor.md" else "documented_mapping"
                     exceptions[category] += 1
                 else:
                     unexpected.append({"path": name, "line": line_number, "match": match.group(0)})

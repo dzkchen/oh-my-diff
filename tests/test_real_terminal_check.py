@@ -11,6 +11,21 @@ with mock.patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "
 
 
 class RealTerminalCheckTests(unittest.TestCase):
+    def test_orca_prepares_the_script_and_stops_only_the_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            (base / "codex.pid").write_text("987")
+            terminal = real_terminal_check.Orca(base, base / "run.sh")
+            with mock.patch.object(real_terminal_check, "wait") as wait, \
+                    mock.patch.object(real_terminal_check, "call") as call, \
+                    mock.patch("builtins.print") as printed:
+                terminal.start({})
+                self.assertIn(str(base / "run.sh"), printed.call_args.args[0])
+                self.assertTrue(wait.call_args.args[1]())
+                self.assertEqual(terminal.pid(), 987)
+                terminal.close()
+                self.assertEqual(call.call_args.args[0], ["kill", 987])
+
     @contextmanager
     def fixture(self, keep_open=True):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:

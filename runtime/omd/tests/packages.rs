@@ -5,6 +5,7 @@ use codex_omd::ModPackageSource;
 use codex_omd::ModPackageTrust;
 use codex_omd::ModStore;
 use serde_json::json;
+use sha2::Digest;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -272,7 +273,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
     store.package_enable("fixture").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);
-    assert_eq!(status["selections"][0]["managed"], true);
+    assert_eq!(status["selections"][0]["packaged"], true);
     assert_eq!(status["selections"][0]["settings_keys"], json!(["mode"]));
     store.package_disable("fixture").unwrap();
     assert_eq!(
@@ -591,7 +592,7 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
         action: None,
         source: ModPackageSource::Repository {
             repository: repository.display().to_string(),
-            revision,
+            revision: revision.clone(),
             subdirectory: "repo_mod".into(),
         },
         index: None,
@@ -651,6 +652,60 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
                 .contains("repository_reference_invalid")
         );
     }
+    std::fs::write(
+        repository.join("repo_mod/assets/helper.json"),
+        b"{\"value\":2}",
+    )
+    .unwrap();
+    git(&repository, &["add", "."]);
+    git(&repository, &["commit", "-m", "changed"]);
+    let replacement = git_output(&repository, &["rev-parse", "HEAD"]);
+    git(&repository, &["replace", &revision, &replacement]);
+    let replaced = store.package_plan(offline.clone()).unwrap();
+    git(&repository, &["replace", "--delete", &revision]);
+
+    let remote = "https://127.0.0.1:9/allowed.git";
+    manifest["provenance"]["source"] = json!(remote);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    git(&repository, &["add", "."]);
+    git(&repository, &["commit", "-m", "claimed remote"]);
+    let remote_revision = git_output(&repository, &["rev-parse", "HEAD"]);
+    let repositories = root.join("store/repository-cache");
+    std::fs::create_dir_all(&repositories).unwrap();
+    let cached = repositories.join(format!("{:x}.git", sha2::Sha256::digest(remote.as_bytes())));
+    git(
+        &repository,
+        &[
+            "clone",
+            "--bare",
+            repository.to_str().unwrap(),
+            cached.to_str().unwrap(),
+        ],
+    );
+    git(
+        &cached,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", repository.display()),
+            remote,
+        ],
+    );
+    let mut redirected = offline;
+    redirected.offline = false;
+    redirected.source = ModPackageSource::Repository {
+        repository: remote.into(),
+        revision: remote_revision,
+        subdirectory: "repo_mod".into(),
+    };
+    let redirected = store.package_plan(redirected);
+    assert_eq!(
+        (
+            replaced.packages[0].integrity == lock.packages["repo_mod"].integrity,
+            redirected.is_err()
+        ),
+        (true, true),
+        "pinned content ignores replacement refs and verified fetches ignore cached URL rewrites"
+    );
 }
 
 #[test]

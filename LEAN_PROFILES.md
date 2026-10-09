@@ -13,13 +13,15 @@ These internal selectors, installation paths, schema-1 records and lock filename
 remain unchanged. They identify the same profiles; the public labels and status
 metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
-These are local Apple Silicon candidate profiles for the active Codex `0.161.0`
+These are local Apple Silicon candidate profiles for the active Codex `0.162.0`
 patch. They are not a public release or a qualified default. Build the patched
-`codex`, `omd-mod`, `omd`, and `omd-contract` executables from
-`upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
-SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
-and copy that archive to `/path/to/release/mod-api.tgz`. Use Node 24.18 or a
-later 24.x (`mise which node`); any upstream Codex `0.161.x` serves as the
+`codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
+executables from `upstream.lock.json` and `runtime/patches/manifest.json` after
+`mise run batch setup BATCH`, with
+`python3 scripts/batch_tree.py artifacts BATCH --release`. It copies and signs
+`target/release` binaries and packs the typed author SDK as `mod-api.tgz` in
+`/private/tmp/omd-bBATCH/artifacts`; tests keep the debug target. Use Node 24.18 or a
+later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
@@ -75,30 +77,39 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod, the `omd_mods` control screen and the `omd_update` notices, all enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs forty-seven first-party candidate mods. A fresh OMD+ store enables
-`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker` and `omd_tool_lines`; Codex's
-`tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
-typed tasks, workflow, advisor review, lead-requested research, checks, graph
-navigation, guideline governance, Pi prompts, repository analysis, source
-knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel, plan-mode removal, account and provider profiles, the workspace layout with its palettes and task worktrees, the built-in editor, shared-checkout coordination, the mini interface, the experimental Cursor provider, Herdr pane status, MCP server status and setup, the prompt queue and the usage HUD are installed but disabled. Advisor every-turn selection and the separate research preset
-require their own explicit host policy and allowance; installation does not
-activate either. Attaching an
+`--profile full` installs the first-party launch collection. A fresh OMD+ store enables
+`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
+`omd_plan_removal` and `omd_tool_lines`; Codex's
+`tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
+intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
+the privacy policy and the usage HUD (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,
+`omd_advisor`, `omd_preview`, `omd_frecency`, `omd_profiles`, `omd_privacy` and `omd_usage`) are installed but
+disabled. Advisor every-turn selection requires its own explicit host policy and allowance;
+installation does not activate it. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
 selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
 re-enabled when they were on), and adds newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
-`--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Ten curated plugin source packages are available in
+`--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Three plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. The upstream `codex-code-mode-host`, built from the same pinned tree,
 is installed beside `codex`, because current models run shell commands through
-it. The deferred code-execution plugin, browser, bridge service, external
-language servers and sidecars are absent from the installed base profile.
+it. External language servers, Python, Bun and other sidecars are absent from
+the installed base profile.
 
-The staged plugins are guidance hooks, review policy, application bridges,
-artifact reading, anchored edit, session review, curated memory, debugger, procedures and browser. Their nested
-skills, hooks and mod components are source inventory, not enabled extensions.
+The staged plugins are anchored edit, artifact reading and code execution. Their nested
+skills and mod components are source inventory, not enabled extensions.
 See [plugin setup](plugins/README.md) for each component's separate trust and
 activation steps. OMD Core can install the same packages explicitly.
+
+Packages outside this launch collection are not shipped. They remain in the
+annotated Git tag `pre-launch-collection`, except for later additions whose restore
+revision is recorded in the launch cut inventory, and return in post-launch waves. Wave 1 is `omd_source_knowledge`,
+`omd_mini`, `omd_plan_panel`, `omd_cursor`, `omd_programmable_context`, `omd_continue`
+and the `omd_profiles` account-switcher upgrade; wave 2 is the remaining deferred
+mods and plugins, `bridge/` and `browser/`.
+See the [launch cut inventory](INTEGRATION.md#launch-cut-inventory) for restoration
+requirements and dependency notes.
 
 Enable the installed synchronization mod explicitly with
 `/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It claims Python,
@@ -137,88 +148,54 @@ mode has neither. To disable a broken first-party mod from a shell:
 /path/to/omd-bin/omd-package mod disable omd_workspace
 ```
 
-Enable the Git sidebar with `/path/to/omd-bin/omd-package mod enable omd_git`;
 `mod disable omd_logo` removes the logo in either profile;
 the native `>_ OpenAI Codex (vVERSION)` session header remains.
 
-`omd mini [codex arguments]` launches the scrollback-first mini interface over
-the same session engine once `omd-package mod enable omd_mini` has run; it
-needs a terminal, and `/omd_mini:switch` reopens the session in the full
-interface at the next quit ([details](mods/first-party/omd_mini/README.md)).
-
 `omd-package mod enable omd_usage` turns on the provider usage HUD: context,
-cache, cost and quota panels, a Usage dialog (Alt+a) and the data for the
-theme's status-line segments ([details](mods/first-party/omd_usage/README.md)).
-
-`omd-package mod enable omd_prompt_queue` adds `/queue` and Alt+q: prompts you
-capture are kept per thread, can be edited, reordered and joined, and are sent
-as you, in order, when the session is idle ([details](mods/first-party/omd_prompt_queue/README.md)).
+cache, cost and quota panels and a Usage dialog (Alt+a)
+([details](mods/first-party/omd_usage/README.md)).
 
 `omd-package mod enable omd_privacy` turns on a fail-closed final-request policy:
 secrets and the PII rules you select become stable opaque placeholders in every
 provider-bound request, and shell reads of sensitive paths ask first; `/privacy`
 shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 
-Git mutations also need an explicit permission-profile grant for the repository's
-Git metadata and affected files. Codex's default `.git` protection is respected;
-enabling `omd_git` alone does not authorize writes. Run from the repository root.
-Git hooks and filters keep the session's filesystem restrictions and have no
-network access through this local Git interface.
-
 `OMD_CONTROLLED_MANIFEST` fails closed on the current host. Configure routes and grants in
 the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
 with `omd-contract`. Enabling the mod does not select a contract or grant a
-provider. `omd_task_tools` requires the enabled `omd_workflow` service; the
-package command rejects a missing dependency and restores the prior selection.
-The earlier bounded live native-workflow task and its `unverified` receipt are
+provider. The earlier bounded live native-workflow task and its `unverified` receipt are
 historical evidence, not qualification of this mod-owned workflow. Batch 2.55
 has local synthetic coverage; installed-profile and live-provider qualification
 remain separate gates.
 
-The inactive `omd_typed_tasks` package can be enabled for a task with a selected
-and initialized mod-owned workflow contract
-with `/path/to/omd-bin/omd-package mod enable omd_typed_tasks`. Its
-`tasks` setting declares each worker role, one host-authorized route, tools,
-and a bounded JSON result schema. The mod validates all sibling results before
-advancing any editing result. Edit workers require configured checks and an
-authorized distinct review route; host integration remains separately gated.
-Direct work remains available when the package is disabled or the selected
-contract forbids children. Local Batch 2.55 runner coverage does not qualify
-real-model quality or public support.
-
-The OMD+ profile includes inactive `omd_claude_cli`, `omd_cursor` and
-`omd_muse` route mods. `omd_claude_cli` uses the official Claude CLI's logged-in
-`claude.ai` Pro or Max subscription; `omd_cursor` uses your Cursor account
-through the official Cursor SDK, which setup installs with pnpm; `omd_muse` uses
-a separately installed Muse Code with an MSP host (`muse serve`). Set a route up once, then launch sessions on it:
+The OMD+ profile includes inactive `omd_claude_cli` and `omd_profiles` route mods.
+`omd_claude_cli` uses the official Claude CLI's logged-in
+`claude.ai` Pro or Max subscription; `omd_profiles` switches between ChatGPT
+accounts, API keys and compatible providers
+([details](mods/first-party/omd_profiles/README.md)). Set a route up once, then launch sessions on it:
 
 ```sh
 /path/to/omd-bin/omd-package claude --setup
 /path/to/omd-bin/omd-package claude --model sonnet
 /path/to/omd-bin/omd-package claude --model haiku exec 'Your task'
-/path/to/omd-bin/omd-package cursor --setup
-/path/to/omd-bin/omd-package cursor --model cursor-auto
-/path/to/omd-bin/omd-package muse --setup
-/path/to/omd-bin/omd-package muse
+/path/to/omd-bin/omd-package profiles --setup --add NAME --credential NAME \
+  --protocol responses --url URL --upstream-model MODEL
+/path/to/omd-bin/omd-package profiles [--model NAME]
 ```
 
-Setup checks the CLI or SDK, reads its model catalog and context windows,
+Setup writes the route's model catalog (the Claude setup first checks the CLI and
+reads its context windows),
 adds the route's service grant and local token to the store's `host.json`,
 enables the mod and makes the managed `codex` launcher define the provider.
 Launching adds the provider, model and catalog to an ordinary OMD+ session, so
 enabled mods, their data, `/status` and resume work as usual; `--model` takes a
-slug or family shortcut and further arguments go to `codex`. The Claude route
+slug, family shortcut or profile name and further arguments go to `codex`. The Claude route
 requires official Claude CLI `2.1.285` and rejects inherited API-key and cloud
-overrides; there is no API-key fallback. Cursor setup enrolls through Cursor's
-browser login, hands the minted key to the broker as a mod-owned secret that only the route's
-service receives, and turns off Cursor's own tools so the agent acts only
-through OMD tools. The native host keeps process
+overrides; there is no API-key fallback. The native host keeps process
 authority, tool execution, approvals and usage accounting; each Claude model
 call admits one upstream request. `ask_claude: true` gives other leads an
-opt-in Claude delegation tool, and the Muse mod adds a read-only `research`
-subagent tool. Muse approvals go through an OMD prompt unless `auto_approve` is
-set. The package READMEs list each route's limits. OMD Core includes no route
-or assets.
+opt-in Claude delegation tool. The package READMEs list each route's limits.
+OMD Core includes no route or assets.
 
 For a user mod in the OMD Core profile, inspect its `mod.json` and source,
 then use the installed `artifacts/omd-mod` binary to inspect, trust its exact
@@ -347,8 +324,35 @@ To protect credentials, grants and evidence from same-user processes on macOS, d
 
 While the broker is deployed, installing a package adds its binaries to the pins, and `install.sh` upgrades and rollbacks re-pin exactly the active and previous installations; each asks for sudo once. `install.sh uninstall` and `omd-package uninstall` refuse while the broker is deployed; pruning an older installation uses `omd-package uninstall --keep-broker`. The protection boundary is described in [mods/REFERENCE.md](mods/REFERENCE.md#protected-authority-macos).
 
+Broker installation imports the unchanged configuration's exact valid grants,
+including secret grants and expiry, without re-trusting or toggling selections.
+Stale selections are skipped. This import does not certify package origins;
+source-restricted packages need a verified reinstall after broker deployment.
+
+Organizations restrict and deploy mods with an administrator policy, on either profile:
+
+```sh
+/path/to/omd-bin/omd-package policy install policy.json  # sudo; root-owned policy file, keeps the previous one
+/path/to/omd-bin/omd-package policy rollback             # sudo; swap back to the previous file
+/path/to/omd-bin/omd-package policy remove               # sudo
+/path/to/omd-bin/omd-package policy explain              # targets, deployment generation and each mod's scope and refusal
+/path/to/omd-bin/omd mods sync [--offline|--rollback]    # deploy the policy's packages to this account's store
+```
+
+With the broker deployed, an administrator can keep the policy in the broker instead
+(`omd-mod policy set FILE`, one administrator dialog). Existing deployment tools fit
+around these commands: an MDM profile or configuration-management run installs OMD and
+the policy file as root, then runs `omd mods sync --store STORE` as each user (for example
+from a launch agent) against the organization's own folders, Git hosts, npm registry or
+mirrored catalog; no hosted fleet service or provider secret is involved. Until that sync
+deploys a policy package, every surface the package could intercept fails closed, so
+run it right after installing the policy. Mods the policy
+deploys can't be turned off in `/mods` or `/omd`; disabling or resetting user mods there
+leaves them running. Policy fields, refusals and recovery are in
+[mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).
+
 The installer refuses removal if its
-launcher changed, no upstream Codex `0.161.x` remains on `PATH`, or the prefix
+launcher changed, no upstream Codex `0.162.x` remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
 fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,

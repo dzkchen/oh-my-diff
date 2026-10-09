@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = [ROOT / "mods/first-party", ROOT / "mods/optional", ROOT / "mods/examples"]
+SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples"]
 TUI_OPERATIONS = {
     "exec.run", "exec.output_page", "workspace.read", "workspace.list", "workspace.stat",
     "workspace.check_access", "workspace.transaction", "workspace.backup", "workspace.restore",
@@ -201,7 +201,7 @@ def collisions(status, ids):
 def check(host, paths, providers, commands, scenarios):
     report = {}
     ids = {manifest(path)["id"]: path for path in packages([])}
-    first_party = [path for path in paths if path.parent.name in ("first-party", "optional")]
+    first_party = [path for path in paths if path.parent.name == "first-party"]
     if first_party:
         location, refused = host.store("all", first_party, providers)
         status = host.status(location)

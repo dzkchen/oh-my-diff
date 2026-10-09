@@ -8,10 +8,11 @@ import tarfile
 
 try:
     from scripts import install_support as support
-    from scripts import full_mods_lock
+    from scripts import full_mods_lock, lean_profiles
 except ModuleNotFoundError:
     import install_support as support
     import full_mods_lock
+    import lean_profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +33,7 @@ SOURCES = (
     "mods/author/cli.mjs",
     "LEAN_PROFILES.md", "install.sh",
     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
-) + full_mods_lock.sources() + support.optional_plugin_sources()
+) + full_mods_lock.sources()
 
 
 def sign(path):
@@ -62,44 +63,6 @@ def sdk_sources():
 SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
-def selected_plugins(index, package_mode):
-    lock = support.plugin_lock()
-    source = ROOT / lock["source"]
-    if support.digest(ROOT / lock["guide"]["path"]) != lock["guide"]["sha256"]:
-        raise ValueError("pinned bundled plugin guide changed")
-    selected = sorted(package["id"] for package in index["packages"]
-                      if package["extension_type"] == "plugin"
-                      and package["support_status"] in ("reviewed_candidate", "supported"))
-    if not selected or not set(selected) <= set(lock["plugins"]):
-        raise ValueError("curated plugin selection disagrees with pinned sources")
-    expected = {name for name in lock["files"]
-                if name.startswith("plugins/") and name.split("/")[1] in selected}
-    actual = {path.relative_to(source).as_posix() for path in source.rglob("*")
-              if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-              and path.relative_to(source).parts[:2] in
-              {("plugins", identifier) for identifier in selected}}
-    if actual != expected:
-        raise ValueError("selected plugin source inventory changed")
-    for name in expected:
-        if support.digest(source / name) != lock["files"][name]:
-            raise ValueError(f"selected plugin source changed: {name}")
-    marketplace = json.loads((source / ".agents/plugins/marketplace.json").read_text())
-    listed = {entry["name"] for entry in marketplace["plugins"]}
-    if marketplace.get("name") != lock["marketplace"] or not set(selected) <= listed:
-        raise ValueError("selected plugin marketplace changed")
-    if not package_mode and support.digest(source / ".agents/plugins/marketplace.json") != lock["files"][".agents/plugins/marketplace.json"]:
-        raise ValueError("pinned bundled plugin marketplace changed")
-    if package_mode and (listed != set(selected) or any(
-            name.startswith("plugins/") and name.split("/")[1] not in selected for name in
-            (path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()))):
-        raise ValueError("unselected plugin source leaked into the package")
-    for identifier in selected:
-        manifest = json.loads((source / f"plugins/{identifier}/.codex-plugin/plugin.json").read_text())
-        if manifest.get("name") != identifier or manifest.get("version") != lock["plugins"][identifier]["version"]:
-            raise ValueError(f"selected plugin identity changed: {identifier}")
-    return lock, selected
-
-
 def build(artifact_dir, package_mode=False):
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
@@ -115,7 +78,7 @@ def build(artifact_dir, package_mode=False):
             or index["release_pin"]["mod_api"] != preview["mod_api"]
             or index["release_pin"]["node"] != preview["node"]):
         raise ValueError("curated catalog does not match the active release pin")
-    _, selected = selected_plugins(index, package_mode)
+    plugins = sorted(support.plugin_sources()["plugins"])
     artifacts = {}
     for name in BINARIES:
         path = artifact_dir / name
@@ -163,8 +126,8 @@ def build(artifact_dir, package_mode=False):
             "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods", "omd_update"], "first_party_default_active": ["omd_logo", "omd_mods", "omd_update"],
                          "plugin_sources": []},
             "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_tool_lines", "omd_update", "omd_workspace"],
-                     "plugin_sources": sorted((*selected, *support.SELECTED_OPTIONAL_PLUGINS))},
+                     "first_party_default_active": sorted(lean_profiles.DEFAULT_ACTIVE),
+                     "plugin_sources": plugins},
         },
         "qualification": "development package candidate; supported collection and default pending",
     }

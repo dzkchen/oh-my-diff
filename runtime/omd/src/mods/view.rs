@@ -615,8 +615,10 @@ pub enum ModComponent {
         id: String,
         label: String,
         alt: String,
-        width: u16,
-        height: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u16>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pointer: bool,
     },
@@ -1082,8 +1084,15 @@ fn valid_control(hotkey: &Option<String>) -> bool {
 }
 
 impl ModView {
+    /// The size of raster `id` when both sides are declared; a fill raster has no size a client could check a blit against.
     pub fn raster_size(&self, id: &str) -> Option<(u16, u16)> {
-        fn find(components: &[ModComponent], id: &str) -> Option<(u16, u16)> {
+        let (width, height) = self.raster_declared(id)?;
+        Some((width?, height?))
+    }
+
+    /// The declared width and height of raster `id`; a side that fills its layout region is `None`.
+    pub fn raster_declared(&self, id: &str) -> Option<(Option<u16>, Option<u16>)> {
+        fn find(components: &[ModComponent], id: &str) -> Option<(Option<u16>, Option<u16>)> {
             components.iter().find_map(|component| match component {
                 ModComponent::Raster {
                     id: raster,
@@ -1480,8 +1489,8 @@ impl ModComponent {
             } => {
                 identified(id, label, ids)
                     && visible(alt, 256)
-                    && (1..=200).contains(width)
-                    && (1..=40).contains(height)
+                    && width.is_none_or(|width| (1..=200).contains(&width))
+                    && height.is_none_or(|height| (1..=40).contains(&height))
             }
             Self::Slot | Self::Native { .. } => {
                 *slots += 1;

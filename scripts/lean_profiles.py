@@ -7,7 +7,6 @@ from pathlib import Path
 import platform
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import tarfile
@@ -30,11 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
-DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_tool_lines", "omd_update", "omd_workspace")
+DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_removal", "omd_tool_lines",
+                  "omd_update", "omd_workspace")
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
-ROUTES = {"claude": "omd_claude_cli", "cursor": "omd_cursor", "muse": "omd_muse", "profiles": "omd_profiles"}
+ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
@@ -123,61 +123,18 @@ def candidate_lock(upstream, patch, preview):
     for name, expected in record["source_sha256"].items():
         if support.digest(ROOT / name) != expected:
             raise ValueError(f"lean candidate source changed: {name}")
-    prefixes = tuple(f"plugins/optional/plugins/{identifier}/" for identifier in support.SELECTED_OPTIONAL_PLUGINS)
-    if set(support.optional_plugin_sources()) != {name for name in record["source_sha256"] if name.startswith(prefixes)}:
-        raise ValueError("selected optional plugin source inventory changed")
     return record
 
 
-def copy_curated_plugins(destination):
-    lock = support.plugin_lock()
-    index = json.loads((ROOT / "extensions/index.json").read_text())
-    selected = {package["id"] for package in index["packages"]
-                if package["extension_type"] == "plugin"
-                and package["support_status"] in ("reviewed_candidate", "supported")}
-    if not selected or not selected <= set(lock["plugins"]):
-        raise ValueError("curated plugin selection disagrees with the pinned bundle")
+def copy_plugins(destination):
+    lock = support.plugin_sources()
     source = ROOT / lock["source"]
-    if support.digest(ROOT / lock["guide"]["path"]) != lock["guide"]["sha256"]:
-        raise ValueError("pinned bundled plugin guide changed")
-    files = {}
-    for name, expected in lock["files"].items():
-        if name.startswith("plugins/") and name.split("/")[1] in selected:
-            if support.digest(source / name) != expected:
-                raise ValueError(f"pinned curated plugin source changed: {name}")
-            target = destination / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source / name, target)
-            files[name] = expected
-    marketplace = json.loads((source / ".agents/plugins/marketplace.json").read_text())
-    listed = {entry["name"] for entry in marketplace["plugins"]}
-    if marketplace.get("name") != lock["marketplace"] or not selected <= listed:
-        raise ValueError("curated plugin marketplace changed")
-    if listed == set(lock["plugins"]) and support.digest(
-            source / ".agents/plugins/marketplace.json") != lock["files"][".agents/plugins/marketplace.json"]:
-        raise ValueError("pinned bundled plugin marketplace changed")
-    marketplace["plugins"] = [entry for entry in marketplace["plugins"] if entry["name"] in selected]
-    optional_sources = support.optional_plugin_sources()
-    for identifier in support.SELECTED_OPTIONAL_PLUGINS:
-        source = ROOT / "plugins/optional/plugins" / identifier
-        for name in optional_sources:
-            path = ROOT / name
-            if not path.is_relative_to(source):
-                continue
-            relative = f"plugins/{identifier}/{path.relative_to(source).as_posix()}"
-            target = destination / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-            files[relative] = support.digest(path)
-        marketplace["plugins"].append({"name": identifier,
-                                       "source": {"source": "local", "path": f"./plugins/{identifier}"},
-                                       "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
-                                       "category": "Developer Tools"})
-    selected.update(support.SELECTED_OPTIONAL_PLUGINS)
-    support.atomic_text(destination / ".agents/plugins/marketplace.json",
-                        json.dumps(marketplace, indent=2) + "\n")
-    return {"marketplace": str(destination), "plugins": sorted(selected), "files": files,
-            "marketplace_sha256": support.digest(destination / ".agents/plugins/marketplace.json"),
+    for name in lock["files"]:
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / name, target)
+    return {"marketplace": str(destination), "plugins": sorted(lock["plugins"]), "files": lock["files"],
+            "marketplace_sha256": lock["files"][".agents/plugins/marketplace.json"],
             "installed_by_candidate": [],
             "note": "available for explicit installation; no plugin is configured by this installer"}
 
@@ -442,36 +399,6 @@ def route(prefix, bin_dir, name, args):
                         "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
 
 
-def mini(prefix, bin_dir, codex):
-    record = load(prefix)
-    _, manager = check(record, bin_dir)
-    if record["activation"]["selection"] == "direct":
-        raise ValueError("activate OMD Core or OMD+ before using omd mini")
-    selections = invoke(manager, "selection-status", record["store"])["selections"]
-    if not any(item.get("id") == "omd_mini" and item.get("effective") and not item.get("error") for item in selections):
-        raise ValueError("omd mini needs its mod enabled: omd-package mod enable omd_mini")
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        raise ValueError("omd mini needs a terminal; use `codex exec` for piped or scripted runs")
-    launch, run, mode = os.urandom(8).hex(), 0, "mini"
-    for name in (signal.SIGINT, signal.SIGQUIT):
-        signal.signal(name, signal.SIG_IGN)
-    while True:
-        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}"}
-        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen"] if mode == "mini" else []), *codex], env=env,
-                              preexec_fn=lambda: [signal.signal(name, signal.SIG_DFL) for name in (signal.SIGINT, signal.SIGQUIT)]).returncode
-        exported = subprocess.run([record["tools"]["omd"]["installed_path"], "store", "export", "--mod", "omd_mini",
-                                   "--store", record["store"], "--scope", "user"], capture_output=True, text=True)
-        try:
-            entry = json.loads(exported.stdout)["entries"].get(f"switch_{launch}") if exported.returncode == 0 else None
-        except (ValueError, KeyError, AttributeError):
-            entry = None
-        request = entry.get("value") if isinstance(entry, dict) else None
-        if not (isinstance(request, dict) and request.get("run") == run and request.get("target") in ("mini", "full")
-                and isinstance(request.get("thread"), str) and request["thread"].replace("-", "").isalnum()):
-            return code
-        mode, codex, run = request["target"], ["resume", request["thread"]], run + 1
-
-
 def install(args):
     prefix, bin_dir, store = paths(args.prefix, args.bin_dir, args.store)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -575,7 +502,7 @@ def install(args):
             tools[name] = {"installed_path": str(target), "sha256": support.digest(target)}
         tools["omd-mod"] = {"installed_path": str(installed_manager), "sha256": support.digest(installed_manager)}
         if args.profile == "full":
-            plugin_bundle = copy_curated_plugins(prefix / "bundles/oh-my-diff")
+            plugin_bundle = copy_plugins(prefix / "bundles/oh-my-diff")
         sources = store / "sources"
         sources.mkdir(exist_ok=True)
         trusted, enabled = [], []
@@ -618,6 +545,7 @@ def install(args):
                   "prefix": str(prefix), "bin_dir": str(bin_dir), "store": str(store),
                   "profile": args.profile, "profile_label": PROFILE_LABELS[args.profile],
                   "version": candidate["version"], "mod_api": host["api"], "packages": installed,
+                  "sources": {identifier: packages[identifier]["files"] for identifier in PACKAGES},
                   "plugin_bundle": plugin_bundle,
                   "binary": {**binary, "installed_path": str(artifacts / "codex"),
                              "sha256": support.digest(artifacts / "codex")},
@@ -673,8 +601,7 @@ def install(args):
                 update = record.get("update")
                 routed = (f"if [ \"$1\" = update ]; then shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
                           f"{shlex.quote(update['installer'])} update --root {shlex.quote(update['root'])} \"$@\"; fi\n") if update else ""
-                launcher_text = (f"#!/bin/sh\nif [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control_launcher))} mini -- \"$@\"; fi\n"
-                                 f"{routed}export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
+                launcher_text = (f"#!/bin/sh\n{routed}export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
             support.atomic_text(tool_launcher, launcher_text, 0o755)
             made_launchers.append(tool_launcher)
             details["launcher_sha256"] = support.digest(tool_launcher)
@@ -743,9 +670,27 @@ def broker(prefix, bin_dir, action, also=()):
         arguments += [f"--pin={path}" for path in sorted(pins)]
     if action == "install":
         arguments += ["--helper", record["broker"]["installed_path"]]
+    snapshot = invoke(manager, "broker-grants-import", record["store"]) if action == "install" else None
     result = authority_broker.main(arguments)
     if action == "install":
+        invoke(manager, "broker-grants-import", record["store"], json.dumps(snapshot))
         invoke(manager, "reload", record["store"])
+    return result
+
+
+def administrator_policy(prefix, bin_dir, action, source=None):
+    record = load(prefix)
+    _, manager = check(record, bin_dir)
+    if action == "explain":
+        return invoke(manager, "policy", "explain", record["store"])
+    arguments = [f"policy-{action}"]
+    if action == "install":
+        if source is None:
+            raise ValueError("usage: omd-package policy install FILE")
+        invoke(manager, "policy", "check", source.resolve())
+        arguments.append(str(source.resolve()))
+    result = authority_broker.main(arguments)
+    invoke(manager, "reload", record["store"])
     return result
 
 
@@ -760,8 +705,11 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
+    sources = record.get("sources")
+    if sources is None:
+        sources = {identifier: package["files"] for identifier, package in record["packages"].items()}
     managed.update(prefix / "sources" / identifier / name
-                   for identifier, package in record["packages"].items() for name in package["files"])
+                   for identifier, files in sources.items() for name in files)
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -827,8 +775,6 @@ def main():
                 route_parser.add_argument(f"--{flag}")
             route_parser.add_argument("--reasoning", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
-    mini_parser = commands.add_parser("mini", help="launch the scrollback-first mini interface (omd mini)")
-    mini_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))
     contract_parser.add_argument("contract", nargs="?", help="ID@VERSION for plan and select")
@@ -837,6 +783,9 @@ def main():
     broker_parser.add_argument("action", choices=("install", "pin", "status", "reset", "uninstall"))
     broker_parser.add_argument("--also", type=Path, action="append", default=[],
                                help="also pin the binaries of another installation prefix")
+    policy_parser = commands.add_parser("policy", help="install, roll back, remove or explain the administrator policy file (sudo)")
+    policy_parser.add_argument("action", choices=("install", "rollback", "remove", "explain"))
+    policy_parser.add_argument("file", type=Path, nargs="?")
     uninstall_parser = commands.add_parser("uninstall", help="remove this installation and its launchers")
     uninstall_parser.add_argument("--keep-broker", action="store_true",
                                   help="remove this installation while another one keeps using the authority broker")
@@ -859,14 +808,14 @@ def main():
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
     elif args.command in ROUTES:
         result = route(prefix, bin_dir, args.command, args)
-    elif args.command == "mini":
-        raise SystemExit(mini(prefix, bin_dir, args.codex[1:] if args.codex[:1] == ["--"] else args.codex))
     elif args.command == "contract":
         result = contract(prefix, args.action, args.contract)
     elif args.command == "plugins":
         result = register_plugins(prefix, bin_dir)
     elif args.command == "broker":
         result = broker(prefix, bin_dir, args.action, args.also)
+    elif args.command == "policy":
+        result = administrator_policy(prefix, bin_dir, args.action, args.file)
     else:
         result = uninstall(prefix, bin_dir, args.keep_broker)
     print(json.dumps(result, indent=2, sort_keys=True))

@@ -83,20 +83,20 @@ test('Claude mod forwards images, skips reasoning items and hides ask_claude fro
 });
 
 test('Claude mod routes Codex tool search so a Claude lead can load deferred mod tools', () => {
-  const research = { type: 'function', name: 'mod_omd_muse_research', description: 'Research', parameters: { type: 'object', properties: {} } };
+  const research = { type: 'function', name: 'mod_omd_advisor_consult', description: 'Research', parameters: { type: 'object', properties: {} } };
   const translated = translateRequest({ ...prompt, tools: [...prompt.tools, { type: 'tool_search', execution: 'client', description: 'Find tools',
     parameters: { type: 'object', properties: { query: { type: 'string' } } } }],
   input: [...prompt.input, { type: 'tool_search_call', call_id: 's1', execution: 'client', arguments: { query: 'muse' } },
     { type: 'tool_search_output', call_id: 's1', status: 'completed', execution: 'client', tools: [{ type: 'namespace', name: 'functions', tools: [research] }] }] }, model);
-  assert.ok(translated.reverse.mod_omd_muse_research);
+  assert.ok(translated.reverse.mod_omd_advisor_consult);
   assert.deepEqual(translated.frames[1].message.content, [{ type: 'tool_use', id: 's1', name: 'mcp__omd__tool_search', input: { query: 'muse' } }]);
-  assert.equal(translated.frames[2].message.content[0].content, 'Loaded tools: mcp__omd__mod_omd_muse_research');
+  assert.equal(translated.frames[2].message.content[0].content, 'Loaded tools: mcp__omd__mod_omd_advisor_consult');
   const events = responseEvents({ id: 'msg_s', usage: { input_tokens: 1, output_tokens: 1 }, content: [
     { type: 'tool_use', id: 's2', name: 'mcp__omd__tool_search', input: { query: 'git' } },
-    { type: 'tool_use', id: 'c1', name: 'mcp__omd__mod_omd_muse_research', input: { question: 'q' } }] }, {}, model, translated.reverse);
+    { type: 'tool_use', id: 'c1', name: 'mcp__omd__mod_omd_advisor_consult', input: { question: 'q' } }] }, {}, model, translated.reverse);
   const items = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
   assert.deepEqual(items[0], { type: 'tool_search_call', id: 's2', call_id: 's2', execution: 'client', arguments: { query: 'git' } });
-  assert.equal(items[1].name, 'mod_omd_muse_research');
+  assert.equal(items[1].name, 'mod_omd_advisor_consult');
 });
 
 test('Claude mod rejects route drift and carries calls to tools no longer offered as text', () => {

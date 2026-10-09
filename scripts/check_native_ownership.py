@@ -13,7 +13,7 @@ GENERIC_LITERALS = {
     "session_review": "upstream Codex session metadata field",
 }
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/native/src")
-PACKAGE_MANIFESTS = ("mods/first-party/*/mod.json", "mods/optional/*/mod.json", "plugins/**/mod.json")
+PACKAGE_MANIFESTS = ("mods/first-party/*/mod.json", "plugins/**/mod.json")
 SURFACES = ("MOD_HOST_FEATURES", "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS",
             "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")
 

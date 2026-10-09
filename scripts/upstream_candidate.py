@@ -156,7 +156,7 @@ class Candidate:
 
     def protected_hashes(self):
         roots = [self.repo / "upstream.lock.json", self.repo / "mods/compatibility.json", *(self.repo / "runtime").glob("*.json"),
-                 *(self.repo / "runtime/patches").glob("*"), self.repo / "mods/first-party/omd_typed_tasks/.omd/active-host.d.ts"]
+                 *(self.repo / "runtime/patches").glob("*"), self.repo / "mods/examples/release_check/.omd/active-host.d.ts"]
         for _, mirror in MIRRORS:
             roots += [p for p in (self.repo / mirror).rglob("*") if not MIRROR_SKIP & set(p.relative_to(self.repo / mirror).parts)]
         return {str(p.relative_to(self.repo)): file_sha(p) for p in roots if p.is_file()}
@@ -318,7 +318,7 @@ class Candidate:
             overlay["runtime/native/src/request_observer.rs"] = observer.read_bytes()
         old = self.active["tag"].removeprefix("rust-v")
         for name, pattern in (("mods/compatibility.json", rf'("codex": ")' + re.escape(old) + '(")'),
-                              ("mods/first-party/omd_typed_tasks/.omd/active-host.d.ts", r"(ActiveCodexRelease = ')" + re.escape(old) + "(')")):
+                              ("mods/examples/release_check/.omd/active-host.d.ts", r"(ActiveCodexRelease = ')" + re.escape(old) + "(')")):
             text = (self.repo / name).read_text() if (self.repo / name).is_file() else None
             if text is not None:
                 overlay[name] = re.sub(pattern, rf"\g<1>{version}\g<2>", text).encode()

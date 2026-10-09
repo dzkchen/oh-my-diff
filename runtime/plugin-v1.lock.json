@@ -5,33 +5,14 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "5842a6bedd053bdb4311872d8322e5598dfd64965a9e6284815f6dbd265de193"
+    "sha256": "aa7a26fc171e8b799b433aac23932efadc363a19882194a61003e46c28710a02"
   },
   "plugins": {
-    "omd-guidance-hooks": {
-      "version": "0.1.0",
+    "omd-anchored-edit": {
+      "version": "0.2.0-preview.1",
       "extension_types": [
         "plugin",
-        "skill",
-        "hook"
-      ],
-      "mod_required": false
-    },
-    "omd-review-policy": {
-      "version": "0.1.0+codex.20260927022545",
-      "extension_types": [
-        "plugin",
-        "skill",
-        "hook"
-      ],
-      "mod_required": false
-    },
-    "omd-application-bridges": {
-      "version": "0.1.0",
-      "extension_types": [
-        "plugin",
-        "mcp",
-        "hook"
+        "skill"
       ],
       "mod_required": false
     },
@@ -53,12 +34,14 @@
     }
   },
   "files": {
-    ".agents/plugins/marketplace.json": "6ce86f410c51a1c4f79f1a4ae807eff923647608fcb88f71090fcbde978c332c",
-    "plugins/omd-application-bridges/.codex-plugin/plugin.json": "7186a6f3cb23b7ae757ef200ce2ba53393f050846cc0aa76dea05222985254cc",
-    "plugins/omd-application-bridges/.mcp.json": "e0ed5aa1abd9dd1e78d3f6797a5730bf7e5a36de370e18e162c4a73cc7551701",
-    "plugins/omd-application-bridges/hooks/hooks.json": "705c7166e08a13e189d4caf332408a3ce0b760b04ffc42d183062da2d143b993",
-    "plugins/omd-application-bridges/hooks/omd_bridge_lifecycle.py": "539b6345795423658a84f8296de958011677f7640a871f5528b49ab80fda6e49",
-    "plugins/omd-application-bridges/scripts/omd_application_bridge.py": "2351aff368316899153c753b0330f26c85e6ec60e720802459c8c4ea0942ac16",
+    ".agents/plugins/marketplace.json": "04b95b0e31386e9e08964a840210aced7a9b3191d56f3e1262944d6dd08a9d03",
+    "plugins/omd-anchored-edit/.codex-plugin/omd.json": "7dfd938bb11b7d492eb6e4961e7ffe1c5340589c870fbf29aa45842511fd84c7",
+    "plugins/omd-anchored-edit/.codex-plugin/plugin.json": "9db0f6a6a44bd389e9cd45d54c6581a0c01f7c52d67d722910a4b91a48c1ed13",
+    "plugins/omd-anchored-edit/README.md": "a1a0f1a6ceb1a83ea461a6fea1d6c763e8916a135b33f164d78f47c139b995fc",
+    "plugins/omd-anchored-edit/mod/index.ts": "1a7e9bfcc43c78bc9d61907285703f1a63eaadbe40a137847788e2160c54a59d",
+    "plugins/omd-anchored-edit/mod/mod.json": "62069d26106713ee9d765453a550241016f0e14b86295c256f2bfa36dcaffa46",
+    "plugins/omd-anchored-edit/skills/omd-anchored-edit/SKILL.md": "9a1fcb82de5db7bc9179e4b7383150c160f3757f3031cfa3d9d115cf7ffc9ae6",
+    "plugins/omd-anchored-edit/tsconfig.json": "d406c45044e0ac875e6fe9ed6c8c7c70fdfac49bbe5e386fbd51c9e5bc38ebcf",
     "plugins/omd-artifact-reading/.codex-plugin/omd.json": "38e358e9488c196911257135004be50b144974936892848ad4d0cd4885bf3a1b",
     "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "e4859e9126b144cfc79ba0f8e828939e7f3479a3f78ee76a300f9c9b62f166fe",
     "plugins/omd-artifact-reading/README.md": "b8cd094cc8039aa3686e559f68b53bb4ee6252d8b53b641eb482762fb3948ffd",
@@ -72,24 +55,6 @@
     "plugins/omd-code-execution/.codex-plugin/plugin.json": "f22c589d2750663096d75be96c63c666c4303542258eb0d79b8b5f6adce924e0",
     "plugins/omd-code-execution/kernels/bun.mjs": "0e983d0c42e282e1145d7a421fdf8e331e9bb5ce21f6c153c839954520be5071",
     "plugins/omd-code-execution/kernels/python.py": "38d7563a12663419d880f22973e7141663131630c0e2c3c02cfaae550fe2068b",
-    "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "03f8411e5f55e94773fd4985dc07bfc7abf065ed7267a5d8ae024195df59aae5",
-    "plugins/omd-guidance-hooks/.codex-plugin/plugin.json": "a303772e639a7968daf4de505371a46eb4c46c2dd948049a59af76502a2bac32",
-    "plugins/omd-guidance-hooks/hooks/hooks.json": "012112646dc59cf0af1562c1f779ab0e39752c2d6d50bb85f21e44f5298675bc",
-    "plugins/omd-guidance-hooks/hooks/omd_lifecycle.py": "d700221b49f8645498a3856b9735552ef23051450c4d6f7529fa3174098b4e2f",
-    "plugins/omd-guidance-hooks/skills/omd-concise-updates/SKILL.md": "f4e3a03b924775ae4831bedfa7c8c117cdd803c1334a00a10c8a429632d34cc9",
-    "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/SKILL.md": "1f20193b6e19ab5efe932b29bc6867052053b16c14051fcb4a4cce1fc8000d1a",
-    "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/full-short-v1.md": "548f64606aedcd29d24e0b962df2ebd2696c51c47b1fcadef6a068bd76e14459",
-    "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/tiny-selected-v1.md": "6d82565c7a81fd1c2ddf8d5fff10573cad9ee9bd4d8601bcba9ba64c1204581b",
-    "plugins/omd-guidance-hooks/skills/omd-structured-reports/SKILL.md": "6de37a55033d4389109ff564f5bd03d337f511a94803d5bbc409d6373deb29aa",
-    "plugins/omd-review-policy/.codex-plugin/omd.json": "b8672319e0196959c2a6fe2b172171a2bf7380acedeccd7ef59f7548efb3bef0",
-    "plugins/omd-review-policy/.codex-plugin/plugin.json": "b853d394d4907148bd64a9797083b7b828a9ca5fa41e193c66d88234ae7cab4f",
-    "plugins/omd-review-policy/README.md": "26b0121068015225ac7e916da1296a15363f610d220189d641b18a13bae2c4b7",
-    "plugins/omd-review-policy/hooks/hooks.json": "695c491a68372be3a48bd44c4d3ef5e38bea5432cd16305b8a19936547f325bd",
-    "plugins/omd-review-policy/hooks/omd_review_lifecycle.py": "4af7ddb744211a046f051916860c8be6a3a7d5f2a4fc78c8d93f3296ba3efd79",
-    "plugins/omd-review-policy/mod/index.ts": "489e9d15198b88ae89616f64c43da4caa064e57b74015d7da58d52cb51cfde0d",
-    "plugins/omd-review-policy/mod/mod.json": "4c6c805feceeba40590b4011e5ca8d1c518244ec6afbe39a7e16ca9c23b03fe6",
-    "plugins/omd-review-policy/skills/omd-final-review/SKILL.md": "38051ec9e664e9f884b53819e36a25aa93892afbf9c36e55172651edb961ed2e",
-    "plugins/omd-review-policy/skills/omd-review-cadence/SKILL.md": "35376621fbd683cb3a7f388a7f8e3faf42f732637225b6c64e75b7b6cf8afe0c",
-    "plugins/omd-review-policy/skills/omd-simplify/SKILL.md": "7e658a7ac2e7ee60fd77683f56e5be1a107e7f6289ea19113c3bbfedab6a51f5"
+    "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "03f8411e5f55e94773fd4985dc07bfc7abf065ed7267a5d8ae024195df59aae5"
   }
 }
