@@ -47,7 +47,7 @@ const dialog = (state, settings = hud, now = NOW) => {
   return { view, text: view.sites.dialog.components[0].children.map(child => child.text ?? '').join('\n') };
 };
 const start = (session = { thread_id: 'lead', model: 'gpt-6.1-sol', provider: 'openai' }, limits = null) => call(usageMod, { event: 'start', payload: {}, settings: hud }, ({ operation, arguments: args }) =>
-  operation === 'session.info' ? { root: '/repo', cwd: '/repo', codex_version: '0.161.0', route: null, turns_started: 0, ...session }
+  operation === 'session.info' ? { root: '/repo', cwd: '/repo', codex_version: '0.162.0', route: null, turns_started: 0, ...session }
     : operation === 'app.request' && args.method === 'config/read' ? { config: { model_context_window: 272_000, model_auto_compact_token_limit: 240_000 } }
       : operation === 'app.request' ? (limits ? { rateLimits: limits } : new Error('unavailable')) : { delivered: 1, dropped: 0 }).state;
 

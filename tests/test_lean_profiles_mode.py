@@ -107,8 +107,7 @@ class LeanProfileModeTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("OMD_TEST_MOD_BIN"), "set OMD_TEST_MOD_BIN for native offline coverage")
     def test_task_tools_enable_requires_workflow_in_isolated_store(self):
         manager = Path(os.environ["OMD_TEST_MOD_BIN"]).resolve()
-        node = shutil.which("node")
-        self.assertIsNotNone(node)
+        node = subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()
         with tempfile.TemporaryDirectory(prefix="omd-profile-selection-", dir="/private/tmp") as temporary:
             base = Path(temporary)
             store = base / "store"

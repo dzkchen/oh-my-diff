@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.161.0`. The package's
+`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.162.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and
@@ -1048,6 +1048,10 @@ configured route; `thread/start` and `fuzzyFileSearch` roots must be the session
 root or one of its `git worktree list` entries. Thread-scoped methods reach the
 current thread and threads the mod itself started or forked. Local image and
 audio inputs must be `{resource}` references; raw paths are refused.
+`thread/attachmentOwner/list` searches the whole configured thread store across
+projects. Omitting `archived` includes both archived and non-archived threads.
+It requires `account`, a user action and native confirmation naming the mod and
+exact lookup parameters; event callbacks cannot invoke it.
 Turn-starting methods run only from user contexts; `turn/steer` runs from
 events into a running turn; `mcpServer/tool/call` asks for a native
 confirmation on every call. A confirmation names the mod, the method and its

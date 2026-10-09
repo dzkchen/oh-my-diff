@@ -13,7 +13,7 @@ These internal selectors, installation paths, schema-1 records and lock filename
 remain unchanged. They identify the same profiles; the public labels and status
 metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
-These are local Apple Silicon candidate profiles for the active Codex `0.161.0`
+These are local Apple Silicon candidate profiles for the active Codex `0.162.0`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
 executables from `upstream.lock.json` and `runtime/patches/manifest.json` after
@@ -21,7 +21,7 @@ executables from `upstream.lock.json` and `runtime/patches/manifest.json` after
 `python3 scripts/batch_tree.py artifacts BATCH --release`. It copies and signs
 `target/release` binaries and packs the typed author SDK as `mod-api.tgz` in
 `/private/tmp/omd-bBATCH/artifacts`; tests keep the debug target. Use Node 24.18 or a
-later 24.x (`mise which node`); any upstream Codex `0.161.x` serves as the
+later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
@@ -377,7 +377,7 @@ leaves them running. Policy fields, refusals and recovery are in
 [mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).
 
 The installer refuses removal if its
-launcher changed, no upstream Codex `0.161.x` remains on `PATH`, or the prefix
+launcher changed, no upstream Codex `0.162.x` remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
 fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,
