@@ -351,8 +351,6 @@ def render(matrix):
         "## Launch cut inventory", "",
         f"Every package outside the launch collection is preserved at the `{cut['tag']}` tag and is not shipped,",
         f"selected or tested here. Restore a path with `{cut['restore']}`.",
-        "Restoring source also requires reintegrating and testing its dependencies and contracts;",
-        "for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.",
         "Launch entries exist on disk; wave entries are deleted until their wave restores them.",
         *[f"{note}" for note in cut["notes"]],
         f"Deleted and not restored: {', '.join(f'`{path}/`' for path in cut['not_restored'])}.", "",

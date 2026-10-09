@@ -9,8 +9,8 @@
       "sha256": "f377446f70bb4b8ce070a95e2478564a11374facd709e38139e49331c7da3e16"
     },
     "mod-api.tgz": {
-      "bytes": 120627,
-      "sha256": "dca5eabb5ab840756b7c63c1ecbe46499f31deda747ffd9e1c7c83f9220cd6c4"
+      "bytes": 120623,
+      "sha256": "edaefb22f73c0f7a8b472486c444fc3beae3adc7681c57d17b726b1e74fa4ed1"
     },
     "omd": {
       "bytes": 12608752,
@@ -94,11 +94,11 @@
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "source_sha256": {
-    "LEAN_PROFILES.md": "e7857708bca0a8ed5577a7302070d7be81ce2915dc8a4974e6793fcceabc1d78",
+    "LEAN_PROFILES.md": "d4e45ba16385847567757131b76ed4c3b89ced80febb2572224e35fa175b74b9",
     "extensions/index.json": "bacfc9bd6be565c85441b161686a5ab792a1030cc2ba7eec94918d774245b0dc",
     "install.sh": "c4448e8d99ea1c03a4cced5996f9b0192ff1a504a25ac8d986d7435f0cea79fd",
-    "mods/EXTENSION_TYPES.md": "93993d72d44d2a84f691a02ae13c5b64a4c0555f6c94f53a1319cd9673f1e3c7",
-    "mods/README.md": "c92e072bdeb8de18fb70d6cb7a39cd3bd8f105677c4254dda7fb69b209ce6043",
+    "mods/EXTENSION_TYPES.md": "36507fc59bacdad7a5cf0684b4c1c1fba0da48501fd5863a2be908ac93f8d265",
+    "mods/README.md": "783ff367700d939ee5c63c5bd853700f90459a7ddb0237914ee263a982957ee7",
     "mods/REFERENCE.md": "2fcee79dcd15037bf05301eaf7a44dec3039abdc4eb2d22cdc11a7bd37fffa87",
     "mods/api.d.ts": "527962218cc1587e2b029b596288769b913d80ef6624f620e786681a978f4221",
     "mods/author/cli.mjs": "d0d541312ac20821f1bfb534d35e58d8687c9fb353419382885867702130e57e",
@@ -141,7 +141,7 @@
     "mods/examples/workspace/index.ts": "644332b9cc3cb71dc3d8faa4f9d728d91b83def82b2cebdcf7623a6ff0a825f7",
     "mods/examples/workspace/mod.json": "80f9e84335117a7b40d0eec65e8ff19aaedf08d1ad3448b21a0d37495259e496",
     "mods/examples/workspace/mod.test.json": "ec53fd7bb191621b388ba5b8e27dc0038aa44476b518d81462006d74b2cd6cfa",
-    "mods/extension-types.json": "11959296fd680939cefa1b09c662db6ae89ab37c539bcf554efc0aa8614fb306",
+    "mods/extension-types.json": "09401cb7950ce9472c23b20ec7eb544be1d51c6756100c9fc28d59cf8e300c95",
     "mods/first-party/omd_advisor/index.ts": "084a49b1f55f35c8f47ca636f9512693ee0e009509c91d11e4c884be9caa43df",
     "mods/first-party/omd_advisor/mod.json": "f7c838bd53b8aebbe9d34cbfc2c733c2d17fb7709f0a9432c01665af39631400",
     "mods/first-party/omd_claude_cli/index.ts": "c3c02e68632dfb492fa49682063b532cdca8b500f078081e9a792ac8eab39eac",
@@ -189,7 +189,7 @@
     "scripts/full_mods_lock.py": "2c3c76e60529d6a67813c97fb2bec2cacd6afd496e7440a54c8e95b9a4e2b170",
     "scripts/install_support.py": "b23fad328eeb12ed10ad530b86db0c19a41f9dd49112d8c6844a6d068dafc054",
     "scripts/lean_package.py": "fef19e974f4b3b3936ea0fcbc38e43524d69d200aaba33aaf953e1f8f8bebe2c",
-    "scripts/lean_profiles.py": "7742df7ba35c49bb61a8daa8158f1626b171b8184aeb8d89864fa3bd418b76c8",
+    "scripts/lean_profiles.py": "bfc5ead9e38b7f3c1964bade13f5e7837e621d449866deb88545dac1ceeb5614",
     "scripts/lean_release_lock.py": "184f0be7c3ea278134423c0d824e00ec215d3270242b5ff7588cbb4e675a800f",
     "scripts/preview_lock.py": "96260c4fbdabe43e338f87c289a7834b667a65aa07bd51aedb7ea493743a0c31",
     "upstream.lock.json": "cfd0099f1864aebd858d1c6c2ccd7963019c17224f26e1e3f247d6944c211f41"

@@ -14,6 +14,45 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LeanProfileModeTests(unittest.TestCase):
+    def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
+        for legacy in (True, False):
+            for unmanaged in (False, True):
+                with self.subTest(legacy=legacy, unmanaged=unmanaged), tempfile.TemporaryDirectory() as temporary:
+                    base = Path(temporary)
+                    prefix, bin_dir = base / "prefix", base / "bin"
+                    prefix.mkdir()
+                    bin_dir.mkdir()
+                    record = {key: {"installed_path": str(prefix / key)}
+                              for key in ("binary", "code_mode_host", "broker", "manager")}
+                    record.update(author={"files": []}, management={"files": []},
+                                  packages={"example": {"files": ["index.ts"]}},
+                                  shared_state={"codex_home": str(base / "home")}, store=str(base / "store"))
+                    if not legacy:
+                        record["sources"] = {"example": ["index.ts"], "inactive": ["index.ts"]}
+                    for name in ("install.json", "binary", "code_mode_host", "broker", "manager"):
+                        (prefix / name).touch()
+                    for identifier in (record["packages"] if legacy else record["sources"]):
+                        source = prefix / "sources" / identifier
+                        source.mkdir(parents=True)
+                        (source / "index.ts").touch()
+                    for name in ("omd-package", "omd-mod-author", "codex"):
+                        (bin_dir / name).touch()
+                    if unmanaged:
+                        (prefix / "personal.txt").write_text("preserve")
+                    with patch.object(lean_profiles, "load", return_value=record), \
+                            patch.object(lean_profiles, "check"), \
+                            patch.object(lean_profiles.authority_broker, "deployed", return_value=False), \
+                            patch.object(lean_profiles.shutil, "which", return_value="/usr/bin/true"), \
+                            patch.object(lean_profiles.support, "binary_identity"):
+                        if unmanaged:
+                            with self.assertRaisesRegex(ValueError, "unmanaged files"):
+                                lean_profiles.uninstall(prefix, bin_dir)
+                            self.assertEqual((prefix / "personal.txt").read_text(), "preserve")
+                            self.assertTrue((bin_dir / "codex").exists())
+                        else:
+                            self.assertTrue(lean_profiles.uninstall(prefix, bin_dir)["uninstalled"])
+                            self.assertFalse(prefix.exists())
+
     def test_cli_advertises_only_current_activation_choices(self):
         result = subprocess.run(
             [sys.executable, "-m", "scripts.lean_profiles", "--prefix", "/tmp/omd-unused-prefix",

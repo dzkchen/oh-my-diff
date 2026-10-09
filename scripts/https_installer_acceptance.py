@@ -13,9 +13,9 @@ import tomllib
 from threading import Thread
 
 try:
-    from scripts import lean_profiles
+    from scripts.lean_profile_acceptance import expected_defaults
 except ModuleNotFoundError:
-    import lean_profiles
+    from lean_profile_acceptance import expected_defaults
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,7 +122,7 @@ def run(archive, upstream, output):
             assert full["installed"] == "full"
             full_status = command("status", *fixed)["profile"]
             assert full_status["profile"] == "full"
-            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == set(lean_profiles.DEFAULT_ACTIVE)
+            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == set(expected_defaults())
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
             assert len(full_status["plugin_bundle"]["plugins"]) == 3
             registered = json.loads(subprocess.check_output([bin_dir / "omd-package", "plugins"], env=env, text=True))

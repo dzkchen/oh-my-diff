@@ -77,7 +77,7 @@ with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
 `--profile full` installs the first-party launch collection. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
-`omd_plan_removal` and `omd_tool_lines`; Codex's
+`omd_plan_removal`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
 intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
 the privacy policy and the usage HUD (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,
@@ -106,9 +106,8 @@ deferred package) and return in post-launch waves. Wave 1 is `omd_source_knowled
 `omd_mini`, `omd_plan_panel`, `omd_cursor`, `omd_programmable_context`, `omd_continue`
 and the `omd_profiles` account-switcher upgrade; wave 2 is the remaining deferred
 mods and plugins, `bridge/` and `browser/`.
-Restoring a path retrieves its source, not a working integration. Deferred packages
-also need their dependencies and contracts reintegrated and tested; for example,
-`omd_verification_gate` needs its contract admitted by `omd_workflow` again.
+See the [launch cut inventory](INTEGRATION.md#launch-cut-inventory) for restoration
+requirements and dependency notes.
 
 Enable the installed synchronization mod explicitly with
 `/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It claims Python,

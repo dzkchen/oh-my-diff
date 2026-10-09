@@ -18,15 +18,31 @@ import termios
 import time
 
 try:
-    from scripts import install_support as support, lean_profiles
-    from scripts.lean_profile_acceptance import isolated_environment
+    from scripts import install_support as support
+    from scripts.lean_profile_acceptance import isolated_environment, expected_defaults
 except ModuleNotFoundError:
     import install_support as support
-    import lean_profiles
-    from lean_profile_acceptance import isolated_environment
+    from lean_profile_acceptance import isolated_environment, expected_defaults
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_ERROR = "intentional isolated appearance fixture"
+
+
+def fixture_failed(status, identifier="omd_usage"):
+    return any(item["id"] == identifier and FIXTURE_ERROR in (item["error"] or "")
+               for item in status["mods"])
+
+
+def latest_status(cache_events):
+    return next((event for event in reversed(cache_events)
+                 if event["file"] == "mod-status.json"), {})
+
+
+def zero_first_party_published(cache_events):
+    status = latest_status(cache_events)
+    return (status.get("modified_after_launch", False) and status.get("mods") == []
+            and status.get("rejected") == [] and status.get("reload_error") is None)
 
 
 def call(args, env):
@@ -42,7 +58,7 @@ def native_blossom_visible(screen):
 
 
 def disable_first_party(command, manager, store, env):
-    for identifier in lean_profiles.DEFAULT_ACTIVE:
+    for identifier in expected_defaults():
         call(command + ["mod", "disable", identifier], env)
     status = call([manager, "status", store], env)
     assert not status["mods"] and not status["rejected"] and status["reload_error"] is None, status
@@ -52,7 +68,7 @@ def terminal(binary, repo, env, width, version, profile=None, *,
              logo=True, blossom=False, welcome=False, early_blossom=False, exercise=False, arguments=(), status=None, status_selector=None,
              backdrop=None, absent=(), cache_store=None, startup_seconds=10, trace_path=None,
              check_first_paint=True, ascii_logo=False, live_mods=(), native_session=None,
-             live_recovery=None):
+             live_recovery=None, zero_first_party=False):
     import pyte
 
     master, slave = pty.openpty()
@@ -159,16 +175,21 @@ def terminal(binary, repo, env, width, version, profile=None, *,
             if cache_store:
                 for name in ("mod-view.json", "mod-status.json"):
                     path = cache_store / name
-                    metadata = path.stat() if path.is_file() else None
+                    try:
+                        metadata = path.stat()
+                    except FileNotFoundError:
+                        metadata = None
                     state = (metadata.st_size, metadata.st_mtime_ns) if metadata else None
                     if name not in cache_states or cache_states[name] != state:
-                        cache_states[name] = state
                         event = {"file": name, "elapsed_ms": round((time.monotonic() - started) * 1000),
                                  "bytes": metadata.st_size if metadata else None,
                                  "modified_after_launch": metadata.st_mtime_ns >= launched_wall_ns
                                      if metadata else False}
                         if metadata:
-                            value = json.loads(path.read_text())
+                            try:
+                                value = json.loads(path.read_text())
+                            except (FileNotFoundError, json.JSONDecodeError):
+                                continue
                             if name == "mod-view.json":
                                 event.update(presentation=(value.get("input") or {}).get("presentation"),
                                     identity=(value.get("input") or {}).get("identity"),
@@ -180,6 +201,7 @@ def terminal(binary, repo, env, width, version, profile=None, *,
                                                    for item in value.get("mods", [])],
                                              rejected=value.get("rejected"),
                                              reload_error=value.get("reload_error"))
+                        cache_states[name] = state
                         cache_events.append(event)
             ready, _, _ = select.select([master], [], [], 0.05)
             if ready:
@@ -213,6 +235,9 @@ def terminal(binary, repo, env, width, version, profile=None, *,
                    startup_appearance, startup_seconds, complete_frame=check_first_paint)
         if check_first_paint and "first_paint" not in stages:
             raise AssertionError("no completed synchronized editable frame was observed")
+        if zero_first_party:
+            read_frame("zero_first_party_publication",
+                       lambda: startup_appearance() and zero_first_party_published(cache_events), startup_seconds)
         if exercise:
             send(b"draft-marker", "typing", lambda: appearance() and visible("draft-marker"))
             send(b"\x7fedit", "editing", lambda: appearance() and visible("draft-markeedit"))
@@ -381,8 +406,7 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
             launch(profile, profile=expected, exercise=not diagnostic_only,
                    status=None if diagnostic_only else "Oh My Diff",
                    status_selector="platform_only" if profile == "platform" else "full",
-                   live_mods=() if diagnostic_only else (("omd_logo", "omd_mods", "omd_update") if profile == "platform" else
-                       lean_profiles.DEFAULT_ACTIVE),
+                   live_mods=() if diagnostic_only else expected_defaults(profile),
                    startup_seconds=30 if diagnostic_only else 10)
             if diagnostic_only:
                 call(command + ["uninstall"], env)
@@ -427,7 +451,7 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
                 source = store / "sources" / identifier
                 entry = source / "index.ts"
                 original = entry.read_bytes()
-                entry.write_text("throw new Error('intentional isolated appearance fixture');\n")
+                entry.write_text(f"throw new Error({json.dumps(FIXTURE_ERROR)});\n")
                 declared = json.loads((source / "mod.json").read_text())
                 def trust_current():
                     inspected = call([manager, "inspect", source], env)
@@ -439,7 +463,7 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
                     trust_current()
                     failed = next(item for item in call([manager, "status", store], env)["mods"]
                                   if item["id"] == identifier)
-                    assert failed["error"], f"{identifier} fixture did not actually break"
+                    assert fixture_failed({"mods": [failed]}, identifier), failed
                     launch(f"{profile}_{identifier}_broken", **launch_options)
                 finally:
                     entry.write_bytes(original)
@@ -476,10 +500,7 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
                 })
                 call(command + ["mod", "disable", "omd_usage"], env)
                 disable_first_party(command, manager, store, env)
-                launch("full_zero_first_party", logo=False, blossom=True)
-                status = [event for event in observations["full_zero_first_party"]["cache_events"]
-                          if event["file"] == "mod-status.json" and event["modified_after_launch"]][-1]
-                assert not status["mods"] and not status["rejected"] and status["reload_error"] is None, status
+                launch("full_zero_first_party", logo=False, blossom=True, zero_first_party=True)
             call(command + ["activate", "direct"], env)
             launch(f"{profile}_direct", logo=False, blossom=True, status="upstream-style direct",
                    status_selector="platform_only" if profile == "platform" else "full")

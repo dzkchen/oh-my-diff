@@ -977,6 +977,7 @@
       "benchmarks"
     ],
     "notes": [
+      "Restoring source also requires reintegrating and testing its dependencies and contracts; for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.",
       "Wave 1 also upgrades omd_profiles with an account switcher."
     ],
     "entries": [

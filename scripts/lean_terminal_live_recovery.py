@@ -8,17 +8,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from scripts import install_support as support, lean_profiles
-from scripts.lean_profile_acceptance import isolated_environment
-from scripts.lean_terminal_acceptance import ROOT, call, terminal, native_blossom_visible
-
-
-FIXTURE_ERROR = "intentional isolated live appearance fixture"
-
-
-def fixture_failed(status):
-    return any(item["id"] == "omd_usage" and FIXTURE_ERROR in (item["error"] or "")
-               for item in status["mods"])
+from scripts import install_support as support
+from scripts.lean_profile_acceptance import isolated_environment, expected_defaults
+from scripts.lean_terminal_acceptance import (
+    ROOT, call, terminal, native_blossom_visible, FIXTURE_ERROR, fixture_failed, latest_status,
+)
 
 
 def run(artifacts, upstream, output):
@@ -86,7 +80,7 @@ def run(artifacts, upstream, output):
                     and visible("| OMD+") and visible("Budget $0.00 of $") == theme
                     and (not note or visible(note))
                     and (not broken or (visible("1 failed") and
-                         fixture_failed(json.loads((store / "mod-status.json").read_text()))))
+                         fixture_failed({"mods": latest_status(cache_events).get("mods", [])})))
                     and not native_blossom_visible(capture()["screen"]))
 
             def boundary(label, theme=True, note=None, broken=False,
@@ -153,7 +147,7 @@ def run(artifacts, upstream, output):
             result["check"] = terminal(bin_dir / "codex", repo, env, 80, version,
                 profile="OMD+", backdrop="Budget $0.00 of $7.77",
                 cache_store=store, startup_seconds=15,
-                live_mods=(*lean_profiles.DEFAULT_ACTIVE, "omd_usage"),
+                live_mods=(*expected_defaults(), "omd_usage"),
                 trace_path=output.with_suffix(".trace"), live_recovery=exercise)
             result["status"] = "pass"
         except Exception as error:

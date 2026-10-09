@@ -687,8 +687,11 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
+    sources = record.get("sources")
+    if sources is None:
+        sources = {identifier: package["files"] for identifier, package in record["packages"].items()}
     managed.update(prefix / "sources" / identifier / name
-                   for identifier, files in record["sources"].items() for name in files)
+                   for identifier, files in sources.items() for name in files)
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])

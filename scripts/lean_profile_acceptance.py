@@ -10,16 +10,19 @@ import time
 import tomllib
 
 try:
-    from scripts import install_support as private, lean_profiles
+    from scripts import install_support as private
 except ModuleNotFoundError:
     import install_support as private
-    import lean_profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_ENV_PREFIXES = ("OPENAI_", "ANTHROPIC_", "GOOGLE_", "GEMINI_", "AZURE_", "AWS_",
                          "MISTRAL_", "GROQ_", "CEREBRAS_", "DEEPSEEK_", "TOGETHER_",
                          "OPENROUTER_", "HF_")
+
+
+def expected_defaults(profile="full"):
+    return json.loads((ROOT / "integration/matrix.json").read_text())["profiles"][profile]["first_party_default_active"]
 
 
 def call(arguments, env, parse=True):
@@ -134,7 +137,7 @@ def run(artifact_dir, upstream, output):
         assert full["profile_label"] == "OMD+"
         assert call([base / "full-bin/omd-package", "status", "--json"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
-        assert active == sorted(lean_profiles.DEFAULT_ACTIVE)
+        assert active == sorted(expected_defaults())
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
         assert not next(item for item in full["packages"] if item["id"] == "omd_usage")["active"]
@@ -211,7 +214,7 @@ def run(artifact_dir, upstream, output):
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
-        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(lean_profiles.DEFAULT_ACTIVE) - {"omd_workspace"})
+        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_workspace"})
         enabled = command("full", "mod", "enable", "omd_workspace")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_workspace")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)

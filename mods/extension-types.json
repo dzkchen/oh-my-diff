@@ -402,7 +402,7 @@
       "path": "mods/first-party/omd_plan_removal",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+."
+      "why_mod": "Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); enabled by default in OMD+."
     },
     {
       "path": "mods/first-party/omd_preview",
