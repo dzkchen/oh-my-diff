@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.162.0.patch",
-      "sha256": "d3d6a9535b499ffcfe93524e3747ac19e42e50ffa99b396f914d170ab906e95d"
+      "sha256": "b339bcb537481cb5569894bf24c4730779737b120c0cc392d861d407d5a1f292"
     }
   ],
-  "compatibility_evidence": ".docs/audits/evidence/upstream-candidates/rust-v0.162.0/report.json"
+  "compatibility_evidence": ".docs/audits/upstream-pin-0162-20261008.md"
 }

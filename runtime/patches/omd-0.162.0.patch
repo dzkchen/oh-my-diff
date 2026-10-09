@@ -72725,7 +72725,7 @@ index 000000000..ae1342ed9
 +}
 diff --git a/codex-rs/omd/src/app_routes.json b/codex-rs/omd/src/app_routes.json
 new file mode 100644
-index 000000000..9353fc0f4
+index 000000000..61391bd42
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.json
 @@ -0,0 +1,1889 @@
@@ -73476,11 +73476,11 @@ index 000000000..9353fc0f4
 +   ]
 +  },
 +  "thread/attachmentOwner/list": {
-+   "class": "sessions",
++   "class": "account",
 +   "contexts": [
-+    "user",
-+    "event"
++    "user"
 +   ],
++   "confirm": true,
 +   "fields": [
 +    "archived",
 +    "attachmentType",
@@ -80180,10 +80180,10 @@ index 000000000..3543f951e
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..e8793c0c1
+index 000000000..013cd98d4
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,609 @@
+@@ -0,0 +1,652 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80616,6 +80616,49 @@ index 000000000..e8793c0c1
 +            json!("redraw"),
 +            json!([])
 +        ]
++    );
++}
++
++#[test]
++fn global_attachment_owner_lookup_requires_account_user_confirmation() {
++    let _serial = hub_test();
++    let _registration = register(Arc::new(Echo));
++    let dir = tempfile::tempdir().unwrap();
++    let arguments = json!({"method": "thread/attachmentOwner/list", "params": {
++        "attachmentType": "file", "identityKey": "shared", "archived": true,
++        "cursor": "foreign-thread-cursor", "limit": 10
++    }});
++    let request = |capability: &str, context| {
++        app_request(
++            "m",
++            &[capability.to_owned()],
++            context,
++            false,
++            None,
++            dir.path(),
++            &[],
++            arguments.clone(),
++            Arc::new(|| true),
++        )
++    };
++    for capability in ["sessions", "threads", "inventory"] {
++        assert_eq!(
++            request(capability, InvocationContext::User).unwrap_err(),
++            "app_capability_missing: account"
++        );
++    }
++    assert_eq!(
++        request("account", InvocationContext::Event).unwrap_err(),
++        "app_context_user_only: thread/attachmentOwner/list"
++    );
++    let value = request("account", InvocationContext::User).unwrap();
++    assert_eq!(value["arguments"], arguments);
++    assert_eq!(
++        value["confirm"],
++        format!(
++            "Mod m requests thread/attachmentOwner/list with {}.",
++            arguments["params"]
++        )
 +    );
 +}
 +

@@ -1276,11 +1276,11 @@
   },
   "app_request:thread/attachmentOwner/list": {
    "route": "app.request",
-   "class": "sessions",
+   "class": "account",
    "contexts": [
-    "user",
-    "event"
+    "user"
    ],
+   "confirm": true,
    "fields": [
     "archived",
     "attachmentType",

@@ -434,6 +434,49 @@ fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
 }
 
 #[test]
+fn global_attachment_owner_lookup_requires_account_user_confirmation() {
+    let _serial = hub_test();
+    let _registration = register(Arc::new(Echo));
+    let dir = tempfile::tempdir().unwrap();
+    let arguments = json!({"method": "thread/attachmentOwner/list", "params": {
+        "attachmentType": "file", "identityKey": "shared", "archived": true,
+        "cursor": "foreign-thread-cursor", "limit": 10
+    }});
+    let request = |capability: &str, context| {
+        app_request(
+            "m",
+            &[capability.to_owned()],
+            context,
+            false,
+            None,
+            dir.path(),
+            &[],
+            arguments.clone(),
+            Arc::new(|| true),
+        )
+    };
+    for capability in ["sessions", "threads", "inventory"] {
+        assert_eq!(
+            request(capability, InvocationContext::User).unwrap_err(),
+            "app_capability_missing: account"
+        );
+    }
+    assert_eq!(
+        request("account", InvocationContext::Event).unwrap_err(),
+        "app_context_user_only: thread/attachmentOwner/list"
+    );
+    let value = request("account", InvocationContext::User).unwrap();
+    assert_eq!(value["arguments"], arguments);
+    assert_eq!(
+        value["confirm"],
+        format!(
+            "Mod m requests thread/attachmentOwner/list with {}.",
+            arguments["params"]
+        )
+    );
+}
+
+#[test]
 fn confirmations_name_the_exact_request() {
     assert_eq!(
         confirmation(

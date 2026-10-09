@@ -1,6 +1,6 @@
 # Mod compatibility
 
-This is the experimental compatibility contract as of October 7, 2026. The
+This is the experimental compatibility contract as of October 8, 2026. The
 machine-readable source is [compatibility.json](compatibility.json), checked
 against the Rust host by `python3 scripts/mod_compatibility.py`.
 

@@ -180,10 +180,10 @@ def run(archive, upstream, output, pty):
             checks.append("offline and malformed release metadata leave the installation unchanged")
 
             publish("0.1.0-alpha.2", newer)
-            publish("0.1.0-alpha.3", newer, upstream_tag="rust-v0.161.0")
+            publish("0.1.0-alpha.3", newer, upstream_tag="rust-v0.163.0")
             found = omd("check")
             assert found["available"]["version"] == "0.1.0-alpha.2" and found["blocked"]["version"] == "0.1.0-alpha.3"
-            assert "0.161.x" in found["blocked"]["reasons"][0]
+            assert "0.163.x" in found["blocked"]["reasons"][0]
             (root / "update/next").unlink(missing_ok=True)
             checked = hits["/releases"]
             launch()

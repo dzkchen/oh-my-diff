@@ -1025,6 +1025,10 @@ configured route; `thread/start` and `fuzzyFileSearch` roots must be the session
 root or one of its `git worktree list` entries. Thread-scoped methods reach the
 current thread and threads the mod itself started or forked. Local image and
 audio inputs must be `{resource}` references; raw paths are refused.
+`thread/attachmentOwner/list` searches the whole configured thread store across
+projects. Omitting `archived` includes both archived and non-archived threads.
+It requires `account`, a user action and native confirmation naming the mod and
+exact lookup parameters; event callbacks cannot invoke it.
 Turn-starting methods run only from user contexts; `turn/steer` runs from
 events into a running turn; `mcpServer/tool/call` asks for a native
 confirmation on every call. A confirmation names the mod, the method and its
