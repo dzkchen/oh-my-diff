@@ -1369,7 +1369,7 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
 | `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
-| `tool_call` | call ID (row ID for agent and image rows) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
+| `tool_call` | call ID (row ID for agent rows; `explore:<first call ID>` for an exploration group) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
 | `turn_duration` | `turn-<completed ms>` | `seconds`, `completed_at_ms` | — |
@@ -1384,8 +1384,9 @@ rows without dropping calls. Patch `files` contains at most 32 details; `file_co
 `added` and `removed` are complete totals across all changed files.
 Grouped exploration and computer activity offer each member through `tool_call`
 as `exec` or `mcp`. When those member hooks replace the drawing, each member has
-its own focus, pointer region and `expanded` flag; native grouping remains when
-no member is replaced. Aggregate exploration rendering remains available on the
+its own focus, pointer region and `expanded` flag; `next` draws a collapsed
+member as its compact row, and Find searches every member expanded. Native
+grouping remains when no member is replaced. Aggregate exploration rendering remains available on the
 group when member rendering does not replace it.
 
 Text props carry at most 4 KiB; a content digest is stable across resume and
@@ -1405,7 +1406,8 @@ Render callbacks get no host operations and cannot write state
 render); read `api.state` or atoms instead. Renders run in a runner that stays
 activated while the package revision, settings and persisted state stay unchanged.
 Changing state requires a new activation; stateless renders can reuse the runner
-across rows. Activation-local state is restored before each reused render.
+across rows, including renders that call `next`. Activation-local state is
+restored before each reused render.
 Module variables may survive between renders, so never draw from them. A tree
 lives until its input changes or a state key its hooks read changes: live
 components redraw asynchronously and keep their last tree until the new one

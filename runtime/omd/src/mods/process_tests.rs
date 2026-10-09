@@ -56,7 +56,7 @@ fn render_heap_exhaustion_retains_the_memory_failure_diagnostic() {
 }
 
 #[test]
-fn render_reuse_preserves_activation_state_and_retires_suspensions() {
+fn render_reuse_preserves_activation_state_across_suspensions() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let input = json!({"component":"tool_call"});
     let mut request = json!({"source":"export default api => { const a = api.atom('value', 0); a.set(a.get() + 1); api.intercept('render', (e, next) => e.replay ? next({...e, value: a.get()}) : {value: a.get()}); };",
@@ -88,13 +88,14 @@ fn render_reuse_preserves_activation_state_and_retires_suspensions() {
     )
     .unwrap();
     assert!(!reply["host_call"].is_null());
-    assert!(
-        !WARM
-            .lock()
+    let pid = || {
+        WARM.lock()
             .unwrap()
             .iter()
-            .any(|runner| runner.key == "activation-state")
-    );
+            .find(|runner| runner.key == "activation-state")
+            .map(|runner| runner.child.id())
+    };
+    let suspended = pid().expect("a suspended render keeps its runner");
     request["receipts"] =
         json!([{"call":reply["host_call"],"value":{"result":{"value":1},"trace":[]}}]);
     let replay = evaluate_warm(
@@ -107,6 +108,32 @@ fn render_reuse_preserves_activation_state_and_retires_suspensions() {
     )
     .unwrap();
     assert_eq!(replay["value"]["result"]["value"], 1);
+    assert_eq!(pid(), Some(suspended));
+}
+
+#[test]
+fn crashed_render_runner_reports_its_diagnostic_without_host_details() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let input = json!({"component":"tool_call"});
+    let request = json!({"source":"export default api => api.intercept('render', () => { throw { get stack() { throw new Error('unprintable'); } }; });",
+        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
+    let error = evaluate_warm(
+        &node,
+        "crashed-runner",
+        &request,
+        Duration::from_secs(2),
+        &|| true,
+        &mut |_| unreachable!(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.starts_with("mod_process_failed: "), "{error}");
+    assert!(error.len() > "mod_process_failed: ".len(), "{error}");
+    assert!(!error.contains("crashed-runner"), "{error}");
+    assert!(!error.contains(&*node.to_string_lossy()), "{error}");
 }
 
 #[test]

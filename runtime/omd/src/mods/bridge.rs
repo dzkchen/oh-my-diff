@@ -218,13 +218,15 @@ pub(super) fn run(
     // this package revision, settings and state.
     let warm = (event == "intercept" && request["payload"]["surface"] == "render").then(|| {
         request["serve"] = Value::Bool(true);
-        let mut key = request.clone();
-        if let Some(fields) = key.as_object_mut() {
-            for field in ["name", "payload", "receipts"] {
-                fields.remove(field);
+        // `entrypoint_sha256` stands for the source.
+        let mut key = Sha256::new();
+        for (field, value) in request.as_object().into_iter().flatten() {
+            if !["source", "name", "payload", "receipts"].contains(&field.as_str()) {
+                key.update(field);
+                key.update(value.to_string());
             }
         }
-        format!("{}:{}", node.display(), digest(key.to_string().as_bytes()))
+        format!("{}:{:x}", node.display(), key.finalize())
     });
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);

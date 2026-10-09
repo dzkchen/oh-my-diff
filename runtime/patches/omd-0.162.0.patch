@@ -29089,7 +29089,7 @@ index 4c4119b34..558b42f47 100644
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index 026fe11ea..2da3eaa30 100644
+index 026fe11ea..737672d72 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -29152,7 +29152,15 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -418,6 +427,7 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
+@@ -353,6 +362,7 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
+         app.chat_widget.apply_external_edit(draft.to_string());
+         if label == "Detailed" {
+             app.transcript_cells = vec![Arc::new(crate::history_cell::new_view_image_tool_call(
++                "image".into(),
+                 codex_utils_path_uri::LegacyAppPathString::from_string("assets/detail-image.png"),
+             ))];
+             app.open_transcript_overlay(&mut tui);
+@@ -418,6 +428,7 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29160,7 +29168,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()> {
      use crossterm::event::MouseButton;
      use crossterm::event::MouseEvent;
-@@ -499,6 +509,7 @@ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()>
+@@ -499,6 +510,7 @@ async fn owned_drag_stops_when_focus_or_input_ownership_is_lost() -> Result<()>
  }
 
  #[tokio::test]
@@ -29168,7 +29176,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -552,6 +563,7 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
+@@ -552,6 +564,7 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29176,7 +29184,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.transcript_cells = vec![Arc::new(crate::history_cell::PlainHistoryCell::new(vec![
-@@ -582,6 +594,7 @@ async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
+@@ -582,6 +595,7 @@ async fn owned_transcript_keeps_text_out_of_the_pet_columns() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29184,7 +29192,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Result<()> {
      let (mut app, mut events, _operations) = make_test_app_with_channels().await;
      let thread_id = ThreadId::new();
-@@ -634,6 +647,7 @@ async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Re
+@@ -634,6 +648,7 @@ async fn owned_details_escape_interrupts_work_without_starting_backtrack() -> Re
  }
 
  #[tokio::test]
@@ -29192,7 +29200,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view() -> Result<()> {
      let (mut app, mut events, _operations) = make_test_app_with_channels().await;
      let thread_id = ThreadId::new();
-@@ -694,6 +708,7 @@ async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view(
+@@ -694,6 +709,7 @@ async fn owned_backtrack_keys_edit_the_selected_prompt_and_restore_compact_view(
  }
 
  #[tokio::test]
@@ -29200,7 +29208,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Result<()> {
      for input in [
          vec![TuiEvent::Paste("abc".to_string())],
-@@ -761,6 +776,7 @@ async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Resu
+@@ -761,6 +777,7 @@ async fn cancelling_owned_backtrack_returns_arrow_keys_to_the_composer() -> Resu
  }
 
  #[tokio::test]
@@ -29208,7 +29216,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn owned_search_and_selection_consume_input_before_composer_and_backtrack() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -867,6 +883,7 @@ async fn owned_search_and_selection_consume_input_before_composer_and_backtrack(
+@@ -867,6 +884,7 @@ async fn owned_search_and_selection_consume_input_before_composer_and_backtrack(
  }
 
  #[tokio::test]
@@ -29216,7 +29224,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -919,6 +936,7 @@ async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Resul
+@@ -919,6 +937,7 @@ async fn inline_transcript_search_draws_and_escape_precedes_backtrack() -> Resul
  }
 
  #[tokio::test]
@@ -29224,7 +29232,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.transcript_cells = vec![user_cell("alpha beta")];
-@@ -1027,6 +1045,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
+@@ -1027,6 +1046,7 @@ async fn find_owns_editor_chords_without_changing_the_composer_draft() -> Result
  }
 
  #[tokio::test]
@@ -29232,7 +29240,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.chat_widget
-@@ -1079,6 +1098,7 @@ async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
+@@ -1079,6 +1099,7 @@ async fn offline_find_closes_before_the_next_ctrl_c_quits() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29240,7 +29248,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Result<()> {
      for owned in [true, false] {
          let (mut app, mut events, _operations) = make_test_app_with_channels().await;
-@@ -1171,6 +1191,7 @@ async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Re
+@@ -1171,6 +1192,7 @@ async fn offline_backtrack_keeps_the_preview_and_draft_without_reverting() -> Re
  }
 
  #[tokio::test]
@@ -29248,7 +29256,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      attach_thread(&mut app, ThreadId::new());
-@@ -1286,6 +1307,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
+@@ -1286,6 +1308,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
  }
 
  #[tokio::test]
@@ -29256,7 +29264,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn double_escape_browses_prompts_without_reverting_and_explains_editing() -> Result<()> {
      let (mut app, mut events, _operations) = make_test_app_with_channels().await;
      app.keymap = RuntimeKeymap::from_config(&toml::from_str(
-@@ -1357,6 +1379,7 @@ async fn double_escape_browses_prompts_without_reverting_and_explains_editing()
+@@ -1357,6 +1380,7 @@ async fn double_escape_browses_prompts_without_reverting_and_explains_editing()
  mod browsing;
 
  #[tokio::test]
@@ -29264,7 +29272,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn find_refreshes_live_details_before_searching_the_first_query() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      crate::chatwidget::tests::helpers::set_active_cell(
-@@ -1433,6 +1456,7 @@ fn row_containing(tui: &tui::Tui, text: &str) -> u16 {
+@@ -1433,6 +1457,7 @@ fn row_containing(tui: &tui::Tui, text: &str) -> u16 {
  }
 
  #[tokio::test]
@@ -29272,7 +29280,7 @@ index 026fe11ea..2da3eaa30 100644
  async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
-@@ -1731,6 +1755,97 @@ async fn fullscreen_composer_scrolls_without_moving_caret_or_transcript() -> Res
+@@ -1731,6 +1756,97 @@ async fn fullscreen_composer_scrolls_without_moving_caret_or_transcript() -> Res
      Ok(())
  }
 
@@ -29370,7 +29378,7 @@ index 026fe11ea..2da3eaa30 100644
  #[tokio::test]
  async fn fullscreen_composer_remote_images_leave_an_editable_prompt_row() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
-@@ -1783,3 +1898,190 @@ async fn fullscreen_composer_remote_images_leave_an_editable_prompt_row() -> Res
+@@ -1783,3 +1899,190 @@ async fn fullscreen_composer_remote_images_leave_an_editable_prompt_row() -> Res
      tui.set_owned_screen(/*owned*/ false)?;
      Ok(())
  }
@@ -31014,6 +31022,18 @@ index c65cc64ea..b8e1e68b4 100644
      );
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
+diff --git a/codex-rs/tui/src/app/thread_routing.rs b/codex-rs/tui/src/app/thread_routing.rs
+index 9a6adc013..1efd40f3e 100644
+--- a/codex-rs/tui/src/app/thread_routing.rs
++++ b/codex-rs/tui/src/app/thread_routing.rs
+@@ -421,6 +421,7 @@ impl App {
+         }
+         self.chat_widget
+             .add_to_history(history_cell::new_patch_event(
++                request.id.clone(),
+                 request.changes.clone(),
+                 &request.cwd,
+             ));
 diff --git a/codex-rs/tui/src/app/thread_title_tests.rs b/codex-rs/tui/src/app/thread_title_tests.rs
 index ca73ee8d3..b3a606a68 100644
 --- a/codex-rs/tui/src/app/thread_title_tests.rs
@@ -32780,7 +32800,7 @@ index aa5de8be2..bbf153af4 100644
          });
      }
 diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
-index 85ea55133..124611da2 100644
+index 85ea55133..3ec4a72a0 100644
 --- a/codex-rs/tui/src/chatwidget/protocol.rs
 +++ b/codex-rs/tui/src/chatwidget/protocol.rs
 @@ -360,6 +360,10 @@ impl ChatWidget {
@@ -32794,6 +32814,17 @@ index 85ea55133..124611da2 100644
              | ServerNotification::ThreadQueueChanged(_)
              | ServerNotification::ThreadPredictionUpdated(_)
              | ServerNotification::ThreadArchived(_)
+@@ -595,8 +599,8 @@ impl ChatWidget {
+                 self.on_context_compaction_started(id, elapsed);
+             }
+             item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_started(item),
+-            ThreadItem::FileChange { id: _, changes, .. } => {
+-                self.on_patch_apply_begin(file_update_changes_to_display(changes));
++            ThreadItem::FileChange { id, changes, .. } => {
++                self.on_patch_apply_begin(id, file_update_changes_to_display(changes));
+             }
+             item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
+             item @ ThreadItem::DynamicToolCall { .. } => self.on_dynamic_tool_item(item),
 diff --git a/codex-rs/tui/src/chatwidget/protocol_requests.rs b/codex-rs/tui/src/chatwidget/protocol_requests.rs
 index e76b50b6e..0b181454a 100644
 --- a/codex-rs/tui/src/chatwidget/protocol_requests.rs
@@ -33162,6 +33193,36 @@ index 6a95ec466..7637c9c03 100644
          top: 1,
          right: 2,
          persistent_layout: None,
+diff --git a/codex-rs/tui/src/chatwidget/replay.rs b/codex-rs/tui/src/chatwidget/replay.rs
+index 1907577c5..41db8b2a6 100644
+--- a/codex-rs/tui/src/chatwidget/replay.rs
++++ b/codex-rs/tui/src/chatwidget/replay.rs
+@@ -250,12 +250,12 @@ impl ChatWidget {
+         match item {
+             // Snapshots contain the completed item, without the live start that renders its diff.
+             ThreadItem::FileChange {
++                id,
+                 changes,
+                 status: codex_app_server_protocol::PatchApplyStatus::Completed,
+-                ..
+             } => {
+                 if !changes.is_empty() {
+-                    self.on_patch_apply_begin(file_update_changes_to_display(changes));
++                    self.on_patch_apply_begin(id, file_update_changes_to_display(changes));
+                 }
+             }
+             item => {
+@@ -409,8 +409,8 @@ impl ChatWidget {
+                         .unwrap_or(codex_app_server_protocol::WebSearchAction::Other),
+                 );
+             }
+-            ThreadItem::ImageView { id: _, path } => {
+-                self.on_view_image_tool_call(path);
++            ThreadItem::ImageView { id, path } => {
++                self.on_view_image_tool_call(id, path);
+             }
+             ThreadItem::ImageGeneration(item) => {
+                 self.on_image_generation_end(
 diff --git a/codex-rs/tui/src/chatwidget/skills.rs b/codex-rs/tui/src/chatwidget/skills.rs
 index 56bb6071f..ab538df57 100644
 --- a/codex-rs/tui/src/chatwidget/skills.rs
@@ -35068,10 +35129,32 @@ index 307e1f512..988a2ae89 100644
  async fn app_server_cyber_policy_error_renders_dedicated_notice() {
      let (mut chat, mut rx, _ops) = make_chatwidget_manual(Some("gpt-5.6-sol")).await;
 diff --git a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
-index 135aabca8..d3999051d 100644
+index 135aabca8..a4e468539 100644
 --- a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 +++ b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
-@@ -105,7 +105,7 @@ impl ChatWidget {
+@@ -8,13 +8,17 @@ use crate::thread_transcript::tools::McpHistory;
+ use codex_utils_path_uri::LegacyAppPathString;
+
+ impl ChatWidget {
+-    pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
+-        self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
++    pub(super) fn on_patch_apply_begin(
++        &mut self,
++        id: String,
++        changes: HashMap<PathBuf, FileChange>,
++    ) {
++        self.add_to_history(history_cell::new_patch_event(id, changes, &self.config.cwd));
+     }
+
+-    pub(super) fn on_view_image_tool_call(&mut self, path: LegacyAppPathString) {
++    pub(super) fn on_view_image_tool_call(&mut self, id: String, path: LegacyAppPathString) {
+         self.flush_answer_stream_with_separator();
+-        self.add_to_history(history_cell::new_view_image_tool_call(path));
++        self.add_to_history(history_cell::new_view_image_tool_call(id, path));
+         self.request_redraw();
+     }
+
+@@ -105,7 +109,7 @@ impl ChatWidget {
          }
      }
 
@@ -35080,6 +35163,22 @@ index 135aabca8..d3999051d 100644
          self.flush_answer_stream_with_separator();
          self.add_to_history(cell);
          self.request_redraw();
+@@ -164,13 +168,13 @@ impl ChatWidget {
+     }
+
+     pub(crate) fn handle_file_change_completed_now(&mut self, item: ThreadItem) {
+-        let ThreadItem::FileChange { status, .. } = item else {
++        let ThreadItem::FileChange { id, status, .. } = item else {
+             return;
+         };
+         // If the patch was successful, just let the "Edited" block stand.
+         // Otherwise, add a failure block.
+         if matches!(status, codex_app_server_protocol::PatchApplyStatus::Failed) {
+-            self.add_to_history(history_cell::new_patch_apply_failure(String::new()));
++            self.add_to_history(history_cell::new_patch_apply_failure(id, String::new()));
+         }
+     }
+
 diff --git a/codex-rs/tui/src/chatwidget/transcript.rs b/codex-rs/tui/src/chatwidget/transcript.rs
 index f055cd1b7..991e3eb8a 100644
 --- a/codex-rs/tui/src/chatwidget/transcript.rs
@@ -35334,10 +35433,27 @@ index aaa32e195..503ae83f0 100644
  #[cfg(test)]
  pub(crate) use model::ExecCall;
 diff --git a/codex-rs/tui/src/exec_cell/model.rs b/codex-rs/tui/src/exec_cell/model.rs
-index a99ea4909..0d2eebaff 100644
+index a99ea4909..f5f645952 100644
 --- a/codex-rs/tui/src/exec_cell/model.rs
 +++ b/codex-rs/tui/src/exec_cell/model.rs
-@@ -107,7 +107,10 @@ impl ExecCell {
+@@ -79,6 +79,8 @@ pub(crate) struct ExecCall {
+ pub(crate) struct ExecCell {
+     pub(crate) group: ActivityGroup<ExecCall>,
+     animations_enabled: bool,
++    /// Calls still running when the turn ended; they carry a synthetic exit code.
++    pub(super) interrupted: Vec<String>,
+ }
+
+ impl ExecCell {
+@@ -86,6 +88,7 @@ impl ExecCell {
+         Self {
+             group: ActivityGroup::new(vec![call]),
+             animations_enabled,
++            interrupted: Vec::new(),
+         }
+     }
+
+@@ -107,7 +110,10 @@ impl ExecCell {
              duration: None,
              interaction_input,
          };
@@ -35349,7 +35465,7 @@ index a99ea4909..0d2eebaff 100644
              self.group.calls.push(call);
              true
          } else {
-@@ -117,7 +120,11 @@ impl ExecCell {
+@@ -117,7 +123,11 @@ impl ExecCell {
 
      /// Historical grouping uses the same compatibility and failure boundary as live calls.
      pub(crate) fn append_completed(&mut self, mut newer: Self) -> Result<(), Self> {
@@ -35362,11 +35478,34 @@ index a99ea4909..0d2eebaff 100644
              return Err(newer);
          }
          newer.group.details.prepend(
+@@ -126,12 +136,14 @@ impl ExecCell {
+         );
+         self.group.details = newer.group.details;
+         self.group.calls.append(&mut newer.group.calls);
++        self.interrupted.append(&mut newer.interrupted);
+         Ok(())
+     }
+
+     /// Preserve live clocks and pending output when a validated older page extends exploration.
+     pub(crate) fn prepend(&mut self, older: Self) {
+         self.group.prepend(older.group);
++        self.interrupted.extend(older.interrupted);
+     }
+
+     /// Marks the most recently matching call as finished and returns whether a call was found.
+@@ -174,6 +186,7 @@ impl ExecCell {
+                     .unwrap_or_else(|| Duration::from_millis(0));
+                 call.start_time = None;
+                 call.duration = Some(elapsed);
++                self.interrupted.push(call.call_id.clone());
+                 call.output
+                     .get_or_insert_with(CommandOutput::default)
+                     .exit_code = 1;
 diff --git a/codex-rs/tui/src/exec_cell/render.rs b/codex-rs/tui/src/exec_cell/render.rs
-index bae014ea1..108b0f319 100644
+index bae014ea1..6aa4d3ca3 100644
 --- a/codex-rs/tui/src/exec_cell/render.rs
 +++ b/codex-rs/tui/src/exec_cell/render.rs
-@@ -210,6 +210,106 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
+@@ -210,6 +210,124 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
  }
 
  impl HistoryCell for ExecCell {
@@ -35392,12 +35531,20 @@ index bae014ea1..108b0f319 100644
 +                        target.live,
 +                        props.clone(),
 +                    ),
-+                    native: Box::new(move |width| {
-+                        self.member_hyperlink_lines(
-+                            width,
-+                            crate::history_cell::HistoryRenderMode::Rich,
-+                            index..index + 1,
-+                        )
++                    native: Box::new(move |width, expanded| {
++                        if expanded {
++                            self.member_hyperlink_lines(
++                                width,
++                                crate::history_cell::HistoryRenderMode::Rich,
++                                index..index + 1,
++                            )
++                        } else {
++                            prefix_hyperlink_lines(
++                                Self::exploring_call_lines(&self.group.calls[index..=index], width),
++                                "• ".dim(),
++                                "  ".into(),
++                            )
++                        }
 +                    }),
 +                }
 +            })
@@ -35409,10 +35556,12 @@ index bae014ea1..108b0f319 100644
 +        let running = self.is_active();
 +        let status = |call: &ExecCall| match &call.output {
 +            _ if call.duration.is_none() => "running",
++            _ if self.interrupted.contains(&call.call_id) => "interrupted",
 +            Some(output) if output.exit_code != 0 => "failed",
 +            _ => "completed",
 +        };
 +        let call = |call: &ExecCall| {
++            let status = status(call);
 +            let (total, _) = call
 +                .output
 +                .as_ref()
@@ -35430,8 +35579,8 @@ index bae014ea1..108b0f319 100644
 +                    }
 +                    value
 +                }).collect::<Vec<_>>(),
-+                "status": status(call),
-+                "exit_code": call.output.as_ref().map(|output| output.exit_code),
++                "status": status,
++                "exit_code": call.output.as_ref().filter(|_| status != "interrupted").map(|output| output.exit_code),
 +                "duration_ms": call.duration.map(|duration| duration.as_millis() as u64),
 +                "output_lines": total,
 +                "output_tail": call.output.as_ref().map(|output| {
@@ -35447,6 +35596,8 @@ index bae014ea1..108b0f319 100644
 +                "running"
 +            } else if calls.iter().any(|item| status(item) == "failed") {
 +                "failed"
++            } else if calls.iter().any(|item| status(item) == "interrupted") {
++                "interrupted"
 +            } else {
 +                "completed"
 +            };
@@ -35462,9 +35613,15 @@ index bae014ea1..108b0f319 100644
 +        } else {
 +            call(first)
 +        };
++        // Members render under their call IDs, so the group needs its own.
++        let id = if self.is_exploring_cell() {
++            format!("explore:{}", first.call_id)
++        } else {
++            first.call_id.clone()
++        };
 +        Some(crate::mod_render::RenderTarget::new(
 +            "tool_call",
-+            first.call_id.clone(),
++            id,
 +            running,
 +            props,
 +        ))
@@ -35473,6 +35630,50 @@ index bae014ea1..108b0f319 100644
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
          if self.is_exploring_cell() {
              self.group.push_detail(std::sync::Arc::from(cell));
+@@ -328,8 +446,15 @@ impl ExecCell {
+             ])
+             .into(),
+         );
++        out.extend(prefix_hyperlink_lines(
++            Self::exploring_call_lines(&self.group.calls, width),
++            "  └ ".dim(),
++            "    ".into(),
++        ));
++        out
++    }
+
+-        let mut calls = self.group.calls.as_slice();
++    fn exploring_call_lines(mut calls: &[ExecCall], width: u16) -> Vec<HyperlinkLine> {
+         let mut out_indented = Vec::new();
+         let nonzero_exit = |call: &ExecCall| {
+             call.duration
+@@ -438,13 +563,7 @@ impl ExecCell {
+                 out_indented.extend(wrapped);
+             }
+         }
+-
+-        out.extend(prefix_hyperlink_lines(
+-            out_indented,
+-            "  └ ".dim(),
+-            "    ".into(),
+-        ));
+-        out
++        out_indented
+     }
+
+     fn command_display_lines(&self, width: u16) -> Vec<HyperlinkLine> {
+@@ -1095,6 +1214,11 @@ mod tests {
+         let preview = cell.display_lines(/*width*/ 60);
+         cell.group.calls[0].start_time = None;
+         cell.mark_failed();
++        let props = cell.render_target().unwrap().props;
++        assert_eq!(
++            (props["status"].as_str(), props["exit_code"].is_null()),
++            (Some("interrupted"), true)
++        );
+         let compact = visible_lines(cell.compact_hyperlink_lines(/*width*/ 60));
+         let transcript = cell.transcript_lines(/*width*/ 60);
+
 diff --git a/codex-rs/tui/src/exec_cell/transcript.rs b/codex-rs/tui/src/exec_cell/transcript.rs
 index 43ed4ce55..5c39d2951 100644
 --- a/codex-rs/tui/src/exec_cell/transcript.rs
@@ -35504,10 +35705,10 @@ index 43ed4ce55..5c39d2951 100644
              }
              let script = strip_bash_lc_and_escape(&call.command);
 diff --git a/codex-rs/tui/src/exec_cell/transcript_tests.rs b/codex-rs/tui/src/exec_cell/transcript_tests.rs
-index 41a8c4f15..67f6d1ab5 100644
+index 41a8c4f15..edd5c3bf0 100644
 --- a/codex-rs/tui/src/exec_cell/transcript_tests.rs
 +++ b/codex-rs/tui/src/exec_cell/transcript_tests.rs
-@@ -30,6 +30,38 @@ fn completed_read(name: &str, output: &str) -> ExecCell {
+@@ -30,6 +30,42 @@ fn completed_read(name: &str, output: &str) -> ExecCell {
      )
  }
 
@@ -35531,6 +35732,10 @@ index 41a8c4f15..67f6d1ab5 100644
 +            .unwrap()
 +            .len(),
 +        32
++    );
++    assert_ne!(
++        group.render_target().unwrap().id,
++        group.render_members()[0].target.id
 +    );
 +    let command = vec!["cat".into(), "next".into()];
 +    let parsed = codex_shell_command::parse_command::parse_command(&command);
@@ -35599,10 +35804,10 @@ index 16d484518..30ac1498b 100644
  pub(crate) struct WebHyperlinkHistoryCell {
      lines: Vec<HyperlinkLine>,
 diff --git a/codex-rs/tui/src/history_cell/computer_activity.rs b/codex-rs/tui/src/history_cell/computer_activity.rs
-index 7ef3342ec..da372b19d 100644
+index 7ef3342ec..a4711398e 100644
 --- a/codex-rs/tui/src/history_cell/computer_activity.rs
 +++ b/codex-rs/tui/src/history_cell/computer_activity.rs
-@@ -119,6 +119,28 @@ fn error_preview(call: &McpToolCallCell) -> Option<&str> {
+@@ -119,6 +119,31 @@ fn error_preview(call: &McpToolCallCell) -> Option<&str> {
  }
 
  impl HistoryCell for ComputerActivityCell {
@@ -35615,7 +35820,10 @@ index 7ef3342ec..da372b19d 100644
 +                Some(RenderMember {
 +                    id: format!("mcp:{}", call.call_id()),
 +                    target: call.render_target()?,
-+                    native: Box::new(move |width| {
++                    native: Box::new(move |width, expanded| {
++                        if !expanded {
++                            return call.compact_hyperlink_lines(width);
++                        }
 +                        let mut lines = call.transcript_hyperlink_lines(width);
 +                        lines.extend(self.group.details.lines_after(
 +                            index + 1,
@@ -35631,6 +35839,24 @@ index 7ef3342ec..da372b19d 100644
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
          if self.group.calls.is_empty() {
              Err(cell)
+diff --git a/codex-rs/tui/src/history_cell/computer_activity_tests.rs b/codex-rs/tui/src/history_cell/computer_activity_tests.rs
+index c6b9766fc..41679bfa8 100644
+--- a/codex-rs/tui/src/history_cell/computer_activity_tests.rs
++++ b/codex-rs/tui/src/history_cell/computer_activity_tests.rs
+@@ -81,6 +81,13 @@ fn computer_activity_active_and_interrupted() {
+             .collect::<Vec<_>>(),
+         vec![Some(true), Some(false)]
+     );
++    assert_eq!(
++        cell.render_members()
++            .iter()
++            .map(|member| member.target.props["status"].clone())
++            .collect::<Vec<_>>(),
++        vec![json!("completed"), json!("interrupted")]
++    );
+ }
+
+ #[test]
 diff --git a/codex-rs/tui/src/history_cell/dynamic.rs b/codex-rs/tui/src/history_cell/dynamic.rs
 index 9c5c60306..f4615af1a 100644
 --- a/codex-rs/tui/src/history_cell/dynamic.rs
@@ -35758,10 +35984,52 @@ index 18bc6f0b3..d9ce7c223 100644
      ThreadItem::DynamicToolCall {
          id: "dynamic-1".to_string(),
 diff --git a/codex-rs/tui/src/history_cell/mcp.rs b/codex-rs/tui/src/history_cell/mcp.rs
-index 9f80e5e5d..e57f43b6c 100644
+index 9f80e5e5d..23295d1c5 100644
 --- a/codex-rs/tui/src/history_cell/mcp.rs
 +++ b/codex-rs/tui/src/history_cell/mcp.rs
-@@ -239,6 +239,32 @@ impl McpToolCallCell {
+@@ -54,6 +54,8 @@ pub(crate) struct McpToolCallCell {
+     start_time: Instant,
+     duration: Option<Duration>,
+     result: Option<Result<McpToolResult, String>>,
++    output_lines: Option<usize>,
++    interrupted: bool,
+     animations_enabled: bool,
+ }
+
+@@ -96,6 +98,8 @@ impl McpToolCallCell {
+             start_time: Instant::now(),
+             duration: None,
+             result: None,
++            output_lines: None,
++            interrupted: false,
+             animations_enabled,
+         }
+     }
+@@ -111,6 +115,14 @@ impl McpToolCallCell {
+     ) {
+         let result = result.map(|result| McpToolResult::new(result, self.result_kind()));
+         self.duration = Some(duration);
++        self.output_lines = Some(match &result {
++            Ok(result) => result
++                .content
++                .iter()
++                .map(|block| block.text().map_or(1, |text| text.lines().count()))
++                .sum(),
++            Err(error) => error.lines().count(),
++        });
+         self.result = Some(result);
+     }
+
+@@ -126,6 +138,8 @@ impl McpToolCallCell {
+         let elapsed = self.start_time.elapsed();
+         self.duration = Some(elapsed);
+         self.result = Some(Err("interrupted".to_string()));
++        self.output_lines = Some(1);
++        self.interrupted = true;
+     }
+
+     pub(crate) fn freeze_snapshot(&mut self) {
+@@ -239,6 +253,32 @@ impl McpToolCallCell {
 
      /// Share one bounded preview across result blocks while retaining full transcript sources.
      fn render_detail_lines(&self, width: u16, mode: McpToolCallRenderMode) -> Vec<HyperlinkLine> {
@@ -35794,7 +36062,7 @@ index 9f80e5e5d..e57f43b6c 100644
          let detail_width = usize::from(width)
              .saturating_sub(/*rhs*/ 4)
              .max(/*other*/ 1);
-@@ -356,6 +382,33 @@ impl McpToolCallCell {
+@@ -356,6 +396,27 @@ impl McpToolCallCell {
  }
 
  impl HistoryCell for McpToolCallCell {
@@ -35802,17 +36070,11 @@ index 9f80e5e5d..e57f43b6c 100644
 +        let running = self.result.is_none();
 +        let status = match self.success() {
 +            None => "running",
++            Some(_) if self.interrupted => "interrupted",
 +            Some(true) => "completed",
 +            Some(false) => "failed",
 +        };
-+        let output_lines = self.result.as_ref().map(|result| match result {
-+            Ok(result) => result
-+                .content
-+                .iter()
-+                .map(|block| block.text().map_or(1, |text| text.lines().count()))
-+                .sum::<usize>(),
-+            Err(error) => error.lines().count(),
-+        });
++        let output_lines = self.output_lines;
 +        Some(crate::mod_render::RenderTarget::new(
 +            "tool_call",
 +            self.call_id.clone(),
@@ -35914,10 +36176,10 @@ index 1cd4a356c..75640d11b 100644
          visible_lines(self.display_hyperlink_lines(width))
      }
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index ac39aef42..c9e9180e4 100644
+index ac39aef42..8720e913a 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
-@@ -196,7 +196,95 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+@@ -196,7 +196,97 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
  /// intact by adaptive wrapping). Concrete types only need to override
  /// heights when they apply additional layout logic beyond what
  /// `Paragraph::line_count` captures.
@@ -35962,7 +36224,8 @@ index ac39aef42..c9e9180e4 100644
 +pub(crate) struct RenderMember<'a> {
 +    pub(crate) id: String,
 +    pub(crate) target: crate::mod_render::RenderTarget,
-+    pub(crate) native: Box<dyn Fn(u16) -> Vec<HyperlinkLine> + 'a>,
++    /// The member's native drawing at a width, expanded or compact.
++    pub(crate) native: Box<dyn Fn(u16, bool) -> Vec<HyperlinkLine> + 'a>,
 +}
 +
 +pub(crate) struct MemberLines {
@@ -35991,10 +36254,11 @@ index ac39aef42..c9e9180e4 100644
 +        members
 +            .into_iter()
 +            .map(|mut member| {
-+                member.target.props["expanded"] = expanded.contains(&member.id).into();
++                let open = expanded.contains(&member.id);
++                member.target.props["expanded"] = open.into();
 +                let (mut lines, _) =
 +                    crate::mod_render::hyperlink_lines(&member.target, width, |_, width| {
-+                        (member.native)(width)
++                        (member.native)(width, open)
 +                    });
 +                lines.extend(crate::mod_render::tool_notice_lines(&member.target));
 +                MemberLines {
@@ -36013,7 +36277,7 @@ index ac39aef42..c9e9180e4 100644
      /// Retain reasoning inside an activity group, or return it for normal insertion.
      /// Call positions stay fixed as in-flight calls complete; other history cells decline it.
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
-@@ -234,6 +322,20 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -234,6 +324,20 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          plain_hyperlink_lines(self.display_lines(width))
      }
 
@@ -36034,7 +36298,7 @@ index ac39aef42..c9e9180e4 100644
      /// Compact presentation for the owned transcript, which can reveal details in place.
      #[allow(dead_code, reason = "Used by later layers of the TUI refresh stack.")]
      fn compact_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-@@ -268,7 +370,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -268,7 +372,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
      fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {
          match mode {
@@ -36045,7 +36309,7 @@ index ac39aef42..c9e9180e4 100644
              HistoryRenderMode::Raw => self.live_raw_lines(),
          }
      }
-@@ -279,7 +383,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -279,7 +385,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          mode: HistoryRenderMode,
      ) -> Vec<HyperlinkLine> {
          match mode {
@@ -36059,7 +36323,7 @@ index ac39aef42..c9e9180e4 100644
              HistoryRenderMode::Raw => plain_hyperlink_lines(self.live_raw_lines()),
          }
      }
-@@ -350,7 +459,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -350,7 +461,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
  impl Renderable for Box<dyn HistoryCell> {
      fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -36187,13 +36451,18 @@ index 06d7b2f13..219c1586d 100644
 
  #[derive(Debug)]
 diff --git a/codex-rs/tui/src/history_cell/patches.rs b/codex-rs/tui/src/history_cell/patches.rs
-index 3569c7c9a..931a954ea 100644
+index 3569c7c9a..ce5baae71 100644
 --- a/codex-rs/tui/src/history_cell/patches.rs
 +++ b/codex-rs/tui/src/history_cell/patches.rs
-@@ -24,6 +24,42 @@ impl PatchHistoryCell {
+@@ -16,14 +16,43 @@ pub(crate) struct PatchHistoryCell {
+     cwd: PathBuf,
  }
 
- impl HistoryCell for PatchHistoryCell {
+-impl PatchHistoryCell {
+-    pub(crate) fn with_activity_id(mut self, id: String) -> Self {
+-        self.activity_id = format!("patch:{id}");
+-        self
++impl HistoryCell for PatchHistoryCell {
 +    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
 +        let id = self.activity_id.trim_start_matches("patch:").to_owned();
 +        let mut files = self
@@ -36228,12 +36497,38 @@ index 3569c7c9a..931a954ea 100644
 +            serde_json::json!({"call_id": id, "kind": "patch", "status": "completed",
 +                "duration_ms": null, "files": files, "file_count": file_count, "added": added, "removed": removed, "error": null}),
 +        ))
-+    }
-+
+     }
+-}
+
+-impl HistoryCell for PatchHistoryCell {
      fn activity_ids(&self) -> Vec<String> {
          vec![self.activity_id.clone()]
      }
-@@ -90,6 +126,20 @@ pub(crate) struct PatchFailureCell {
+@@ -65,19 +94,20 @@ impl HistoryCell for PatchHistoryCell {
+ /// a proposed patch. The summary lines should already be formatted (e.g.
+ /// "A path/to/file.rs").
+ pub(crate) fn new_patch_event(
++    id: String,
+     changes: HashMap<PathBuf, FileChange>,
+     cwd: &Path,
+ ) -> PatchHistoryCell {
+     PatchHistoryCell {
+-        activity_id: format!("patch:{}", uuid::Uuid::new_v4()),
++        activity_id: format!("patch:{id}"),
+         changes,
+         cwd: cwd.to_path_buf(),
+     }
+ }
+
+-pub(crate) fn new_patch_apply_failure(stderr: String) -> PatchFailureCell {
++pub(crate) fn new_patch_apply_failure(id: String, stderr: String) -> PatchFailureCell {
+     PatchFailureCell {
+-        activity_id: format!("patch-failure:{}", uuid::Uuid::new_v4()),
++        activity_id: format!("patch-failure:{id}"),
+         stderr,
+     }
+ }
+@@ -90,6 +120,20 @@ pub(crate) struct PatchFailureCell {
  }
 
  impl HistoryCell for PatchFailureCell {
@@ -36254,7 +36549,7 @@ index 3569c7c9a..931a954ea 100644
      fn activity_ids(&self) -> Vec<String> {
          vec![self.activity_id.clone()]
      }
-@@ -159,11 +209,31 @@ impl HistoryCell for PatchFailureCell {
+@@ -159,11 +203,31 @@ impl HistoryCell for PatchFailureCell {
 
  #[derive(Debug)]
  pub(crate) struct ViewImageHistoryCell {
@@ -36286,15 +36581,25 @@ index 3569c7c9a..931a954ea 100644
      fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
          let line = vec![
              "• ".dim(),
-@@ -197,6 +267,7 @@ pub(crate) fn new_view_image_tool_call(path: LegacyAppPathString) -> ViewImageHi
+@@ -191,12 +255,16 @@ impl HistoryCell for ViewImageHistoryCell {
+     }
+ }
+
+-pub(crate) fn new_view_image_tool_call(path: LegacyAppPathString) -> ViewImageHistoryCell {
++pub(crate) fn new_view_image_tool_call(
++    id: String,
++    path: LegacyAppPathString,
++) -> ViewImageHistoryCell {
+     let filename = path
+         .to_inferred_path_uri()
          .and_then(|path| path.basename())
          .unwrap_or_else(|| path.render_for_ui());
      ViewImageHistoryCell {
-+        id: uuid::Uuid::new_v4().to_string(),
++        id,
          filename,
          path_label: path.into_string(),
      }
-@@ -207,8 +278,12 @@ pub(crate) fn new_image_generation_call(
+@@ -207,8 +275,12 @@ pub(crate) fn new_image_generation_call(
      status: &str,
      revised_prompt: Option<String>,
      saved_path: Option<AbsolutePathBuf>,
@@ -36309,7 +36614,7 @@ index 3569c7c9a..931a954ea 100644
      let heading = if status == "failed" {
          vec!["✗ ".red().bold(), "Image generation failed".bold()].into()
      } else {
-@@ -222,5 +297,5 @@ pub(crate) fn new_image_generation_call(
+@@ -222,5 +294,5 @@ pub(crate) fn new_image_generation_call(
          lines.push(vec!["  └ ".dim(), "Saved to: ".dim(), saved_path.into()].into());
      }
 
@@ -36317,16 +36622,17 @@ index 3569c7c9a..931a954ea 100644
 +    ToolCallCell::new(PlainHistoryCell { lines }, call_id, props)
  }
 diff --git a/codex-rs/tui/src/history_cell/patches_tests.rs b/codex-rs/tui/src/history_cell/patches_tests.rs
-index 9844d9b4e..e26f084fe 100644
+index 9844d9b4e..e106a028b 100644
 --- a/codex-rs/tui/src/history_cell/patches_tests.rs
 +++ b/codex-rs/tui/src/history_cell/patches_tests.rs
-@@ -1,6 +1,100 @@
+@@ -1,9 +1,109 @@
  use super::*;
  use pretty_assertions::assert_eq;
 
 +#[test]
 +fn patch_summary_totals_include_files_beyond_detail_limit() {
 +    let cell = new_patch_event(
++        "patch".into(),
 +        (0..33)
 +            .map(|i| {
 +                (
@@ -36350,6 +36656,7 @@ index 9844d9b4e..e26f084fe 100644
 +fn tool_rows_offer_one_tool_call_target_per_row() {
 +    let target = |cell: &dyn HistoryCell| cell.render_target().expect("tool row");
 +    let patch = target(&new_patch_event(
++        "patch".into(),
 +        HashMap::from([
 +            (
 +                PathBuf::from("new.txt"),
@@ -36382,7 +36689,10 @@ index 9844d9b4e..e26f084fe 100644
 +            ])
 +        )
 +    );
-+    let failure = target(&new_patch_apply_failure("hunk failed".into()));
++    let failure = target(&new_patch_apply_failure(
++        "failure".into(),
++        "hunk failed".into(),
++    ));
 +    assert_eq!(
 +        (
 +            failure.props["status"].clone(),
@@ -36393,12 +36703,12 @@ index 9844d9b4e..e26f084fe 100644
 +            serde_json::json!("hunk failed")
 +        )
 +    );
-+    let images = [
-+        new_view_image_tool_call(LegacyAppPathString::from_string("shot.png")),
-+        new_view_image_tool_call(LegacyAppPathString::from_string("shot.png")),
-+    ];
-+    assert_ne!(target(&images[0]).id, target(&images[1]).id);
-+    assert_ne!(images[0].activity_ids(), images[1].activity_ids());
++    let image = |id: &str| {
++        new_view_image_tool_call(id.into(), LegacyAppPathString::from_string("shot.png"))
++    };
++    assert_eq!(target(&image("a")).id, target(&image("a")).id);
++    assert_eq!(image("a").activity_ids(), image("a").activity_ids());
++    assert_ne!(target(&image("a")).id, target(&image("b")).id);
 +    let running = new_active_web_search_call("ws".into(), String::new(), false);
 +    let done = new_web_search_call(
 +        "ws".into(),
@@ -36421,6 +36731,56 @@ index 9844d9b4e..e26f084fe 100644
  #[test]
  fn compact_patches_retain_full_changes_and_failure_details() {
      let patch = new_patch_event(
++        "patch".into(),
+         HashMap::from([
+             (
+                 PathBuf::from("new.txt"),
+@@ -21,8 +121,11 @@ fn compact_patches_retain_full_changes_and_failure_details() {
+         ]),
+         Path::new("."),
+     );
+-    let failure = new_patch_apply_failure("first\nsecond\nthird\nfourth diagnostic".into());
+-    let missing = new_patch_apply_failure(String::new());
++    let failure = new_patch_apply_failure(
++        "failure".into(),
++        "first\nsecond\nthird\nfourth diagnostic".into(),
++    );
++    let missing = new_patch_apply_failure("missing".into(), String::new());
+     let mut snapshots = Vec::new();
+     for (label, cell) in [
+         ("patch", &patch as &dyn HistoryCell),
+@@ -46,7 +149,7 @@ fn viewed_image_retains_original_path_in_details() {
+         "/workspace/assets/example.png",
+         r"C:\workspace\assets\example.png",
+     ] {
+-        let cell = new_view_image_tool_call(LegacyAppPathString::from_string(path));
++        let cell = new_view_image_tool_call("image".into(), LegacyAppPathString::from_string(path));
+         assert_eq!(
+             cell.display_lines(/*width*/ 80)
+                 .iter()
+@@ -70,9 +173,10 @@ fn viewed_image_retains_original_path_in_details() {
+
+ #[test]
+ fn viewed_image_narrow_summary() {
+-    let cell = new_view_image_tool_call(LegacyAppPathString::from_string(
+-        "/workspace/very-long-screenshot-name.png",
+-    ));
++    let cell = new_view_image_tool_call(
++        "image".into(),
++        LegacyAppPathString::from_string("/workspace/very-long-screenshot-name.png"),
++    );
+     insta::assert_snapshot!(cell.display_lines(/*width*/ 32)[0].to_string());
+ }
+
+@@ -82,7 +186,7 @@ fn failed_patch_keeps_diagnostics_beyond_the_legacy_preview() {
+         .map(|line| format!("diagnostic line {line}"))
+         .collect::<Vec<_>>()
+         .join("\n");
+-    let cell = new_patch_apply_failure(diagnostics.clone());
++    let cell = new_patch_apply_failure("failure".into(), diagnostics.clone());
+     assert_eq!(
+         cell.raw_lines(),
+         std::iter::once(Line::from("Failed to apply patch"))
 diff --git a/codex-rs/tui/src/history_cell/request_user_input.rs b/codex-rs/tui/src/history_cell/request_user_input.rs
 index 006ed07b8..ab72476ad 100644
 --- a/codex-rs/tui/src/history_cell/request_user_input.rs
@@ -38444,6 +38804,57 @@ index 5b6194e5f..e9c8a27e6 100644
 +        assert!(join_exploration_groups(&older, &newer, &[turn]).is_some());
 +    }
 +}
+diff --git a/codex-rs/tui/src/thread_transcript/other_items.rs b/codex-rs/tui/src/thread_transcript/other_items.rs
+index 681161339..ea9ccdb62 100644
+--- a/codex-rs/tui/src/thread_transcript/other_items.rs
++++ b/codex-rs/tui/src/thread_transcript/other_items.rs
+@@ -24,17 +24,16 @@ pub(super) fn cells(item: ThreadItem, cwd: &AbsolutePathBuf) -> TranscriptCells
+             status,
+         } => match status {
+             PatchApplyStatus::Completed if !changes.is_empty() => {
+-                cells.push(Arc::new(
+-                    history_cell::new_patch_event(
+-                        file_update_changes_to_display(changes),
+-                        cwd.as_path(),
+-                    )
+-                    .with_activity_id(id),
+-                ));
++                cells.push(Arc::new(history_cell::new_patch_event(
++                    id,
++                    file_update_changes_to_display(changes),
++                    cwd.as_path(),
++                )));
+             }
+             PatchApplyStatus::Completed => {}
+             PatchApplyStatus::Failed => {
+                 cells.push(Arc::new(history_cell::new_patch_apply_failure(
++                    id,
+                     String::new(),
+                 )));
+             }
+@@ -55,8 +54,8 @@ pub(super) fn cells(item: ThreadItem, cwd: &AbsolutePathBuf) -> TranscriptCells
+             item.query,
+             item.action.unwrap_or(WebSearchAction::Other),
+         ))),
+-        ThreadItem::ImageView { path, .. } => {
+-            cells.push(Arc::new(history_cell::new_view_image_tool_call(path)))
++        ThreadItem::ImageView { id, path } => {
++            cells.push(Arc::new(history_cell::new_view_image_tool_call(id, path)))
+         }
+         ThreadItem::ImageGeneration(item)
+             if !matches!(item.status.as_str(), "completed" | "failed") =>
+diff --git a/codex-rs/tui/src/thread_transcript/other_items_tests.rs b/codex-rs/tui/src/thread_transcript/other_items_tests.rs
+index e116a6025..41508acf1 100644
+--- a/codex-rs/tui/src/thread_transcript/other_items_tests.rs
++++ b/codex-rs/tui/src/thread_transcript/other_items_tests.rs
+@@ -42,6 +42,7 @@ fn completed_patch_restores_rich_diff_and_styles() {
+         },
+     ];
+     let expected = history_cell::new_patch_event(
++        "patch-1".to_string(),
+         HashMap::from([
+             (
+                 PathBuf::from("new.rs"),
 diff --git a/codex-rs/tui/src/transcript_view.rs b/codex-rs/tui/src/transcript_view.rs
 index 31ebfec5e..6027db21a 100644
 --- a/codex-rs/tui/src/transcript_view.rs
@@ -38491,6 +38902,26 @@ index 31ebfec5e..6027db21a 100644
          self.live_separated = None;
          self.live_continuation = key.is_some_and(|key| key.is_stream_continuation);
          let live = layout(width).map(Arc::new);
+diff --git a/codex-rs/tui/src/transcript_view/diff_source_tests.rs b/codex-rs/tui/src/transcript_view/diff_source_tests.rs
+index cd2651fd2..bf886fb2f 100644
+--- a/codex-rs/tui/src/transcript_view/diff_source_tests.rs
++++ b/codex-rs/tui/src/transcript_view/diff_source_tests.rs
+@@ -13,6 +13,7 @@ fn wrapped_added_code_keeps_indentation_and_graphemes_when_copied_and_resized()
+     let code =
+         "\tlet message = \"a long value with 界 e\u{301} and 👩‍💻 inside\";\n    return message;\n";
+     let patch = crate::history_cell::new_patch_event(
++        "patch".into(),
+         HashMap::from([(
+             PathBuf::from("test.rs"),
+             FileChange::Add {
+@@ -58,6 +59,7 @@ fn annotated_diff_preserves_the_existing_hard_wrapped_visual_output() {
+ #[test]
+ fn updated_diff_copy_includes_signs_but_no_line_number_gutters() {
+     let patch = crate::history_cell::new_patch_event(
++        "patch".into(),
+         HashMap::from([(PathBuf::from("example.txt"), FileChange::Update {
+             unified_diff: "--- a/example.txt\n+++ b/example.txt\n@@ -1,2 +1,2 @@\n unchanged\n-old long value with several words\n+new long value with several words\n".to_string(),
+             move_path: None,
 diff --git a/codex-rs/tui/src/transcript_view/disclosure.rs b/codex-rs/tui/src/transcript_view/disclosure.rs
 index d22138770..47ed87ff1 100644
 --- a/codex-rs/tui/src/transcript_view/disclosure.rs
@@ -38875,7 +39306,7 @@ index ced88a72b..ea7a539e5 100644
                      if self.copy_on_select {
                          return Some(ViewAction::CopyOnSelect(text));
 diff --git a/codex-rs/tui/src/transcript_view/layout.rs b/codex-rs/tui/src/transcript_view/layout.rs
-index 5e912a062..8c952126c 100644
+index 5e912a062..b6b3c2304 100644
 --- a/codex-rs/tui/src/transcript_view/layout.rs
 +++ b/codex-rs/tui/src/transcript_view/layout.rs
 @@ -15,9 +15,12 @@ const MAX_CACHED_TEXT_BYTES: usize = 8 * 1024 * 1024;
@@ -38935,8 +39366,11 @@ index 5e912a062..8c952126c 100644
          let separated = index > 0 && !cell.is_stream_continuation();
          let presentation = CellPresentation {
              separated,
-@@ -186,15 +195,33 @@ impl TranscriptView {
+@@ -184,17 +193,36 @@ impl TranscriptView {
+             .disclosure
+             .keymap
              .primary_hint(KeymapContext::Global, "open_transcript");
++        let every_member = full_content.then(|| ids.iter().cloned().collect());
          Some(self.cache.get(cell, width, presentation, || {
              if disclosure {
 -                activity_layout(
@@ -38945,7 +39379,7 @@ index 5e912a062..8c952126c 100644
 +                let members = crate::history_cell::hooked_member_lines(
 +                    cell.as_ref(),
 +                    width,
-+                    &self.disclosure.expanded,
++                    every_member.as_ref().unwrap_or(&self.disclosure.expanded),
 +                );
 +                if let Some(members) = members {
 +                    return TextLayout::member_lines(members, Vec::new(), width);
@@ -38973,7 +39407,7 @@ index 5e912a062..8c952126c 100644
                      },
                      width,
                      expanded,
-@@ -220,6 +247,7 @@ impl LayoutCache {
+@@ -220,6 +248,7 @@ impl LayoutCache {
          self.frame = self.frame.wrapping_add(/*rhs*/ 1);
          let state = RenderState {
              theme: crate::render::highlight::syntax_theme_revision(),
@@ -38981,7 +39415,7 @@ index 5e912a062..8c952126c 100644
              foreground: crate::terminal_palette::default_fg(),
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
-@@ -245,7 +273,10 @@ impl LayoutCache {
+@@ -245,7 +274,10 @@ impl LayoutCache {
                  && entry.source.ptr_eq(&source)
                  && (entry.rendered_frame == self.frame
                      || (cell.has_stable_transcript_height()
@@ -38993,7 +39427,7 @@ index 5e912a062..8c952126c 100644
          }) {
              let layout = Arc::clone(&self.entries[index].layout);
              if index + 1 != self.entries.len() {
-@@ -254,6 +285,8 @@ impl LayoutCache {
+@@ -254,6 +286,8 @@ impl LayoutCache {
              }
              return layout;
          }
@@ -39002,7 +39436,7 @@ index 5e912a062..8c952126c 100644
          let layout = render();
          let layout = if presentation.separated {
              layout.with_leading_separator()
-@@ -273,6 +306,7 @@ impl LayoutCache {
+@@ -273,6 +307,7 @@ impl LayoutCache {
              layout: Arc::clone(&layout),
              rendered_frame: self.frame,
              animation_tick,
@@ -98413,10 +98847,10 @@ index 000000000..c40de7d97
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..d85e13e17
+index 000000000..21a4f02fc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,368 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -98637,13 +99071,15 @@ index 000000000..d85e13e17
 +    // this package revision, settings and state.
 +    let warm = (event == "intercept" && request["payload"]["surface"] == "render").then(|| {
 +        request["serve"] = Value::Bool(true);
-+        let mut key = request.clone();
-+        if let Some(fields) = key.as_object_mut() {
-+            for field in ["name", "payload", "receipts"] {
-+                fields.remove(field);
++        // `entrypoint_sha256` stands for the source.
++        let mut key = Sha256::new();
++        for (field, value) in request.as_object().into_iter().flatten() {
++            if !["source", "name", "payload", "receipts"].contains(&field.as_str()) {
++                key.update(field);
++                key.update(value.to_string());
 +            }
 +        }
-+        format!("{}:{}", node.display(), digest(key.to_string().as_bytes()))
++        format!("{}:{:x}", node.display(), key.finalize())
 +    });
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
@@ -104133,10 +104569,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..e84a00527
+index 000000000..7415885a2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,409 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -104196,20 +104632,23 @@ index 000000000..e84a00527
 +        std::thread::spawn(|| {
 +            loop {
 +                std::thread::sleep(Duration::from_secs(1));
-+                if let Ok(mut warm) = WARM.lock() {
-+                    for runner in warm.extract_if(.., |runner| runner.used.elapsed() >= WARM_IDLE) {
-+                        runner.stop();
-+                    }
++                for runner in retire_warm(|runner| runner.used.elapsed() >= WARM_IDLE) {
++                    runner.stop();
 +                }
-+                let Ok(mut spares) = SPARES.lock() else {
-+                    return;
-+                };
-+                if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER) {
-+                    while spares.0.len() > 1 {
-+                        if let Some((_, child)) = spares.0.pop() {
-+                            stop(child);
-+                        }
++                let surplus = {
++                    let Ok(mut spares) = SPARES.lock() else {
++                        return;
++                    };
++                    if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER)
++                        && !spares.0.is_empty()
++                    {
++                        spares.0.split_off(1)
++                    } else {
++                        Vec::new()
 +                    }
++                };
++                for (_, child) in surplus {
++                    stop(child);
 +                }
 +            }
 +        });
@@ -104253,9 +104692,11 @@ index 000000000..e84a00527
 +    warm.map_or_else(|| spawn(node), Ok)
 +}
 +
-+fn request_line(request: &Value) -> Result<Vec<u8>> {
++const INPUT_LIMIT: usize = 524_288;
++
++fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 +    let mut bytes = serde_json::to_vec(request)?;
-+    if bytes.len() > 524_288 {
++    if bytes.len() > INPUT_LIMIT {
 +        return Err(failure("input_limit"));
 +    }
 +    bytes.push(b'\n');
@@ -104334,6 +104775,8 @@ index 000000000..e84a00527
 +    reader: std::thread::JoinHandle<()>,
 +    errors: std::thread::JoinHandle<Vec<u8>>,
 +    used: Instant,
++    /// Bytes of the activation request outside its serve fields.
++    base: usize,
 +}
 +
 +impl Warm {
@@ -104345,15 +104788,7 @@ index 000000000..e84a00527
 +}
 +
 +pub(super) fn invalidate_warm(key: &str) {
-+    let retired = WARM
-+        .lock()
-+        .map(|mut runners| {
-+            runners
-+                .extract_if(.., |runner| runner.key == key)
-+                .collect::<Vec<_>>()
-+        })
-+        .unwrap_or_default();
-+    for runner in retired {
++    for runner in retire_warm(|runner| runner.key == key) {
 +        runner.stop();
 +    }
 +}
@@ -104394,6 +104829,7 @@ index 000000000..e84a00527
 +        reader,
 +        errors,
 +        used: Instant::now(),
++        base: 0,
 +    })
 +}
 +
@@ -104407,65 +104843,93 @@ index 000000000..e84a00527
 +    active: &dyn Fn() -> bool,
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
 +) -> Result<Value> {
-+    let bytes = request_line(request)?;
-+    let reused = WARM.lock().ok().and_then(|mut warm| {
-+        let index = warm.iter().position(|runner| runner.key == key)?;
-+        let mut runner = warm.swap_remove(index);
-+        if matches!(runner.child.try_wait(), Ok(None)) {
-+            Some(runner)
-+        } else {
-+            runner.stop();
-+            None
-+        }
++    let serve = request_line(
++        &["name", "payload", "receipts", "state"]
++            .map(|field| (field, &request[field]))
++            .into_iter()
++            .collect::<std::collections::BTreeMap<_, _>>(),
++    )?;
++    let mut reused = WARM.lock().ok().and_then(|mut runners| {
++        let index = runners.iter().position(|runner| runner.key == key)?;
++        Some(runners.swap_remove(index))
 +    });
-+    let mut warm = match reused {
-+        Some(warm) => warm,
-+        None => warm_runner(node, key)?,
++    if let Some(dead) = reused.take_if(|warm| !matches!(warm.child.try_wait(), Ok(None))) {
++        dead.stop();
++    }
++    let (mut warm, bytes) = match reused {
++        Some(warm) => {
++            // The activation request differs from this one only in the serve fields.
++            if warm.base + serve.len() > INPUT_LIMIT + 1 {
++                pool(warm);
++                return Err(failure("input_limit"));
++            }
++            (warm, serve)
++        }
++        None => {
++            let bytes = request_line(request)?;
++            let mut warm = warm_runner(node, key)?;
++            warm.base = bytes.len().saturating_sub(serve.len());
++            (warm, bytes)
++        }
 +    };
 +    let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
-+    let value = output.and_then(|line| serde_json::from_slice::<Value>(&line).map_err(Into::into));
-+    match value {
-+        Ok(value) if value.get("error").is_none() && value["host_call"].is_null() => {
-+            warm.used = Instant::now();
-+            if let Ok(mut runners) = WARM.lock() {
-+                runners.push(warm);
-+                while runners.len() > WARM_RUNNERS {
-+                    if let Some(oldest) = runners
-+                        .iter()
-+                        .enumerate()
-+                        .min_by_key(|(_, runner)| runner.used)
-+                        .map(|(index, _)| index)
-+                    {
-+                        runners.swap_remove(oldest).stop();
-+                    }
-+                }
-+            } else {
-+                warm.stop();
-+            }
-+            Ok(value)
-+        }
-+        Ok(value) => {
-+            warm.stop();
-+            if let Some(error) = value.get("error") {
-+                Err(failure(error.as_str().unwrap_or("mod_process_failed")))
-+            } else {
-+                Ok(value)
-+            }
-+        }
++    let output = match output {
++        Ok(output) => output,
 +        Err(error) => {
-+            let errors = warm.stop();
-+            let errors = String::from_utf8_lossy(&errors);
-+            if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
-+                Err(failure(
-+                    "mod_out_of_memory: the mod exceeded its 64 MB heap",
-+                ))
-+            } else {
-+                Err(failure(format!(
-+                    "{error}; render runner {key}: {}",
-+                    errors.lines().next().unwrap_or("no stderr")
-+                )))
-+            }
++            warm.stop();
++            return Err(error);
 +        }
++    };
++    let Ok(value) = serde_json::from_slice::<Value>(&output) else {
++        return Err(process_failure(&warm.stop()));
++    };
++    if let Some(error) = value.get("error") {
++        warm.stop();
++        return Err(failure(error.as_str().unwrap_or("mod_process_failed")));
++    }
++    pool(warm);
++    Ok(value)
++}
++
++fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
++    WARM.lock()
++        .map(|mut runners| runners.extract_if(.., retire).collect())
++        .unwrap_or_default()
++}
++
++/// Returns a runner to the pool, stopping the least recently used ones beyond its size.
++fn pool(mut runner: Warm) {
++    runner.used = Instant::now();
++    let evicted = match WARM.lock() {
++        Ok(mut runners) => {
++            runners.push(runner);
++            let mut evicted = Vec::new();
++            while runners.len() > WARM_RUNNERS {
++                let oldest = runners
++                    .iter()
++                    .enumerate()
++                    .min_by_key(|(_, runner)| runner.used)
++                    .map_or(0, |(index, _)| index);
++                evicted.push(runners.swap_remove(oldest));
++            }
++            evicted
++        }
++        Err(_) => vec![runner],
++    };
++    for runner in evicted {
++        runner.stop();
++    }
++}
++
++fn process_failure(errors: &[u8]) -> std::io::Error {
++    let errors = String::from_utf8_lossy(errors);
++    if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
++        failure("mod_out_of_memory: the mod exceeded its 64 MB heap")
++    } else {
++        failure(format!(
++            "mod_process_failed: {}",
++            errors.lines().next().unwrap_or_default()
++        ))
 +    }
 +}
 +
@@ -104506,17 +104970,7 @@ index 000000000..e84a00527
 +    let errors = errors.join().unwrap_or_default();
 +    let output = output?;
 +    let status = status?;
-+    let value: Value = serde_json::from_slice(&output).map_err(|_| {
-+        let errors = String::from_utf8_lossy(&errors);
-+        if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
-+            failure("mod_out_of_memory: the mod exceeded its 64 MB heap")
-+        } else {
-+            failure(format!(
-+                "mod_process_failed: {}",
-+                errors.lines().next().unwrap_or_default()
-+            ))
-+        }
-+    })?;
++    let value: Value = serde_json::from_slice(&output).map_err(|_| process_failure(&errors))?;
 +    if !status.success() || value.get("error").is_some() {
 +        return Err(failure(
 +            value["error"].as_str().unwrap_or("mod_process_failed"),
@@ -104530,10 +104984,10 @@ index 000000000..e84a00527
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..8939289e6
+index 000000000..5ea87720f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,303 @@
 +use super::WARM;
 +use super::command;
 +use super::evaluate_warm;
@@ -104592,7 +105046,7 @@ index 000000000..8939289e6
 +}
 +
 +#[test]
-+fn render_reuse_preserves_activation_state_and_retires_suspensions() {
++fn render_reuse_preserves_activation_state_across_suspensions() {
 +    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
 +    let input = json!({"component":"tool_call"});
 +    let mut request = json!({"source":"export default api => { const a = api.atom('value', 0); a.set(a.get() + 1); api.intercept('render', (e, next) => e.replay ? next({...e, value: a.get()}) : {value: a.get()}); };",
@@ -104624,13 +105078,14 @@ index 000000000..8939289e6
 +    )
 +    .unwrap();
 +    assert!(!reply["host_call"].is_null());
-+    assert!(
-+        !WARM
-+            .lock()
++    let pid = || {
++        WARM.lock()
 +            .unwrap()
 +            .iter()
-+            .any(|runner| runner.key == "activation-state")
-+    );
++            .find(|runner| runner.key == "activation-state")
++            .map(|runner| runner.child.id())
++    };
++    let suspended = pid().expect("a suspended render keeps its runner");
 +    request["receipts"] =
 +        json!([{"call":reply["host_call"],"value":{"result":{"value":1},"trace":[]}}]);
 +    let replay = evaluate_warm(
@@ -104643,6 +105098,32 @@ index 000000000..8939289e6
 +    )
 +    .unwrap();
 +    assert_eq!(replay["value"]["result"]["value"], 1);
++    assert_eq!(pid(), Some(suspended));
++}
++
++#[test]
++fn crashed_render_runner_reports_its_diagnostic_without_host_details() {
++    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
++    let input = json!({"component":"tool_call"});
++    let request = json!({"source":"export default api => api.intercept('render', () => { throw { get stack() { throw new Error('unprintable'); } }; });",
++        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
++        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
++        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
++        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
++    let error = evaluate_warm(
++        &node,
++        "crashed-runner",
++        &request,
++        Duration::from_secs(2),
++        &|| true,
++        &mut |_| unreachable!(),
++    )
++    .unwrap_err()
++    .to_string();
++    assert!(error.starts_with("mod_process_failed: "), "{error}");
++    assert!(error.len() > "mod_process_failed: ".len(), "{error}");
++    assert!(!error.contains("crashed-runner"), "{error}");
++    assert!(!error.contains(&*node.to_string_lossy()), "{error}");
 +}
 +
 +#[test]
@@ -142667,10 +143148,10 @@ index 000000000..4efb44883
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..e675f282d
+index 000000000..bd3d54fb0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,719 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -142734,7 +143215,7 @@ index 000000000..e675f282d
 +    .unwrap();
 +    std::fs::write(
 +        package.join("index.ts"),
-+        "export default api => api.intercept('render', {match: {component: 'tool_call'}}, (e, next) => e.props.expanded ? next(e) : {tree: [{type: 'line', id: 'row', label: 'Row', spans: [{text: `• ${e.props.kind} ${e.props.command} ${e.props.status}`}]}]});",
++        "export default api => api.intercept('render', {match: {component: 'tool_call'}}, (e, next) => e.props.expanded || e.props.command === 'cat two' ? next(e) : {tree: [{type: 'line', id: 'row', label: 'Row', spans: [{text: `• ${e.props.kind} ${e.props.command} ${e.props.status}`}]}]});",
 +    )
 +    .unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
@@ -142899,8 +143380,28 @@ index 000000000..e675f282d
 +            .iter()
 +            .filter(|line| line.contains("• exec"))
 +            .count(),
-+        2
++        1
 +    );
++    let compact = collapsed.join("\n");
++    assert!(
++        compact.contains("• Read two") && !compact.contains("SECOND_READ"),
++        "{compact}"
++    );
++    let mut find = crate::transcript_view::TranscriptView::default();
++    draw_grouped(&mut find, 80);
++    find.begin_search();
++    find.paste_search("FIRST_READ");
++    for _ in 0..512 {
++        if !find.advance_search(&grouped) {
++            break;
++        }
++    }
++    let footer = find
++        .footer(80, crate::motion::MotionMode::Reduced)
++        .unwrap()
++        .text
++        .to_string();
++    assert!(footer.contains("enter accept"), "{footer}");
 +    assert_eq!(
 +        collapsed
 +            .iter()

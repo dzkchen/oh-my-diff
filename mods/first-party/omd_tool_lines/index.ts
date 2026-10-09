@@ -42,8 +42,14 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 const lines = (count: number | null, status: RenderToolCall['status']) => count == null || status === 'running' ? null : plural(count, 'line');
 
-const duration = (ms: number | null) => !ms ? null
-  : ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+const duration = (ms: number | null) => {
+  if (!ms) return null;
+  if (ms < 1000) return `${ms}ms`;
+  const tenths = Math.round(ms / 100);
+  if (tenths < 600) return `${(tenths / 10).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+};
 
 const outcome = (status: RenderToolCall['status'], exit: number | null = null) =>
   status === 'running' ? 'running' : status === 'interrupted' ? 'interrupted'

@@ -29,6 +29,7 @@ const exec = { call_id: 'c1', kind: 'exec', command: 'cargo test -p codex-omd', 
 test('tool lines draw every agent tool kind as one marked line per call', () => {
   assert.deepEqual(lines(exec), ['• Shell cargo test -p codex-omd · ok · 214 lines · 41.3s']);
   assert.deepEqual(lines({ ...exec, duration_ms: 0 }), ['• Shell cargo test -p codex-omd · ok · 214 lines']);
+  assert.deepEqual([59_940, 59_960, 119_600, 61_000].map(ms => lines({ ...exec, duration_ms: ms })[0].split(' · ').at(-1)), ['59.9s', '1m 0s', '2m 0s', '1m 1s']);
   assert.deepEqual(lines({ ...exec, status: 'failed', exit_code: 101, output_lines: 1, duration_ms: 900 }), ['✗ Shell cargo test -p codex-omd · exit 101 · 1 line · 900ms']);
   assert.deepEqual(lines({ ...exec, status: 'running', exit_code: null, duration_ms: null }), ['• Shell cargo test -p codex-omd · running']);
   const read = { ...exec, call_id: 'r1', command: 'cat a.rs', parsed: [{ type: 'read', cmd: 'cat a.rs', name: 'a.rs', path: '/repo/a.rs' }], output_lines: 3, duration_ms: 12 };

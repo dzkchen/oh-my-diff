@@ -57,20 +57,23 @@ fn reap() {
         std::thread::spawn(|| {
             loop {
                 std::thread::sleep(Duration::from_secs(1));
-                if let Ok(mut warm) = WARM.lock() {
-                    for runner in warm.extract_if(.., |runner| runner.used.elapsed() >= WARM_IDLE) {
-                        runner.stop();
-                    }
+                for runner in retire_warm(|runner| runner.used.elapsed() >= WARM_IDLE) {
+                    runner.stop();
                 }
-                let Ok(mut spares) = SPARES.lock() else {
-                    return;
-                };
-                if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER) {
-                    while spares.0.len() > 1 {
-                        if let Some((_, child)) = spares.0.pop() {
-                            stop(child);
-                        }
+                let surplus = {
+                    let Ok(mut spares) = SPARES.lock() else {
+                        return;
+                    };
+                    if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER)
+                        && !spares.0.is_empty()
+                    {
+                        spares.0.split_off(1)
+                    } else {
+                        Vec::new()
                     }
+                };
+                for (_, child) in surplus {
+                    stop(child);
                 }
             }
         });
@@ -114,9 +117,11 @@ fn runner(node: &Path) -> Result<Child> {
     warm.map_or_else(|| spawn(node), Ok)
 }
 
-fn request_line(request: &Value) -> Result<Vec<u8>> {
+const INPUT_LIMIT: usize = 524_288;
+
+fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
-    if bytes.len() > 524_288 {
+    if bytes.len() > INPUT_LIMIT {
         return Err(failure("input_limit"));
     }
     bytes.push(b'\n');
@@ -195,6 +200,8 @@ struct Warm {
     reader: std::thread::JoinHandle<()>,
     errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
+    /// Bytes of the activation request outside its serve fields.
+    base: usize,
 }
 
 impl Warm {
@@ -206,15 +213,7 @@ impl Warm {
 }
 
 pub(super) fn invalidate_warm(key: &str) {
-    let retired = WARM
-        .lock()
-        .map(|mut runners| {
-            runners
-                .extract_if(.., |runner| runner.key == key)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    for runner in retired {
+    for runner in retire_warm(|runner| runner.key == key) {
         runner.stop();
     }
 }
@@ -255,6 +254,7 @@ fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
         reader,
         errors,
         used: Instant::now(),
+        base: 0,
     })
 }
 
@@ -268,65 +268,93 @@ pub(super) fn evaluate_warm(
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> Result<Value> {
-    let bytes = request_line(request)?;
-    let reused = WARM.lock().ok().and_then(|mut warm| {
-        let index = warm.iter().position(|runner| runner.key == key)?;
-        let mut runner = warm.swap_remove(index);
-        if matches!(runner.child.try_wait(), Ok(None)) {
-            Some(runner)
-        } else {
-            runner.stop();
-            None
-        }
+    let serve = request_line(
+        &["name", "payload", "receipts", "state"]
+            .map(|field| (field, &request[field]))
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+    )?;
+    let mut reused = WARM.lock().ok().and_then(|mut runners| {
+        let index = runners.iter().position(|runner| runner.key == key)?;
+        Some(runners.swap_remove(index))
     });
-    let mut warm = match reused {
-        Some(warm) => warm,
-        None => warm_runner(node, key)?,
+    if let Some(dead) = reused.take_if(|warm| !matches!(warm.child.try_wait(), Ok(None))) {
+        dead.stop();
+    }
+    let (mut warm, bytes) = match reused {
+        Some(warm) => {
+            // The activation request differs from this one only in the serve fields.
+            if warm.base + serve.len() > INPUT_LIMIT + 1 {
+                pool(warm);
+                return Err(failure("input_limit"));
+            }
+            (warm, serve)
+        }
+        None => {
+            let bytes = request_line(request)?;
+            let mut warm = warm_runner(node, key)?;
+            warm.base = bytes.len().saturating_sub(serve.len());
+            (warm, bytes)
+        }
     };
     let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
-    let value = output.and_then(|line| serde_json::from_slice::<Value>(&line).map_err(Into::into));
-    match value {
-        Ok(value) if value.get("error").is_none() && value["host_call"].is_null() => {
-            warm.used = Instant::now();
-            if let Ok(mut runners) = WARM.lock() {
-                runners.push(warm);
-                while runners.len() > WARM_RUNNERS {
-                    if let Some(oldest) = runners
-                        .iter()
-                        .enumerate()
-                        .min_by_key(|(_, runner)| runner.used)
-                        .map(|(index, _)| index)
-                    {
-                        runners.swap_remove(oldest).stop();
-                    }
-                }
-            } else {
-                warm.stop();
-            }
-            Ok(value)
-        }
-        Ok(value) => {
-            warm.stop();
-            if let Some(error) = value.get("error") {
-                Err(failure(error.as_str().unwrap_or("mod_process_failed")))
-            } else {
-                Ok(value)
-            }
-        }
+    let output = match output {
+        Ok(output) => output,
         Err(error) => {
-            let errors = warm.stop();
-            let errors = String::from_utf8_lossy(&errors);
-            if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
-                Err(failure(
-                    "mod_out_of_memory: the mod exceeded its 64 MB heap",
-                ))
-            } else {
-                Err(failure(format!(
-                    "{error}; render runner {key}: {}",
-                    errors.lines().next().unwrap_or("no stderr")
-                )))
-            }
+            warm.stop();
+            return Err(error);
         }
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&output) else {
+        return Err(process_failure(&warm.stop()));
+    };
+    if let Some(error) = value.get("error") {
+        warm.stop();
+        return Err(failure(error.as_str().unwrap_or("mod_process_failed")));
+    }
+    pool(warm);
+    Ok(value)
+}
+
+fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
+    WARM.lock()
+        .map(|mut runners| runners.extract_if(.., retire).collect())
+        .unwrap_or_default()
+}
+
+/// Returns a runner to the pool, stopping the least recently used ones beyond its size.
+fn pool(mut runner: Warm) {
+    runner.used = Instant::now();
+    let evicted = match WARM.lock() {
+        Ok(mut runners) => {
+            runners.push(runner);
+            let mut evicted = Vec::new();
+            while runners.len() > WARM_RUNNERS {
+                let oldest = runners
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, runner)| runner.used)
+                    .map_or(0, |(index, _)| index);
+                evicted.push(runners.swap_remove(oldest));
+            }
+            evicted
+        }
+        Err(_) => vec![runner],
+    };
+    for runner in evicted {
+        runner.stop();
+    }
+}
+
+fn process_failure(errors: &[u8]) -> std::io::Error {
+    let errors = String::from_utf8_lossy(errors);
+    if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
+        failure("mod_out_of_memory: the mod exceeded its 64 MB heap")
+    } else {
+        failure(format!(
+            "mod_process_failed: {}",
+            errors.lines().next().unwrap_or_default()
+        ))
     }
 }
 
@@ -367,17 +395,7 @@ pub(super) fn evaluate(
     let errors = errors.join().unwrap_or_default();
     let output = output?;
     let status = status?;
-    let value: Value = serde_json::from_slice(&output).map_err(|_| {
-        let errors = String::from_utf8_lossy(&errors);
-        if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
-            failure("mod_out_of_memory: the mod exceeded its 64 MB heap")
-        } else {
-            failure(format!(
-                "mod_process_failed: {}",
-                errors.lines().next().unwrap_or_default()
-            ))
-        }
-    })?;
+    let value: Value = serde_json::from_slice(&output).map_err(|_| process_failure(&errors))?;
     if !status.success() || value.get("error").is_some() {
         return Err(failure(
             value["error"].as_str().unwrap_or("mod_process_failed"),
