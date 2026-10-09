@@ -19,13 +19,30 @@ import time
 
 try:
     from scripts import install_support as support
-    from scripts.lean_profile_acceptance import isolated_environment
+    from scripts.lean_profile_acceptance import isolated_environment, expected_defaults
 except ModuleNotFoundError:
     import install_support as support
-    from lean_profile_acceptance import isolated_environment
+    from lean_profile_acceptance import isolated_environment, expected_defaults
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_ERROR = "intentional isolated appearance fixture"
+
+
+def fixture_failed(status, identifier="omd_usage"):
+    return any(item["id"] == identifier and FIXTURE_ERROR in (item["error"] or "")
+               for item in status["mods"])
+
+
+def latest_status(cache_events):
+    return next((event for event in reversed(cache_events)
+                 if event["file"] == "mod-status.json"), {})
+
+
+def zero_first_party_published(cache_events):
+    status = latest_status(cache_events)
+    return (status.get("modified_after_launch", False) and status.get("mods") == []
+            and status.get("rejected") == [] and status.get("reload_error") is None)
 
 
 def call(args, env):
@@ -36,22 +53,33 @@ def call(args, env):
     return json.loads(result.stdout)
 
 
-def terminal(binary, repo, env, width, version, greetings, profile=None, *,
-             logo=True, greeting="", exercise=False, arguments=(), status=None, status_selector=None,
+def native_blossom_visible(screen):
+    return sum(1 for line in screen for char in line if "\u2801" <= char <= "\u28ff") >= 40
+
+
+def disable_first_party(command, manager, store, env):
+    for identifier in expected_defaults():
+        call(command + ["mod", "disable", identifier], env)
+    status = call([manager, "status", store], env)
+    assert not status["mods"] and not status["rejected"] and status["reload_error"] is None, status
+
+
+def terminal(binary, repo, env, width, version, profile=None, *,
+             logo=True, blossom=False, welcome=False, early_blossom=False, exercise=False, arguments=(), status=None, status_selector=None,
              backdrop=None, absent=(), cache_store=None, startup_seconds=10, trace_path=None,
              check_first_paint=True, ascii_logo=False, live_mods=(), native_session=None,
-             live_recovery=None):
+             live_recovery=None, zero_first_party=False):
     import pyte
 
     master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, width, 0, 0))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 44, width, 0, 0))
     launched_wall_ns = time.time_ns()
     process = subprocess.Popen([str(binary), "-C", str(repo), *arguments], cwd=repo, env=env,
                                stdin=slave, stdout=slave, stderr=slave,
                                start_new_session=True)
     os.close(slave)
     output = bytearray()
-    screen = pyte.Screen(width, 28)
+    screen = pyte.Screen(width, 44)
     screen.write_process_input = lambda text: os.write(master, text.encode())
     stream = pyte.ByteStream(screen)
     stages = {}
@@ -80,15 +108,14 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
         return (all(visible(row) for row in ascii_mark) if ascii_logo else
                 all(visible(row) for row in mark) or all(visible(row) for row in ascii_mark))
 
-    def native_greeting_visible():
-        # Long upstream phrases can be truncated: their first 24 characters still fit at 80 columns.
-        return any(visible(phrase[:24]) for phrase in greetings)
+    def empty_state_visible():
+        return native_blossom_visible(screen.display) or (welcome and visible("mods on."))
 
-    def appearance():
+    def appearance(settled=True):
         return (visible(title) and mark_visible() == logo
-                and (visible(greeting) if greeting else not native_greeting_visible()
-                     and not visible("THEME GREETING PROBE"))
-                and (not backdrop or visible(backdrop))
+                and (empty_state_visible() if blossom else
+                     not native_blossom_visible(screen.display) or (early_blossom and not settled))
+                and (not backdrop or not settled or visible(backdrop))
                 and all(not visible(phrase) for phrase in absent))
 
     def capture():
@@ -98,11 +125,11 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                 "backgrounds": sorted({cell.bg for row in screen.buffer.values()
                                        for cell in row.values()})}
 
-    def startup_appearance():
-        if greeting is None:
-            return (visible(title) and not mark_visible() and native_greeting_visible()
+    def startup_appearance(settled=True):
+        if blossom:
+            return (visible(title) and not mark_visible() and (empty_state_visible() or not settled)
                     and not visible("| OMD+") and not visible("| OMD Core"))
-        return appearance()
+        return appearance(settled)
 
     def feed(chunk):
         nonlocal completed_frames, completed_screen_digest
@@ -127,7 +154,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                 stages["first_paint"] = {**capture(), "completed_frame": completed_frames,
                     "trace_end_offset": end, "elapsed_ms": round((time.monotonic() - started) * 1000),
                     "boundary": "DEC synchronized update end (2026)"}
-                if check_first_paint and not startup_appearance():
+                if check_first_paint and not startup_appearance(False):
                     raise AssertionError("first completed editable frame assertion failed:\n"
                                          + "\n".join(screen.display))
             if (check_first_paint and not live_seen and screen.columns == width
@@ -135,7 +162,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                 prelive_frames.append({"completed_frame": completed_frames, "trace_end_offset": end,
                     "screen_sha256": capture()["screen_sha256"],
                     "elapsed_ms": round((time.monotonic() - started) * 1000)})
-                if not startup_appearance():
+                if not startup_appearance(False):
                     raise AssertionError("completed startup frame lost presentation before live publication:\n"
                                          + "\n".join(screen.display))
         stream.feed(chunk[consumed:])
@@ -148,20 +175,24 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
             if cache_store:
                 for name in ("mod-view.json", "mod-status.json"):
                     path = cache_store / name
-                    metadata = path.stat() if path.is_file() else None
+                    try:
+                        metadata = path.stat()
+                    except FileNotFoundError:
+                        metadata = None
                     state = (metadata.st_size, metadata.st_mtime_ns) if metadata else None
                     if name not in cache_states or cache_states[name] != state:
-                        cache_states[name] = state
                         event = {"file": name, "elapsed_ms": round((time.monotonic() - started) * 1000),
                                  "bytes": metadata.st_size if metadata else None,
                                  "modified_after_launch": metadata.st_mtime_ns >= launched_wall_ns
                                      if metadata else False}
                         if metadata:
-                            value = json.loads(path.read_text())
+                            try:
+                                value = json.loads(path.read_text())
+                            except (FileNotFoundError, json.JSONDecodeError):
+                                continue
                             if name == "mod-view.json":
                                 event.update(presentation=(value.get("input") or {}).get("presentation"),
                                     identity=(value.get("input") or {}).get("identity"),
-                                    greeting=value.get("view", {}).get("greeting"),
                                     suffix=value.get("view", {}).get("session_title_suffix"))
                                 if event["modified_after_launch"] and (event["presentation"] or {}).get("thread_id"):
                                     live_seen = True
@@ -170,6 +201,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                                                    for item in value.get("mods", [])],
                                              rejected=value.get("rejected"),
                                              reload_error=value.get("reload_error"))
+                        cache_states[name] = state
                         cache_events.append(event)
             ready, _, _ = select.select([master], [], [], 0.05)
             if ready:
@@ -194,15 +226,18 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
 
     def resize(columns, label, predicate):
         screen.resize(columns=columns)
-        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 28, columns, 0, 0))
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 44, columns, 0, 0))
         os.kill(process.pid, signal.SIGWINCH)
         read_frame(label, predicate)
 
     try:
-        read_frame("startup_fallback" if greeting is None else "startup",
+        read_frame("startup_fallback" if blossom else "startup",
                    startup_appearance, startup_seconds, complete_frame=check_first_paint)
         if check_first_paint and "first_paint" not in stages:
             raise AssertionError("no completed synchronized editable frame was observed")
+        if zero_first_party:
+            read_frame("zero_first_party_publication",
+                       lambda: startup_appearance() and zero_first_party_published(cache_events), startup_seconds)
         if exercise:
             send(b"draft-marker", "typing", lambda: appearance() and visible("draft-marker"))
             send(b"\x7fedit", "editing", lambda: appearance() and visible("draft-markeedit"))
@@ -286,7 +321,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                     process.wait(timeout=10)
 
 
-def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "full"),
+def run(artifact_dir, upstream, output, profiles=("platform", "full"),
         diagnostic_only=False):
     import pyte
 
@@ -294,16 +329,11 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
         raise ValueError("evidence output already exists")
     node = Path(subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()).resolve()
     version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-    greetings = [json.loads(line.strip().removesuffix(","))
-                 for line in greeting_source.read_text().splitlines()
-                 if re.match(r'^    ".*",$', line)]
-    if len(greetings) < 50:
-        raise ValueError("reviewed native greeting source did not contain the expected phrase list")
     with tempfile.TemporaryDirectory(prefix="omd-terminal-acceptance-", dir="/private/tmp") as temporary:
         base = Path(temporary)
         home = base / "codex-home"
         home.mkdir()
-        shutil.copy2(ROOT / "benchmarks/fixtures/controlled-models.json", home / "models.json")
+        shutil.copy2(ROOT / "tests/fixtures/controlled-models.json", home / "models.json")
         repo = base / "repo"
         repo.mkdir()
         (home / "config.toml").write_text(
@@ -344,7 +374,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
             def launch(label, environment=None, **options):
                 try:
                     observations[label] = terminal(bin_dir / "codex", repo, environment or env,
-                                                   80, version, greetings, cache_store=store,
+                                                   80, version, cache_store=store,
                                                    trace_path=output.with_name(f"{output.stem}-{label}.trace"),
                                                    check_first_paint=not diagnostic_only, **options)
                 except Exception as error:
@@ -376,8 +406,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
             launch(profile, profile=expected, exercise=not diagnostic_only,
                    status=None if diagnostic_only else "Oh My Diff",
                    status_selector="platform_only" if profile == "platform" else "full",
-                   live_mods=() if diagnostic_only else (("omd_logo", "omd_mods", "omd_update") if profile == "platform" else
-                       ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update", "omd_workspace")),
+                   live_mods=() if diagnostic_only else expected_defaults(profile),
                    startup_seconds=30 if diagnostic_only else 10)
             if diagnostic_only:
                 call(command + ["uninstall"], env)
@@ -409,7 +438,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                            arguments=(action, session_id), native_session=(action, session_id))
             manager = prefix / "artifacts/omd-mod"
             call(command + ["mod", "disable", "omd_logo"], env)
-            launch(f"{profile}_logo_disabled", logo=False, greeting=None)
+            launch(f"{profile}_logo_disabled", logo=False, blossom=True, welcome=True)
             call(command + ["mod", "enable", "omd_logo"], env)
             launch(f"{profile}_logo_reenabled", profile=expected)
             if profile == "platform":
@@ -422,7 +451,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                 source = store / "sources" / identifier
                 entry = source / "index.ts"
                 original = entry.read_bytes()
-                entry.write_text("throw new Error('intentional isolated appearance fixture');\n")
+                entry.write_text(f"throw new Error({json.dumps(FIXTURE_ERROR)});\n")
                 declared = json.loads((source / "mod.json").read_text())
                 def trust_current():
                     inspected = call([manager, "inspect", source], env)
@@ -434,7 +463,7 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                     trust_current()
                     failed = next(item for item in call([manager, "status", store], env)["mods"]
                                   if item["id"] == identifier)
-                    assert failed["error"], f"{identifier} fixture did not actually break"
+                    assert fixture_failed({"mods": [failed]}, identifier), failed
                     launch(f"{profile}_{identifier}_broken", **launch_options)
                 finally:
                     entry.write_bytes(original)
@@ -442,46 +471,38 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                 launch(f"{profile}_{identifier}_repaired_reload_next_launch",
                        **(repaired_options or {"profile": expected}))
 
-            broken_package("omd_logo", {"logo": False, "greeting": None})
+            broken_package("omd_logo", {"logo": False, "blossom": True, "welcome": True})
             if profile == "full":
-                call(command + ["mod", "disable", "omd_workspace"], env)
-                theme_source = store / "sources/omd_theme"
-                call([manager, "settings", store, theme_source, json.dumps({
-                    "greeting_enabled": True, "greeting_text": "THEME GREETING PROBE",
-                    "backdrop_mode": "ascii", "ascii_text": "THEMEPROBE", "position": "tile",
-                    "composer_gloss": True, "backdrop_gloss": True,
-                })], env)
-                call(command + ["mod", "enable", "omd_theme"], env)
-                launch("theme_composed", profile=expected, greeting="THEME GREETING PROBE",
-                       backdrop="THEMEPROBE")
+                usage_source = store / "sources/omd_usage"
+                budget_line = "Budget $0.00 of $7.77"
+                call([manager, "settings", store, usage_source, json.dumps({"budget_usd": 7.77})], env)
+                call(command + ["mod", "enable", "omd_usage"], env)
+                launch("usage_budget", profile=expected, backdrop=budget_line)
                 for label, changes, arguments in (
                     ("no_color", {"NO_COLOR": "1"}, ()),
                     ("ssh_environment", {"SSH_CONNECTION": "127.0.0.1 1 127.0.0.1 2"}, ()),
                     ("tmux_environment", {"TMUX": str(base / "unconnected-tmux")}, ()),
                     ("reduced_motion", {}, ("-c", "tui.animations=false")),
                 ):
-                    launch(f"theme_{label}", environment={**env, **changes}, profile=expected,
-                        greeting="THEME GREETING PROBE", arguments=arguments,
-                        backdrop=None if label == "no_color" else "THEMEPROBE",
-                        absent=("THEMEPROBE",) if label == "no_color" else ())
+                    launch(f"usage_{label}", environment={**env, **changes}, profile=expected,
+                        arguments=arguments, backdrop=budget_line)
                 for label, arguments in (
                     ("inline", ("--no-alt-screen",)),
                     ("raw", ("-c", "tui.raw_output_mode=true")),
                 ):
-                    launch(f"theme_{label}", profile=expected, logo=False,
-                        greeting="THEME GREETING PROBE", arguments=arguments)
-                call(command + ["mod", "disable", "omd_theme"], env)
-                launch("theme_disabled", profile=expected, absent=("THEMEPROBE",))
-                call(command + ["mod", "enable", "omd_theme"], env)
-                broken_package("omd_theme", {"profile": expected, "absent": ("THEMEPROBE",)}, {
-                    "profile": expected, "greeting": "THEME GREETING PROBE", "backdrop": "THEMEPROBE",
+                    launch(f"usage_{label}", profile=expected, logo=False, early_blossom=label == "raw",
+                           arguments=arguments)
+                call(command + ["mod", "disable", "omd_usage"], env)
+                launch("usage_disabled", profile=expected, absent=("Budget $0.00",))
+                call(command + ["mod", "enable", "omd_usage"], env)
+                broken_package("omd_usage", {"profile": expected, "absent": ("Budget $0.00",)}, {
+                    "profile": expected, "backdrop": budget_line,
                 })
-                call(command + ["mod", "disable", "omd_theme"], env)
-                for identifier in ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_update"):
-                    call(command + ["mod", "disable", identifier], env)
-                launch("full_zero_first_party", logo=False, greeting=None)
+                call(command + ["mod", "disable", "omd_usage"], env)
+                disable_first_party(command, manager, store, env)
+                launch("full_zero_first_party", logo=False, blossom=True, zero_first_party=True)
             call(command + ["activate", "direct"], env)
-            launch(f"{profile}_direct", logo=False, greeting=None, status="upstream-style direct",
+            launch(f"{profile}_direct", logo=False, blossom=True, status="upstream-style direct",
                    status_selector="platform_only" if profile == "platform" else "full")
             call(command + ["uninstall"], env)
     result = {"status": "diagnostic" if diagnostic_only else "pass", "candidate_lock_sha256": support.digest(ROOT / "runtime/lean-release.lock.json"),
@@ -491,7 +512,6 @@ def run(artifact_dir, upstream, output, greeting_source, profiles=("platform", "
                                 "source_sha256": support.digest(Path(pyte.__file__)),
                                 "screen_source_sha256": support.digest(Path(pyte.screens.__file__)),
                                 "stream_source_sha256": support.digest(Path(pyte.streams.__file__))},
-              "greeting_source_sha256": support.digest(greeting_source),
               "fixture_sha256": support.digest(Path(__file__)),
               "scope": "isolated current-screen PTY appearance with an inactive loopback provider; no model request",
               "limits": ["repaired reload is checked on the next launch, not a live accepted-turn boundary",
@@ -508,12 +528,11 @@ def main():
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--greeting-source", type=Path, required=True)
     parser.add_argument("--profiles", choices=("platform", "full"), nargs="+", default=("platform", "full"))
     parser.add_argument("--diagnostic-only", action="store_true")
     args = parser.parse_args()
     run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve(),
-        args.greeting_source.resolve(), args.profiles, args.diagnostic_only)
+        args.profiles, args.diagnostic_only)
 
 
 if __name__ == "__main__":

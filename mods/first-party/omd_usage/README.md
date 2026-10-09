@@ -2,8 +2,8 @@
 
 Opt-in provider usage HUD, installed inactive in OMD+ (`omd-package mod enable
 omd_usage`). It adds Usage and Workers panels to the sidebar, a Usage dialog
-(Alt+a or `/omd_usage:hud`) and the data behind `omd_theme`'s cache, quota
-and spend status-line segments. `/omd_usage:budget 5` sets an optional
+(Alt+a or `/omd_usage:hud`) and publishes cache, quota and spend summaries
+on `omd_usage/hud`. `/omd_usage:budget 5` sets an optional
 soft budget in USD (`0` removes it) and `/omd_usage:categories on` adds the
 request category drilldown; both apply from the next turn. Settings:
 `categories` and `budget_usd`.
@@ -42,8 +42,7 @@ request category drilldown; both apply from the next turn. Settings:
   Otherwise expiry is "unavailable"; the HUD never claims a warm cache and sends
   no keepalive requests.
 - **Cost.** Each record is billed (provider-reported, such as OpenRouter's
-  `usage.cost` or a Cursor charge settled later in the ledger), a
-  configured-rate estimate, unsettled, included subscription use (with the
+  `usage.cost`), a configured-rate estimate, unsettled, included subscription use (with the
   Claude CLI's list-equivalent estimate when reported), unknown (missing cost is
   not zero) or none (synthetic). Lead, workers and inherited records are totaled
   separately, and unknown subscription overage is said so.
@@ -61,7 +60,7 @@ request category drilldown; both apply from the next turn. Settings:
   allowance bar from `task.status` limits and the soft budget; the Workers panel
   shows plan progress, running sub-agents and running tools. The dialog's
   Expanded view adds a tokens-per-request sparkline and the 40 most recent
-  records. The summary is published on `omd_usage/hud` for `omd_theme`. Glyphs
+  records. The summary is published on `omd_usage/hud`. Glyphs
   are ASCII so the HUD reads the same without color or Unicode; inline (mini)
   sessions hide the sidebar.
 - **Budget.** Spend at 80% of the soft budget turns the cost segment to
@@ -72,10 +71,7 @@ Provider coverage comes from the route adapters: Codex subscription and API
 (native Responses usage), the Claude CLI subscription (`omd_claude_cli`: served
 model, cache read/write, TTL, list-equivalent cost), Claude API and OpenRouter
 through `omd_profiles` (served model, cache writes, raw usage, OpenRouter's
-billed cost, Anthropic TTL), Muse (`omd_muse`: cache writes) and Cursor
-(`omd_cursor`: observed tokens, provider-billed charges that stay unsettled
-until the mod settles them; plan pools are in `/cursor usage`). Live routes are
-not exercised by the tests.
+billed cost, Anthropic TTL). Live routes are not exercised by the tests.
 
 Capabilities: `agents` (`task.status`), `commands`, `store`, `terminal`,
 `events`, `model` (`model_response`), `lifecycle`, `middleware` (`agent` and

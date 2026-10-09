@@ -12,9 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ARMS = {
     "empty": (),
     "workspace": ("omd_workspace",),
-    "coordination": ("omd_coordination",),
-    "recovery_with_coordination": ("omd_coordination", "omd_recovery"),
-    "all_three": ("omd_workspace", "omd_coordination", "omd_recovery"),
+    "workflow": ("omd_workflow",),
+    "both": ("omd_workspace", "omd_workflow"),
 }
 
 

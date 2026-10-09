@@ -30,15 +30,10 @@ def run(*arguments, cwd=None, env=None):
 def copy_sources(destination):
     plugin = support.plugin_sources()
     preview = support.preview_sources(support.preview_lock())
-    index = json.loads((ROOT / "extensions/index.json").read_text())
-    selected = {package["id"] for package in index["packages"]
-                if package["extension_type"] == "plugin"
-                and package["support_status"] in ("reviewed_candidate", "supported")}
     listed = set(release.SOURCES)
     listed.update(("runtime/lean-release.lock.json", plugin["guide"]["path"],
                    json.loads((ROOT / "runtime/patches/manifest.json").read_text())["patch"]["path"]))
-    listed.update(f"{plugin['source']}/{name}" for name in plugin["files"]
-                  if name.startswith("plugins/") and name.split("/")[1] in selected)
+    listed.update(f"{plugin['source']}/{name}" for name in plugin["files"])
     for package in preview["packages"].values():
         listed.update(f"{package['source']}/{name}" for name in package["files"])
     for name in sorted(listed):
@@ -46,10 +41,6 @@ def copy_sources(destination):
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    marketplace = json.loads((ROOT / plugin["source"] / ".agents/plugins/marketplace.json").read_text())
-    marketplace["plugins"] = [entry for entry in marketplace["plugins"] if entry["name"] in selected]
-    support.atomic_text(destination / plugin["source"] / ".agents/plugins/marketplace.json",
-                        json.dumps(marketplace, indent=2) + "\n")
 
 
 def archive_payload(artifact_dir, destination, source_rebuild=False):

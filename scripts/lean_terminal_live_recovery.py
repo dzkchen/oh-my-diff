@@ -3,26 +3,24 @@
 import argparse
 import importlib.metadata
 import json
-import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 from scripts import install_support as support
-from scripts.lean_profile_acceptance import isolated_environment
-from scripts.lean_terminal_acceptance import ROOT, call, terminal
+from scripts.lean_profile_acceptance import isolated_environment, expected_defaults
+from scripts.lean_terminal_acceptance import (
+    ROOT, call, terminal, native_blossom_visible, FIXTURE_ERROR, fixture_failed, latest_status,
+)
 
 
-def run(artifacts, upstream, output, greeting_source):
+def run(artifacts, upstream, output):
     import pyte
 
     if output.exists():
         raise ValueError("evidence output already exists")
     version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-    greetings = [json.loads(line.strip().removesuffix(","))
-                 for line in greeting_source.read_text().splitlines()
-                 if re.match(r'^    ".*",$', line)]
     node = Path(subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()).resolve()
     operations = []
     result = {"status": "partial", "operations": operations,
@@ -30,12 +28,11 @@ def run(artifacts, upstream, output, greeting_source):
         "candidate_lock_sha256": support.digest(ROOT / "runtime/lean-release.lock.json"),
         "fixture_sha256": support.digest(Path(__file__)),
         "terminal_fixture_sha256": support.digest(ROOT / "scripts/lean_terminal_acceptance.py"),
-        "greeting_source_sha256": support.digest(greeting_source),
         "screen_parser": {"package": "pyte", "version": importlib.metadata.version("pyte"),
             "source_sha256": support.digest(Path(pyte.__file__)),
             "screen_source_sha256": support.digest(Path(pyte.screens.__file__)),
             "stream_source_sha256": support.digest(Path(pyte.streams.__file__))},
-        "scope": "one live OMD+ process; manager theme disable and trusted broken/repaired theme source; explicit existing TUI command reload boundary; no prompt or model request",
+        "scope": "one live OMD+ process; manager usage disable and trusted broken/repaired usage source; explicit existing TUI command reload boundary; no prompt or model request",
         "limits": ["manager reload is queued; the existing inspector close slash command explicitly reloads the TUI command host and publishes its presentation preview",
             "native task host caches are recorded separately from TUI command previews; no accepted-turn reload claim",
             "simulated xterm screen parsing, not physical terminal painting"]}
@@ -49,7 +46,7 @@ def run(artifacts, upstream, output, greeting_source):
         home, repo = base / "codex-home", base / "repo"
         home.mkdir()
         repo.mkdir()
-        shutil.copy2(ROOT / "benchmarks/fixtures/controlled-models.json", home / "models.json")
+        shutil.copy2(ROOT / "tests/fixtures/controlled-models.json", home / "models.json")
         (home / "config.toml").write_text(
             'model = "gpt-5.6-sol"\nmodel_provider = "omd_local_probe"\n'
             f'model_catalog_json = {json.dumps(str(home / "models.json"))}\n'
@@ -69,29 +66,24 @@ def run(artifacts, upstream, output, greeting_source):
             "--omd-contract", artifacts / "omd-contract", "--author-archive", artifacts / "mod-api.tgz",
             "--node", node, "--store", store], env)
         manager = prefix / "artifacts/omd-mod"
-        call(command + ["mod", "disable", "omd_workspace"], env)
-        call([manager, "settings", store, store / "sources/omd_theme", json.dumps({
-            "greeting_enabled": True, "greeting_text": "THEME GREETING PROBE",
-            "backdrop_mode": "ascii", "ascii_text": "THEMEPROBE", "position": "tile",
-            "composer_gloss": True, "backdrop_gloss": True})], env)
-        call(command + ["mod", "enable", "omd_theme"], env)
+        call([manager, "settings", store, store / "sources/omd_usage", json.dumps({"budget_usd": 7.77})], env)
+        call(command + ["mod", "enable", "omd_usage"], env)
 
         def exercise(send, read_frame, visible, mark_visible, capture, process, cache_events):
             pid = process.pid
             initial = json.loads((store / "mod-view.json").read_text())
             thread = initial["input"]["presentation"]["thread_id"]
             assert thread and initial["input"]["presentation"]["phase"] == "fresh"
-            assert visible(str(repo)), "tiled backdrop interrupted the actual native path"
 
-            def appearance(theme=True, greeting="THEME GREETING PROBE", broken=False):
-                painted = any(color != "default" for color in capture()["backgrounds"])
+            def appearance(theme=True, note=None, broken=False):
                 return (visible(f"OpenAI Codex (v{version})")
-                    and visible("| OMD+") and painted == theme
-                    and (visible(greeting) if theme else not visible("THEME GREETING PROBE"))
-                    and (not broken or visible("failed: Error: intentional isolated live appearance fixture"))
-                    and not any(visible(phrase[:24]) for phrase in greetings))
+                    and visible("| OMD+") and visible("Budget $0.00 of $") == theme
+                    and (not note or visible(note))
+                    and (not broken or (visible("1 failed") and
+                         fixture_failed({"mods": latest_status(cache_events).get("mods", [])})))
+                    and not native_blossom_visible(capture()["screen"]))
 
-            def boundary(label, theme=True, greeting="THEME GREETING PROBE", broken=False,
+            def boundary(label, theme=True, note=None, broken=False,
                          invocation="omd_inspector:inspect close"):
                 assert process.pid == pid and process.poll() is None
                 status = call([manager, "status", store], env)
@@ -101,7 +93,7 @@ def run(artifacts, upstream, output, greeting_source):
                     "manager_status": status,
                     "boundary": "/" + invocation + " (existing local user command; no model turn)"})
                 send(("/" + invocation).encode(), label + "_completion", lambda: visible("› /" + invocation))
-                send(b"\r", label, lambda: appearance(theme, greeting, broken))
+                send(b"\r", label, lambda: appearance(theme, note, broken))
                 current = json.loads((store / "mod-view.json").read_text())
                 assert current["input"]["presentation"] == initial["input"]["presentation"]
                 rollout_records = [json.loads(line) for path in (home / "sessions").rglob("*.jsonl")
@@ -119,7 +111,7 @@ def run(artifacts, upstream, output, greeting_source):
                 print(json.dumps({"stage": label, "status": "pass", "pid": pid}), flush=True)
                 return status
 
-            identifier = "omd_theme"
+            identifier = "omd_usage"
             source = store / "sources" / identifier
             call(command + ["mod", "disable", identifier], env)
             boundary(identifier + "_live_disabled", theme=False)
@@ -135,18 +127,16 @@ def run(artifacts, upstream, output, greeting_source):
                 return inspected["sha256"]
 
             try:
-                entry.write_text("throw new Error('intentional isolated live appearance fixture');\n")
+                entry.write_text(f"throw new Error('{FIXTURE_ERROR}');\n")
                 broken_digest = trust_reload()
                 status = boundary(identifier + "_live_broken", theme=False, broken=True)
-                failed = next(item for item in status["mods"] if item["id"] == identifier)
-                assert failed["error"], "trusted broken package did not fail"
+                assert fixture_failed(status), "trusted package did not report the fixture error"
                 operations[-1]["trusted_source_sha256"] = broken_digest
             finally:
                 entry.write_bytes(original)
                 repaired_digest = trust_reload()
-            greeting = "THEME RECOVERY RESTORED"
-            healthy = boundary(identifier + "_live_repaired", greeting=greeting,
-                invocation="omd_theme:set greeting_text " + greeting)
+            healthy = boundary(identifier + "_live_repaired", note="Soft budget $8.88",
+                invocation="omd_usage:budget 8.88")
             assert all(item["error"] is None for item in healthy["mods"])
             assert not healthy["rejected"] and healthy["reload_error"] is None
             operations[-1]["trusted_source_sha256"] = repaired_digest
@@ -154,10 +144,10 @@ def run(artifacts, upstream, output, greeting_source):
                 "model_provider": "inactive loopback port 9", "native_cache_initial_input": initial["input"]}
 
         try:
-            result["check"] = terminal(bin_dir / "codex", repo, env, 80, version, greetings,
-                profile="OMD+", greeting="THEME GREETING PROBE", backdrop="THEMEPROBE",
+            result["check"] = terminal(bin_dir / "codex", repo, env, 80, version,
+                profile="OMD+", backdrop="Budget $0.00 of $7.77",
                 cache_store=store, startup_seconds=15,
-                live_mods=("omd_inspector", "omd_logo", "omd_model_picker", "omd_theme"),
+                live_mods=(*expected_defaults(), "omd_usage"),
                 trace_path=output.with_suffix(".trace"), live_recovery=exercise)
             result["status"] = "pass"
         except Exception as error:
@@ -171,7 +161,7 @@ def run(artifacts, upstream, output, greeting_source):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    for name in ("artifact-dir", "upstream", "output", "greeting-source"):
+    for name in ("artifact-dir", "upstream", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
-    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve(), args.greeting_source.resolve())
+    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve())

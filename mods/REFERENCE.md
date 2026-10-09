@@ -1026,7 +1026,7 @@ package with `adapter: "<package id>"` is wrapped by that module before
 activation and may import its aliases. The adapted package keeps only its own
 capabilities.
 
-## Batch 2.6 host primitives
+## Host primitives
 
 API `0.2.0-experimental.5` adds these generic primitives; earlier API versions
 no longer load. Each advertises a host feature a package can require.
@@ -2754,10 +2754,7 @@ under `ndjson`; a blank line or 8 KiB without a valid header under
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch
-directory. The opt-in debugger package in `plugins/optional/plugins/omd-debugger`
-exposes **Python launch only**; LLDB, Delve and attach are not supported. Its mod requires
-separate review, trust, and enablement. Plugin installation does not activate
-the mod or install Python or debugpy. OMD+ stages the plugin inactive.
+directory.
 
 ## Terminal identity, rich lines and picker
 
@@ -2787,62 +2784,6 @@ and native fallback when the mod is absent or fails.
 
 Copy-on-select and right-click paste are Codex settings (`tui.copy_on_select`,
 `tui.right_click_paste`); mods change them through `config.write`.
-
-## Git operations
-
-The first-party `omd_git` mod owns Git reads, the sidebar, previews and
-user-invoked mutations through the public API 0.2 operations. It runs fixed
-`git` argument lists through `exec.run` in the session's effective sandbox
-with `network: "none"`. Reads have a 10 s timeout and reject truncated output;
-the mod bounds status to 1,000 entries and 64 KiB, log to 50 commits, and each
-diff to 64 KiB. The mod disables pagers and the filesystem monitor for its
-commands, and external diffs and text conversion for diff reads. The host has no
-`git.*` operations or Git-specific capability. Its read-only GitHub pull request
-and CI status uses only `http.request` to `https://api.github.com` with an
-`owned` secret, timers and its own channel.
-
-Stage and unstage require an exact single-file scope and reject conflicts and
-renames. Stage additionally requires a regular file or tracked deletion.
-Before each sandboxed Git write, the host checks `required_access` for every
-affected path and verifies bounded `exec.run` guards. Index writes guard
-status, HEAD and the full index; stage also guards file content. The guards
-run inside the exclusive write operation; a mismatch rejects a stale preview.
-The mod refuses incomplete or oversized scopes, and path-mutating actions
-reject non-regular files. Git metadata still needs to be writable under the
-session's effective permissions; installing the mod does not grant access. The
-default workspace profile protects `.git`, so staging, committing, and switching
-require a permission profile that explicitly grants `.git` write access for the
-selected workspace. The current-host terminal fixture verifies both the default
-denial and the explicitly granted path without changing the default profile.
-For an opt-in workspace profile, the relevant configuration is:
-
-```toml
-default_permissions = "git-workspace"
-
-[permissions.git-workspace]
-extends = ":workspace"
-
-[permissions.git-workspace.filesystem.":workspace_roots"]
-".git" = "write"
-```
-
-Commit previews list staged paths and can show the staged diff. Confirmation
-guards status, HEAD and the full index, then runs ordinary Git hooks and
-signing in the sandbox. A failed hook reports the failure and whether HEAD
-moved. A successful commit compares the committed tree with the previewed
-index; a hook that changed the index produces an explicit warning to inspect
-the resulting commit. This post-check reports a difference after the commit;
-it cannot prevent a hook from changing staged content during execution.
-
-Discard supports regular tracked worktree changes and untracked files. It
-backs up the exact file outside the repository before changing it; untracked
-deletion uses `workspace.transaction` with an expected content hash. Restore
-requires the path to still match the post-discard state. Branch switching
-requires a clean worktree, a local destination, a bounded nonempty set of
-regular or absent affected paths, and a backup. Its guards bind status, HEAD,
-destination commit and branch diff before `git switch --no-overwrite-ignore`.
-Conflicts, symlinks, directories, oversized scopes and unsupported path
-shapes fail closed.
 
 ## Diagnostics and source maps
 

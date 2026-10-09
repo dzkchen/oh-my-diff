@@ -49,7 +49,7 @@ test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and d
   assert.equal(run('completion', { kind: 'argument', command: 'note', query: '', line: '' }, () => { throw new Error('no host call'); }).value, null);
   const { host } = repository(null, '');
   assert.deepEqual(run('service', { query: 'tree', paths: ['src/tree.ts', 'src/treat.ts'] }, host, 'omd.frecency.rank').value, { paths: ['src/tree.ts', 'src/treat.ts'] });
-  assert.deepEqual(run('service', { query: 'index theme', paths: ['mods/omd_theme/index.ts'] }, host, 'omd.frecency.rank').value, { paths: ['mods/omd_theme/index.ts'] });
+  assert.deepEqual(run('service', { query: 'index logo', paths: ['mods/omd_logo/index.ts'] }, host, 'omd.frecency.rank').value, { paths: ['mods/omd_logo/index.ts'] });
   assert.equal(run('service', { query: 'tree', paths: Array.from({ length: 60 }, (_, index) => `src/tree${index}.ts`) }, host, 'omd.frecency.rank').value.paths.length, 60);
 });
 

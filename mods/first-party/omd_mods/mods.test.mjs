@@ -34,9 +34,9 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   const host = call => {
     calls.push(call);
     if (call.operation === 'packages.list') return { generation: 7, reload_error: null, packages: [
-      item('omd_lsp_sync', { source: 'local', enabled: true, effective: true }), item('omd_git', { enabled: true, pending: 'reload' }),
-      item('omd_theme', { settings_schema: { type: 'object', properties: { greeting: { type: 'boolean', default: true }, density: { type: 'string', enum: ['full', 'compact'], default: 'full' } } }, settings: { greeting: true, density: 'full' } }),
-      item('omd_notes', { failed: 'callback_timeout: notes' })] };
+      item('omd_lsp_sync', { source: 'local', enabled: true, effective: true }), item('omd_advisor', { enabled: true, pending: 'reload' }),
+      item('omd_workflow', { settings_schema: { type: 'object', properties: { greeting: { type: 'boolean', default: true }, density: { type: 'string', enum: ['full', 'compact'], default: 'full' } } }, settings: { greeting: true, density: 'full' } }),
+      item('omd_preview', { failed: 'callback_timeout: notes' })] };
     if (call.operation === 'packages.preview') return { action: 'update', id: 'omd_lsp_sync', changes: { packages: [{ id: 'omd_lsp_sync', version: { from: '1.0.0', to: '1.1.0' } }] }, grants_added: ['exec'], conflicts: [] };
     if (call.operation === 'settings.write') return { settings: call.arguments.values };
     return { status: 'applied', generation: 8 };
@@ -50,27 +50,27 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   const list = dialog.children.find(child => child.type === 'list');
   assert.deepEqual(list.action, { command: 'omd_mods:mods', args: 'toggle' });
   assert.deepEqual(list.rows.map(row => row.spans.slice(0, 3).map(span => span.text).join('')),
-    ['Failed 1', '✕ Notes failed', 'On 2', '◇ Git starting', '◆ Lsp Sync on', 'Off 1', '○ Theme off']);
+    ['Failed 1', '✕ Preview failed', 'On 2', '◇ Advisor starting', '◆ Lsp Sync on', 'Off 1', '○ Workflow off']);
   assert.ok(list.rows.every(row => !row.label.includes('omd_') && !row.spans.slice(0, 3).some(span => span.text.includes('omd_'))));
   assert.equal(dialog.children.at(-1).text, '↑↓ move · space toggle · tab more · esc close');
 
-  state = command('toggle user:omd_git', state);
-  assert.deepEqual(calls.find(call => call.operation === 'packages.apply').arguments, { action: 'disable', id: 'omd_git', scope: 'user', expected_generation: 7 });
-  assert.equal(state.notice, 'Git is off from your next message.');
-  state = command('toggle user:omd_theme', state);
-  assert.equal(state.notice, 'Theme is on. Its commands work now; the rest starts with your next message.');
+  state = command('toggle user:omd_advisor', state);
+  assert.deepEqual(calls.find(call => call.operation === 'packages.apply').arguments, { action: 'disable', id: 'omd_advisor', scope: 'user', expected_generation: 7 });
+  assert.equal(state.notice, 'Advisor is off from your next message.');
+  state = command('toggle user:omd_workflow', state);
+  assert.equal(state.notice, 'Workflow is on. Its commands work now; the rest starts with your next message.');
   command('toggle group:On', state);
   assert.equal(calls.filter(call => call.operation === 'packages.apply').length, 2);
 
-  state = command('filter the', state);
-  assert.deepEqual(view(state).children.find(child => child.type === 'list').rows.map(row => row.value), ['group:Off', 'user:omd_theme']);
-  state = command('details user:omd_theme', { ...state, filter: '' });
+  state = command('filter work', state);
+  assert.deepEqual(view(state).children.find(child => child.type === 'list').rows.map(row => row.value), ['group:Off', 'user:omd_workflow']);
+  state = command('details user:omd_workflow', { ...state, filter: '' });
   const page = view(state);
-  assert.equal(page.title, 'Theme');
+  assert.equal(page.title, 'Workflow');
   assert.deepEqual(page.children.filter(child => child.id.startsWith('omd_mods_setting_')).map(child => [child.label, child.value]), [['greeting', 'true'], ['density', 'full']]);
-  state = command('set user:omd_theme greeting false', state);
-  assert.deepEqual(calls.find(call => call.operation === 'settings.write').arguments, { id: 'omd_theme', values: { greeting: false } });
-  assert.equal(state.notice, 'Theme: greeting saved');
+  state = command('set user:omd_workflow greeting false', state);
+  assert.deepEqual(calls.find(call => call.operation === 'settings.write').arguments, { id: 'omd_workflow', values: { greeting: false } });
+  assert.equal(state.notice, 'Workflow: greeting saved');
   state = command('back', state);
   assert.equal(state.details, null);
 
@@ -92,16 +92,16 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
 test('the directory searches the catalog, installs a picked version or a typed source in the chosen scope and survives a missing catalog', () => {
   const calls = [];
   let catalog = true;
-  const entry = { id: 'omd_notes', latest: '1.2.0', description: 'Session notes', support: 'maintained', installed: null,
+  const entry = { id: 'omd_preview', latest: '1.2.0', description: 'Session notes', support: 'maintained', installed: null,
     versions: [{ version: '1.3.0', blocked: 'leaks tokens' }, { version: '1.2.0', blocked: null }, { version: '1.1.0', blocked: null }] };
   const host = call => {
     calls.push(call);
-    if (call.operation === 'packages.list') return { generation: 3, reload_error: null, packages: [item('omd_git', { source: 'npm', blocked: 'exfiltrates tokens' })] };
+    if (call.operation === 'packages.list') return { generation: 3, reload_error: null, packages: [item('omd_advisor', { source: 'npm', blocked: 'exfiltrates tokens' })] };
     if (call.operation === 'packages.index') {
       if (!catalog) throw new Error('package_index_unavailable: install from npm:, git+ or a folder instead');
       return { index: '/store/package-index.json', packages: call.arguments.query === 'zzz' ? [] : [entry] };
     }
-    if (call.operation === 'packages.preview') return { action: 'install', id: 'omd_notes', changes: { packages: [{ id: 'omd_notes', version: { from: null, to: '1.1.0' } }] }, grants_added: ['commands'] };
+    if (call.operation === 'packages.preview') return { action: 'install', id: 'omd_preview', changes: { packages: [{ id: 'omd_preview', version: { from: null, to: '1.1.0' } }] }, grants_added: ['commands'] };
     return { status: 'applied', generation: 4 };
   };
   const command = (payload, state) => run({ event: 'command', name: 'mods', payload, state }, host).state;
@@ -112,20 +112,20 @@ test('the directory searches the catalog, installs a picked version or a typed s
   state = command('directory', state);
   let dialog = view(state);
   assert.equal(dialog.title, 'Mod directory');
-  assert.deepEqual(dialog.children.find(child => child.id === 'omd_mods_catalog').rows.map(row => row.value), ['omd_notes']);
+  assert.deepEqual(dialog.children.find(child => child.id === 'omd_mods_catalog').rows.map(row => row.value), ['omd_preview']);
   state = command('search zzz', state);
   assert.equal(view(state).children.find(child => child.id === 'omd_mods_catalog_empty').text, 'No directory mod matches "zzz"');
   state = command('search notes', state);
-  state = command('pick omd_notes', state);
+  state = command('pick omd_preview', state);
   dialog = view(state);
   assert.deepEqual(dialog.children.find(child => child.id === 'omd_mods_version').options.map(option => option.value), ['1.2.0', '1.1.0']);
   assert.equal(dialog.children.find(child => child.id === 'omd_mods_blocked').text, '1.3.0: leaks tokens');
   state = command('version 1.1.0', command('scope project', state));
   state = command('get', state);
-  assert.deepEqual(calls.findLast(call => call.operation === 'packages.preview').arguments, { action: 'install', reference: 'omd_notes@1.1.0', scope: 'project', expected_generation: 3 });
+  assert.deepEqual(calls.findLast(call => call.operation === 'packages.preview').arguments, { action: 'install', reference: 'omd_preview@1.1.0', scope: 'project', expected_generation: 3 });
   state = command('apply', state);
-  assert.deepEqual(calls.findLast(call => call.operation === 'packages.apply').arguments, { action: 'install', id: 'omd_notes', reference: 'omd_notes@1.1.0', scope: 'project', expected_generation: 3 });
-  assert.equal(state.notice, 'Install Notes 1.1.0 (project) installed and off; turn it on to use it');
+  assert.deepEqual(calls.findLast(call => call.operation === 'packages.apply').arguments, { action: 'install', id: 'omd_preview', reference: 'omd_preview@1.1.0', scope: 'project', expected_generation: 3 });
+  assert.equal(state.notice, 'Install Preview 1.1.0 (project) installed and off; turn it on to use it');
   assert.equal(calls.at(-1).operation, 'packages.index', 'the directory refreshes after an install');
 
   catalog = false;

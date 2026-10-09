@@ -11,7 +11,7 @@ SCHEMA = 1
 PRODUCT = "oh-my-diff-private-preview-v1"
 NODE = "24.18.0"
 FILES = ("mod.json", "index.ts")
-PACKAGES = ("omd_coordination", "omd_recovery", "omd_workflow", "omd_workspace")
+PACKAGES = ("omd_workflow", "omd_workspace")
 
 
 def digest(path):

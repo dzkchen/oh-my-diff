@@ -213,7 +213,7 @@ deterministic and composable; the added control per decision is:
 
 - **limits** — Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including host-call replays, and 64 KiB state.
 
-- **first_party_parity** — First-party mods use the published API only. `omd_coordination`, `omd_workspace`, and `omd_recovery` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.
+- **first_party_parity** — First-party mods use the published API only. `omd_workflow` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.
 
 ## Classic hook coverage
 

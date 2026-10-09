@@ -54,26 +54,15 @@ For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
 installer in [LEAN_PROFILES.md](../LEAN_PROFILES.md) stages candidate packages
-inactive except six default packages (`omd_inspector`, `omd_logo`,
-`omd_model_picker`, `omd_mods`, `omd_update` and `omd_workspace`). Its `omd_workflow` package
+inactive except seven default packages (`omd_inspector`, `omd_logo`,
+`omd_model_picker`, `omd_mods`, `omd_plan_removal`, `omd_update` and
+`omd_workspace`). Its `omd_workflow` package
 implements task controls through mod-owned schema-2 contracts selected
 separately with `/omd_workflow:contract ID@VERSION` or `omd-package contract select ID@VERSION`.
 
-## Pi extensions
-
-Pi Markdown prompts and skills are handled by the
-[`omd_project_pi_prompts`](first-party/omd_project_pi_prompts/README.md) mod,
-not the host. It follows Pi v0.74 discovery, frontmatter and argument
-expansion, reads an explicitly configured user directory through sandboxed
-`exec.run`, and submits an expanded prompt through its `/pi` command.
-
-Pi TypeScript extensions have no built-in shim; wrap one with an adapter package
-named by the manifest `adapter` field. The prompts mod does not emulate Pi's
-agent loop, TUI, provider registry, symlinked resources, explicit or package
-resource paths, or skill-name validation warnings. Ignore-file matching uses the
-Rust `ignore` crate's gitignore semantics, which may differ from Pi's `ignore`
-package in edge cases. The tests exercise Pi's own argument-expansion code; they
-do not claim execution of the complete Pi distribution or its ecosystem.
+Packages deferred from the launch collection are not in this tree. They can be
+restored from the `pre-launch-collection` Git tag and return in post-launch waves
+([LEAN_PROFILES.md](../LEAN_PROFILES.md)).
 
 ## Validation
 

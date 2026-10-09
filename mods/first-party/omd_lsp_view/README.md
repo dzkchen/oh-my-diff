@@ -17,11 +17,9 @@ Lines and columns are 1-based. Slash commands cannot call framed processes or
 services, so `/lsp` shows "Asking the language server…", publishes the request
 on `omd_lsp_view/request`, and the mod's own channel callback calls
 `omd.lsp`'s `query` method and republishes the view. Results open in a popup;
-Pin to pane moves them to the `omd_lsp_view/lsp` site (`/pane split right lsp`
-in `omd_panes`). Enter on a location shows the surrounding lines with Open in
-pane (`omd_panes`), Open in editor (the host's `editor` setting), Edit here
-(an `omd_editor` buffer, on the same line even with unsaved edits) and Back;
-Enter on a code action applies it after a confirmation. Formatting also
+Pin to pane moves them to the `omd_lsp_view/lsp` site. Enter on a location
+shows the surrounding lines with Open in editor (the host's `editor` setting)
+and Back; Enter on a code action applies it after a confirmation. Formatting also
 confirms first. Without an enabled `omd_lsp_sync` the host keeps this mod
 inactive with `service_provider_missing`; if the provider fails later, the
 view says to enable it.
@@ -31,10 +29,6 @@ diagnostics, which starts its server on demand, and lists the file's errors
 under the excerpt (Enter jumps). A Language servers pane in the sidebar shows
 each running or failed server, its open documents and current errors from
 `omd_lsp_sync/status`.
-
-`omd_panes` opens the view from the file tree (symbols, diagnostics, format)
-and from a selected viewer line (definition, references, hover per symbol,
-code actions, symbols, diagnostics, format) when its `lsp` setting is on.
 
 Capabilities: `commands`, `terminal`, `store`, `events` (the request hop),
 `exec` (`pwd` and `awk` for excerpts) and `services` (imports `omd.lsp`

@@ -4,7 +4,7 @@
   "version": "0.1.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "description": "Removes /plan and plan mode for users who never want them",
+  "description": "Removes /plan and plan mode; enabled by default in OMD+ and can be disabled",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_removal"},
   "capabilities": ["builtins"],

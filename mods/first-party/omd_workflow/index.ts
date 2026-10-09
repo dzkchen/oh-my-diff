@@ -194,7 +194,7 @@ export default function activate(api: ModAPI) {
   });
   const selected = () => {
     const contract = api.host.call('contract.status', null);
-    if (contract.status !== 'active' || !['reviewed_omd', 'solo_evidence', 'omd_verification_gate'].includes(contract.active?.id ?? '')) throw new Error('select_workflow_contract_first');
+    if (contract.status !== 'active' || !['reviewed_omd', 'solo_evidence'].includes(contract.active?.id ?? '')) throw new Error('select_workflow_contract_first');
     if (!object(contract.finding_ledger)) throw new Error('finding_ledger_required');
     return contract;
   };
