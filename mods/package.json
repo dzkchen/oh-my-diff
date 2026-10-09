@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.14.0",
   "engines": {
-    "node": "24.18.0",
+    "node": ">=24.18.0 <25",
     "pnpm": ">=11.14.0"
   },
   "types": "api.d.ts",

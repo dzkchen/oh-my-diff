@@ -439,7 +439,12 @@ impl ModStore {
         bytes: &[u8],
         commit: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
-        if bytes.len() > 65_536 {
+        let limit = match name {
+            "packages.lock.json" => 524_288,
+            "package-transaction.json" => 1_048_576,
+            _ => 65_536,
+        };
+        if bytes.len() > limit {
             return Err(failure("state_or_configuration_limit"));
         }
         let path = self.root.join(name);

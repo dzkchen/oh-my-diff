@@ -27,7 +27,8 @@ indented code, `$…$` and `$$…$$` math and `mermaid` fences. Raw HTML in the
 source is escaped, links and images keep only http(s), mailto, anchor and
 relative targets, and relative targets resolve from the source file. A
 content-security policy allows only the page's own inline script (by hash)
-and the pinned CDN files. The page loads highlight.js 11.12.0, KaTeX 0.18.10
+and the pinned CDN files, plus images from any source (`img-src * data: file:`),
+so a document's remote and local images load when the page opens. The page loads highlight.js 11.12.0, KaTeX 0.18.10
 or Mermaid 12.0.0 from jsDelivr with SRI hashes only when it uses them; offline,
 code stays plain and math and diagrams stay as source. The page follows the
 browser's light or dark theme.

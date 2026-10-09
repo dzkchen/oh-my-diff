@@ -187,9 +187,9 @@ def profile_choice(args):
     try:
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff candidate\n"
-                           "1) OMD Core: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
+                           "1) OMD Core: patched Codex, mod manager, typed author tools; the logo, mod manager and update mods are active.\n"
                            "2) OMD+: the selected first-party collection and staged plugin sources.\n"
-                           "   The inspector, logo, model picker and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
+                           "   The inspector, workspace, logo, model picker, mod manager, update and plan removal mods are active on a fresh install. Other mods require your explicit activation.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
             terminal.flush()
@@ -313,7 +313,7 @@ def install(args, root, current):
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     if not url:
-        fail("No Oh My Diff release is published yet; nothing was installed. Pass --asset-url and --asset-sha256 for a local package.")
+        fail("No Oh My Diff release is published yet; nothing was installed. Pass an HTTPS --asset-url and its --asset-sha256.")
     profile = profile_choice(args)
     upstream = upstream_binary(args, current, UPSTREAM_MINOR)
     node = node_binary(args)
@@ -333,9 +333,9 @@ def refuse_sessions(root, own):
         raise SessionsOpen(f"{len(live)} OMD session(s) are open (process {', '.join(map(str, live))}); close them and retry")
 
 
-def journaled(root, generation, own):
+def journaled(root, generation, own, created=None):
     update_dir(root)
-    write_json(root / "update/journal.json", {"generation": generation.name if generation else None})
+    write_json(root / "update/journal.json", {"generation": generation.name if generation else None, "created": created})
     try:
         refuse_sessions(root, own)
     except SessionsOpen:
@@ -350,9 +350,9 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         payload = extract(archive, Path(temporary) / "unpacked")
         generation = root / "releases" / uuid.uuid4().hex
-        journaled(root, generation, args.session)
-        generation.mkdir(parents=True)
         store = root / "stores" / profile
+        journaled(root, generation, args.session, None if store.exists() else profile)
+        generation.mkdir(parents=True)
         command = [sys.executable, "-m", "scripts.lean_package", "install",
                    "--archive", archive, "--sha256", expected, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
@@ -434,13 +434,16 @@ def recover(args, root, current):
     journal = root / "update/journal.json"
     if not journal.exists():
         return
-    name = read_json(journal, {}).get("generation")
+    entry = read_json(journal, {})
+    name, created = entry.get("generation"), entry.get("created")
     upstream = Path(upstream_binary(args, current)["path"]) if current else None
     interrupted = root / "releases" / name if isinstance(name, str) and re.fullmatch(r"[0-9a-f]{32}", name) else None
     if not current:
         restore_links(root, args.bin_dir)
     if interrupted and interrupted != current and interrupted.is_dir():
         discard(interrupted, upstream or Path("/nonexistent/codex"), args.bin_dir)
+    if interrupted and interrupted != current and created in PROFILE_LABELS:
+        shutil.rmtree(root / "stores" / created, ignore_errors=True)
     restore_store(current, upstream, args.bin_dir)
     if current:
         set_links(root, args.bin_dir)
@@ -512,6 +515,15 @@ def uninstall(args, root, bin_dir, current):
     generations = [item for item in generations if (item / "receipt.json").is_file()]
     for generation in generations:
         status(generation, upstream, bin_dir)
+    failures = []
+    for generation in [item for item in generations if item != current]:
+        try:
+            remove_generation(generation, upstream, bin_dir)
+        except (OSError, ValueError) as error:
+            failures.append(f"{generation.name}: {error}")
+    (root / "previous").unlink(missing_ok=True)
+    if failures:
+        fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
     restore_links(root, bin_dir)
     try:
         package(current, upstream, bin_dir, "uninstall")
@@ -522,9 +534,9 @@ def uninstall(args, root, bin_dir, current):
     (current / "bin").rmdir()
     current.rmdir()
     (root / "current").unlink()
-    (root / "previous").unlink(missing_ok=True)
-    for generation in [item for item in generations if item != current]:
-        remove_generation(generation, upstream, bin_dir)
+    for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions"]:
+        shutil.rmtree(leftover, ignore_errors=True)
+    (root / ".install.lock").unlink(missing_ok=True)
     print(json.dumps({"uninstalled": True, "restored_upstream": str(upstream),
                       "preserved_stores": str(root / "stores")}, indent=2))
 
@@ -622,21 +634,22 @@ def installation(root, current):
 def selected_settings(store):
     source = (store / "sources" / UPDATE_MOD).resolve()
     entries = json.loads((store / "mods.json").read_text()).get("mods", [])
-    return source, next((item.get("settings") or {} for item in entries if Path(item.get("path", "")).resolve() == source), {})
+    return source, next((item for item in entries if Path(item.get("path", "")).resolve() == source), {})
 
 
 def policy(store):
-    source, settings = selected_settings(store)
+    source, entry = selected_settings(store)
     schema = json.loads((source / "mod.json").read_text())["settings_schema"]["properties"]
-    return {name: spec.get("default") for name, spec in schema.items()} | settings
+    settings = {name: spec.get("default") for name, spec in schema.items()} | (entry.get("settings") or {})
+    return settings if entry.get("enabled") else settings | {"checks": "off", "auto": "off"}
 
 
 def set_policy(root, record, name, value):
     changed = []
     for store in sorted((root / "stores").iterdir()):
         if (store / "sources" / UPDATE_MOD).is_dir():
-            source, settings = selected_settings(store)
-            run([record["manager"]["installed_path"], "settings", store, source, json.dumps(settings | {name: value})])
+            source, entry = selected_settings(store)
+            run([record["manager"]["installed_path"], "settings", store, source, json.dumps((entry.get("settings") or {}) | {name: value})])
             run([record["manager"]["installed_path"], "reload", store])
             changed.append(store.name)
     (update_dir(root) / "next").unlink(missing_ok=True)

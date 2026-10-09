@@ -492,8 +492,12 @@ impl Services {
             return Err("credential_gateway_requires_network".into());
         } else {
             let (url, registration) =
-                crate::credential_gateway::register(host.root.clone(), grant.credentials.clone())
-                    .map_err(|error| error.to_string())?;
+                crate::credential_gateway::register(
+                    host.root.clone(),
+                    mod_id.to_owned(),
+                    grant.credentials.clone(),
+                )
+                .map_err(|error| error.to_string())?;
             config
                 .permissions
                 .shell_environment_policy

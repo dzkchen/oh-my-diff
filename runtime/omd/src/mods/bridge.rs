@@ -238,21 +238,7 @@ pub(super) fn run(
                 .contains(&call.operation.as_str())
                 || crate::client_surface::awaits_user(&call.operation, &call.arguments);
             scope.charge_call()?;
-            let result = host(call.clone());
-            let mut receipt = match result {
-                Ok(value) => json!({"call": call, "value": value}),
-                Err(error) => {
-                    json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
-                }
-            };
-            let bytes = serde_json::to_vec(&receipt)?.len();
-            let room = scope
-                .receipt_room()
-                .min(HOST_RECEIPT_BYTES.saturating_sub(serde_json::to_vec(&receipts)?.len()));
-            if bytes > room {
-                receipt = json!({"call": call, "error": format!(
-                "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
-            }
+            let receipt = receipt_for(&call, host(call.clone()), &receipts, scope)?;
             expected.push(call);
             receipts.push(receipt.clone());
             if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
@@ -283,20 +269,19 @@ pub(super) fn run(
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));
         }
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
         scope.charge_call()?;
         let call_started = Instant::now();
-        let receipt = match host(call.clone()) {
-            Ok(value) => json!({"call": call, "value": value}),
-            Err(error) => {
-                json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
-            }
-        };
+        let receipt = receipt_for(&call, host(call.clone()), &receipts, scope)?;
         waited += call_started.elapsed();
         expected.push(call);
-        receipts.push(receipt);
+        receipts.push(receipt.clone());
         if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
             return Err(failure("host_receipt_limit"));
         }
+        scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
     };
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
@@ -309,6 +294,29 @@ pub(super) fn run(
     forward(event, &reply.updates, &mut forwarded, progress)?;
     reply.receipts = receipts;
     Ok(reply)
+}
+
+fn receipt_for(
+    call: &ModHostCall,
+    result: Result<Value>,
+    receipts: &[Value],
+    scope: &InvocationScope,
+) -> Result<Value> {
+    let receipt = match result {
+        Ok(value) => json!({"call": call, "value": value}),
+        Err(error) => {
+            json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
+        }
+    };
+    let bytes = serde_json::to_vec(&receipt)?.len();
+    let room = scope
+        .receipt_room()
+        .min(HOST_RECEIPT_BYTES.saturating_sub(serde_json::to_vec(receipts)?.len()));
+    if bytes > room {
+        return Ok(json!({"call": call, "error": format!(
+        "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")}));
+    }
+    Ok(receipt)
 }
 
 #[derive(Deserialize)]

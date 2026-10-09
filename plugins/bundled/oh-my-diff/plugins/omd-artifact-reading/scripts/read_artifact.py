@@ -31,9 +31,9 @@ def notebook(path):
     if item.suffix != ".ipynb":
         raise ValueError("notebook source must end in .ipynb")
     value = json.loads(item.read_text(encoding="utf-8"))
-    cells = value.get("cells")
+    cells = value.get("cells") if isinstance(value, dict) else None
     if not isinstance(cells, list) or len(cells) > MAX_CELLS:
-        raise ValueError("notebook exceeds the 1000-cell limit")
+        raise ValueError("notebook must hold a cell list of at most 1000 cells")
     if any(not isinstance(cell, dict) for cell in cells):
         raise ValueError("notebook cells must be objects")
     return item, digest, cells
@@ -164,7 +164,7 @@ def main():
                 images = [output["data"]["image/png"] for output in cell.get("outputs", []) if isinstance(output, dict) and isinstance(output.get("data"), dict) and "image/png" in output["data"]]
                 if len(images) != 1:
                     raise ValueError("cell must have exactly one PNG output")
-                data = base64.b64decode("".join(images[0]) if isinstance(images[0], list) else images[0], validate=True)
+                data = base64.b64decode("".join(joined_text(images[0]).split()), validate=True)
                 if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) > MAX_IMAGE:
                     raise ValueError("notebook PNG is invalid or exceeds 8 MiB")
                 destination = Path(args.output).expanduser().resolve()

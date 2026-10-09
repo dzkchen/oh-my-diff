@@ -49,6 +49,18 @@ class TerminalAcceptanceTests(unittest.TestCase):
             events.append({**status, "modified_after_launch": True, field: value})
             self.assertFalse(acceptance.zero_first_party_published(events))
 
+    def test_outside_author_requires_exactly_that_one_healthy_mod(self):
+        status = {"file": "mod-status.json", "modified_after_launch": True,
+                  "mods": [{"id": "outside_author", "error": None}], "rejected": [], "reload_error": None}
+        self.assertTrue(acceptance.zero_first_party_published([status], ["outside_author"]))
+        self.assertFalse(acceptance.zero_first_party_published([status]))
+        for mods in ([], [{"id": "omd_logo", "error": None}],
+                     [{"id": "outside_author", "error": None}, {"id": "omd_logo", "error": None}],
+                     [{"id": "outside_author", "error": "failed"}]):
+            self.assertFalse(acceptance.zero_first_party_published([{**status, "mods": mods}], ["outside_author"]))
+        self.assertFalse(acceptance.zero_first_party_published(
+            [{**status, "modified_after_launch": False}], ["outside_author"]))
+
     def test_recovery_uses_latest_observed_status(self):
         failed = {"file": "mod-status.json", "mods": [{"id": "omd_usage", "error": FIXTURE_ERROR}]}
         repaired = {"file": "mod-status.json", "mods": [{"id": "omd_usage", "error": None}]}

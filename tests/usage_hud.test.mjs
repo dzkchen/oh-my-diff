@@ -79,9 +79,10 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
 
   for (let index = 0; index < 125; index++) state.hud.entries.push({ ...settled, key: `x${index}#1`, request: `x${index}`, at: NOW - 3_600_000 + index });
   state = feed(state, [['model_response', response('r3')]]);
-  assert.equal(state.hud.entries.length, 120);
-  assert.equal(state.hud.dropped, 11);
-  assert.match(dialog(state).text, /11 older dropped \(not in these totals\)/);
+  assert.ok(JSON.stringify(state).length <= 65_536, 'saved state must fit the 64 KiB store limit');
+  assert.ok(state.hud.entries.length < 120);
+  assert.equal(state.hud.entries.length + state.hud.dropped, 131);
+  assert.match(dialog(state).text, new RegExp(`${state.hud.dropped} older dropped \\(not in these totals\\)`));
 });
 
 test('provider costs, cache policy and missing usage keep their own labels', () => {

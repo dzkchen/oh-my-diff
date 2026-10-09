@@ -2296,6 +2296,29 @@ fn watched_changes_skip_ignored_paths_unless_included() {
     );
 }
 
+#[test]
+fn external_change_hashes_regular_files_and_never_follow_links_or_fifos() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("a.txt"), "a\n").unwrap();
+    std::os::unix::fs::symlink("a.txt", root.join("link")).unwrap();
+    let fifo = root.join("fifo");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(
+        super::activity::file_hash(&root, "a.txt"),
+        Some(crate::execution::hash(b"a\n"))
+    );
+    assert_eq!(super::activity::file_hash(&root, "link"), None);
+    assert_eq!(super::activity::file_hash(&root, "fifo"), None);
+    assert_eq!(super::activity::file_hash(&root, "missing"), None);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn mcp_connect_builds_only_declared_servers_for_the_engine() {
     let Some(fixture) = fixture(&[Package {

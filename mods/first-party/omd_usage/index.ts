@@ -23,6 +23,7 @@ type Snapshot = { open: boolean; ledger: Ledger | null; error: string | null; al
 type Charge = { kind: 'billed' | 'estimate' | 'pending' | 'included' | 'unknown' | 'none'; usd: number | null; list: number | null };
 
 const MAX_ENTRIES = 120;
+const MAX_BYTES = 52_000;
 const MAX_SAMPLES = 32;
 const HUD: Hud = {
   thread: null, entries: [], dropped: 0, since: null, turn: null, detail: false, current: { model: null, provider: null, effort: null }, tick: 0, room: { size: null, compact: null },
@@ -151,9 +152,11 @@ export default function activate(api: ModAPI) {
     if (!old) hud.entries.push(entry);
     else if (rank(entry) >= rank(old) && plain(entry) !== plain(old)) hud.entries[index] = { ...entry, turn: old.turn, revision: old.revision + 1 };
     hud.entries.sort((a, b) => a.at - b.at);
-    const extra = hud.entries.length - MAX_ENTRIES;
+    const before = hud.entries.length;
+    let size = JSON.stringify(hud).length;
+    while (hud.entries.length > 1 && (hud.entries.length > MAX_ENTRIES || size > MAX_BYTES)) size -= JSON.stringify(hud.entries.shift()).length + 1;
+    const extra = before - hud.entries.length;
     if (extra > 0) {
-      hud.entries.splice(0, extra);
       hud.dropped += extra;
       hud.since = hud.entries[0].at;
     }

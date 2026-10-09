@@ -54,6 +54,22 @@ class LeanProfileModeTests(unittest.TestCase):
                             self.assertTrue(lean_profiles.uninstall(prefix, bin_dir)["uninstalled"])
                             self.assertFalse(prefix.exists())
 
+    def test_shelved_catalog_copy_survives_its_generation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = base / "releases/one/prefix/sources/example"
+            source.mkdir(parents=True)
+            (source / "index.ts").write_text("export {}")
+            destination = base / "catalog/example" / ("a" * 64)
+            stale = destination.with_name(f".{destination.name}.new")
+            stale.mkdir(parents=True)
+            (stale / "partial").touch()
+            self.assertEqual(lean_profiles.shelve(source, destination), destination)
+            shutil.rmtree(base / "releases")
+            self.assertEqual(list(destination.rglob("*")), [destination / "index.ts"])
+            self.assertFalse(stale.exists())
+            self.assertEqual(lean_profiles.shelve(base / "missing", destination), destination)
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],

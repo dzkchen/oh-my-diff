@@ -233,7 +233,7 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript; new optional .9 component paths tested locally at Codex 0.157.0, with explicit trust and grants",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.162.0 and OMD 0.1.0; mod API 0.2.0-experimental.5; virtual_reads_v1, service_requests_v1, plugin_dispatch_v1; PDF rendering requires an installed Ghostscript; the optional mod component needs explicit trust and grants",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",

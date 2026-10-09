@@ -355,10 +355,10 @@ async function serve(routePath) {
     active.add(controller);
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
     try {
+      if (request.headers.authorization !== `Bearer ${token}`) throw Object.assign(new Error('profile_caller_unauthorized'), { status: 401 });
       const body = JSON.parse(await bodyOf(request));
       const table = JSON.parse(await readFile(routePath, 'utf8')).profiles ?? route.profiles;
       const profile = table[body.model];
-      if (request.headers.authorization !== `Bearer ${token}`) throw Object.assign(new Error('profile_caller_unauthorized'), { status: 401 });
       if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
       const tokens = estimate(body.input);
       if (profile.window && tokens > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${tokens} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });

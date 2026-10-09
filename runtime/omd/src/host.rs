@@ -1256,7 +1256,7 @@ impl Host<'_> {
         Ok(json!({"files": files}))
     }
 
-    fn file_stat(path: &Path, hash: bool) -> Result<Value, String> {
+    fn file_stat(path: &Path, hash: Option<(&Path, &str)>) -> Result<Value, String> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
@@ -1277,8 +1277,18 @@ impl Host<'_> {
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |elapsed| elapsed.as_millis() as u64);
         let mut value = json!({"kind": kind, "size": metadata.len(), "mtime_ms": mtime_ms});
-        if hash && kind == "file" && metadata.len() <= 64 * 1024 * 1024 {
-            let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+        if let Some((root, name)) =
+            hash.filter(|_| kind == "file" && metadata.len() <= 64 * 1024 * 1024)
+        {
+            let mut file =
+                crate::workspace::open_contained(root, name).map_err(|error| error.to_string())?;
+            if !file
+                .metadata()
+                .map_err(|error| error.to_string())?
+                .is_file()
+            {
+                return Err("workspace_not_regular_file".into());
+            }
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)
                 .map_err(|error| error.to_string())?;
@@ -1299,7 +1309,13 @@ impl Host<'_> {
         let paths = self.checked_paths(&input.paths, false)?;
         let mut files = serde_json::Map::new();
         for (name, path) in input.paths.iter().zip(paths) {
-            files.insert(name.clone(), Self::file_stat(&path, input.hash)?);
+            files.insert(
+                name.clone(),
+                Self::file_stat(
+                    &path,
+                    input.hash.then_some((self.repository(), name.as_str())),
+                )?,
+            );
         }
         Ok(json!({"files": files}))
     }
@@ -1393,7 +1409,7 @@ impl Host<'_> {
                 truncated = true;
                 break;
             }
-            let mut value = Self::file_stat(path, false)?;
+            let mut value = Self::file_stat(path, None)?;
             if value.is_null() {
                 continue;
             }
@@ -1503,7 +1519,7 @@ impl Host<'_> {
             let stat = Self::file_stat(
                 &crate::workspace_path(self.repository(), name)
                     .map_err(|error| error.to_string())?,
-                false,
+                None,
             )?;
             let matches = match (expected, &current) {
                 (None, None) => true,

@@ -209,7 +209,12 @@ pub(crate) fn event_allows(event: &str, operation: &str) -> bool {
         || event == "workspace_pre_rename"
             && matches!(
                 operation,
-                "workspace.read" | "workspace.stat" | "workspace.list"
+                "workspace.read"
+                    | "process.start"
+                    | "process.exchange"
+                    | "process.status"
+                    | "process.stop"
+                    | "process.which"
             )
 }
 

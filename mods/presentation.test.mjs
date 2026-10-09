@@ -5,7 +5,7 @@ import { runnerSync } from '../tests/mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = {
-  events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
+  events: { terminal: 'terminal', component_event: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
   replacements: [], intercept: { render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts',
 };
 const read = (name, file) => readFileSync(new URL(`./first-party/${name}/${file}`, import.meta.url), 'utf8');

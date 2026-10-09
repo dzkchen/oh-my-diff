@@ -220,6 +220,7 @@ fn persist(
     durable: bool,
 ) -> Result<(), String> {
     use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let path = directory.join(name);
     let temporary = directory.join(format!(
         ".{name}.{}.{}.tmp",
@@ -232,6 +233,7 @@ fn persist(
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
+        .mode(0o600)
         .open(&temporary)
         .map_err(|error| error.to_string())?;
     let result = file
@@ -710,5 +712,10 @@ mod tests {
         let path = directory.path().join("state.json");
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&path).unwrap().permissions())
+                & 0o777,
+            0o600
+        );
     }
 }

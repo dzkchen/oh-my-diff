@@ -93,9 +93,11 @@ test('the opt-in observer flags cited visible output, drops forged quotes and du
 
   const denied = end('c', () => { throw new Error('admission_denied: worker_limits'); });
   assert.deepEqual([denied.state.observer.status, denied.state.observer.reason], ['unavailable', 'admission_denied: worker_limits']);
-  assert.equal(run('terminal', { event: 'idle', ledger: null }, denied.state).value.status[0], 'Advisor on demand · observer unavailable');
+  assert.equal(run('terminal', { event: 'idle', ledger: null }, denied.state).value.status[0], 'Advisor on demand · watch unavailable');
   state = end('d', () => ({ handle: 'h4', route: 'astra', permissions: 'read_only' })).state;
-  assert.equal(finish('h4', 'not json').state.observer.status, 'invalid_result');
+  const invalid = finish('h4', 'not json').state;
+  assert.equal(invalid.observer.status, 'invalid_result');
+  assert.ok(Buffer.byteLength(run('terminal', { event: 'idle', ledger: null }, invalid).value.status[0]) <= 40, 'a status segment over 40 bytes drops the whole view');
   assert.equal(finish('h4', [{ ...note, kind: 'constructor' }]).state.observer.status, 'invalid_result', 'a kind inherited from Object is rejected');
   const superseded = run('turn_start', { turn_id: 'turn-e' }, state, ({ operation, arguments: input }) => { assert.deepEqual([operation, input], ['agents.cancel', { handle: 'h4' }]); return { cancelled: true }; });
   assert.equal(superseded.state.observer.status, 'superseded');

@@ -41,6 +41,7 @@ class UpdateSelection(unittest.TestCase):
         (store / "sources/omd_update").mkdir(parents=True)
         shutil.copy2(ROOT / "mods/first-party/omd_update/mod.json", store / "sources/omd_update/mod.json")
         self.settings = {}
+        self.enabled = True
         self.write_settings()
         (self.current / "prefix").mkdir(parents=True)
         (self.root / "current").symlink_to(self.current)
@@ -59,7 +60,7 @@ class UpdateSelection(unittest.TestCase):
 
     def write_settings(self):
         store = self.root / "stores/platform"
-        (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_update"), "settings": self.settings}]}))
+        (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_update"), "enabled": self.enabled, "settings": self.settings}]}))
 
     def upstream(self, args, current, minor=None):
         if minor and minor != "0.162":
@@ -287,6 +288,89 @@ class UpdateSelection(unittest.TestCase):
                 self.module.deferred(self.root, available)
                 self.module.launch(args, self.root, self.current)
         self.assertEqual(applied, ["0.2.0", "0.2.0"])
+
+    def test_disabling_the_update_mod_stops_checks_and_automatic_installs(self):
+        self.published = [release("0.2.0")]
+        staged, applied = [], []
+        self.module.stage = lambda root, available: staged.append(available["version"])
+        self.module.mod_request = lambda *arguments: None
+        self.module.apply = lambda args, root, current, available: applied.append(available["version"])
+        args = types.SimpleNamespace(session=os.getpid())
+        self.settings = {"checks": "on", "auto": "on"}
+        self.write_settings()
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(staged, ["0.2.0"])
+        (self.root / "update/next").unlink()
+        self.enabled = False
+        self.write_settings()
+        policy = self.module.policy(self.root / "stores/platform")
+        self.assertEqual((policy["checks"], policy["auto"]), ("off", "off"))
+        self.module.tick(args, self.root, self.current)
+        self.assertEqual(staged, ["0.2.0"])
+        self.module.launch(args, self.root, self.current)
+        self.assertEqual(applied, [])
+        self.assertFalse((self.root / "update/ready.json").exists())
+
+    def test_recovery_removes_only_a_store_the_interrupted_install_created(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                root = Path(temporary)
+                store = root / "stores/platform"
+                if existing:
+                    store.mkdir(parents=True)
+                args = types.SimpleNamespace(bin_dir=root / "bin", session=None, releases_url=None)
+
+                def killed(*arguments, **keywords):
+                    command = arguments[0]
+                    Path(command[command.index("--prefix") + 1]).mkdir()
+                    store.mkdir(parents=True, exist_ok=True)
+                    raise KeyboardInterrupt
+
+                with patch.object(self.module, "extract", return_value=root), patch.object(self.module, "run", side_effect=killed), \
+                        patch.object(self.module, "discard"), patch.object(self.module, "abandon"):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
+                                                "platform", {"path": "/usr/bin/true"}, "/usr/bin/true")
+                self.assertEqual(self.module.read_json(root / "update/journal.json", {})["created"], None if existing else "platform")
+                self.module.recover(args, root, None)
+                self.assertEqual(store.exists(), existing)
+                self.assertFalse((root / "update/journal.json").exists())
+
+    def test_uninstall_removes_older_generations_before_current_and_cleans_leftovers(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        older = self.root / "releases" / ("1" * 32)
+        for generation in (self.current, older):
+            (generation / "bin").mkdir(parents=True, exist_ok=True)
+            (generation / "prefix").mkdir(exist_ok=True)
+            (generation / "receipt.json").write_text("{}")
+        (older / "prefix/personal.txt").write_text("keep")
+        (self.root / "previous").symlink_to(older)
+        (self.root / "releases/failed-stranded/prefix").mkdir(parents=True)
+        (self.root / "releases" / ("2" * 32)).mkdir()
+        (self.root / "releases" / ("2" * 32) / ".DS_Store").touch()
+        (self.root / "update/staged").mkdir(parents=True)
+        (self.root / "update/staged/package.tar.xz").touch()
+        (self.root / "sessions").mkdir()
+        (self.root / ".install.lock").touch()
+        (self.root / "catalog").mkdir()
+
+        def package(generation, upstream, directory, *arguments):
+            if (generation / "prefix/personal.txt").exists():
+                raise ValueError("installation prefix contains unmanaged files")
+            shutil.rmtree(generation / "prefix")
+
+        args = types.SimpleNamespace(session=None)
+        with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
+                patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
+            with self.assertRaisesRegex(ValueError, "unmanaged files"):
+                self.module.uninstall(args, self.root, bin_dir, self.current)
+            self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
+            (older / "prefix/personal.txt").unlink()
+            self.module.uninstall(args, self.root, bin_dir, self.current)
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["bin", "catalog", "releases", "stores"])
+        self.assertEqual(list((self.root / "releases").iterdir()), [])
+        self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
     def test_node_falls_back_to_mise_when_the_recorded_node_is_too_old(self):
         module = installer()

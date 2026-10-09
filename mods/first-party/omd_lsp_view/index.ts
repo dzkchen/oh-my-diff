@@ -12,6 +12,22 @@ const target = (value: string) => {
   return { path: match?.[1] ?? '', line: Number(match?.[2] ?? 1), character: Number(match?.[3] ?? 1) };
 };
 
+const clip = (text: string, limit: number) => {
+  let end = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    limit -= code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (limit < 0) break;
+    end += char.length;
+  }
+  return text.slice(0, end);
+};
+const visible = (text: string, limit: number) => clip(text.replace(/\t/g, '    ').replace(/[\u0000-\u001f\u007f-\u009f]/g, ''), limit);
+const rows = (items: Item[], tone?: 'failure') => items.filter((item, index) => clip(item.value, 256) === item.value && items.findIndex(other => other.value === item.value) === index).map(item => {
+  const label = visible(item.label, 256);
+  return { value: item.value, label, spans: [{ text: label, ...tone && { tone } }] };
+});
+
 export default function activate(api: ModAPI) {
   const saved = (): Saved => ({ view: null, servers: [], ...api.state.get() as unknown as Saved | null });
   const view = () => saved().view;
@@ -89,19 +105,19 @@ export default function activate(api: ModAPI) {
     const components: TerminalComponent[] = [
       { type: 'text', id: id('status'), label: 'Status', text: where || current.message || `${current.items.length} results`, tone: current.status === 'error' ? 'failure' : current.status === 'working' ? 'muted' : 'normal' },
       ...(excerpt ? [
-        { type: 'document' as const, id: id('excerpt'), label: excerpt.path, lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
+        { type: 'document' as const, id: id('excerpt'), label: excerpt.path, lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text: visible(text, 1000) }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
         { type: 'button' as const, id: id('editor'), label: 'Open in your editor', text: 'Open in editor', action: { command: 'omd_lsp_view:lsp', args: `editor ${excerpt.path}:${excerpt.line}` } },
         { type: 'button' as const, id: id('back'), label: 'Back to the results', text: 'Back', action: { command: 'omd_lsp_view:lsp', args: 'back' } },
-        ...(own.length ? [{ type: 'list' as const, id: id('errors'), label: 'Errors in this file, Enter jumps', height: 6, rows: own.map(item => ({ value: item.value, label: item.label, spans: [{ text: item.label, tone: 'failure' as const }] })), action: { command: 'omd_lsp_view:lsp', args: 'open' } }] : []),
+        ...(own.length ? [{ type: 'list' as const, id: id('errors'), label: 'Errors in this file, Enter jumps', height: 6, rows: rows(own, 'failure'), action: { command: 'omd_lsp_view:lsp', args: 'open' } }] : []),
       ] : [
-        ...(current.text ? [{ type: 'pane' as const, id: id('text'), label: 'Details, scroll with arrows', children: [{ type: 'markdown' as const, id: id('markdown'), label: 'Details', text: current.text }] }] : []),
+        ...(current.text ? [{ type: 'pane' as const, id: id('text'), label: 'Details, scroll with arrows', children: [{ type: 'markdown' as const, id: id('markdown'), label: 'Details', text: clip(current.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ''), 4096) }] }] : []),
         ...(current.items.length ? [{ type: 'list' as const, id: id('items'), label: current.action === 'apply' ? 'Code actions, Enter applies' : 'Results, Enter jumps', height: 12,
-          rows: current.items.map(item => ({ value: item.value, label: item.label, spans: [{ text: item.label }] })), action: { command: 'omd_lsp_view:lsp', args: current.action } }] : []),
+          rows: rows(current.items), action: { command: 'omd_lsp_view:lsp', args: current.action } }] : []),
       ]),
       { type: 'button', id: id('mode'), label: current.pane ? 'Show as a popup' : 'Show in the omd_lsp_view/lsp pane', text: current.pane ? 'Popup' : 'Pin to pane', action: { command: 'omd_lsp_view:lsp', args: 'pane' } },
       { type: 'button', id: id('close'), label: 'Close code intelligence', text: 'Close', action: { command: 'omd_lsp_view:lsp', args: 'close' } },
     ];
     return current.pane ? { sites: { ...sidebar, 'omd_lsp_view/lsp': { mode: 'replace', components } } }
-      : { sites: { ...sidebar, dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: current.title, children: components }, { type: 'slot' }] } } };
+      : { sites: { ...sidebar, dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: visible(current.title, 128), children: components }, { type: 'slot' }] } } };
   });
 }
