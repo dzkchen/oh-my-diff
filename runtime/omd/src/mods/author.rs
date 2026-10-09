@@ -592,6 +592,7 @@ impl ModHost {
                     if !matches!(
                         mounted,
                         ModComponent::Box { pointer: true, .. }
+                            | ModComponent::Pane { pointer: true, .. }
                             | ModComponent::Image { pointer: true, .. }
                             | ModComponent::Raster { pointer: true, .. }
                     ) {

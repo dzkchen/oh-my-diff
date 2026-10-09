@@ -184,7 +184,7 @@ export default function activate(api: ModAPI) {
     hud.samples = kept.slice(-4 * MAX_SAMPLES);
   };
 
-  const sidebar = (state: Snapshot, now: number): TerminalComponent[] => {
+  const prompt = (state: Snapshot, now: number): TerminalComponent[] => {
     const h = state.hud; const current = context(h); const sum = totals(h.entries);
     const usage: string[] = [];
     if (current?.last.tokens?.input) {
@@ -205,11 +205,11 @@ export default function activate(api: ModAPI) {
       ...Object.values(h.tools).slice(0, 3).map(tool => `running ${tool.tool}`),
     ];
     const tone = (body: string): TerminalTone => /stale|passed|unknown|unsettled/.test(body) ? 'attention' : 'muted';
-    return [
-      { type: 'pane', id: 'omd_usage_panel', label: 'Usage panel', title: 'Usage', children: usage.map((body, index) => ({ type: 'text', id: `omd_usage_usage_${index}`, label: `Usage ${index + 1}`, text: fit(body, 36), tone: tone(body) })) },
-      { type: 'pane', id: 'omd_usage_workers', label: 'Tasks and workers panel', title: `Workers${agents.length ? ` (${agents.length})` : ''}`, collapsed: !workers.length,
-        children: (workers.length ? workers : ['No tasks or workers running']).map((body, index) => ({ type: 'text', id: `omd_usage_worker_${index}`, label: `Worker ${index + 1}`, text: fit(body, 36), tone: 'muted' })) },
-    ];
+    const spans = (parts: string[]) => parts.slice(0, 6).flatMap((body, index) => [...(index ? [{ text: ' · ', tone: 'muted' as const }] : []), { text: fit(body, 40), tone: tone(body) }]);
+    return [{ type: 'box', id: 'omd_usage_prompt', label: 'Usage', style: { direction: 'row', gap: 2, padding: [0, 1] }, children: [
+      { type: 'line', id: 'omd_usage_prompt_usage', label: 'Usage', spans: spans(usage) },
+      ...(workers.length ? [{ type: 'line' as const, id: 'omd_usage_prompt_workers', label: `Tasks and workers${agents.length ? ` (${agents.length})` : ''}`, spans: spans(workers) }] : []),
+    ] }];
   };
 
   const expanded = (state: Snapshot, now: number): TerminalComponent[] => {
@@ -284,7 +284,7 @@ export default function activate(api: ModAPI) {
 
   const view = (ledger: Ledger | null): TerminalPatch => {
     const state = saved(); const now = Date.now();
-    const sites = { sidebar: { mode: 'wrap' as const, components: [{ type: 'slot' as const }, ...sidebar(state, now)] } };
+    const sites = { above_composer: { mode: 'wrap' as const, components: [{ type: 'slot' as const }, ...prompt(state, now)] } };
     const keybindings = { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } };
     if (!state.open) return { sites, keybindings };
     const effective = ledger ?? state.ledger;

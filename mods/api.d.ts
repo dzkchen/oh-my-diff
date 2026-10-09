@@ -133,8 +133,22 @@ export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; 
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
 export type TerminalControl = { hotkey?: KeyName; autofocus?: boolean };
+/** Cells on every side, or `[vertical, horizontal]`; each 0–4. */
+export type TerminalSpacing = number | [number, number];
+export type TerminalPaint = TerminalTone | ThemeColor;
+/** Restyles a box while hovered or while it or a descendant has focus; never adds or removes its border. */
+export type TerminalBoxAccent = { border?: TerminalBoxStyle['border']; background?: TerminalPaint; foreground?: TerminalPaint };
+/** One box model for boxes, panes, dialogs, overlays, layout sites and the sidebar. The title sits in the top edge when there is a border. */
+export type TerminalBoxStyle = {
+  border?: 'none' | 'plain' | 'rounded' | 'double' | 'thick'; padding?: TerminalSpacing; margin?: TerminalSpacing; gap?: number;
+  background?: TerminalPaint; foreground?: TerminalPaint; direction?: 'column' | 'row'; hover?: TerminalBoxAccent; focus?: TerminalBoxAccent;
+};
+/** Dialogs, overlays, layout sites and the sidebar take no `hover`/`focus` accents. */
+export type TerminalFrameStyle = Omit<TerminalBoxStyle, 'hover' | 'focus'>;
+/** `flex` (1–12) weights a child's share of a row; in a row `max_width` caps its width, elsewhere both bounds hide it outside them. */
+export type TerminalBoxProps = { style?: TerminalBoxStyle; flex?: number; min_width?: number; max_width?: number; pointer?: boolean };
 export type TerminalComponent =
-  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number; pointer?: boolean }
+  | ({ type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[] } & TerminalBoxProps)
   | { type: 'line'; id: string; label: string; spans: TerminalSpan[] }
   | { type: 'text'; id: string; label: string; text: string; tone?: TerminalTone }
   | ({ type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction } & TerminalControl)
@@ -144,8 +158,8 @@ export type TerminalComponent =
   | ({ type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction } & TerminalControl)
   | { type: 'markdown'; id: string; label: string; text: string }
   | { type: 'code'; id: string; label: string; text: string; language?: string }
-  | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] }
-  | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[] }
+  | ({ type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] } & TerminalBoxProps)
+  | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[]; style?: TerminalFrameStyle }
   | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
@@ -158,8 +172,9 @@ export type TerminalComponent =
 export type TerminalRange = { start: number; end: number };
 export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
-  | { content: 'transcript' | 'composer' | `site:${TerminalSiteName}` }
-  | { split: 'horizontal' | 'vertical'; ratio?: number[]; children: LayoutNode[] }
+  | { content: 'transcript' | 'composer' }
+  | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle }
+  | { split: 'horizontal' | 'vertical'; ratio?: number[]; gap?: number; children: LayoutNode[] }
   | { tabs: { title: string; node: LayoutNode }[]; active?: number };
 export type BackdropTransform = { position?: 'center' | 'fill' | 'fit' | 'tile'; dim?: number; scale?: number; tint?: ThemeColor; opacity?: number; offset?: { x: number; y: number } };
 export type AsciiBackdrop = BackdropTransform & { text: string };
@@ -170,7 +185,7 @@ export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; fore
 /** An overlay draws a `owner/name` site above the layout at its anchor's top-left plus `offset`; higher `z` draws later. */
 export type TerminalOverlay = {
   anchor: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center' | { component: string };
-  offset?: { x: number; y: number }; width: number; height: number; z?: number; clip?: 'screen' | 'anchor'; border?: boolean;
+  offset?: { x: number; y: number }; width: number; height: number; z?: number; clip?: 'screen' | 'anchor'; style?: TerminalFrameStyle;
 };
 export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[]; overlay?: TerminalOverlay };
 export type TerminalWelcome = { show_while_composing?: boolean };
@@ -195,7 +210,7 @@ export type TerminalCell = string | [glyph: string, fg: ThemeColor | null, bg: T
 export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
-  title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; panels?: Panel[]; header?: Panel; footer?: Panel;
+  title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; sidebar_style?: TerminalFrameStyle; panels?: Panel[]; header?: Panel; footer?: Panel;
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
   placeholder?: string;
   layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };

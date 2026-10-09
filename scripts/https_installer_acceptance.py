@@ -135,14 +135,14 @@ def run(archive, upstream, output):
             again = command("rollback", *fixed)
             assert again["profile"] == "full"
             assert command("status", *fixed)["profile"]["profile"] == "full"
-            subprocess.run([bin_dir / "omd-package", "mod", "disable", "omd_workspace"],
+            subprocess.run([bin_dir / "omd-package", "mod", "disable", "omd_inspector"],
                            check=True, capture_output=True, env=env)
             command(*fixed, "--profile", "full", *asset)
             repeated = command("status", *fixed)["profile"]
             assert Path(registered["source"]).resolve() != registered_generation
             available = subprocess.check_output([bin_dir / "codex", "plugin", "list"], env=env, text=True)
             assert all(f"{name}@oh-my-diff" in available for name in registered["plugins"])
-            assert not next(item for item in repeated["packages"] if item["id"] == "omd_workspace")["enabled_in_store"]
+            assert not next(item for item in repeated["packages"] if item["id"] == "omd_inspector")["enabled_in_store"]
             restored = command("rollback", *fixed)
             assert restored["profile"] == "full"
             assert command("status", *fixed)["profile"]["profile"] == "full"

@@ -11,9 +11,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 ARMS = {
     "empty": (),
-    "workspace": ("omd_workspace",),
     "workflow": ("omd_workflow",),
-    "both": ("omd_workspace", "omd_workflow"),
 }
 
 
