@@ -27,7 +27,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn("### Fixed\n\n- Update path", release.notes(entries, "1.0.0"))
                 with self.assertRaisesRegex(SystemExit, "lean-release.lock.json is 1.0.0, not 1.0.1"):
                     release.check("1.0.1")
-                (root / "README.md").write_text("[guide](docs/missing.md) [first](CHANGELOG.md#100--2026-10-17) [gone](CHANGELOG.md#nope)\n")
+                (root / "README.md").write_text("[guide](docs/missing.md) [first](CHANGELOG.md#100--2026-10-17) [gone](CHANGELOG.md#nope) <a href=\"docs/html.md\">x</a>\n")
                 entries[1]["commits"] = ["abcdef1"]
                 (root / "changelog.json").write_text(json.dumps(entries))
                 with self.assertRaises(SystemExit) as failure:
@@ -36,6 +36,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn("broken link README.md: docs/missing.md", str(failure.exception))
                 self.assertIn("broken link README.md: CHANGELOG.md#nope", str(failure.exception))
                 self.assertNotIn("#100", str(failure.exception))
+                self.assertIn("broken link README.md: docs/html.md", str(failure.exception))
 
     def test_pull_request_titles_follow_conventional_commits(self):
         self.assertTrue(release.TITLE.fullmatch("feat(mods): add a launch picker"))

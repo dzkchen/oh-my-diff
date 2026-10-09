@@ -15,7 +15,7 @@ REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
 TITLE = re.compile(r"(?:feat|fix|perf|refactor|docs|test|build|ci|chore|revert)(?:\([a-z0-9-]+\))?!?: \S.*")
 LABELS = ("New", "Changed", "Fixed", "Decided")
-LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)|(?:href|src)=\"([^\"]+)\"")
 
 
 def run(*args, capture=True):
@@ -67,7 +67,7 @@ def broken_links():
         if not path.exists():
             continue
         text = re.sub(r"```.*?```", "", path.read_text(), flags=re.S)
-        for link in LINK.findall(text):
+        for link in (markdown or html for markdown, html in LINK.findall(text)):
             target, _, anchor = link.partition("#")
             if re.match(r"[a-z]+:", target):
                 continue
