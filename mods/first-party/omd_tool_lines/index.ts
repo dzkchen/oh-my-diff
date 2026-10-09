@@ -11,27 +11,36 @@ const bytes = (text: string) => {
   return total;
 };
 
-const WIDE = /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]|\p{Extended_Pictographic}/u;
+const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
+const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;
+const EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[#*0-9]\uFE0F?\u20E3)[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]*$/u;
+const segments = new Intl.Segmenter();
+// The native renderer treats variation-selector-1 quotes as two cells.
+const widthOf = (text: string) => [...segments.segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
+  : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
 // Keeps `cells` display columns, `chars` characters and `limit` UTF-8 bytes, ending in `…` when cut.
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
+  if (cells < 1 || chars < 1 || limit < 3) return '';
   const flat = text.replace(/\s+/g, ' ').trim();
   const all = [...flat];
-  const widthOf = (char: string) => WIDE.test(char) ? 2 : 1;
-  if (all.length <= chars && all.reduce((sum, char) => sum + widthOf(char), 0) <= cells && bytes(flat) <= limit) return flat;
+  if (all.length <= chars && widthOf(flat) <= cells && bytes(flat) <= limit) return flat;
   const kept: string[] = [];
   let width = 1;
   let size = 3;
-  for (const char of all) {
-    if (width + widthOf(char) > cells || kept.length + 2 > chars || size + bytes(char) > limit) break;
+  let count = 1;
+  for (const { segment: char } of segments.segment(flat)) {
+    if (width + widthOf(char) > cells || count + [...char].length > chars || size + bytes(char) > limit) break;
     kept.push(char);
     width += widthOf(char);
     size += bytes(char);
+    count += [...char].length;
   }
   return `${kept.join('')}…`;
 };
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+const lines = (count: number | null, status: RenderToolCall['status']) => count == null || status === 'running' ? null : plural(count, 'line');
 
 const duration = (ms: number | null) => !ms ? null
   : ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
@@ -49,7 +58,7 @@ const parsedName = (parsed: RenderParsedCommand) =>
   parsed.type === 'read' ? 'Read' : parsed.type === 'list_files' ? 'List' : parsed.type === 'search' ? 'Search' : 'Shell';
 
 const parsedArgs = (parsed: RenderParsedCommand) =>
-  parsed.type === 'read' ? parsed.name
+  parsed.type === 'read' ? parsed.name ?? ''
     : parsed.type === 'list_files' ? parsed.path ?? '.'
     : parsed.type === 'search' ? `${parsed.query ?? ''}${parsed.path ? ` in ${parsed.path}` : ''}`.trim()
     : parsed.cmd;
@@ -59,7 +68,7 @@ const exec = (call: RenderExecCall): Row => {
   const name = parsed.length && parsed.every(item => item.type === parsed[0].type) ? parsedName(parsed[0]) : 'Shell';
   return {
     name, args: name === 'Shell' ? call.command : parsed.map(parsedArgs).join(', '),
-    marker: [outcome(call.status, call.exit_code), call.status === 'running' ? null : plural(call.output_lines, 'line'), duration(call.duration_ms)],
+    marker: [outcome(call.status, call.exit_code), lines(call.output_lines, call.status), duration(call.duration_ms)],
     failed: call.status === 'failed', running: call.status === 'running',
   };
 };
@@ -67,36 +76,38 @@ const exec = (call: RenderExecCall): Row => {
 const AGENT_TOOLS: Record<string, string> = { spawn_agent: 'Spawn agent', send_input: 'Message agent', resume_agent: 'Resume agent', wait: 'Wait for agents', close_agent: 'Close agent', agent: 'Agent' };
 const SEARCH_ACTIONS: Record<string, string> = { search: 'Web search', open_page: 'Open page', find_in_page: 'Find in page', other: 'Web' };
 
-const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row => {
+const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null => {
   const base = { failed: props.status === 'failed', running: props.status === 'running' };
-  const lines = (count: number | null) => count === null || props.status === 'running' ? null : plural(count, 'line');
   switch (props.kind) {
     case 'exec': return exec(props);
     case 'patch': {
-      if (props.error !== null) return { name: 'Patch', args: props.error.split('\n')[0] ?? '', marker: ['failed'], ...base };
-      const added = props.files.reduce((sum, file) => sum + file.added, 0);
-      const removed = props.files.reduce((sum, file) => sum + file.removed, 0);
-      const only = props.files.length === 1 ? props.files[0] : null;
+      if (props.error != null) return { name: 'Patch', args: props.error.split('\n')[0], marker: ['failed'], ...base };
+      if (!props.files.length) return { name: 'Patch', args: '', marker: [outcome(props.status)], ...base };
+      const { added, removed } = props;
+      const only = props.file_count === 1 ? props.files[0] : null;
       const name = only?.change === 'add' ? 'Add' : only?.change === 'delete' ? 'Delete' : 'Edit';
-      return { name, args: only ? only.path : plural(props.files.length, 'file'), marker: [`+${added} −${removed}`], ...base };
+      return { name, args: only ? only.path : plural(props.file_count, 'file'), marker: [props.status === 'completed' ? null : outcome(props.status), `+${added} −${removed}`], ...base };
     }
     case 'web_search': return { name: SEARCH_ACTIONS[props.action] ?? 'Web', args: props.query, marker: [outcome(props.status)], ...base };
     case 'agent': return { name: AGENT_TOOLS[props.tool] ?? 'Agent', args: [props.agents.join(', '), props.prompt].filter(Boolean).join(' · '), marker: [outcome(props.status)], ...base };
-    case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines), duration(props.duration_ms)], ...base };
-    case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines), duration(props.duration_ms)], ...base };
+    case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
+    case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
     case 'image': return { name: props.tool === 'view_image' ? 'View image' : 'Generate image', args: props.path ?? props.prompt ?? '', marker: [outcome(props.status)], ...base };
+    default: return null;
   }
 };
 
 const line = (id: string, item: Row, columns: number): TerminalComponent => {
-  const marker = item.marker.filter(Boolean).join(' · ');
-  const name = fit(item.name, 48);
-  const used = [...name].length + [...marker].length;
+  const available = Math.max(0, Math.min(columns, 256));
+  const bullet = fit(item.failed ? '✗' : '•', available);
+  const marker = fit(item.marker.filter(Boolean).join(' · '), available - 5 - Math.min(12, widthOf(item.name)), 96);
+  const name = fit(item.name, Math.min(48, available - 2 - (marker ? widthOf(marker) + 3 : 0)));
+  const used = widthOf(bullet) + (name ? widthOf(name) + 1 : 0) + (marker ? widthOf(marker) + 3 : 0);
   // A line holds at most 256 characters across its spans.
-  const args = fit(item.args, columns - used - 7, 244 - used);
+  const args = fit(item.args, Math.max(0, available - used - 1), 249 - [...name].length - [...marker].length);
   const spans: TerminalSpan[] = [
-    { text: item.failed ? '✗ ' : '• ', tone: item.failed ? 'failure' : item.running ? 'accent' : 'muted' },
-    { text: name, bold: true },
+    { text: bullet, tone: item.failed ? 'failure' : item.running ? 'accent' : 'muted' },
+    { text: name ? ` ${name}` : '', bold: true },
   ];
   if (args) spans.push({ text: ` ${args}` });
   if (marker) spans.push({ text: ` · ${marker}`, tone: item.failed ? 'failure' : 'muted' });
@@ -107,7 +118,12 @@ export default function activate(api: ModAPI) {
   api.intercept('render', { match: { component: 'tool_call' } }, (event, next) => {
     const { props, viewport } = event as RenderEvent<'tool_call'>;
     if (props.expanded || (props.kind === 'exec' && props.user_shell)) return next(event);
-    const rows = props.kind === 'explore' ? props.calls.map(exec) : [row(props)];
-    return { tree: rows.map((item, index) => line(`tool_lines_${index}`, item, viewport.columns)) };
+    try {
+      const rows = props.kind === 'explore' ? props.calls.map(exec) : [row(props)];
+      if (rows.length && rows.every((item): item is Row => item !== null)) {
+        return { tree: rows.map((item, index) => line(`tool_lines_${index}`, item, viewport.columns)) };
+      }
+    } catch {}
+    return next(event);
   });
 }

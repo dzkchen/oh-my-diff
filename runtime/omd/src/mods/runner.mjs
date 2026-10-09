@@ -76,6 +76,7 @@ function track(key) {
 }
 const rendering = request.event === 'intercept' && request.payload?.surface === 'render';
 let activating = true;
+let activatedState;
 let pending = null;
 const calls = [];
 let receipts = request.receipts ?? [];
@@ -84,7 +85,7 @@ function serve(line) {
   const next = JSON.parse(line);
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
-  state = structuredCloneFallback(request.state);
+  state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
   updates.length = 0;
@@ -342,6 +343,7 @@ function envelope(name, native, input, subject, next, delivery) {
     original: next ? next.original : input, effective: input, delivery });
 }
 function hook(name, options, handler) {
+  if (!activating) throw new Error('hook_registration_outside_activation');
   if (handler === undefined) [options, handler] = [{}, options];
   const entry = Object.hasOwn(CLASSIC, name) ? CLASSIC[name] : undefined;
   if (!entry) throw new Error('unsupported_classic_hook: ' + name);
@@ -429,6 +431,7 @@ const api = Object.freeze({
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
+    if (!activating) throw new Error('event_registration_outside_activation');
     const capability = Object.hasOwn(surface.events, event) ? surface.events[event] : undefined;
     if (!capability) throw new Error('unsupported_event: ' + event);
     requireCapability(capability);
@@ -436,6 +439,7 @@ const api = Object.freeze({
     registrations.events.push(event);
   },
   middleware(event, handler) {
+    if (!activating) throw new Error('middleware_registration_outside_activation');
     if (!surface.middleware.includes(event)) throw new Error('unsupported_middleware_event: ' + event);
     requireCapability('middleware');
     if (event === 'approval') requireCapability('approvals');
@@ -469,6 +473,7 @@ const api = Object.freeze({
     return tagged('glob', pattern);
   }, not: matcher => tagged('not', matcher) }),
   replace(point, handler) {
+    if (!activating) throw new Error('replacement_registration_outside_activation');
     if (!surface.replacements.includes(point)) throw new Error('unsupported_replacement_point: ' + point);
     api.on(point, handler);
     registrations.replacements.push(point);
@@ -507,9 +512,10 @@ const api = Object.freeze({
     registrations.agents.push(structuredCloneFallback(definition));
   },
   tool(spec, handler) {
+    if (!activating) throw new Error('tool_registration_outside_activation');
     requireCapability('tools');
     unique(tools, spec.name, handler);
-    registrations.tools.push(spec);
+    registrations.tools.push(structuredCloneFallback(spec));
   },
   virtualRead(definition, handler) {
     requireCapability('virtual_reads');
@@ -519,6 +525,7 @@ const api = Object.freeze({
     registrations.virtual_reads.push(structuredCloneFallback(definition));
   },
   command(name, handler, options = {}) {
+    if (!activating) throw new Error('command_registration_outside_activation');
     requireCapability('commands');
     for (const key of Object.keys(options ?? {})) if (!['description', 'cli', 'args_hint', 'immediate'].includes(key)) throw new Error('unsupported_command_option: ' + key);
     unique(commands, name, handler);
@@ -645,7 +652,7 @@ const api = Object.freeze({
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => rendering ? request.state : state, request, calls,
-  pending: () => pending, ready: () => { activating = false; }, suspension, serve };
+  pending: () => pending, ready: () => { activatedState = structuredCloneFallback(state); activating = false; }, suspension, serve };
 `;
 try {
   const setup = new SourceTextModule(bootstrap, { context });

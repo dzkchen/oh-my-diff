@@ -281,7 +281,11 @@ pub(super) fn run(
             Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
             None => process::evaluate(node, &request, budget, active, &mut answer),
         };
-        let reply: Reply = serde_json::from_value(evaluated?)?;
+        let reply: Reply = serde_json::from_value(evaluated?).inspect_err(|_| {
+            if let Some(key) = &warm {
+                process::invalidate_warm(key);
+            }
+        })?;
         let Some(call) = reply
             .host_call
             .clone()
@@ -317,9 +321,15 @@ pub(super) fn run(
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
     if event != "inspect" && reply.registrations != loaded.registrations {
+        if let Some(key) = &warm {
+            process::invalidate_warm(key);
+        }
         return Err(failure("registration_changed_during_callback"));
     }
     if reply.host_call.is_some() || reply.calls != expected {
+        if let Some(key) = &warm {
+            process::invalidate_warm(key);
+        }
         return Err(failure("invalid_host_call_receipts"));
     }
     forward(event, &reply.updates, &mut forwarded, progress)?;

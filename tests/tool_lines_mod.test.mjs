@@ -9,6 +9,7 @@ const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const surface = { events: {}, replacements: [], middleware: [], state: 'store', contracts: 'contracts', intercept: { render: 'terminal' } };
 
 function render(props, columns = 100) {
+  if (props.kind === 'patch') props = { file_count: props.files.length, added: props.files.reduce((n, f) => n + f.added, 0), removed: props.files.reduce((n, f) => n + f.removed, 0), ...props };
   const input = { component: 'tool_call', id: props.call_id, surface: 'fullscreen', viewport: { columns, rows: 24 }, lifecycle: 'final', owner: null,
     props: { expanded: false, duration_ms: null, ...props } };
   const reply = JSON.parse(runnerSync({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, surface, state: null,
@@ -58,5 +59,40 @@ test('tool lines leave expanded rows and user shell commands native and stay wit
     assert.ok([...text].length <= 256 && [...text].length + (cells - 1) * [...text].filter(char => char === command.at(-1)).length <= columns, text);
     assert.ok(long.spans.every(span => Buffer.byteLength(span.text) <= 256));
     assert.ok(Buffer.byteLength(long.label) <= 128);
+  }
+});
+
+test('unknown, malformed and empty tool rows fall back without runner errors', () => {
+  for (const props of [{ kind: 'future' }, { kind: 'explore', calls: [] }, { kind: 'explore', calls: [null] }]) {
+    assert.equal(render(props).host_call.operation, 'continuation.next');
+  }
+  assert.doesNotMatch(lines({ ...exec, output_lines: null })[0], /null lines/);
+  assert.match(lines({ kind: 'patch', status: 'failed', files: [], error: undefined })[0], /failed/);
+  assert.match(lines({ kind: 'patch', status: 'completed', files: [], error: null })[0], /ok/);
+  assert.doesNotMatch(lines({ ...exec, parsed: [{ type: 'read' }] })[0], /undefined/);
+});
+
+test('patch summaries use complete totals rather than the bounded file details', () => {
+  assert.deepEqual(lines({ kind: 'patch', status: 'completed', file_count: 33, added: 33, removed: 0,
+    files: Array.from({ length: 32 }, (_, i) => ({ path: `${i}.txt`, change: 'add', added: 1, removed: 0 })), error: null }), ['• Edit 33 files · +33 −0']);
+});
+
+test('the whole row fits narrow viewports with long and wide names and markers', () => {
+  for (const tool of ['x'.repeat(48), '日'.repeat(48), '👩‍💻'.repeat(30), '🇨🇦'.repeat(30), 'é'.repeat(100)]) {
+    for (const columns of [0, 1, 2, 4, 12, 40, 70]) {
+      const node = render({ ...exec, kind: 'dynamic', tool, arguments: 'argument' }, columns).value.result.tree[0];
+      const text = node.spans.map(span => span.text).join('');
+      const width = [...new Intl.Segmenter().segment(text)].reduce((sum, { segment }) => sum + (/日|\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(segment) ? 2 : 1), 0);
+      assert.ok(width <= columns, `${columns}: ${text} (${width})`);
+      assert.ok([...text].length <= 256);
+      assert.ok(node.spans.every(span => Buffer.byteLength(span.text) <= 256));
+    }
+  }
+});
+
+test('non-emoji graphemes budget every spacing character', () => {
+  for (const cluster of ['ᄀ'.repeat(12), '가'.repeat(12), '\u115F'.repeat(12), 'क्ष'.repeat(12), 'का'.repeat(12), '\u17D8'.repeat(12), '‘\uFE01'.repeat(12)]) {
+    const node = render({ ...exec, command: `echo ${cluster}`, parsed: [], output_lines: 0, duration_ms: null }, 30).value.result.tree[0];
+    assert.equal(node.spans.map(span => span.text).join(''), '• Shell echo … · ok · 0 lines');
   }
 });

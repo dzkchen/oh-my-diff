@@ -14,8 +14,15 @@ Shell commands, grouped reads, searches and listings (one line per call), patche
 
 It is default-active in OMD+ and can be installed in OMD Core. It needs only the `terminal` capability and registers one `render` hook on `tool_call`, which draws from the row's props: it makes no host calls and keeps no state.
 
+Patch markers use complete file and line totals even when file details are bounded.
+Names, arguments and markers share the viewport width; narrow panes shorten them
+at grapheme boundaries, counting each spacing character within non-emoji clusters.
+Unknown, malformed and empty exploration rows fall back to the native drawing.
+
 ## Opening a row
 
 In the fullscreen transcript, a click on a tool line, or F4 to focus tool rows, ↑/↓ to move and Enter (or →/←), toggles that row between the one-line form and the full native row. Ctrl+T opens the full transcript, where every row is native. Inline sessions (`--no-alt-screen`) write one-line rows to scrollback; Ctrl+T shows them in full there too.
 
-The call that is still running keeps its native progress drawing until it finishes. Disabling the mod, or a broken copy, restores native rows at once.
+Grouped exploration and computer MCP calls retain individual row identities, so opening one member leaves its neighbours collapsed.
+
+Live tool rows use the same summaries, with a running marker. Raw output bypasses hooks. Disabling the mod, or a broken copy, restores native rows at once.

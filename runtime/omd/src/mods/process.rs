@@ -59,7 +59,7 @@ fn reap() {
                 std::thread::sleep(Duration::from_secs(1));
                 if let Ok(mut warm) = WARM.lock() {
                     for runner in warm.extract_if(.., |runner| runner.used.elapsed() >= WARM_IDLE) {
-                        stop(runner.child);
+                        runner.stop();
                     }
                 }
                 let Ok(mut spares) = SPARES.lock() else {
@@ -153,7 +153,7 @@ fn converse(
 ) -> (Result<Vec<u8>>, Instant) {
     let mut deadline = Instant::now() + budget + Duration::from_millis(250);
     if let Err(error) = stdin.write_all(bytes) {
-        return (Err(error.into()), deadline);
+        return (Err(error), deadline);
     }
     let output = loop {
         if !active() {
@@ -181,7 +181,7 @@ fn converse(
         let mut receipt = receipt.to_string().into_bytes();
         receipt.push(b'\n');
         if let Err(error) = stdin.write_all(&receipt) {
-            break Err(error.into());
+            break Err(error);
         }
     };
     (output, deadline)
@@ -192,7 +192,31 @@ struct Warm {
     child: Child,
     stdin: ChildStdin,
     lines: mpsc::Receiver<Vec<u8>>,
+    reader: std::thread::JoinHandle<()>,
+    errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
+}
+
+impl Warm {
+    fn stop(self) -> Vec<u8> {
+        stop(self.child);
+        let _ = self.reader.join();
+        self.errors.join().unwrap_or_default()
+    }
+}
+
+pub(super) fn invalidate_warm(key: &str) {
+    let retired = WARM
+        .lock()
+        .map(|mut runners| {
+            runners
+                .extract_if(.., |runner| runner.key == key)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for runner in retired {
+        runner.stop();
+    }
 }
 
 static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
@@ -205,17 +229,31 @@ fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
         .stderr
         .take()
         .ok_or_else(|| failure("missing_stderr"))?;
-    std::thread::spawn(move || std::io::copy(&mut { stderr }, &mut std::io::sink()));
+    let errors = std::thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut output = Vec::new();
+        let mut chunk = [0; 1024];
+        while let Ok(count) = stderr.read(&mut chunk) {
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&chunk[..count.min(769 - output.len())]);
+        }
+        output
+    });
     let stdin = child.stdin.take().ok_or_else(|| failure("missing_stdin"))?;
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| failure("missing_stdout"))?;
+    let (lines, reader) = lines(stdout);
     Ok(Warm {
         key: key.to_owned(),
         child,
         stdin,
-        lines: lines(stdout).0,
+        lines,
+        reader,
+        errors,
         used: Instant::now(),
     })
 }
@@ -237,7 +275,7 @@ pub(super) fn evaluate_warm(
         if matches!(runner.child.try_wait(), Ok(None)) {
             Some(runner)
         } else {
-            stop(runner.child);
+            runner.stop();
             None
         }
     });
@@ -246,12 +284,9 @@ pub(super) fn evaluate_warm(
         None => warm_runner(node, key)?,
     };
     let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
-    let value = output.and_then(|line| {
-        serde_json::from_slice::<Value>(&line)
-            .map_err(|_| failure("mod_process_failed: the render runner ended"))
-    });
+    let value = output.and_then(|line| serde_json::from_slice::<Value>(&line).map_err(Into::into));
     match value {
-        Ok(value) if value.get("error").is_none() => {
+        Ok(value) if value.get("error").is_none() && value["host_call"].is_null() => {
             warm.used = Instant::now();
             if let Ok(mut runners) = WARM.lock() {
                 runners.push(warm);
@@ -262,21 +297,35 @@ pub(super) fn evaluate_warm(
                         .min_by_key(|(_, runner)| runner.used)
                         .map(|(index, _)| index)
                     {
-                        stop(runners.swap_remove(oldest).child);
+                        runners.swap_remove(oldest).stop();
                     }
                 }
+            } else {
+                warm.stop();
             }
             Ok(value)
         }
         Ok(value) => {
-            stop(warm.child);
-            Err(failure(
-                value["error"].as_str().unwrap_or("mod_process_failed"),
-            ))
+            warm.stop();
+            if let Some(error) = value.get("error") {
+                Err(failure(error.as_str().unwrap_or("mod_process_failed")))
+            } else {
+                Ok(value)
+            }
         }
         Err(error) => {
-            stop(warm.child);
-            Err(error)
+            let errors = warm.stop();
+            let errors = String::from_utf8_lossy(&errors);
+            if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
+                Err(failure(
+                    "mod_out_of_memory: the mod exceeded its 64 MB heap",
+                ))
+            } else {
+                Err(failure(format!(
+                    "{error}; render runner {key}: {}",
+                    errors.lines().next().unwrap_or("no stderr")
+                )))
+            }
         }
     }
 }
