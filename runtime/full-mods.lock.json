@@ -145,11 +145,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "9fb2b9dce56eee2bfdc1167a759120f57c2cdf598996fda73381ec19818c0886",
+        "index.ts": "4288bcb714f969a39b2e16cc80932aafc8cb92311a8a4dabb9d6ddd2fefa2e63",
         "mod.json": "d1ef583fe829fe06a8774b22e18d7dfc60564e429a572b96ea9fd2be74d37220"
       },
       "id": "omd_lsp_view",
-      "package_sha256": "004e71c9247a928a8d5bc3ce6e1404731e9620c6b1130e9af2b1137222e3dc7a",
+      "package_sha256": "5540c5b08bcf578655aaa9420e63103a925025465d15629bc9169a69e22cd6a4",
       "source": "mods/first-party/omd_lsp_view",
       "version": "0.2.0-preview.1"
     },

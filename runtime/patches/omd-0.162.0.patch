@@ -27853,7 +27853,7 @@ index 45f586651..386c5fdd7 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 5dfc3ad7b..de036a916 100644
+index 5dfc3ad7b..5d8d9f25d 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -233,6 +233,10 @@ mod link_hover;
@@ -28066,6 +28066,14 @@ index 5dfc3ad7b..de036a916 100644
 +            crate::mod_client::flush();
              Ok(rendered_area)
          })
+     }
+@@ -1224,6 +1342,7 @@ impl App {
+         width: u16,
+         render: impl FnOnce(u16, &dyn Renderable) -> T,
+     ) -> T {
++        let _footer_frame = crate::mod_ui::footer_frame();
+         let chat_widget = self.chat_widget.as_renderable();
+         render(chat_widget.desired_height(width), &chat_widget)
      }
 diff --git a/codex-rs/tui/src/app/agents_overview_new.rs b/codex-rs/tui/src/app/agents_overview_new.rs
 index 2d6465a5e..1f32bb22c 100644
@@ -28735,7 +28743,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 3fcd0cd23..4323fb198 100644
+index 3fcd0cd23..cd1cabee5 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -63,8 +63,9 @@ impl App {
@@ -28749,7 +28757,15 @@ index 3fcd0cd23..4323fb198 100644
              })
          };
          changed || search_changed
-@@ -85,8 +86,22 @@ impl App {
+@@ -75,6 +76,7 @@ impl App {
+         tui: &mut tui::Tui,
+         screen_size: Size,
+     ) -> Result<Rect> {
++        let _footer_frame = crate::mod_ui::footer_frame();
+         self.chat_widget.sync_warnings(&self.transcript_cells);
+         let motion = MotionMode::from_animations_enabled(
+             self.local_settings.tui.animations && self.local_settings.tui.effects.shimmer,
+@@ -85,8 +87,22 @@ impl App {
          } else {
              "esc latest"
          };
@@ -28774,7 +28790,7 @@ index 3fcd0cd23..4323fb198 100644
          let composer_hint = self.composer_hint(transcript_width);
          let now = Instant::now();
          let turn_tip = self.turn_tip(transcript_width, now, &tui.frame_requester());
-@@ -101,8 +116,7 @@ impl App {
+@@ -101,8 +117,7 @@ impl App {
          let mut composer_gap = (!self.chat_widget.has_active_view()
              && !self.chat_widget.is_external_writer_view())
          .then(crate::bottom_pane::ComposerGap::default);
@@ -28784,7 +28800,7 @@ index 3fcd0cd23..4323fb198 100644
          let chat_widget = &self.chat_widget;
          let view = &mut self.transcript_view;
          let active_key = chat_widget.active_cell_transcript_key();
-@@ -112,17 +126,14 @@ impl App {
+@@ -112,17 +127,14 @@ impl App {
              tui.frame_requester().schedule_frame();
          }
          let footer_area = crate::bottom_pane::inset_footer_hint_area(Rect::new(
@@ -28807,7 +28823,7 @@ index 3fcd0cd23..4323fb198 100644
          let bottom =
              chat_widget.bottom_pane_renderable(crate::bottom_pane::ComposerRenderOptions {
                  max_height: Some(max_composer_height),
-@@ -140,20 +151,13 @@ impl App {
+@@ -140,20 +152,13 @@ impl App {
              .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
              .is_some();
          let bottom_height = if dashboard_visible {
@@ -28832,7 +28848,7 @@ index 3fcd0cd23..4323fb198 100644
          let mut rendered_cursor = None;
          let mut footer_height_changed = false;
          let mut feedback_tick = None;
-@@ -161,16 +165,11 @@ impl App {
+@@ -161,16 +166,11 @@ impl App {
          let mut transcript_bottom = available.saturating_sub(u16::from(composer_gap.is_none()));
          tui.draw(screen_size.height, |frame| {
              ratatui::widgets::Clear.render(
@@ -28851,7 +28867,7 @@ index 3fcd0cd23..4323fb198 100644
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -209,45 +208,44 @@ impl App {
+@@ -209,45 +209,44 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -28923,7 +28939,7 @@ index 3fcd0cd23..4323fb198 100644
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -260,8 +258,8 @@ impl App {
+@@ -260,8 +259,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -28934,7 +28950,7 @@ index 3fcd0cd23..4323fb198 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -270,16 +268,29 @@ impl App {
+@@ -270,16 +269,29 @@ impl App {
              .filter(|_| chat_widget.no_modal_or_popup_active());
              feedback_tick =
                  view.render_composer_gap(follow_area, composer_hint.as_ref(), frame.buffer, now);
@@ -28971,7 +28987,7 @@ index 3fcd0cd23..4323fb198 100644
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -290,12 +301,20 @@ impl App {
+@@ -290,12 +302,20 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
@@ -32964,34 +32980,38 @@ index b1b63f41e..defeea366 100644
 -  status line stays visible
 +  Oh My Diff · upstream-style direct · hooks off · status line stays visible
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index adfe1cee5..c01f77816 100644
+index adfe1cee5..56127ece3 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
-@@ -12,6 +12,23 @@ use ratatui::text::Span;
+@@ -12,6 +12,27 @@ use ratatui::text::Span;
  use ratatui::widgets::Block;
  use std::cell::Cell;
 
-+struct FooterNotes(Vec<crate::terminal_hyperlinks::HyperlinkLine>);
++struct FooterNotes;
 +
 +impl Renderable for FooterNotes {
 +    fn render(&self, area: Rect, buf: &mut Buffer) {
-+        ratatui::widgets::Widget::render(
-+            HyperlinkParagraph::new(&self.0, Style::default()),
-+            area,
++        let gap = u16::from(area.height > 0);
++        crate::mod_ui::footer_layout(area.width).render(
++            Rect {
++                y: area.y + gap,
++                height: area.height - gap,
++                ..area
++            },
 +            buf,
 +        );
 +    }
 +
 +    fn desired_height(&self, width: u16) -> u16 {
-+        u16::try_from(HyperlinkParagraph::new(&self.0, Style::default()).line_count(width))
-+            .unwrap_or(u16::MAX)
++        let height = crate::mod_ui::footer_layout(width).height();
++        height.saturating_add(u16::from(height > 0))
 +    }
 +}
 +
  struct ExternalWriterNotice {
      command_center_available: bool,
      agents_navigation_key_available: bool,
-@@ -160,6 +177,7 @@ impl ChatWidget {
+@@ -160,6 +181,7 @@ impl ChatWidget {
          let active_cell_renderable = match &self.transcript.active_cell {
              Some(cell) => RenderableItem::Owned(Box::new(TranscriptAreaRenderable {
                  child: cell.as_ref(),
@@ -32999,7 +33019,7 @@ index adfe1cee5..c01f77816 100644
                  // The initial header becomes the first history cell, which has no leading separator.
                  top: if cell.as_any().is::<history_cell::SessionHeaderHistoryCell>() {
                      0
-@@ -176,7 +194,6 @@ impl ChatWidget {
+@@ -176,7 +198,6 @@ impl ChatWidget {
                          cell_identity: cell.as_ref() as *const dyn HistoryCell as *const ()
                              as usize,
                          revision: self.transcript.active_cell_revision,
@@ -33007,7 +33027,7 @@ index adfe1cee5..c01f77816 100644
                      },
                  ),
              })),
-@@ -194,6 +211,7 @@ impl ChatWidget {
+@@ -194,6 +215,7 @@ impl ChatWidget {
                  /*flex*/ 1,
                  RenderableItem::Owned(Box::new(TranscriptAreaRenderable {
                      child: cell.as_ref(),
@@ -33015,7 +33035,7 @@ index adfe1cee5..c01f77816 100644
                      top: 1,
                      right: active_cell_right_reserve,
                      persistent_layout: None,
-@@ -206,6 +224,7 @@ impl ChatWidget {
+@@ -206,6 +228,7 @@ impl ChatWidget {
                  /*flex*/ 1,
                  RenderableItem::Owned(Box::new(TranscriptAreaRenderable {
                      child: cell,
@@ -33023,7 +33043,7 @@ index adfe1cee5..c01f77816 100644
                      top: 1,
                      right: active_cell_right_reserve,
                      persistent_layout: None,
-@@ -230,7 +249,7 @@ impl ChatWidget {
+@@ -230,7 +253,7 @@ impl ChatWidget {
          &'a self,
          mut options: crate::bottom_pane::ComposerRenderOptions<'a>,
      ) -> RenderableItem<'a> {
@@ -33032,28 +33052,23 @@ index adfe1cee5..c01f77816 100644
              RenderableItem::Owned(Box::new(
                  Paragraph::new("Forking conversation…".dim()).inset(Insets::tlbr(
                      /*top*/ 1, /*left*/ 2, /*bottom*/ 1, /*right*/ 2,
-@@ -257,7 +276,20 @@ impl ChatWidget {
+@@ -257,7 +280,15 @@ impl ChatWidget {
              options.separate_status_line = options.command_popup_placement
                  != crate::bottom_pane::CommandPopupPlacement::AboveComposer;
              self.bottom_pane.backdrop_with_options(options)
 +        };
-+        let notes = FooterNotes(crate::mod_ui::footer_hyperlink_lines(
-+            self.last_rendered_width.get().unwrap_or(80),
-+        ));
-+        if notes.0.is_empty() || self.bottom_pane.has_active_view() || self.external_writer_view {
++        let notes = FooterNotes;
++        if self.bottom_pane.has_active_view() || self.external_writer_view {
 +            return bottom;
          }
 +        let mut flex = FlexRenderable::new();
-+        flex.push(
-+            0,
-+            RenderableItem::Owned(Box::new(notes)).inset(Insets::tlbr(1, 0, 0, 0)),
-+        );
++        flex.push(0, RenderableItem::Owned(Box::new(notes)));
 +        flex.push(0, bottom);
 +        RenderableItem::Owned(Box::new(flex))
      }
 
      /// Returns compact live-history lines using the current rich or raw presentation.
-@@ -311,6 +343,7 @@ impl ChatWidget {
+@@ -311,6 +342,7 @@ impl ChatWidget {
 
  struct TranscriptAreaRenderable<'a> {
      child: &'a dyn HistoryCell,
@@ -33061,7 +33076,7 @@ index adfe1cee5..c01f77816 100644
      top: u16,
      right: u16,
      persistent_layout: Option<PersistentActiveCellLayout<'a>>,
-@@ -320,13 +353,14 @@ struct PersistentActiveCellLayout<'a> {
+@@ -320,13 +352,14 @@ struct PersistentActiveCellLayout<'a> {
      cache: &'a Cell<Option<ActiveCellLayoutCache>>,
      cell_identity: usize,
      revision: u64,
@@ -33078,7 +33093,7 @@ index adfe1cee5..c01f77816 100644
          let paragraph = HyperlinkParagraph::new(&lines, Style::default());
          let y = if area.height == 0 {
              0
-@@ -356,19 +390,26 @@ impl Renderable for TranscriptAreaRenderable<'_> {
+@@ -356,19 +389,26 @@ impl Renderable for TranscriptAreaRenderable<'_> {
              if let Some(height) = layout.desired_height {
                  height
              } else {
@@ -33107,7 +33122,7 @@ index adfe1cee5..c01f77816 100644
      fn layout(
          &self,
          width: u16,
-@@ -378,8 +419,9 @@ impl TranscriptAreaRenderable<'_> {
+@@ -378,8 +418,9 @@ impl TranscriptAreaRenderable<'_> {
              cell_identity: persistent.cell_identity,
              revision: persistent.revision,
              width,
@@ -146044,10 +146059,10 @@ index 000000000..6865d56a6
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..75adb37c2
+index 000000000..b1b8985b8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4508 @@
+@@ -0,0 +1,4505 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -146096,6 +146111,12 @@ index 000000000..75adb37c2
 +use std::sync::RwLock;
 +use unicode_width::UnicodeWidthStr;
 +
++mod footer;
++pub(crate) use footer::footer_frame;
++#[cfg(test)]
++use footer::footer_hyperlink_lines;
++pub(crate) use footer::footer_layout;
++
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +pub(crate) enum ThemeSlot {
 +    Accent,
@@ -146110,7 +146131,7 @@ index 000000000..75adb37c2
 +
 +#[derive(Default)]
 +struct Cache {
-+    snapshot: ModViewSnapshot,
++    snapshot: std::sync::Arc<ModViewSnapshot>,
 +    terminal: bool,
 +    colors: [Option<Color>; 8],
 +    seen: Option<(u64, u64)>,
@@ -146199,7 +146220,7 @@ index 000000000..75adb37c2
 +    captured: Option<String>,
 +}
 +
-+#[derive(Default)]
++#[derive(Clone, Default)]
 +struct ComponentRow {
 +    id: Option<String>,
 +    label: Option<String>,
@@ -146213,10 +146234,12 @@ index 000000000..75adb37c2
 +    cells: Option<u16>,
 +    /// Rows of later columns drawn into `line`, each keeping its own targets.
 +    beside: Vec<ComponentRow>,
++    columns: Vec<Vec<String>>,
 +}
 +
 +/// A box holding a row: its left cell and width, this row's offset in it, and whether the
 +/// box reports pointer events or only restyles on hover.
++#[derive(Clone)]
 +struct Held {
 +    id: String,
 +    x: u16,
@@ -146227,6 +146250,24 @@ index 000000000..75adb37c2
 +}
 +
 +impl ComponentRow {
++    fn take_columns(&mut self, columns: &mut Vec<Vec<String>>) {
++        columns.append(&mut self.columns);
++        for row in &mut self.beside {
++            row.take_columns(columns);
++        }
++    }
++
++    fn clip(&mut self, width: u16) {
++        self.cells = Some(self.own().min(width.saturating_sub(self.indent)));
++        for link in &mut self.links {
++            link.columns.end = link.columns.end.min(usize::from(width));
++        }
++        self.links.retain(|link| !link.columns.is_empty());
++        for row in &mut self.beside {
++            row.clip(width);
++        }
++    }
++
 +    fn own(&self) -> u16 {
 +        self.cells.unwrap_or_else(|| {
 +            u16::try_from(self.line.width())
@@ -146250,10 +146291,6 @@ index 000000000..75adb37c2
 +    }
 +}
 +
-+fn cells(indent: usize) -> u16 {
-+    u16::try_from(indent).unwrap_or(u16::MAX)
-+}
-+
 +const ASCII_BORDER: ratatui::symbols::border::Set<'static> = ratatui::symbols::border::Set {
 +    top_left: "+",
 +    top_right: "+",
@@ -146269,6 +146306,7 @@ index 000000000..75adb37c2
 +/// border, so its geometry stays put.
 +#[derive(Clone, Copy)]
 +struct Frame {
++    look: (ModBorder, ModIcons),
 +    border: Option<ratatui::symbols::border::Set<'static>>,
 +    padding: (u16, u16),
 +    margin: (u16, u16),
@@ -146308,6 +146346,20 @@ index 000000000..75adb37c2
 +}
 +
 +impl Frame {
++    fn card(
++        style: Option<ModBoxStyle>,
++        look: (ModBorder, ModIcons),
++        hovered: bool,
++        focused: bool,
++    ) -> Self {
++        Self::new(
++            style.unwrap_or_default().over(card(look.0)),
++            look,
++            hovered,
++            focused,
++        )
++    }
++
 +    fn new(style: ModBoxStyle, look: (ModBorder, ModIcons), hovered: bool, focused: bool) -> Self {
 +        let mut border = style.border.unwrap_or(ModBoxBorder::None);
 +        let (mut background, mut foreground) = (style.background, style.foreground);
@@ -146328,9 +146380,12 @@ index 000000000..75adb37c2
 +            foreground = accent.foreground.or(foreground);
 +        }
 +        Self {
++            look,
 +            border: match border {
 +                ModBoxBorder::None => None,
-+                _ if look.1 == ModIcons::Ascii => Some(ASCII_BORDER),
++                _ if look.1 == ModIcons::Ascii || !crate::omd::unicode_supported() => {
++                    Some(ASCII_BORDER)
++                }
 +                ModBoxBorder::Plain => Some(ratatui::symbols::border::PLAIN),
 +                ModBoxBorder::Rounded => Some(ratatui::symbols::border::ROUNDED),
 +                ModBoxBorder::Double => Some(ratatui::symbols::border::DOUBLE),
@@ -146528,7 +146583,9 @@ index 000000000..75adb37c2
 +fn natural_width(component: &ModComponent) -> Option<u16> {
 +    let width = match component {
 +        ModComponent::Button { text, .. } => text.width() + 4,
-+        ModComponent::Text { text, .. } => text.lines().map(UnicodeWidthStr::width).max().unwrap_or(0),
++        ModComponent::Text { text, .. } => {
++            text.lines().map(UnicodeWidthStr::width).max().unwrap_or(0)
++        }
 +        ModComponent::Line { spans, .. } => spans.iter().map(|span| span.text.width()).sum(),
 +        _ => return None,
 +    };
@@ -146546,16 +146603,33 @@ index 000000000..75adb37c2
 +    loop {
 +        let gaps = gap * u16::try_from(shown.len().saturating_sub(1)).unwrap_or(0);
 +        let mut room = width.saturating_sub(gaps);
-+        let natural = shown
++        let mut natural = shown
 +            .iter()
-+            .map(|child| {
-+                natural_width(child).map(|natural| {
-+                    let slot = natural.min(room);
-+                    room -= slot;
-+                    slot
-+                })
-+            })
++            .map(|child| natural_width(child))
 +            .collect::<Vec<_>>();
++        let demand = natural
++            .iter()
++            .flatten()
++            .map(|width| u32::from(*width))
++            .sum::<u32>();
++        let flexible = natural.iter().filter(|width| width.is_none()).count();
++        if demand + flexible as u32 > u32::from(room) {
++            let mut order = natural
++                .iter()
++                .enumerate()
++                .filter_map(|(index, width)| width.map(|width| (index, width)))
++                .collect::<Vec<_>>();
++            order.sort_by_key(|(_, width)| *width);
++            let mut remaining = shown.len();
++            for (index, desired) in order {
++                let width = desired.min(room / u16::try_from(remaining).unwrap_or(u16::MAX));
++                natural[index] = Some(width);
++                room -= width;
++                remaining -= 1;
++            }
++        } else {
++            room -= u16::try_from(demand).unwrap_or(u16::MAX);
++        }
 +        let mut shares = crate::mod_layout::distribute(
 +            room,
 +            &shown
@@ -146608,7 +146682,8 @@ index 000000000..75adb37c2
 +        ModDirection::Column => {
 +            let mut rows = Vec::new();
 +            for child in children {
-+                let child_rows = component_rows(std::slice::from_ref(child), width, interaction, 0);
++                let child_rows =
++                    component_rows(std::slice::from_ref(child), width, interaction, frame.look);
 +                if child_rows.is_empty() {
 +                    continue;
 +                }
@@ -146623,7 +146698,8 @@ index 000000000..75adb37c2
 +            let mut placed = columns(children, width, frame.gap)
 +                .into_iter()
 +                .map(|(child, x, width)| {
-+                    let rows = component_rows(std::slice::from_ref(child), width, interaction, 0);
++                    let rows =
++                        component_rows(std::slice::from_ref(child), width, interaction, frame.look);
 +                    (x, width, rows.into_iter())
 +                })
 +                .collect::<Vec<_>>();
@@ -146631,19 +146707,17 @@ index 000000000..75adb37c2
 +            for (_, _, rows) in &placed {
 +                targets(rows.as_slice(), &mut ids);
 +            }
-+            if ids.len() > 1 {
-+                interaction.columns.push(ids);
-+            }
 +            let height = placed
 +                .iter()
 +                .map(|(_, _, rows)| rows.len())
 +                .max()
 +                .unwrap_or(0);
-+            (0..height)
++            let mut rows = (0..height)
 +                .map(|_| {
 +                    let (mut merged, mut spans, mut cursor) = (None::<ComponentRow>, Vec::new(), 0);
 +                    for (x, width, rows) in &mut placed {
 +                        let mut row = rows.next().unwrap_or_default();
++                        row.clip(*width);
 +                        row.shift(*x);
 +                        spans.push(Span::raw(" ".repeat(usize::from(*x - cursor))));
 +                        spans.extend(fit(std::mem::take(&mut row.line), *width, Style::default()));
@@ -146657,7 +146731,13 @@ index 000000000..75adb37c2
 +                    row.line = Line::from(spans);
 +                    row
 +                })
-+                .collect()
++                .collect::<Vec<_>>();
++            if ids.len() > 1
++                && let Some(row) = rows.first_mut()
++            {
++                row.columns.push(ids);
++            }
++            rows
 +        }
 +    }
 +}
@@ -146697,7 +146777,7 @@ index 000000000..75adb37c2
 +        ModDirection::Column => {
 +            let heights = children
 +                .iter()
-+                .map(|child| component_height(std::slice::from_ref(child), width))
++                .map(|child| component_height(std::slice::from_ref(child), width, frame.look))
 +                .filter(|height| *height > 0)
 +                .collect::<Vec<_>>();
 +            heights.iter().sum::<u16>()
@@ -146705,7 +146785,9 @@ index 000000000..75adb37c2
 +        }
 +        ModDirection::Row => columns(children, width, frame.gap)
 +            .into_iter()
-+            .map(|(child, _, width)| component_height(std::slice::from_ref(child), width))
++            .map(|(child, _, width)| {
++                component_height(std::slice::from_ref(child), width, frame.look)
++            })
 +            .max()
 +            .unwrap_or(0),
 +    }
@@ -147224,7 +147306,7 @@ index 000000000..75adb37c2
 +    crate::mod_render::refresh((snapshot.epoch, snapshot.revision));
 +    *cache = Some(Cache {
 +        colors: colors(&snapshot),
-+        snapshot,
++        snapshot: snapshot.into(),
 +        terminal,
 +        seen,
 +        preview: false,
@@ -147274,7 +147356,7 @@ index 000000000..75adb37c2
 +    let seen = cache.as_ref().and_then(|cache| cache.seen);
 +    *cache = Some(Cache {
 +        colors: colors(&snapshot),
-+        snapshot,
++        snapshot: snapshot.into(),
 +        terminal: true,
 +        seen,
 +        preview: true,
@@ -147420,7 +147502,7 @@ index 000000000..75adb37c2
 +}
 +
 +pub(crate) fn snapshot() -> ModViewSnapshot {
-+    with_cache(|cache| cache.snapshot.clone()).unwrap_or_default()
++    with_cache(|cache| cache.snapshot.as_ref().clone()).unwrap_or_default()
 +}
 +
 +fn dialog_key(dialog: &ModRenderSite) -> String {
@@ -147517,7 +147599,7 @@ index 000000000..75adb37c2
 +    view.sites.get(name)
 +}
 +
-+fn component_height(components: &[ModComponent], width: u16) -> u16 {
++fn component_height(components: &[ModComponent], width: u16, look: (ModBorder, ModIcons)) -> u16 {
 +    components
 +        .iter()
 +        .map(|component| match component {
@@ -147528,19 +147610,13 @@ index 000000000..75adb37c2
 +                style,
 +                ..
 +            } => {
-+                let frame = Frame::new(style.unwrap_or_default(), look(), false, false);
++                let frame = Frame::new(style.unwrap_or_default(), look, false, false);
 +                frame.rows(title.is_some()) + stack_height(children, frame.inner(width), &frame)
 +            }
 +            ModComponent::Dialog {
 +                children, style, ..
 +            } => {
-+                let look = look();
-+                let frame = Frame::new(
-+                    style.unwrap_or_default().over(card(look.0)),
-+                    look,
-+                    false,
-+                    false,
-+                );
++                let frame = Frame::card(*style, look, false, false);
 +                frame.rows(true) + stack_height(children, frame.inner(width), &frame)
 +            }
 +            ModComponent::Pane {
@@ -147549,13 +147625,7 @@ index 000000000..75adb37c2
 +                style,
 +                ..
 +            } => {
-+                let look = look();
-+                let mut frame = Frame::new(
-+                    style.unwrap_or_default().over(card(look.0)),
-+                    look,
-+                    false,
-+                    false,
-+                );
++                let mut frame = Frame::card(*style, look, false, false);
 +                if *collapsed {
 +                    frame.padding.0 = 0;
 +                    frame.rows(true)
@@ -147625,7 +147695,13 @@ index 000000000..75adb37c2
 +    }
 +    if let Some(header) = site(&snapshot.view, "header") {
 +        let width = column(screen, snapshot).width;
-+        return component_height(&header.components, width).clamp(1, 6) + 1;
++        return component_height(
++            &header.components,
++            width,
++            (snapshot.view.theme.border, snapshot.view.theme.icons),
++        )
++        .clamp(1, 6)
++            + 1;
 +    }
 +    match &snapshot.view.header {
 +        Some(header) => u16::try_from(header.lines.len()).unwrap_or(3).min(3) + 2,
@@ -147782,21 +147858,10 @@ index 000000000..75adb37c2
 +        }
 +    }
 +    select(components, list_selected, &mut interaction);
-+    unregistered_rows(components, width, &mut interaction)
++    component_rows(components, width, &mut interaction, look())
 +        .into_iter()
 +        .map(|row| row.line)
 +        .collect()
-+}
-+
-+fn unregistered_rows(
-+    components: &[ModComponent],
-+    width: u16,
-+    interaction: &mut Interaction,
-+) -> Vec<ComponentRow> {
-+    let groups = interaction.columns.len();
-+    let rows = component_rows(components, width, interaction, 0);
-+    interaction.columns.truncate(groups);
-+    rows
 +}
 +
 +fn push_region_rows(
@@ -147805,9 +147870,7 @@ index 000000000..75adb37c2
 +    label: &str,
 +    lines: Vec<Line<'static>>,
 +    pointer: bool,
-+    indent: usize,
 +) {
-+    let indent = u16::try_from(indent).unwrap_or(u16::MAX);
 +    rows.extend(
 +        lines
 +            .into_iter()
@@ -147821,7 +147884,7 @@ index 000000000..75adb37c2
 +                regions: if pointer {
 +                    vec![Held {
 +                        id: id.to_owned(),
-+                        x: indent,
++                        x: 0,
 +                        top: u16::try_from(row).unwrap_or(u16::MAX),
 +                        width: u16::MAX,
 +                        events: true,
@@ -147830,7 +147893,6 @@ index 000000000..75adb37c2
 +                } else {
 +                    Vec::new()
 +                },
-+                indent,
 +                ..ComponentRow::default()
 +            }),
 +    );
@@ -147840,10 +147902,9 @@ index 000000000..75adb37c2
 +    components: &[ModComponent],
 +    width: u16,
 +    interaction: &mut Interaction,
-+    indent: usize,
++    look: (ModBorder, ModIcons),
 +) -> Vec<ComponentRow> {
 +    let mut rows = Vec::new();
-+    let prefix = " ".repeat(indent);
 +    for component in components {
 +        match component {
 +            ModComponent::Box { .. } | ModComponent::Pane { .. } if !component.fits(width) => {}
@@ -147858,7 +147919,7 @@ index 000000000..75adb37c2
 +                let style = style.unwrap_or_default();
 +                let frame = Frame::new(
 +                    style,
-+                    look(),
++                    look,
 +                    interaction.hovered.contains_key(id),
 +                    focus_within(component, interaction),
 +                );
@@ -147889,16 +147950,15 @@ index 000000000..75adb37c2
 +                        id: (index == 0).then(|| id.clone()),
 +                        label: (index == 0).then(|| label.clone()),
 +                        links: Vec::new(),
-+                        line: Line::from(format!("{prefix}{text}")).patch_style(tone_style(*tone)),
++                        line: Line::from(text.to_owned()).patch_style(tone_style(*tone)),
 +                        target: None,
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
 +            }
 +            ModComponent::Line { id, label, spans } => {
-+                let (line, links) = span_line(prefix.clone(), spans);
++                let (line, links) = span_line(String::new(), spans);
 +                rows.push(ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
@@ -147906,7 +147966,6 @@ index 000000000..75adb37c2
 +                    line,
 +                    target: None,
 +                    regions: Vec::new(),
-+                    indent: cells(indent),
 +                    ..ComponentRow::default()
 +                });
 +            }
@@ -147920,10 +147979,9 @@ index 000000000..75adb37c2
 +                id: Some(id.clone()),
 +                label: Some(label.clone()),
 +                links: Vec::new(),
-+                line: Line::from(format!("{prefix}[ {text} ]")),
++                line: Line::from(format!("[ {text} ]")),
 +                target: Some(ComponentTarget::Button(action.clone())),
 +                regions: Vec::new(),
-+                indent: cells(indent),
 +                ..ComponentRow::default()
 +            }),
 +            ModComponent::Input {
@@ -147954,10 +148012,9 @@ index 000000000..75adb37c2
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
 +                    links: Vec::new(),
-+                    line: Line::from(format!("{prefix}{label}: {shown}")),
++                    line: Line::from(format!("{label}: {shown}")),
 +                    target: Some(ComponentTarget::Input(action.clone())),
 +                    regions: Vec::new(),
-+                    indent: cells(indent),
 +                    ..ComponentRow::default()
 +                });
 +            }
@@ -147983,7 +148040,7 @@ index 000000000..75adb37c2
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
 +                    links: Vec::new(),
-+                    line: Line::from(format!("{prefix}{label}: ‹ {shown} ›")),
++                    line: Line::from(format!("{label}: ‹ {shown} ›")),
 +                    target: Some(ComponentTarget::Select {
 +                        action: action.clone(),
 +                        options: options
@@ -147992,7 +148049,6 @@ index 000000000..75adb37c2
 +                            .collect(),
 +                    }),
 +                    regions: Vec::new(),
-+                    indent: cells(indent),
 +                    ..ComponentRow::default()
 +                });
 +            }
@@ -148020,10 +148076,9 @@ index 000000000..75adb37c2
 +                    id: None,
 +                    label: None,
 +                    links: Vec::new(),
-+                    line: Line::from(format!("{prefix}{label}:")),
++                    line: Line::from(format!("{label}:")),
 +                    target: None,
 +                    regions: Vec::new(),
-+                    indent: cells(indent),
 +                    ..ComponentRow::default()
 +                });
 +                for (index, option) in options.iter().enumerate() {
@@ -148032,7 +148087,7 @@ index 000000000..75adb37c2
 +                    } else {
 +                        "[ ]"
 +                    };
-+                    let line = Line::from(format!("{prefix}  {mark} {}", option.label));
++                    let line = Line::from(format!("  {mark} {}", option.label));
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
@@ -148048,7 +148103,6 @@ index 000000000..75adb37c2
 +                            index,
 +                        }),
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148056,9 +148110,7 @@ index 000000000..75adb37c2
 +            ModComponent::Markdown { id, label, text } => {
 +                let rendered = crate::markdown::render_markdown_agent_with_list_spacing(
 +                    text,
-+                    Some(usize::from(
-+                        width.saturating_sub(u16::try_from(indent).unwrap_or(0)),
-+                    )),
++                    Some(usize::from(width)),
 +                    None,
 +                    None,
 +                    crate::markdown_render::ListSpacing::AfterMultiline,
@@ -148071,7 +148123,6 @@ index 000000000..75adb37c2
 +                        line: line.line,
 +                        target: None,
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148087,10 +148138,9 @@ index 000000000..75adb37c2
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
 +                        links: Vec::new(),
-+                        line: Line::from(format!("{prefix}{language}")).dim(),
++                        line: Line::from(language.clone()).dim(),
 +                        target: None,
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148099,10 +148149,9 @@ index 000000000..75adb37c2
 +                        id: None,
 +                        label: None,
 +                        links: Vec::new(),
-+                        line: Line::from(format!("{prefix}{line}")).cyan(),
++                        line: Line::from(line.to_owned()).cyan(),
 +                        target: None,
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148127,9 +148176,8 @@ index 000000000..75adb37c2
 +                    .entry(id.clone())
 +                    .or_insert(*collapsed);
 +                let style = style.unwrap_or_default();
-+                let look = look();
-+                let mut frame = Frame::new(
-+                    style.over(card(look.0)),
++                let mut frame = Frame::card(
++                    Some(style),
 +                    look,
 +                    interaction.hovered.contains_key(id),
 +                    focus_within(component, interaction),
@@ -148141,7 +148189,7 @@ index 000000000..75adb37c2
 +                    (false, true) => "▾",
 +                    (false, false) => "v",
 +                };
-+                let head = ComponentRow {
++                let mut head = ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
 +                    line: Line::from(format!("{marker} {}", title.as_deref().unwrap_or(label)))
@@ -148153,7 +148201,10 @@ index 000000000..75adb37c2
 +                    frame.padding.0 = 0;
 +                    Vec::new()
 +                } else {
-+                    let nested = stack(children, frame.inner(width), &frame, interaction);
++                    let mut nested = stack(children, frame.inner(width), &frame, interaction);
++                    for row in &mut nested {
++                        row.take_columns(&mut head.columns);
++                    }
 +                    let offset =
 +                        usize::from(*interaction.scroll.entry(id.clone()).or_insert(*scroll))
 +                            .min(nested.len().saturating_sub(1));
@@ -148176,13 +148227,7 @@ index 000000000..75adb37c2
 +                style,
 +                ..
 +            } => {
-+                let look = look();
-+                let frame = Frame::new(
-+                    style.unwrap_or_default().over(card(look.0)),
-+                    look,
-+                    false,
-+                    false,
-+                );
++                let frame = Frame::card(*style, look, false, false);
 +                let head = ComponentRow {
 +                    line: Line::from(title.clone()).bold(),
 +                    ..ComponentRow::default()
@@ -148204,10 +148249,9 @@ index 000000000..75adb37c2
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
 +                        links: Vec::new(),
-+                        line: Line::from(format!("{prefix}{label}: (empty)")).dim(),
++                        line: Line::from(format!("{label}: (empty)")).dim(),
 +                        target: None,
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                    continue;
@@ -148234,7 +148278,7 @@ index 000000000..75adb37c2
 +                };
 +                for (index, item) in items.iter().enumerate().skip(start).take(window) {
 +                    let chosen = index == current;
-+                    let lead = format!("{prefix}{}", if chosen { marker } else { "  " });
++                    let lead = (if chosen { marker } else { "  " }).to_owned();
 +                    let (line, links) = if item.spans.is_empty() {
 +                        (Line::from(format!("{lead}{}", item.label)), Vec::new())
 +                    } else {
@@ -148251,7 +148295,6 @@ index 000000000..75adb37c2
 +                            index,
 +                        }),
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148292,7 +148335,7 @@ index 000000000..75adb37c2
 +                    &owners,
 +                    focused,
 +                    *keys,
-+                    &prefix,
++                    "",
 +                ) {
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
@@ -148301,7 +148344,6 @@ index 000000000..75adb37c2
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148331,7 +148373,7 @@ index 000000000..75adb37c2
 +                    &owners,
 +                    focused,
 +                    false,
-+                    &prefix,
++                    "",
 +                ) {
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
@@ -148340,7 +148382,6 @@ index 000000000..75adb37c2
 +                        line,
 +                        target: Some(ComponentTarget::Document(action.clone())),
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148356,13 +148397,9 @@ index 000000000..75adb37c2
 +                    .get(id)
 +                    .and_then(|owner| interaction.pty_bindings.get(owner))
 +                    .cloned();
-+                for line in crate::mod_pty::rows(
-+                    binding.as_ref(),
-+                    session,
-+                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
-+                    height.unwrap_or(16),
-+                    &prefix,
-+                ) {
++                for line in
++                    crate::mod_pty::rows(binding.as_ref(), session, width, height.unwrap_or(16), "")
++                {
 +                    rows.push(ComponentRow {
 +                        id: Some(id.clone()),
 +                        label: Some(label.clone()),
@@ -148370,7 +148407,6 @@ index 000000000..75adb37c2
 +                        line,
 +                        target: Some(ComponentTarget::Terminal(session.clone(), binding.clone())),
 +                        regions: Vec::new(),
-+                        indent: cells(indent),
 +                        ..ComponentRow::default()
 +                    });
 +                }
@@ -148393,12 +148429,12 @@ index 000000000..75adb37c2
 +                    id,
 +                    image,
 +                    alt,
-+                    width.saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX)),
++                    width,
 +                    height.unwrap_or(12),
 +                    &owners,
-+                    &prefix,
++                    "",
 +                );
-+                push_region_rows(&mut rows, id, label, lines, *pointer, indent);
++                push_region_rows(&mut rows, id, label, lines, *pointer);
 +            }
 +            ModComponent::Raster {
 +                id,
@@ -148408,9 +148444,7 @@ index 000000000..75adb37c2
 +                height: rows_high,
 +                pointer,
 +            } => {
-+                let available = width
-+                    .saturating_sub(u16::try_from(prefix.len()).unwrap_or(u16::MAX))
-+                    .max(1);
++                let available = width.max(1);
 +                crate::mod_raster::track(
 +                    id,
 +                    interaction.thread.as_deref(),
@@ -148431,13 +148465,13 @@ index 000000000..75adb37c2
 +                        rows_high.unwrap_or(RASTER_HEIGHT),
 +                    ),
 +                    crate::mod_client::facts().no_color,
-+                    &prefix,
++                    "",
 +                    std::time::Instant::now(),
 +                );
 +                if let Some(next) = next {
 +                    crate::mod_render::schedule_frame(next);
 +                }
-+                push_region_rows(&mut rows, id, label, lines, *pointer, indent);
++                push_region_rows(&mut rows, id, label, lines, *pointer);
 +            }
 +            ModComponent::Slot | ModComponent::Native { .. } => {}
 +        }
@@ -148459,14 +148493,31 @@ index 000000000..75adb37c2
 +    }
 +    let inner = frame.draw(area, title, buffer);
 +    let rows = stack(components, inner.width.max(1), &frame, interaction);
++    let scroll = focused_scroll(&rows, inner.height, interaction);
++    let lines = rows
++        .iter()
++        .skip(scroll)
++        .map(|row| row.line.clone())
++        .collect::<Vec<_>>();
++    Paragraph::new(lines)
++        .style(style.patch(frame.style()))
++        .render(inner, buffer);
++    mark_links(buffer, inner, &rows[scroll.min(rows.len())..]);
++    register_component_targets(inner, rows, scroll, interaction);
++}
++
++fn focused_scroll(rows: &[ComponentRow], height: u16, interaction: &Interaction) -> usize {
++    fn cells(row: &ComponentRow) -> Vec<&ComponentRow> {
++        std::iter::once(row)
++            .chain(row.beside.iter().flat_map(cells))
++            .collect()
++    }
 +    let focused_row = interaction.focused.as_ref().and_then(|focused| {
 +        let cursor = interaction.selected.get(focused).copied();
 +        let mut own = rows
 +            .iter()
 +            .enumerate()
-+            .flat_map(|(index, row)| {
-+                std::iter::once((index, row)).chain(row.beside.iter().map(move |row| (index, row)))
-+            })
++            .flat_map(|(index, row)| cells(row).into_iter().map(move |row| (index, row)))
 +            .filter(|(_, row)| row.target.is_some() && row.id.as_ref() == Some(focused));
 +        let first = own.next();
 +        std::iter::once(first)
@@ -148482,17 +148533,7 @@ index 000000000..75adb37c2
 +            .or(first)
 +            .map(|(row, _)| row)
 +    });
-+    let scroll = focused_row.map_or(0, |row| (row + 1).saturating_sub(usize::from(inner.height)));
-+    let lines = rows
-+        .iter()
-+        .skip(scroll)
-+        .map(|row| row.line.clone())
-+        .collect::<Vec<_>>();
-+    Paragraph::new(lines)
-+        .style(style.patch(frame.style()))
-+        .render(inner, buffer);
-+    mark_links(buffer, inner, &rows[scroll.min(rows.len())..]);
-+    register_component_targets(inner, rows, scroll, interaction);
++    focused_row.map_or(0, |row| (row + 1).saturating_sub(usize::from(height)))
 +}
 +
 +/// Every target joins the focus order; only rows scrolled into view get a hitbox.
@@ -148522,9 +148563,12 @@ index 000000000..75adb37c2
 +    whole: bool,
 +    interaction: &mut Interaction,
 +) {
++    interaction.columns.append(&mut row.columns);
 +    let beside = |indent: u16, width: u16| {
 +        let room = inner.width.saturating_sub(indent);
-+        row_top.map(|y| Rect::new(inner.x + indent, y, width.clamp(1, room.max(1)), 1))
++        row_top
++            .filter(|_| room > 0 && width > 0)
++            .map(|y| Rect::new(inner.x + indent, y, width.min(room), 1))
 +    };
 +    let own = beside(row.indent, row.own());
 +    let area = if whole {
@@ -148605,7 +148649,12 @@ index 000000000..75adb37c2
 +    let mut interaction = INTERACTION
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    let rows = component_rows(&welcome.components, available.width, &mut interaction, 0);
++    let rows = component_rows(
++        &welcome.components,
++        available.width,
++        &mut interaction,
++        (snapshot.view.theme.border, snapshot.view.theme.icons),
++    );
 +    let height = u16::try_from(rows.len()).unwrap_or(u16::MAX);
 +    let width = rows
 +        .iter()
@@ -148676,6 +148725,7 @@ index 000000000..75adb37c2
 +    interaction.owners = snapshot.contributors.clone();
 +    interaction.component_owners = snapshot.component_owners.clone();
 +    bind_terminals(&mut interaction, snapshot);
++    footer::register_footer(&mut interaction);
 +    if let Some(bar) = sidebar(area, snapshot) {
 +        let mut components = site(&snapshot.view, "sidebar")
 +            .map(|site| site.components.clone())
@@ -148948,12 +148998,7 @@ index 000000000..75adb37c2
 +            components => (None, None, components),
 +        };
 +        let theme = &snapshot.view.theme;
-+        let frame = Frame::new(
-+            dialog_style.unwrap_or_default().over(card(theme.border)),
-+            (theme.border, theme.icons),
-+            false,
-+            false,
-+        );
++        let frame = Frame::card(dialog_style, (theme.border, theme.icons), false, false);
 +        let width = stage.width.saturating_sub(4).min(76);
 +        let height = (frame.rows(title.is_some())
 +            + stack_height(components, frame.inner(width), &frame))
@@ -149184,7 +149229,7 @@ index 000000000..75adb37c2
 +}
 +
 +/// Components without a height share the rows a layout region leaves after its fixed components.
-+fn fill_heights(components: &mut [ModComponent], width: u16, rows: u16) {
++fn fill_heights(components: &mut [ModComponent], width: u16, rows: u16, frame: &Frame) {
 +    let fills = |component: &ModComponent| {
 +        matches!(
 +            component,
@@ -149207,8 +149252,22 @@ index 000000000..75adb37c2
 +        .filter(|component| !fills(component))
 +        .cloned()
 +        .collect::<Vec<_>>();
-+    let share = rows.saturating_sub(component_height(&fixed, width))
-+        / u16::try_from(count).unwrap_or(u16::MAX);
++    let visible = components
++        .iter()
++        .filter(|component| {
++            component_height(std::slice::from_ref(component), width, frame.look) > 0
++        })
++        .count();
++    let share = match frame.direction {
++        ModDirection::Row => rows,
++        ModDirection::Column => {
++            rows.saturating_sub(component_height(&fixed, width, frame.look))
++                .saturating_sub(
++                    frame.gap * u16::try_from(visible.saturating_sub(1)).unwrap_or(u16::MAX),
++                )
++                / u16::try_from(count).unwrap_or(u16::MAX)
++        }
++    };
 +    for component in components {
 +        match component {
 +            ModComponent::Terminal { height, .. } if height.is_none() => {
@@ -149262,6 +149321,7 @@ index 000000000..75adb37c2
 +    interaction.owners = snapshot.contributors.clone();
 +    interaction.component_owners = snapshot.component_owners.clone();
 +    bind_terminals(&mut interaction, snapshot);
++    footer::register_footer(&mut interaction);
 +    for region in &placement.regions {
 +        let Some(name) = region.content.strip_prefix("site:") else {
 +            continue;
@@ -149270,16 +149330,12 @@ index 000000000..75adb37c2
 +            .map(|site| site.components.clone())
 +            .unwrap_or_default();
 +        let theme = &snapshot.view.theme;
-+        let frame = Frame::new(
-+            region.style.unwrap_or_default().over(card(theme.border)),
-+            (theme.border, theme.icons),
-+            false,
-+            false,
-+        );
++        let frame = Frame::card(region.style, (theme.border, theme.icons), false, false);
 +        fill_heights(
 +            &mut components,
 +            frame.inner(region.area.width),
 +            region.area.height.saturating_sub(frame.rows(true)),
++            &frame,
 +        );
 +        render_site(
 +            region.area,
@@ -149307,50 +149363,6 @@ index 000000000..75adb37c2
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
-+}
-+
-+pub(crate) fn footer_hyperlink_lines(width: u16) -> Vec<HyperlinkLine> {
-+    let snapshot = snapshot();
-+    let style = panel_style(&snapshot.view);
-+    let rows = |components: &[ModComponent]| -> Vec<HyperlinkLine> {
-+        let mut interaction = INTERACTION
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        interaction.component_owners = snapshot.component_owners.clone();
-+        interaction.thread = snapshot.input["ledger"]["thread_id"]
-+            .as_str()
-+            .map(str::to_owned);
-+        unregistered_rows(components, width, &mut interaction)
-+            .into_iter()
-+            .map(|row| HyperlinkLine {
-+                hyperlinks: row.links,
-+                ..HyperlinkLine::new(row.line.patch_style(style))
-+            })
-+            .collect()
-+    };
-+    let mut lines = if let Some(site) = site(&snapshot.view, "above_composer") {
-+        rows(&site.components)
-+    } else if let Some(footer) = &snapshot.view.footer {
-+        panel_lines(footer)
-+            .into_iter()
-+            .map(|line| HyperlinkLine::new(line.patch_style(style)))
-+            .collect()
-+    } else {
-+        Vec::new()
-+    };
-+    if let Some(cards) = native_cards(&snapshot) {
-+        lines.extend(rows(std::slice::from_ref(&cards)));
-+    }
-+    lines.extend(
-+        live_notices(NoticePlacement::Toast)
-+            .into_iter()
-+            .map(|notice| {
-+                let mut spans = crate::history_cell::notice_spans(notice.kind, &notice.text);
-+                spans.push(format!(" ({})", notice.owner).dark_gray());
-+                HyperlinkLine::new(Line::from(spans))
-+            }),
-+    );
-+    lines
 +}
 +
 +pub(crate) use codex_omd::client_surface::NoticePlacement;
@@ -150556,12 +150568,271 @@ index 000000000..75adb37c2
 +    report(&before, &after, &mut interaction, "mod");
 +    Ok(serde_json::json!({"applied": true}))
 +}
+diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
+new file mode 100644
+index 000000000..d4290e259
+--- /dev/null
++++ b/codex-rs/tui/src/mod_ui/footer.rs
+@@ -0,0 +1,253 @@
++use super::*;
++use std::sync::Arc;
++
++#[derive(Default)]
++struct FooterCache {
++    active: bool,
++    layouts: BTreeMap<u16, Arc<FooterLayout>>,
++    rendered: Option<(Rect, Arc<FooterLayout>, usize)>,
++}
++
++static FOOTER: Mutex<FooterCache> = Mutex::new(FooterCache {
++    active: false,
++    layouts: BTreeMap::new(),
++    rendered: None,
++});
++
++pub(crate) struct FooterFrame;
++
++pub(crate) fn footer_frame() -> FooterFrame {
++    *FOOTER
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner) = FooterCache {
++        active: true,
++        ..FooterCache::default()
++    };
++    FooterFrame
++}
++
++impl Drop for FooterFrame {
++    fn drop(&mut self) {
++        *FOOTER
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner) = FooterCache::default();
++    }
++}
++
++pub(crate) struct FooterLayout {
++    rows: Vec<ComponentRow>,
++    lines: Vec<HyperlinkLine>,
++    key_panes: BTreeSet<String>,
++}
++
++pub(crate) fn footer_layout(width: u16) -> Arc<FooterLayout> {
++    if let Some(layout) = FOOTER
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .layouts
++        .get(&width)
++    {
++        return Arc::clone(layout);
++    }
++    let snapshot = with_cache(|cache| Arc::clone(&cache.snapshot)).unwrap_or_default();
++    let style = panel_style(&snapshot.view);
++    let look = (snapshot.view.theme.border, snapshot.view.theme.icons);
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    interaction.component_owners = snapshot.component_owners.clone();
++    bind_terminals(&mut interaction, &snapshot);
++    let mut rows = if let Some(site) = site(&snapshot.view, "above_composer") {
++        component_rows(&site.components, width, &mut interaction, look)
++    } else {
++        snapshot
++            .view
++            .footer
++            .as_ref()
++            .map(panel_lines)
++            .unwrap_or_default()
++            .into_iter()
++            .map(|line| ComponentRow {
++                line,
++                ..ComponentRow::default()
++            })
++            .collect()
++    };
++    if let Some(cards) = native_cards(&snapshot) {
++        rows.extend(component_rows(&[cards], width, &mut interaction, look));
++    }
++    rows.extend(
++        live_notices(NoticePlacement::Toast)
++            .into_iter()
++            .map(|notice| {
++                let mut spans = crate::history_cell::notice_spans(notice.kind, &notice.text);
++                spans.push(format!(" ({})", notice.owner).dark_gray());
++                ComponentRow {
++                    line: Line::from(spans),
++                    ..ComponentRow::default()
++                }
++            }),
++    );
++    let mut lines = Vec::new();
++    rows = rows
++        .into_iter()
++        .flat_map(|row| {
++            let line = HyperlinkLine {
++                hyperlinks: row_links(&row).into_iter().cloned().collect(),
++                ..HyperlinkLine::new(row.line.clone().patch_style(style))
++            };
++            let wrapped = if line.width() > usize::from(width) {
++                crate::terminal_hyperlinks::adaptive_wrap_hyperlink_lines(
++                    &[line],
++                    crate::wrapping::RtOptions::new(usize::from(width.max(1))),
++                )
++            } else {
++                vec![line]
++            };
++            let mut fragments = Vec::new();
++            for line in wrapped {
++                let mut fragment = row.clone();
++                fragment.line = line.line.clone();
++                fragments.push(fragment);
++                lines.push(line);
++            }
++            fragments
++        })
++        .collect();
++    let mut ids = Vec::new();
++    targets(&rows, &mut ids);
++    let key_panes = ids
++        .into_iter()
++        .filter(|id| interaction.key_panes.contains(id))
++        .collect();
++    let layout = Arc::new(FooterLayout {
++        rows,
++        lines,
++        key_panes,
++    });
++    let mut cache = FOOTER
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if cache.active {
++        cache.layouts.insert(width, Arc::clone(&layout));
++    }
++    layout
++}
++
++impl FooterLayout {
++    pub(crate) fn height(&self) -> u16 {
++        u16::try_from(self.lines.len()).unwrap_or(u16::MAX)
++    }
++
++    pub(crate) fn render(self: &Arc<Self>, area: Rect, buffer: &mut Buffer) {
++        let interaction = INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let scroll = focused_scroll(&self.rows, area.height, &interaction);
++        drop(interaction);
++        crate::terminal_hyperlinks::HyperlinkParagraph::new(
++            &self.lines[scroll..],
++            Style::default(),
++        )
++        .render(area, buffer);
++        let mut cache = FOOTER
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if cache.active {
++            cache.rendered = (!area.is_empty()).then(|| (area, Arc::clone(self), scroll));
++        }
++    }
++}
++
++pub(super) fn register_footer(interaction: &mut Interaction) {
++    let cache = FOOTER
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some((area, layout, scroll)) = &cache.rendered {
++        interaction
++            .key_panes
++            .extend(layout.key_panes.iter().cloned());
++        register_component_targets(*area, layout.rows.clone(), *scroll, interaction);
++    }
++}
++
++#[cfg(test)]
++pub(crate) fn footer_hyperlink_lines(width: u16) -> Vec<HyperlinkLine> {
++    footer_layout(width).lines.clone()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    #[serial_test::serial]
++    fn footer_controls_survive_native_render_and_scroll_into_view() {
++        let snapshot = ModViewSnapshot {
++            view: ModView::parse(serde_json::json!({"layout":{"split":"vertical","children":[{"content":"transcript"},{"content":"composer"}]},"sites":{"above_composer":{"components":[
++                {"type":"box","id":"card","label":"Card","title":"Results","children":[
++                    {"type":"text","id":"long","label":"Long","text":"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine"},
++                    {"type":"list","id":"results","label":"Results","rows":[{"value":"file:1","label":"file:1"}],"action":{"command":"demo:open"}},
++                    {"type":"button","id":"close","label":"Close","text":"Close","action":{"command":"demo:close"}}
++                ]}
++            ]}}})).unwrap(),
++            contributors: vec!["demo".into()],
++            component_owners: [("results".into(), "demo".into()), ("close".into(), "demo".into())].into(),
++            ..ModViewSnapshot::default()
++        };
++        preview(snapshot.clone());
++        let screen = Rect::new(0, 0, 80, 24);
++        assert!(placement(screen, &snapshot).is_some());
++        let area = Rect::new(2, 14, 60, 4);
++        let mut buffer = Buffer::empty(screen);
++        {
++            let _frame = footer_frame();
++            footer_layout(area.width).render(area, &mut buffer);
++            render(screen, screen, &mut buffer, &snapshot);
++            assert!(focus("close"));
++        }
++        {
++            let _frame = footer_frame();
++            footer_layout(area.width).render(area, &mut buffer);
++            render_owned(screen, screen, screen, screen, &mut buffer, &snapshot);
++            let hit = INTERACTION
++                .lock()
++                .unwrap()
++                .hitboxes
++                .iter()
++                .find(|hit| hit.id == "close")
++                .unwrap()
++                .area;
++            assert!(area.contains((hit.x, hit.y).into()));
++            assert!(matches!(
++                pointer(MouseEvent {
++                    kind: MouseEventKind::Up(MouseButton::Left),
++                    column: hit.x,
++                    row: hit.y,
++                    modifiers: KeyModifiers::NONE
++                }),
++                Some(ModPointer::Action(_, _))
++            ));
++            assert!(focus("results"));
++            assert!(matches!(
++                input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
++                Some(ModInput::Interaction(_, _))
++            ));
++        }
++        preview(ModViewSnapshot::default());
++    }
++
++    #[test]
++    #[serial_test::serial]
++    fn footer_layout_is_reused_only_within_a_frame_at_the_same_width() {
++        preview(ModViewSnapshot::default());
++        let first;
++        {
++            let _frame = footer_frame();
++            first = footer_layout(80);
++            assert!(Arc::ptr_eq(&first, &footer_layout(80)));
++            assert!(!Arc::ptr_eq(&first, &footer_layout(40)));
++        }
++        assert!(!Arc::ptr_eq(&first, &footer_layout(80)));
++    }
++}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..babeb4306
+index 000000000..a532864ab
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2329 @@
+@@ -0,0 +1,2435 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -150581,6 +150852,74 @@ index 000000000..babeb4306
 +        view: ModView::parse(value).unwrap(),
 +        ..ModViewSnapshot::default()
 +    }
++}
++
++#[test]
++fn row_overflow_keeps_each_natural_child_visible() {
++    let view = snapshot(serde_json::json!({"sites":{"above_composer":{"components":[
++        {"type":"text","id":"usage","label":"Usage","text":"x".repeat(100)},
++        {"type":"text","id":"tasks","label":"Tasks","text":"Tasks 1/3"},
++        {"type":"button","id":"close","label":"Close","text":"Close","action":{"command":"demo:close"}}
++    ]}}}));
++    let placed = columns(&view.view.sites["above_composer"].components, 80, 1);
++    assert_eq!(placed.len(), 3);
++    assert!(placed.iter().all(|(_, _, width)| *width > 0));
++    assert_eq!(placed[1].2, 9);
++    assert_eq!(placed[2].2, 9);
++    assert!(placed.last().is_some_and(|(_, x, width)| x + width <= 80));
++}
++
++#[test]
++#[serial_test::serial]
++fn row_footer_preserves_links_in_later_columns() {
++    preview(snapshot(
++        serde_json::json!({"sites":{"above_composer":{"components":[
++            {"type":"box","id":"row","label":"Row","style":{"direction":"row","gap":2},"children":[
++                {"type":"line","id":"first","label":"First","spans":[{"text":"one","link":"https://one.example/"}]},
++                {"type":"line","id":"second","label":"Second","spans":[{"text":"two","link":"https://two.example/"}]}
++            ]}
++        ]}}}),
++    ));
++    let lines = footer_hyperlink_lines(40);
++    assert_eq!(lines[0].hyperlinks.len(), 2);
++    assert_eq!(lines[0].hyperlinks[1].columns, 5..8);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn frame_honours_terminal_ascii_override() {
++    let _ascii = crate::omd::tests::EnvGuard::set("OMD_TUI_ASCII", Some("1"));
++    let frame = Frame::new(
++        card(ModBorder::Double),
++        (ModBorder::Double, ModIcons::Unicode),
++        false,
++        false,
++    );
++    assert_eq!(frame.border.unwrap().top_left, "+");
++}
++
++#[test]
++#[serial_test::serial]
++fn nested_frames_use_the_rendered_snapshot_theme() {
++    preview(snapshot(
++        serde_json::json!({"theme":{"icons":"unicode","border":"rounded"}}),
++    ));
++    let view = snapshot(
++        serde_json::json!({"theme":{"icons":"ascii","border":"double"},
++        "sidebar_width":40,"sites":{"sidebar":{"components":[
++            {"type":"pane","id":"nested","label":"Nested","children":[
++                {"type":"text","id":"body","label":"Body","text":"content"}
++            ]}
++        ]}}}),
++    );
++    let area = Rect::new(0, 0, 120, 30);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &view);
++    let text = rows(&buffer, area);
++    assert!(text.contains("+"));
++    assert!(!text.contains('╭'));
++    preview(ModViewSnapshot::default());
 +}
 +
 +#[test]
@@ -151664,7 +152003,12 @@ index 000000000..babeb4306
 +    ]}}}))
 +    .view;
 +    let mut components = view.sites["pane/a"].components.clone();
-+    fill_heights(&mut components, 40, 24);
++    fill_heights(
++        &mut components,
++        40,
++        24,
++        &Frame::new(ModBoxStyle::default(), look(), false, false),
++    );
 +    let heights = components
 +        .iter()
 +        .map(|component| match component {
@@ -151676,6 +152020,35 @@ index 000000000..babeb4306
 +        })
 +        .collect::<Vec<_>>();
 +    assert_eq!(heights, vec![None, Some(5), Some(6), Some(3), Some(6)]);
++}
++
++#[test]
++fn layout_fill_accounts_for_gaps_and_row_direction() {
++    let view = snapshot(serde_json::json!({"sites":{"pane/a":{"components":[
++        {"type":"text","id":"label","label":"Label","text":"Header"},
++        {"type":"raster","id":"first","label":"First","alt":"First"},
++        {"type":"raster","id":"second","label":"Second","alt":"Second"}
++    ]}}}));
++    for (direction, expected) in [(ModDirection::Column, 10), (ModDirection::Row, 25)] {
++        let frame = Frame::new(
++            ModBoxStyle {
++                direction: Some(direction),
++                gap: Some(2),
++                ..ModBoxStyle::default()
++            },
++            look(),
++            false,
++            false,
++        );
++        let mut components = view.view.sites["pane/a"].components.clone();
++        fill_heights(&mut components, 80, 25, &frame);
++        for component in &components[1..] {
++            assert!(
++                matches!(component, ModComponent::Raster { height: Some(height), .. } if *height == expected)
++            );
++        }
++        assert_eq!(stack_height(&components, 80, &frame), 25);
++    }
 +}
 +
 +#[test]
@@ -152850,13 +153223,13 @@ index 000000000..babeb4306
 +#[test]
 +#[serial_test::serial]
 +fn row_boxes_take_focus_one_column_at_a_time() {
-+    let button = |id: &str| {
-+        serde_json::json!({"type": "button", "id": id, "label": id, "text": id, "action": {"command": "demo:go"}})
-+    };
-+    let snapshot = snapshot(serde_json::json!({"sidebar_width": 40, "sites": {"sidebar": {"components": [
++    let button = |id: &str| serde_json::json!({"type": "button", "id": id, "label": id, "text": id, "action": {"command": "demo:go"}});
++    let snapshot = snapshot(
++        serde_json::json!({"sidebar_width": 40, "sites": {"sidebar": {"components": [
 +        {"type": "box", "id": "row", "label": "Row", "style": {"direction": "row"}, "children": [
 +            {"type": "box", "id": "a", "label": "A", "children": [button("a1"), button("a2")]},
-+            {"type": "box", "id": "b", "label": "B", "children": [button("b1"), button("b2")]}]}]}}}));
++            {"type": "box", "id": "b", "label": "B", "children": [button("b1"), button("b2")]}]}]}}}),
++    );
 +    preview(snapshot.clone());
 +    let area = Rect::new(0, 0, 100, 20);
 +    let chat = chat_area(area, &snapshot, 0);
@@ -152884,7 +153257,11 @@ index 000000000..babeb4306
 +    render(area, chat, &mut buffer, &snapshot);
 +    let dialog = INTERACTION.lock().unwrap().dialog_area.unwrap();
 +    assert_eq!((dialog.x, dialog.width, dialog.height), (37, 76, 3));
-+    let row = |y| (0..120).map(|x| buffer[(x, y)].symbol()).collect::<String>();
++    let row = |y| {
++        (0..120)
++            .map(|x| buffer[(x, y)].symbol())
++            .collect::<String>()
++    };
 +    let top = row(dialog.y);
 +    assert!(top.contains("╔ Settings ═"), "{top}");
 +    let buttons = row(dialog.y + 1);
@@ -153044,10 +153421,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..72dff68b7
+index 000000000..7c17403fd
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,710 @@
+@@ -0,0 +1,712 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -153330,9 +153707,11 @@ index 000000000..72dff68b7
 +}
 +
 +pub(crate) fn ligatures_enabled() -> bool {
-+    terminal_active()
-+        && std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1")
-+        && locale_supports_unicode()
++    terminal_active() && unicode_supported()
++}
++
++pub(crate) fn unicode_supported() -> bool {
++    std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1") && locale_supports_unicode()
 +}
 +
 +pub(crate) fn mouse_enabled() -> bool {
@@ -153500,7 +153879,7 @@ index 000000000..72dff68b7
 +    }
 +
 +    impl EnvGuard {
-+        fn set(name: &'static str, value: Option<&str>) -> Self {
++        pub(crate) fn set(name: &'static str, value: Option<&str>) -> Self {
 +            let original = std::env::var_os(name);
 +            match value {
 +                Some(value) => unsafe { std::env::set_var(name, value) },

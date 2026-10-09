@@ -1539,8 +1539,9 @@ The mod owns the buffer, cursor and selection and draws them as spans; a key
 `document` keeps its scroll across content changes and scrolls to `selected`.
 A paste into a focused `terminal` component goes to the PTY, bracketed when
 the program asked for it. In a layout
-region, `terminal`, `document`, `diff` and `list` components without a
-`height` share the rows left after the region's other components. Releasing a
+region, `terminal`, `document`, `diff`, `list` and `raster` components without a
+`height` share the rows left after the region's other components and gaps.
+In a row layout each gets the region's full inner height. Releasing a
 mouse drag on a split border sends `component_event {kind: 'resize',
 component, ratio}`, where `component` is the split's path (`r` for the root,
 then `.N` per child index) and `ratio` its new percentages, so a mod can keep
@@ -1632,7 +1633,8 @@ styles a `box`, `pane` or `dialog`, an overlay, a layout `site:` leaf and,
 as `sidebar_style`, the sidebar:
 
 - `border`: `none`, `plain`, `rounded`, `double` or `thick`; a title sits in
-  the top edge. Under the theme's `icons: 'ascii'` every border draws as
+  the top edge. Under the theme's `icons: 'ascii'`, `OMD_TUI_ASCII=1`, or a
+  non-Unicode locale, every border draws as
   `+`, `-` and `|`.
 - `padding` and `margin`: cells on every side, or `[vertical, horizontal]`,
   each 0–4. `gap` (0–4) separates children: rows in a column, cells in a row.
@@ -1641,7 +1643,9 @@ as `sidebar_style`, the sidebar:
   so the fill reaches the edge; other boxes leave rows unpadded.
 - `direction: 'row'` lays children side by side. A `button`, `text` or `line`
   takes its natural width; every other child gets a share of the rest by its
-  `flex` weight (1–12, default 1); `max_width` caps a child's
+  `flex` weight (1–12, default 1). When natural widths exceed the available
+  space, shorter children keep their width and longer children share the
+  remaining columns. `max_width` caps a child's
   width and a child with fewer columns than its `min_width` drops out. In a
   column, `min_width`/`max_width` hide the box outside its bounds.
 - `hover` and `focus` take `{border?, background?, foreground?}` on a `box`

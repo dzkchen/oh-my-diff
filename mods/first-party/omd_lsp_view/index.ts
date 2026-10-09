@@ -111,7 +111,7 @@ export default function activate(api: ModAPI) {
         { type: 'button', id: id('close'), label: 'Close code intelligence', text: 'Close', action: { command: 'omd_lsp_view:lsp', args: 'close' } },
       ] },
     ];
-    return current.pane ? { sites: prompt([{ type: 'pane', id: 'omd_lsp_view_pinned', label: 'Code intelligence, /lsp pane unpins', title: current.title, children: components }, ...serverCards]) }
+    return current.pane ? { sites: prompt([{ type: 'box', id: 'omd_lsp_view_pinned', label: 'Code intelligence, /lsp pane unpins', title: current.title, style: { border: 'rounded', padding: [0, 1] }, children: components }, ...serverCards]) }
       : { sites: { ...prompt(serverCards), dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: current.title, children: components }, { type: 'slot' }] } } };
   });
 }

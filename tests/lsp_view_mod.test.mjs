@@ -54,6 +54,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     state = invoke(state, 'command', 'pane', 'lsp').state;
     let patch = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value;
     assert.deepEqual([Object.keys(patch), Object.keys(patch.sites)], [['sites'], ['above_composer']]);
+    assert.equal(patch.sites.above_composer.components[1].type, 'box');
     view = patch.sites.above_composer.components[1].children;
     assert.equal(view[0].text, 'box.py:2 · 1 errors');
     assert.deepEqual(view[2].rows.map(row => row.value), ['box.py:3']);
