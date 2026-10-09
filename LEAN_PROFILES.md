@@ -13,7 +13,7 @@ These internal selectors, installation paths, schema-1 records and lock filename
 remain unchanged. They identify the same profiles; the public labels and status
 metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
-These are local Apple Silicon candidate profiles for the active Codex `0.161.0`
+These are local Apple Silicon candidate profiles for the active Codex `0.162.0`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `omd-mod`, `omd`, and `omd-contract` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author

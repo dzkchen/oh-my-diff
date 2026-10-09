@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.161.0",
-  "commit": "979011409de0a60b52f179721948e65531d26144"
+  "tag": "rust-v0.162.0",
+  "commit": "c1382380de69521303b416720a52f42d51af6248"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -742,6 +742,20 @@
     "attachmentType",
     "identityKey",
     "threadId"
+   ]
+  },
+  "thread/attachmentOwner/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "archived",
+    "attachmentType",
+    "cursor",
+    "identityKey",
+    "limit"
    ]
   },
   "thread/backgroundTerminals/clean": {
@@ -1486,6 +1500,7 @@
   "features.guardian_reuse_parent_compaction",
   "features.guardian_root_handoff_context",
   "features.guardianv2",
+  "features.guardianv2_decisions_comparison",
   "features.login_shell_package_path",
   "features.mcp_oauth_refresh_coordination",
   "features.network_proxy",
@@ -1618,7 +1633,9 @@
   "features.code_mode_host",
   "features.code_mode_interrupt",
   "features.code_mode_only",
+  "features.code_mode_only_strict_3p_tools",
   "features.code_mode_prewarm",
+  "features.code_mode_tool_search",
   "features.codex_apps_mcp_2026_07_28",
   "features.codex_git_commit",
   "features.codex_hooks",
@@ -1658,6 +1675,7 @@
   "features.in_app_local_automation",
   "features.in_app_updates",
   "features.in_app_voice",
+  "features.incremental_tools",
   "features.instant_interrupt",
   "features.item_ids",
   "features.js_repl",
@@ -1672,6 +1690,7 @@
   "features.multi_agent",
   "features.multi_agent_mode",
   "features.multi_agent_v2",
+  "features.multi_agent_v2_dynamic_tools",
   "features.non_prefixed_mcp_tool_names",
   "features.nonfatal_clock_read_errors",
   "features.omit_app_server_notification_media",
@@ -1704,6 +1723,7 @@
   "features.skip_host_skill_discovery",
   "features.sleep_tool",
   "features.sqlite",
+  "features.stable_environment_tools",
   "features.standalone_web_search",
   "features.steer",
   "features.step_model_switching",
@@ -1718,6 +1738,7 @@
   "features.tool_suggest",
   "features.transcript_v2",
   "features.tui_app_server",
+  "features.ultrafast_mode",
   "features.unavailable_dummy_tools",
   "features.unbounded_connection_retries",
   "features.undo",
@@ -1821,6 +1842,7 @@
   "tools.update_plan",
   "tools.web_search",
   "tui",
+  "tui.agents_overview_grouping",
   "tui.alternate_screen",
   "tui.animations",
   "tui.auto_recap",
@@ -1830,6 +1852,7 @@
   "tui.fullscreen_transcript",
   "tui.keymap",
   "tui.model_availability_nux",
+  "tui.mouse_scroll_speed",
   "tui.notification_condition",
   "tui.notification_method",
   "tui.notifications",

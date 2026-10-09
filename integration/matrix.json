@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "as_of": "2026-10-07",
+  "as_of": "2026-10-08",
   "release": {
-    "codex": "0.161.0",
+    "codex": "0.162.0",
     "omd": "0.1.0",
     "mod_api": "0.2.0-experimental.5",
     "package_schema": 1,
-    "upstream_tag": "rust-v0.161.0",
-    "upstream_commit": "979011409de0a60b52f179721948e65531d26144",
+    "upstream_tag": "rust-v0.162.0",
+    "upstream_commit": "c1382380de69521303b416720a52f42d51af6248",
     "target": "aarch64-apple-darwin",
     "node": "24.18.0"
   },
@@ -17,7 +17,7 @@
       "area": "host",
       "name": "OMD host runtime",
       "owner": "OMD runtime (runtime/omd, runtime/native)",
-      "version": "0.1.0 on Codex 0.161.0",
+      "version": "0.1.0 on Codex 0.162.0",
       "features": [
         "author_diagnostics_v1",
         "author_offline_runner_v1",
@@ -273,7 +273,7 @@
       "area": "native",
       "name": "Codex plugins (plugin.json)",
       "owner": "upstream Codex",
-      "version": "0.161.0",
+      "version": "0.162.0",
       "status": "supported",
       "fixtures": [
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique",
@@ -287,7 +287,7 @@
       "area": "native",
       "name": "Codex hooks",
       "owner": "upstream Codex",
-      "version": "0.161.0",
+      "version": "0.162.0",
       "hooks": [
         "pre_tool_use",
         "permission_request",
@@ -653,7 +653,7 @@
       "area": "optional",
       "name": "Remote control",
       "owner": "upstream Codex",
-      "version": "0.161.0 native",
+      "version": "0.162.0 native",
       "status": "removed",
       "fixtures": [],
       "limitations": "The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained.",
@@ -1066,7 +1066,7 @@
     {
       "id": "pinned_codex_baseline",
       "retained_for": [
-        "0.161.0"
+        "0.162.0"
       ],
       "case": "The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces.",
       "evidence": [
@@ -1143,7 +1143,7 @@
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",
     "pnpm --dir mods test"
   ],
-  "qualification": "Development pin: the 0.161.0 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-0161-20261007.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
+  "qualification": "Development pin: the 0.162.0 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-0162-20261008.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
   "profiles": {
     "platform": {
       "label": "OMD Core",

@@ -2,7 +2,7 @@
   "schema": 1,
   "as_of": "2026-10-07",
   "release_pin": {
-    "codex": "0.161.0",
+    "codex": "0.162.0",
     "omd": "0.1.0",
     "mod_api": "0.2.0-experimental.5",
     "node": "24.18.0"
@@ -16,7 +16,7 @@
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.285",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.285",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -35,7 +35,7 @@
       "source": "mods/first-party/omd_cursor",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; @cursor/sdk 1.0.35 installed at enrollment; a Cursor account",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; @cursor/sdk 1.0.35 installed at enrollment; a Cursor account",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -53,7 +53,7 @@
       "source": "mods/first-party/omd_mini",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, store_v1, store_thread_v1, state_scopes_v1, terminal_lists_v1, terminal_inline_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, store_v1, store_thread_v1, state_scopes_v1, terminal_lists_v1, terminal_inline_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -71,7 +71,7 @@
       "source": "mods/first-party/omd_prompt_queue",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; composer_v2, user_submissions_v1, store_thread_v1, state_scopes_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; composer_v2, user_submissions_v1, store_thread_v1, state_scopes_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -89,7 +89,7 @@
       "source": "mods/first-party/omd_privacy",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; approval_v1, final_request_policy_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; approval_v1, final_request_policy_v1, store_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -107,7 +107,7 @@
       "source": "mods/first-party/omd_usage",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -125,7 +125,7 @@
       "source": "mods/first-party/omd_muse",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; Muse Code with an MSP host (muse serve)",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; Muse Code with an MSP host (muse serve)",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -143,7 +143,7 @@
       "source": "mods/first-party/omd_coordination",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -161,7 +161,7 @@
       "source": "mods/first-party/omd_recovery",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -179,7 +179,7 @@
       "source": "mods/first-party/omd_workspace",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -197,7 +197,7 @@
       "source": "mods/first-party/omd_typed_tasks",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -215,7 +215,7 @@
       "source": "mods/first-party/omd_logo",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -233,7 +233,7 @@
       "source": "mods/first-party/omd_model_picker",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -251,7 +251,7 @@
       "source": "mods/first-party/omd_git",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -269,7 +269,7 @@
       "source": "mods/first-party/omd_reactive_rules",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; stream_control_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; stream_control_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -287,7 +287,7 @@
       "source": "mods/first-party/omd_programmable_context",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; history_v1, store_thread_v1, routes_v1, model_complete_v1, terminal_prompt_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; history_v1, store_thread_v1, routes_v1, model_complete_v1, terminal_prompt_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -305,7 +305,7 @@
       "source": "mods/first-party/omd_plan_removal",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -323,7 +323,7 @@
       "source": "mods/first-party/omd_continue",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_activity_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_activity_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -341,7 +341,7 @@
       "source": "mods/first-party/omd_preview",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -359,7 +359,7 @@
       "source": "mods/first-party/omd_panes",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1, service_dispatch_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -377,7 +377,7 @@
       "source": "mods/first-party/omd_notes",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_arguments_v1, events_v1, exec_v1, timers_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_arguments_v1, events_v1, exec_v1, timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -395,7 +395,7 @@
       "source": "mods/first-party/omd_editor",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, store_thread_v1, events_v1, timers_v1, exec_v1, terminal_input_v1, terminal_style_v1, workspace_fs_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, store_thread_v1, events_v1, timers_v1, exec_v1, terminal_input_v1, terminal_style_v1, workspace_fs_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -413,7 +413,7 @@
       "source": "mods/first-party/omd_shared_checkout",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, approval_v1, events_v1, store_thread_v1, timers_v1, builtins_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, approval_v1, events_v1, store_thread_v1, timers_v1, builtins_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -431,7 +431,7 @@
       "source": "mods/first-party/omd_lsp_view",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -449,7 +449,7 @@
       "source": "mods/first-party/omd_frecency",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -467,7 +467,7 @@
       "source": "mods/first-party/omd_plan_panel",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -485,7 +485,7 @@
       "source": "mods/first-party/omd_layout",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, terminal_commands_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, terminal_commands_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -503,7 +503,7 @@
       "source": "mods/first-party/omd_worktree",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, guarded_exec_v1, terminal_prompt_v1, service_dispatch_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, guarded_exec_v1, terminal_prompt_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -521,7 +521,7 @@
       "source": "mods/first-party/omd_mods",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; package_controls_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; package_controls_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -539,7 +539,7 @@
       "source": "mods/first-party/omd_update",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, store_v1, terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, store_v1, terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -685,7 +685,7 @@
       "extension_type": "mod",
       "capability": "Opt-in Herdr integration: reports working, blocked and idle states and the session resume command to the Herdr pane running the session",
       "source": "mods/first-party/omd_herdr",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; unix_sockets, app_v1, store_v1; Node 24.18.0"
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; unix_sockets, app_v1, store_v1; Node 24.18.0"
     },
     {
       "id": "omd_mcp",
@@ -703,7 +703,7 @@
       "extension_type": "mod",
       "capability": "Opt-in MCP status: server status, tools and startup failures in the sidebar, reload, enable or disable and reviewed server setup",
       "source": "mods/first-party/omd_mcp",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, terminal_lists_v1, store_v1; Node 24.18.0"
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, terminal_lists_v1, store_v1; Node 24.18.0"
     },
     {
       "id": "omd_profiles",
@@ -721,7 +721,7 @@
       "extension_type": "mod",
       "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn",
       "source": "mods/first-party/omd_profiles",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; credentials_v1, events_v1, route_reload_v1, state_scopes_v1; Node 24.18.0"
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; credentials_v1, events_v1, route_reload_v1, state_scopes_v1; Node 24.18.0"
     },
     {
       "id": "omd_theme",
@@ -731,7 +731,7 @@
       "source": "mods/first-party/omd_theme",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_render_sites_v1, store_v1, terminal_surface_paint_v1, terminal_backdrop_transform_v1, terminal_image_sample_v1, terminal_import_lifetime_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_render_sites_v1, store_v1, terminal_surface_paint_v1, terminal_backdrop_transform_v1, terminal_image_sample_v1, terminal_import_lifetime_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -749,7 +749,7 @@
       "source": "mods/first-party/omd_task_tools",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; task_tool_exposure_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; task_tool_exposure_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -767,7 +767,7 @@
       "source": "mods/first-party/omd_lsp_sync",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, workspace_fs_v1, framed_process_v1, store_v1, tool_feedback_v1, service_dispatch_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, workspace_fs_v1, framed_process_v1, store_v1, tool_feedback_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -785,7 +785,7 @@
       "source": "mods/first-party/omd_advisor",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_evidence_v1, turn_activity_v1, workspace_snapshots_v1, workspace_fingerprint_v1, contracts_v2, tool_feedback_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_evidence_v1, turn_activity_v1, workspace_snapshots_v1, workspace_fingerprint_v1, contracts_v2, tool_feedback_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -803,7 +803,7 @@
       "source": "mods/first-party/omd_research",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; routes_v1, workspace_fs_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; routes_v1, workspace_fs_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -821,7 +821,7 @@
       "source": "mods/first-party/omd_checks",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, exec_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, exec_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -839,7 +839,7 @@
       "source": "mods/first-party/omd_graph_navigator",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; service_dispatch_v1, terminal_lists_v1, events_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; service_dispatch_v1, terminal_lists_v1, events_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -857,7 +857,7 @@
       "source": "mods/first-party/omd_guideline_governance",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; store_v1, workspace_fingerprint_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; store_v1, workspace_fingerprint_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -875,7 +875,7 @@
       "source": "mods/first-party/omd_inspector",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, events_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, events_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -893,7 +893,7 @@
       "source": "mods/first-party/omd_repository_analysis",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, store_v1, package_text_assets_v1, exec_output_artifacts_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, store_v1, package_text_assets_v1, exec_output_artifacts_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -911,7 +911,7 @@
       "source": "mods/first-party/omd_source_knowledge",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, store_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -929,7 +929,7 @@
       "source": "mods/first-party/omd_project_pi_prompts",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, package_text_assets_v1, exec_output_artifacts_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; workspace_fs_v1, workspace_fingerprint_v1, package_text_assets_v1, exec_output_artifacts_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
@@ -947,7 +947,7 @@
       "source": "mods/first-party/omd_workflow",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.161.0; OMD 0.1.0; mod API 0.2.0-experimental.5; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
+      "compatibility": "Codex 0.162.0; OMD 0.1.0; mod API 0.2.0-experimental.5; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
