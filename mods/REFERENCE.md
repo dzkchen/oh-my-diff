@@ -2364,12 +2364,12 @@ has no host maximum, so a provider's context window is configuration.
 | --- | --- |
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author examples DIR` | Live routing, coordination, recovery, terminal, workflow, and stream-replacement mod examples |
-| `pnpm check` | Strict TypeScript validation against this exact SDK, plus the engine's erasable-syntax check |
+| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed |
 | `pnpm test` | Engine-owned scenario execution with no provider requests, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
-| `pnpm watch -- STORE` | Re-inspects unchanged capabilities, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
+| `pnpm watch -- STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
@@ -2472,6 +2472,15 @@ code you wrote or reviewed; to try the mod in a real store, review the digest
 and approve it there yourself with `/omd` or `omd-mod trust`. Code an agent
 wrote is never trusted automatically.
 
+For a local package installed with `omd install`, watch updates it through the
+package preview/apply path, preserving its scope, settings, grants and enabled
+or disabled choice. It refuses a plan that changes any installed package's
+scope, including a shared dependency, as well as changed grants, authority or
+state versions; the refusal leaves the package lock and selections unchanged.
+Review those changes separately before watching again. An installed Git or npm
+package, or a rollback pointing at cached source, needs a fresh local install
+of the editable directory before watch can update it.
+
 Noninteractive: `omd-mod-author watch DIR STORE --once` does one inspect,
 approve and reload and exits, which suits a build step against a scratch store;
 `omd-mod-author test DIR` (or `pnpm test`) is the CI check and needs no store,
@@ -2529,7 +2538,17 @@ supported.
 | `omd-mod package-uninstall-plan STORE ID` | Preview removal and reject installed dependents |
 | `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the managed selection while retaining local source, state, cache, and history |
 
-`REQUEST_JSON` is `{action, id?, source?, reference?, version?, index?,
+For native `package-plan` and `package-apply`, `REQUEST_JSON` is
+`{action?, source, index?, scope?, offline?, trust, settings?}`. `action` is
+`install` (the default) or `update`. `trust` is
+`{packages: {ID: {capabilities, lifecycle?, dependencies?, secret_environment?}}}`:
+each package needs its exact capability and lifecycle grants, and dependencies
+need explicit trust too. `settings` maps package IDs to setting objects; an
+update preserves existing settings when omitted. Apply the identical request
+with the preview's `confirmation` string.
+
+The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI
+use `{action, id?, source?, reference?, version?, index?,
 scope?}` with `action` one of `install`, `update`, `remove`, `rollback`,
 `enable`, `disable` or `trust`. A request names a package with `source` or with
 a `reference` (and optional `version`), never both. A `source` is one of:
@@ -2608,11 +2627,28 @@ with `package_version_blocked: REASON`, and `packages.index` lists it with that
 reason.
 
 A managed package manifest must declare `license` and `provenance`; the
-scaffold emits both with placeholders to change. An optional `description` of
+scaffold emits both with placeholders to change. For a Git install,
+`provenance.source` must equal the repository URL exactly, without the `git+`
+prefix or `#REF:DIRECTORY` suffix. For example, use
+`https://github.com/author/repo` for `git+https://github.com/author/repo#v1.2.3:mod`.
+For a local source such as `git+file:///absolute/repo#REF:mod`, use the
+repository's canonical absolute filesystem path, without `git+`, `file://`,
+the revision or the mod subdirectory; resolve symlinks first. Commit that
+manifest at the selected Git revision. A mismatch is refused with
+`repository_provenance_mismatch`.
+An optional `description` of
 1–160 printable characters says what the mod adds; `packages.list` and the
 `/mods` screen show it. Package rollback repoints the
 selection at the immutable store cache, so returning to editable local
 development is a fresh local install of the rolled-back source.
+
+Successful local package updates retain eight rollback history entries. After
+commit, the package manager removes local snapshots evicted from that history
+when no installed package, retained history, selection or managed deployment
+references them. Cleanup leaves editable sources and remote package caches
+alone; uninstall retains its cache. This is best-effort cleanup of history
+evictions, not a store-wide size limit: abandoned previews, older orphaned
+snapshots, interrupted cleanup and deletion failures can retain extra files.
 
 Resolution selects the highest unblocked exact or caret-compatible semantic
 version and then checks the index integrity against the manifest, entrypoint,

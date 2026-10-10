@@ -85,7 +85,7 @@ export default function activate(api: ModAPI) {
 `;
 }
 
-function scenarioFor(name) {
+function scenarioFor(name, example = 'minimal') {
   const scenarios = {
     minimal: {
       schema: 1,
@@ -161,14 +161,14 @@ function scenarioFor(name) {
     review_probe: { schema: 1, steps: [{ type: 'invoke', mod: 'example_review_probe', event: 'turn_end', name: '', payload: { turn_id: 'fixture', outcome: 'aborted' } }] },
     snapshot_review: { schema: 1, host_operations: { 'task.status': [{ result: { ledger: { thread_id: 'author-preview' } } }], 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'snapshot_review', event: 'tool', name: 'start', payload: {}, expect_error: 'capture_first' }] },
   };
-  return scenarios[name] || scenarios.minimal;
+  return scenarios[example] || scenarios.minimal;
 }
 
-function debugScenario(name) {
-  if (name === 'coordination') {
+function debugScenario(name, example = 'minimal') {
+  if (example === 'coordination') {
     return { schema: 1, steps: [{ type: 'invoke', mod: 'coordination', event: 'tool', name: 'compare', payload: null, expect_error: 'prompt required' }] };
   }
-  if (name === 'minimal') {
+  if (example === 'minimal') {
     return { schema: 1, steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'fail', expect_error: 'INTENTIONAL_AUTHOR_FAILURE' }] };
   }
   return { schema: 1, steps: [{ type: 'invoke', mod: ({ service_request: 'example_service_request', workspace: 'workspace_author', virtual_reader: 'example_virtual_reader', scoped_data: 'example_scoped_data', review_probe: 'example_review_probe' })[name] ?? name.replaceAll('-', '_'), event: 'command', name: '__intentional_missing__', payload: null, expect_error: 'unsupported_or_unregistered_operation' }] };
@@ -178,11 +178,11 @@ async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function writeProjectFiles(directory, name) {
+async function writeProjectFiles(directory, name, example) {
   await writeJson(join(directory, 'package.json'), packageJson(name));
   await writeJson(join(directory, 'tsconfig.json'), tsconfig());
-  await writeJson(join(directory, 'mod.test.json'), scenarioFor(name));
-  await writeJson(join(directory, 'debug.test.json'), debugScenario(name));
+  await writeJson(join(directory, 'mod.test.json'), scenarioFor(name, example));
+  await writeJson(join(directory, 'debug.test.json'), debugScenario(name, example));
 }
 
 // The SDK is a local file dependency, so the scaffold and its lockfile install without the network.
@@ -208,7 +208,7 @@ async function copyExample(directory, name) {
   if (!statSync(source).isDirectory()) fail(`unknown_example: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   cpSync(source, directory, { recursive: true });
-  await writeProjectFiles(directory, name);
+  await writeProjectFiles(directory, name, name);
   const suppliedScenario = join(source, 'mod.test.json');
   if (existsSync(suppliedScenario)) cpSync(suppliedScenario, join(directory, 'mod.test.json'));
 }
@@ -251,10 +251,14 @@ function compileJsx(directory) {
   if (existing !== generated) writeFileSync(target, generated);
 }
 
-function checkProject(directory) {
+function checkSyntax(directory) {
   compileJsx(directory);
   const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
   stripTypeScriptTypes(readFileSync(join(directory, manifest.entrypoint ?? 'index.ts'), 'utf8'));
+}
+
+function checkProject(directory) {
+  checkSyntax(directory);
   if (!existsSync(join(directory, 'node_modules/.bin/tsc'))) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;
@@ -356,8 +360,22 @@ async function packageProject(directory) {
 function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
-    compileJsx(directory);
-    const inspected = trustPackage(store, directory);
+    checkSyntax(directory);
+    const inspected = engineJson(['inspect', directory]);
+    const locked = engineJson(['package-lock', store]).packages;
+    const installed = locked[inspected.manifest.id];
+    if (installed) {
+      if (installed.source.kind !== 'local' || realpathSync(installed.source.path) !== inspected.path || realpathSync(installed.path) !== inspected.path) fail('watch_source_mismatch: use a scratch store with this local package');
+      const index = installed.dependencies.map(dependency => locked[dependency.id]?.source).find(source => source?.kind === 'package')?.index;
+      const request = JSON.stringify({ action: 'update', source: { kind: 'local', path: inspected.path }, scope: installed.scope, offline: true, index,
+        trust: { packages: Object.fromEntries(Object.entries(locked).map(([id, entry]) => [id, entry.trust])) } });
+      const preview = engineJson(['package-plan', store, request]);
+      if (preview.packages.some(packageEntry => locked[packageEntry.id] && locked[packageEntry.id].scope !== packageEntry.scope)) fail('watch_approval_required: review package scope changes before watching');
+      if (preview.changes.packages.some(change => change.renewed_approval || change.state_version.migration_required)) fail('watch_approval_required: review changed package grants, authority or state versions before watching');
+      engineJson(['package-apply', store, request, preview.confirmation]);
+    } else {
+      trustPackage(store, directory);
+    }
     files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
     if (existsSync(join(directory, 'index.tsx'))) files.add('index.tsx');
     const result = engineJson(['reload', store]);
@@ -384,7 +402,7 @@ function watchProject(directory, store, once) {
 }
 
 async function main() {
-  const [action, rawDirectory = '.', nameOrStore, extra] = process.argv.slice(2);
+  const [action, rawDirectory = '.', nameOrStore, extra] = process.argv.slice(2).filter(argument => argument !== '--');
   const directory = resolve(rawDirectory);
   switch (action) {
     case 'create': return createProject(directory, nameOrStore || basename(directory));
