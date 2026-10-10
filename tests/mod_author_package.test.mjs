@@ -88,7 +88,8 @@ test('watch updates an installed local package without changing its grants, scop
     engine('package-apply', store, request, preview.confirmation);
     engine('package-enable', store, 'dependency');
     engine('package-enable', store, 'fixture');
-    const original = engine('package-lock', store).packages.fixture;
+    const originalPackages = engine('package-lock', store).packages;
+    const original = originalPackages.fixture;
     assert.equal(original.scope, 'project');
     const source = readFileSync(join(project, 'index.ts'), 'utf8');
     writeFileSync(join(project, 'index.ts'), source.replace('Hello ', 'Edited '));
@@ -100,6 +101,7 @@ test('watch updates an installed local package without changing its grants, scop
     assert.deepEqual(updated.trust, original.trust);
     assert.deepEqual(updated.settings, { label: 'Kept' });
     assert.equal(updated.enabled, true);
+    assert.deepEqual(engine('package-lock', store).packages.dependency, originalPackages.dependency);
     assert.deepEqual(engine('command', store, 'fixture', 'hello', '"author"'), { display: 'Edited author' });
     writeFileSync(join(project, 'index.ts'), source + '?');
     const broken = author('watch', project, store, '--once');
@@ -133,6 +135,56 @@ test('watch updates an installed local package without changing its grants, scop
     assert.notEqual(replaced.status, 0);
     assert.match(replaced.stderr, /watch_source_mismatch/);
     assert.equal(engine('package-lock', store).packages.fixture.integrity, updated.integrity);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('watch refuses to move a shared dependency from project to user scope', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-watch-scope-'));
+  const project = join(root, 'project');
+  const store = join(root, 'store');
+  const author = (...args) => spawnSync(process.execPath, ['--no-warnings', new URL('../mods/author/cli.mjs', import.meta.url).pathname, ...args], { encoding: 'utf8', cwd: root });
+  const engine = (...args) => {
+    const result = spawnSync(process.env.OMD_MOD_BIN, args, { encoding: 'utf8', cwd: project });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const install = request => {
+    const serialized = JSON.stringify(request);
+    const preview = engine('package-plan', store, serialized);
+    engine('package-apply', store, serialized, preview.confirmation);
+  };
+  try {
+    assert.equal(author('create', project, 'fixture').status, 0);
+    const manifest = JSON.parse(readFileSync(join(project, 'mod.json'), 'utf8'));
+    const dependency = join(root, 'dependency');
+    mkdirSync(dependency);
+    writeFileSync(join(dependency, 'mod.json'), JSON.stringify({ ...manifest, id: 'dependency', capabilities: [] }));
+    writeFileSync(join(dependency, 'index.ts'), 'export default () => {};');
+    const inspected = engine('inspect', dependency);
+    const index = join(root, 'index.json');
+    const dependencySource = { kind: 'package', index, id: 'dependency', version: '^0.1.0' };
+    writeFileSync(index, JSON.stringify({ schema: 1, packages: { dependency: [{ version: '0.1.0', source: { kind: 'local', path: dependency }, integrity: inspected.sha256 }] } }));
+    writeFileSync(join(project, 'mod.json'), JSON.stringify({ ...manifest, dependencies: [{ id: 'dependency', version: '^0.1.0' }] }));
+    engine('init', store, process.execPath);
+    const trust = { packages: { fixture: { capabilities: manifest.capabilities, dependencies: true }, dependency: { capabilities: [] } } };
+    install({ source: { kind: 'local', path: project }, scope: 'user', index, trust });
+    install({ source: dependencySource, scope: 'project', index, trust });
+    engine('package-enable', store, 'dependency');
+    const before = engine('package-lock', store);
+    assert.equal(before.packages.fixture.scope, 'user');
+    assert.equal(before.packages.dependency.scope, 'project');
+    const selections = readFileSync(join(store, 'mods.json'), 'utf8');
+    const source = readFileSync(join(project, 'index.ts'), 'utf8');
+    writeFileSync(join(project, 'index.ts'), source.replace('Hello ', 'Edited '));
+    const watched = author('watch', project, store, '--once');
+    assert.notEqual(watched.status, 0, watched.stdout);
+    assert.match(watched.stderr, /watch_approval_required/);
+    assert.deepEqual(engine('package-lock', store), before);
+    assert.equal(readFileSync(join(store, 'mods.json'), 'utf8'), selections);
+    engine('package-disable', store, 'dependency');
+    assert.equal(engine('package-lock', store).packages.dependency.enabled, false);
+    engine('package-enable', store, 'dependency');
+    assert.equal(engine('package-lock', store).packages.dependency.enabled, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -370,6 +370,7 @@ function watchProject(directory, store, once) {
       const request = JSON.stringify({ action: 'update', source: { kind: 'local', path: inspected.path }, scope: installed.scope, offline: true, index,
         trust: { packages: Object.fromEntries(Object.entries(locked).map(([id, entry]) => [id, entry.trust])) } });
       const preview = engineJson(['package-plan', store, request]);
+      if (preview.packages.some(packageEntry => locked[packageEntry.id] && locked[packageEntry.id].scope !== packageEntry.scope)) fail('watch_approval_required: review package scope changes before watching');
       if (preview.changes.packages.some(change => change.renewed_approval || change.state_version.migration_required)) fail('watch_approval_required: review changed package grants, authority or state versions before watching');
       engineJson(['package-apply', store, request, preview.confirmation]);
     } else {

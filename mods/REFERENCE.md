@@ -2474,8 +2474,10 @@ wrote is never trusted automatically.
 
 For a local package installed with `omd install`, watch updates it through the
 package preview/apply path, preserving its scope, settings, grants and enabled
-or disabled choice. It refuses changed grants, authority or state versions;
-review those changes separately before watching again. An installed Git or npm
+or disabled choice. It refuses a plan that changes any installed package's
+scope, including a shared dependency, as well as changed grants, authority or
+state versions; the refusal leaves the package lock and selections unchanged.
+Review those changes separately before watching again. An installed Git or npm
 package, or a rollback pointing at cached source, needs a fresh local install
 of the editable directory before watch can update it.
 
@@ -2639,6 +2641,14 @@ An optional `description` of
 `/mods` screen show it. Package rollback repoints the
 selection at the immutable store cache, so returning to editable local
 development is a fresh local install of the rolled-back source.
+
+Successful local package updates retain eight rollback history entries. After
+commit, the package manager removes local snapshots evicted from that history
+when no installed package, retained history, selection or managed deployment
+references them. Cleanup leaves editable sources and remote package caches
+alone; uninstall retains its cache. This is best-effort cleanup of history
+evictions, not a store-wide size limit: abandoned previews, older orphaned
+snapshots, interrupted cleanup and deletion failures can retain extra files.
 
 Resolution selects the highest unblocked exact or caret-compatible semantic
 version and then checks the index integrity against the manifest, entrypoint,
