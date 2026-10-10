@@ -76,6 +76,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "session.info"
                         | "tools.list"
                         | "turns.activity"
+                        | "turns.abort"
                         | "events.publish"
                         | "credentials.list"
                         | "packages.list"
@@ -324,7 +325,7 @@ async fn run(
     lead: &Lead,
     caller: Caller<'_>,
     call: Option<&ToolCall<'_>>,
-    request: ModHostCall,
+    mut request: ModHostCall,
     cancelled: &Arc<AtomicBool>,
 ) -> Result<Value, String> {
     let host = &lead.host;
@@ -431,6 +432,30 @@ async fn run(
         .map_err(|e| e.to_string())?;
     }
     if operation.starts_with("process.") {
+        if operation == "process.start" {
+            let grants = caller.grants.as_ref().ok_or("host_caller_inactive")?;
+            let overrides = codex_omd::host::environment_overrides(
+                &host.root,
+                Some(&lead.thread.to_string()),
+                caller.id,
+                caller.source,
+                &grants.exec_environment,
+            )?;
+            if !overrides.is_empty() {
+                let arguments = request
+                    .arguments
+                    .as_object_mut()
+                    .ok_or("process_arguments_invalid")?;
+                let environment = arguments
+                    .entry("environment")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .ok_or("process_arguments_invalid")?;
+                for (name, value) in overrides {
+                    environment.entry(name).or_insert(json!(value));
+                }
+            }
+        }
         crate::generic_host::process_request_allowed(caller.grants.as_ref(), &request)?;
         let authority = authority(lead, call).await?;
         let processes = lead.session.processes.clone();
@@ -593,6 +618,35 @@ async fn run(
         "peers.list" | "peers.send" => {
             let endpoints = super::peering::current_endpoints(core).await;
             core.peering.call(lead, &caller, request, endpoints)
+        }
+        "turns.abort" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                turn_id: String,
+            }
+            if !matches!(caller.origin, Origin::UserCommand | Origin::Event) {
+                return Err("host_operation_user_or_event_only: turns.abort".into());
+            }
+            let input: Input = serde_json::from_value(request.arguments)
+                .map_err(|_| "turn_abort_arguments_invalid")?;
+            if input.turn_id.is_empty() || input.turn_id.len() > 128 {
+                return Err("turn_abort_arguments_invalid".into());
+            }
+            let manager = lead
+                .host
+                .manager
+                .upgrade()
+                .ok_or("native_thread_manager_stopped")?;
+            let thread = manager
+                .get_thread(lead.thread)
+                .await
+                .map_err(|error| error.to_string())?;
+            let accepted = thread
+                .interrupt_if_no_pending_input(&input.turn_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(json!({"accepted": accepted}))
         }
         "turns.queue" | "turns.queued" | "turns.dequeue" => {
             let core = core.this.upgrade().ok_or("native_host_stopped")?;

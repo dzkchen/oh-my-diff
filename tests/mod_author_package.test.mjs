@@ -38,6 +38,31 @@ test('author test fails when a project has no tests', () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('author example and diagnostic commands preserve their public arguments', () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-commands-'));
+  try {
+    const engine = join(root, 'engine.mjs');
+    writeFileSync(engine, `#!${process.execPath}\nconsole.log(JSON.stringify({ args: process.argv.slice(2) }));\n`);
+    chmodSync(engine, 0o700);
+    const author = (...args) => {
+      const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, ...args], { encoding: 'utf8', env: { ...process.env, OMD_MOD_BIN: engine } });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout;
+    };
+    const store = join(root, 'store');
+    for (const command of ['report', 'events']) assert.deepEqual(JSON.parse(author(command, store)).args, [command, store]);
+    const output = join(root, 'diagnostics.json');
+    assert.deepEqual(JSON.parse(author('diagnostics', store, output)).args, ['diagnostics', store, output]);
+    assert.deepEqual(JSON.parse(author('explain', 'capability_denied')).args, ['explain', 'capability_denied']);
+    const single = join(root, 'single');
+    author('example', single, 'terminal');
+    assert.equal(JSON.parse(readFileSync(join(single, 'mod.json'))).id, 'terminal');
+    const all = join(root, 'all');
+    author('examples', all);
+    assert.equal(JSON.parse(readFileSync(join(all, 'routing', 'mod.json'))).id, 'routing');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('scaffold commands and mapped failures work for custom and example-named IDs', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-scaffold-'));
   const author = (...args) => spawnSync(process.execPath, ['--no-warnings', new URL('../mods/author/cli.mjs', import.meta.url).pathname, ...args], { encoding: 'utf8' });
@@ -49,6 +74,11 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       const tested = author('test', project);
       assert.equal(tested.status, 0, tested.stderr);
       assert.match(tested.stdout, /Hello author/);
+      const checked = author('check', project);
+      assert.equal(checked.status, 0, checked.stderr);
+      const scenario = author('run', project);
+      assert.equal(scenario.status, 0, scenario.stderr);
+      assert.match(scenario.stdout, /Hello author/);
       const debugged = author('debug', project);
       assert.equal(debugged.status, 0, debugged.stderr);
       assert.match(debugged.stdout, /INTENTIONAL_AUTHOR_FAILURE/);

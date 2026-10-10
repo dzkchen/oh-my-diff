@@ -41,6 +41,21 @@ function run(name, event, payload = null, options = {}) {
   return result;
 }
 
+test('host control examples preserve clipboard status and scoped arguments', () => {
+  const selected = run('terminal', 'command', null, { name: 'copy_selection' });
+  assert.deepEqual(selected.host_call, { operation: 'terminal.selection', arguments: {} });
+  const receipt = { call: selected.host_call, value: { text: 'selected error', truncated: true } };
+  const copying = run('terminal', 'command', null, { name: 'copy_selection', receipts: [receipt] });
+  assert.deepEqual(copying.host_call, { operation: 'terminal.copy', arguments: { text: 'selected error' } });
+  const copied = run('terminal', 'command', null, { name: 'copy_selection', receipts: [receipt, { call: copying.host_call, value: { status: 'pending' } }] });
+  assert.equal(copied.value.display, 'Clipboard: pending (selection truncated)');
+  const empty = run('terminal', 'command', null, { name: 'copy_selection', receipts: [{ call: selected.host_call, value: { text: null, truncated: false } }] });
+  assert.equal(empty.host_call, null);
+  assert.deepEqual(run('os_tools', 'command', 'C', { name: 'locale' }).host_call, { operation: 'environment.set', arguments: { name: 'LANG', value: 'C' } });
+  assert.deepEqual(run('os_tools', 'command', '', { name: 'locale' }).host_call, { operation: 'environment.set', arguments: { name: 'LANG', value: null } });
+  assert.deepEqual(run('status_tools', 'command', ' turn-a ', { name: 'abort_turn' }).host_call, { operation: 'turns.abort', arguments: { turn_id: 'turn-a' } });
+});
+
 test('all packed legacy examples declare the current API and type-only current imports', () => {
   for (const name of names) {
     const manifest = JSON.parse(readFileSync(packageFile(name, 'mod.json'), 'utf8'));
@@ -227,7 +242,7 @@ test('reactive dashboard keeps a form, streamed status and derived summary on ke
   const manifest = JSON.parse(readFileSync(new URL('../mods/examples/reactive_dashboard/mod.json', import.meta.url), 'utf8'));
   assert.ok(manifest.subscriptions?.channels.includes('reactive_dashboard/stream'));
   const stream = run('reactive_dashboard', 'channel', { channel: 'reactive_dashboard/stream', data: null });
-  assert.deepEqual(stream.host_call, { operation: 'events.schedule', arguments: { key: 'tick', delay_ms: 1000 } });
+  assert.deepEqual(stream.host_call, { operation: 'events.schedule', arguments: { key: 'tick', delay_ms: 100 } });
   const typing = run('reactive_dashboard', 'component_event', { component: 'dashboard_query', kind: 'change', value: 'log', origin: 'user' });
   assert.equal(typing.state ?? null, null, 'edits do not write state until the input submits');
   const changed = run('reactive_dashboard', 'command', ' login ', { name: 'search' });
@@ -236,8 +251,8 @@ test('reactive dashboard keeps a form, streamed status and derived summary on ke
   assert.equal(view.sites.sidebar.components[0].value, 'login');
   assert.equal(view.sites.sidebar.components[1].text, 'login · 1 searches · 0 ticks');
   const tick = run('reactive_dashboard', 'timer', { key: 'tick' }, { state: changed.state });
-  assert.deepEqual(tick.host_call, { operation: 'events.schedule', arguments: { key: 'tick', delay_ms: 1000 } });
-  const ticked = run('reactive_dashboard', 'timer', { key: 'tick' }, { state: changed.state, receipts: [{ call: tick.host_call, value: { key: 'tick', delay_ms: 1000 } }] });
+  assert.deepEqual(tick.host_call, { operation: 'events.schedule', arguments: { key: 'tick', delay_ms: 100 } });
+  const ticked = run('reactive_dashboard', 'timer', { key: 'tick' }, { state: changed.state, receipts: [{ call: tick.host_call, value: { key: 'tick', delay_ms: 100 } }] });
   assert.equal(ticked.state.ticks, 1);
   const cleared = run('reactive_dashboard', 'command', '  ', { name: 'search', state: ticked.state });
   assert.deepEqual(cleared.state, { query: '', counts: { searches: 2 }, ticks: 1 });

@@ -25,6 +25,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
+mod environment;
+pub use environment::{clear_environment, environment_overrides, retain_environment};
+
 pub const RESERVED_EXEC_ENVIRONMENT: &[&str] = &[
     "PATH",
     "HOME",
@@ -204,6 +207,7 @@ pub fn served(operation: &str) -> bool {
             | "store.export"
             | "store.reset"
             | "environment.read"
+            | "environment.set"
     )
 }
 
@@ -230,7 +234,7 @@ impl Authority for ExternalRoot {
     }
 }
 
-fn environment(caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+fn environment(root: &Path, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Input {
@@ -241,12 +245,21 @@ fn environment(caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
         return Err("environment_names_invalid".into());
     }
     let mut values = serde_json::Map::new();
+    let overrides = environment_overrides(
+        root,
+        caller.thread,
+        caller.id,
+        caller.source_sha256,
+        caller.exec_environment,
+    )?;
     for name in input.names {
         if !caller.exec_environment.contains(&name) {
             return Err(format!("exec_environment_undeclared: {name}"));
         }
-        let value = std::env::var(&name)
-            .ok()
+        let value = overrides
+            .get(&name)
+            .cloned()
+            .unwrap_or_else(|| std::env::var(&name).ok())
             .filter(|value| value.len() <= 4096);
         let entry = if secret_like(&name) {
             json!({"set": value.is_some()})
@@ -776,7 +789,8 @@ impl Host<'_> {
             "workspace.transaction" => self.transaction(caller, arguments),
             "workspace.backup" => self.backup(caller, arguments),
             "workspace.restore" => self.restore(caller, arguments),
-            "environment.read" => environment(caller, arguments),
+            "environment.read" => environment(self.data_root, caller, arguments),
+            "environment.set" => environment::set(self.data_root, caller, arguments),
             operation if operation.starts_with("store.") => {
                 let key = repository_key(self.repository());
                 DataStore {
@@ -853,7 +867,23 @@ impl Host<'_> {
         struct RequiredAccess {
             write: Vec<String>,
         }
-        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let mut input: Input =
+            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let overrides = environment_overrides(
+            self.data_root,
+            caller.thread,
+            caller.id,
+            caller.source_sha256,
+            caller.exec_environment,
+        )?;
+        for (name, value) in &overrides {
+            if let Some(value) = value {
+                input
+                    .env
+                    .entry(name.clone())
+                    .or_insert_with(|| value.clone());
+            }
+        }
         if !(self.active)() {
             return Err("exec_cancelled".into());
         }
@@ -1105,6 +1135,11 @@ impl Host<'_> {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (name, value) in &overrides {
+            if value.is_none() {
+                command.env_remove(name);
+            }
+        }
         command.envs(&input.env);
         let started = Instant::now();
         let mut child = Child(

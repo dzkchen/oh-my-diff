@@ -177,6 +177,8 @@
         "terminal.pane",
         "terminal.panes",
         "terminal.notice",
+        "terminal.selection",
+        "terminal.copy",
         "terminal.blit",
         "terminal.pty"
       ]

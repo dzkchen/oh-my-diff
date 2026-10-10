@@ -104,6 +104,77 @@ fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Ori
 // Tests share the `fixture` caller, so parallel exec runs would hit its concurrency cap.
 static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[test]
+fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
+    let _slot = exec_slot();
+    let (_temp, _, data, authority) = setup();
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &|| true,
+        record_changes: false,
+    };
+    let caps = strings(&["exec"]);
+    let names = strings(&["FIXTURE_VALUE", "FIXTURE_TOKEN", "HOME"]);
+    let mut who = caller(&caps, &names, Origin::UserCommand);
+    let set = |who: &Caller<'_>, name: &str, value: Value| {
+        host.call(
+            who,
+            "environment.set",
+            json!({"name": name, "value": value}),
+        )
+    };
+    assert_eq!(
+        set(&who, "FIXTURE_VALUE", json!("private")).unwrap(),
+        json!({"name": "FIXTURE_VALUE", "set": true})
+    );
+    set(&who, "FIXTURE_TOKEN", json!("hidden")).unwrap();
+    let read = |who: &Caller<'_>| {
+        host.call(
+            who,
+            "environment.read",
+            json!({"names": ["FIXTURE_VALUE", "FIXTURE_TOKEN"]}),
+        )
+        .unwrap()
+    };
+    assert_eq!(read(&who)["values"]["FIXTURE_TOKEN"], json!({"set": true}));
+    assert_eq!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
+    assert!(set(&who, "HOME", json!("bad")).is_err());
+    assert!(set(&who, "UNDECLARED", json!("bad")).is_err());
+    assert!(set(&who, "FIXTURE_VALUE", json!("x".repeat(4097))).is_err());
+    assert!(set(&who, "FIXTURE_VALUE", json!("x\u{0}y")).is_err());
+    let run = |who: &Caller<'_>, env: Value| {
+        host.call(who, "exec.run", json!({"program": "sh", "argv": ["-c", "printf '%s' \"${FIXTURE_VALUE-unset}\""], "env": env})).unwrap()
+    };
+    assert_eq!(run(&who, json!({}))["stdout"], "private");
+    assert_eq!(
+        run(&who, json!({"FIXTURE_VALUE": "explicit"}))["stdout"],
+        "explicit"
+    );
+    who.id = "other";
+    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
+    who.id = "fixture";
+    who.thread = Some("other-thread");
+    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
+    who.thread = Some("thread-1");
+    who.source_sha256 = "other-source";
+    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
+    who.source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+    set(&who, "FIXTURE_VALUE", Value::Null).unwrap();
+    assert_eq!(run(&who, json!({}))["stdout"], "unset");
+    assert_eq!(
+        run(&who, json!({"FIXTURE_VALUE": "explicit"}))["stdout"],
+        "explicit"
+    );
+    set(&who, "FIXTURE_VALUE", json!("private")).unwrap();
+    codex_omd::host::clear_environment(&data, Some("other-thread"), None);
+    assert_eq!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
+    codex_omd::host::retain_environment(&data, &Default::default());
+    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
+    who.thread = None;
+    assert!(set(&who, "FIXTURE_VALUE", json!("private")).is_err());
+}
+
 fn exec_slot() -> std::sync::MutexGuard<'static, ()> {
     EXEC.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

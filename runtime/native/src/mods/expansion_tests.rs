@@ -133,6 +133,239 @@ fn mods(core: &Arc<Core>) -> Mods {
     }
 }
 
+async fn attach_thread(fixture: &mut Fixture) -> Arc<codex_core::ThreadManager> {
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    config.model_provider.base_url = Some("http://127.0.0.1:9/v1".into());
+    let policy = codex_config::CloudConfigBundlePolicy::default();
+    let mut snapshot = codex_config::CloudConfigBundleSnapshot {
+        bundle: Ok(None),
+        binding: None,
+    };
+    policy.publish_snapshot(&mut snapshot);
+    config.config_layer_stack = config
+        .config_layer_stack
+        .with_cloud_config_binding(snapshot.binding);
+    *fixture.lead.permission_profile.lock().unwrap() =
+        config.permissions.effective_permission_profile();
+    let manager = Arc::new(
+        codex_core::test_support::thread_manager_with_models_provider(
+            codex_login::CodexAuth::from_api_key("test"),
+            config.model_provider.clone(),
+        ),
+    );
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions::new(config))
+        .await
+        .unwrap();
+    let host = &fixture.lead.host;
+    fixture.lead.host = Arc::new(Host {
+        root: host.root.clone(),
+        repository: host.repository.clone(),
+        repository_identity: host.repository_identity.clone(),
+        config: host.config.clone(),
+        routes: Mutex::new(crate::RouteTable {
+            stamp: None,
+            config: Arc::new(host.config.clone()),
+            error: None,
+        }),
+        accounts: host.accounts.clone(),
+        manager: Arc::downgrade(&manager),
+        epoch: host.epoch,
+    });
+    fixture.lead.thread = started.thread_id;
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    manager
+}
+
+async fn control_call(
+    fixture: &Fixture,
+    origin: Origin,
+    operation: &str,
+    arguments: Value,
+) -> Result<Value, String> {
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("control"), runtime.generation())
+    };
+    let source = grants
+        .as_ref()
+        .unwrap_or_else(|| {
+            panic!(
+                "missing control grants: {:?}",
+                fixture.core.runtime.lock().unwrap().status()
+            )
+        })
+        .source_sha256
+        .clone();
+    super::operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        Caller {
+            id: "control",
+            source: &source,
+            grants,
+            generation,
+            origin,
+            record_changes: false,
+        },
+        None,
+        ModHostCall {
+            operation: operation.into(),
+            arguments,
+        },
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turn_abort_requires_event_or_user_and_stays_in_current_thread() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["threads"],
+        manifest: Value::Null,
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    assert!(
+        control_call(
+            &fixture,
+            Origin::Tool,
+            "turns.abort",
+            json!({"turn_id": "stale"})
+        )
+        .await
+        .unwrap_err()
+        .contains("user_or_event_only")
+    );
+    for origin in [Origin::UserCommand, Origin::Event] {
+        for arguments in [
+            json!({}),
+            json!({"turn_id": ""}),
+            json!({"turn_id": "x".repeat(129)}),
+            json!({"turn_id": "stale", "thread_id": ThreadId::new().to_string()}),
+        ] {
+            assert_eq!(
+                control_call(&fixture, origin, "turns.abort", arguments)
+                    .await
+                    .unwrap_err(),
+                "turn_abort_arguments_invalid"
+            );
+        }
+        assert_eq!(
+            control_call(&fixture, origin, "turns.abort", json!({"turn_id": "stale"}))
+                .await
+                .unwrap(),
+            json!({"accepted": false})
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["exec"],
+        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    control_call(
+        &fixture,
+        Origin::Event,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
+    )
+    .await
+    .unwrap();
+    let found = control_call(
+        &fixture,
+        Origin::Event,
+        "process.which",
+        json!({"names": ["sh"]}),
+    )
+    .await
+    .unwrap();
+    let sh = &found["found"][0];
+    for (session, explicit, expected) in [
+        ("scoped", json!({}), "scoped"),
+        ("explicit", json!({"FIXTURE_VALUE": "explicit"}), "explicit"),
+        ("unset", json!({"FIXTURE_VALUE": null}), "unset"),
+    ] {
+        control_call(&fixture, Origin::Event, "process.start", json!({"session": session, "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": explicit,
+            "arguments": ["-c", "printf '{\"value\":\"%s\"}\\n' \"${FIXTURE_VALUE-unset}\"; read marker"], "framing": "ndjson"})).await.unwrap();
+        let result = control_call(
+            &fixture,
+            Origin::Event,
+            "process.exchange",
+            json!({"session": session, "wait_ms": 1000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["messages"][0]["value"], expected);
+        control_call(
+            &fixture,
+            Origin::Event,
+            "process.stop",
+            json!({"session": session}),
+        )
+        .await
+        .unwrap();
+    }
+    control_call(
+        &fixture,
+        Origin::Event,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "x".repeat(1025)}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        control_call(
+            &fixture,
+            Origin::Event,
+            "process.start",
+            json!({"session": "large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"]})
+        )
+        .await
+        .is_err()
+    );
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    let package = fixture
+        ._dir
+        .path()
+        .join("packages/control")
+        .canonicalize()
+        .unwrap();
+    store.enable(&package, false).unwrap();
+    fixture.core.runtime.lock().unwrap().reload().unwrap();
+    store.enable(&package, true).unwrap();
+    fixture.core.runtime.lock().unwrap().reload().unwrap();
+    let value = control_call(
+        &fixture,
+        Origin::Event,
+        "environment.read",
+        json!({"names": ["FIXTURE_VALUE"]}),
+    )
+    .await
+    .unwrap();
+    assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "x".repeat(1025));
+}
+
 fn command(core: &Core, id: &str, name: &str) -> Value {
     let mut runtime = core.runtime.lock().unwrap();
     let generation = runtime.generation();
@@ -816,11 +1049,18 @@ fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
 }
 
 async fn background_call(core: &Core, lead: &Lead, operation: &str, arguments: Value) -> Value {
+    let source = core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("observer")
+        .unwrap()
+        .source_sha256;
     let caller = {
         let runtime = core.runtime.lock().unwrap();
         Caller {
             id: "observer",
-            source: "source",
+            source: &source,
             grants: runtime.grants("observer"),
             generation: runtime.generation(),
             origin: Origin::Event,
@@ -954,7 +1194,7 @@ async fn background_timers_replace_and_cancel_only_in_the_calling_thread() {
             &fixture.core,
             lead,
             "events.schedule",
-            json!({"key": "hop", "delay_ms": 1000}),
+            json!({"key": "hop", "delay_ms": 100}),
         )
         .await;
     }
@@ -977,7 +1217,7 @@ async fn background_timers_replace_and_cancel_only_in_the_calling_thread() {
         .await["cancelled"],
         false
     );
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     delivery::deliver(&fixture.core).await;
     for (lead, expected) in [(&fixture.lead, Value::Null), (&second, json!(["hop"]))] {
         let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
@@ -1995,6 +2235,38 @@ fn process_output_notices_coalesce_per_session_and_keep_exit_order() {
             ("a".to_owned(), None),
             ("a".to_owned(), Some(5)),
         ]
+    );
+}
+
+#[test]
+fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
+    let state = State::default();
+    let thread = ThreadId::new();
+    let timer = |owner: &str, key: &str| delivery::Pending::Timer {
+        thread,
+        owner: owner.into(),
+        key: key.into(),
+        source: "source".into(),
+    };
+    for item in [
+        timer("a", "one"),
+        timer("a", "one"),
+        timer("a", "two"),
+        timer("b", "one"),
+    ] {
+        delivery::push(&state, item);
+    }
+    assert_eq!(state.pending.lock().unwrap().len(), 3);
+    let now = std::time::Instant::now();
+    assert!(
+        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, key, .. }) if owner == "a" && key == "one")
+    );
+    assert!(
+        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, .. }) if owner == "b")
+    );
+    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(99)).is_none());
+    assert!(
+        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(100)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
     );
 }
 

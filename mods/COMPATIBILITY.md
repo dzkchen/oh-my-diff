@@ -1,8 +1,13 @@
 # Mod compatibility
 
-This is the experimental compatibility contract as of October 8, 2026. The
+This is the experimental compatibility contract as of October 10, 2026. The
 machine-readable source is [compatibility.json](compatibility.json), checked
 against the Rust host by `python3 scripts/mod_compatibility.py`.
+
+The launch API is frozen at `0.2.0-experimental.5` through `2027-03-20` for the
+entries marked frozen in [COVERAGE.md](COVERAGE.md). Explicitly experimental
+entries are excluded. This does not promote the pre-release host or SDK to
+stable status, nor replace the later public-release qualification.
 
 ## Supported matrix
 

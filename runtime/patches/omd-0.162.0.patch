@@ -37669,6 +37669,21 @@ index ee6694b35..b94feefc0 100644
 +        );
 +    }
  }
+diff --git a/codex-rs/tui/src/pager_overlay/transcript.rs b/codex-rs/tui/src/pager_overlay/transcript.rs
+index 508d5c34f..31be98a1a 100644
+--- a/codex-rs/tui/src/pager_overlay/transcript.rs
++++ b/codex-rs/tui/src/pager_overlay/transcript.rs
+@@ -450,6 +450,10 @@ impl TranscriptOverlay {
+         self.view.cancel_beginning();
+     }
+
++    pub(crate) fn selected_text(&mut self) -> Option<String> {
++        self.view.selected_text(&self.cells)
++    }
++
+     fn apply_action(&mut self, tui: &mut tui::Tui, action: ViewAction) {
+         self.notice = None;
+         let resume_following = matches!(action, ViewAction::CopyAndFollow(_));
 diff --git a/codex-rs/tui/src/pets/mod.rs b/codex-rs/tui/src/pets/mod.rs
 index f12313ff4..84fa7f63c 100644
 --- a/codex-rs/tui/src/pets/mod.rs
@@ -55569,10 +55584,10 @@ index 000000000..0c9f8faf5
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..db618a5b7
+index 000000000..3ef019120
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1664 @@
+@@ -0,0 +1,1675 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -56192,7 +56207,7 @@ index 000000000..db618a5b7
 +                    #[serde(default)]
 +                    arguments: Vec<String>,
 +                    #[serde(default)]
-+                    environment: BTreeMap<String, String>,
++                    environment: BTreeMap<String, Option<String>>,
 +                    #[serde(default)]
 +                    framing: Option<String>,
 +                    #[serde(default)]
@@ -56271,10 +56286,12 @@ index 000000000..db618a5b7
 +                                .iter()
 +                                .any(|prefix| key.starts_with(prefix))
 +                            || key == "XDG_CACHE_HOME"
-+                            || value.len() > 1024
-+                            || value
-+                                .bytes()
-+                                .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
++                            || value.as_ref().is_some_and(|value| {
++                                value.len() > 1024
++                                    || value
++                                        .bytes()
++                                        .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
++                            })
 +                    })
 +                    || !matches!(
 +                        input.framing.as_deref(),
@@ -56388,12 +56405,21 @@ index 000000000..db618a5b7
 +                            command
 +                        }
 +                    };
++                    for (name, value) in &input.environment {
++                        match value {
++                            Some(value) => {
++                                command.env(name, value);
++                            }
++                            None => {
++                                command.env_remove(name);
++                            }
++                        }
++                    }
 +                    let mut child = command
 +                        .current_dir(repository)
 +                        .env("TMPDIR", &scratch)
 +                        .env("XDG_CACHE_HOME", &scratch)
 +                        .env("PYTHONDONTWRITEBYTECODE", "1")
-+                        .envs(&input.environment)
 +                        .stdin(Stdio::piped())
 +                        .stdout(Stdio::piped())
 +                        .stderr(Stdio::null())
@@ -57239,10 +57265,10 @@ index 000000000..db618a5b7
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..dba75c69d
+index 000000000..90e1acf18
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2374 @@
+@@ -0,0 +1,2386 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -59164,6 +59190,12 @@ index 000000000..dba75c69d
 +                accounts.remove(&lead.thread.to_string());
 +            }
 +            self.host.accounts.forget_thread(&lead.thread.to_string());
++            expansion::release_thread(self, lead.thread);
++            codex_omd::host::clear_environment(
++                &self.host.root,
++                Some(&lead.thread.to_string()),
++                None,
++            );
 +            if let Ok(mut invokers) = self.expansion.invokers.lock() {
 +                invokers.remove(&lead.thread.to_string());
 +            }
@@ -59181,6 +59213,12 @@ index 000000000..dba75c69d
 +            )
 +            .await;
 +            self.event("stop", Value::Null, Some(&*lead)).await;
++            expansion::release_thread(self, lead.thread);
++            codex_omd::host::clear_environment(
++                &self.host.root,
++                Some(&lead.thread.to_string()),
++                None,
++            );
 +            lead.session.processes.cleanup();
 +            lead.session.access.cleanup();
 +            let _ = lead.session.persist_cost_capture();
@@ -63959,10 +63997,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..1d08e3830
+index 000000000..ff73c2a21
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,739 @@
+@@ -0,0 +1,741 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -63987,6 +64025,7 @@ index 000000000..1d08e3830
 +pub(super) use delivery::lead_started;
 +pub(super) use delivery::process_started;
 +pub(super) use delivery::release_owner;
++pub(super) use delivery::release_thread;
 +pub(super) use delivery::retain_sources;
 +pub(super) use tool_batch::tool_before_payload;
 +
@@ -64055,6 +64094,7 @@ index 000000000..1d08e3830
 +    pending: Mutex<std::collections::VecDeque<delivery::Pending>>,
 +    dropped: AtomicU64,
 +    timers: Mutex<Timers>,
++    timer_deliveries: Mutex<std::collections::HashMap<(ThreadId, String), std::time::Instant>>,
 +    core: std::sync::OnceLock<std::sync::Weak<Core>>,
 +    pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
 +    pub(super) invoked: Mutex<BTreeMap<String, String>>,
@@ -65400,10 +65440,10 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..237561eba
+index 000000000..f871a88f7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,575 @@
+@@ -0,0 +1,675 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -65431,11 +65471,19 @@ index 000000000..237561eba
 +        thread: ThreadId,
 +        owner: String,
 +        key: String,
++        source: String,
 +    },
 +}
 +
 +pub(super) fn push(state: &State, pending: Pending) {
 +    if let Ok(mut queue) = state.pending.lock() {
++        if let Pending::Timer {
++            thread, owner, key, ..
++        } = &pending
++        {
++            queue.retain(|item| !matches!(item, Pending::Timer { thread: other_thread, owner: other_owner, key: other_key, .. }
++                if thread == other_thread && owner == other_owner && key == other_key));
++        }
 +        if let (
 +            Pending::Process {
 +                thread,
@@ -65595,12 +65643,7 @@ index 000000000..237561eba
 +    let mut subscribers = later.into_iter().chain(earlier).collect();
 +    let mut budget = DELIVERIES_PER_ROUND;
 +    while budget > 0 {
-+        let next = core
-+            .expansion
-+            .pending
-+            .lock()
-+            .ok()
-+            .and_then(|mut queue| queue.pop_front());
++        let next = next_pending(&core.expansion, std::time::Instant::now());
 +        let channel = next_channel_event(&core.expansion, &mut subscribers);
 +        if next.is_none() && channel.is_none() {
 +            break;
@@ -65624,6 +65667,27 @@ index 000000000..237561eba
 +        }
 +    }
 +    budget == 0
++        || core
++            .expansion
++            .pending
++            .lock()
++            .is_ok_and(|queue| !queue.is_empty())
++}
++
++pub(super) fn next_pending(state: &State, now: std::time::Instant) -> Option<Pending> {
++    let mut rates = state.timer_deliveries.lock().ok()?;
++    let mut queue = state.pending.lock().ok()?;
++    let index = queue.iter().position(|item| match item {
++        Pending::Timer { thread, owner, .. } => rates
++            .get(&(*thread, owner.clone()))
++            .is_none_or(|last| now.duration_since(*last) >= std::time::Duration::from_millis(100)),
++        _ => true,
++    })?;
++    let next = queue.remove(index)?;
++    if let Pending::Timer { thread, owner, .. } = &next {
++        rates.insert((*thread, owner.clone()), now);
++    }
++    Some(next)
 +}
 +
 +fn next_channel_event(
@@ -65687,10 +65751,23 @@ index 000000000..237561eba
 +        Pending::Broadcast { event, payload } => {
 +            core.event(event, payload, current).await;
 +        }
-+        Pending::Timer { thread, owner, key } => {
++        Pending::Timer {
++            thread,
++            owner,
++            key,
++            source,
++        } => {
 +            let Some(lead) = core.expansion.thread(thread) else {
 +                return;
 +            };
++            if !core.runtime.lock().is_ok_and(|runtime| {
++                runtime
++                    .owners()
++                    .iter()
++                    .any(|(id, active)| id == &owner && active.sha256 == source)
++            }) {
++                return;
++            }
 +            invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
 +        }
 +    }
@@ -65877,9 +65954,7 @@ index 000000000..237561eba
 +        delay_ms: u64,
 +    }
 +    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-+    if input.key.is_empty()
-+        || input.key.len() > 64
-+        || !(1_000..=86_400_000).contains(&input.delay_ms)
++    if input.key.is_empty() || input.key.len() > 64 || !(100..=86_400_000).contains(&input.delay_ms)
 +    {
 +        return Err("timer_invalid".into());
 +    }
@@ -65910,10 +65985,25 @@ index 000000000..237561eba
 +        return Err("timer_limit".into());
 +    }
 +    let (owner, key, thread) = (caller.id.to_owned(), input.key.clone(), lead.thread);
++    if let Ok(mut queue) = core.expansion.pending.lock() {
++        queue.retain(|item| {
++            !matches!(item, Pending::Timer { thread: t, owner: o, key: k, .. }
++            if *t == thread && o == &owner && k == &key)
++        });
++    }
++    let source = caller.source.to_owned();
 +    let task = tokio::spawn(async move {
 +        tokio::time::sleep(std::time::Duration::from_millis(input.delay_ms)).await;
 +        if let Some(core) = weak.upgrade() {
-+            push(&core.expansion, Pending::Timer { thread, owner, key });
++            push(
++                &core.expansion,
++                Pending::Timer {
++                    thread,
++                    owner,
++                    key,
++                    source,
++                },
++            );
 +        }
 +    });
 +    if let Some((_, previous)) = timers.insert(slot, (caller.source.to_owned(), task)) {
@@ -65938,10 +66028,29 @@ index 000000000..237561eba
 +    if let Some((_, task)) = &removed {
 +        task.abort();
 +    }
-+    Ok(json!({"cancelled": removed.is_some()}))
++    let mut cancelled = removed.is_some();
++    if let Ok(mut queue) = core.expansion.pending.lock() {
++        let before = queue.len();
++        queue.retain(|item| {
++            !matches!(item, Pending::Timer { thread, owner, key: k, .. }
++            if *thread == lead.thread && owner == caller && k == key)
++        });
++        cancelled |= queue.len() != before;
++    }
++    Ok(json!({"cancelled": cancelled}))
 +}
 +
 +pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
++    codex_omd::host::retain_environment(&core.host.root, sources);
++    if let Ok(mut queue) = core.expansion.pending.lock() {
++        queue.retain(|item| {
++            !matches!(item, Pending::Timer { owner, source, .. }
++            if sources.get(owner) != Some(source))
++        });
++    }
++    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
++        rates.retain(|(_, owner), _| sources.contains_key(owner));
++    }
 +    if let Ok(mut timers) = core.expansion.timers.lock() {
 +        timers.retain(|(_, owner, _), (source, task)| {
 +            let keep = sources.get(owner) == Some(source);
@@ -65959,10 +66068,41 @@ index 000000000..237561eba
 +}
 +
 +pub(in crate::mods) fn release_owner(core: &Core, owner: &str) {
++    codex_omd::host::clear_environment(&core.host.root, None, Some(owner));
++    clear_timers(core, None, Some(owner));
 +    if let Ok(watches) = core.expansion.watches.lock()
 +        && let Some(watches) = watches.as_ref()
 +    {
 +        watches.unwatch_all(owner);
++    }
++}
++
++pub(in crate::mods) fn release_thread(core: &Core, thread: ThreadId) {
++    clear_timers(core, Some(thread), None);
++}
++
++fn clear_timers(core: &Core, thread: Option<ThreadId>, owner: Option<&str>) {
++    let matches = |t: &str, id: &str| {
++        thread.is_none_or(|thread| thread.to_string() == t) && owner.is_none_or(|owner| owner == id)
++    };
++    if let Ok(mut timers) = core.expansion.timers.lock() {
++        timers.retain(|(t, id, _), (_, task)| {
++            if matches(t, id) {
++                task.abort();
++                false
++            } else {
++                true
++            }
++        });
++    }
++    if let Ok(mut queue) = core.expansion.pending.lock() {
++        queue.retain(|item| {
++            !matches!(item, Pending::Timer { thread, owner, .. }
++            if matches(&thread.to_string(), owner))
++        });
++    }
++    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
++        rates.retain(|(thread, owner), _| !matches(&thread.to_string(), owner));
 +    }
 +}
 +
@@ -66588,10 +66728,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..e29d930f2
+index 000000000..af0f8351b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3645 @@
+@@ -0,0 +1,3917 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -66725,6 +66865,239 @@ index 000000000..e29d930f2
 +        settled: Mutex::new(BTreeMap::new()),
 +        elicitations: Mutex::default(),
 +    }
++}
++
++async fn attach_thread(fixture: &mut Fixture) -> Arc<codex_core::ThreadManager> {
++    let mut config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    config.model_provider.base_url = Some("http://127.0.0.1:9/v1".into());
++    let policy = codex_config::CloudConfigBundlePolicy::default();
++    let mut snapshot = codex_config::CloudConfigBundleSnapshot {
++        bundle: Ok(None),
++        binding: None,
++    };
++    policy.publish_snapshot(&mut snapshot);
++    config.config_layer_stack = config
++        .config_layer_stack
++        .with_cloud_config_binding(snapshot.binding);
++    *fixture.lead.permission_profile.lock().unwrap() =
++        config.permissions.effective_permission_profile();
++    let manager = Arc::new(
++        codex_core::test_support::thread_manager_with_models_provider(
++            codex_login::CodexAuth::from_api_key("test"),
++            config.model_provider.clone(),
++        ),
++    );
++    let started = manager
++        .start_thread(codex_core::StartThreadOptions::new(config))
++        .await
++        .unwrap();
++    let host = &fixture.lead.host;
++    fixture.lead.host = Arc::new(Host {
++        root: host.root.clone(),
++        repository: host.repository.clone(),
++        repository_identity: host.repository_identity.clone(),
++        config: host.config.clone(),
++        routes: Mutex::new(crate::RouteTable {
++            stamp: None,
++            config: Arc::new(host.config.clone()),
++            error: None,
++        }),
++        accounts: host.accounts.clone(),
++        manager: Arc::downgrade(&manager),
++        epoch: host.epoch,
++    });
++    fixture.lead.thread = started.thread_id;
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    manager
++}
++
++async fn control_call(
++    fixture: &Fixture,
++    origin: Origin,
++    operation: &str,
++    arguments: Value,
++) -> Result<Value, String> {
++    let (grants, generation) = {
++        let runtime = fixture.core.runtime.lock().unwrap();
++        (runtime.grants("control"), runtime.generation())
++    };
++    let source = grants
++        .as_ref()
++        .unwrap_or_else(|| {
++            panic!(
++                "missing control grants: {:?}",
++                fixture.core.runtime.lock().unwrap().status()
++            )
++        })
++        .source_sha256
++        .clone();
++    super::operations::dispatch(
++        &fixture.core,
++        &fixture.lead,
++        Caller {
++            id: "control",
++            source: &source,
++            grants,
++            generation,
++            origin,
++            record_changes: false,
++        },
++        None,
++        ModHostCall {
++            operation: operation.into(),
++            arguments,
++        },
++        &Arc::new(AtomicBool::new(false)),
++    )
++    .await
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn turn_abort_requires_event_or_user_and_stays_in_current_thread() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["threads"],
++        manifest: Value::Null,
++        source: "export default () => {}",
++    }]) else {
++        return;
++    };
++    let _manager = attach_thread(&mut fixture).await;
++    assert!(
++        control_call(
++            &fixture,
++            Origin::Tool,
++            "turns.abort",
++            json!({"turn_id": "stale"})
++        )
++        .await
++        .unwrap_err()
++        .contains("user_or_event_only")
++    );
++    for origin in [Origin::UserCommand, Origin::Event] {
++        for arguments in [
++            json!({}),
++            json!({"turn_id": ""}),
++            json!({"turn_id": "x".repeat(129)}),
++            json!({"turn_id": "stale", "thread_id": ThreadId::new().to_string()}),
++        ] {
++            assert_eq!(
++                control_call(&fixture, origin, "turns.abort", arguments)
++                    .await
++                    .unwrap_err(),
++                "turn_abort_arguments_invalid"
++            );
++        }
++        assert_eq!(
++            control_call(&fixture, origin, "turns.abort", json!({"turn_id": "stale"}))
++                .await
++                .unwrap(),
++            json!({"accepted": false})
++        );
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["exec"],
++        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
++        source: "export default () => {}",
++    }]) else {
++        return;
++    };
++    let _manager = attach_thread(&mut fixture).await;
++    control_call(
++        &fixture,
++        Origin::Event,
++        "environment.set",
++        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
++    )
++    .await
++    .unwrap();
++    let found = control_call(
++        &fixture,
++        Origin::Event,
++        "process.which",
++        json!({"names": ["sh"]}),
++    )
++    .await
++    .unwrap();
++    let sh = &found["found"][0];
++    for (session, explicit, expected) in [
++        ("scoped", json!({}), "scoped"),
++        ("explicit", json!({"FIXTURE_VALUE": "explicit"}), "explicit"),
++        ("unset", json!({"FIXTURE_VALUE": null}), "unset"),
++    ] {
++        control_call(&fixture, Origin::Event, "process.start", json!({"session": session, "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": explicit,
++            "arguments": ["-c", "printf '{\"value\":\"%s\"}\\n' \"${FIXTURE_VALUE-unset}\"; read marker"], "framing": "ndjson"})).await.unwrap();
++        let result = control_call(
++            &fixture,
++            Origin::Event,
++            "process.exchange",
++            json!({"session": session, "wait_ms": 1000}),
++        )
++        .await
++        .unwrap();
++        assert_eq!(result["messages"][0]["value"], expected);
++        control_call(
++            &fixture,
++            Origin::Event,
++            "process.stop",
++            json!({"session": session}),
++        )
++        .await
++        .unwrap();
++    }
++    control_call(
++        &fixture,
++        Origin::Event,
++        "environment.set",
++        json!({"name": "FIXTURE_VALUE", "value": "x".repeat(1025)}),
++    )
++    .await
++    .unwrap();
++    assert!(
++        control_call(
++            &fixture,
++            Origin::Event,
++            "process.start",
++            json!({"session": "large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"]})
++        )
++        .await
++        .is_err()
++    );
++    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
++    let package = fixture
++        ._dir
++        .path()
++        .join("packages/control")
++        .canonicalize()
++        .unwrap();
++    store.enable(&package, false).unwrap();
++    fixture.core.runtime.lock().unwrap().reload().unwrap();
++    store.enable(&package, true).unwrap();
++    fixture.core.runtime.lock().unwrap().reload().unwrap();
++    let value = control_call(
++        &fixture,
++        Origin::Event,
++        "environment.read",
++        json!({"names": ["FIXTURE_VALUE"]}),
++    )
++    .await
++    .unwrap();
++    assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "x".repeat(1025));
 +}
 +
 +fn command(core: &Core, id: &str, name: &str) -> Value {
@@ -67410,11 +67783,18 @@ index 000000000..e29d930f2
 +}
 +
 +async fn background_call(core: &Core, lead: &Lead, operation: &str, arguments: Value) -> Value {
++    let source = core
++        .runtime
++        .lock()
++        .unwrap()
++        .grants("observer")
++        .unwrap()
++        .source_sha256;
 +    let caller = {
 +        let runtime = core.runtime.lock().unwrap();
 +        Caller {
 +            id: "observer",
-+            source: "source",
++            source: &source,
 +            grants: runtime.grants("observer"),
 +            generation: runtime.generation(),
 +            origin: Origin::Event,
@@ -67548,7 +67928,7 @@ index 000000000..e29d930f2
 +            &fixture.core,
 +            lead,
 +            "events.schedule",
-+            json!({"key": "hop", "delay_ms": 1000}),
++            json!({"key": "hop", "delay_ms": 100}),
 +        )
 +        .await;
 +    }
@@ -67571,7 +67951,7 @@ index 000000000..e29d930f2
 +        .await["cancelled"],
 +        false
 +    );
-+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
++    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 +    delivery::deliver(&fixture.core).await;
 +    for (lead, expected) in [(&fixture.lead, Value::Null), (&second, json!(["hop"]))] {
 +        let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
@@ -68589,6 +68969,38 @@ index 000000000..e29d930f2
 +            ("a".to_owned(), None),
 +            ("a".to_owned(), Some(5)),
 +        ]
++    );
++}
++
++#[test]
++fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
++    let state = State::default();
++    let thread = ThreadId::new();
++    let timer = |owner: &str, key: &str| delivery::Pending::Timer {
++        thread,
++        owner: owner.into(),
++        key: key.into(),
++        source: "source".into(),
++    };
++    for item in [
++        timer("a", "one"),
++        timer("a", "one"),
++        timer("a", "two"),
++        timer("b", "one"),
++    ] {
++        delivery::push(&state, item);
++    }
++    assert_eq!(state.pending.lock().unwrap().len(), 3);
++    let now = std::time::Instant::now();
++    assert!(
++        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, key, .. }) if owner == "a" && key == "one")
++    );
++    assert!(
++        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, .. }) if owner == "b")
++    );
++    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(99)).is_none());
++    assert!(
++        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(100)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
 +    );
 +}
 +
@@ -70826,10 +71238,10 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..ee5d3f76f
+index 000000000..d3916b736
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,724 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -70908,6 +71320,7 @@ index 000000000..ee5d3f76f
 +                        | "session.info"
 +                        | "tools.list"
 +                        | "turns.activity"
++                        | "turns.abort"
 +                        | "events.publish"
 +                        | "credentials.list"
 +                        | "packages.list"
@@ -71156,7 +71569,7 @@ index 000000000..ee5d3f76f
 +    lead: &Lead,
 +    caller: Caller<'_>,
 +    call: Option<&ToolCall<'_>>,
-+    request: ModHostCall,
++    mut request: ModHostCall,
 +    cancelled: &Arc<AtomicBool>,
 +) -> Result<Value, String> {
 +    let host = &lead.host;
@@ -71263,6 +71676,30 @@ index 000000000..ee5d3f76f
 +        .map_err(|e| e.to_string())?;
 +    }
 +    if operation.starts_with("process.") {
++        if operation == "process.start" {
++            let grants = caller.grants.as_ref().ok_or("host_caller_inactive")?;
++            let overrides = codex_omd::host::environment_overrides(
++                &host.root,
++                Some(&lead.thread.to_string()),
++                caller.id,
++                caller.source,
++                &grants.exec_environment,
++            )?;
++            if !overrides.is_empty() {
++                let arguments = request
++                    .arguments
++                    .as_object_mut()
++                    .ok_or("process_arguments_invalid")?;
++                let environment = arguments
++                    .entry("environment")
++                    .or_insert_with(|| json!({}))
++                    .as_object_mut()
++                    .ok_or("process_arguments_invalid")?;
++                for (name, value) in overrides {
++                    environment.entry(name).or_insert(json!(value));
++                }
++            }
++        }
 +        crate::generic_host::process_request_allowed(caller.grants.as_ref(), &request)?;
 +        let authority = authority(lead, call).await?;
 +        let processes = lead.session.processes.clone();
@@ -71425,6 +71862,35 @@ index 000000000..ee5d3f76f
 +        "peers.list" | "peers.send" => {
 +            let endpoints = super::peering::current_endpoints(core).await;
 +            core.peering.call(lead, &caller, request, endpoints)
++        }
++        "turns.abort" => {
++            #[derive(serde::Deserialize)]
++            #[serde(deny_unknown_fields)]
++            struct Input {
++                turn_id: String,
++            }
++            if !matches!(caller.origin, Origin::UserCommand | Origin::Event) {
++                return Err("host_operation_user_or_event_only: turns.abort".into());
++            }
++            let input: Input = serde_json::from_value(request.arguments)
++                .map_err(|_| "turn_abort_arguments_invalid")?;
++            if input.turn_id.is_empty() || input.turn_id.len() > 128 {
++                return Err("turn_abort_arguments_invalid".into());
++            }
++            let manager = lead
++                .host
++                .manager
++                .upgrade()
++                .ok_or("native_thread_manager_stopped")?;
++            let thread = manager
++                .get_thread(lead.thread)
++                .await
++                .map_err(|error| error.to_string())?;
++            let accepted = thread
++                .interrupt_if_no_pending_input(&input.turn_id)
++                .await
++                .map_err(|error| error.to_string())?;
++            Ok(json!({"accepted": accepted}))
 +        }
 +        "turns.queue" | "turns.queued" | "turns.dequeue" => {
 +            let core = core.this.upgrade().ok_or("native_host_stopped")?;
@@ -84244,10 +84710,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..a7a6a63b7
+index 000000000..cb68a6119
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1284 @@
+@@ -0,0 +1,1289 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -84315,11 +84781,15 @@ index 000000000..a7a6a63b7
 +    "terminal.pane",
 +    "terminal.panes",
 +    "terminal.notice",
++    "terminal.selection",
++    "terminal.copy",
 +    "terminal.blit",
 +    "terminal.pty",
 +];
 +
 +pub const USER_ONLY_OPERATIONS: &[&str] = &[
++    "terminal.selection",
++    "terminal.copy",
 +    "credentials.request",
 +    "terminal.import_file",
 +    "builtins.invoke",
@@ -84330,7 +84800,8 @@ index 000000000..a7a6a63b7
 +];
 +
 +pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
-+    USER_ONLY_OPERATIONS.contains(&operation)
++    (USER_ONLY_OPERATIONS.contains(&operation)
++        && !matches!(operation, "terminal.selection" | "terminal.copy"))
 +        || operation == "terminal.prompt"
 +        || (operation == "app.request"
 +            && arguments["method"]
@@ -85534,10 +86005,10 @@ index 000000000..a7a6a63b7
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..3458eedfc
+index 000000000..6c4047fda
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,682 @@
+@@ -0,0 +1,717 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -86119,6 +86590,8 @@ index 000000000..3458eedfc
 +fn remote_actions_cannot_cause_terminal_only_operations() {
 +    for (operation, arguments) in [
 +        ("config.set", Value::Null),
++        ("terminal.selection", json!({})),
++        ("terminal.copy", json!({"text": "test"})),
 +        ("prompts.consent", Value::Null),
 +        ("terminal.pty", json!({"action": "start"})),
 +    ] {
@@ -86147,6 +86620,39 @@ index 000000000..3458eedfc
 +        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
 +    );
 +    assert_eq!(presented(Value::Null), Value::Null);
++}
++
++#[test]
++fn clipboard_operations_require_local_user_context_without_waiting_for_confirmation() {
++    for operation in ["terminal.selection", "terminal.copy"] {
++        assert!(!awaits_user(operation, &json!({})));
++        assert_eq!(
++            submit(
++                "m",
++                operation,
++                json!({}),
++                InvocationContext::Event,
++                false,
++                None,
++                None
++            )
++            .err(),
++            Some(format!("host_operation_user_only: {operation}"))
++        );
++        assert_eq!(
++            submit(
++                "m",
++                operation,
++                json!({}),
++                InvocationContext::User,
++                true,
++                None,
++                None
++            )
++            .err(),
++            Some(needs_terminal_error(operation))
++        );
++    }
 +}
 +
 +#[test]
@@ -89357,10 +89863,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..84e30c368
+index 000000000..3fd0f6b1d
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1590 @@
+@@ -0,0 +1,1625 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -89387,6 +89893,9 @@ index 000000000..84e30c368
 +use std::sync::Mutex;
 +use std::time::Duration;
 +use std::time::Instant;
++
++mod environment;
++pub use environment::{clear_environment, environment_overrides, retain_environment};
 +
 +pub const RESERVED_EXEC_ENVIRONMENT: &[&str] = &[
 +    "PATH",
@@ -89567,6 +90076,7 @@ index 000000000..84e30c368
 +            | "store.export"
 +            | "store.reset"
 +            | "environment.read"
++            | "environment.set"
 +    )
 +}
 +
@@ -89593,7 +90103,7 @@ index 000000000..84e30c368
 +    }
 +}
 +
-+fn environment(caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
++fn environment(root: &Path, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
 +    #[derive(Deserialize)]
 +    #[serde(deny_unknown_fields)]
 +    struct Input {
@@ -89604,12 +90114,21 @@ index 000000000..84e30c368
 +        return Err("environment_names_invalid".into());
 +    }
 +    let mut values = serde_json::Map::new();
++    let overrides = environment_overrides(
++        root,
++        caller.thread,
++        caller.id,
++        caller.source_sha256,
++        caller.exec_environment,
++    )?;
 +    for name in input.names {
 +        if !caller.exec_environment.contains(&name) {
 +            return Err(format!("exec_environment_undeclared: {name}"));
 +        }
-+        let value = std::env::var(&name)
-+            .ok()
++        let value = overrides
++            .get(&name)
++            .cloned()
++            .unwrap_or_else(|| std::env::var(&name).ok())
 +            .filter(|value| value.len() <= 4096);
 +        let entry = if secret_like(&name) {
 +            json!({"set": value.is_some()})
@@ -90139,7 +90658,8 @@ index 000000000..84e30c368
 +            "workspace.transaction" => self.transaction(caller, arguments),
 +            "workspace.backup" => self.backup(caller, arguments),
 +            "workspace.restore" => self.restore(caller, arguments),
-+            "environment.read" => environment(caller, arguments),
++            "environment.read" => environment(self.data_root, caller, arguments),
++            "environment.set" => environment::set(self.data_root, caller, arguments),
 +            operation if operation.starts_with("store.") => {
 +                let key = repository_key(self.repository());
 +                DataStore {
@@ -90216,7 +90736,23 @@ index 000000000..84e30c368
 +        struct RequiredAccess {
 +            write: Vec<String>,
 +        }
-+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++        let mut input: Input =
++            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++        let overrides = environment_overrides(
++            self.data_root,
++            caller.thread,
++            caller.id,
++            caller.source_sha256,
++            caller.exec_environment,
++        )?;
++        for (name, value) in &overrides {
++            if let Some(value) = value {
++                input
++                    .env
++                    .entry(name.clone())
++                    .or_insert_with(|| value.clone());
++            }
++        }
 +        if !(self.active)() {
 +            return Err("exec_cancelled".into());
 +        }
@@ -90468,6 +91004,11 @@ index 000000000..84e30c368
 +            })
 +            .stdout(Stdio::piped())
 +            .stderr(Stdio::piped());
++        for (name, value) in &overrides {
++            if value.is_none() {
++                command.env_remove(name);
++            }
++        }
 +        command.envs(&input.env);
 +        let started = Instant::now();
 +        let mut child = Child(
@@ -90950,6 +91491,110 @@ index 000000000..84e30c368
 +            .map_err(|error| error.to_string())?;
 +        Ok(json!({"files": result.files}))
 +    }
++}
+diff --git a/codex-rs/omd/src/host/environment.rs b/codex-rs/omd/src/host/environment.rs
+new file mode 100644
+index 000000000..e962102cf
+--- /dev/null
++++ b/codex-rs/omd/src/host/environment.rs
+@@ -0,0 +1,98 @@
++use super::*;
++
++type Scope = (PathBuf, String, String, String);
++type Values = BTreeMap<String, Option<String>>;
++static OVERRIDES: std::sync::LazyLock<Mutex<BTreeMap<Scope, Values>>> =
++    std::sync::LazyLock::new(|| Mutex::new(BTreeMap::new()));
++
++pub fn environment_overrides(
++    root: &Path,
++    thread: Option<&str>,
++    owner: &str,
++    source: &str,
++    declared: &[String],
++) -> Result<Values, String> {
++    let Some(thread) = thread else {
++        return Ok(BTreeMap::new());
++    };
++    let values = OVERRIDES
++        .lock()
++        .map_err(|_| "environment_state_poisoned")?
++        .get(&(
++            root.to_owned(),
++            thread.to_owned(),
++            owner.to_owned(),
++            source.to_owned(),
++        ))
++        .cloned()
++        .unwrap_or_default();
++    if values.keys().any(|name| !declared.contains(name)) {
++        return Err("exec_environment_undeclared".into());
++    }
++    Ok(values)
++}
++
++pub fn clear_environment(root: &Path, thread: Option<&str>, owner: Option<&str>) {
++    if let Ok(mut values) = OVERRIDES.lock() {
++        values.retain(|(path, t, id, _), _| {
++            path != root
++                || thread.is_some_and(|thread| thread != t)
++                || owner.is_some_and(|owner| owner != id)
++        });
++    }
++}
++
++pub fn retain_environment(root: &Path, sources: &BTreeMap<String, String>) {
++    if let Ok(mut values) = OVERRIDES.lock() {
++        values.retain(|(path, _, id, source), _| path != root || sources.get(id) == Some(source));
++    }
++}
++
++pub(super) fn set(root: &Path, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
++    #[derive(Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Input {
++        name: String,
++        value: Value,
++    }
++    let input: Input =
++        serde_json::from_value(arguments).map_err(|_| "environment_arguments_invalid")?;
++    let thread = caller.thread.ok_or("environment_thread_required")?;
++    let name = &input.name;
++    if !caller.exec_environment.contains(name) {
++        return Err("exec_environment_undeclared".into());
++    }
++    if name.is_empty()
++        || name.len() > 64
++        || name.as_bytes()[0].is_ascii_digit()
++        || !name
++            .bytes()
++            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
++        || RESERVED_EXEC_ENVIRONMENT.contains(&name.as_str())
++        || RESERVED_EXEC_PREFIXES
++            .iter()
++            .any(|prefix| name.starts_with(prefix))
++    {
++        return Err("environment_name_invalid".into());
++    }
++    let set = !input.value.is_null();
++    let value = match input.value {
++        Value::Null => None,
++        Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
++        _ => return Err("environment_value_invalid".into()),
++    };
++    let mut scopes = OVERRIDES.lock().map_err(|_| "environment_state_poisoned")?;
++    let key = (
++        root.to_owned(),
++        thread.to_owned(),
++        caller.id.to_owned(),
++        caller.source_sha256.to_owned(),
++    );
++    let mut values = scopes.get(&key).cloned().unwrap_or_default();
++    values.insert(name.clone(), value);
++    if values.len() > 16 || values.values().flatten().map(String::len).sum::<usize>() > 16 * 1024 {
++        return Err("environment_limit".into());
++    }
++    scopes.insert(key, values);
++    Ok(json!({"name": name, "set": set}))
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
@@ -93082,10 +93727,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..13d514a35
+index 000000000..1821e1fe2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5113 @@
+@@ -0,0 +1,5134 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -93111,14 +93756,12 @@ index 000000000..13d514a35
 +pub use view::ModBoxAccent;
 +pub use view::ModBoxBorder;
 +pub use view::ModBoxStyle;
-+pub use view::ModDirection;
-+pub use view::ModPaint;
-+pub use view::ModSpacing;
 +pub use view::ModColor;
 +pub use view::ModCommandAction;
 +pub use view::ModComponent;
 +pub use view::ModComponentAction;
 +pub use view::ModDensity;
++pub use view::ModDirection;
 +pub use view::ModFind;
 +pub use view::ModIcons;
 +pub use view::ModImageBackdrop;
@@ -93130,6 +93773,7 @@ index 000000000..13d514a35
 +pub use view::ModListRow;
 +pub use view::ModOverlay;
 +pub use view::ModOverlayClip;
++pub use view::ModPaint;
 +pub use view::ModPanel;
 +pub use view::ModRange;
 +pub use view::ModRenderSite;
@@ -93137,6 +93781,7 @@ index 000000000..13d514a35
 +pub use view::ModSelectOption;
 +pub use view::ModSidebarSide;
 +pub use view::ModSiteMode;
++pub use view::ModSpacing;
 +pub use view::ModSpan;
 +pub use view::ModSplit;
 +pub use view::ModStyle;
@@ -93495,6 +94140,7 @@ index 000000000..13d514a35
 +    "credentials.request",
 +    "routes.select",
 +    "turns.activity",
++    "turns.abort",
 +    "terminal.notify",
 +    "terminal.show_thread",
 +    "commands.list",
@@ -93524,6 +94170,8 @@ index 000000000..13d514a35
 +    "terminal.pane",
 +    "terminal.panes",
 +    "terminal.notice",
++    "terminal.selection",
++    "terminal.copy",
 +    "terminal.blit",
 +    "terminal.pty",
 +    "model.complete",
@@ -93545,6 +94193,7 @@ index 000000000..13d514a35
 +    "mcp.connect",
 +    "mcp.disconnect",
 +    "environment.read",
++    "environment.set",
 +    "peers.list",
 +    "peers.send",
 +    "turns.queue",
@@ -96027,6 +96676,7 @@ index 000000000..13d514a35
 +            Err(error) => {
 +                if !self.loaded.is_empty() {
 +                    self.loaded.clear();
++                    crate::host::clear_environment(&self.store.root, None, None);
 +                    self.order.clear();
 +                    self.generation += 1;
 +                    self.dynamic_tools.clear();
@@ -96136,6 +96786,14 @@ index 000000000..13d514a35
 +            })
 +        });
 +        if self.loaded.len() != retained {
++            crate::host::retain_environment(
++                &self.store.root,
++                &self
++                    .owners()
++                    .into_iter()
++                    .map(|(id, owner)| (id, owner.sha256))
++                    .collect(),
++            );
 +            self.generation += 1;
 +            self.dynamic_tools.clear();
 +        }
@@ -96327,6 +96985,14 @@ index 000000000..13d514a35
 +        }
 +        self.rejected = rejected;
 +        self.admit();
++        crate::host::retain_environment(
++            &self.store.root,
++            &self
++                .owners()
++                .into_iter()
++                .map(|(id, owner)| (id, owner.sha256))
++                .collect(),
++        );
 +        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
 +        self.generation += 1;
@@ -99060,10 +99726,10 @@ index 000000000..820477c93
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..21a4f02fc
+index 000000000..5625167ec
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,371 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -99121,6 +99787,7 @@ index 000000000..21a4f02fc
 +            "credentials.list" | "credentials.request" => Ok("credentials"),
 +            "routes.select" => Ok("model"),
 +            "turns.activity" => Ok("sessions"),
++            "turns.abort" => Ok("threads"),
 +            "terminal.notify"
 +            | "terminal.show_thread"
 +            | "commands.list"
@@ -99132,6 +99799,8 @@ index 000000000..21a4f02fc
 +            | "terminal.pane"
 +            | "terminal.panes"
 +            | "terminal.notice"
++            | "terminal.selection"
++            | "terminal.copy"
 +            | "terminal.blit" => Ok("terminal"),
 +            "terminal.pty" => Ok("pty"),
 +            "model.complete" | "model.fork" => Ok("agents"),
@@ -99150,7 +99819,7 @@ index 000000000..21a4f02fc
 +            "settings.write" => Ok("commands"),
 +            "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
 +            "mcp.connect" | "mcp.disconnect" => Ok("mcp"),
-+            "environment.read" => Ok("exec"),
++            "environment.read" | "environment.set" => Ok("exec"),
 +            "peers.list" | "peers.send" => Ok("peers"),
 +            "turns.queue" | "turns.queued" | "turns.dequeue" => Ok("autonomous"),
 +            _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
@@ -99434,10 +100103,10 @@ index 000000000..21a4f02fc
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..713f6ca54
+index 000000000..fe06fdb22
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1829 @@
+@@ -0,0 +1,1833 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -100566,6 +101235,10 @@ index 000000000..713f6ca54
 +        }
 +        "mcp.connect" | "mcp.disconnect" => receipt["server"] = arguments["server"].clone(),
 +        "environment.read" => receipt["names"] = arguments["names"].clone(),
++        "environment.set" => {
++            receipt["name"] = arguments["name"].clone();
++            receipt["set"] = json!(!arguments["value"].is_null());
++        }
 +        "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
 +            if arguments.get("root").is_some() =>
 +        {
@@ -106127,7 +106800,7 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..0be8cd634
+index 000000000..7b3fbaa3e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
 @@ -0,0 +1,756 @@
@@ -106530,7 +107203,7 @@ index 000000000..0be8cd634
 +  requireCapability('events');
 +  if (!activating) throw new Error('timer_registration_outside_activation');
 +  if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,58}$/.test(key)) throw new Error('invalid_timer_key: ' + key);
-+  if (!Number.isSafeInteger(ms) || ms < 1000 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
++  if (!Number.isSafeInteger(ms) || ms < 100 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
 +  if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
 +  const scheduled = 'time:' + key;
 +  if (timers.has(scheduled)) throw new Error('conflict: ' + scheduled);
@@ -117052,10 +117725,10 @@ index 000000000..6cf3616c8
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..cdbb6aaca
+index 000000000..a41ba839b
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,1954 @@
+@@ -0,0 +1,2025 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -117161,6 +117834,77 @@ index 000000000..cdbb6aaca
 +
 +// Tests share the `fixture` caller, so parallel exec runs would hit its concurrency cap.
 +static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
++
++#[test]
++fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
++    let _slot = exec_slot();
++    let (_temp, _, data, authority) = setup();
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        active: &|| true,
++        record_changes: false,
++    };
++    let caps = strings(&["exec"]);
++    let names = strings(&["FIXTURE_VALUE", "FIXTURE_TOKEN", "HOME"]);
++    let mut who = caller(&caps, &names, Origin::UserCommand);
++    let set = |who: &Caller<'_>, name: &str, value: Value| {
++        host.call(
++            who,
++            "environment.set",
++            json!({"name": name, "value": value}),
++        )
++    };
++    assert_eq!(
++        set(&who, "FIXTURE_VALUE", json!("private")).unwrap(),
++        json!({"name": "FIXTURE_VALUE", "set": true})
++    );
++    set(&who, "FIXTURE_TOKEN", json!("hidden")).unwrap();
++    let read = |who: &Caller<'_>| {
++        host.call(
++            who,
++            "environment.read",
++            json!({"names": ["FIXTURE_VALUE", "FIXTURE_TOKEN"]}),
++        )
++        .unwrap()
++    };
++    assert_eq!(read(&who)["values"]["FIXTURE_TOKEN"], json!({"set": true}));
++    assert_eq!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
++    assert!(set(&who, "HOME", json!("bad")).is_err());
++    assert!(set(&who, "UNDECLARED", json!("bad")).is_err());
++    assert!(set(&who, "FIXTURE_VALUE", json!("x".repeat(4097))).is_err());
++    assert!(set(&who, "FIXTURE_VALUE", json!("x\u{0}y")).is_err());
++    let run = |who: &Caller<'_>, env: Value| {
++        host.call(who, "exec.run", json!({"program": "sh", "argv": ["-c", "printf '%s' \"${FIXTURE_VALUE-unset}\""], "env": env})).unwrap()
++    };
++    assert_eq!(run(&who, json!({}))["stdout"], "private");
++    assert_eq!(
++        run(&who, json!({"FIXTURE_VALUE": "explicit"}))["stdout"],
++        "explicit"
++    );
++    who.id = "other";
++    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
++    who.id = "fixture";
++    who.thread = Some("other-thread");
++    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
++    who.thread = Some("thread-1");
++    who.source_sha256 = "other-source";
++    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
++    who.source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
++    set(&who, "FIXTURE_VALUE", Value::Null).unwrap();
++    assert_eq!(run(&who, json!({}))["stdout"], "unset");
++    assert_eq!(
++        run(&who, json!({"FIXTURE_VALUE": "explicit"}))["stdout"],
++        "explicit"
++    );
++    set(&who, "FIXTURE_VALUE", json!("private")).unwrap();
++    codex_omd::host::clear_environment(&data, Some("other-thread"), None);
++    assert_eq!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
++    codex_omd::host::retain_environment(&data, &Default::default());
++    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
++    who.thread = None;
++    assert!(set(&who, "FIXTURE_VALUE", json!("private")).is_err());
++}
 +
 +fn exec_slot() -> std::sync::MutexGuard<'static, ()> {
 +    EXEC.lock()
@@ -132186,10 +132930,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..fd096506d
+index 000000000..9f9f37f82
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1870 @@
+@@ -0,0 +1,1942 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -132205,6 +132949,26 @@ index 000000000..fd096506d
 +use serde_json::json;
 +
 +const IMPORT_BYTES: u64 = 8 * 1024 * 1024;
++
++fn selection_result(mut text: Option<String>) -> Value {
++    let truncated = text.as_ref().is_some_and(|text| text.len() > 65_536);
++    if let Some(text) = text.as_mut() {
++        let mut end = text.len().min(65_536);
++        while !text.is_char_boundary(end) {
++            end -= 1;
++        }
++        text.truncate(end);
++    }
++    json!({"text": text, "truncated": truncated})
++}
++
++fn copy_text(arguments: &Value) -> Result<&str, String> {
++    arguments["text"]
++        .as_str()
++        .filter(|text| text.len() <= 65_536)
++        .filter(|_| arguments.as_object().is_some_and(|args| args.len() == 1))
++        .ok_or_else(|| "terminal_copy_arguments_invalid".into())
++}
 +
 +fn store_paths() -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
@@ -133387,6 +134151,40 @@ index 000000000..fd096506d
 +            }
 +            "terminal.panes" => Ok(crate::mod_ui::panes(&call.caller)),
 +            "terminal.notice" => self.mod_notice(tui, &call),
++            "terminal.selection" => {
++                if call
++                    .arguments
++                    .as_object()
++                    .is_none_or(|args| !args.is_empty())
++                {
++                    Err("terminal_selection_arguments_invalid".into())
++                } else {
++                    let text = match self.overlay.as_mut() {
++                        Some(crate::pager_overlay::Overlay::Transcript(overlay)) => {
++                            overlay.selected_text()
++                        }
++                        Some(_) => None,
++                        None => self.transcript_view.selected_text(&self.transcript_cells),
++                    };
++                    Ok(selection_result(text))
++                }
++            }
++            "terminal.copy" => copy_text(&call.arguments).and_then(|text| {
++                tui.clipboard
++                    .copy(
++                        text.into(),
++                        crate::clipboard_copy::CopyFormat::PlainText,
++                        tui.frame_requester(),
++                    )
++                    .map(|status| {
++                        json!({"status": match status {
++                            crate::clipboard_copy::CopyStatus::Confirmed => "confirmed",
++                            crate::clipboard_copy::CopyStatus::Unconfirmed => "unconfirmed",
++                            crate::clipboard_copy::CopyStatus::Pending(_) => "pending",
++                            crate::clipboard_copy::CopyStatus::Busy => "busy",
++                        }})
++                    })
++            }),
 +            "terminal.blit" => {
 +                tui.frame_requester().schedule_frame();
 +                let key = call.arguments["key"].as_str().unwrap_or_default();
@@ -133784,6 +134582,24 @@ index 000000000..fd096506d
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn selection_and_copy_bound_utf8_and_do_not_invent_a_selection() {
++        assert_eq!(
++            selection_result(None),
++            json!({"text": null, "truncated": false})
++        );
++        let text = "界".repeat(21_846);
++        let selected = selection_result(Some(text.clone()));
++        assert_eq!(selected["text"].as_str().unwrap().len(), 65_535);
++        assert_eq!(selected["truncated"], true);
++        assert!(copy_text(&json!({"text": text})).is_err());
++        assert!(copy_text(&json!({"text": "ok", "thread": "other"})).is_err());
++        assert_eq!(
++            copy_text(&json!({"text": selected["text"]})).unwrap().len(),
++            65_535
++        );
++    }
 +
 +    #[tokio::test]
 +    #[serial_test::serial]
@@ -144665,7 +145481,7 @@ index 000000000..bd3d54fb0
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..028a22027
+index 000000000..62384eaad
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
 @@ -0,0 +1,919 @@
@@ -145517,7 +146333,7 @@ index 000000000..028a22027
 +    }
 +    match operation {
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
-+        "model.complete" | "model.fork" | "session.info" | "tools.list" => {
++        "model.complete" | "model.fork" | "session.info" | "tools.list" | "turns.abort" => {
 +            let thread = scope
 +                .thread
 +                .map(str::to_owned)

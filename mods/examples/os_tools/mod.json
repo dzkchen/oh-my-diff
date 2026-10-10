@@ -5,6 +5,7 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "MIT",
+  "exec_environment": ["LANG"],
   "capabilities": [
     "exec",
     "os",

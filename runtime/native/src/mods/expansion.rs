@@ -22,6 +22,7 @@ pub(super) use activity::turn_started;
 pub(super) use delivery::lead_started;
 pub(super) use delivery::process_started;
 pub(super) use delivery::release_owner;
+pub(super) use delivery::release_thread;
 pub(super) use delivery::retain_sources;
 pub(super) use tool_batch::tool_before_payload;
 
@@ -90,6 +91,7 @@ pub(super) struct State {
     pending: Mutex<std::collections::VecDeque<delivery::Pending>>,
     dropped: AtomicU64,
     timers: Mutex<Timers>,
+    timer_deliveries: Mutex<std::collections::HashMap<(ThreadId, String), std::time::Instant>>,
     core: std::sync::OnceLock<std::sync::Weak<Core>>,
     pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
     pub(super) invoked: Mutex<BTreeMap<String, String>>,

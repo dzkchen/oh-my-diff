@@ -617,7 +617,7 @@ impl ManagedProcesses {
                     #[serde(default)]
                     arguments: Vec<String>,
                     #[serde(default)]
-                    environment: BTreeMap<String, String>,
+                    environment: BTreeMap<String, Option<String>>,
                     #[serde(default)]
                     framing: Option<String>,
                     #[serde(default)]
@@ -696,10 +696,12 @@ impl ManagedProcesses {
                                 .iter()
                                 .any(|prefix| key.starts_with(prefix))
                             || key == "XDG_CACHE_HOME"
-                            || value.len() > 1024
-                            || value
-                                .bytes()
-                                .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+                            || value.as_ref().is_some_and(|value| {
+                                value.len() > 1024
+                                    || value
+                                        .bytes()
+                                        .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+                            })
                     })
                     || !matches!(
                         input.framing.as_deref(),
@@ -813,12 +815,21 @@ impl ManagedProcesses {
                             command
                         }
                     };
+                    for (name, value) in &input.environment {
+                        match value {
+                            Some(value) => {
+                                command.env(name, value);
+                            }
+                            None => {
+                                command.env_remove(name);
+                            }
+                        }
+                    }
                     let mut child = command
                         .current_dir(repository)
                         .env("TMPDIR", &scratch)
                         .env("XDG_CACHE_HOME", &scratch)
                         .env("PYTHONDONTWRITEBYTECODE", "1")
-                        .envs(&input.environment)
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .stderr(Stdio::null())

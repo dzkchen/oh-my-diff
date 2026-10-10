@@ -1919,6 +1919,12 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 accounts.remove(&lead.thread.to_string());
             }
             self.host.accounts.forget_thread(&lead.thread.to_string());
+            expansion::release_thread(self, lead.thread);
+            codex_omd::host::clear_environment(
+                &self.host.root,
+                Some(&lead.thread.to_string()),
+                None,
+            );
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
             }
@@ -1936,6 +1942,12 @@ impl ThreadLifecycleContributor<Config> for Mods {
             )
             .await;
             self.event("stop", Value::Null, Some(&*lead)).await;
+            expansion::release_thread(self, lead.thread);
+            codex_omd::host::clear_environment(
+                &self.host.root,
+                Some(&lead.thread.to_string()),
+                None,
+            );
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();

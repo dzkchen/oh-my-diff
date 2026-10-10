@@ -9,6 +9,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ContractTests(unittest.TestCase):
+    def test_launch_inventory_rejects_drift_and_missing_consumers(self):
+        contract = json.loads(mod_conformance.CONTRACT.read_text())
+        _, sets = mod_conformance.host_sets()
+        name = next(name for name, entry in contract["launch"].items() if entry["status"] == "frozen")
+        del contract["launch"][name]
+        self.assertIn(f"unclassified launch surface: {name}", mod_conformance.check_launch(contract, sets))
+        contract["launch"][name] = {"status": "frozen", "consumer": {"path": "mods/api.d.ts", "snippet": "export"}, "evidence": ["node:missing test"]}
+        problems = mod_conformance.check_launch(contract, sets)
+        self.assertIn(f"{name}: missing launch/example consumer", problems)
+        self.assertIn(f"{name}: missing or unresolved launch evidence", problems)
+        contract["launch"][name] = {"status": "experimental"}
+        self.assertIn(f"{name}: experimental surface needs a reason", mod_conformance.check_launch(contract, sets))
+
+    def test_public_inventory_includes_nested_views_and_new_component_commands(self):
+        fields = mod_conformance.fields("export interface View { first?: string; nested?: { hidden: string }; last: string; }", "View")
+        self.assertEqual(fields, {"first", "nested", "last"})
+        _, sets = mod_conformance.host_sets()
+        public = mod_conformance.public_sets(sets)
+        self.assertIn("native", public["components"])
+        self.assertIn("owner/name", public["view_sites"])
+        self.assertIn("example", public["author_commands"])
+
     def test_published_compatibility_matrix_matches_the_host(self):
         matrix = json.loads(mod_compatibility.MATRIX.read_text())
         self.assertEqual(mod_compatibility.check(matrix), [])

@@ -23,14 +23,12 @@ pub use view::ModBorder;
 pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
 pub use view::ModBoxStyle;
-pub use view::ModDirection;
-pub use view::ModPaint;
-pub use view::ModSpacing;
 pub use view::ModColor;
 pub use view::ModCommandAction;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
 pub use view::ModDensity;
+pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
 pub use view::ModImageBackdrop;
@@ -42,6 +40,7 @@ pub use view::ModLayoutTabs;
 pub use view::ModListRow;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
+pub use view::ModPaint;
 pub use view::ModPanel;
 pub use view::ModRange;
 pub use view::ModRenderSite;
@@ -49,6 +48,7 @@ pub use view::ModScreenAnchor;
 pub use view::ModSelectOption;
 pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
+pub use view::ModSpacing;
 pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
@@ -407,6 +407,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "credentials.request",
     "routes.select",
     "turns.activity",
+    "turns.abort",
     "terminal.notify",
     "terminal.show_thread",
     "commands.list",
@@ -436,6 +437,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.pane",
     "terminal.panes",
     "terminal.notice",
+    "terminal.selection",
+    "terminal.copy",
     "terminal.blit",
     "terminal.pty",
     "model.complete",
@@ -457,6 +460,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "mcp.connect",
     "mcp.disconnect",
     "environment.read",
+    "environment.set",
     "peers.list",
     "peers.send",
     "turns.queue",
@@ -2939,6 +2943,7 @@ impl ModHost {
             Err(error) => {
                 if !self.loaded.is_empty() {
                     self.loaded.clear();
+                    crate::host::clear_environment(&self.store.root, None, None);
                     self.order.clear();
                     self.generation += 1;
                     self.dynamic_tools.clear();
@@ -3048,6 +3053,14 @@ impl ModHost {
             })
         });
         if self.loaded.len() != retained {
+            crate::host::retain_environment(
+                &self.store.root,
+                &self
+                    .owners()
+                    .into_iter()
+                    .map(|(id, owner)| (id, owner.sha256))
+                    .collect(),
+            );
             self.generation += 1;
             self.dynamic_tools.clear();
         }
@@ -3239,6 +3252,14 @@ impl ModHost {
         }
         self.rejected = rejected;
         self.admit();
+        crate::host::retain_environment(
+            &self.store.root,
+            &self
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect(),
+        );
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
         self.generation += 1;

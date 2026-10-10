@@ -25,11 +25,19 @@ pub(in crate::mods) enum Pending {
         thread: ThreadId,
         owner: String,
         key: String,
+        source: String,
     },
 }
 
 pub(super) fn push(state: &State, pending: Pending) {
     if let Ok(mut queue) = state.pending.lock() {
+        if let Pending::Timer {
+            thread, owner, key, ..
+        } = &pending
+        {
+            queue.retain(|item| !matches!(item, Pending::Timer { thread: other_thread, owner: other_owner, key: other_key, .. }
+                if thread == other_thread && owner == other_owner && key == other_key));
+        }
         if let (
             Pending::Process {
                 thread,
@@ -189,12 +197,7 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
     let mut subscribers = later.into_iter().chain(earlier).collect();
     let mut budget = DELIVERIES_PER_ROUND;
     while budget > 0 {
-        let next = core
-            .expansion
-            .pending
-            .lock()
-            .ok()
-            .and_then(|mut queue| queue.pop_front());
+        let next = next_pending(&core.expansion, std::time::Instant::now());
         let channel = next_channel_event(&core.expansion, &mut subscribers);
         if next.is_none() && channel.is_none() {
             break;
@@ -218,6 +221,27 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
         }
     }
     budget == 0
+        || core
+            .expansion
+            .pending
+            .lock()
+            .is_ok_and(|queue| !queue.is_empty())
+}
+
+pub(super) fn next_pending(state: &State, now: std::time::Instant) -> Option<Pending> {
+    let mut rates = state.timer_deliveries.lock().ok()?;
+    let mut queue = state.pending.lock().ok()?;
+    let index = queue.iter().position(|item| match item {
+        Pending::Timer { thread, owner, .. } => rates
+            .get(&(*thread, owner.clone()))
+            .is_none_or(|last| now.duration_since(*last) >= std::time::Duration::from_millis(100)),
+        _ => true,
+    })?;
+    let next = queue.remove(index)?;
+    if let Pending::Timer { thread, owner, .. } = &next {
+        rates.insert((*thread, owner.clone()), now);
+    }
+    Some(next)
 }
 
 fn next_channel_event(
@@ -281,10 +305,23 @@ async fn deliver_pending(core: &Arc<Core>, current: Option<&Lead>, next: Pending
         Pending::Broadcast { event, payload } => {
             core.event(event, payload, current).await;
         }
-        Pending::Timer { thread, owner, key } => {
+        Pending::Timer {
+            thread,
+            owner,
+            key,
+            source,
+        } => {
             let Some(lead) = core.expansion.thread(thread) else {
                 return;
             };
+            if !core.runtime.lock().is_ok_and(|runtime| {
+                runtime
+                    .owners()
+                    .iter()
+                    .any(|(id, active)| id == &owner && active.sha256 == source)
+            }) {
+                return;
+            }
             invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
         }
     }
@@ -471,9 +508,7 @@ pub(in crate::mods) fn schedule(
         delay_ms: u64,
     }
     let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-    if input.key.is_empty()
-        || input.key.len() > 64
-        || !(1_000..=86_400_000).contains(&input.delay_ms)
+    if input.key.is_empty() || input.key.len() > 64 || !(100..=86_400_000).contains(&input.delay_ms)
     {
         return Err("timer_invalid".into());
     }
@@ -504,10 +539,25 @@ pub(in crate::mods) fn schedule(
         return Err("timer_limit".into());
     }
     let (owner, key, thread) = (caller.id.to_owned(), input.key.clone(), lead.thread);
+    if let Ok(mut queue) = core.expansion.pending.lock() {
+        queue.retain(|item| {
+            !matches!(item, Pending::Timer { thread: t, owner: o, key: k, .. }
+            if *t == thread && o == &owner && k == &key)
+        });
+    }
+    let source = caller.source.to_owned();
     let task = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(input.delay_ms)).await;
         if let Some(core) = weak.upgrade() {
-            push(&core.expansion, Pending::Timer { thread, owner, key });
+            push(
+                &core.expansion,
+                Pending::Timer {
+                    thread,
+                    owner,
+                    key,
+                    source,
+                },
+            );
         }
     });
     if let Some((_, previous)) = timers.insert(slot, (caller.source.to_owned(), task)) {
@@ -532,10 +582,29 @@ pub(in crate::mods) fn cancel(
     if let Some((_, task)) = &removed {
         task.abort();
     }
-    Ok(json!({"cancelled": removed.is_some()}))
+    let mut cancelled = removed.is_some();
+    if let Ok(mut queue) = core.expansion.pending.lock() {
+        let before = queue.len();
+        queue.retain(|item| {
+            !matches!(item, Pending::Timer { thread, owner, key: k, .. }
+            if *thread == lead.thread && owner == caller && k == key)
+        });
+        cancelled |= queue.len() != before;
+    }
+    Ok(json!({"cancelled": cancelled}))
 }
 
 pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
+    codex_omd::host::retain_environment(&core.host.root, sources);
+    if let Ok(mut queue) = core.expansion.pending.lock() {
+        queue.retain(|item| {
+            !matches!(item, Pending::Timer { owner, source, .. }
+            if sources.get(owner) != Some(source))
+        });
+    }
+    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
+        rates.retain(|(_, owner), _| sources.contains_key(owner));
+    }
     if let Ok(mut timers) = core.expansion.timers.lock() {
         timers.retain(|(_, owner, _), (source, task)| {
             let keep = sources.get(owner) == Some(source);
@@ -553,10 +622,41 @@ pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, St
 }
 
 pub(in crate::mods) fn release_owner(core: &Core, owner: &str) {
+    codex_omd::host::clear_environment(&core.host.root, None, Some(owner));
+    clear_timers(core, None, Some(owner));
     if let Ok(watches) = core.expansion.watches.lock()
         && let Some(watches) = watches.as_ref()
     {
         watches.unwatch_all(owner);
+    }
+}
+
+pub(in crate::mods) fn release_thread(core: &Core, thread: ThreadId) {
+    clear_timers(core, Some(thread), None);
+}
+
+fn clear_timers(core: &Core, thread: Option<ThreadId>, owner: Option<&str>) {
+    let matches = |t: &str, id: &str| {
+        thread.is_none_or(|thread| thread.to_string() == t) && owner.is_none_or(|owner| owner == id)
+    };
+    if let Ok(mut timers) = core.expansion.timers.lock() {
+        timers.retain(|(t, id, _), (_, task)| {
+            if matches(t, id) {
+                task.abort();
+                false
+            } else {
+                true
+            }
+        });
+    }
+    if let Ok(mut queue) = core.expansion.pending.lock() {
+        queue.retain(|item| {
+            !matches!(item, Pending::Timer { thread, owner, .. }
+            if matches(&thread.to_string(), owner))
+        });
+    }
+    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
+        rates.retain(|(thread, owner), _| !matches(&thread.to_string(), owner));
     }
 }
 
