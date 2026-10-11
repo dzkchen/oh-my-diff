@@ -78,28 +78,19 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
 }
 
 fn write_cost_capture(account: &Account, durable: bool) -> Result<(), TransportError> {
-    use std::io::Write;
-
     let bytes =
         serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
-    let temporary = account.cost_capture.with_extension(format!(
-        "json.{}.{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(denied)?
-            .as_nanos()
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)
-        .map_err(denied)?;
-    file.write_all(&bytes)
-        .and_then(|_| if durable { file.sync_all() } else { Ok(()) })
-        .map_err(denied)?;
-    std::fs::rename(&temporary, &account.cost_capture).map_err(denied)?;
-    Ok(())
+    let (directory, name) = account
+        .cost_capture
+        .parent()
+        .zip(
+            account
+                .cost_capture
+                .file_name()
+                .and_then(|name| name.to_str()),
+        )
+        .ok_or_else(|| denied("cost_capture_path_invalid"))?;
+    crate::persist(directory, name, &bytes, durable).map_err(denied)
 }
 
 pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
@@ -583,7 +574,7 @@ impl Accounts {
                     origin.clone(),
                     active,
                     |caller, call| match &dispatcher {
-                        Some(dispatch) => dispatch(thread, caller, call, &active),
+                        Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
                         None => Err(std::io::Error::other(
                             "host_operation_unavailable: no session dispatcher",
                         )),
@@ -877,7 +868,7 @@ impl Accounts {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(thread, caller, call, &active),
+                Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),
@@ -2003,7 +1994,7 @@ impl Attempt {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(&thread, caller, call, &active),
+                Some(dispatch) => dispatch(&thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),

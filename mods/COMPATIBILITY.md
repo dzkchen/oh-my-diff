@@ -1,14 +1,19 @@
 # Mod compatibility
 
-This is the experimental compatibility contract as of October 8, 2026. The
+This is the experimental compatibility contract as of October 10, 2026. The
 machine-readable source is [compatibility.json](compatibility.json), checked
 against the Rust host by `python3 scripts/mod_compatibility.py`.
+
+The launch API is frozen at `0.2.0-experimental.5` through `2027-03-20` for the
+entries marked frozen in [COVERAGE.md](COVERAGE.md). Explicitly experimental
+entries are excluded. This does not promote the pre-release host or SDK to
+stable status, nor replace the later public-release qualification.
 
 ## Supported matrix
 
 | Codex | OMD host | Package schema | Mod API | API label | Service imports | Generated installed-contract types | Support through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.162.0 | 0.1.0, experimental | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.162.1 | 0.1.0, experimental | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
 API 0.1 packages and declarations are retired from this development host. The
 earlier 0.1 support-window rows described pre-release builds and are historical
@@ -30,6 +35,12 @@ compatibility metadata and rely on its supported API row, or declare `compatibil
 excluded host release rejects the package before activation and tells the user
 which host/package side must change. Missing optional features are reported but
 do not disable the mod.
+
+Require `turn_abort_v1` for `turns.abort`, `terminal_selection_v1` for
+`terminal.selection`, `terminal_copy_v1` for `terminal.copy`,
+`environment_overrides_v1` for `environment.set`, and `timers_100ms_v1` for
+100–999 ms timers. These labels reject older hosts before activation even when
+their API version matches.
 
 ## Stability and change rules
 

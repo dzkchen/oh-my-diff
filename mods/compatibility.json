@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "as_of": "2026-10-08",
+  "as_of": "2026-10-10",
   "host": {
-    "codex": "0.162.0",
+    "codex": "0.162.1",
     "omd": "0.1.0",
     "stability": "experimental",
     "current_api": "0.2.0-experimental.5",
@@ -12,6 +12,11 @@
     "state_storage_schema": 1,
     "installed_contract_types": 1,
     "features": [
+      "turn_abort_v1",
+      "terminal_selection_v1",
+      "terminal_copy_v1",
+      "environment_overrides_v1",
+      "timers_100ms_v1",
       "author_diagnostics_v1",
       "author_offline_runner_v1",
       "author_tooling_v1",

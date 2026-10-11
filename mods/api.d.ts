@@ -3,7 +3,8 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write';
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write'
+  | 'fs.external' | 'http' | 'mcp' | 'policy';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -332,14 +333,16 @@ export interface HostOperations {
   'mcp.connect': { arguments: { server: string }; result: { server: string; connected: true; tool_prefix: string } };
   'mcp.disconnect': { arguments: { server: string }; result: { server: string; connected: false; tool_prefix: string } };
   'environment.read': { arguments: { names: string[] }; result: { values: Record<string, { set: boolean; value?: string | null }> } };
+  /** Requires environment_overrides_v1; null restores inheritance and releases the override slot. */
+  'environment.set': { arguments: { name: string; value: string | null }; result: { name: string; set: boolean } };
   'workspace.backup': { arguments: { expected: Record<string, Fingerprint> }; result: { backup: ResourceRef } };
   'workspace.restore': { arguments: { backup: ResourceRef; expected: Record<string, Fingerprint> }; result: { files: Record<string, string | null> } };
   'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
   'workspace.integrate': { arguments: { handle: string; acceptance_sha256?: string }; result: { status: 'integrated'; candidate_sha256: string; parent_candidate_sha256: string; changed_paths: string[]; evidence: HostEvidence; receipt_error?: string } | { status: 'refused'; candidate_sha256: string; missing: ContractRequirement[] } };
   'store.get': { arguments: { key: string; scope?: StoreScope }; result: { value: Json; revision: number; provenance: StoreProvenance } | null };
-  'store.put': { arguments: { key: string; value: Json; expected_revision: number | null; scope?: StoreScope }; result: { revision: number } };
+  'store.put': { arguments: { key: string; value: Exclude<Json, null>; expected_revision: number | null; scope?: StoreScope }; result: { revision: number } };
   'store.delete': { arguments: { key: string; expected_revision: number; scope?: StoreScope }; result: { deleted: boolean } };
-  'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null } };
+  'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null; generation: number } };
   'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
   'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };
@@ -368,7 +371,7 @@ export interface HostOperations {
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. */
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string }; result: { session: string; running: true } };
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -383,6 +386,7 @@ export interface HostOperations {
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
+  /** Require timers_100ms_v1 for delays below 1000 ms. */
   'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
@@ -394,6 +398,12 @@ export interface HostOperations {
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
+  /** Requires turn_abort_v1; acceptance precedes cancellation cleanup. */
+  'turns.abort': { arguments: { turn_id: string }; result: { accepted: boolean } };
+  /** Requires terminal_selection_v1; truncation also accounts for the select-then-copy receipt budget. */
+  'terminal.selection': { arguments: Record<string, never>; result: { text: string | null; truncated: boolean } };
+  /** Requires terminal_copy_v1. */
+  'terminal.copy': { arguments: { text: string }; result: { status: 'confirmed' | 'unconfirmed' | 'pending' | 'busy' } };
   'terminal.notify': { arguments: { title: string; body?: string }; result: { delivered: boolean; method: 'osc9' | 'osc99' | 'osc777' | 'bel' | 'none'; reason?: string } };
   'terminal.show_thread': { arguments: { thread_id: string }; result: { shown: boolean } };
   'commands.list': { arguments: null; result: { commands: CommandRow[] } };

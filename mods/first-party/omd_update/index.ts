@@ -61,7 +61,7 @@ export default function activate(api: ModAPI) {
 
   const act = (state: Saved, verb: string, value: string): Partial<Saved> => {
     const available = state.info?.available;
-    if (verb in CHOICES) {
+    if (Object.hasOwn(CHOICES, verb)) {
       if (!CHOICES[verb].includes(value)) return { notice: `${verb} takes ${CHOICES[verb].join(' or ')}` };
       const written = api.host.tryCall('settings.write', { values: { [verb]: value } });
       return written.ok ? { overrides: { ...state.overrides, [verb]: value }, notice: 'Saved; it applies from the next check.' } : { notice: `Not saved (${written.error})` };

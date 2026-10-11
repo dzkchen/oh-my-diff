@@ -37,7 +37,7 @@ export function packages(...paths: string[]): { packages: string[] };
 /** Runs these mod IDs as administrator-managed packages: `prepend` outside every other mod, `append` inside. */
 export function tiers(tiers: { prepend?: string[]; append?: string[] }): { tiers: Record<string, 'prepend' | 'append'> };
 export function hostOperations(operations: Record<string, HostReply[]>): { host_operations: Record<string, ({ result: Json } | { error: string })[]> };
-/** Ordered `store.get` (null for a missing key), `store.put` and `store.delete` replies. */
+/** Ordered `store.get` (null for a missing key), `store.put` and `store.delete` replies; they are canned, so the host's argument checks (such as the non-null `store.put` value) do not run. */
 export function storeMock(replies?: { get?: Json[]; put?: unknown[]; delete?: unknown[] }): { host_operations: Record<string, ({ result: Json } | { error: string })[]> };
 export function scenario(...parts: ScenarioPart[]): Scenario;
 /** Runs the project and its tiers against the engine offline and returns the trace; needs `omd-mod` (`OMD_MOD_BIN`). */

@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.162.0",
-  "commit": "c1382380de69521303b416720a52f42d51af6248"
+  "tag": "rust-v0.162.1",
+  "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d"
  },
  "routes": {
   "app.request": "Q1 `app.request`: invoke this pinned app-server client request on the session's own app-server connection. `class` is the required capability; `contexts` limits where it may be called (`user` = a user-invoked command, key or component action; `event` = lifecycle or notification handlers); `confirm` requires a native confirmation naming the mod; `scope` binds thread arguments to threads the caller may see; `refuse` lists parameters a mod may not set; `root` parameters must name the session root or one of its worktrees; `route_fields` must match a configured route; `keys` names the config keys the call writes, checked against `authority_config`.",

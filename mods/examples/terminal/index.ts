@@ -1,6 +1,12 @@
 import type { ModAPI, TerminalPatch } from '@oh-my-diff/mod-api';
 
 export default function activate(api: ModAPI) {
+  api.command('copy_selection', () => {
+    const selection = api.host.call('terminal.selection', {});
+    if (!selection.text) return { display: 'Select transcript text first.' };
+    const result = api.host.call('terminal.copy', { text: selection.text });
+    return { display: `Clipboard: ${result.status}${selection.truncated ? ' (selection truncated)' : ''}` };
+  });
   api.command('layout', argument => ({ display: `Layout request: ${String(argument)}` }), {
     description: 'Apply an example component value',
   });
@@ -19,7 +25,11 @@ export default function activate(api: ModAPI) {
           ],
         }, { type: 'slot' }],
       },
-      above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'text', id: 'shortcut_help', label: 'Shortcut help', text: 'F10 review prompt · Ctrl+Alt+r review', tone: 'muted' }] },
+      above_composer: { mode: 'wrap', components: [
+        { type: 'slot' },
+        { type: 'button', id: 'copy_selection', label: 'Copy selected transcript', text: 'Copy selected transcript', action: { command: 'terminal:copy_selection' } },
+        { type: 'text', id: 'shortcut_help', label: 'Shortcut help', text: 'F10 review prompt · Ctrl+Alt+r review', tone: 'muted' },
+      ] },
       dialog: {
         mode: 'replace',
         components: [{

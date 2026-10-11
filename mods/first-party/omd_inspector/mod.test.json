@@ -1,6 +1,27 @@
 {
   "schema": 1,
+  "host_operations": {
+    "task.status": [{ "result": { "ledger": { "thread_id": "fixture-thread", "cost": null }, "limits": { "turns": 3 }, "worker_limits": null } }],
+    "contract.status": [{ "result": { "status": "none" } }]
+  },
   "steps": [
-    { "type": "invoke", "mod": "omd_inspector", "event": "command", "name": "inspect", "payload": "close" }
+    {
+      "type": "event",
+      "event": "channel",
+      "payload": { "channel": "omd_inspector/refresh", "data": null, "thread_id": "fixture-thread" },
+      "expect": [{ "mod": "omd_inspector", "value": null }]
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": { "event": "idle", "ledger": { "thread_id": "fixture-thread", "cost": null } },
+      "expect": [{ "mod": "omd_inspector", "value": null }]
+    },
+    {
+      "type": "event",
+      "event": "component_event",
+      "payload": { "component": "omd_inspector_dialog", "kind": "input", "events": [{ "key": "Esc" }], "thread_id": "fixture-thread" },
+      "expect": [{ "mod": "omd_inspector", "value": null }]
+    }
   ]
 }

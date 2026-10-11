@@ -11,7 +11,7 @@
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"
   },
-  "capabilities": ["commands", "lifecycle", "model", "exec", "credentials", "events", "terminal", "store"],
+  "capabilities": ["commands", "lifecycle", "model", "threads", "middleware", "exec", "credentials", "events", "terminal", "store"],
   "compatibility": {"required_features": ["credentials_v1", "events_v1", "route_reload_v1"]},
   "assets": ["router.mjs", "setup.mjs"]
 }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { once } from 'node:events';
-import { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
+import activate, { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
 import { CLI_VERSION, Capture, Relay, checkCli, limitHeaders, upstreamFailure } from '../mods/first-party/omd_claude_cli/transport.mjs';
 
 const model = 'claude-sonnet-5';
@@ -97,6 +97,24 @@ test('Claude mod routes Codex tool search so a Claude lead can load deferred mod
   const items = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
   assert.deepEqual(items[0], { type: 'tool_search_call', id: 's2', call_id: 's2', execution: 'client', arguments: { query: 'git' } });
   assert.equal(items[1].name, 'mod_omd_advisor_consult');
+});
+
+test('ask_claude consumes waits so write results integrate and refuses prompts over the host byte limit', () => {
+  const calls = [];
+  let ask;
+  activate({ on() {}, command() {}, settings: { ask_claude: true }, state: { set() {}, get: () => false },
+    tool: (_, handler) => { ask = handler; },
+    host: { tryCall: (operation, input) => {
+      calls.push([operation, input]);
+      if (operation === 'sidecars.status') return { ok: true, value: { running: true } };
+      if (operation === 'agents.spawn') return { ok: true, value: { handle: 'h1' } };
+      if (operation === 'agents.wait') return { ok: true, value: { status: 'completed', text: 'done', changed_paths: ['a'] } };
+      return { ok: true, value: { status: 'integrated' } };
+    } } });
+  assert.equal(ask({ prompt: 'é'.repeat(4097) }).reason, 'prompt_over_8192_bytes');
+  assert.equal(calls.some(([operation]) => operation === 'agents.spawn'), false);
+  assert.equal(ask({ prompt: 'é'.repeat(4096), mode: 'write' }).integration.status, 'integrated');
+  assert.deepEqual(calls.filter(([operation]) => operation === 'agents.wait'), [['agents.wait', { handle: 'h1', consume: true }]]);
 });
 
 test('Claude mod rejects route drift and carries calls to tools no longer offered as text', () => {

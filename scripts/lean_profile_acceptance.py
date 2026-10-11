@@ -227,6 +227,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert registered["marketplace"] == "oh-my-diff" and registered["source"] == str(bundle)
         assert command("full", "plugins") == registered
         for identifier in full["plugin_bundle"]["plugins"]:
+            plugin_root = bundle / "plugins" / identifier
+            if (plugin_root / ".codex-plugin/omd.json").is_file():
+                call([base / "full-prefix/artifacts/omd-mod", "plugin-component", plugin_root], env)
             plugin = call([base / "full-bin/codex", "plugin", "add", f"{identifier}@oh-my-diff", "--json"], env)
             assert plugin["name"] == identifier
             listed = call([base / "full-bin/codex", "plugin", "list", "--json"], env)

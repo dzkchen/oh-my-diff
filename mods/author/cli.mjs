@@ -85,7 +85,8 @@ export default function activate(api: ModAPI) {
 `;
 }
 
-function scenarioFor(name) {
+function scenarioFor(name, example = 'minimal') {
+  const contractStatus = { status: 'active', active: { schema: 2, id: 'paired_review', version: 1, description: 'Paired review', assurance: 'independent-review-candidate', gates: { complete: [] } }, provenance: null, receipts: [], finding_ledger: {}, restrictions: [], scoped_restrictions: [] };
   const scenarios = {
     minimal: {
       schema: 1,
@@ -101,9 +102,9 @@ function scenarioFor(name) {
       schema: 1,
       host_operations: {
         'routes.list': [{ result: [{ name: 'sol', model: 'm1', provider: 'p', available: true, billing: 'included_subscription', roles: ['worker'] }, { name: 'astra', model: 'm2', provider: 'p', available: true, billing: 'included_subscription', roles: ['worker'] }] }],
-        'workspace.snapshot': [{ result: { snapshot: { id: 'fixture-snapshot', sha256: 'a'.repeat(64) } } }],
+        'workspace.snapshot': [{ result: { snapshot: { reference: 'snapshot:fixture', sha256: 'a'.repeat(64) }, candidate_sha256: 'a'.repeat(64) } }],
         'agents.spawn': [{ result: { handle: 'a', route: 'sol', permissions: 'read_only' } }, { result: { handle: 'b', route: 'astra', permissions: 'read_only' } }],
-        'agents.wait': [{ result: { status: 'completed', text: 'one', consumed: true } }, { result: { status: 'completed', text: 'two', consumed: true } }],
+        'agents.wait': [{ result: { status: 'completed', text: 'one', consumed: true, evidence: { reference: 'native-thread:a', sha256: 'b'.repeat(64) } } }, { result: { status: 'completed', text: 'two', consumed: true, evidence: { reference: 'native-thread:b', sha256: 'c'.repeat(64) } } }],
       },
       steps: [{ type: 'invoke', mod: 'coordination', event: 'tool', name: 'compare', payload: { prompt: 'inspect' } }],
     },
@@ -122,8 +123,8 @@ function scenarioFor(name) {
     kernel: {
       schema: 1,
       steps: [
-        { type: 'event', event: 'model_request', payload: { routes: [{ name: 'sol', available: true, billing: 'included_subscription' }, { name: 'astra', available: true, billing: 'included_subscription' }] }, expect: [{ mod: 'kernel', value: { route: 'astra' } }] },
-        { type: 'event', event: 'response_stream', payload: { protected: false, text: 'experimental API' }, expect: [{ mod: 'kernel', value: { text: 'preview API' } }] },
+        { type: 'intercept', surface: 'model_request', payload: { request_id: 'r1', route: 'sol', routes: [{ name: 'sol', available: true, billing: 'included_subscription' }, { name: 'astra', available: true, billing: 'included_subscription' }], effort: null, sections: [] }, core: [{ value: { route: 'astra', effort: null, cache: { from: null } } }] },
+        { type: 'intercept', surface: 'response_stream', payload: { kind: 'text', index: 0, text: 'experimental API', protected: false }, core: [{ value: { chunks: [{ kind: 'text', index: 0, text: 'preview API', protected: false }] } }] },
       ],
     },
     counter: {
@@ -140,11 +141,11 @@ function scenarioFor(name) {
     workflow: {
       schema: 1,
       host_operations: {
-        'contract.status': [{ result: { id: 'paired_review', version: 1, assurance: 'independent-review-candidate' } }],
+        'contract.status': [{ result: contractStatus }],
         'contract.restrict': [{ result: { restricted: true } }],
       },
       steps: [
-        { type: 'invoke', mod: 'workflow', event: 'tool', name: 'workflow', payload: {}, expect: { id: 'paired_review', version: 1, assurance: 'independent-review-candidate' } },
+        { type: 'invoke', mod: 'workflow', event: 'tool', name: 'workflow', payload: {}, expect: contractStatus },
         { type: 'invoke', mod: 'workflow', event: 'tool', name: 'no_delegation', payload: {}, expect: { restricted: true } },
       ],
     },
@@ -159,16 +160,33 @@ function scenarioFor(name) {
     scoped_data: { schema: 1, host_operations: { 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'example_scoped_data', event: 'command', name: 'inspect', payload: null, expect: null }] },
     service_request: { schema: 1, host_operations: { 'sidecars.invoke': [{ result: { provider: 'example_echo', program_sha256: 'a'.repeat(64), source_hashes: {}, result: { echo: 'extension-owned request' }, untrusted: true } }] }, steps: [{ type: 'invoke', mod: 'example_service_request', event: 'tool', name: 'probe', payload: {} }] },
     review_probe: { schema: 1, steps: [{ type: 'invoke', mod: 'example_review_probe', event: 'turn_end', name: '', payload: { turn_id: 'fixture', outcome: 'aborted' } }] },
+    render_hooks: {
+      schema: 1,
+      steps: [
+        { type: 'intercept', surface: 'render', payload: { component: 'spinner', id: 'fixture', surface: 'fullscreen', viewport: { columns: 100, rows: 40 }, lifecycle: 'live', owner: null, props: { header: 'Working', elapsed_seconds: 5 } } },
+        { type: 'intercept', surface: 'render', payload: { component: 'tool_call', id: 'fixture-tool', surface: 'fullscreen', viewport: { columns: 100, rows: 40 }, lifecycle: 'final', owner: null, props: { kind: 'function', tool: 'read_file', status: 'failed' } }, core: [{ value: { tree: [] } }] },
+      ],
+    },
+    reactive_dashboard: {
+      schema: 1,
+      steps: [
+        { type: 'invoke', mod: 'reactive_dashboard', event: 'command', name: 'search', payload: ' logs ', expect: null },
+        { type: 'event', event: 'terminal', payload: { event: 'draw', ledger: null }, expect: [{ mod: 'reactive_dashboard', value: { sidebar_width: 32, sites: { sidebar: { components: [
+          { type: 'input', id: 'dashboard_query', label: 'Filter', value: 'logs', placeholder: 'type to filter', action: { command: 'reactive_dashboard:search' } },
+          { type: 'text', id: 'dashboard_summary', label: 'Summary', text: 'logs · 1 searches · 0 ticks', tone: 'muted' },
+        ] } } } }] },
+      ],
+    },
     snapshot_review: { schema: 1, host_operations: { 'task.status': [{ result: { ledger: { thread_id: 'author-preview' } } }], 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'snapshot_review', event: 'tool', name: 'start', payload: {}, expect_error: 'capture_first' }] },
   };
-  return scenarios[name] || scenarios.minimal;
+  return scenarios[example] || scenarios.minimal;
 }
 
-function debugScenario(name) {
-  if (name === 'coordination') {
+function debugScenario(name, example = 'minimal') {
+  if (example === 'coordination') {
     return { schema: 1, steps: [{ type: 'invoke', mod: 'coordination', event: 'tool', name: 'compare', payload: null, expect_error: 'prompt required' }] };
   }
-  if (name === 'minimal') {
+  if (example === 'minimal') {
     return { schema: 1, steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'fail', expect_error: 'INTENTIONAL_AUTHOR_FAILURE' }] };
   }
   return { schema: 1, steps: [{ type: 'invoke', mod: ({ service_request: 'example_service_request', workspace: 'workspace_author', virtual_reader: 'example_virtual_reader', scoped_data: 'example_scoped_data', review_probe: 'example_review_probe' })[name] ?? name.replaceAll('-', '_'), event: 'command', name: '__intentional_missing__', payload: null, expect_error: 'unsupported_or_unregistered_operation' }] };
@@ -178,11 +196,11 @@ async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function writeProjectFiles(directory, name) {
+async function writeProjectFiles(directory, name, example) {
   await writeJson(join(directory, 'package.json'), packageJson(name));
   await writeJson(join(directory, 'tsconfig.json'), tsconfig());
-  await writeJson(join(directory, 'mod.test.json'), scenarioFor(name));
-  await writeJson(join(directory, 'debug.test.json'), debugScenario(name));
+  await writeJson(join(directory, 'mod.test.json'), scenarioFor(name, example));
+  await writeJson(join(directory, 'debug.test.json'), debugScenario(name, example));
 }
 
 // The SDK is a local file dependency, so the scaffold and its lockfile install without the network.
@@ -208,7 +226,7 @@ async function copyExample(directory, name) {
   if (!statSync(source).isDirectory()) fail(`unknown_example: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   cpSync(source, directory, { recursive: true });
-  await writeProjectFiles(directory, name);
+  await writeProjectFiles(directory, name, name);
   const suppliedScenario = join(source, 'mod.test.json');
   if (existsSync(suppliedScenario)) cpSync(suppliedScenario, join(directory, 'mod.test.json'));
 }
@@ -251,10 +269,14 @@ function compileJsx(directory) {
   if (existing !== generated) writeFileSync(target, generated);
 }
 
-function checkProject(directory) {
+function checkSyntax(directory) {
   compileJsx(directory);
   const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
   stripTypeScriptTypes(readFileSync(join(directory, manifest.entrypoint ?? 'index.ts'), 'utf8'));
+}
+
+function checkProject(directory) {
+  checkSyntax(directory);
   if (!existsSync(join(directory, 'node_modules/.bin/tsc'))) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;
@@ -356,8 +378,22 @@ async function packageProject(directory) {
 function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
-    compileJsx(directory);
-    const inspected = trustPackage(store, directory);
+    checkSyntax(directory);
+    const inspected = engineJson(['inspect', directory]);
+    const locked = engineJson(['package-lock', store]).packages;
+    const installed = locked[inspected.manifest.id];
+    if (installed) {
+      if (installed.source.kind !== 'local' || realpathSync(installed.source.path) !== inspected.path || realpathSync(installed.path) !== inspected.path) fail('watch_source_mismatch: use a scratch store with this local package');
+      const index = installed.dependencies.map(dependency => locked[dependency.id]?.source).find(source => source?.kind === 'package')?.index;
+      const request = JSON.stringify({ action: 'update', source: { kind: 'local', path: inspected.path }, scope: installed.scope, offline: true, index,
+        trust: { packages: Object.fromEntries(Object.entries(locked).map(([id, entry]) => [id, entry.trust])) } });
+      const preview = engineJson(['package-plan', store, request]);
+      if (preview.packages.some(packageEntry => locked[packageEntry.id] && locked[packageEntry.id].scope !== packageEntry.scope)) fail('watch_approval_required: review package scope changes before watching');
+      if (preview.changes.packages.some(change => change.renewed_approval || change.state_version.migration_required)) fail('watch_approval_required: review changed package grants, authority or state versions before watching');
+      engineJson(['package-apply', store, request, preview.confirmation]);
+    } else {
+      trustPackage(store, directory);
+    }
     files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
     if (existsSync(join(directory, 'index.tsx'))) files.add('index.tsx');
     const result = engineJson(['reload', store]);
@@ -384,7 +420,7 @@ function watchProject(directory, store, once) {
 }
 
 async function main() {
-  const [action, rawDirectory = '.', nameOrStore, extra] = process.argv.slice(2);
+  const [action, rawDirectory = '.', nameOrStore, extra] = process.argv.slice(2).filter(argument => argument !== '--');
   const directory = resolve(rawDirectory);
   switch (action) {
     case 'create': return createProject(directory, nameOrStore || basename(directory));

@@ -183,6 +183,28 @@ fn integration_receipt(
 mod history_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn waiting_does_not_hold_the_slot_lock() {
+        let slot = Arc::new(tokio::sync::Mutex::new(false));
+        let waiting = tokio::spawn({
+            let slot = slot.clone();
+            async move {
+                tokio::time::timeout(
+                    Duration::from_secs(30),
+                    wait_finished(&slot, |finished| *finished),
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let started = std::time::Instant::now();
+        *tokio::time::timeout(Duration::from_secs(1), slot.lock())
+            .await
+            .unwrap() = true;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(waiting.await.unwrap().is_ok());
+    }
+
     #[test]
     fn receipt_agents_are_read_only_and_bound_to_the_acceptance_they_received() {
         let acceptance = "a".repeat(64);
@@ -1103,12 +1125,16 @@ impl Agents {
             .attest_execution(caller, lead.thread, candidate, evidence, outcome)
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(super) async fn execute_snapshot(
         &self,
         lead: &Lead,
         caller: &operations::Caller<'_>,
         mut arguments: Value,
         cancelled: &Arc<AtomicBool>,
+        environment: Arc<codex_omd::host::Environment>,
+        mut authority: crate::workspace_operations::WorkspaceAuthority,
+        policy: Option<codex_protocol::models::PermissionProfile>,
     ) -> Result<Value, String> {
         if !caller
             .grants
@@ -1130,15 +1156,19 @@ impl Agents {
                 .map_err(|_| "snapshot_lock_poisoned")?;
             snapshots.get(caller, lead.thread, &reference)?
         };
-        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
+        let parent_permissions = authority.context.permissions.clone();
+        if let Some(policy) = &policy {
+            let permissions =
+                execution::intersect(&parent_permissions, policy, &authority.repository)?;
+            authority.policy = permissions.file_system_sandbox_policy();
+            authority.context.permissions = permissions;
+        }
         snapshots::permitted(&snapshot, &authority, &lead.host.protected_paths())?;
         let mut parent = (*parent_config(lead).await?).clone();
         parent
             .permissions
             .set_permission_profile_from_session_snapshot(
-                codex_protocol::models::PermissionProfileSnapshot::legacy(
-                    authority.context.permissions,
-                ),
+                codex_protocol::models::PermissionProfileSnapshot::legacy(parent_permissions),
             )
             .map_err(|error| error.to_string())?;
         let session = lead.session.clone();
@@ -1162,14 +1192,25 @@ impl Agents {
             let mut cleanup = IntegrationScratch { parent: session.scratch.clone(), directory: Some(directory.clone()) };
             let root = codex_omd::create_worktree(&snapshot, &directory, host.config.snapshot_bytes).map_err(|e| e.to_string())?;
             let config = execution::isolated(&parent, &root, &host.config.toolchain_reads, &host.protected_paths(), arguments["write"] == true)?;
-            let profile = config.permissions.effective_permission_profile();
+            let mut profile = config.permissions.effective_permission_profile();
+            if let Some(policy) = &policy {
+                profile = execution::intersect(&profile, policy, &host.repository)?;
+            }
             let workspace = crate::workspace_operations::WorkspaceAuthority {
                 repository: root.clone(), session_root: None, session_database: None,
                 policy: profile.file_system_sandbox_policy(),
                 context: codex_file_system::FileSystemSandboxContext::from_permission_profile(profile,
                     codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)),
             };
-            let result = crate::generic_host::call(grants, &workspace, &host.root, host.protected_paths(),
+            let declared = &grants.as_ref().ok_or("host_caller_inactive")?.exec_environment;
+            let mut effective = environment.values(Some(&thread.to_string()), &id, &source, declared)?;
+            let environment = codex_omd::host::Environment::scoped(&thread.to_string(), &id, &source, effective.clone());
+            let explicit: codex_omd::host::EnvironmentValues = serde_json::from_value(
+                arguments.get("env").cloned().unwrap_or_else(|| json!({})))
+                .map_err(|error| error.to_string())?;
+            effective.extend(explicit.clone());
+            let environment_evidence = codex_omd::host::environment_evidence(&effective);
+            let result = crate::generic_host::call(grants, &workspace, &host.root, Some(&environment), host.protected_paths(),
                 &id, origin, Some(&thread.to_string()), codex_omd::ModHostCall {
                     operation: "exec.run".into(), arguments: arguments.clone(),
                 }, &active, false)?;
@@ -1178,9 +1219,14 @@ impl Agents {
                 return Err("snapshot_execution_changed_source".into());
             }
             if !active() { return Err("snapshot_execution_cancelled".into()); }
+            let mut recorded_arguments = arguments;
+            if recorded_arguments.get("env").is_some() {
+                recorded_arguments["env"] = codex_omd::host::environment_evidence(&explicit);
+            }
             let recorded = session.evidence(&format!("execution-{}.json", ThreadId::new()),
                 &json!({"caller": id, "source_sha256": source, "generation": generation, "thread": thread,
-                    "candidate_sha256": candidate, "arguments": arguments, "result": result}))?;
+                    "candidate_sha256": candidate, "arguments": recorded_arguments,
+                    "environment": environment_evidence, "result": result}))?;
             let sha = recorded["sha256"].as_str().ok_or("execution_digest_missing")?.to_owned();
             let evidence = codex_omd::resource_data::ResourceRef { reference: format!("execution:{sha}"), sha256: sha };
             cleanup.cleanup()?;
@@ -1604,19 +1650,17 @@ impl Agents {
                         .map_err(|e| e.to_string())?
                         .0
                         .min(Duration::from_secs(30));
-                    let waited = match &mut agent.job {
-                        Some(job) => tokio::select! {
-                            result = tokio::time::timeout(deadline, job) => result.ok(),
-                            () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
-                        },
-                        None => None,
-                    };
-                    if let Some(result) = waited {
-                        agent.job = None;
-                        if let Err(error) = result {
-                            *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
-                                Some(Err(error.to_string()));
-                        }
+                    drop(agent);
+                    tokio::select! {
+                        _ = tokio::time::timeout(deadline, wait_finished(&slot, Agent::finished)) => (),
+                        () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
+                    }
+                    agent = slot.lock().await;
+                    if let Some(job) = agent.job.take_if(|job| job.is_finished())
+                        && let Err(error) = job.await
+                    {
+                        *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
+                            Some(Err(error.to_string()));
                     }
                 }
                 let result = agent
@@ -2529,7 +2573,13 @@ impl Agents {
     }
 }
 
-async fn until_cancelled(cancelled: &AtomicBool) {
+async fn wait_finished<T>(slot: &tokio::sync::Mutex<T>, finished: impl Fn(&T) -> bool) {
+    while !finished(&*slot.lock().await) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+pub(super) async fn until_cancelled(cancelled: &AtomicBool) {
     while !cancelled.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

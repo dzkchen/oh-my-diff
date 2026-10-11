@@ -1,7 +1,7 @@
 import type { Json, ModAPI, RouteInfo } from '../../api.d.ts';
 
 const PROVIDER = 'omd_profiles';
-type Profile = { name: string; model: string; billing: RouteInfo['billing']; available: boolean };
+type Profile = { name: string; model: string; reasoning: RouteInfo['reasoning']; billing: RouteInfo['billing']; available: boolean };
 type Saved = { profiles: Profile[]; current: string | null; notice: string | null; pending: string | null; ours: boolean };
 
 const USAGE = 'usage: /profile [use NAME | add chatgpt|api_key LABEL | add provider LABEL PROVIDER HTTPS_ORIGIN | remove LABEL | refresh LABEL]';
@@ -17,7 +17,7 @@ export default function activate(api: ModAPI) {
   const refresh = () => {
     const routes = api.host.tryCall('routes.list', null);
     if (routes.ok) store({ profiles: routes.value.filter(route => route.provider === PROVIDER && route.roles.includes('lead'))
-      .map(({ name, model, billing, available }) => ({ name, model, billing, available })) });
+      .map(({ name, model, reasoning, billing, available }) => ({ name, model, reasoning, billing, available })) });
   };
   const ensure = () => {
     const status = api.host.tryCall('sidecars.status', { id: PROVIDER });
@@ -44,6 +44,10 @@ export default function activate(api: ModAPI) {
     store(selected.ok ? { current: pending, pending: null, notice: null } : { pending: null, notice: `${pending}: ${selected.error}` });
     refresh();
   });
+  api.intercept('model_request', (event, next) => {
+    const { notice, pending } = saved();
+    return notice || pending ? { deny: notice ?? `Profile selection pending: ${pending}` } : next(event);
+  });
   api.on('terminal', () => {
     const { current, notice, pending } = saved();
     const text = notice ? 'profile switch failed' : pending ? `profile → ${pending}` : current ? `profile ${current}` : null;
@@ -61,10 +65,18 @@ export default function activate(api: ModAPI) {
     if (op === 'use') {
       const profile = profiles.find(item => item.name === label);
       if (!profile) return { display: `Unknown profile ${label || '(none)'}. ${USAGE}` };
+      if (!saved().ours) return { display: 'Start this thread with omd-package profiles before switching profiles.' };
+      if (!profile.available) return { display: `Profile ${profile.name} is unavailable.` };
       if (profile.billing !== 'included_subscription') {
         const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: 'Use a paid API profile', message: `${profile.name} (${profile.model}) bills its API account per request. Switch at the next request?` });
         if (!answer.ok || answer.value.status !== 'accepted') return { display: 'Kept the current profile.' };
       }
+      const before = api.host.call('store.get', { key: 'thread' });
+      api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
+      const threadId = api.host.call('store.get', { key: 'thread' })?.provenance.thread_id;
+      if (!threadId) return { display: 'Profile switch failed: current thread unavailable.' };
+      const updated = api.host.tryCall('app.request', { method: 'thread/settings/update', params: { threadId, model: profile.model, effort: profile.reasoning } });
+      if (!updated.ok) return { display: `Profile switch failed: ${updated.error}` };
       store({ pending: profile.name, notice: null });
       return { display: `Switching this thread to ${profile.name} at its next turn; its attachments and tool history are kept. Earlier reasoning is not sent to another account, and Chat Completions or Anthropic profiles get no hosted tools.` };
     }

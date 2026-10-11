@@ -4,11 +4,12 @@
   "version": "0.2.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "state_scope": "thread",
   "description": "/inspect shows the session mode, install profile, active mods, workflow contract, limits and ledger",
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
   "capabilities": ["agents", "commands", "contracts", "store", "terminal", "events"],
   "subscriptions": { "channels": ["omd_inspector/refresh"] },
-  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "events_v1"] },
+  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1"] },
   "settings_schema": { "type": "object", "properties": {}, "additionalProperties": false }
 }

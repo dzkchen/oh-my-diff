@@ -361,6 +361,14 @@ fn read_index(path: &Path) -> Result<PackageIndex> {
     if index.schema != 1 {
         return Err(failure("unsupported_package_index_schema"));
     }
+    if index
+        .packages
+        .values()
+        .flatten()
+        .any(|release| matches!(release.source, ModPackageSource::Package { .. }))
+    {
+        return Err(failure("index_release_source_invalid"));
+    }
     Ok(index)
 }
 
@@ -543,6 +551,14 @@ impl ModStore {
                     )));
                 }
                 let previous = existing.packages.get(&resolved.package.id);
+                if let Some(locked) = previous
+                    && locked.scope != request.scope
+                {
+                    return Err(failure(format!(
+                        "package_scope_conflict: {} is installed in {} scope",
+                        locked.id, locked.scope
+                    )));
+                }
                 if let Some(reason) = managed.as_ref().and_then(|managed| {
                     managed.policy.install_refusal(
                         &resolved.locked.id,
@@ -570,10 +586,7 @@ impl ModStore {
                             .exists()
                 });
                 resolved.locked.enabled = previous.is_some_and(|locked| {
-                    locked.enabled
-                        && locked.trust == resolved.locked.trust
-                        && locked.authority == resolved.locked.authority
-                        && same_origin(&locked.source, &resolved.locked.source)
+                    locked.enabled && same_approval(locked, &resolved.locked)
                 }) && !state_migration_required;
                 Ok(resolved.locked)
             })
@@ -584,6 +597,13 @@ impl ModStore {
         } else {
             "install"
         };
+        if let Some(requested) = request.action.as_deref()
+            && requested != action
+        {
+            return Err(failure(format!(
+                "package_plan_action_mismatch: {requested} requested, {action} computed"
+            )));
+        }
         let changes = package_changes(&existing, &packages);
         let mut plan = ModPackagePlan {
             schema: PACKAGE_LOCK_SCHEMA,
@@ -634,9 +654,20 @@ impl ModStore {
                 store::package(&selection.path)
                     .ok()
                     .map(|(manifest, _, _)| manifest.id)
+                    .or_else(|| {
+                        lock.packages
+                            .values()
+                            .find(|locked| {
+                                locked.scope == selection.scope
+                                    && (locked.path == selection.path
+                                        || locked.cache_path == selection.path)
+                            })
+                            .map(|locked| locked.id.clone())
+                    })
             })
             .collect::<Vec<_>>();
         let mut lifecycle = Vec::new();
+        let mut evicted = Vec::new();
         for package in &plan.packages {
             match lock.packages.get(&package.id) {
                 None => lifecycle.push((package.clone(), "install")),
@@ -648,7 +679,7 @@ impl ModStore {
             if let Some(previous) = lock.packages.insert(package.id.clone(), package.clone())
                 && previous.integrity != package.integrity
             {
-                push_history(&mut lock, &package.id, previous)?;
+                evicted.extend(push_history(&mut lock, &package.id, previous));
             }
             let selection = config
                 .mods
@@ -686,14 +717,86 @@ impl ModStore {
             .ok_or_else(|| failure("revision_overflow"))?;
         let event =
             json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
-        self.commit_package_transaction(
+        let lock = self.commit_package_transaction(
             lock,
             config,
             &lifecycle,
             &plan.action,
             event,
             if online { &plan.packages } else { &[] },
-        )
+        )?;
+        self.prune_evicted_local_snapshots(&lock, &evicted);
+        Ok(lock)
+    }
+
+    fn prune_evicted_local_snapshots(&self, lock: &ModPackageLock, evicted: &[ModLockedPackage]) {
+        if evicted.is_empty() {
+            return;
+        }
+        let (Ok(config), Ok(managed)) = (self.configuration(), self.managed_deployment()) else {
+            return;
+        };
+        let mut paths = lock
+            .packages
+            .values()
+            .chain(lock.history.values().flatten())
+            .flat_map(|package| [&package.path, &package.cache_path])
+            .chain(config.mods.iter().map(|selection| &selection.path))
+            .collect::<Vec<_>>();
+        let mut integrities = config
+            .mods
+            .iter()
+            .map(|selection| &selection.sha256)
+            .collect::<BTreeSet<_>>();
+        let mut generation = Some(&managed);
+        while let Some(deployment) = generation {
+            for package in &deployment.packages {
+                paths.push(&package.path);
+                integrities.insert(&package.sha256);
+                integrities.extend(&package.dependencies);
+            }
+            generation = deployment.previous.as_deref();
+        }
+        let paths = paths
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+            .collect::<Vec<_>>();
+        for package in evicted {
+            let ModPackageSource::Local { path: source } = &package.source else {
+                continue;
+            };
+            if !identifier(&package.id)
+                || package.integrity.len() != 64
+                || !package
+                    .integrity
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || !source.is_absolute()
+                || source.starts_with(&self.root)
+                || source
+                    .canonicalize()
+                    .is_ok_and(|path| path.starts_with(&self.root))
+            {
+                continue;
+            }
+            let cache = self.root.join("package-cache");
+            let base = cache.join(&package.id);
+            let expected = base.join(&package.integrity);
+            if package.cache_path != expected
+                || [&cache, &base, &expected].iter().any(|path| {
+                    !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+                })
+                || !expected.canonicalize().is_ok_and(|path| path == expected)
+                || paths.iter().any(|path| path.starts_with(&expected))
+                || integrities.contains(&package.integrity)
+                || !store::package(&expected).is_ok_and(|(manifest, _, integrity)| {
+                    manifest.id == package.id && integrity == package.integrity
+                })
+            {
+                continue;
+            }
+            let _ = std::fs::remove_dir_all(expected);
+        }
     }
 
     pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -896,8 +999,14 @@ impl ModStore {
             .packages
             .remove(id)
             .ok_or_else(|| failure("package_not_installed"))?;
-        self.run_lifecycle(&package, "uninstall")?;
-        push_history(&mut lock, id, package.clone())?;
+        if let Err(error) = self.run_lifecycle(&package, "uninstall") {
+            let _ = self.record_security_event(
+                "lifecycle_failed",
+                json!({"package": package_event(&package), "script": "uninstall", "reason": error_code(&error)}),
+            );
+        }
+        let installed = lock.packages.keys().cloned().collect::<BTreeSet<_>>();
+        lock.history.retain(|name, _| installed.contains(name));
         lock.revision = lock
             .revision
             .checked_add(1)
@@ -905,7 +1014,10 @@ impl ModStore {
         let mut config = self.configuration()?;
         config.mods.retain(|selection| {
             !(selection.scope == package.scope
-                && store::package(&selection.path).is_ok_and(|(manifest, _, _)| manifest.id == id))
+                && (selection.path == package.path
+                    || selection.path == package.cache_path
+                    || store::package(&selection.path)
+                        .is_ok_and(|(manifest, _, _)| manifest.id == id)))
         });
         config.revision = config
             .revision
@@ -947,6 +1059,13 @@ impl ModStore {
                 previous.version
             )));
         }
+        if current.trust == ModPackageGrant::default()
+            && previous.trust != ModPackageGrant::default()
+        {
+            return Err(failure(format!(
+                "package_trust_revoked: grant {id} again with an install or update before rolling back"
+            )));
+        }
         let mut plan = ModPackagePlan {
             schema: PACKAGE_LOCK_SCHEMA,
             action: "rollback".into(),
@@ -982,7 +1101,9 @@ impl ModStore {
         let current_path = current.path.clone();
         previous.path = previous.cache_path.clone();
         previous.settings = selected_settings(&self.configuration()?, &current);
-        previous.enabled = current.enabled && previous.state_version == current.state_version;
+        previous.enabled = current.enabled
+            && same_approval(&previous, &current)
+            && previous.state_version == current.state_version;
         validate_settings(&store::package(&previous.path)?.0, &previous.settings)?;
         let history = lock.history.entry(id.to_owned()).or_default();
         history.pop();
@@ -2143,6 +2264,13 @@ pub(super) fn error_code(error: &io::Error) -> String {
         .collect()
 }
 
+fn same_approval(previous: &ModLockedPackage, next: &ModLockedPackage) -> bool {
+    previous.trust == next.trust
+        && previous.authority == next.authority
+        && previous.exec_environment == next.exec_environment
+        && same_origin(&previous.source, &next.source)
+}
+
 fn same_origin(previous: &ModPackageSource, next: &ModPackageSource) -> bool {
     match (previous, next) {
         (ModPackageSource::Local { path: a }, ModPackageSource::Local { path: b }) => a == b,
@@ -2462,13 +2590,14 @@ fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
     Ok(())
 }
 
-fn push_history(lock: &mut ModPackageLock, id: &str, package: ModLockedPackage) -> Result<()> {
+fn push_history(
+    lock: &mut ModPackageLock,
+    id: &str,
+    package: ModLockedPackage,
+) -> Option<ModLockedPackage> {
     let history = lock.history.entry(id.to_owned()).or_default();
     history.push(package);
-    if history.len() > PACKAGE_HISTORY_LIMIT {
-        history.remove(0);
-    }
-    Ok(())
+    (history.len() > PACKAGE_HISTORY_LIMIT).then(|| history.remove(0))
 }
 
 fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {
@@ -2524,8 +2653,7 @@ fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> 
             "capabilities":{"from":previous.map(|value|&value.capabilities),"to":package.capabilities},
             "authority":{"from":previous.map(|value|&value.authority),"to":package.authority},
             "grant":{"from":previous.map(|value|&value.trust),"to":package.trust},
-            "renewed_approval":previous.is_none_or(|value|value.trust != package.trust
-                || value.authority != package.authority || !same_origin(&value.source, &package.source)),
+            "renewed_approval":previous.is_none_or(|value|!same_approval(value, package)),
             "exec_environment":{"from":previous.map(|value|&value.exec_environment),"to":package.exec_environment},
             "secret_environment":{"from":previous.map(|value|&value.trust.secret_environment),"to":package.trust.secret_environment},
             "settings_schema_sha256":{"from":previous.map(|value|&value.settings_schema_sha256),"to":package.settings_schema_sha256},
@@ -2546,7 +2674,7 @@ fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> 
         (
             "activation".to_owned(),
             json!(
-                "installing never enables a package; an update keeps a package on only when its grant, authority and origin are unchanged"
+                "installing never enables a package; an update keeps a package on only when its grant, authority, origin and exec environment are unchanged"
             ),
         ),
     ]))

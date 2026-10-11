@@ -1,11 +1,11 @@
 ---
 name: omd-code-execution
-description: Use persistent V8, Python, or Bun cells that call current agent tools under native permission and task controls.
+description: Use V8 cells with session storage or persistent Python and Bun workers to call current agent tools under native permission and task controls.
 ---
 
 # OMD code execution
 
-Use Codex `functions.exec` for persistent V8 JavaScript. Its `tools` object calls the current host tools through the native router. The V8 path remains available independently of the optional workers.
+Use Codex `functions.exec` for V8 JavaScript. Each call runs in a fresh isolate: variables and `globalThis` do not persist. Save serializable session state with `store("key", value)` and read it in another call with `load("key")`. Its `tools` object calls the current host tools through the native router. The V8 path remains available independently of the optional workers.
 
 The Python and Bun workers are code-mode kernels that this plugin ships as drivers in `kernels/python.py` and `kernels/bun.mjs`. They require the matching patched Codex and `codex-code-mode-host`, an installed `python3` or `bun`, and explicit kernel entries whose `driver` is the absolute path of the installed driver and whose `driver_sha256` is its SHA-256:
 
