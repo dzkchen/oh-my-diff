@@ -1,12 +1,12 @@
 {
   "artifacts": {
     "codex": {
-      "bytes": 383155840,
-      "sha256": "5acec1308b5f7f47757a0e43fa9598c7f465c50ef6c3235be75d351f30e327ad"
+      "bytes": 383155808,
+      "sha256": "14ac08e296ac6853381f0eb53f2330a0b3883ac3015fd15790d2dbc5f0c86493"
     },
     "codex-code-mode-host": {
-      "bytes": 87407720,
-      "sha256": "68396b9948f64f7dbb05832ed9f63a511b18a387e8861323c55b12ab193df884"
+      "bytes": 87407688,
+      "sha256": "e928908a4c5fe3cad8d7e08b7902c93f7365fe1e849712d601ee38b21f5f1c9c"
     },
     "mod-api.tgz": {
       "bytes": 140195,
