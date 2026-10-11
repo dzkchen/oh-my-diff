@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/openai/codex.git",
-  "tag": "rust-v0.162.0",
-  "tag_object": "1f3f93473394b620b35580859b7e6864f7a9f948",
-  "commit": "c1382380de69521303b416720a52f42d51af6248",
+  "tag": "rust-v0.162.1",
+  "tag_object": "7a078f6bb4ce0dc2a81408b334ce52979d92c603",
+  "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
   "rust_toolchain": "1.95.0",
   "rust_components": [
     "clippy",
@@ -11,14 +11,14 @@
   ],
   "verified_target": "aarch64-apple-darwin",
   "cargo_lock_sha256": "49fe417bcafe3f69f1f6636e23274f90d37e75e388127a76888c39001a4f8117",
-  "normalized_cargo_lock_sha256": "1f770c0e411d51770e6dd48e9f3f4eab847bbabc7949f82f3619414697d68b8d",
+  "normalized_cargo_lock_sha256": "765110795bf3385d734bf1acfcae77660d29a6c678d5b77015d7ffe49f26e69f",
   "normalized_workspace_packages": 161,
-  "lock_normalization": "161 source-less workspace package versions: 0.0.0 -> 0.162.0; external dependencies unchanged",
+  "lock_normalization": "161 source-less workspace package versions: 0.0.0 -> 0.162.1; external dependencies unchanged",
   "runtime_patches": [
     {
-      "path": "runtime/patches/omd-0.162.0.patch",
-      "sha256": "f3f34f4400f77f2d2c4165bf200511608a1996db4ca698a47e91a14f9bba34aa"
+      "path": "runtime/patches/omd-0.162.1.patch",
+      "sha256": "e372d5c52def47e3356ad94876d95a023bf5036821e3b29d9876b67ae40c9c71"
     }
   ],
-  "compatibility_evidence": ".docs/audits/upstream-pin-0162-20261008.md"
+  "compatibility_evidence": ".docs/audits/upstream-pin-01621-20261010.md"
 }
