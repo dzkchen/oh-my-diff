@@ -242,6 +242,17 @@ pub(in crate::mods) fn visible_paths(
         .collect()
 }
 
+pub(in crate::mods) fn file_hash(root: &std::path::Path, path: &str) -> Option<String> {
+    let snapshot = codex_omd::Snapshot::capture(
+        root,
+        &std::collections::BTreeSet::from([path.to_owned()]),
+        HASH_BYTES as usize,
+    )
+    .ok()?;
+    let file = snapshot.files.get(path)?;
+    Some(crate::execution::hash(&file.bytes))
+}
+
 pub(in crate::mods) async fn external_changes(
     core: &Core,
     lead: &Lead,
@@ -260,12 +271,7 @@ pub(in crate::mods) async fn external_changes(
         })
         .into_iter()
         .map(|path| {
-            let full = root.join(&path);
-            let after = std::fs::symlink_metadata(&full)
-                .ok()
-                .filter(|metadata| metadata.is_file() && metadata.len() <= HASH_BYTES)
-                .and_then(|_| std::fs::read(&full).ok())
-                .map(|bytes| crate::execution::hash(&bytes));
+            let after = file_hash(&root, &path);
             json!({"path": path, "before": null, "after": after})
         })
         .collect::<Vec<_>>()

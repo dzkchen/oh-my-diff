@@ -443,7 +443,7 @@ async fn run(
         let _guard = exclusive(&lead.session)?;
         let authority = authority(lead, call).await?;
         let runtime = core.input_runtime.clone();
-        let processes = lead.session.processes.clone();
+        let lead = lead.clone();
         let generation = caller.generation;
         let protected = host.protected_paths();
         let thread = lead.thread.to_string();
@@ -453,7 +453,7 @@ async fn run(
             authority.request_rename(
                 request.arguments,
                 &mut runtime,
-                &processes,
+                &lead,
                 &protected,
                 generation,
                 &thread,

@@ -213,7 +213,10 @@ only the managed launcher and installation prefix:
 /path/to/omd-bin/omd-package uninstall
 ```
 
-The mod store and Codex state remain.
+The mod store and Codex state remain. `install.sh uninstall` also removes every older installation, failed
+attempts, staged updates and session markers; it refuses, leaving the current installation intact, when an older
+one cannot be removed. The stores under `ROOT/stores` stay, with the `ROOT/catalog` copies that `/mods` Browse
+installs of OMD's own mods run from.
 
 ## Install and manage mods
 
@@ -304,7 +307,9 @@ The launcher starts a detached check at most once per cadence and never waits fo
 area until you snooze or skip the release). Policy is `omd_update`'s settings, also editable in `/mods`;
 `omd update` writes it to every profile store. An update installs only when no other OMD session is open, because the
 store's first-party sources and trust change: with sessions open, `omd update` downloads and verifies the release
-and it installs the next time OMD starts with no other session open; **Update now** in `/update` does the same.
+and it installs the next time OMD starts with no other session open. **Update now** in `/update` only records a request;
+the next OMD launch downloads, verifies and installs the release, once no other session is open. With `omd_update`
+disabled in `/mods`, background checks and automatic updates stop, and `omd update` still works.
 Automatic updates download in the background and install at launch the same way, and a release that failed once is
 not retried automatically. A failed update rolls back and keeps the current version; an update interrupted at any
 point is repaired by the next launch or installer command. Updates keep the profile, activation choice, route setups,
@@ -352,7 +357,7 @@ leaves them running. Policy fields, refusals and recovery are in
 [mods/REFERENCE.md](mods/REFERENCE.md#administrator-policy-and-managed-deployment).
 
 The installer refuses removal if its
-launcher changed, no upstream Codex `0.162.x` remains on `PATH`, or the prefix
+launcher changed, no upstream `codex` that runs remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
 fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
 `--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,

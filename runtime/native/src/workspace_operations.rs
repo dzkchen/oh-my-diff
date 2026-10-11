@@ -260,6 +260,70 @@ impl WorkspaceAuthority {
         Ok(json!({"status":"renamed","files":result["files"]}))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn pre_rename_call(
+        &self,
+        id: &str,
+        call: codex_omd::ModHostCall,
+        grants: Option<&codex_omd::ModGrants>,
+        restricted: &dyn Fn(&str, &Value) -> Result<(), String>,
+        processes: &crate::managed_process::ManagedProcesses,
+        protected: &[PathBuf],
+        generation: u64,
+        thread: &str,
+        environment: &codex_omd::host::Environment,
+        active: &impl Fn() -> bool,
+    ) -> Result<Value, String> {
+        if !crate::generic_host::event_allows("workspace_pre_rename", &call.operation) {
+            return Err(format!(
+                "host_operation_unavailable: {} is not available during workspace_pre_rename",
+                call.operation
+            ));
+        }
+        restricted(&call.operation, &call.arguments)?;
+        match call.operation.as_str() {
+            "workspace.read" => self.call(&call.operation, call.arguments, active),
+            "process.start"
+                if call
+                    .arguments
+                    .as_object()
+                    .is_some_and(|fields| fields.contains_key("network")) =>
+            {
+                Err("pre_rename_operation_unavailable".into())
+            }
+            _ => {
+                let grants = grants.ok_or("host_caller_inactive")?;
+                crate::generic_host::process_request_allowed(Some(grants), &call)?;
+                let overrides = if call.operation == "process.start" {
+                    environment.values(
+                        Some(thread),
+                        id,
+                        &grants.source_sha256,
+                        &grants.exec_environment,
+                    )?
+                } else {
+                    Default::default()
+                };
+                processes.call(
+                    crate::managed_process::ProcessOwner {
+                        thread: Some(thread),
+                        id,
+                        generation,
+                        repository: &self.repository,
+                        policy: &self.policy,
+                        protected,
+                        environment: Some(&overrides),
+                        os_access: None,
+                        blit: None,
+                    },
+                    &call.operation,
+                    call.arguments,
+                    active,
+                )
+            }
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "callbacks retain their runtime, process and environment authority"
@@ -268,7 +332,7 @@ impl WorkspaceAuthority {
         &self,
         arguments: Value,
         runtime: &mut codex_omd::ModHost,
-        processes: &crate::managed_process::ManagedProcesses,
+        lead: &crate::Lead,
         protected: &[PathBuf],
         generation: u64,
         thread: &str,
@@ -287,59 +351,36 @@ impl WorkspaceAuthority {
         if !runtime.has_event("workspace_pre_rename") {
             return Ok(json!({"status":"fallback","reason":"no_pre_rename_handler"}));
         }
-        let grants = runtime
-            .owners()
+        let grants: std::collections::BTreeMap<_, _> = runtime
+            .subscribers_with_capability("workspace_pre_rename", "fs.write")
             .into_iter()
-            .filter_map(|(id, _)| runtime.grants(&id).map(|grants| (id, grants)))
-            .collect::<std::collections::BTreeMap<_, _>>();
+            .filter_map(|id| runtime.grants(&id).map(|grants| (id, grants)))
+            .collect();
         let proposals = runtime.event_guarded_with(
             "workspace_pre_rename",
             payload.clone(),
             &active,
             |id, call| {
-                let operation = call.operation.clone();
-                let result = match operation.as_str() {
-                    "workspace.read" => self.call(&call.operation, call.arguments, &active),
-                    "process.start"
-                        if call
-                            .arguments
-                            .as_object()
-                            .is_some_and(|fields| fields.contains_key("network")) =>
-                    {
-                        Err("pre_rename_operation_unavailable".into())
-                    }
-                    operation if operation.starts_with("process.") => (|| {
-                        let grants = grants.get(id).ok_or("host_caller_inactive")?;
-                        crate::generic_host::process_request_allowed(Some(grants), &call)?;
-                        let overrides = if operation == "process.start" {
-                            environment.values(
-                                Some(thread),
-                                id,
-                                &grants.source_sha256,
-                                &grants.exec_environment,
-                            )?
-                        } else {
-                            Default::default()
-                        };
-                        processes.call(
-                            crate::managed_process::ProcessOwner {
-                                thread: Some(thread),
-                                id,
-                                generation,
-                                repository: &self.repository,
-                                policy: &self.policy,
-                                protected,
-                                environment: Some(&overrides),
-                                os_access: None,
-                                blit: None,
-                            },
-                            operation,
-                            call.arguments,
-                            &active,
-                        )
-                    })(),
-                    _ => Err("pre_rename_operation_unavailable".into()),
-                };
+                let audited =
+                    codex_omd::access_receipt(id, &call, Ok(&Value::Null)).map(|_| call.clone());
+                let result = self.pre_rename_call(
+                    id,
+                    call,
+                    grants.get(id),
+                    &|operation, arguments| lead.restricted(operation, arguments),
+                    &lead.session.processes,
+                    protected,
+                    generation,
+                    thread,
+                    environment,
+                    &active,
+                );
+                if let Some(call) = audited
+                    && let Some(receipt) =
+                        codex_omd::access_receipt(id, &call, result.as_ref().map_err(Clone::clone))
+                {
+                    lead.session.record_access(&receipt);
+                }
                 result.map_err(std::io::Error::other)
             },
         );
@@ -648,6 +689,68 @@ mod tests {
                 .visible_changes(vec![change("secret.py")])
                 .unwrap_err(),
             "workspace_change_scope_unavailable"
+        );
+    }
+
+    #[test]
+    fn pre_rename_process_calls_obey_the_normal_dispatch_gates() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.py"), "x\n").unwrap();
+        let authority = authority(root, FileSystemAccessMode::Write);
+        let processes = crate::managed_process::ManagedProcesses::default();
+        let grants = codex_omd::ModGrants::default();
+        let call = |operation: &str, arguments: Value, restricted: bool| {
+            authority.pre_rename_call(
+                "mod",
+                codex_omd::ModHostCall {
+                    operation: operation.into(),
+                    arguments,
+                },
+                Some(&grants),
+                &|_, _| {
+                    if restricted {
+                        Err("contract_restricted".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                &processes,
+                &[],
+                1,
+                "thread",
+                &codex_omd::host::Environment::default(),
+                &|| true,
+            )
+        };
+        assert_eq!(
+            call(
+                "process.start",
+                json!({"session":"s","name":"sh","path":"/bin/sh","sha256":"x","environment":{"SECRET":"1"}}),
+                false
+            )
+            .unwrap_err(),
+            "exec_environment_undeclared"
+        );
+        assert_eq!(
+            call("process.which", json!({"names":["sh"]}), true).unwrap_err(),
+            "contract_restricted"
+        );
+        assert!(
+            call("process.which", json!({"names":["sh"]}), false).unwrap()["found"][0]["path"]
+                .is_string()
+        );
+        assert_eq!(
+            call("workspace.transaction", json!({}), false).unwrap_err(),
+            "host_operation_unavailable: workspace.transaction is not available during workspace_pre_rename"
+        );
+        assert_eq!(
+            call("process.start", json!({"network":"loopback"}), false).unwrap_err(),
+            "pre_rename_operation_unavailable"
+        );
+        assert_eq!(
+            call("workspace.read", json!({"paths":["a.py"]}), false).unwrap()["files"]["a.py"]["text"],
+            "x\n"
         );
     }
 

@@ -14,7 +14,8 @@ fn only_registered_sidecars_reach_approved_profiles_until_revoked() {
         .create("up", "provider", Some("up"), Some("https://up.example"))
         .unwrap();
     let other = profiles.create("other", "api_key", None, None).unwrap();
-    let (base, registration) = register(store, BTreeSet::from([approved.id.clone()])).unwrap();
+    let (base, registration) =
+        register(store, "mod".into(), BTreeSet::from([approved.id.clone()])).unwrap();
     let port = base.rsplit_once('/').unwrap().0;
     assert_eq!(
         get(&format!("{port}/unknown/{}/v1", approved.id)),
@@ -32,6 +33,33 @@ fn only_registered_sidecars_reach_approved_profiles_until_revoked() {
     assert_eq!(
         get(&format!("{base}/{}/v1", approved.id)),
         (403, "credential_not_host_approved".into())
+    );
+}
+
+#[test]
+fn a_grant_naming_another_mods_secret_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().canonicalize().unwrap();
+    let profiles = CredentialProfiles::local(&store).unwrap();
+    let secret = profiles
+        .create_secret("token", "https://up.example", "owner")
+        .unwrap();
+    let url = |base: &str| format!("{base}/{}/v1", secret.id);
+    let (base, _intruder) = register(
+        store.clone(),
+        "intruder".into(),
+        BTreeSet::from([secret.id.clone()]),
+    )
+    .unwrap();
+    assert_eq!(
+        get(&url(&base)),
+        (403, format!("credential_secret_not_owned: {}", secret.id))
+    );
+    let (base, _owner) =
+        register(store, "owner".into(), BTreeSet::from([secret.id.clone()])).unwrap();
+    assert_ne!(
+        get(&url(&base)),
+        (403, format!("credential_secret_not_owned: {}", secret.id))
     );
 }
 
@@ -69,8 +97,13 @@ fn fixture(gateway: &Gateway, listener: &TcpListener) -> (tempfile::TempDir, Str
     document["profiles"][0]["origin"] =
         serde_json::json!(format!("http://{}", listener.local_addr().unwrap()));
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-    let (base, registration) =
-        register_at(gateway, store, BTreeSet::from([profile.id.clone()])).unwrap();
+    let (base, registration) = register_at(
+        gateway,
+        store,
+        "mod".into(),
+        BTreeSet::from([profile.id.clone()]),
+    )
+    .unwrap();
     (temp, format!("{base}/{}/v1", profile.id), registration)
 }
 

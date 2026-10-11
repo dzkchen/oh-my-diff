@@ -14,6 +14,9 @@ GENERIC_LITERALS = {
 }
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/native/src")
 PACKAGE_MANIFESTS = ("mods/first-party/*/mod.json", "plugins/**/mod.json")
+PLUGIN_MANIFESTS = "plugins/bundled/**/.codex-plugin/plugin.json"
+PATCH_DIRECTORY = "runtime/patches"
+PATCH_MIRRORS = ("codex-rs/omd/", "codex-rs/ext/omd/")
 SURFACES = ("MOD_HOST_FEATURES", "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS",
             "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")
 
@@ -97,13 +100,48 @@ def runner(root):
     return findings
 
 
-def first_party(root):
+def package_identifiers(root):
     identifiers = set()
     for pattern in PACKAGE_MANIFESTS:
         for manifest in root.glob(pattern):
             if "node_modules" not in manifest.parts:
                 identifiers.add(json.loads(manifest.read_text())["id"])
+    for manifest in root.glob(PLUGIN_MANIFESTS):
+        if "node_modules" not in manifest.parts:
+            identifiers.add(json.loads(manifest.read_text())["name"])
+    return identifiers
+
+
+def patch_test_path(path):
+    name = path.rsplit("/", 1)[-1]
+    return name.endswith("_tests.rs") or name == "tests.rs" or "/tests/" in path or ".snap" in name
+
+
+def patched(root, identifiers):
+    pattern = re.compile("|".join(rf"\b{re.escape(identifier)}\b" for identifier in sorted(identifiers)))
     findings = []
+    for patch in sorted((root / PATCH_DIRECTORY).glob("*.patch")):
+        path, line = None, 0
+        for text in patch.read_text(errors="replace").splitlines():
+            if text.startswith("diff --git"):
+                path = None
+            elif text.startswith("+++ b/"):
+                path = text[6:]
+                if path.startswith(PATCH_MIRRORS) or patch_test_path(path):
+                    path = None
+            elif text.startswith("@@"):
+                line = int(re.search(r"\+(\d+)", text).group(1)) - 1
+            elif path and text[:1] in ("+", " "):
+                line += 1
+                for match in pattern.finditer(text, 1) if text[0] == "+" else ():
+                    findings.append({"path": path, "line": line, "surface": "first_party_id",
+                                     "name": match.group(), "feature": match.group()})
+    return findings
+
+
+def first_party(root):
+    identifiers = package_identifiers(root)
+    findings = patched(root, identifiers) if identifiers else []
     paths = list(native_files(root)) + [root / "runtime/omd/src/mods/runner.mjs"]
     for path in paths:
         if not path.exists():

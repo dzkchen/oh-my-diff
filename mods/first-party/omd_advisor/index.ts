@@ -23,7 +23,7 @@ const OBSERVE = 'You watch a coding agent\'s visible output for a user who may o
 const SECRETS = [
   /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----[\s\S]*?(?:-----END(?: [A-Z0-9]+)? PRIVATE KEY-----|$)/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
-  /["']?[\w-]*(?:api[_-]?key|token|secret|password|passwd)["']?\s*[:=]\s*(?:"[^"]*"?|'[^']*'?|[^\s"'&,;)}\]]+)/gi,
+  /(?<![\w-])["']?[\w-]*(?:api[_-]?key|token|secret|password|passwd)["']?\s*[:=]\s*(?:"[^"]*"?|'[^']*'?|[^\s"'&,;)}\]]+)/gi,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/gi,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
 ];
@@ -354,9 +354,9 @@ export default function activate(api: ModAPI) {
       status[0] += ` · ${watch.notes.length} to know`;
       above.push({ type: 'box', id: 'advisor_observations', label: 'You should know', title: 'You should know', children: [
         { type: 'list', id: 'advisor_observation_list', label: 'Observer notes; Enter inspects', height: watch.notes.length, hotkey: 'Alt+m', action: { command: 'omd_advisor:observations' },
-          rows: watch.notes.map((note, index) => ({ value: String(index + 1), label: `${KINDS[note.kind]}: ${note.implication}`.slice(0, 200), spans: [{ text: `${KINDS[note.kind]}: `, tone: 'attention', bold: true }, { text: note.implication.slice(0, 200) }] })) },
+          rows: watch.notes.map((note, index) => ({ value: String(index + 1), label: clip(`${KINDS[note.kind]}: ${note.implication}`, 256), spans: [{ text: `${KINDS[note.kind]}: `, tone: 'attention', bold: true }, { text: clip(note.implication, 256) }] })) },
         { type: 'text', id: 'advisor_observation_hint', label: 'Observer hint', text: 'Alt+m then Enter inspects · /observations dismiss N|all', tone: 'muted' }] });
-    } else if (watch && ['observing', 'unavailable', 'invalid_result', 'incomplete'].includes(watch.status)) status[0] += ` · observer ${watch.status.replace('_', ' ')}`;
+    } else if (watch && ['observing', 'unavailable', 'invalid_result', 'incomplete'].includes(watch.status)) status[0] += ` · watch ${watch.status.replace('_', ' ')}`;
     const note = watch && watch.inspect !== null ? watch.notes[watch.inspect] : undefined;
     if (note) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'advisor_observation', label: 'You should know', title: `You should know: ${KINDS[note.kind]}`, children: [
       { type: 'markdown', id: 'advisor_observation_body', label: 'Observer note', text: `**${note.implication}**\n\n${note.detail}` },
@@ -365,6 +365,7 @@ export default function activate(api: ModAPI) {
       { type: 'button', id: 'advisor_observation_dismiss', label: 'Dismiss this note', text: 'Dismiss', action: { command: 'omd_advisor:observations', args: `dismiss ${watch!.inspect! + 1}` } },
       { type: 'button', id: 'advisor_observation_close', label: 'Close', text: 'Close', action: { command: 'omd_advisor:observations', args: 'close' } }] }] };
     if (above.length) sites.above_composer = { mode: 'wrap', components: [{ type: 'slot' }, ...above] };
+    status[0] = clip(status[0], 40);
     return Object.keys(sites).length ? { status, sites } : { status };
   });
 }

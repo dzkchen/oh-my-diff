@@ -40,7 +40,7 @@ export default function activate(api: ModAPI) {
     const value = stored.ok && stored.value ? stored.value.value as unknown as Files : null;
     return { files: value?.files ? value : { tick: 0, files: {} }, revision: stored.ok && stored.value ? stored.value.revision : null };
   };
-  const save = (files: Files, revision: number | null) => api.host.tryCall('store.put', { key: 'files', value: files as unknown as Json, expected_revision: revision, scope: 'repository' });
+  const save = (files: Files, revision: number | null) => api.host.tryCall('store.put', { key: 'files', value: files as unknown as Exclude<Json, null>, expected_revision: revision, scope: 'repository' });
   const weight = (files: Files, path: string) => {
     const entry = files.files[path];
     return entry ? Math.min(30, 10 * Math.log2(1 + entry[0])) * 0.5 ** ((files.tick - entry[1]) / HALF_LIFE) : 0;

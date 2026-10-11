@@ -399,6 +399,21 @@ def route(prefix, bin_dir, name, args):
                         "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
 
 
+def verify(manager, source, expected):
+    if invoke(manager, "inspect", source)["sha256"] != expected:
+        raise ValueError(f"package digest mismatch: {source.name}")
+
+
+def shelve(source, destination):
+    if not destination.is_dir():
+        staged = destination.with_name(f".{destination.name}.new")
+        shutil.rmtree(staged, ignore_errors=True)
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, staged)
+        staged.rename(destination)
+    return destination
+
+
 def install(args):
     prefix, bin_dir, store = paths(args.prefix, args.bin_dir, args.store)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -452,6 +467,7 @@ def install(args):
     previous = load(support.resolved(args.previous)) if args.previous else None
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
+    managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
     made_store = False
     made_launchers = []
     try:
@@ -515,8 +531,10 @@ def install(args):
                 (prefix / "sources" / identifier / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / package["source"] / name, prefix / "sources" / identifier / name)
             if identifier in curated:
+                shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
+                         if managed else prefix / "sources" / identifier)
                 catalog[identifier] = [{"version": package["version"], "integrity": package["package_sha256"],
-                                        "source": {"kind": "local", "path": str(prefix / "sources" / identifier)},
+                                        "source": {"kind": "local", "path": str(shelf)},
                                         "description": curated[identifier]["capability"],
                                         "support": curated[identifier]["support_status"]}]
             if identifier not in profile_packages(args.profile):
@@ -531,14 +549,15 @@ def install(args):
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
         (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
+        for item in trusted:
+            verify(installed_manager, Path(item["path"]), item["sha256"])
         if trusted:
             invoke(installed_manager, "trust-all", store, json.dumps(trusted))
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
         for identifier in installed:
-            if invoke(installed_manager, "inspect", sources / identifier)["sha256"] != installed[identifier]["sha256"]:
-                raise ValueError(f"package digest mismatch: {identifier}")
+            verify(installed_manager, sources / identifier, installed[identifier]["sha256"])
         home, sqlite = support.state_roots()
         record = {"schema": SCHEMA, "product": PRODUCT,
                   "installed_at": datetime.now(timezone.utc).isoformat(),
@@ -565,7 +584,7 @@ def install(args):
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
                                    "policy": "inherited unchanged; never removed by uninstall"},
                   "activation": {"selection": args.profile}}
-        if prefix.name == "prefix" and prefix.parent.parent.name == "releases":
+        if managed:
             record["update"] = {"root": str(prefix.parents[2]), "installer": str(management_root / "install.sh"),
                                 "python": sys.executable}
         if previous and previous["profile"] == args.profile:

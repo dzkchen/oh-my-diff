@@ -770,6 +770,14 @@ fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
     assert_eq!(record.raw_usage, Some(usage));
     assert_eq!(record.settled_microusd, Some(8));
     assert_eq!(record.status, "completed");
+    assert_eq!(
+        std::os::unix::fs::PermissionsExt::mode(
+            &std::fs::metadata(root.path().join("evidence/task-cost.json"))
+                .unwrap()
+                .permissions()
+        ) & 0o777,
+        0o600
+    );
     let capture: codex_omd::TaskCostCapture = serde_json::from_slice(
         &std::fs::read(root.path().join("evidence/task-cost.json")).unwrap(),
     )

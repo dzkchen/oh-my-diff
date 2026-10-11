@@ -5,7 +5,7 @@
 ```text
 /profile add chatgpt work                 # native ChatGPT sign-in for another account
 /profile add api_key openai-key           # masked OpenAI API key entry
-/profile add provider openrouter openrouter   # masked key for another provider
+/profile add provider openrouter openrouter https://openrouter.ai   # masked key for another provider
 ```
 
 ```sh
@@ -19,7 +19,7 @@ omd-package profiles [--model work] [codex args]   # launch with the profiles pr
 ```
 
 ```text
-/profile                 # profiles, billing, credential and the current one
+/profile                 # profiles, billing, availability and the current one
 /profile use router      # applies at this thread's next turn; paid profiles ask first
 /profile refresh work    # native token refresh
 /profile remove work     # native credential removal

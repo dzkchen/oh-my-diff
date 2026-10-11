@@ -695,7 +695,7 @@ async fn scoped_environment_pre_rename_children_keep_mod_and_thread_scope() {
         )
         .unwrap();
         let runtime = fixture.core.input_runtime.clone();
-        let processes = fixture.lead.session.processes.clone();
+        let lead = fixture.lead.clone();
         let environment = fixture.core.environment.clone();
         let result = tokio::task::spawn_blocking(move || {
             let mut runtime = runtime.lock().unwrap();
@@ -703,7 +703,7 @@ async fn scoped_environment_pre_rename_children_keep_mod_and_thread_scope() {
             authority.request_rename(
                 json!({"old": "old.ts", "new": "new.ts"}),
                 &mut runtime,
-                &processes,
+                &lead,
                 &[],
                 generation,
                 &thread,
@@ -3061,6 +3061,29 @@ fn watched_changes_skip_ignored_paths_unless_included() {
         super::activity::visible_paths(&root, paths, true, |_| true),
         vec!["src/a.rs", "build/out.js"]
     );
+}
+
+#[test]
+fn external_change_hashes_regular_files_and_never_follow_links_or_fifos() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("a.txt"), "a\n").unwrap();
+    std::os::unix::fs::symlink("a.txt", root.join("link")).unwrap();
+    let fifo = root.join("fifo");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(
+        super::activity::file_hash(&root, "a.txt"),
+        Some(crate::execution::hash(b"a\n"))
+    );
+    assert_eq!(super::activity::file_hash(&root, "link"), None);
+    assert_eq!(super::activity::file_hash(&root, "fifo"), None);
+    assert_eq!(super::activity::file_hash(&root, "missing"), None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

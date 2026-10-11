@@ -258,6 +258,18 @@ including nested provider calls, except calls made inside an interceptor
 callback and `sessions.*` and `evidence.*` calls. Pure SDK functions and local
 rendering are not host operations and are not intercepted.
 
+The `host_operation` middleware event (`middleware`) reports every other mod's
+host call as `{phase, caller, operation}` plus `arguments` before, and `result`
+or `error` after. For `store.*`, `environment.read`, `credentials.*`, `http.*`,
+`exec.*`, `sessions.*` and `evidence.*` the `arguments` and `result` are `null`
+and an error is `private_operation_failed`; the operation, caller and whether it
+failed stay visible. Other operations are shown in full. Masking applies to the
+event only: a `host_operation` interceptor still receives the `arguments` and
+answer of the calls it matches, except `sessions.*` and `evidence.*`, which are
+never intercepted. Because of that, `middleware` is listed in the grant
+exposure text at trust, install and status; it is not one of the authority
+grants that expire.
+
 A manifest may list up to 16 `exec_environment` names that `exec.run` passes
 through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
 interpreter variables and the `DYLD_`, `LD_`, `OMD_`, `CODEX_`, `SSH_`, `GPG_`
@@ -2775,7 +2787,8 @@ provider, denied capability or source error names itself instead of only asking
 for a reload.
 
 Steps can advance virtual time, invoke tools or commands, dispatch ordinary
-events, model-request and response-stream middleware, tool outcomes and agent
+events, interceptor chains (an `intercept` step answers `next` from its `core`
+replies), tool outcomes and agent
 lifecycle, reload at a safe boundary, mount a terminal view, and interact with
 a mounted key or component ID. Component interaction activates buttons, inputs,
 and selectors with an optional `value`; copy actions return without touching the
@@ -2867,8 +2880,10 @@ selected `workspace_pre_rename` subscribers before the move, and accepts one
 operation, or an unavailable server yields `{status:"fallback",reason}`.
 Conflicting proposals fail visibly. The host checks all expected hashes and
 effective write permissions, then applies the companion writes and move in one
-checked transaction. A subscriber can read additional companion files before
-returning its proposal. The [independent workspace example](examples/workspace)
+checked transaction. A subscriber can read additional companion files and use
+`process.start`, `process.exchange`, `process.status`, `process.stop` and
+`process.which` (no network, under its declared environment and the workflow
+contract's restrictions) before returning its proposal. The [independent workspace example](examples/workspace)
 demonstrates this path without using a language server.
 
 `workspace_write` is delivered after an OMD tool call changes a source file,

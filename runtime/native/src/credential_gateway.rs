@@ -29,6 +29,7 @@ type Failure = (u16, String);
 
 struct Route {
     store: PathBuf,
+    owner: String,
     profiles: BTreeSet<String>,
     active: Mutex<Vec<watch::Sender<bool>>>,
 }
@@ -156,14 +157,16 @@ fn start_gateway(idle: Duration, lifetime: Duration) -> Result<Gateway, String> 
 
 pub(crate) fn register(
     store: PathBuf,
+    owner: String,
     profiles: BTreeSet<String>,
 ) -> io::Result<(String, Registration)> {
-    register_at(gateway()?, store, profiles)
+    register_at(gateway()?, store, owner, profiles)
 }
 
 fn register_at(
     gateway: &Gateway,
     store: PathBuf,
+    owner: String,
     profiles: BTreeSet<String>,
 ) -> io::Result<(String, Registration)> {
     let mut bytes = [0u8; 16];
@@ -180,6 +183,7 @@ fn register_at(
             key.clone(),
             Arc::new(Route {
                 store,
+                owner,
                 profiles,
                 active: Mutex::new(Vec::new()),
             }),
@@ -256,6 +260,7 @@ async fn forward(
         .try_acquire_owned()
         .map_err(|_| (429, "credential_gateway_busy".to_owned()))?;
     let store = guard.route.store.clone();
+    let owner = guard.route.owner.clone();
     let profile = profile.to_owned();
     let (origin, secret) = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -267,7 +272,7 @@ async fn forward(
             .map(str::to_owned)
             .ok_or_else(|| "credential_origin_missing".to_owned())?;
         let secret = profiles
-            .secret(&profile, &origin, None)
+            .secret(&profile, &origin, Some(&owner))
             .map_err(|error| error.to_string())?;
         Ok::<_, String>((origin, secret))
     })

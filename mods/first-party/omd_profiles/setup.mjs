@@ -84,7 +84,7 @@ async function setup(recordPath, optionText) {
     const profile = profileEntry(options.add, JSON.parse(listed.stdout));
     profiles[`${profile.name}/${profile.model}`] = profile;
   }
-  if (!Object.keys(profiles).length) throw new Error('no_profiles: add one with --add');
+  if (!Object.keys(profiles).length && !Object.keys(previous.profiles ?? {}).length) throw new Error('no_profiles: add one with --add');
   try { await writeFile(tokenPath, randomBytes(40).toString('base64url'), { flag: 'wx', mode: 0o600 }); }
   catch (error) { if (error.code !== 'EEXIST') throw error; }
   await chmod(tokenPath, 0o600);
@@ -95,7 +95,7 @@ async function setup(recordPath, optionText) {
   const bundled = JSON.parse(dump.stdout).models;
   const slugs = Object.keys(profiles);
   const models = slugs.map((slug, index) => catalogEntry(slug, profiles[slug], bundled, index));
-  const fallback = slugs.includes(previous.default) ? previous.default : slugs[0];
+  const fallback = slugs.includes(previous.default) ? previous.default : slugs[0] ?? null;
   const node = await realpath(record.author.node);
   const readPaths = [];
   for (const path of [mod, directory, resolve(dirname(node), '..'), '/System', '/usr/lib', '/private/etc/ssl', '/etc/ssl']) {
@@ -110,10 +110,10 @@ async function setup(recordPath, optionText) {
   if (routes.some(route => !route.rates.included_subscription) && !(host.limits?.exposure_microusd > 0)) throw new Error('profile_allowance_required: pass --allowance USD for paid API profiles');
   host.secret_refs = { ...host.secret_refs, omd_profiles_local_token: tokenPath };
   host.routes = [...(host.routes ?? []).filter(route => route.provider !== 'omd_profiles'), ...routes];
-  host.services = [...(host.services ?? []).filter(grant => grant.id !== 'omd_profiles'), {
+  host.services = [...(host.services ?? []).filter(grant => grant.id !== 'omd_profiles'), ...slugs.length ? [{
     id: 'omd_profiles', mod_id: 'omd_profiles', program: node, program_sha256: sha(await readFile(node)),
     arguments: [join(mod, 'router.mjs'), 'serve', routePath], secrets: { OMD_PROFILES_LOCAL_TOKEN: 'omd_profiles_local_token' },
-    credentials: [...new Set(slugs.map(slug => profiles[slug].credential))], network: true, read_paths: readPaths, route: routes[slugs.indexOf(fallback)] }];
+    credentials: [...new Set(slugs.map(slug => profiles[slug].credential))], network: true, read_paths: readPaths, route: routes[slugs.indexOf(fallback)] }] : []];
   await writeFile(routePath, `${JSON.stringify({ port, default: fallback, models: slugs.map(slug => ({ slug, family: profiles[slug].name })), profiles }, null, 2)}\n`);
   await writeFile(catalogPath, `${JSON.stringify({ models }, null, 2)}\n`);
   await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });

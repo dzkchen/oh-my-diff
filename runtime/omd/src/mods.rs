@@ -566,6 +566,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     if granted("autonomous") {
         exposure.push("autonomous: this mod may queue prompts that start turns while you are idle and continue a finished turn, within its autonomy limits; queued turns are labelled with the mod, keep your permissions and route, pause when you interrupt, and stop when you disable or revoke the mod.");
     }
+    if granted("middleware") {
+        exposure.push("middleware: this mod sees and may change prompts, tool calls and results, model requests and response streams, and through host_operation interceptors the arguments and results of other mods' host operations, including store, environment, credential, http and exec calls; its host_operation events hide the arguments and results of store, environment, credential, http, exec, sessions and evidence calls, and sessions and evidence calls are never intercepted.");
+    }
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
     }
@@ -1098,6 +1101,7 @@ fn source_use(
         (".classify(", "agents"),
         (".classify<", "agents"),
         (".rateLimits(", "account"),
+        ("parent_history", "sessions"),
     ] {
         if source.contains(call) {
             capabilities.insert(capability.to_owned());
@@ -2654,7 +2658,12 @@ fn invoke(
                 }
                 let private = call.operation.starts_with("sessions.")
                     || call.operation.starts_with("evidence.");
-                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
+                let masked = private
+                    || ["store.", "credentials.", "http.", "exec."]
+                        .iter()
+                        .any(|prefix| call.operation.starts_with(prefix))
+                    || matches!(call.operation.as_str(), "environment.read" | "environment.set");
+                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
                 let _ = access.with(|runtime| {
                     Ok(runtime.event_except("host_operation", before, id, active, scope))
                 });
@@ -2687,10 +2696,10 @@ fn invoke(
                 };
                 let after = match &result {
                     Ok(value) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if private {Value::Null} else {value.clone()}})
+                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
                     }
                     Err(error) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if private {"private_operation_failed".to_owned()} else {error.to_string()}})
+                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
                     }
                 };
                 let _ = access.with(|runtime| {

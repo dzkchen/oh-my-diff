@@ -340,9 +340,9 @@ export interface HostOperations {
   'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
   'workspace.integrate': { arguments: { handle: string; acceptance_sha256?: string }; result: { status: 'integrated'; candidate_sha256: string; parent_candidate_sha256: string; changed_paths: string[]; evidence: HostEvidence; receipt_error?: string } | { status: 'refused'; candidate_sha256: string; missing: ContractRequirement[] } };
   'store.get': { arguments: { key: string; scope?: StoreScope }; result: { value: Json; revision: number; provenance: StoreProvenance } | null };
-  'store.put': { arguments: { key: string; value: Json; expected_revision: number | null; scope?: StoreScope }; result: { revision: number } };
+  'store.put': { arguments: { key: string; value: Exclude<Json, null>; expected_revision: number | null; scope?: StoreScope }; result: { revision: number } };
   'store.delete': { arguments: { key: string; expected_revision: number; scope?: StoreScope }; result: { deleted: boolean } };
-  'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null } };
+  'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null; generation: number } };
   'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
   'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };

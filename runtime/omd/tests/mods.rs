@@ -1991,6 +1991,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         &["commands", "store"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
+        &["commands", "agents", "sessions"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
     assert_eq!(
         policies["intercept.response_stream"]["usage"],
@@ -3003,6 +3008,27 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
 }
 
 #[test]
+fn oversized_continuation_results_are_limited_like_host_results() {
+    let (temp, _, _) = fixture(
+        "export default api => api.intercept('composer_edit', async (e, next) => next(e))",
+        &["composer"],
+    );
+    let runtime = std::sync::Mutex::new(host(&temp));
+    codex_omd::continue_operation(
+        &runtime,
+        "composer_edit",
+        json!({"source": "user", "caller": "user", "revision": 1, "edit": {"kind": "fill", "text": "x"}}),
+        json!({"caller": "user"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |effective| Ok(json!({"edit": effective["edit"], "padding": "x".repeat(200_000)})),
+    )
+    .unwrap();
+    let chains = runtime.lock().unwrap().status()["chains"].to_string();
+    assert!(chains.contains("host_result_limit"), "{chains}");
+}
+
+#[test]
 fn request_path_interceptors_refuse_sleep_before_continuation() {
     for required in [false, true] {
         let source = format!(
@@ -3644,6 +3670,73 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
     let chains = runtime.status()["chains"].clone();
     assert_eq!(chains[0]["chain"]["trace"][2]["attempts"], 2);
     assert_eq!(chains[1]["chain"]["answered_by"], "guard");
+}
+
+#[test]
+fn host_operation_events_mask_store_credential_and_exec_payloads() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let watcher = package(
+        &root,
+        "watcher",
+        "export default api => { api.on('host_operation', e => { api.state.set([...(api.state.get() ?? []), e]); }); api.command('seen', () => api.state.get()); }",
+        &["middleware", "commands", "store"],
+    );
+    trust(&store, &watcher, &["middleware", "commands", "store"]);
+    let consumer = package(
+        &root,
+        "consumer",
+        "export default api => api.command('go', () => [() => api.host.call('store.get', {secret: 'argument'}), () => api.host.call('credentials.list', {secret: 'argument'}), () => api.host.call('exec.run', {secret: 'argument'}), () => api.host.call('environment.read', {names: ['FIXTURE']}), () => api.host.call('environment.set', {name: 'FIXTURE', value: 'secret-override'}), () => api.host.call('workspace.stat', {secret: 'argument'})].map(call => { try { return call(); } catch (error) { return null; } }))",
+        &["commands", "store", "credentials", "exec", "fs.read"],
+    );
+    let granted = &["commands", "store", "credentials", "exec", "fs.read"];
+    trust(&store, &consumer, granted);
+    let mut runtime = host(&temp);
+    runtime
+        .invoke_scoped_with(
+            "consumer",
+            runtime.generation(),
+            "command",
+            "go",
+            Value::Null,
+            || true,
+            |_, call| {
+                if call.operation == "exec.run" {
+                    return Err(std::io::Error::other("failure-secret"));
+                }
+                Ok(json!({"secret": "result"}))
+            },
+        )
+        .unwrap();
+    let seen = runtime
+        .invoke(
+            "watcher",
+            runtime.generation(),
+            "command",
+            "seen",
+            Value::Null,
+        )
+        .unwrap();
+    let events = seen.as_array().unwrap();
+    assert_eq!(events.len(), 12, "{seen}");
+    for event in events {
+        let operation = event["operation"].as_str().unwrap();
+        assert_eq!(event["caller"], "consumer");
+        let shown = operation == "workspace.stat";
+        assert_eq!(event.to_string().contains("secret"), shown, "{event}");
+        let field = if event["phase"] == "before" {
+            "arguments"
+        } else {
+            "result"
+        };
+        if operation != "exec.run" || event["phase"] == "before" {
+            assert_eq!(event[field].is_null(), !shown, "{event}");
+        }
+        if operation == "exec.run" && event["phase"] == "after" {
+            assert_eq!(event["error"], "private_operation_failed");
+        }
+    }
 }
 
 #[test]
@@ -4298,7 +4391,15 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 6);
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 7);
+    assert!(
+        status["exposure"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|text| text.as_str().unwrap().starts_with("middleware:"))
+    );
+    assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&"middleware"));
     contended(|| store.revoke("delegate"));
     runtime.reload().unwrap();
     assert!(

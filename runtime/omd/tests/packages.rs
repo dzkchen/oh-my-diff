@@ -1887,3 +1887,218 @@ fn private_npm_registries_use_npmrc_and_an_unreadable_lock_is_recoverable() {
         "{output}"
     );
 }
+
+fn edit_manifest(package: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = package.join("mod.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    edit(&mut manifest);
+    std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+}
+
+fn install(store: &ModStore, request: ModInstallRequest) -> codex_omd::ModPackageLock {
+    let plan = store.package_plan(request.clone()).unwrap();
+    store.package_apply(request, &plan.confirmation).unwrap()
+}
+
+#[test]
+fn an_update_keeps_activation_only_when_every_approval_input_is_unchanged() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let store = store(&temp);
+    install(&store, request(&package, &["exec"]));
+    store.package_enable("fixture").unwrap();
+
+    edit_manifest(&package, |manifest| manifest["version"] = json!("1.0.1"));
+    let plan = store.package_plan(request(&package, &["exec"])).unwrap();
+    assert_eq!(plan.changes["packages"][0]["renewed_approval"], false);
+    assert_eq!(plan.changes["packages"][0]["activation"]["to"], true);
+
+    edit_manifest(&package, |manifest| {
+        manifest["version"] = json!("1.1.0");
+        manifest["exec_environment"] = json!(["FIXTURE_VALUE"]);
+    });
+    let plan = store.package_plan(request(&package, &["exec"])).unwrap();
+    assert_eq!(plan.changes["packages"][0]["renewed_approval"], true);
+    assert_eq!(plan.changes["packages"][0]["activation"]["to"], false);
+    let lock = store
+        .package_apply(request(&package, &["exec"]), &plan.confirmation)
+        .unwrap();
+    assert!(!lock.packages["fixture"].enabled);
+    assert!(!store.configuration().unwrap().mods[0].enabled);
+}
+
+#[test]
+fn a_rollback_keeps_activation_only_when_the_previous_approval_matches_and_never_after_revocation()
+{
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
+    let store = store(&temp);
+    install(&store, request(&package, &["commands"]));
+    store.package_enable("fixture").unwrap();
+
+    edit_manifest(&package, |manifest| {
+        manifest["version"] = json!("1.1.0");
+        manifest["capabilities"] = json!(["commands", "store"]);
+    });
+    install(&store, request(&package, &["commands", "store"]));
+    store.package_enable("fixture").unwrap();
+    let plan = store.package_rollback_plan("fixture").unwrap();
+    let lock = store
+        .package_rollback("fixture", &plan.confirmation)
+        .unwrap();
+    assert_eq!(lock.packages["fixture"].version, "1.0.0");
+    assert!(
+        !lock.packages["fixture"].enabled && !store.configuration().unwrap().mods[0].enabled,
+        "a different grant is not carried across a rollback"
+    );
+
+    edit_manifest(&package, |manifest| {
+        manifest["version"] = json!("1.2.0");
+        manifest["capabilities"] = json!(["commands"]);
+    });
+    install(&store, request(&package, &["commands"]));
+    store.revoke("fixture").unwrap();
+    let error = store
+        .package_rollback_plan("fixture")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("package_trust_revoked"), "{error}");
+    install(&store, request(&package, &["commands"]));
+    assert!(store.package_rollback_plan("fixture").is_ok());
+}
+
+#[test]
+fn package_requests_refuse_a_wrong_action_another_scope_and_nested_index_sources() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &[], json!([]));
+    let store = store(&temp);
+    let mut wrong = request(&package, &[]);
+    wrong.action = Some("update".into());
+    let error = store.package_plan(wrong.clone()).unwrap_err().to_string();
+    assert!(error.contains("package_plan_action_mismatch"), "{error}");
+    let plan = store.package_plan(request(&package, &[])).unwrap();
+    assert!(
+        store
+            .package_apply(wrong, &plan.confirmation)
+            .unwrap_err()
+            .to_string()
+            .contains("package_plan_action_mismatch")
+    );
+    let mut install_request = request(&package, &[]);
+    install_request.action = Some("install".into());
+    install(&store, install_request.clone());
+    let error = store.package_plan(install_request).unwrap_err().to_string();
+    assert!(error.contains("package_plan_action_mismatch"), "{error}");
+
+    let mut project = request(&package, &[]);
+    project.scope = "project".into();
+    let error = store.package_plan(project).unwrap_err().to_string();
+    assert!(error.contains("package_scope_conflict"), "{error}");
+
+    let index = root.join("index.json");
+    std::fs::write(
+        &index,
+        serde_json::to_vec(&json!({"schema":1,"packages":{"nested":[{
+            "version":"1.0.0",
+            "source":{"kind":"package","index":index,"id":"nested","version":"1.0.0"},
+            "integrity":"0".repeat(64)
+        }]}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let error = store
+        .package_index_entries(&index, "")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("index_release_source_invalid"), "{error}");
+}
+
+#[test]
+fn uninstall_and_update_find_selections_by_recorded_path_when_the_source_is_gone() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let first = root.join("first");
+    let second = root.join("second");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let package = mod_package(&first, "fixture", "1.0.0", &["commands"], json!([]));
+    let store = store(&temp);
+    install(&store, request(&package, &["commands"]));
+    store.package_enable("fixture").unwrap();
+    std::fs::remove_dir_all(&package).unwrap();
+
+    let replacement = mod_package(&second, "fixture", "2.0.0", &["commands"], json!([]));
+    let lock = install(&store, request(&replacement, &["commands"]));
+    assert_eq!(lock.history["fixture"].len(), 1);
+    let config = store.configuration().unwrap();
+    assert_eq!(config.mods.len(), 1, "{config:?}");
+    assert_eq!(config.mods[0].path, replacement);
+
+    std::fs::remove_dir_all(&replacement).unwrap();
+    let plan = store.package_uninstall_plan("fixture").unwrap();
+    let lock = store
+        .package_uninstall("fixture", &plan.confirmation)
+        .unwrap();
+    assert!(lock.packages.is_empty());
+    assert!(
+        lock.history.is_empty(),
+        "history for ids that are no longer installed is dropped"
+    );
+    assert!(store.configuration().unwrap().mods.is_empty());
+}
+
+#[test]
+fn a_failing_uninstall_hook_is_recorded_and_does_not_block_uninstall() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "scripted", "1.0.0", &[], json!([]));
+    edit_manifest(&package, |manifest| {
+        manifest["lifecycle"] = json!({"uninstall":"uninstall.ts"})
+    });
+    std::fs::write(package.join("uninstall.ts"), "export default () => {}\n").unwrap();
+    let node = root.join("node");
+    std::fs::write(&node, "").unwrap();
+    let store = ModStore::create(root.join("store"), node).unwrap();
+    let mut install_request = request(&package, &[]);
+    install_request
+        .trust
+        .packages
+        .get_mut("scripted")
+        .unwrap()
+        .lifecycle = vec!["uninstall".into()];
+    install(&store, install_request);
+    let plan = store.package_uninstall_plan("scripted").unwrap();
+    let lock = store
+        .package_uninstall("scripted", &plan.confirmation)
+        .unwrap();
+    assert!(!lock.packages.contains_key("scripted"));
+    assert!(store.configuration().unwrap().mods.is_empty());
+    assert!(
+        store
+            .security_events()
+            .unwrap()
+            .iter()
+            .any(|event| event["event"] == "lifecycle_failed" && event["script"] == "uninstall")
+    );
+}
+
+#[test]
+fn the_package_lock_can_outgrow_the_state_write_limit() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = store(&temp);
+    for number in 0..80 {
+        let id = format!("catalog_{number:02}");
+        let package = mod_package(&root, &id, "1.0.0", &["commands"], json!([]));
+        install(&store, request(&package, &["commands"]));
+    }
+    let size = std::fs::metadata(root.join("store/packages.lock.json"))
+        .unwrap()
+        .len();
+    assert!(size > 65_536 && size <= 524_288);
+    assert_eq!(store.package_lock().unwrap().packages.len(), 80);
+}

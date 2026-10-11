@@ -890,6 +890,45 @@ fn exec_run_bounds_program_environment_output_time_and_authority() {
 }
 
 #[test]
+fn workspace_stat_hash_reads_contained_regular_files_only() {
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+        record_changes: false,
+        environment: None,
+    };
+    let capabilities = strings(&["fs.read"]);
+    let reader = caller(&capabilities, &[], Origin::Tool);
+    std::os::unix::fs::symlink("README.md", repository.join("link.md")).unwrap();
+    std::os::unix::fs::symlink(&data, repository.join("outside")).unwrap();
+    let stat = host
+        .call(
+            &reader,
+            "workspace.stat",
+            json!({"paths":["README.md"],"hash":true}),
+        )
+        .unwrap();
+    assert_eq!(
+        stat["files"]["README.md"]["sha256"],
+        codex_omd::resource_data::hash(&std::fs::read(repository.join("README.md")).unwrap())
+    );
+    for path in ["link.md", "outside/file"] {
+        assert!(
+            host.call(
+                &reader,
+                "workspace.stat",
+                json!({"paths":[path],"hash":true})
+            )
+            .is_err(),
+            "{path}"
+        );
+    }
+}
+
+#[test]
 fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
     let (_temp, repository, data, authority) = setup();
     let active = || true;

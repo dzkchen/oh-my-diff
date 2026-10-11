@@ -462,6 +462,9 @@ class LspSyncModTest(unittest.TestCase):
                 self.assertEqual((repository / "box.py").read_text(), "value = 1\nclass Crate:\n    size = 2\n")
                 self.assertEqual(query(op="hover", path="../box.py", line=1, character=1)["status"], "error")
                 self.assertEqual(host.operations.count("process.start"), 1)
+                state["servers"]["python"]["diagnostics"].update({f"f{n}.py": {"count": 50, "version": None, "errors": [f"{line}:1 {'x' * 200}" for line in range(50)]} for n in range(20)})
+                query(op="hover", path="box.py", line=1, character=1)
+                self.assertLessEqual(len(json.dumps(state, separators=(",", ":"))), 65536)
             finally:
                 host.close()
 

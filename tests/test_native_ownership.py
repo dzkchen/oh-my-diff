@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from scripts.check_native_ownership import inspect
+from scripts.check_native_ownership import first_party, inspect
 
 
 class NativeOwnershipTests(unittest.TestCase):
@@ -49,6 +49,24 @@ class NativeOwnershipTests(unittest.TestCase):
             findings = {(item["surface"], item["name"]) for item in inspect(root)}
             self.assertEqual(findings, {("literal", "authorized_presets"), ("runner", "piText"),
                                         ("first_party_id", "omd_sample")})
+
+    def test_added_patch_lines_are_scanned_outside_tests_and_mirrors(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "mods/first-party/omd_sample/mod.json"
+            patch = root / "runtime/patches/sample.patch"
+            for path in (package, patch):
+                path.parent.mkdir(parents=True)
+            package.write_text('{"id": "omd_sample"}')
+            patch.write_text(
+                "diff --git a/codex-rs/tui/src/a.rs b/codex-rs/tui/src/a.rs\n--- a/codex-rs/tui/src/a.rs\n"
+                "+++ b/codex-rs/tui/src/a.rs\n@@ -1,2 +1,3 @@\n omd_sample\n-omd_sample\n+let x = \"omd_sample\";\n"
+                "diff --git a/codex-rs/tui/src/a_tests.rs b/codex-rs/tui/src/a_tests.rs\n"
+                "+++ b/codex-rs/tui/src/a_tests.rs\n@@ -0,0 +1 @@\n+omd_sample\n"
+                "diff --git a/codex-rs/ext/omd/src/b.rs b/codex-rs/ext/omd/src/b.rs\n"
+                "+++ b/codex-rs/ext/omd/src/b.rs\n@@ -0,0 +1 @@\n+omd_sample\n")
+            self.assertEqual([(item["path"], item["line"]) for item in first_party(root)],
+                             [("codex-rs/tui/src/a.rs", 2)])
 
 
 if __name__ == "__main__":

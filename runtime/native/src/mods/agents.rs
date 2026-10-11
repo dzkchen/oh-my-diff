@@ -183,6 +183,28 @@ fn integration_receipt(
 mod history_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn waiting_does_not_hold_the_slot_lock() {
+        let slot = Arc::new(tokio::sync::Mutex::new(false));
+        let waiting = tokio::spawn({
+            let slot = slot.clone();
+            async move {
+                tokio::time::timeout(
+                    Duration::from_secs(30),
+                    wait_finished(&slot, |finished| *finished),
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let started = std::time::Instant::now();
+        *tokio::time::timeout(Duration::from_secs(1), slot.lock())
+            .await
+            .unwrap() = true;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(waiting.await.unwrap().is_ok());
+    }
+
     #[test]
     fn receipt_agents_are_read_only_and_bound_to_the_acceptance_they_received() {
         let acceptance = "a".repeat(64);
@@ -1628,19 +1650,17 @@ impl Agents {
                         .map_err(|e| e.to_string())?
                         .0
                         .min(Duration::from_secs(30));
-                    let waited = match &mut agent.job {
-                        Some(job) => tokio::select! {
-                            result = tokio::time::timeout(deadline, job) => result.ok(),
-                            () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
-                        },
-                        None => None,
-                    };
-                    if let Some(result) = waited {
-                        agent.job = None;
-                        if let Err(error) = result {
-                            *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
-                                Some(Err(error.to_string()));
-                        }
+                    drop(agent);
+                    tokio::select! {
+                        _ = tokio::time::timeout(deadline, wait_finished(&slot, Agent::finished)) => (),
+                        () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
+                    }
+                    agent = slot.lock().await;
+                    if let Some(job) = agent.job.take_if(|job| job.is_finished())
+                        && let Err(error) = job.await
+                    {
+                        *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
+                            Some(Err(error.to_string()));
                     }
                 }
                 let result = agent
@@ -2550,6 +2570,12 @@ impl Agents {
             json!({"handle":id,"route":request.route,"permissions":if writable {"isolated_worktree"} else {"read_only"},
                 "parent_history": history.map(|(_, provenance)| provenance)}),
         )
+    }
+}
+
+async fn wait_finished<T>(slot: &tokio::sync::Mutex<T>, finished: impl Fn(&T) -> bool) {
+    while !finished(&*slot.lock().await) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
 

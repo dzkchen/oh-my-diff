@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -98,6 +98,8 @@ test('router adapts Responses requests to each protocol through the credential g
       return { status: reply.status, events: text.split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
     };
     assert.equal((await ask('a/up', 'Bearer sk-test')).status, 401);
+    const unauthorized = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization: 'Bearer sk-test' }, body: 'not json' });
+    assert.equal(unauthorized.status, 401);
     assert.equal((await ask('missing/up')).status, 400);
     await ask('a/up');
     assert.equal(seen['/responses'].body.model, 'up-model');
@@ -145,5 +147,31 @@ test('router adapts Responses requests to each protocol through the credential g
     child.kill();
     gateway.close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('setup removing the last profile drops its route and service grant', () => {
+  const store = mkdtempSync(join(tmpdir(), 'omd-profiles-setup-'));
+  try {
+    const mod = fileURLToPath(new URL('.', import.meta.url));
+    mkdirSync(join(store, 'sources'));
+    symlinkSync(mod, join(store, 'sources', 'omd_profiles'));
+    mkdirSync(join(store, 'routes', 'profiles'), { recursive: true });
+    const binary = join(store, 'codex');
+    writeFileSync(binary, '#!/bin/sh\necho \'{"models":[]}\'\n', { mode: 0o755 });
+    const record = join(store, 'install.json');
+    writeFileSync(record, JSON.stringify({ profile: 'full', packages: { omd_profiles: {} }, store, binary: { installed_path: binary }, author: { node: process.execPath } }));
+    writeFileSync(join(store, 'routes', 'profiles', 'route.json'), JSON.stringify({ port: 49152, default: 'work/up', profiles: { 'work/up': { name: 'work', model: 'up' } } }));
+    writeFileSync(join(store, 'host.json'), JSON.stringify({ schema: 1, routes: [{ provider: 'omd_profiles', name: 'work' }, { provider: 'other', name: 'keep' }],
+      services: [{ id: 'omd_profiles' }, { id: 'other' }] }));
+    const run = options => spawnSync(process.execPath, [join(mod, 'setup.mjs'), 'setup', record, JSON.stringify(options)], { encoding: 'utf8' });
+    const done = run({ remove: 'work' });
+    assert.equal(done.status, 0, done.stderr);
+    const host = JSON.parse(readFileSync(join(store, 'host.json'), 'utf8'));
+    assert.deepEqual([host.routes.map(route => route.name), host.services.map(grant => grant.id)], [['keep'], ['other']]);
+    assert.deepEqual(JSON.parse(readFileSync(join(store, 'routes', 'profiles', 'route.json'), 'utf8')).profiles, {});
+    assert.match(run({ remove: 'work' }).stderr, /^no_profiles/);
+  } finally {
+    rmSync(store, { recursive: true, force: true });
   }
 });
