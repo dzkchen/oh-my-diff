@@ -69,7 +69,7 @@ fn store(args: &[String]) -> io::Result<Value> {
     }
     let mut id = None;
     let mut repository = None;
-    let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
+    let mut root = None;
     let mut scope = "repository".to_owned();
     let mut remaining = rest.iter();
     while let Some(argument) = remaining.next() {
@@ -77,13 +77,19 @@ fn store(args: &[String]) -> io::Result<Value> {
         match argument.as_str() {
             "--mod" => id = Some(value.clone()),
             "--repo" => repository = Some(PathBuf::from(value).canonicalize()?),
-            "--store" => root = Some(PathBuf::from(value)),
+            "--store" => {
+                if root.is_some() {
+                    return Err(io::Error::other("duplicate_store"));
+                }
+                root = Some(PathBuf::from(value));
+            }
             "--scope" => scope = value.clone(),
             _ => return Err(usage()),
         }
     }
     let id = id.ok_or_else(usage)?;
     let root = root
+        .or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
         .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
         .canonicalize()?;
     let key = match (&repository, scope.as_str()) {
@@ -141,7 +147,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
     let mut version = None;
     let mut yes = false;
     let (mut offline, mut rollback) = (false, false);
-    let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
+    let mut root = None;
     let mut remaining = args.iter();
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
@@ -150,13 +156,19 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             "--rollback" => rollback = true,
             "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
             "--version" => version = Some(remaining.next().ok_or_else(usage)?.clone()),
-            "--store" => root = Some(PathBuf::from(remaining.next().ok_or_else(usage)?)),
+            "--store" => {
+                if root.is_some() {
+                    return Err(io::Error::other("duplicate_store"));
+                }
+                root = Some(PathBuf::from(remaining.next().ok_or_else(usage)?));
+            }
             flag if flag.starts_with("--") => return Err(usage()),
             _ => positional.push(argument.clone()),
         }
     }
     let store = codex_omd::ModStore::open(
-        root.ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
+        root.or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
+            .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
             .canonicalize()?,
     )?;
     let first = || positional.first().cloned().ok_or_else(usage);
@@ -440,8 +452,8 @@ fn run(args: Vec<String>) -> io::Result<Value> {
     }
     let command = &args[0];
     let mut repository = None;
-    let mut store = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
-    let mut home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
+    let mut store = None;
+    let mut home = None;
     let mut sqlite = None;
     let mut payload = Vec::new();
     let mut remaining = args[1..].iter();
@@ -461,6 +473,9 @@ fn run(args: Vec<String>) -> io::Result<Value> {
                 );
             }
             "--store" => {
+                if store.is_some() {
+                    return Err(io::Error::other("duplicate_store"));
+                }
                 store = Some(PathBuf::from(
                     remaining
                         .next()
@@ -468,6 +483,9 @@ fn run(args: Vec<String>) -> io::Result<Value> {
                 ));
             }
             "--home" => {
+                if home.is_some() {
+                    return Err(io::Error::other("duplicate_home"));
+                }
                 home = Some(PathBuf::from(
                     remaining
                         .next()
@@ -489,10 +507,12 @@ fn run(args: Vec<String>) -> io::Result<Value> {
     }
     let repository = repository.ok_or_else(|| io::Error::other("explicit_repository_required"))?;
     let root = store
+        .or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
         .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
         .canonicalize()?;
-    let home =
-        home.or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
+    let home = home
+        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
     let sessions = home.as_ref().map(|path| path.join("sessions"));
     let mut runtime = ModHost::open(root.clone())?;
     let exports: Vec<_> = runtime

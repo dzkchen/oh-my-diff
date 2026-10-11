@@ -23,14 +23,12 @@ pub use view::ModBorder;
 pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
 pub use view::ModBoxStyle;
-pub use view::ModDirection;
-pub use view::ModPaint;
-pub use view::ModSpacing;
 pub use view::ModColor;
 pub use view::ModCommandAction;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
 pub use view::ModDensity;
+pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
 pub use view::ModImageBackdrop;
@@ -42,6 +40,7 @@ pub use view::ModLayoutTabs;
 pub use view::ModListRow;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
+pub use view::ModPaint;
 pub use view::ModPanel;
 pub use view::ModRange;
 pub use view::ModRenderSite;
@@ -49,6 +48,7 @@ pub use view::ModScreenAnchor;
 pub use view::ModSelectOption;
 pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
+pub use view::ModSpacing;
 pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
@@ -116,7 +116,7 @@ pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 pub use store::Trust;
 
-pub const CODEX_HOST_RELEASE: &str = "0.162.0";
+pub const CODEX_HOST_RELEASE: &str = "0.162.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -242,6 +242,11 @@ pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
 pub const MOD_HOST_FEATURES: &[&str] = &[
+    "turn_abort_v1",
+    "terminal_selection_v1",
+    "terminal_copy_v1",
+    "environment_overrides_v1",
+    "timers_100ms_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -407,6 +412,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "credentials.request",
     "routes.select",
     "turns.activity",
+    "turns.abort",
     "terminal.notify",
     "terminal.show_thread",
     "commands.list",
@@ -436,6 +442,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.pane",
     "terminal.panes",
     "terminal.notice",
+    "terminal.selection",
+    "terminal.copy",
     "terminal.blit",
     "terminal.pty",
     "model.complete",
@@ -457,6 +465,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "mcp.connect",
     "mcp.disconnect",
     "environment.read",
+    "environment.set",
     "peers.list",
     "peers.send",
     "turns.queue",
@@ -556,6 +565,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     }
     if granted("autonomous") {
         exposure.push("autonomous: this mod may queue prompts that start turns while you are idle and continue a finished turn, within its autonomy limits; queued turns are labelled with the mod, keep your permissions and route, pause when you interrupt, and stop when you disable or revoke the mod.");
+    }
+    if granted("middleware") {
+        exposure.push("middleware: this mod sees and may change prompts, tool calls and results, model requests and response streams, and through host_operation interceptors the arguments and results of other mods' host operations, including store, environment, credential, http and exec calls; its host_operation events hide the arguments and results of store, environment, credential, http, exec, sessions and evidence calls, and sessions and evidence calls are never intercepted.");
     }
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
@@ -1089,6 +1101,7 @@ fn source_use(
         (".classify(", "agents"),
         (".classify<", "agents"),
         (".rateLimits(", "account"),
+        ("parent_history", "sessions"),
     ] {
         if source.contains(call) {
             capabilities.insert(capability.to_owned());
@@ -2422,6 +2435,7 @@ pub struct ModHost {
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
     unserved: Vec<(String, Vec<String>, String)>,
@@ -2644,7 +2658,12 @@ fn invoke(
                 }
                 let private = call.operation.starts_with("sessions.")
                     || call.operation.starts_with("evidence.");
-                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
+                let masked = private
+                    || ["store.", "credentials.", "http.", "exec."]
+                        .iter()
+                        .any(|prefix| call.operation.starts_with(prefix))
+                    || matches!(call.operation.as_str(), "environment.read" | "environment.set");
+                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if masked {Value::Null} else {call.arguments.clone()}});
                 let _ = access.with(|runtime| {
                     Ok(runtime.event_except("host_operation", before, id, active, scope))
                 });
@@ -2677,10 +2696,10 @@ fn invoke(
                 };
                 let after = match &result {
                     Ok(value) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if private {Value::Null} else {value.clone()}})
+                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if masked {Value::Null} else {value.clone()}})
                     }
                     Err(error) => {
-                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if private {"private_operation_failed".to_owned()} else {error.to_string()}})
+                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if masked {"private_operation_failed".to_owned()} else {error.to_string()}})
                     }
                 };
                 let _ = access.with(|runtime| {
@@ -2866,6 +2885,7 @@ impl ModHost {
             admissions: BTreeMap::new(),
             brokered: None,
             required_surfaces: Arc::default(),
+            environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
             unserved: Vec::new(),
@@ -2939,6 +2959,7 @@ impl ModHost {
             Err(error) => {
                 if !self.loaded.is_empty() {
                     self.loaded.clear();
+                    self.environment.clear(None, None);
                     self.order.clear();
                     self.generation += 1;
                     self.dynamic_tools.clear();
@@ -3048,6 +3069,7 @@ impl ModHost {
             })
         });
         if self.loaded.len() != retained {
+            self.retain_environment();
             self.generation += 1;
             self.dynamic_tools.clear();
         }
@@ -3239,6 +3261,7 @@ impl ModHost {
         }
         self.rejected = rejected;
         self.admit();
+        self.retain_environment();
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
         self.generation += 1;
@@ -3254,6 +3277,20 @@ impl ModHost {
     /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
     pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
         self.required_surfaces.clone()
+    }
+
+    pub fn environment(&self) -> Arc<crate::host::Environment> {
+        self.environment.clone()
+    }
+
+    fn retain_environment(&self) {
+        self.environment.retain(
+            &self
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect(),
+        );
     }
 
     fn publish_required_surfaces(&self) {

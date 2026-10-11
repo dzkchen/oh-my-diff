@@ -806,6 +806,21 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
 }
 
 #[test]
+fn host_control_features_are_available_for_admission() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let path = package(&root, "controls", "export default () => {}", &[]);
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["compatibility"] = json!({"required_features": [
+        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_100ms_v1"
+    ]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    ModStore::inspect_package(&path).unwrap();
+}
+
+#[test]
 fn host_versions_and_storage_schemas_are_reported_independently() {
     let (temp, _, _) = fixture("export default () => {}", &[]);
     let status = host(&temp).status();
@@ -1976,6 +1991,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         &["commands", "store"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
+        &["commands", "agents", "sessions"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
     assert_eq!(
         policies["intercept.response_stream"]["usage"],
@@ -2835,8 +2855,9 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
         &root,
         "sdk",
         "export default api => { \
-         const pulse = api.time.every('pulse', 1000, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
+         const pulse = api.time.every('pulse', 100, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
          api.command('start', () => { pulse.start(); return api.package; }); \
+         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:99})); \
          api.command('nap', () => api.time.sleep(1500)); \
          api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
          api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
@@ -2865,7 +2886,8 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "look", "expect": {"exists": true,
                     "canonical": {"path": "src/a.ts", "kind": "file", "sha256": "abc"}, "ancestors": [{"path": "package.json", "kind": "file"}]}},
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "label", "expect": "yes"},
-                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"}
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"},
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "invalid_timer", "expect_error": "timer_delay_invalid"}
             ]
         }))
         .unwrap();
@@ -2876,7 +2898,7 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
             .iter()
             .map(|tick| tick["at_ms"].as_u64().unwrap())
             .collect::<Vec<_>>(),
-        [2000, 3000, 4000],
+        [1100, 1200, 1300],
         "the repeating timer stops when its handler returns false"
     );
     assert_eq!(result["virtual_time_ms"], 4500);
@@ -2983,6 +3005,27 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
             "{entry}"
         );
     }
+}
+
+#[test]
+fn oversized_continuation_results_are_limited_like_host_results() {
+    let (temp, _, _) = fixture(
+        "export default api => api.intercept('composer_edit', async (e, next) => next(e))",
+        &["composer"],
+    );
+    let runtime = std::sync::Mutex::new(host(&temp));
+    codex_omd::continue_operation(
+        &runtime,
+        "composer_edit",
+        json!({"source": "user", "caller": "user", "revision": 1, "edit": {"kind": "fill", "text": "x"}}),
+        json!({"caller": "user"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |effective| Ok(json!({"edit": effective["edit"], "padding": "x".repeat(200_000)})),
+    )
+    .unwrap();
+    let chains = runtime.lock().unwrap().status()["chains"].to_string();
+    assert!(chains.contains("host_result_limit"), "{chains}");
 }
 
 #[test]
@@ -3627,6 +3670,73 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
     let chains = runtime.status()["chains"].clone();
     assert_eq!(chains[0]["chain"]["trace"][2]["attempts"], 2);
     assert_eq!(chains[1]["chain"]["answered_by"], "guard");
+}
+
+#[test]
+fn host_operation_events_mask_store_credential_and_exec_payloads() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let watcher = package(
+        &root,
+        "watcher",
+        "export default api => { api.on('host_operation', e => { api.state.set([...(api.state.get() ?? []), e]); }); api.command('seen', () => api.state.get()); }",
+        &["middleware", "commands", "store"],
+    );
+    trust(&store, &watcher, &["middleware", "commands", "store"]);
+    let consumer = package(
+        &root,
+        "consumer",
+        "export default api => api.command('go', () => [() => api.host.call('store.get', {secret: 'argument'}), () => api.host.call('credentials.list', {secret: 'argument'}), () => api.host.call('exec.run', {secret: 'argument'}), () => api.host.call('environment.read', {names: ['FIXTURE']}), () => api.host.call('environment.set', {name: 'FIXTURE', value: 'secret-override'}), () => api.host.call('workspace.stat', {secret: 'argument'})].map(call => { try { return call(); } catch (error) { return null; } }))",
+        &["commands", "store", "credentials", "exec", "fs.read"],
+    );
+    let granted = &["commands", "store", "credentials", "exec", "fs.read"];
+    trust(&store, &consumer, granted);
+    let mut runtime = host(&temp);
+    runtime
+        .invoke_scoped_with(
+            "consumer",
+            runtime.generation(),
+            "command",
+            "go",
+            Value::Null,
+            || true,
+            |_, call| {
+                if call.operation == "exec.run" {
+                    return Err(std::io::Error::other("failure-secret"));
+                }
+                Ok(json!({"secret": "result"}))
+            },
+        )
+        .unwrap();
+    let seen = runtime
+        .invoke(
+            "watcher",
+            runtime.generation(),
+            "command",
+            "seen",
+            Value::Null,
+        )
+        .unwrap();
+    let events = seen.as_array().unwrap();
+    assert_eq!(events.len(), 12, "{seen}");
+    for event in events {
+        let operation = event["operation"].as_str().unwrap();
+        assert_eq!(event["caller"], "consumer");
+        let shown = operation == "workspace.stat";
+        assert_eq!(event.to_string().contains("secret"), shown, "{event}");
+        let field = if event["phase"] == "before" {
+            "arguments"
+        } else {
+            "result"
+        };
+        if operation != "exec.run" || event["phase"] == "before" {
+            assert_eq!(event[field].is_null(), !shown, "{event}");
+        }
+        if operation == "exec.run" && event["phase"] == "after" {
+            assert_eq!(event["error"], "private_operation_failed");
+        }
+    }
 }
 
 #[test]
@@ -4281,7 +4391,15 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 6);
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 7);
+    assert!(
+        status["exposure"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|text| text.as_str().unwrap().starts_with("middleware:"))
+    );
+    assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&"middleware"));
     contended(|| store.revoke("delegate"));
     runtime.reload().unwrap();
     assert!(
@@ -4531,4 +4649,40 @@ fn omd_mod_reset_moves_only_resettable_store_files_aside() {
     let refused = reset("grants.json");
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
+}
+
+#[test]
+fn clipboard_delivery_wait_is_not_callback_execution() {
+    let (temp, store, path) = fixture(
+        "export default api => api.command('copy', () => { api.host.call('terminal.copy', {text:'one'}); return api.host.call('terminal.copy', {text:'two'}); })",
+        &["commands", "terminal"],
+    );
+    let manifest = path.join("mod.json");
+    let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    package["hook_budget_ms"] = json!(250);
+    std::fs::write(&manifest, serde_json::to_vec(&package).unwrap()).unwrap();
+    trust(&store, &path, &["commands", "terminal"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let mut copies = 0;
+    let result = runtime
+        .invoke_with(
+            "fixture",
+            generation,
+            "command",
+            "copy",
+            json!(""),
+            || true,
+            |call| {
+                assert_eq!(call.operation, "terminal.copy");
+                // Each external delivery is within its 5s surface deadline; their sum exceeds
+                // the callback execution budget and each exceeds the per-hook budget.
+                std::thread::sleep(std::time::Duration::from_millis(2_600));
+                copies += 1;
+                Ok(json!({"status": "confirmed"}))
+            },
+        )
+        .unwrap();
+    assert_eq!(copies, 2);
+    assert_eq!(result, json!({"status": "confirmed"}));
 }

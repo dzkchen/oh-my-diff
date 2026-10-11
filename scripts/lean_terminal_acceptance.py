@@ -39,9 +39,12 @@ def latest_status(cache_events):
                  if event["file"] == "mod-status.json"), {})
 
 
-def zero_first_party_published(cache_events):
+def zero_first_party_published(cache_events, identifiers=()):
     status = latest_status(cache_events)
-    return (status.get("modified_after_launch", False) and status.get("mods") == []
+    mods = status.get("mods") or []
+    return (status.get("modified_after_launch", False)
+            and [item["id"] for item in mods] == list(identifiers)
+            and all(item["error"] is None for item in mods)
             and status.get("rejected") == [] and status.get("reload_error") is None)
 
 
@@ -68,7 +71,7 @@ def terminal(binary, repo, env, width, version, profile=None, *,
              logo=True, blossom=False, welcome=False, early_blossom=False, exercise=False, arguments=(), status=None, status_selector=None,
              backdrop=None, absent=(), cache_store=None, startup_seconds=10, trace_path=None,
              check_first_paint=True, ascii_logo=False, live_mods=(), native_session=None,
-             live_recovery=None, zero_first_party=False):
+             live_recovery=None, zero_first_party=False, outside_author=None):
     import pyte
 
     master, slave = pty.openpty()
@@ -238,6 +241,10 @@ def terminal(binary, repo, env, width, version, profile=None, *,
         if zero_first_party:
             read_frame("zero_first_party_publication",
                        lambda: startup_appearance() and zero_first_party_published(cache_events), startup_seconds)
+        if outside_author:
+            read_frame("outside_author_publication",
+                       lambda: appearance() and zero_first_party_published(cache_events, [outside_author]),
+                       startup_seconds)
         if exercise:
             send(b"draft-marker", "typing", lambda: appearance() and visible("draft-marker"))
             send(b"\x7fedit", "editing", lambda: appearance() and visible("draft-markeedit"))
@@ -363,7 +370,7 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
             install = ["install", "--profile", profile, "--binary", artifact_dir / "codex",
                        "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--omd-contract", artifact_dir / "omd-contract", "--author-archive", artifact_dir / "mod-api.tgz",
                        "--node", node, "--store", store]
-            call(command + install, env)
+            api = call(command + install, env)["mod_api"]
             def save_progress(status, **extra):
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(json.dumps({"status": status, "checks": observations,
@@ -501,6 +508,28 @@ def run(artifact_dir, upstream, output, profiles=("platform", "full"),
                 call(command + ["mod", "disable", "omd_usage"], env)
                 disable_first_party(command, manager, store, env)
                 launch("full_zero_first_party", logo=False, blossom=True, zero_first_party=True)
+                outside = base / "outside_author"
+                outside.mkdir()
+                (outside / "mod.json").write_text(json.dumps({
+                    "schema": 1, "id": "outside_author", "version": "1.0.0", "api": api,
+                    "state_version": 1, "license": "MIT",
+                    "provenance": {"maintainer": "Outside Author", "source": "outside-author"},
+                    "capabilities": ["terminal"],
+                    "compatibility": {"required_features": ["terminal_render_sites_v1", "terminal_welcome_v1"]}}))
+                welcome = "Outside author welcome"
+                (outside / "index.ts").write_text(
+                    "import type { ModAPI } from '@oh-my-diff/mod-api';\n"
+                    "export default function activate(api: ModAPI) {\n"
+                    "  api.on('terminal', () => ({ sites: { welcome: { mode: 'replace', components: [\n"
+                    f"    {{ type: 'text', id: 'outside_welcome', label: 'Welcome', text: {json.dumps(welcome)} }},\n"
+                    "  ] } } }));\n}\n")
+                request = json.dumps({"source": {"kind": "local", "path": str(outside)},
+                                      "trust": {"packages": {"outside_author": {"capabilities": ["terminal"]}}}})
+                call([manager, "package-apply", store, request,
+                      call([manager, "package-plan", store, request], env)["confirmation"]], env)
+                call([manager, "package-enable", store, "outside_author"], env)
+                launch("full_outside_author", logo=False, early_blossom=True, backdrop=welcome,
+                       outside_author="outside_author")
             call(command + ["activate", "direct"], env)
             launch(f"{profile}_direct", logo=False, blossom=True, status="upstream-style direct",
                    status_selector="platform_only" if profile == "platform" else "full")

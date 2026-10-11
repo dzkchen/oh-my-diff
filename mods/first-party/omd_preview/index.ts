@@ -817,7 +817,7 @@ export default function activate(api: ModAPI) {
   };
 
   const previewFile = (path: string, inline: boolean, watched: boolean): CommandResult => {
-    const file = api.host.call('workspace.stat', { paths: [path] }).files[path];
+    const file = api.host.call('workspace.stat', { paths: [path], hash: watched }).files[path];
     if (file?.kind !== 'file') return { display: `No file ${path} in the workspace` };
     if (inline) {
       if (file.size > 1_000_000) return { display: `${path} is too large to show inline; use /preview ${path}` };
@@ -826,15 +826,19 @@ export default function activate(api: ModAPI) {
     if (watched) {
       const watch = [...new Set([...load().watch, path])];
       if (watch.length > MAX_WATCHES) return { display: `At most ${MAX_WATCHES} files can be watched; use /preview unwatch` };
-      save({ watch });
-      api.host.tryCall('events.publish', { channel: 'watch', data: null });
+      save({ watch, hashes: { ...load().hashes, [path]: file.sha256 ?? '' } });
     }
-    return open(render(outputFor(path), path, path), path);
+    const result = open(render(outputFor(path), path, path), path);
+    if (watched) api.host.tryCall('events.publish', { channel: 'watch', data: null });
+    return result;
   };
 
-  const poll = () => {
+  const poll = (retry = false) => {
     const { watch, hashes } = load();
-    if (!watch.length) return;
+    if (!watch.length) {
+      if (retry) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
+      return;
+    }
     const stat = api.host.tryCall('workspace.stat', { paths: watch, hash: true });
     if (stat.ok) {
       const next = Object.fromEntries(watch.map(path => [path, stat.value.files[path]?.sha256 ?? '']));
@@ -860,16 +864,21 @@ export default function activate(api: ModAPI) {
     }
   }, { description: 'Render a response or file as HTML (--inline shows it here), inspect Mermaid diagrams or preview draft images' });
 
-  for (const event of ['channel', 'timer'] as const) api.on(event, poll);
+  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true); });
+  api.on('timer', () => poll());
   for (const event of ['start', 'resume'] as const) api.on(event, () => { poll(); if (thumbnails) refresh(); });
   if (thumbnails) {
     api.on('composer', event => { if (event.kind === 'change' && event.attachments_revision !== load().attachments) refresh(event.attachments_revision); });
-    api.on('component_event', event => {
-      const index = /^omd_preview_thumb_(\d+)$/.exec(event.component)?.[1];
-      const picture = index === undefined ? undefined : load().images[Number(index)];
-      if (picture && event.kind === 'pointer' && event.pointer?.action === 'down' && event.pointer.button === 'left') viewImage(picture);
-    });
   }
+  api.on('component_event', event => {
+    if (event.component.startsWith('omd_preview_') && event.events?.some(input => 'key' in input && input.key === 'Esc')) {
+      save({ inline: null });
+      return;
+    }
+    const index = thumbnails ? /^omd_preview_thumb_(\d+)$/.exec(event.component)?.[1] : undefined;
+    const picture = index === undefined ? undefined : load().images[Number(index)];
+    if (picture && event.kind === 'pointer' && event.pointer?.action === 'down' && event.pointer.button === 'left') viewImage(picture);
+  });
   if (diagrams !== 'off') {
     api.intercept('render', { match: { component: 'assistant_message', lifecycle: 'final', props: { text: [api.match.glob('*\x60\x60\x60mermaid*'), api.match.glob('*~~~mermaid*')] } } }, event => {
       const { viewport, props } = event as RenderEvent<'assistant_message'>;
@@ -909,6 +918,7 @@ export default function activate(api: ModAPI) {
   };
 
   api.on('terminal', event => {
+    if (event?.event === 'startup' && load().inline) save({ inline: null });
     const { inline, revision, images } = load();
     const sites: Partial<Record<'dialog' | 'above_composer', TerminalRenderSite>> = {};
     if (inline) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision, Math.min((event?.client?.columns ?? 80) - 4, 76) - 3) }] };

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the public mod API contract against the host source and its executable evidence."""
 import json
+from functools import cache
 import re
 import sys
 from pathlib import Path
@@ -55,6 +56,7 @@ def host_sets():
     }
 
 
+@cache
 def resolve(reference):
     kind, _, name = reference.partition(":")
     if kind == "rust":
@@ -62,10 +64,93 @@ def resolve(reference):
     if kind == "patch":
         return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", PATCH.read_text(), re.M) is not None
     if kind == "node":
+        if ":" in name:
+            file, name = name.split(":", 1)
+            path = (ROOT / file).resolve()
+            return path.is_relative_to(ROOT / "tests") and path.suffix == ".mjs" and path.is_file() and f"test('{name}'" in path.read_text()
         return f"test('{name}'" in RUNNER_TESTS.read_text()
     if kind == "python":
         return any(f"def {name}(" in path.read_text() for path in PYTHON_TESTS.glob("test_*.py"))
     return False
+
+
+def declaration(source, name):
+    match = re.search(rf"export (?:type|interface) {name}\b(.*?)(?=\nexport |\Z)", source, re.S)
+    if not match:
+        raise ValueError(f"missing declaration {name}")
+    return match.group(1)
+
+
+def fields(source, name):
+    body = declaration(source, name).split("{", 1)[1].rsplit("}", 1)[0]
+    tokens = re.findall(r"/\*.*?\*/|//[^\n]*|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[\w.]+|[^\s]", body, re.S)
+    result, depth, start = set(), 0, True
+    for index, token in enumerate(tokens):
+        if token.startswith(("/*", "//")):
+            continue
+        if start and depth == 0:
+            if token == "readonly":
+                continue
+            if index + 1 < len(tokens) and tokens[index + 1] in ("?", ":"):
+                result.add(token.strip("'"))
+            start = False
+        if token in ("{", "[", "("):
+            depth += 1
+        elif token in ("}", "]", ")"):
+            depth -= 1
+        elif token == ";" and depth == 0:
+            start = True
+    return result
+
+
+def public_sets(sets):
+    source = (ROOT / "mods/api.d.ts").read_text()
+    return {**sets,
+        "components": set(re.findall(r"\btype: '([^']+)'", declaration(source, "TerminalComponent"))),
+        "render_sites": fields(source, "RenderProps"),
+        "view_fields": fields(source, "TerminalView"),
+        "view_sites": set(re.findall(r"'([^']+)'", declaration(source, "TerminalSiteName"))) | {"owner/name"},
+        "classic_hooks": set(re.findall(r"'([^']+)'", declaration(source, "ClassicHook"))),
+        "author_commands": set(re.findall(r"case '([^']+)':", (ROOT / "mods/author/cli.mjs").read_text())),
+    }
+
+
+def check_launch(contract, sets):
+    problems = []
+    source = (ROOT / "mods/api.d.ts").read_text()
+    for category, name in {"operations": "HostOperations", "events": "Events", "intercepts": "InterceptSurfaces"}.items():
+        expected = sets[category] - ({"mods.service"} if category == "operations" else set())
+        if fields(source, name) != expected:
+            problems.append(f"{category}: public types disagree with host: {sorted(fields(source, name) ^ expected)}")
+    declared = set(re.findall(r"'([^']+)'", declaration(source, "Capability")))
+    if declared != sets["capabilities"]:
+        problems.append(f"capabilities: public types disagree with host: {sorted(declared ^ sets['capabilities'])}")
+    expected = {f"{category}:{name}" for category, names in public_sets(sets).items() for name in names}
+    entries = contract.get("launch", {})
+    for name in sorted(expected - entries.keys()):
+        problems.append(f"unclassified launch surface: {name}")
+    for name in sorted(entries.keys() - expected):
+        problems.append(f"unknown launch surface: {name}")
+    decisions = {decision["id"]: decision for decision in contract["decisions"]}
+    for name, entry in entries.items():
+        if entry.get("status") == "experimental":
+            if not entry.get("reason"):
+                problems.append(f"{name}: experimental surface needs a reason")
+            continue
+        if entry.get("status") != "frozen":
+            problems.append(f"{name}: invalid launch status")
+            continue
+        evidence = entry.get("evidence", decisions.get(entry.get("decision"), {}).get("evidence", []))
+        if not evidence or not all(resolve(reference) for reference in evidence):
+            problems.append(f"{name}: missing or unresolved launch evidence")
+        consumer = entry.get("consumer", {})
+        path = (ROOT / consumer.get("path", "")).resolve()
+        allowed = any(path.is_relative_to(ROOT / directory) for directory in ("mods/first-party", "mods/examples"))
+        if name.startswith("author_commands:"):
+            allowed |= path in (ROOT / "mods/README.md", ROOT / "mods/REFERENCE.md")
+        if not allowed or not path.is_file() or not consumer.get("snippet") or consumer["snippet"] not in path.read_text():
+            problems.append(f"{name}: missing launch/example consumer")
+    return problems
 
 
 def check(contract, version, sets):
@@ -112,7 +197,7 @@ def check(contract, version, sets):
             problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
         if not entry["check"] or not resolve(entry["check"]):
             problems.append(f"classic hook {entry['hook']}: unresolved check {entry['check']}")
-    return problems
+    return problems + check_launch(contract, sets)
 
 
 def replacement(decision):
@@ -146,6 +231,12 @@ def render(contract):
         "(`api.intercept`) wrap an operation and compose as an ordered continuation chain.",
         "",
     ]
+    out += ["## Launch surface status", "",
+        "Frozen means held for the launch candidate; the API version remains experimental until the release freeze.", "",
+        table([(name, entry["status"], entry.get("reason", "") or
+                f"`{entry['consumer']['path']}`; " + ", ".join(entry.get("evidence", [entry.get("decision", "")])) )
+               for name, entry in sorted(contract.get("launch", {}).items())],
+              ["Surface", "Launch status", "Consumer and evidence, or experimental reason"]), ""]
     for group, title in GROUPS.items():
         rows = [
             (

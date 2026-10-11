@@ -11,7 +11,14 @@ export default function activate(api: ModAPI) {
   const brand = typeof api.settings.brand === 'string' ? clean(api.settings.brand).slice(0, 24) : 'oh my diff';
   const shorten = (value: string, limit: number) => {
     const text = Array.from(clean(value));
-    return text.length <= limit ? text.join('') : `${text.slice(0, Math.max(1, limit - 1)).join('')}…`;
+    const size = (chars: string[]) => chars.reduce((sum, char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return sum + (code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4);
+    }, 0);
+    if (text.length <= limit && size(text) <= 256) return text.join('');
+    const kept = text.slice(0, Math.max(1, limit - 1));
+    while (size(kept) > 253) kept.pop();
+    return `${kept.join('')}…`;
   };
   api.intercept('render', { match: { component: 'list' } }, (input, next) => {
     const { props: event, viewport } = input as RenderEvent<'list'>;

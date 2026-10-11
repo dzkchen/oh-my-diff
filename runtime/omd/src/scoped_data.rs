@@ -11,7 +11,6 @@ pub struct ScopedDataHost {
     pub session_root: Option<PathBuf>,
     pub session_database: Option<PathBuf>,
     pub binding: ResourceBinding,
-    pub(crate) session_bytes: usize,
 }
 
 pub fn operation(name: &str) -> bool {
@@ -59,7 +58,6 @@ impl ScopedDataHost {
             session_root,
             session_database,
             binding,
-            session_bytes: 0,
         })
     }
 
@@ -84,11 +82,10 @@ impl ScopedDataHost {
         }
         .capability()
         .map_err(|error| io::Error::other(error.to_string()))?;
-        if configuration.revision != self.binding.generation
-            || !selection.capabilities.iter().any(|cap| cap == required)
-        {
+        if !selection.capabilities.iter().any(|cap| cap == required) {
             return Err(io::Error::other("data_selection_changed_or_revoked"));
         }
+        self.binding.generation = configuration.revision;
         if name == "evidence.read" {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -129,10 +126,7 @@ impl ScopedDataHost {
                 enabled: true,
             }
             .call(name, arguments, active)?;
-            self.session_bytes = self
-                .session_bytes
-                .saturating_add(serde_json::to_vec(&result)?.len());
-            if self.session_bytes > 1_048_576 {
+            if serde_json::to_vec(&result)?.len() > 1_048_576 {
                 return Err(io::Error::other("session_invocation_limit"));
             }
             return Ok(result);
@@ -200,7 +194,14 @@ impl ScopedDataHosts {
     }
 
     fn host(&mut self, owner: &str, source_sha256: &str) -> io::Result<&mut ScopedDataHost> {
-        let host = match self.hosts.entry(owner.to_owned()) {
+        if self
+            .hosts
+            .get(owner)
+            .is_some_and(|host| host.binding.source_sha256 != source_sha256)
+        {
+            self.hosts.remove(owner);
+        }
+        Ok(match self.hosts.entry(owner.to_owned()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => entry.insert(ScopedDataHost::new(
                 self.root.clone(),
@@ -211,10 +212,6 @@ impl ScopedDataHosts {
                 self.thread.clone(),
                 source_sha256.to_owned(),
             )?),
-        };
-        if host.binding.source_sha256 != source_sha256 {
-            return Err(io::Error::other("data_selection_changed_or_revoked"));
-        }
-        Ok(host)
+        })
     }
 }

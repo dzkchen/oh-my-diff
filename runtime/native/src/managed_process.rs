@@ -220,6 +220,7 @@ pub(super) struct ProcessOwner<'a> {
     pub protected: &'a [PathBuf],
     pub os_access: Option<&'a codex_omd::ModOsAccess>,
     pub blit: Option<&'a BlitSink>,
+    pub environment: Option<&'a codex_omd::host::EnvironmentValues>,
 }
 
 struct ManagedProcess {
@@ -569,6 +570,7 @@ impl ManagedProcesses {
             protected,
             os_access,
             blit,
+            environment,
         } = owner;
         if !active()
             || !repository.is_absolute()
@@ -617,7 +619,7 @@ impl ManagedProcesses {
                     #[serde(default)]
                     arguments: Vec<String>,
                     #[serde(default)]
-                    environment: BTreeMap<String, String>,
+                    environment: BTreeMap<String, Option<String>>,
                     #[serde(default)]
                     framing: Option<String>,
                     #[serde(default)]
@@ -631,7 +633,7 @@ impl ManagedProcesses {
                     #[serde(default)]
                     keys: Option<String>,
                 }
-                let input: Input =
+                let mut input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
                 let component = |id: &String| {
                     !id.is_empty()
@@ -696,10 +698,12 @@ impl ManagedProcesses {
                                 .iter()
                                 .any(|prefix| key.starts_with(prefix))
                             || key == "XDG_CACHE_HOME"
-                            || value.len() > 1024
-                            || value
-                                .bytes()
-                                .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+                            || value.as_ref().is_some_and(|value| {
+                                value.len() > 1024
+                                    || value
+                                        .bytes()
+                                        .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+                            })
                     })
                     || !matches!(
                         input.framing.as_deref(),
@@ -723,6 +727,15 @@ impl ManagedProcesses {
                         != input.path
                 {
                     return Err("process_program_or_arguments_invalid".into());
+                }
+                if let Some(environment) = environment {
+                    codex_omd::host::validate_environment(environment)?;
+                    for (name, value) in environment {
+                        input
+                            .environment
+                            .entry(name.clone())
+                            .or_insert_with(|| Some(value.clone()));
+                    }
                 }
                 let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
                 if !metadata.is_file()
@@ -813,12 +826,22 @@ impl ManagedProcesses {
                             command
                         }
                     };
-                    let mut child = command
-                        .current_dir(repository)
+                    command
                         .env("TMPDIR", &scratch)
                         .env("XDG_CACHE_HOME", &scratch)
-                        .env("PYTHONDONTWRITEBYTECODE", "1")
-                        .envs(&input.environment)
+                        .env("PYTHONDONTWRITEBYTECODE", "1");
+                    for (name, value) in &input.environment {
+                        match value {
+                            Some(value) => {
+                                command.env(name, value);
+                            }
+                            None => {
+                                command.env_remove(name);
+                            }
+                        }
+                    }
+                    let mut child = command
+                        .current_dir(repository)
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .stderr(Stdio::null())
@@ -1183,6 +1206,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };
@@ -1249,6 +1273,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };
@@ -1300,6 +1325,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: Some(&access),
             blit: Some(&sink),
         };
@@ -1394,6 +1420,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: Some(&access),
             blit: None,
         };
@@ -1503,6 +1530,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: Some(&access),
             blit: None,
         };
@@ -1544,6 +1572,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };
@@ -1633,6 +1662,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };

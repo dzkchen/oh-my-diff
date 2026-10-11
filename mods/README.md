@@ -1,6 +1,6 @@
 # TypeScript mods
 
-The current pinned Codex `0.162.0` OMD host exposes API
+The current pinned Codex `0.162.1` OMD host exposes API
 `0.2.0-experimental.5` on Apple Silicon macOS and Node `24.18.0`. Mods are
 editable, hash-approved TypeScript packages; Node 24.18 or a later 24.x also works. The API remains experimental;
 local author and host fixtures do not complete independent preview feedback or
@@ -50,10 +50,15 @@ demonstrations remain repository-only conformance fixtures.
 [EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and
 rationale for every package.
 
+The terminal fixture copies the bounded selection and reports backend delivery;
+the OS tools fixture's `/locale` with no argument restores the inherited locale.
+Examples using the new controls declare their required host feature labels;
+see [compatibility](COMPATIBILITY.md) when adopting those operations.
+
 For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
-installer in [LEAN_PROFILES.md](../LEAN_PROFILES.md) stages candidate packages
+installer (`LEAN_PROFILES.md` in the repository) stages candidate packages
 inactive except seven default packages (`omd_inspector`, `omd_logo`,
 `omd_model_picker`, `omd_mods`, `omd_plan_removal`, `omd_tool_lines` and
 `omd_update`). Its `omd_workflow` package
@@ -62,7 +67,7 @@ separately with `/omd_workflow:contract ID@VERSION` or `omd-package contract sel
 
 Packages deferred from the launch collection are not in this tree. They can be
 restored from the `pre-launch-collection` Git tag and return in post-launch waves
-([LEAN_PROFILES.md](../LEAN_PROFILES.md)).
+(`LEAN_PROFILES.md` in the repository).
 
 ## Validation
 

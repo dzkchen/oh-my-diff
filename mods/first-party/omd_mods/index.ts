@@ -53,7 +53,7 @@ export default function activate(api: ModAPI) {
     if (!item || !property) return { ...state, notice: 'That setting is unavailable' };
     const text = rest.join(' ');
     const value: Json = property.type === 'boolean' ? text === 'true' : property.type === 'number' ? Number(text) : text;
-    if (property.type === 'number' && !Number.isFinite(value)) return { ...state, notice: `${name} needs a number` };
+    if (property.type === 'number' && (!text.trim() || !Number.isFinite(value))) return { ...state, notice: `${name} needs a number` };
     const written = api.host.tryCall('settings.write', { id: item.id, values: { [name]: value } });
     return refresh(state, written.ok ? `${friendly(item.id)}: ${name.replace(/_/g, ' ')} saved` : `${name} was not saved (${written.error})`);
   };

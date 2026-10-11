@@ -42,6 +42,21 @@ class ArtifactReadingTests(unittest.TestCase):
         self.assertEqual(image.read_bytes(), PNG)
         self.assertNotEqual(self.read("notebook-image", notebook, 0, image).returncode, 0)
 
+    def test_notebook_image_accepts_wrapped_base64_and_malformed_notebooks_fail_cleanly(self):
+        encoded = base64.encodebytes(PNG).decode()
+        notebook = self.directory / "wrapped.ipynb"
+        notebook.write_text(json.dumps({"cells": [{"cell_type": "code", "outputs": [{"output_type": "display_data", "data": {"image/png": encoded}}]}]}))
+        image = self.directory / "wrapped.png"
+        result = self.read("notebook-image", notebook, 0, image)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(image.read_bytes(), PNG)
+        notebook.write_text(json.dumps({"cells": [{"cell_type": "code", "outputs": [{"output_type": "display_data", "data": {"image/png": [1, 2]}}]}]}))
+        notebook.with_name("list.ipynb").write_text("[]")
+        for name in ("wrapped.ipynb", "list.ipynb"):
+            result = self.read("notebook-image", self.directory / name, 0, self.directory / f"{name}.png")
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("error", json.loads(result.stderr))
+
     @unittest.skipUnless(shutil.which("gs"), "Ghostscript is not installed")
     def test_pdf_page_text_and_figure_keep_page_and_digest(self):
         postscript = self.directory / "sample.ps"

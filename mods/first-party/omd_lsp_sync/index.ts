@@ -259,14 +259,20 @@ export default function activate(api: ModAPI) {
     spent += cost + size(result);
     return result;
   };
-  const stopServer = (s: State) => budget({ session: s.adapter }, argument => api.host.tryCall('process.stop', argument));
-  const readFiles = (paths: string[]) => budget({ paths }, argument => api.host.tryCall('workspace.read', argument));
+  const stopServer = (s: State) => budget({ session: s.adapter }, a => api.host.tryCall('process.stop', a));
+  const readFiles = (paths: string[]) => budget({ paths }, a => api.host.tryCall('workspace.read', a));
   let dirty = false;
   const save = (s: State) => {
     const root = object(api.state.get()) ?? {};
     const existing = object(root.servers ?? null);
     const prior = existing ?? (string(root.repository ?? null) ? { python: state(api.state.get(), 'python') as unknown as Json } : {});
-    api.state.set({ servers: { ...prior, [s.adapter]: s as unknown as Json } });
+    const stored = { ...s, diagnostics: { ...s.diagnostics } };
+    const body = () => ({ servers: { ...prior, [s.adapter]: stored } }) as unknown as Json;
+    for (const path in stored.diagnostics) {
+      if (serializedBytes(body()) <= 60_000) break;
+      stored.diagnostics[path] = { ...s.diagnostics[path], errors: [] };
+    }
+    api.state.set(body());
     dirty = true;
   };
   const announce = <T>(value: T): T => {
@@ -274,11 +280,11 @@ export default function activate(api: ModAPI) {
     dirty = false;
     const data = ORDER.map(adapter => state(api.state.get(), adapter)).filter(s => s.status !== 'idle' || s.running).map(s => ({ adapter: s.adapter, server: s.running ? s.server : null, status: s.status, reason: s.reason, documents: Object.keys(s.documents).length,
       count: Object.values(s.diagnostics).reduce((total, entry) => total + entry.count, 0), errors: Object.entries(s.diagnostics).flatMap(([path, entry]) => entry.errors.slice(0, 3).map(error => `${path}:${error}`)).slice(0, 6) }));
-    budget({ channel: 'status', data }, argument => api.host.tryCall('events.publish', argument));
+    budget({ channel: 'status', data }, a => api.host.tryCall('events.publish', a));
     return value;
   };
   const exchange = (s: State, outgoing: Json[], wait_ms: number): Result<Message[]> => {
-    const result = budget({ session: s.adapter, send: outgoing, wait_ms }, argument => api.host.tryCall('process.exchange', argument));
+    const result = budget({ session: s.adapter, send: outgoing, wait_ms }, a => api.host.tryCall('process.exchange', a));
     if (!result.ok) return result;
     const messages = result.value.messages.map(message);
     return messages.every(Boolean) ? ok(messages as Message[]) : fail('invalid_server_message');
@@ -344,7 +350,7 @@ export default function activate(api: ModAPI) {
   };
   const initialize = (s: State, repository: string): Result<boolean> => {
     if (s.running && s.repository === repository) {
-      const status = budget({ session: s.adapter }, argument => api.host.tryCall('process.status', argument));
+      const status = budget({ session: s.adapter }, a => api.host.tryCall('process.status', a));
       if (status.ok && status.value.running) return ok(false);
     }
     if (s.running) stopServer(s);
@@ -356,7 +362,7 @@ export default function activate(api: ModAPI) {
     s.preview = null;
     s.next_id = 1;
     const candidates = ADAPTERS[s.adapter].candidates;
-    const found = budget({ names: [...candidates.map(candidate => candidate.name), ...(s.adapter === 'rust' ? ['cargo'] : [])] }, argument => api.host.tryCall('process.which', argument));
+    const found = budget({ names: [...candidates.map(candidate => candidate.name), ...(s.adapter === 'rust' ? ['cargo'] : [])] }, a => api.host.tryCall('process.which', a));
     if (!found.ok) return found;
     const chosen = candidates.find(candidate => found.value.found.some(server => server.name === candidate.name));
     const server = chosen && found.value.found.find(server => server.name === chosen.name);
@@ -365,10 +371,10 @@ export default function activate(api: ModAPI) {
     const rustup = s.adapter === 'rust' && cargo ? /^(.*)\/\.cargo\/bin\/rustup$/.exec(cargo.path) : null;
     const environment: Record<string, string> = rustup ? { RUSTUP_HOME: `${rustup[1]}/.rustup` } : {};
     const launch = { session: s.adapter, name: server.name, path: server.path, sha256: server.sha256, arguments: chosen.arguments, environment };
-    let started = budget(launch, argument => api.host.tryCall('process.start', argument));
+    let started = budget(launch, a => api.host.tryCall('process.start', a));
     if (!started.ok && started.error.startsWith('process_session_limit_or_duplicate')) {
       stopServer(s);
-      started = budget(launch, argument => api.host.tryCall('process.start', argument));
+      started = budget(launch, a => api.host.tryCall('process.start', a));
     }
     if (!started.ok) return started;
     s.running = true;
@@ -464,21 +470,21 @@ export default function activate(api: ModAPI) {
     return ok(changed);
   };
   const observedRepository = (repository: string, record: boolean): Result<boolean> => {
-    const current = budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument));
+    const current = budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, a => api.host.tryCall('store.get', a));
     if (!current.ok) return current;
     const value = object(current.value?.value ?? null);
     if (current.value) return ok(value?.repository === repository);
     if (!record) return ok(false);
-    const saved = budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const, expected_revision: null, value: { repository } }, argument => api.host.tryCall('store.put', argument));
+    const saved = budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const, expected_revision: null, value: { repository } }, a => api.host.tryCall('store.put', a));
     return saved.ok ? ok(true) : saved;
   };
   const currentThread = (): Result<string> => {
     const key = 'lsp.thread_probe';
-    const before = budget({ key, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument));
+    const before = budget({ key, scope: 'repository' as const }, a => api.host.tryCall('store.get', a));
     if (!before.ok) return before;
-    const put = budget({ key, scope: 'repository' as const, expected_revision: before.value?.revision ?? null, value: { revision: (before.value?.revision ?? 0) + 1 } }, argument => api.host.tryCall('store.put', argument));
+    const put = budget({ key, scope: 'repository' as const, expected_revision: before.value?.revision ?? null, value: { revision: (before.value?.revision ?? 0) + 1 } }, a => api.host.tryCall('store.put', a));
     if (!put.ok) return put;
-    const after = budget({ key, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument));
+    const after = budget({ key, scope: 'repository' as const }, a => api.host.tryCall('store.get', a));
     if (!after.ok) return after;
     const thread = after.value?.provenance.thread_id;
     return after.value?.revision === put.value.revision && thread ? ok(thread) : fail('thread_identity_unavailable');
@@ -571,7 +577,7 @@ export default function activate(api: ModAPI) {
       const s = state(api.state.get(), adapter);
       const lazy = viewing && !s.running && mentioned.some(path => adapterFor(path) === adapter);
       if (lazy && !s.repository) {
-        const read = observed === undefined ? budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument)) : null;
+        const read = observed === undefined ? budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, a => api.host.tryCall('store.get', a)) : null;
         if (read) observed = read.ok ? string(object(read.value?.value ?? null)?.repository ?? null) ?? '' : '';
         s.repository = observed ?? '';
       }
@@ -592,7 +598,7 @@ export default function activate(api: ModAPI) {
     const paths = [...new Set(work.flatMap(item => item.candidates))];
     const files: Record<string, FileStat | null> = {};
     for (let index = 0; index < paths.length; index += 128) {
-      const stat = budget({ paths: paths.slice(index, index + 128), hash: true }, argument => api.host.tryCall('workspace.stat', argument));
+      const stat = budget({ paths: paths.slice(index, index + 128), hash: true }, a => api.host.tryCall('workspace.stat', a));
       if (!stat.ok) {
         for (const { adapter } of work) incomplete(state(api.state.get(), adapter), stat.error);
         return report;
@@ -663,7 +669,7 @@ export default function activate(api: ModAPI) {
     for (const adapter of ORDER) {
       const s = state(api.state.get(), adapter);
       if (!s.running) continue;
-      const status = budget({ session: s.adapter }, argument => api.host.tryCall('process.status', argument));
+      const status = budget({ session: s.adapter }, a => api.host.tryCall('process.status', a));
       if (status.ok && status.value.idle_ms < IDLE_STOP_MS) continue;
       if (status.ok) stopServer(s);
       s.running = false;
@@ -701,9 +707,9 @@ export default function activate(api: ModAPI) {
       writes[path] = updated;
     }
     if (serializedBytes({ expected, writes }) > 60_000) return fallback('server_edit_size_limit');
-    const backup = budget({ expected }, argument => api.host.tryCall('workspace.backup', argument));
+    const backup = budget({ expected }, a => api.host.tryCall('workspace.backup', a));
     if (!backup.ok) return fallback(backup.error, true);
-    const applied = budget({ expected, writes }, argument => api.host.tryCall('workspace.transaction', argument));
+    const applied = budget({ expected, writes }, a => api.host.tryCall('workspace.transaction', a));
     if (!applied.ok) return fallback(applied.error, true);
     const after = applied.value.files;
     const rollback = (reason: string) => {
@@ -918,7 +924,7 @@ export default function activate(api: ModAPI) {
     if (!adapter || !pathFromUri('/repository', uri('/repository', path))) return failed(`${path || 'this file'} has no supported language server`);
     const s = state(api.state.get(), adapter);
     if (!s.repository) {
-      const root = budget({ program: 'pwd', timeout_ms: 5_000 }, argument => api.host.tryCall('exec.run', argument));
+      const root = budget({ program: 'pwd', timeout_ms: 5_000 }, a => api.host.tryCall('exec.run', a));
       const repository = root.ok && root.value.exit_code === 0 ? root.value.stdout.trim() : '';
       const observed = repository ? observedRepository(repository, true) : { ok: false as const, error: 'repository_unavailable' };
       if (!observed.ok || !observed.value) return failed(observed.ok ? 'repository_binding_mismatch' : observed.error);
@@ -990,7 +996,7 @@ export default function activate(api: ModAPI) {
       const edit = textWorkspaceEdit(s.repository, action.edit);
       if (!edit.ok) return failed(edit.error);
       const scope = Object.keys(edit.value);
-      const stat = budget({ paths: scope, hash: true }, argument => api.host.tryCall('workspace.stat', argument));
+      const stat = budget({ paths: scope, hash: true }, a => api.host.tryCall('workspace.stat', a));
       if (!stat.ok) return failed(stat.error);
       const expected = Object.fromEntries(scope.map(name => [name, stat.value.files[name]?.sha256 ?? '']));
       if (!confirm('Apply code action', `${action.title}\nChanges ${scope.join(', ')}`)) return done([], 'Cancelled');

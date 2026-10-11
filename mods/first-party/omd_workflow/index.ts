@@ -142,7 +142,7 @@ export default function activate(api: ModAPI) {
     return op.entry;
   };
   const save = (op: Op, value: Checkpoint) => {
-    op.entry = { revision: api.host.call('store.put', { ...TASK, expected_revision: op.entry?.revision ?? null, value: value as unknown as Json }).revision, value };
+    op.entry = { revision: api.host.call('store.put', { ...TASK, expected_revision: op.entry?.revision ?? null, value: value as unknown as Exclude<Json, null> }).revision, value };
   };
   const commit = (op: Op, value: Checkpoint, result: Record<string, Json>, unacknowledged = false): Json => {
     const revision = (op.entry?.value.revision ?? 0) + 1;
@@ -164,7 +164,7 @@ export default function activate(api: ModAPI) {
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Workflow checkpoint', content: output });
     api.host.call('receipts.submit', { kind: 'checkpoint', candidate_sha256: candidate.candidate_sha256, acceptance_sha256: entry.value.acceptance.sha256, outcome: 'pass', evidence });
     api.host.tryCall('store.put', { ...TASK, expected_revision: entry.revision, value: { ...entry.value,
-      operations: entry.value.operations.map(item => item.id === op.id ? { id: item.id, binding: item.binding, result: item.result } : item) } as unknown as Json });
+      operations: entry.value.operations.map(item => item.id === op.id ? { id: item.id, binding: item.binding, result: item.result } : item) } as unknown as Exclude<Json, null> });
   };
   const operate = (name: string, handler: (op: Op, input: Record<string, Json>) => Json) => refusing(async input => {
     if (!object(input) || typeof input.operation_id !== 'string' || !OPERATION_ID.test(input.operation_id)
@@ -362,7 +362,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       api.host.call('store.put', { ...TASK, expected_revision: entry.revision,
         value: { ...task, calls, status, decisions: count >= noProgressLimit
           ? [...task.decisions, { operation: 'no_progress', call_sha256: event.call_sha256,
-              unchanged_calls: count, decision: status === 'paused' ? 'paused' : 'reassess' }].slice(-24) : task.decisions } as unknown as Json });
+              unchanged_calls: count, decision: status === 'paused' ? 'paused' : 'reassess' }].slice(-24) : task.decisions } as unknown as Exclude<Json, null> });
       if (status === 'paused') {
         const state = api.state.get();
         const leads = object(state) ? state : {};

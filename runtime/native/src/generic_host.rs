@@ -209,7 +209,12 @@ pub(crate) fn event_allows(event: &str, operation: &str) -> bool {
         || event == "workspace_pre_rename"
             && matches!(
                 operation,
-                "workspace.read" | "workspace.stat" | "workspace.list"
+                "workspace.read"
+                    | "process.start"
+                    | "process.exchange"
+                    | "process.status"
+                    | "process.stop"
+                    | "process.which"
             )
 }
 
@@ -218,6 +223,7 @@ pub(crate) fn call(
     runtime_grants: Option<codex_omd::ModGrants>,
     workspace: &WorkspaceAuthority,
     data_root: &Path,
+    environment: Option<&codex_omd::host::Environment>,
     protected: Vec<PathBuf>,
     caller: &str,
     origin: Origin,
@@ -234,6 +240,7 @@ pub(crate) fn call(
     Host {
         authority: &authority,
         data_root,
+        environment,
         active,
         record_changes,
     }

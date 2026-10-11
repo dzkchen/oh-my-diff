@@ -19,7 +19,7 @@ export const tiers = ({ prepend = [], append = [] }) => ({
   tiers: Object.fromEntries([...prepend.map(id => [id, 'prepend']), ...append.map(id => [id, 'append'])]),
 });
 export const hostOperations = operations => ({
-  host_operations: Object.fromEntries(Object.entries(operations).map(([operation, replies]) => [operation, replies.map(reply => (reply?.error === undefined ? { result: reply } : reply))])),
+  host_operations: Object.fromEntries(Object.entries(operations).map(([operation, replies]) => [operation, replies.map(reply => (typeof reply?.error === 'string' && Object.keys(reply).length === 1 ? reply : { result: reply }))])),
 });
 export const storeMock = ({ get = [], put = [], delete: remove = [] } = {}) => hostOperations({
   'store.get': get.map((value, index) => (value === null ? null : { value, revision: index + 1, provenance: { mod: 'fixture', source_sha256: '0'.repeat(64), thread_id: null, origin: 'cli', at: '1970-01-01T00:00:00Z' } })),

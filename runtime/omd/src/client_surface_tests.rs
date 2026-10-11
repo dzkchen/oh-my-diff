@@ -579,6 +579,8 @@ fn config_rows_mark_managed_and_writable_keys_and_never_carry_secrets() {
 fn remote_actions_cannot_cause_terminal_only_operations() {
     for (operation, arguments) in [
         ("config.set", Value::Null),
+        ("terminal.selection", json!({})),
+        ("terminal.copy", json!({"text": "test"})),
         ("prompts.consent", Value::Null),
         ("terminal.pty", json!({"action": "start"})),
     ] {
@@ -607,6 +609,39 @@ fn presentation_reports_the_terminal_screen_mode() {
         json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
     );
     assert_eq!(presented(Value::Null), Value::Null);
+}
+
+#[test]
+fn clipboard_operations_require_local_user_context_without_waiting_for_confirmation() {
+    for operation in ["terminal.selection", "terminal.copy"] {
+        assert!(!awaits_user(operation, &json!({})));
+        assert_eq!(
+            submit(
+                "m",
+                operation,
+                json!({}),
+                InvocationContext::Event,
+                false,
+                None,
+                None
+            )
+            .err(),
+            Some(format!("host_operation_user_only: {operation}"))
+        );
+        assert_eq!(
+            submit(
+                "m",
+                operation,
+                json!({}),
+                InvocationContext::User,
+                true,
+                None,
+                None
+            )
+            .err(),
+            Some(needs_terminal_error(operation))
+        );
+    }
 }
 
 #[test]

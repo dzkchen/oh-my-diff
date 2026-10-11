@@ -1,5 +1,5 @@
 use codex_omd::data_store::{DataStore, Origin, StoreProvenance};
-use codex_omd::scoped_data::ScopedDataHost;
+use codex_omd::scoped_data::{ScopedDataHost, ScopedDataHosts};
 use codex_omd::{ModHost, ModStore};
 use serde_json::{Value, json};
 use std::fs;
@@ -265,6 +265,37 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     );
     assert!(!run().status.success());
     store.enable(&component, true).unwrap();
+    let bound = data.binding.generation;
+    let listing = json!({"limit": 1});
+    let mut listed = 0;
+    let mut bytes = 0;
+    while bytes <= 1_048_576 {
+        let page = data
+            .call("sessions.list", listing.clone(), || true)
+            .unwrap();
+        bytes += serde_json::to_vec(&page).unwrap().len();
+        listed += 1;
+    }
+    assert!(listed > 1 && data.binding.generation > bound);
+    let mut hosts = ScopedDataHosts::new(
+        store_path.clone(),
+        repo.clone(),
+        Some(home.join("sessions")),
+        None,
+        "user-command".into(),
+    );
+    let owner = "example_scoped_data";
+    hosts
+        .call(owner, hash, "sessions.list", listing.clone(), || true)
+        .unwrap();
+    let stale = "0".repeat(64);
+    let error = hosts
+        .call(owner, &stale, "sessions.list", listing.clone(), || true)
+        .unwrap_err();
+    assert_eq!(error.to_string(), "data_source_not_selected");
+    hosts
+        .call(owner, hash, "sessions.list", listing.clone(), || true)
+        .unwrap();
     let mut changed_selection = ScopedDataHost::new(
         store_path.clone(),
         repo.clone(),
@@ -285,4 +316,32 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     fs::remove_dir_all(&component).unwrap();
     std::os::unix::fs::symlink(&repo, &component).unwrap();
     assert!(codex_omd::plugin_component::inspect(&plugin).is_err());
+}
+
+#[test]
+fn cli_rejects_repeated_store_and_home() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let run = |flag: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+            .args(["example-sessions", "--repo", root.to_str().unwrap()])
+            .args(["--store", root.to_str().unwrap()])
+            .args([flag, root.to_str().unwrap(), flag, root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        String::from_utf8_lossy(&output.stderr).trim().to_owned()
+    };
+    assert_eq!(run("--home"), "duplicate_home");
+    assert_eq!(run("--store"), "duplicate_store");
+    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+        .args(["store", "export", "--mod", "m"])
+        .args(["--store", root.to_str().unwrap()])
+        .args(["--store", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "duplicate_store"
+    );
 }

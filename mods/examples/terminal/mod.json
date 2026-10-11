@@ -12,7 +12,9 @@
   "compatibility": {
     "required_features": [
       "terminal_components_v1",
-      "terminal_render_sites_v1"
+      "terminal_render_sites_v1",
+      "terminal_selection_v1",
+      "terminal_copy_v1"
     ]
   },
   "capabilities": [
