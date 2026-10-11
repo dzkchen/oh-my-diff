@@ -665,19 +665,25 @@ pub(in crate::mods) fn blit_sink(
     let owner = id.clone();
     let admitted_source = source.clone();
     let capabilities = grants.capabilities.clone();
-    let current: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+    let current: Arc<dyn Fn() -> Result<(), String> + Send + Sync> = Arc::new(move || {
         let mut runtime = runtime
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        runtime.reload().is_ok()
-            && runtime.generation() == generation
+        runtime
+            .reload()
+            .map_err(|_| "callback_cancelled".to_owned())?;
+        (runtime.generation() == generation
             && runtime.grants(&owner).is_some_and(|grants| {
                 grants.source_sha256 == admitted_source && grants.capabilities == capabilities
-            })
+            }))
+        .then_some(())
+        .ok_or_else(|| "process_raster_revoked".to_owned())
     });
     Some(Arc::new(move |arguments, active| {
+        current()?;
         let current = current.clone();
-        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || active() && current());
+        let active: Arc<dyn Fn() -> bool + Send + Sync> =
+            Arc::new(move || active() && current().is_ok());
         codex_omd::client_surface::with_admission(&source, generation, None, || {
             codex_omd::client_surface::call(
                 &id,

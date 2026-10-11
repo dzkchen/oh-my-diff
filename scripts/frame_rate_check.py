@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import math
 import os
 import resource
 from pathlib import Path
@@ -40,8 +41,11 @@ def records(path):
 
 
 def summarize(base):
-    samples = list(records(base / "capture.jsonl"))
+    capture = list(records(base / "capture.jsonl"))
+    samples = [row for row in capture if "display_ns" in row]
     produced = {row["sequence"]: row for row in records(base / "producer.jsonl") if "sequence" in row}
+    if any(sequence >= 65536 for sequence in produced):
+        raise AssertionError("producer exceeded the 16-bit frame marker range")
     shown = {}
     for sample in samples:
         if sample["status"] == 0 and sample["sequence"] in produced:
@@ -49,28 +53,34 @@ def summarize(base):
     if not shown:
         raise AssertionError("capture found no valid sequence markers")
     start = min(shown.values()) + 3e9
-    count = int((max(shown.values()) - start) / 1e9)
-    if count < 5:
+    end = max((row["capture_end_ns"] for row in capture if "capture_end_ns" in row),
+              default=max(sample["display_ns"] for sample in samples))
+    duration = (end - start) / 1e9
+    if duration < 5:
         raise AssertionError("fewer than five complete measured seconds")
-    windows = [sum(start + n * 1e9 <= value < start + (n + 1) * 1e9 for value in shown.values()) for n in range(count)]
-    latency = [(at - produced[sequence]["created_ns"]) / 1e6 for sequence, at in shown.items() if at >= start]
-    complete = [row["display_ns"] for row in samples if row["status"] == 0 and row["display_ns"] >= start]
+    windows = [sum(start + n * 1e9 <= value < min(end, start + (n + 1) * 1e9) for value in shown.values())
+               / min(1, duration - n) for n in range(math.ceil(duration))]
+    latency = [(at - produced[sequence]["created_ns"]) / 1e6 for sequence, at in shown.items() if start <= at < end]
+    complete = [row["display_ns"] for row in samples if row["status"] == 0 and start <= row["display_ns"] < end]
     cadence = [(b - a) / 1e6 for a, b in zip(complete, complete[1:]) if b > a]
     stages = {}
     trace = base / "stages.jsonl"
     for row in records(trace) if trace.exists() else []:
-        if start <= row["at_ns"] < start + count * 1e9:
+        if start <= row["at_ns"] < end:
             stages.setdefault(row["stage"], []).append(row)
-    measured = [row for row in produced.values() if start <= row["created_ns"] < start + count * 1e9]
+    measured = [row for row in produced.values() if start <= row["created_ns"] < end]
     return {"shown_fps_windows": windows, "shown_fps_p50": statistics.median(windows),
-            "latency_ms_p50": statistics.median(latency), "latency_ms_p95": sorted(latency)[int(len(latency) * .95)],
+            "latency_ms_p50": statistics.median(latency) if latency else None,
+            "latency_ms_p95": sorted(latency)[int(len(latency) * .95)] if latency else None,
             "unique_shown": len(shown), "capture_samples": len(samples), "invalid_markers": sum(row["sequence"] < 0 for row in samples),
-            "invalid_markers_measured": sum(row["sequence"] < 0 and row["status"] == 0 and start <= row["display_ns"] < start + count * 1e9 for row in samples),
-            "capture_interval_ms_p50": statistics.median(cadence), "capture_interval_ms_p95": sorted(cadence)[int(len(cadence) * .95)],
-            "measured_seconds": count, "producer_frames": len(measured), "source_dimensions": [measured[-1]["width"], measured[-1]["height"]],
+            "invalid_markers_measured": sum(row["sequence"] < 0 and row["status"] == 0 and start <= row["display_ns"] < end for row in samples),
+            "capture_interval_ms_p50": statistics.median(cadence) if cadence else None,
+            "capture_interval_ms_p95": sorted(cadence)[int(len(cadence) * .95)] if cadence else None,
+            "measured_seconds": duration, "producer_frames": len(measured),
+            "source_dimensions": [produced[max(produced)]["width"], produced[max(produced)]["height"]],
             "producer_cpu_ms": sum(row["cpu_us"] for row in measured) / 1000,
-            "producer_generate_ms_p50": statistics.median(row["generate_ms"] for row in measured),
-            "producer_encode_write_ms_p50": statistics.median(row["encode_write_ms"] for row in measured),
+            "producer_generate_ms_p50": statistics.median(row["generate_ms"] for row in measured) if measured else None,
+            "producer_encode_write_ms_p50": statistics.median(row["encode_write_ms"] for row in measured) if measured else None,
             "host_interval_ms_p50": {name: statistics.median((b["at_ns"] - a["at_ns"]) / 1e6 for a, b in zip(rows, rows[1:]))
                                      for name, rows in stages.items() if name in ("raw_snapshot", "raster_apply", "owned_frame") and len(rows) > 1},
             "stages": {name: {"samples": len(rows), "wall_ms_p50": statistics.median(row["wall_ns"] for row in rows) / 1e6,
@@ -86,8 +96,8 @@ def main():
     parser.add_argument("--seconds", type=int, default=20)
     parser.add_argument("--mouse", action="store_true")
     args = parser.parse_args()
-    if not 9 <= args.seconds <= 900:
-        parser.error("--seconds must be 9–900 to provide complete windows without wrapping the frame marker")
+    if not 9 <= args.seconds <= 400:
+        parser.error("--seconds must be 9–400, leaving startup allowance before the 120 FPS 16-bit marker wraps")
     base = fresh(f"frames-{args.terminal}-{args.transport}")
     print(base, flush=True)
     call(["swiftc", "-parse-as-library", "-O", ROOT / "scripts/frame_capture.swift", "-o", base / "capture"], ROOT)

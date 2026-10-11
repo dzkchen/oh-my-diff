@@ -313,6 +313,12 @@ fn program_sha256(path: &Path) -> io::Result<String> {
 /// The newest frame waiting for the blit thread; older ones are dropped.
 struct Frames(Arc<(Mutex<Option<Option<Value>>>, std::sync::Condvar)>);
 
+impl Drop for Frames {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 impl Frames {
     fn offer(&self, image: Value) {
         let (slot, ready) = &*self.0;
@@ -361,14 +367,35 @@ fn blit_worker(
                     reply["retry_after_ms"].as_u64().unwrap_or(16).min(1_000),
                 )),
                 Ok(_) => None,
-                Err(_) if image.get("pixels").is_some() => {
+                Err(_) if !active() => return,
+                Err(error) if error == "process_raster_revoked" => {
                     stop();
                     return;
                 }
-                Err(_) if !active() => return,
-                Err(_) => (attempts < BLIT_ATTEMPTS).then_some(BLIT_RETRY),
+                Err(error)
+                    if image.get("pixels").is_some()
+                        && matches!(
+                            error.as_str(),
+                            "terminal_blit_pixels_invalid"
+                                | "terminal_blit_pixels_length"
+                                | "terminal_blit_pixels_io"
+                                | "terminal_blit_sequence_stale"
+                                | "terminal_blit_source_not_owned"
+                                | "terminal_blit_invalid"
+                                | "terminal_blit_too_large"
+                        ) =>
+                {
+                    stop();
+                    return;
+                }
+                Err(_) => (image.get("pixels").is_some() || attempts < BLIT_ATTEMPTS)
+                    .then_some(BLIT_RETRY),
             };
-            attempts = if wait.is_some() { attempts + 1 } else { 0 };
+            attempts = if wait.is_some() {
+                attempts.saturating_add(1)
+            } else {
+                0
+            };
             if let Some(wait) = wait {
                 slot.lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -899,25 +926,31 @@ impl ManagedProcesses {
                             kill_group_if_alive(group, &reaped)
                         })
                     });
-                    let mut binding = raster.as_ref().map(|(key, keys, _)| {
-                        let mut components =
-                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
-                        components.extend(
-                            keys.iter()
-                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
-                        );
-                        codex_omd::process_raster::bind(
-                            thread,
-                            id,
-                            components,
-                            input_sink(writer_sender.clone(), group, reaped.clone()),
-                        )
-                    });
+                    let raster_input = raster
+                        .as_ref()
+                        .map(|_| input_sink(writer_sender.clone(), group, reaped.clone()));
+                    let mut binding =
+                        raster
+                            .as_ref()
+                            .zip(raster_input.as_ref())
+                            .map(|((key, keys, _), sink)| {
+                                let mut components =
+                                    vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
+                                components.extend(keys.iter().map(|keys| {
+                                    (keys.clone(), codex_omd::process_raster::Role::Keys)
+                                }));
+                                codex_omd::process_raster::Binding::prepare(
+                                    thread,
+                                    id,
+                                    components,
+                                    sink.clone(),
+                                )
+                            });
                     if let Some(binding) = &mut binding {
                         let initialized = binding
                             .pixels(&scratch.join("pixels.raw"), Some(generation))
                             .and_then(|message| {
-                                input_sink(writer_sender.clone(), group, reaped.clone())(message)
+                                raster_input.as_ref().unwrap()(message)
                                     .then_some(())
                                     .ok_or("process_pixels_init_failed".to_owned())
                             });
@@ -927,6 +960,7 @@ impl ManagedProcesses {
                             let _ = child.wait();
                             return Err(error);
                         }
+                        binding.publish();
                     }
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
@@ -1602,6 +1636,107 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         );
         frames.stop();
         assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
+    }
+
+    #[test]
+    fn raw_frame_transient_failures_retry_and_cancellation_does_not_kill() {
+        for error in [
+            "client_surface_closed",
+            "callback_execution_budget",
+            "callback_cancelled",
+            "terminal_blit_unknown",
+            "terminal_blit_not_owned",
+        ] {
+            let (sender, receiver) = mpsc::channel();
+            let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let calls = attempts.clone();
+            let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop = stopped.clone();
+            let failures = if error == "callback_cancelled" {
+                BLIT_ATTEMPTS as usize + 1
+            } else {
+                1
+            };
+            let frames = blit_worker(
+                "raw-retry".into(),
+                Arc::new(move |_, _| {
+                    if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failures {
+                        Err(error.into())
+                    } else {
+                        sender.send(()).unwrap();
+                        Ok(Value::Null)
+                    }
+                }),
+                Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                move || {
+                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                },
+            );
+            frames.offer(json!({"pixels": {}}));
+            receiver.recv_timeout(Duration::from_secs(8)).unwrap();
+            assert_eq!(
+                attempts.load(std::sync::atomic::Ordering::SeqCst),
+                failures + 1
+            );
+            assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+        }
+        let (sender, receiver) = mpsc::channel();
+        let frames = blit_worker(
+            "raw-cancel".into(),
+            Arc::new(|_, _| Err("terminal_blit_pixels_invalid".into())),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            move || {
+                sender.send(()).unwrap();
+            },
+        );
+        frames.offer(json!({"pixels": {}}));
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn raw_frame_revocation_stops_raw_and_encoded_producers() {
+        for image in [
+            json!({"pixels":{}}),
+            json!({"media_type":"image/png", "base64":"AA=="}),
+        ] {
+            let (sender, receiver) = mpsc::channel();
+            let frames = blit_worker(
+                "revoked".into(),
+                Arc::new(|_, _| Err("process_raster_revoked".into())),
+                Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                move || {
+                    sender.send(()).unwrap();
+                },
+            );
+            frames.offer(image);
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert!(matches!(
+                receiver.recv_timeout(Duration::from_secs(1)),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            ));
+        }
+    }
+
+    #[test]
+    fn raw_frame_worker_drop_releases_idle_state() {
+        let (sender, receiver) = mpsc::channel::<()>();
+        let frames = blit_worker(
+            "raw-idle".into(),
+            Arc::new(move |_, _| {
+                let _ = &sender;
+                Ok(Value::Null)
+            }),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            || {},
+        );
+        drop(frames);
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
     }
 
     #[test]

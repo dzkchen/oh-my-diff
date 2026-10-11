@@ -1039,7 +1039,7 @@ are drawn into that raster by the host as `terminal.blit {key, image}` from the
 mod, with the same validation, but without a callback per frame: the newest
 frame wins and a frame the terminal cannot take yet is retried for up to 5 s.
 The host also creates a private raw buffer and sends
-`{"pixels": {"source": HANDLE, "path": PATH}}` on stdin. The child opens that
+`{"pixels": {"source": HANDLE, "path": PATH}}` on stdin before bound input. The child opens that
 file, writes exactly `width * height * channels` packed bytes at offset zero,
 and publishes `{"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba",
 "width": W, "height": H, "sequence": N}}}`. The equivalent mod call is
@@ -1048,7 +1048,9 @@ for each publication. The child must not modify the buffer until stdin
 acknowledges `{"pixels": {"source": HANDLE, "sequence": N, "ready": true,
 "error": null}}`; an owned invalid descriptor or failed copy returns
 `ready: false` with an error. Fatal raw publications stop the managed producer
-instead of retrying a consumed sequence. Backpressure neither copies nor
+instead of retrying a consumed sequence. Temporary surface, layout and callback
+admission errors retain the pending raw publication for retry while the process
+is active; confirmed owner revocation stops it. Backpressure neither copies nor
 acknowledges the buffer, so the same publication can be retried safely.
 The host retains the original descriptor, copies a bounded immutable frame,
 and never reopens a child-supplied path. Replacing the pathname cannot redirect

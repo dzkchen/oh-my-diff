@@ -2766,6 +2766,41 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn raw_frame_sink_detects_external_revocation_without_an_event() {
+    let fixture = fixture(&[Package {
+        id: "control",
+        capabilities: &["terminal"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }])
+    .unwrap();
+    let grants = fixture.core.runtime.lock().unwrap().grants("control");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    let caller = Caller {
+        id: "control",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    let package = fixture
+        ._dir
+        .path()
+        .join("packages/control")
+        .canonicalize()
+        .unwrap();
+    store.enable(&package, false).unwrap();
+    assert_eq!(
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
+        "process_raster_revoked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn event_context_refuses_user_only_app_methods_before_the_client() {
     let Some(fixture) = fixture(&[Package {
         id: "steerer",

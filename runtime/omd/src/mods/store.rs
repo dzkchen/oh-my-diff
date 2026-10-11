@@ -108,7 +108,12 @@ pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<Strin
     )))
 }
 
+#[cfg(test)]
+thread_local! { pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    #[cfg(test)]
+    READS.set(READS.get() + 1);
     let file = OpenOptions::new()
         .read(true)
         .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)

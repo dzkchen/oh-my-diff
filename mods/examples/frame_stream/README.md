@@ -50,8 +50,11 @@ Use `ghostty`, `orca` or `wezterm` for another installed terminal. `--mouse`
 builds and enables the optional helper. Each run creates its own terminal and
 fixture, performs no provider requests, and closes that terminal afterwards.
 The capture reads sequence markers from WindowServer-presented frames. It
-reports shown FPS in complete one-second windows after a three-second warmup,
+reports shown FPS over the full capture after a three-second warmup, including
+zero-frame windows and a rate-normalized final partial second,
 producer-to-presentation latency, capture cadence, process CPU and opt-in native
 stage timings. Stage CPU totals overlap when one stage contains another; they
 must not be added together. Orca and other shared app process CPU can include
 unrelated windows. Logs and a screenshot remain in the printed run directory.
+Captures are limited to 400 seconds to leave startup allowance before the
+16-bit marker wraps at 120 FPS; already-wrapped producer logs are rejected.

@@ -101,9 +101,16 @@ final class Observer: NSObject, SCStreamOutput, @unchecked Sendable {
         config.showsCursor = false
         let observer = Observer()
         let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: nil)
-        try stream.addStreamOutput(observer, type: .screen, sampleHandlerQueue: DispatchQueue(label: "frame-capture"))
+        let queue = DispatchQueue(label: "frame-capture")
+        try stream.addStreamOutput(observer, type: .screen, sampleHandlerQueue: queue)
         try await stream.startCapture()
         try await Task.sleep(for: .seconds(seconds))
         try await stream.stopCapture()
+        queue.sync {
+            let end = Double(mach_absolute_time()) * Double(observer.timebase.numer) / Double(observer.timebase.denom) + observer.offset
+            if let data = try? JSONSerialization.data(withJSONObject: ["capture_end_ns": end]) {
+                FileHandle.standardOutput.write(data + Data([10]))
+            }
+        }
     }
 }
