@@ -10,6 +10,26 @@ service contracts available to consumers. Once a session has listed its tools,
 the store also generates `tool-types.d.ts` for the tools the host actually has
 ([Typed tool declarations](#typed-tool-declarations)).
 
+The launch surface is frozen at this API version, with support through
+`2027-03-20`. [COVERAGE.md](COVERAGE.md) classifies every public operation,
+event, capability, replacement, interceptor, component, render site, view field,
+classic hook and author command. Frozen entries name a retained consumer and
+executable evidence. Explicitly experimental entries remain outside the freeze;
+the package itself retains its pre-release compatibility label. The freeze is
+a contract boundary, not a public-release or provider qualification.
+Before the release freeze names the API `1.0.0`, only safety fixes and the
+recorded launch gap list may change it. After launch, additions use minor
+versions; breaking changes require a major version and a migration note.
+
+The raster frame-stream (`terminal.blit`, `process_raster_v1`) remains experimental.
+Launch does not promise closure-based client modules, vendor kill switches,
+raw secret access, hosted mobile/desktop clients or rich children inside buttons.
+Buttons use their typed `text` field. [COMPATIBILITY.md](COMPATIBILITY.md) defines
+version and support-window rules.
+First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
+raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
+launch; outside authors can use the public client APIs.
+
 ## API 0.2 host primitives
 
 The host is feature-agnostic: every operation, event and capability below is
@@ -35,7 +55,7 @@ native work.
 
 | Capability | Grants |
 | --- | --- |
-| `exec` | `exec.run`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
+| `exec` | `exec.run`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
 | `pty` | `terminal.pty` (a writable pane also needs `fs.write`) |
 | `history` | the `history` replacement |
 | `outputs` | `tool_output` observers |
@@ -49,8 +69,8 @@ native work.
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.blit`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -170,7 +190,7 @@ without an unrestricted child process.
   user outside the sandbox like any configured MCP server.
 
 Each HTTP request, MCP change, external file operation and
-`environment.read` leaves a receipt with the mod, operation, origin and path
+`environment.read`/`environment.set` leaves a receipt with the mod, operation, origin and path
 without query, root, server or names (never bodies, headers or values) in
 status `access` (the last 32); calls the session runs are also appended to its
 `mod-access.jsonl`.
@@ -183,6 +203,19 @@ for up to 16 names the manifest lists in `exec_environment`; secret-like names
 `{set}`. Per-child values go in `exec.run` `env` and `process.start`
 `environment`, also limited to declared names; nothing changes the host
 process environment.
+
+`environment.set {name, value}` (`exec`) sets a caller/source/thread-local
+override for subsequent `environment.read`, `exec.run` and `process.start`.
+`value: null` removes the override, restores the inherited value and frees its
+slot. Require `environment_overrides_v1` at admission. Names
+must be declared and non-reserved; secret-like names still need hash-bound
+trust and reads disclose only whether they are set. Values are at most 4096
+bytes without NUL, with 16 names and 16 KiB total per scope. Persistent values
+are validated separately from explicit per-call values (managed processes allow
+8 explicit names and 1024 bytes per explicit value).
+Explicit per-call values win. Overrides end on unload, source replacement or
+session end; they do not change providers, sidecars or existing processes.
+Receipts contain the name and override/reset action, never the value.
 
 ### Admission and API policy (`admission_api_policy_v1`)
 
@@ -379,6 +412,9 @@ the host verifies ownership, candidate, reference and outcome. A successful
 receipt requires exit zero, no signal or timeout, and untruncated output. Each
 mod generation and thread holds at most 64 execution records, the host at most
 256.
+The record includes the persistent and explicit environment values used by
+that execution, captured once before launch. Secret-like values are represented
+by hashes rather than plaintext; reproducing those runs requires the same secrets.
 
 ### Durable data: `store.*` and evidence
 
@@ -1280,9 +1316,12 @@ state republishes the terminal view, so background results appear without
 waiting for the next turn. `process_event` exits carry
 only the session; read the exit status with `process.status`.
 `events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
-`{key}` to the calling mod after 1 s to 24 h; scheduling a key again replaces
+`{key}` to the calling mod after 100 ms to 24 h; scheduling a key again replaces
 it within that thread, `events.cancel {key}` stops only that thread's timer,
-16 timers per mod across all threads. A timer never starts a
+16 timers per mod across all threads, including ticks pending delivery. Require
+`timers_100ms_v1` for delays below 1000 ms. Deliveries are spaced at least 100 ms
+apart per mod/thread; pending ticks with the same key coalesce and other
+owners continue while one owner waits for its budget. A timer never starts a
 turn by itself; only `turns.queue` under an `autonomous` grant can.
 
 ### Credentials, secrets and routes (`credentials_v1`, `secrets_v1`)
@@ -1337,6 +1376,13 @@ dependencies require a new grant. Reload and disable stop stale services before
 their IDs can be reused.
 
 ### Thread store, resume and turn activity (`store_thread_v1`, `turn_activity_v1`)
+
+`turns.abort {turn_id}` (`threads`) requests cancellation of the named active
+turn in the current thread from a user or event callback. `{accepted: true}`
+means cancellation was accepted, not that cleanup has completed. A stale or
+absent turn, queued input or competing cancellation returns `accepted: false`.
+Tool callbacks cannot call it, and it cannot target another thread.
+Require `turn_abort_v1`. Successful cancellation wakes idle listeners after cleanup.
 
 `store.*` accepts `scope: 'thread'`: data forks with the thread, is removed
 when the thread is deleted and kept when it is archived. `resume` carries
@@ -1457,6 +1503,21 @@ override an earlier presentation default. Escape/control injection is refused.
 Disable, a broken mod, or direct mode restores the upstream fields.
 
 ### Terminal surface (`terminal_surface_v1`, `terminal_media_v1`, `terminal_prompt_v1`, `terminal_pty_v1`)
+
+`terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current
+TUI selection, or `text: null` when there is none. It prefers the visible
+transcript overlay and never reads obscured transcript text, another client's
+selection or the OS clipboard. UTF-8 text is capped at 64 KiB and further bounded
+by its JSON-encoded size so a selection followed by a copy fits one callback's
+receipt budget. Any shortening sets `truncated: true`.
+`terminal.copy {text}` uses the native plain-text clipboard backend with the
+same 64 KiB limit. Its status is `confirmed`, `unconfirmed`, `pending` or `busy`;
+the native host waits for the matching clipboard worker's delivery result.
+`unconfirmed` means the backend cannot confirm delivery. Both operations require
+a local user callback and reject event/tool calls and attached-client requests.
+Invoke selection from a clicked component action, as the terminal example does;
+typing a slash command clears the transcript selection before its callback.
+Require `terminal_selection_v1` and `terminal_copy_v1` for these operations.
 
 The appearance additions (`terminal_surface_paint_v1`,
 `terminal_backdrop_transform_v1`, `terminal_image_sample_v1`,
@@ -2098,7 +2159,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
   timeout_ms})` polls `check` between sleeps within the 32 host calls.
   `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
-  interval_ms, handler)` register during activation (1 s to 24 h) and return
+  interval_ms, handler)` register during activation (100 ms to 24 h) and return
   `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`; `every` reschedules after each handler run until `cancel()`,
   the handler returns `false`, or a reload with changed source, disable or
@@ -2363,6 +2424,7 @@ has no host maximum, so a provider's context window is configuration.
 | Command | Result |
 | --- | --- |
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
+| `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Live routing, coordination, recovery, terminal, workflow, and stream-replacement mod examples |
 | `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed |
 | `pnpm test` | Engine-owned scenario execution with no provider requests, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |

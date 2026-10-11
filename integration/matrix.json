@@ -19,6 +19,11 @@
       "owner": "OMD runtime (runtime/omd, runtime/native)",
       "version": "0.1.0 on Codex 0.162.1",
       "features": [
+        "turn_abort_v1",
+        "terminal_selection_v1",
+        "terminal_copy_v1",
+        "environment_overrides_v1",
+        "timers_100ms_v1",
         "author_diagnostics_v1",
         "author_offline_runner_v1",
         "author_tooling_v1",
@@ -177,6 +182,8 @@
         "terminal.pane",
         "terminal.panes",
         "terminal.notice",
+        "terminal.selection",
+        "terminal.copy",
         "terminal.blit",
         "terminal.pty"
       ]

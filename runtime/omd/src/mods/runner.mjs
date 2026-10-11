@@ -397,7 +397,7 @@ function timer(key, ms, handler, repeat) {
   requireCapability('events');
   if (!activating) throw new Error('timer_registration_outside_activation');
   if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,58}$/.test(key)) throw new Error('invalid_timer_key: ' + key);
-  if (!Number.isSafeInteger(ms) || ms < 1000 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
+  if (!Number.isSafeInteger(ms) || ms < 100 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
   if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
   const scheduled = 'time:' + key;
   if (timers.has(scheduled)) throw new Error('conflict: ' + scheduled);

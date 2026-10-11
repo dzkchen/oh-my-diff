@@ -260,6 +260,10 @@ impl WorkspaceAuthority {
         Ok(json!({"status":"renamed","files":result["files"]}))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "callbacks retain their runtime, process and environment authority"
+    )]
     pub fn request_rename(
         &self,
         arguments: Value,
@@ -267,6 +271,8 @@ impl WorkspaceAuthority {
         processes: &crate::managed_process::ManagedProcesses,
         protected: &[PathBuf],
         generation: u64,
+        thread: &str,
+        environment: &codex_omd::host::Environment,
         active: impl Fn() -> bool,
     ) -> Result<Value, String> {
         #[derive(Deserialize)]
@@ -281,12 +287,18 @@ impl WorkspaceAuthority {
         if !runtime.has_event("workspace_pre_rename") {
             return Ok(json!({"status":"fallback","reason":"no_pre_rename_handler"}));
         }
+        let grants = runtime
+            .owners()
+            .into_iter()
+            .filter_map(|(id, _)| runtime.grants(&id).map(|grants| (id, grants)))
+            .collect::<std::collections::BTreeMap<_, _>>();
         let proposals = runtime.event_guarded_with(
             "workspace_pre_rename",
             payload.clone(),
             &active,
             |id, call| {
-                let result = match call.operation.as_str() {
+                let operation = call.operation.clone();
+                let result = match operation.as_str() {
                     "workspace.read" => self.call(&call.operation, call.arguments, &active),
                     "process.start"
                         if call
@@ -296,21 +308,36 @@ impl WorkspaceAuthority {
                     {
                         Err("pre_rename_operation_unavailable".into())
                     }
-                    operation if operation.starts_with("process.") => processes.call(
-                        crate::managed_process::ProcessOwner {
-                            thread: None,
-                            id,
-                            generation,
-                            repository: &self.repository,
-                            policy: &self.policy,
-                            protected,
-                            os_access: None,
-                            blit: None,
-                        },
-                        operation,
-                        call.arguments,
-                        &active,
-                    ),
+                    operation if operation.starts_with("process.") => (|| {
+                        let grants = grants.get(id).ok_or("host_caller_inactive")?;
+                        crate::generic_host::process_request_allowed(Some(grants), &call)?;
+                        let overrides = if operation == "process.start" {
+                            environment.values(
+                                Some(thread),
+                                id,
+                                &grants.source_sha256,
+                                &grants.exec_environment,
+                            )?
+                        } else {
+                            Default::default()
+                        };
+                        processes.call(
+                            crate::managed_process::ProcessOwner {
+                                thread: Some(thread),
+                                id,
+                                generation,
+                                repository: &self.repository,
+                                policy: &self.policy,
+                                protected,
+                                environment: Some(&overrides),
+                                os_access: None,
+                                blit: None,
+                            },
+                            operation,
+                            call.arguments,
+                            &active,
+                        )
+                    })(),
                     _ => Err("pre_rename_operation_unavailable".into()),
                 };
                 result.map_err(std::io::Error::other)

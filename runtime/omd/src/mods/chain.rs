@@ -1126,6 +1126,10 @@ pub fn access_receipt(
         }
         "mcp.connect" | "mcp.disconnect" => receipt["server"] = arguments["server"].clone(),
         "environment.read" => receipt["names"] = arguments["names"].clone(),
+        "environment.set" => {
+            receipt["name"] = arguments["name"].clone();
+            receipt["set"] = json!(!arguments["value"].is_null());
+        }
         "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
             if arguments.get("root").is_some() =>
         {

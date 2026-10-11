@@ -25,6 +25,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
+mod environment;
+pub use environment::{Environment, EnvironmentValues, environment_evidence, validate_environment};
+
 pub const RESERVED_EXEC_ENVIRONMENT: &[&str] = &[
     "PATH",
     "HOME",
@@ -100,6 +103,7 @@ pub struct Caller<'a> {
 pub struct Host<'a> {
     pub authority: &'a dyn Authority,
     pub data_root: &'a Path,
+    pub environment: Option<&'a Environment>,
     pub active: &'a dyn Fn() -> bool,
     pub record_changes: bool,
 }
@@ -139,9 +143,16 @@ fn credential_paths() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Serves one session host call for a thread: `(thread, caller, call, active)`.
+/// Serves one session host call under an optional captured source binding.
 pub type SessionDispatcher = Arc<
-    dyn Fn(&str, &str, crate::ModHostCall, &dyn Fn() -> bool) -> std::io::Result<Value>
+    dyn Fn(
+            &str,
+            &str,
+            Option<&str>,
+            Option<&Value>,
+            crate::ModHostCall,
+            &dyn Fn() -> bool,
+        ) -> std::io::Result<Value>
         + Send
         + Sync,
 >;
@@ -158,6 +169,8 @@ pub fn install_session_dispatcher(dispatcher: SessionDispatcher) {
 pub fn session_call(
     thread: &str,
     caller: &str,
+    source: Option<&str>,
+    policy: Option<&Value>,
     call: crate::ModHostCall,
     active: &dyn Fn() -> bool,
 ) -> std::io::Result<Value> {
@@ -168,7 +181,7 @@ pub fn session_call(
         .ok_or_else(|| {
             std::io::Error::other("host_operation_unavailable: no session in this process")
         })?;
-    dispatcher(thread, caller, call, active)
+    dispatcher(thread, caller, source, policy, call, active)
 }
 
 /// Denies mod commands reading or writing protected paths, Codex home and credential locations.
@@ -204,6 +217,7 @@ pub fn served(operation: &str) -> bool {
             | "store.export"
             | "store.reset"
             | "environment.read"
+            | "environment.set"
     )
 }
 
@@ -230,7 +244,11 @@ impl Authority for ExternalRoot {
     }
 }
 
-fn environment(caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+fn environment(
+    state: Option<&Environment>,
+    caller: &Caller<'_>,
+    arguments: Value,
+) -> Result<Value, String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Input {
@@ -241,12 +259,25 @@ fn environment(caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
         return Err("environment_names_invalid".into());
     }
     let mut values = serde_json::Map::new();
+    let overrides = state
+        .map(|state| {
+            state.values(
+                caller.thread,
+                caller.id,
+                caller.source_sha256,
+                caller.exec_environment,
+            )
+        })
+        .transpose()?
+        .unwrap_or_default();
     for name in input.names {
         if !caller.exec_environment.contains(&name) {
             return Err(format!("exec_environment_undeclared: {name}"));
         }
-        let value = std::env::var(&name)
-            .ok()
+        let value = overrides
+            .get(&name)
+            .cloned()
+            .or_else(|| std::env::var(&name).ok())
             .filter(|value| value.len() <= 4096);
         let entry = if secret_like(&name) {
             json!({"set": value.is_some()})
@@ -692,6 +723,7 @@ impl Host<'_> {
         let host = Host {
             authority: &authority,
             data_root: self.data_root,
+            environment: self.environment,
             active: self.active,
             record_changes: false,
         };
@@ -776,7 +808,11 @@ impl Host<'_> {
             "workspace.transaction" => self.transaction(caller, arguments),
             "workspace.backup" => self.backup(caller, arguments),
             "workspace.restore" => self.restore(caller, arguments),
-            "environment.read" => environment(caller, arguments),
+            "environment.read" => environment(self.environment, caller, arguments),
+            "environment.set" => self
+                .environment
+                .ok_or("environment_thread_required")?
+                .set(caller, arguments),
             operation if operation.starts_with("store.") => {
                 let key = repository_key(self.repository());
                 DataStore {
@@ -853,7 +889,8 @@ impl Host<'_> {
         struct RequiredAccess {
             write: Vec<String>,
         }
-        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let mut input: Input =
+            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         if !(self.active)() {
             return Err("exec_cancelled".into());
         }
@@ -919,6 +956,21 @@ impl Host<'_> {
                 .any(|name| !caller.exec_environment.contains(name))
         {
             return Err("exec_arguments_invalid".into());
+        }
+        let overrides = self
+            .environment
+            .map(|state| {
+                state.values(
+                    caller.thread,
+                    caller.id,
+                    caller.source_sha256,
+                    caller.exec_environment,
+                )
+            })
+            .transpose()?
+            .unwrap_or_default();
+        for (name, value) in overrides {
+            input.env.entry(name).or_insert(value);
         }
         let mut timeout = Duration::from_millis(
             input

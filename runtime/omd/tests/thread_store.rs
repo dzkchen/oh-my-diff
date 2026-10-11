@@ -55,6 +55,7 @@ fn thread_scope_is_per_thread_forks_by_copy_and_is_removed_with_the_thread() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };

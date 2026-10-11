@@ -154,6 +154,7 @@ pub(super) struct Core {
     host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
+    environment: Arc<codex_omd::host::Environment>,
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
@@ -414,6 +415,7 @@ pub(super) fn install(
         .map_err(|e| e.to_string())?;
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
+    let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts.install_mod_runtime(runtime.clone(), required);
     let views = Arc::new(view::Views::new());
@@ -424,6 +426,7 @@ pub(super) fn install(
             host,
             runtime,
             input_runtime,
+            environment,
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),
@@ -1919,10 +1922,12 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 accounts.remove(&lead.thread.to_string());
             }
             self.host.accounts.forget_thread(&lead.thread.to_string());
+            expansion::release_thread(self, lead.thread);
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
             }
             if lead.owner != "lead" {
+                self.environment.clear(Some(&lead.thread.to_string()), None);
                 return;
             }
             self.expansion.forget_inventory(lead.thread);
@@ -1936,6 +1941,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
             )
             .await;
             self.event("stop", Value::Null, Some(&*lead)).await;
+            expansion::release_thread(self, lead.thread);
+            self.environment.clear(Some(&lead.thread.to_string()), None);
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();

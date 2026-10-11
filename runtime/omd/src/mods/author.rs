@@ -107,7 +107,7 @@ impl OfflineHost {
             "events.schedule" => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
-                    .filter(|delay| (1000..=86_400_000).contains(delay))
+                    .filter(|delay| (100..=86_400_000).contains(delay))
                     .ok_or_else(|| failure("timer_delay_invalid"))?;
                 self.timers
                     .insert((caller.to_owned(), key.clone()), self.now_ms + delay);

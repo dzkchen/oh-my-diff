@@ -583,7 +583,7 @@ impl Accounts {
                     origin.clone(),
                     active,
                     |caller, call| match &dispatcher {
-                        Some(dispatch) => dispatch(thread, caller, call, &active),
+                        Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
                         None => Err(std::io::Error::other(
                             "host_operation_unavailable: no session dispatcher",
                         )),
@@ -877,7 +877,7 @@ impl Accounts {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(thread, caller, call, &active),
+                Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),
@@ -2003,7 +2003,7 @@ impl Attempt {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(&thread, caller, call, &active),
+                Some(dispatch) => dispatch(&thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),

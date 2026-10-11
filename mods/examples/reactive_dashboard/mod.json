@@ -16,7 +16,8 @@
     "required_features": [
       "render_hooks_v1",
       "ui_composition_v1",
-      "reactive_state_v1"
+      "reactive_state_v1",
+      "timers_100ms_v1"
     ]
   }
 }

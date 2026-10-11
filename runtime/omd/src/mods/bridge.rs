@@ -55,6 +55,7 @@ impl ModHostCall {
             "credentials.list" | "credentials.request" => Ok("credentials"),
             "routes.select" => Ok("model"),
             "turns.activity" => Ok("sessions"),
+            "turns.abort" => Ok("threads"),
             "terminal.notify"
             | "terminal.show_thread"
             | "commands.list"
@@ -66,6 +67,8 @@ impl ModHostCall {
             | "terminal.pane"
             | "terminal.panes"
             | "terminal.notice"
+            | "terminal.selection"
+            | "terminal.copy"
             | "terminal.blit" => Ok("terminal"),
             "terminal.pty" => Ok("pty"),
             "model.complete" | "model.fork" => Ok("agents"),
@@ -84,7 +87,7 @@ impl ModHostCall {
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
             "mcp.connect" | "mcp.disconnect" => Ok("mcp"),
-            "environment.read" => Ok("exec"),
+            "environment.read" | "environment.set" => Ok("exec"),
             "peers.list" | "peers.send" => Ok("peers"),
             "turns.queue" | "turns.queued" | "turns.dequeue" => Ok("autonomous"),
             _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
@@ -250,7 +253,9 @@ pub(super) fn run(
             let call_started = Instant::now();
             let exempt = !crate::client_surface::SURFACE_OPERATIONS
                 .contains(&call.operation.as_str())
-                || crate::client_surface::awaits_user(&call.operation, &call.arguments);
+                || crate::client_surface::awaits_user(&call.operation, &call.arguments)
+                // Clipboard delivery is external work bounded by the surface call lifetime.
+                || call.operation == "terminal.copy";
             scope.charge_call()?;
             let result = host(call.clone());
             let mut receipt = match result {

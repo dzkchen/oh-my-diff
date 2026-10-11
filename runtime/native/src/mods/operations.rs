@@ -76,6 +76,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "session.info"
                         | "tools.list"
                         | "turns.activity"
+                        | "turns.abort"
                         | "events.publish"
                         | "credentials.list"
                         | "packages.list"
@@ -306,10 +307,22 @@ pub(super) async fn dispatch(
     request: ModHostCall,
     cancelled: &Arc<AtomicBool>,
 ) -> Result<Value, String> {
+    dispatch_with_policy(core, lead, caller, call, request, cancelled, None).await
+}
+
+pub(super) async fn dispatch_with_policy(
+    core: &Core,
+    lead: &Lead,
+    caller: Caller<'_>,
+    call: Option<&ToolCall<'_>>,
+    request: ModHostCall,
+    cancelled: &Arc<AtomicBool>,
+    policy: Option<&codex_protocol::models::PermissionProfile>,
+) -> Result<Value, String> {
     let id = caller.id.to_owned();
     let audited =
         codex_omd::access_receipt(&id, &request, Ok(&Value::Null)).map(|_| request.clone());
-    let result = run(core, lead, caller, call, request, cancelled).await;
+    let result = run(core, lead, caller, call, request, cancelled, policy).await;
     if let Some(request) = audited
         && let Some(receipt) =
             codex_omd::access_receipt(&id, &request, result.as_ref().map_err(Clone::clone))
@@ -326,6 +339,7 @@ async fn run(
     call: Option<&ToolCall<'_>>,
     request: ModHostCall,
     cancelled: &Arc<AtomicBool>,
+    policy: Option<&codex_protocol::models::PermissionProfile>,
 ) -> Result<Value, String> {
     let host = &lead.host;
     let operation = request.operation.clone();
@@ -349,14 +363,17 @@ async fn run(
             if request.arguments.get("sandbox").is_some() {
                 return Err("exec_snapshot_requires_sandbox".into());
             }
-            let authority = authority(lead, call).await?;
-            let scoped = Lead {
-                permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
-                ..lead.clone()
-            };
             return core
                 .agents
-                .execute_snapshot(&scoped, &caller, request.arguments, cancelled)
+                .execute_snapshot(
+                    lead,
+                    &caller,
+                    request.arguments,
+                    cancelled,
+                    core.environment.clone(),
+                    authority(lead, call).await?,
+                    policy.cloned(),
+                )
                 .await;
         }
         let _guard = workspace_guard(
@@ -364,15 +381,28 @@ async fn run(
             &request.arguments,
             &lead.session.repository_identity,
         )?;
-        let authority = authority(lead, call).await?;
+        let mut authority = authority(lead, call).await?;
+        if operation == "exec.run"
+            && let Some(policy) = policy
+        {
+            let permissions = crate::execution::intersect(
+                &authority.context.permissions,
+                policy,
+                &authority.repository,
+            )?;
+            authority.policy = permissions.file_system_sandbox_policy();
+            authority.context.permissions = permissions;
+        }
         let (root, protected) = (host.root.clone(), host.protected_paths());
         let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
         let (grants, origin, record) = (caller.grants, caller.origin, caller.record_changes);
+        let environment = core.environment.clone();
         return tokio::task::spawn_blocking(move || {
             crate::generic_host::call(
                 grants,
                 &authority,
                 &root,
+                Some(&environment),
                 protected,
                 &id,
                 origin,
@@ -416,6 +446,8 @@ async fn run(
         let processes = lead.session.processes.clone();
         let generation = caller.generation;
         let protected = host.protected_paths();
+        let thread = lead.thread.to_string();
+        let environment = core.environment.clone();
         return tokio::task::spawn_blocking(move || {
             let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
             authority.request_rename(
@@ -424,6 +456,8 @@ async fn run(
                 &processes,
                 &protected,
                 generation,
+                &thread,
+                &environment,
                 active,
             )
         })
@@ -431,6 +465,17 @@ async fn run(
         .map_err(|e| e.to_string())?;
     }
     if operation.starts_with("process.") {
+        let environment = if operation == "process.start" {
+            let grants = caller.grants.as_ref().ok_or("host_caller_inactive")?;
+            core.environment.values(
+                Some(&lead.thread.to_string()),
+                caller.id,
+                caller.source,
+                &grants.exec_environment,
+            )?
+        } else {
+            Default::default()
+        };
         crate::generic_host::process_request_allowed(caller.grants.as_ref(), &request)?;
         let authority = authority(lead, call).await?;
         let processes = lead.session.processes.clone();
@@ -457,6 +502,7 @@ async fn run(
                     protected: &protected,
                     os_access: os_access.as_ref(),
                     blit: blit.as_ref(),
+                    environment: Some(&environment),
                 },
                 &request.operation,
                 request.arguments,
@@ -593,6 +639,43 @@ async fn run(
         "peers.list" | "peers.send" => {
             let endpoints = super::peering::current_endpoints(core).await;
             core.peering.call(lead, &caller, request, endpoints)
+        }
+        "turns.abort" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                turn_id: String,
+            }
+            if !matches!(caller.origin, Origin::UserCommand | Origin::Event) {
+                return Err("host_operation_user_or_event_only: turns.abort".into());
+            }
+            let input: Input = serde_json::from_value(request.arguments)
+                .map_err(|_| "turn_abort_arguments_invalid")?;
+            if input.turn_id.is_empty() || input.turn_id.len() > 128 {
+                return Err("turn_abort_arguments_invalid".into());
+            }
+            let manager = lead
+                .host
+                .manager
+                .upgrade()
+                .ok_or("native_thread_manager_stopped")?;
+            let thread = manager
+                .get_thread(lead.thread)
+                .await
+                .map_err(|error| error.to_string())?;
+            if cancelled.load(Ordering::Acquire) {
+                return Err("callback_cancelled".into());
+            }
+            let accepted = tokio::select! {
+                biased;
+                result = thread.interrupt_if_no_pending_input(&input.turn_id) => {
+                    result.map_err(|error| error.to_string())?
+                }
+                () = super::agents::until_cancelled(cancelled) => {
+                    return Err("callback_cancelled".into());
+                }
+            };
+            Ok(json!({"accepted": accepted}))
         }
         "turns.queue" | "turns.queued" | "turns.dequeue" => {
             let core = core.this.upgrade().ok_or("native_host_stopped")?;
