@@ -27,11 +27,23 @@ the resulting absolute path. This requests the existing `os` capability and
 an unrestricted child process; cursor control belongs to this author helper.
 The default renderer stays sandboxed and does not request cursor access.
 
-Click inside the raster to lock and hide the cursor. Relative movement changes
-the scene horizontally. Esc or Command releases it; focus loss, process exit
-and a ten-second safety timeout also release it. macOS may require the terminal
-application's existing OS privacy grants for cursor control. The helper reports
-cursor association failures in the producer's metrics file.
+Click inside the raster to lock and hide the cursor. The windowless helper
+takes foreground focus while locked so macOS can hide and pin the pointer;
+ordinary typing does not reach the terminal during that time. Relative movement
+changes the scene horizontally. Esc or Command releases it and returns focus
+to the terminal; focus loss, process exit and a ten-second safety timeout also
+release it. Switching to another app releases without taking focus back.
+Ctrl+J is not a mouse-look binding. macOS may require the terminal application's
+existing OS privacy grants for cursor control. The helper reports activation,
+monitor, cursor association and cursor hiding failures in the producer's metrics
+file; it does not report a successful lock until activation and cursor setup succeed.
+Motion is summed and emitted every 8 ms while locked. If the helper's output
+pipe closes or fills, it releases the cursor and refuses further locks for
+that helper process.
+The helper preserves `NSEvent` movement deltas without sensitivity scaling.
+Older background `CGGetLastMouseDelta` runs that captured no movement are not
+a mouse-sensitivity baseline. Compare frame rates with matching mouse activity;
+the frame-rate harness does not generate mouse movement.
 
 The local macOS probe succeeds unrestricted and rejects cursor association
 under the base read-only Seatbelt profile. The helper therefore requires both
