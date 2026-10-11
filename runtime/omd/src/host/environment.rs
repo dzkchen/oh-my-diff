@@ -30,18 +30,11 @@ impl Environment {
         Ok(values)
     }
 
-    pub fn snapshot(
-        &self,
-        thread: &str,
-        owner: &str,
-        source: &str,
-        declared: &[String],
-    ) -> Result<Self, String> {
-        let values = self.values(Some(thread), owner, source, declared)?;
-        Ok(Self(Mutex::new(BTreeMap::from([(
+    pub fn scoped(thread: &str, owner: &str, source: &str, values: EnvironmentValues) -> Self {
+        Self(Mutex::new(BTreeMap::from([(
             (thread.to_owned(), owner.to_owned(), source.to_owned()),
             values,
-        )]))))
+        )])))
     }
 
     pub fn clear(&self, thread: Option<&str>, owner: Option<&str>) {

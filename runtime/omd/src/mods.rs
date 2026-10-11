@@ -2431,6 +2431,7 @@ pub struct ModHost {
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
     unserved: Vec<(String, Vec<String>, String)>,
@@ -2875,6 +2876,7 @@ impl ModHost {
             admissions: BTreeMap::new(),
             brokered: None,
             required_surfaces: Arc::default(),
+            environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
             unserved: Vec::new(),
@@ -2948,6 +2950,7 @@ impl ModHost {
             Err(error) => {
                 if !self.loaded.is_empty() {
                     self.loaded.clear();
+                    self.environment.clear(None, None);
                     self.order.clear();
                     self.generation += 1;
                     self.dynamic_tools.clear();
@@ -3057,6 +3060,7 @@ impl ModHost {
             })
         });
         if self.loaded.len() != retained {
+            self.retain_environment();
             self.generation += 1;
             self.dynamic_tools.clear();
         }
@@ -3248,6 +3252,7 @@ impl ModHost {
         }
         self.rejected = rejected;
         self.admit();
+        self.retain_environment();
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
         self.generation += 1;
@@ -3263,6 +3268,20 @@ impl ModHost {
     /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
     pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
         self.required_surfaces.clone()
+    }
+
+    pub fn environment(&self) -> Arc<crate::host::Environment> {
+        self.environment.clone()
+    }
+
+    fn retain_environment(&self) {
+        self.environment.retain(
+            &self
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect(),
+        );
     }
 
     fn publish_required_surfaces(&self) {

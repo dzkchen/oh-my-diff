@@ -57679,10 +57679,10 @@ index 000000000..349addbd3
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..4fdb478ab
+index 000000000..0c95487c5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2380 @@
+@@ -0,0 +1,2381 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -58100,6 +58100,7 @@ index 000000000..4fdb478ab
 +        .map_err(|e| e.to_string())?;
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
 +    let required = runtime.required_surfaces();
++    let environment = runtime.environment();
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    host.accounts.install_mod_runtime(runtime.clone(), required);
 +    let views = Arc::new(view::Views::new());
@@ -58110,7 +58111,7 @@ index 000000000..4fdb478ab
 +            host,
 +            runtime,
 +            input_runtime,
-+            environment: Arc::default(),
++            environment,
 +            services: services::Services::default(),
 +            views,
 +            expansion: expansion::State::default(),
@@ -60834,7 +60835,7 @@ index 000000000..bfbebeaa6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..f10c879cc
+index 000000000..99efee36a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2560 @@
@@ -62021,8 +62022,8 @@ index 000000000..f10c879cc
 +                    codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)),
 +            };
 +            let declared = &grants.as_ref().ok_or("host_caller_inactive")?.exec_environment;
-+            let environment = environment.snapshot(&thread.to_string(), &id, &source, declared)?;
 +            let mut effective = environment.values(Some(&thread.to_string()), &id, &source, declared)?;
++            let environment = codex_omd::host::Environment::scoped(&thread.to_string(), &id, &source, effective.clone());
 +            let explicit: codex_omd::host::EnvironmentValues = serde_json::from_value(
 +                arguments.get("env").cloned().unwrap_or_else(|| json!({})))
 +                .map_err(|error| error.to_string())?;
@@ -63393,7 +63394,7 @@ index 000000000..f10c879cc
 +    }
 +}
 +
-+async fn until_cancelled(cancelled: &AtomicBool) {
++pub(super) async fn until_cancelled(cancelled: &AtomicBool) {
 +    while !cancelled.load(Ordering::Acquire) {
 +        tokio::time::sleep(Duration::from_millis(50)).await;
 +    }
@@ -65909,10 +65910,10 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..2321b43e2
+index 000000000..f1f75040a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,721 @@
+@@ -0,0 +1,720 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -66556,7 +66557,6 @@ index 000000000..2321b43e2
 +}
 +
 +pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
-+    core.environment.retain(sources);
 +    if let Ok(mut timers) = core.expansion.timers.lock() {
 +        timers.retain(|(_, owner, _), (source, _, task)| {
 +            let keep = sources.get(owner) == Some(source);
@@ -67243,10 +67243,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..dcc4fae21
+index 000000000..d2e6da01e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4625 @@
+@@ -0,0 +1,4623 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -67333,7 +67333,9 @@ index 000000000..dcc4fae21
 +        manager: std::sync::Weak::new(),
 +        epoch: 1,
 +    });
-+    let runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++    let runtime = ModHost::open(root.clone()).unwrap();
++    let environment = runtime.environment();
++    let runtime = Arc::new(Mutex::new(runtime));
 +    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
 +    let views = Arc::new(view::Views::new());
 +    let core = Arc::new_cyclic(|core| Core {
@@ -67341,7 +67343,7 @@ index 000000000..dcc4fae21
 +        host: host.clone(),
 +        runtime,
 +        input_runtime,
-+        environment: Arc::default(),
++        environment,
 +        services: services::Services::default(),
 +        views,
 +        expansion: State::default(),
@@ -67747,10 +67749,6 @@ index 000000000..dcc4fae21
 +        .unwrap();
 +    store.enable(&package, false).unwrap();
 +    fixture.core.runtime.lock().unwrap().reload().unwrap();
-+    fixture
-+        .core
-+        .event("idle", Value::Null, Some(&fixture.lead))
-+        .await;
 +    store.enable(&package, true).unwrap();
 +    fixture.core.runtime.lock().unwrap().reload().unwrap();
 +    let value = control_call(
@@ -72472,10 +72470,10 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..16ce04c93
+index 000000000..3a673abfa
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,753 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -72832,19 +72830,6 @@ index 000000000..16ce04c93
 +        move || !cancelled.load(Ordering::Acquire)
 +    };
 +    if codex_omd::host::served(&operation) {
-+        let mut authority = authority(lead, call).await?;
-+        if operation == "exec.run"
-+            && request.arguments.get("snapshot").is_none()
-+            && let Some(policy) = policy
-+        {
-+            let permissions = crate::execution::intersect(
-+                &authority.context.permissions,
-+                policy,
-+                &authority.repository,
-+            )?;
-+            authority.policy = permissions.file_system_sandbox_policy();
-+            authority.context.permissions = permissions;
-+        }
 +        if operation == "exec.run" && request.arguments.get("snapshot").is_some() {
 +            if request.arguments.get("guards").is_some()
 +                || request.arguments.get("required_access").is_some()
@@ -72862,7 +72847,7 @@ index 000000000..16ce04c93
 +                    request.arguments,
 +                    cancelled,
 +                    core.environment.clone(),
-+                    authority,
++                    authority(lead, call).await?,
 +                    policy.cloned(),
 +                )
 +                .await;
@@ -72872,6 +72857,18 @@ index 000000000..16ce04c93
 +            &request.arguments,
 +            &lead.session.repository_identity,
 +        )?;
++        let mut authority = authority(lead, call).await?;
++        if operation == "exec.run"
++            && let Some(policy) = policy
++        {
++            let permissions = crate::execution::intersect(
++                &authority.context.permissions,
++                policy,
++                &authority.repository,
++            )?;
++            authority.policy = permissions.file_system_sandbox_policy();
++            authority.context.permissions = permissions;
++        }
 +        let (root, protected) = (host.root.clone(), host.protected_paths());
 +        let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
 +        let (grants, origin, record) = (caller.grants, caller.origin, caller.record_changes);
@@ -73145,16 +73142,14 @@ index 000000000..16ce04c93
 +            if cancelled.load(Ordering::Acquire) {
 +                return Err("callback_cancelled".into());
 +            }
-+            let interrupt = thread.interrupt_if_no_pending_input(&input.turn_id);
-+            tokio::pin!(interrupt);
 +            let accepted = tokio::select! {
-+                    biased;
-+                    _ = async {
-+                        while !cancelled.load(Ordering::Acquire) {
-+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-+                        }
-+                    } => return Err("callback_cancelled".into()),
-+                    result = &mut interrupt => result.map_err(|error| error.to_string())?,
++                biased;
++                result = thread.interrupt_if_no_pending_input(&input.turn_id) => {
++                    result.map_err(|error| error.to_string())?
++                }
++                () = super::agents::until_cancelled(cancelled) => {
++                    return Err("callback_cancelled".into());
++                }
 +            };
 +            Ok(json!({"accepted": accepted}))
 +        }
@@ -92804,10 +92799,10 @@ index 000000000..983ae4dde
 +}
 diff --git a/codex-rs/omd/src/host/environment.rs b/codex-rs/omd/src/host/environment.rs
 new file mode 100644
-index 000000000..837fc701c
+index 000000000..e4c857373
 --- /dev/null
 +++ b/codex-rs/omd/src/host/environment.rs
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,143 @@
 +use super::*;
 +
 +type Scope = (String, String, String);
@@ -92840,18 +92835,11 @@ index 000000000..837fc701c
 +        Ok(values)
 +    }
 +
-+    pub fn snapshot(
-+        &self,
-+        thread: &str,
-+        owner: &str,
-+        source: &str,
-+        declared: &[String],
-+    ) -> Result<Self, String> {
-+        let values = self.values(Some(thread), owner, source, declared)?;
-+        Ok(Self(Mutex::new(BTreeMap::from([(
++    pub fn scoped(thread: &str, owner: &str, source: &str, values: EnvironmentValues) -> Self {
++        Self(Mutex::new(BTreeMap::from([(
 +            (thread.to_owned(), owner.to_owned(), source.to_owned()),
 +            values,
-+        )]))))
++        )])))
 +    }
 +
 +    pub fn clear(&self, thread: Option<&str>, owner: Option<&str>) {
@@ -95090,10 +95078,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..80e8dad03
+index 000000000..9dec3d64a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5122 @@
+@@ -0,0 +1,5141 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -97527,6 +97515,7 @@ index 000000000..80e8dad03
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
 +    brokered: Option<(Instant, String, Authority)>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
++    environment: Arc<crate::host::Environment>,
 +    policies: Vec<PathBuf>,
 +    managed: Option<Managed>,
 +    unserved: Vec<(String, Vec<String>, String)>,
@@ -97971,6 +97960,7 @@ index 000000000..80e8dad03
 +            admissions: BTreeMap::new(),
 +            brokered: None,
 +            required_surfaces: Arc::default(),
++            environment: Arc::default(),
 +            policies: Vec::new(),
 +            managed: None,
 +            unserved: Vec::new(),
@@ -98044,6 +98034,7 @@ index 000000000..80e8dad03
 +            Err(error) => {
 +                if !self.loaded.is_empty() {
 +                    self.loaded.clear();
++                    self.environment.clear(None, None);
 +                    self.order.clear();
 +                    self.generation += 1;
 +                    self.dynamic_tools.clear();
@@ -98153,6 +98144,7 @@ index 000000000..80e8dad03
 +            })
 +        });
 +        if self.loaded.len() != retained {
++            self.retain_environment();
 +            self.generation += 1;
 +            self.dynamic_tools.clear();
 +        }
@@ -98344,6 +98336,7 @@ index 000000000..80e8dad03
 +        }
 +        self.rejected = rejected;
 +        self.admit();
++        self.retain_environment();
 +        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
 +        self.generation += 1;
@@ -98359,6 +98352,20 @@ index 000000000..80e8dad03
 +    /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
 +    pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
 +        self.required_surfaces.clone()
++    }
++
++    pub fn environment(&self) -> Arc<crate::host::Environment> {
++        self.environment.clone()
++    }
++
++    fn retain_environment(&self) {
++        self.environment.retain(
++            &self
++                .owners()
++                .into_iter()
++                .map(|(id, owner)| (id, owner.sha256))
++                .collect(),
++        );
 +    }
 +
 +    fn publish_required_surfaces(&self) {
@@ -119078,10 +119085,10 @@ index 000000000..6cf3616c8
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..8bffd24c9
+index 000000000..aca192d99
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2147 @@
+@@ -0,0 +1,2152 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -119345,9 +119352,14 @@ index 000000000..8bffd24c9
 +        )
 +        .unwrap();
 +    }
-+    let snapshot = environment
-+        .snapshot(who.thread.unwrap(), who.id, who.source_sha256, &names)
-+        .unwrap();
++    let snapshot = codex_omd::host::Environment::scoped(
++        who.thread.unwrap(),
++        who.id,
++        who.source_sha256,
++        environment
++            .values(who.thread, who.id, who.source_sha256, &names)
++            .unwrap(),
++    );
 +    host.call(
 +        &who,
 +        "environment.set",

@@ -1181,8 +1181,8 @@ impl Agents {
                     codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)),
             };
             let declared = &grants.as_ref().ok_or("host_caller_inactive")?.exec_environment;
-            let environment = environment.snapshot(&thread.to_string(), &id, &source, declared)?;
             let mut effective = environment.values(Some(&thread.to_string()), &id, &source, declared)?;
+            let environment = codex_omd::host::Environment::scoped(&thread.to_string(), &id, &source, effective.clone());
             let explicit: codex_omd::host::EnvironmentValues = serde_json::from_value(
                 arguments.get("env").cloned().unwrap_or_else(|| json!({})))
                 .map_err(|error| error.to_string())?;
@@ -2553,7 +2553,7 @@ impl Agents {
     }
 }
 
-async fn until_cancelled(cancelled: &AtomicBool) {
+pub(super) async fn until_cancelled(cancelled: &AtomicBool) {
     while !cancelled.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

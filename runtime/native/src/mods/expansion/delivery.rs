@@ -641,7 +641,6 @@ pub(in crate::mods) fn cancel(
 }
 
 pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
-    core.environment.retain(sources);
     if let Ok(mut timers) = core.expansion.timers.lock() {
         timers.retain(|(_, owner, _), (source, _, task)| {
             let keep = sources.get(owner) == Some(source);

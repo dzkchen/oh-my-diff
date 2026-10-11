@@ -354,19 +354,6 @@ async fn run(
         move || !cancelled.load(Ordering::Acquire)
     };
     if codex_omd::host::served(&operation) {
-        let mut authority = authority(lead, call).await?;
-        if operation == "exec.run"
-            && request.arguments.get("snapshot").is_none()
-            && let Some(policy) = policy
-        {
-            let permissions = crate::execution::intersect(
-                &authority.context.permissions,
-                policy,
-                &authority.repository,
-            )?;
-            authority.policy = permissions.file_system_sandbox_policy();
-            authority.context.permissions = permissions;
-        }
         if operation == "exec.run" && request.arguments.get("snapshot").is_some() {
             if request.arguments.get("guards").is_some()
                 || request.arguments.get("required_access").is_some()
@@ -384,7 +371,7 @@ async fn run(
                     request.arguments,
                     cancelled,
                     core.environment.clone(),
-                    authority,
+                    authority(lead, call).await?,
                     policy.cloned(),
                 )
                 .await;
@@ -394,6 +381,18 @@ async fn run(
             &request.arguments,
             &lead.session.repository_identity,
         )?;
+        let mut authority = authority(lead, call).await?;
+        if operation == "exec.run"
+            && let Some(policy) = policy
+        {
+            let permissions = crate::execution::intersect(
+                &authority.context.permissions,
+                policy,
+                &authority.repository,
+            )?;
+            authority.policy = permissions.file_system_sandbox_policy();
+            authority.context.permissions = permissions;
+        }
         let (root, protected) = (host.root.clone(), host.protected_paths());
         let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
         let (grants, origin, record) = (caller.grants, caller.origin, caller.record_changes);
@@ -667,16 +666,14 @@ async fn run(
             if cancelled.load(Ordering::Acquire) {
                 return Err("callback_cancelled".into());
             }
-            let interrupt = thread.interrupt_if_no_pending_input(&input.turn_id);
-            tokio::pin!(interrupt);
             let accepted = tokio::select! {
-                    biased;
-                    _ = async {
-                        while !cancelled.load(Ordering::Acquire) {
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        }
-                    } => return Err("callback_cancelled".into()),
-                    result = &mut interrupt => result.map_err(|error| error.to_string())?,
+                biased;
+                result = thread.interrupt_if_no_pending_input(&input.turn_id) => {
+                    result.map_err(|error| error.to_string())?
+                }
+                () = super::agents::until_cancelled(cancelled) => {
+                    return Err("callback_cancelled".into());
+                }
             };
             Ok(json!({"accepted": accepted}))
         }

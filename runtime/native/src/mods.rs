@@ -415,6 +415,7 @@ pub(super) fn install(
         .map_err(|e| e.to_string())?;
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
+    let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts.install_mod_runtime(runtime.clone(), required);
     let views = Arc::new(view::Views::new());
@@ -425,7 +426,7 @@ pub(super) fn install(
             host,
             runtime,
             input_runtime,
-            environment: Arc::default(),
+            environment,
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),

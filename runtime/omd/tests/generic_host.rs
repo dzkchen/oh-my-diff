@@ -261,9 +261,14 @@ fn scoped_environment_snapshot_and_evidence_bind_values_without_disclosing_secre
         )
         .unwrap();
     }
-    let snapshot = environment
-        .snapshot(who.thread.unwrap(), who.id, who.source_sha256, &names)
-        .unwrap();
+    let snapshot = codex_omd::host::Environment::scoped(
+        who.thread.unwrap(),
+        who.id,
+        who.source_sha256,
+        environment
+            .values(who.thread, who.id, who.source_sha256, &names)
+            .unwrap(),
+    );
     host.call(
         &who,
         "environment.set",

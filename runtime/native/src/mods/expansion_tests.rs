@@ -84,7 +84,9 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         manager: std::sync::Weak::new(),
         epoch: 1,
     });
-    let runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let runtime = ModHost::open(root.clone()).unwrap();
+    let environment = runtime.environment();
+    let runtime = Arc::new(Mutex::new(runtime));
     let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
     let views = Arc::new(view::Views::new());
     let core = Arc::new_cyclic(|core| Core {
@@ -92,7 +94,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         host: host.clone(),
         runtime,
         input_runtime,
-        environment: Arc::default(),
+        environment,
         services: services::Services::default(),
         views,
         expansion: State::default(),
@@ -498,10 +500,6 @@ async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
         .unwrap();
     store.enable(&package, false).unwrap();
     fixture.core.runtime.lock().unwrap().reload().unwrap();
-    fixture
-        .core
-        .event("idle", Value::Null, Some(&fixture.lead))
-        .await;
     store.enable(&package, true).unwrap();
     fixture.core.runtime.lock().unwrap().reload().unwrap();
     let value = control_call(
