@@ -50,6 +50,11 @@ demonstrations remain repository-only conformance fixtures.
 [EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and
 rationale for every package.
 
+The terminal fixture copies the bounded selection and reports backend delivery;
+the OS tools fixture's `/locale` with no argument restores the inherited locale.
+Examples using the new controls declare their required host feature labels;
+see [compatibility](COMPATIBILITY.md) when adopting those operations.
+
 For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile

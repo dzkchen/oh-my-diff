@@ -307,10 +307,22 @@ pub(super) async fn dispatch(
     request: ModHostCall,
     cancelled: &Arc<AtomicBool>,
 ) -> Result<Value, String> {
+    dispatch_with_policy(core, lead, caller, call, request, cancelled, None).await
+}
+
+pub(super) async fn dispatch_with_policy(
+    core: &Core,
+    lead: &Lead,
+    caller: Caller<'_>,
+    call: Option<&ToolCall<'_>>,
+    request: ModHostCall,
+    cancelled: &Arc<AtomicBool>,
+    policy: Option<&codex_protocol::models::PermissionProfile>,
+) -> Result<Value, String> {
     let id = caller.id.to_owned();
     let audited =
         codex_omd::access_receipt(&id, &request, Ok(&Value::Null)).map(|_| request.clone());
-    let result = run(core, lead, caller, call, request, cancelled).await;
+    let result = run(core, lead, caller, call, request, cancelled, policy).await;
     if let Some(request) = audited
         && let Some(receipt) =
             codex_omd::access_receipt(&id, &request, result.as_ref().map_err(Clone::clone))
@@ -325,8 +337,9 @@ async fn run(
     lead: &Lead,
     caller: Caller<'_>,
     call: Option<&ToolCall<'_>>,
-    mut request: ModHostCall,
+    request: ModHostCall,
     cancelled: &Arc<AtomicBool>,
+    policy: Option<&codex_protocol::models::PermissionProfile>,
 ) -> Result<Value, String> {
     let host = &lead.host;
     let operation = request.operation.clone();
@@ -341,6 +354,19 @@ async fn run(
         move || !cancelled.load(Ordering::Acquire)
     };
     if codex_omd::host::served(&operation) {
+        let mut authority = authority(lead, call).await?;
+        if operation == "exec.run"
+            && request.arguments.get("snapshot").is_none()
+            && let Some(policy) = policy
+        {
+            let permissions = crate::execution::intersect(
+                &authority.context.permissions,
+                policy,
+                &authority.repository,
+            )?;
+            authority.policy = permissions.file_system_sandbox_policy();
+            authority.context.permissions = permissions;
+        }
         if operation == "exec.run" && request.arguments.get("snapshot").is_some() {
             if request.arguments.get("guards").is_some()
                 || request.arguments.get("required_access").is_some()
@@ -350,14 +376,17 @@ async fn run(
             if request.arguments.get("sandbox").is_some() {
                 return Err("exec_snapshot_requires_sandbox".into());
             }
-            let authority = authority(lead, call).await?;
-            let scoped = Lead {
-                permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
-                ..lead.clone()
-            };
             return core
                 .agents
-                .execute_snapshot(&scoped, &caller, request.arguments, cancelled)
+                .execute_snapshot(
+                    lead,
+                    &caller,
+                    request.arguments,
+                    cancelled,
+                    core.environment.clone(),
+                    authority,
+                    policy.cloned(),
+                )
                 .await;
         }
         let _guard = workspace_guard(
@@ -365,15 +394,16 @@ async fn run(
             &request.arguments,
             &lead.session.repository_identity,
         )?;
-        let authority = authority(lead, call).await?;
         let (root, protected) = (host.root.clone(), host.protected_paths());
         let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
         let (grants, origin, record) = (caller.grants, caller.origin, caller.record_changes);
+        let environment = core.environment.clone();
         return tokio::task::spawn_blocking(move || {
             crate::generic_host::call(
                 grants,
                 &authority,
                 &root,
+                Some(&environment),
                 protected,
                 &id,
                 origin,
@@ -417,6 +447,8 @@ async fn run(
         let processes = lead.session.processes.clone();
         let generation = caller.generation;
         let protected = host.protected_paths();
+        let thread = lead.thread.to_string();
+        let environment = core.environment.clone();
         return tokio::task::spawn_blocking(move || {
             let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
             authority.request_rename(
@@ -425,6 +457,8 @@ async fn run(
                 &processes,
                 &protected,
                 generation,
+                &thread,
+                &environment,
                 active,
             )
         })
@@ -432,30 +466,17 @@ async fn run(
         .map_err(|e| e.to_string())?;
     }
     if operation.starts_with("process.") {
-        if operation == "process.start" {
+        let environment = if operation == "process.start" {
             let grants = caller.grants.as_ref().ok_or("host_caller_inactive")?;
-            let overrides = codex_omd::host::environment_overrides(
-                &host.root,
+            core.environment.values(
                 Some(&lead.thread.to_string()),
                 caller.id,
                 caller.source,
                 &grants.exec_environment,
-            )?;
-            if !overrides.is_empty() {
-                let arguments = request
-                    .arguments
-                    .as_object_mut()
-                    .ok_or("process_arguments_invalid")?;
-                let environment = arguments
-                    .entry("environment")
-                    .or_insert_with(|| json!({}))
-                    .as_object_mut()
-                    .ok_or("process_arguments_invalid")?;
-                for (name, value) in overrides {
-                    environment.entry(name).or_insert(json!(value));
-                }
-            }
-        }
+            )?
+        } else {
+            Default::default()
+        };
         crate::generic_host::process_request_allowed(caller.grants.as_ref(), &request)?;
         let authority = authority(lead, call).await?;
         let processes = lead.session.processes.clone();
@@ -482,6 +503,7 @@ async fn run(
                     protected: &protected,
                     os_access: os_access.as_ref(),
                     blit: blit.as_ref(),
+                    environment: Some(&environment),
                 },
                 &request.operation,
                 request.arguments,
@@ -642,10 +664,20 @@ async fn run(
                 .get_thread(lead.thread)
                 .await
                 .map_err(|error| error.to_string())?;
-            let accepted = thread
-                .interrupt_if_no_pending_input(&input.turn_id)
-                .await
-                .map_err(|error| error.to_string())?;
+            if cancelled.load(Ordering::Acquire) {
+                return Err("callback_cancelled".into());
+            }
+            let interrupt = thread.interrupt_if_no_pending_input(&input.turn_id);
+            tokio::pin!(interrupt);
+            let accepted = tokio::select! {
+                    biased;
+                    _ = async {
+                        while !cancelled.load(Ordering::Acquire) {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    } => return Err("callback_cancelled".into()),
+                    result = &mut interrupt => result.map_err(|error| error.to_string())?,
+            };
             Ok(json!({"accepted": accepted}))
         }
         "turns.queue" | "turns.queued" | "turns.dequeue" => {

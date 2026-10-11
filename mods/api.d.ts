@@ -333,6 +333,7 @@ export interface HostOperations {
   'mcp.connect': { arguments: { server: string }; result: { server: string; connected: true; tool_prefix: string } };
   'mcp.disconnect': { arguments: { server: string }; result: { server: string; connected: false; tool_prefix: string } };
   'environment.read': { arguments: { names: string[] }; result: { values: Record<string, { set: boolean; value?: string | null }> } };
+  /** Requires environment_overrides_v1; null restores inheritance and releases the override slot. */
   'environment.set': { arguments: { name: string; value: string | null }; result: { name: string; set: boolean } };
   'workspace.backup': { arguments: { expected: Record<string, Fingerprint> }; result: { backup: ResourceRef } };
   'workspace.restore': { arguments: { backup: ResourceRef; expected: Record<string, Fingerprint> }; result: { files: Record<string, string | null> } };
@@ -385,6 +386,7 @@ export interface HostOperations {
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
+  /** Require timers_100ms_v1 for delays below 1000 ms. */
   'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
@@ -396,8 +398,11 @@ export interface HostOperations {
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
+  /** Requires turn_abort_v1; acceptance precedes cancellation cleanup. */
   'turns.abort': { arguments: { turn_id: string }; result: { accepted: boolean } };
+  /** Requires terminal_selection_v1; truncation also accounts for the select-then-copy receipt budget. */
   'terminal.selection': { arguments: Record<string, never>; result: { text: string | null; truncated: boolean } };
+  /** Requires terminal_copy_v1. */
   'terminal.copy': { arguments: { text: string }; result: { status: 'confirmed' | 'unconfirmed' | 'pending' | 'busy' } };
   'terminal.notify': { arguments: { title: string; body?: string }; result: { delivered: boolean; method: 'osc9' | 'osc99' | 'osc777' | 'bel' | 'none'; reason?: string } };
   'terminal.show_thread': { arguments: { thread_id: string }; result: { shown: boolean } };

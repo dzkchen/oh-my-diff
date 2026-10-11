@@ -253,7 +253,9 @@ pub(super) fn run(
             let call_started = Instant::now();
             let exempt = !crate::client_surface::SURFACE_OPERATIONS
                 .contains(&call.operation.as_str())
-                || crate::client_surface::awaits_user(&call.operation, &call.arguments);
+                || crate::client_surface::awaits_user(&call.operation, &call.arguments)
+                // Clipboard delivery is external work bounded by the surface call lifetime.
+                || call.operation == "terminal.copy";
             scope.charge_call()?;
             let result = host(call.clone());
             let mut receipt = match result {

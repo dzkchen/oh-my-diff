@@ -218,6 +218,7 @@ pub(crate) fn call(
     runtime_grants: Option<codex_omd::ModGrants>,
     workspace: &WorkspaceAuthority,
     data_root: &Path,
+    environment: Option<&codex_omd::host::Environment>,
     protected: Vec<PathBuf>,
     caller: &str,
     origin: Origin,
@@ -234,6 +235,7 @@ pub(crate) fn call(
     Host {
         authority: &authority,
         data_root,
+        environment,
         active,
         record_changes,
     }

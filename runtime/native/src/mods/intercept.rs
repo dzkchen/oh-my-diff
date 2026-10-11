@@ -100,7 +100,12 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
     let weak = Arc::downgrade(core);
     let session = tokio::runtime::Handle::try_current().ok();
     let dispatcher: codex_omd::host::SessionDispatcher = Arc::new(
-        move |thread: &str, caller: &str, request: ModHostCall, active: &dyn Fn() -> bool| {
+        move |thread: &str,
+              caller: &str,
+              expected_source: Option<&str>,
+              policy: Option<&Value>,
+              request: ModHostCall,
+              active: &dyn Fn() -> bool| {
             let unavailable = |reason: &str| {
                 std::io::Error::other(format!("host_operation_unavailable: {reason}"))
             };
@@ -143,10 +148,15 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
                 )
             };
             let cancelled = Arc::new(AtomicBool::new(false));
+            if expected_source.is_some_and(|expected| expected != source) {
+                return Err(std::io::Error::other("host_caller_source_changed"));
+            }
+            let policy: Option<codex_protocol::models::PermissionProfile> =
+                policy.cloned().map(serde_json::from_value).transpose()?;
             let _cancellation = Cancellation(cancelled.clone());
             let future = async {
                 tokio::select! {
-                    value = operations::dispatch(
+                    value = operations::dispatch_with_policy(
                         &core,
                         &lead,
                         Caller {
@@ -160,6 +170,7 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
                         None,
                         request,
                         &cancelled,
+                        policy.as_ref(),
                     ) => value.map_err(std::io::Error::other),
                     () = async {
                         while active() {

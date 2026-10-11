@@ -220,6 +220,7 @@ pub(super) struct ProcessOwner<'a> {
     pub protected: &'a [PathBuf],
     pub os_access: Option<&'a codex_omd::ModOsAccess>,
     pub blit: Option<&'a BlitSink>,
+    pub environment: Option<&'a codex_omd::host::EnvironmentValues>,
 }
 
 struct ManagedProcess {
@@ -569,6 +570,7 @@ impl ManagedProcesses {
             protected,
             os_access,
             blit,
+            environment,
         } = owner;
         if !active()
             || !repository.is_absolute()
@@ -631,7 +633,7 @@ impl ManagedProcesses {
                     #[serde(default)]
                     keys: Option<String>,
                 }
-                let input: Input =
+                let mut input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
                 let component = |id: &String| {
                     !id.is_empty()
@@ -726,6 +728,15 @@ impl ManagedProcesses {
                 {
                     return Err("process_program_or_arguments_invalid".into());
                 }
+                if let Some(environment) = environment {
+                    codex_omd::host::validate_environment(environment)?;
+                    for (name, value) in environment {
+                        input
+                            .environment
+                            .entry(name.clone())
+                            .or_insert_with(|| Some(value.clone()));
+                    }
+                }
                 let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
                 if !metadata.is_file()
                     || metadata.len() > 128 * 1024 * 1024
@@ -815,6 +826,10 @@ impl ManagedProcesses {
                             command
                         }
                     };
+                    command
+                        .env("TMPDIR", &scratch)
+                        .env("XDG_CACHE_HOME", &scratch)
+                        .env("PYTHONDONTWRITEBYTECODE", "1");
                     for (name, value) in &input.environment {
                         match value {
                             Some(value) => {
@@ -827,9 +842,6 @@ impl ManagedProcesses {
                     }
                     let mut child = command
                         .current_dir(repository)
-                        .env("TMPDIR", &scratch)
-                        .env("XDG_CACHE_HOME", &scratch)
-                        .env("PYTHONDONTWRITEBYTECODE", "1")
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .stderr(Stdio::null())
@@ -1194,6 +1206,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };
@@ -1260,6 +1273,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };
@@ -1311,6 +1325,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: Some(&access),
             blit: Some(&sink),
         };
@@ -1405,6 +1420,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: Some(&access),
             blit: None,
         };
@@ -1514,6 +1530,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: Some(&access),
             blit: None,
         };
@@ -1555,6 +1572,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };
@@ -1644,6 +1662,7 @@ mod tests {
             repository: &repository,
             policy: &policy,
             protected: &[],
+            environment: None,
             os_access: None,
             blit: None,
         };

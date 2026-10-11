@@ -206,14 +206,16 @@ process environment.
 
 `environment.set {name, value}` (`exec`) sets a caller/source/thread-local
 override for subsequent `environment.read`, `exec.run` and `process.start`.
-`value: null` explicitly removes that variable from future children. Names
+`value: null` removes the override, restores the inherited value and frees its
+slot. Require `environment_overrides_v1` at admission. Names
 must be declared and non-reserved; secret-like names still need hash-bound
 trust and reads disclose only whether they are set. Values are at most 4096
-bytes without NUL, with 16 names and 16 KiB total per scope. Child-specific
-limits still apply (managed processes allow 8 names and 1024 bytes per value).
+bytes without NUL, with 16 names and 16 KiB total per scope. Persistent values
+are validated separately from explicit per-call values (managed processes allow
+8 explicit names and 1024 bytes per explicit value).
 Explicit per-call values win. Overrides end on unload, source replacement or
 session end; they do not change providers, sidecars or existing processes.
-Receipts contain the name and set/unset action, never the value.
+Receipts contain the name and override/reset action, never the value.
 
 ### Admission and API policy (`admission_api_policy_v1`)
 
@@ -410,6 +412,9 @@ the host verifies ownership, candidate, reference and outcome. A successful
 receipt requires exit zero, no signal or timeout, and untruncated output. Each
 mod generation and thread holds at most 64 execution records, the host at most
 256.
+The record includes the persistent and explicit environment values used by
+that execution, captured once before launch. Secret-like values are represented
+by hashes rather than plaintext; reproducing those runs requires the same secrets.
 
 ### Durable data: `store.*` and evidence
 
@@ -1313,7 +1318,8 @@ only the session; read the exit status with `process.status`.
 `events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
 `{key}` to the calling mod after 100 ms to 24 h; scheduling a key again replaces
 it within that thread, `events.cancel {key}` stops only that thread's timer,
-16 timers per mod across all threads. Deliveries are spaced at least 100 ms
+16 timers per mod across all threads, including ticks pending delivery. Require
+`timers_100ms_v1` for delays below 1000 ms. Deliveries are spaced at least 100 ms
 apart per mod/thread; pending ticks with the same key coalesce and other
 owners continue while one owner waits for its budget. A timer never starts a
 turn by itself; only `turns.queue` under an `autonomous` grant can.
@@ -1376,6 +1382,7 @@ turn in the current thread from a user or event callback. `{accepted: true}`
 means cancellation was accepted, not that cleanup has completed. A stale or
 absent turn, queued input or competing cancellation returns `accepted: false`.
 Tool callbacks cannot call it, and it cannot target another thread.
+Require `turn_abort_v1`. Successful cancellation wakes idle listeners after cleanup.
 
 `store.*` accepts `scope: 'thread'`: data forks with the thread, is removed
 when the thread is deleted and kept when it is archived. `resume` carries
@@ -1500,13 +1507,17 @@ Disable, a broken mod, or direct mode restores the upstream fields.
 `terminal.selection {}` (`terminal`) returns `{text, truncated}` for the current
 TUI selection, or `text: null` when there is none. It prefers the visible
 transcript overlay and never reads obscured transcript text, another client's
-selection or the OS clipboard. UTF-8 text is capped at 64 KiB.
+selection or the OS clipboard. UTF-8 text is capped at 64 KiB and further bounded
+by its JSON-encoded size so a selection followed by a copy fits one callback's
+receipt budget. Any shortening sets `truncated: true`.
 `terminal.copy {text}` uses the native plain-text clipboard backend with the
 same 64 KiB limit. Its status is `confirmed`, `unconfirmed`, `pending` or `busy`;
-pending submission does not claim completed delivery. Both operations require
+the native host waits for the matching clipboard worker's delivery result.
+`unconfirmed` means the backend cannot confirm delivery. Both operations require
 a local user callback and reject event/tool calls and attached-client requests.
 Invoke selection from a clicked component action, as the terminal example does;
 typing a slash command clears the transcript selection before its callback.
+Require `terminal_selection_v1` and `terminal_copy_v1` for these operations.
 
 The appearance additions (`terminal_surface_paint_v1`,
 `terminal_backdrop_transform_v1`, `terminal_image_sample_v1`,

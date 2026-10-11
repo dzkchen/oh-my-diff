@@ -61,7 +61,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "events.cancel",
 ];
 
-type Timers = BTreeMap<(String, String, String), (String, tokio::task::JoinHandle<()>)>;
+type Timers = BTreeMap<(String, String, String), (String, u64, tokio::task::JoinHandle<()>)>;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -91,6 +91,7 @@ pub(super) struct State {
     pending: Mutex<std::collections::VecDeque<delivery::Pending>>,
     dropped: AtomicU64,
     timers: Mutex<Timers>,
+    timer_sequence: AtomicU64,
     timer_deliveries: Mutex<std::collections::HashMap<(ThreadId, String), std::time::Instant>>,
     core: std::sync::OnceLock<std::sync::Weak<Core>>,
     pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
@@ -338,7 +339,20 @@ pub(super) async fn invoke_one(
     event: &'static str,
     payload: Value,
 ) -> Option<Result<Value, String>> {
+    invoke_one_guarded(core, lead, id, event, payload, None).await
+}
+
+async fn invoke_one_guarded(
+    core: &Core,
+    lead: &Lead,
+    id: String,
+    event: &'static str,
+    payload: Value,
+    timer: Option<(String, String, u64)>,
+) -> Option<Result<Value, String>> {
     let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
+    let timer_core = core.this.upgrade()?;
+    let timer_thread = lead.thread.to_string();
     run(
         core,
         lead,
@@ -347,6 +361,29 @@ pub(super) async fn invoke_one(
         move |runtime, host, active| {
             let (generation, before) = {
                 let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+                if let Some((key, source, incarnation)) = &timer {
+                    // Validate source and schedule identity at the generation capture boundary.
+                    let mut timers = timer_core
+                        .expansion
+                        .timers
+                        .lock()
+                        .map_err(|_| "timer_state_poisoned")?;
+                    let slot = (timer_thread.clone(), id.clone(), key.clone());
+                    if timers
+                        .get(&slot)
+                        .is_none_or(|(_, current, _)| current != incarnation)
+                    {
+                        return Ok(Value::Null);
+                    }
+                    timers.remove(&slot);
+                    if !runtime
+                        .owners()
+                        .iter()
+                        .any(|(owner, active)| owner == &id && active.sha256 == *source)
+                    {
+                        return Ok(Value::Null);
+                    }
+                }
                 if !runtime.registered(&id, event) {
                     return Ok(Value::Null);
                 }

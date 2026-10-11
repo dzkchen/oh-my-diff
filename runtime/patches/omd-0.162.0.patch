@@ -20227,6 +20227,273 @@ index d6053a0f5..5a4472e1f 100644
  }
 
  pub(crate) async fn request_mcp_tool_user_approval(
+diff --git a/codex-rs/core/src/session/extension_interruption.rs b/codex-rs/core/src/session/extension_interruption.rs
+index 87da41f20..45ef4e955 100644
+--- a/codex-rs/core/src/session/extension_interruption.rs
++++ b/codex-rs/core/src/session/extension_interruption.rs
+@@ -8,7 +8,6 @@ use codex_protocol::error::CodexErr;
+ use codex_protocol::error::Result as CodexResult;
+ use codex_protocol::protocol::ErrorEvent;
+ use codex_protocol::protocol::EventMsg;
+-use codex_protocol::protocol::Op;
+ use codex_protocol::protocol::TurnAbortReason;
+ use std::sync::Arc;
+ use tokio::sync::oneshot;
+@@ -21,7 +20,8 @@ mod tests;
+ impl CodexThread {
+     /// Interrupts the named active turn unless it has queued input.
+     /// Returns the decision before joining cancellation, so tool callbacks can await it.
+-    /// Like [`Op::Interrupt`], this does not notify idle contributors; the caller owns wakeup.
++    /// Runs independently of submissions, including when called from an input interceptor.
++    /// Idle contributors are notified after cancellation has finished joining the task.
+     pub async fn interrupt_if_no_pending_input(&self, turn_id: &str) -> CodexResult<bool> {
+         let cancellation_token = {
+             let active = self.session.active_turn.lock().await;
+@@ -33,16 +33,26 @@ impl CodexThread {
+             }
+             task.cancellation_token.clone()
+         };
++        if cancellation_token.is_cancelled() {
++            return Ok(false);
++        }
+         let (reply, mut result) = oneshot::channel();
++        let session = Arc::clone(&self.session);
++        let turn_id = turn_id.to_owned();
++        // Submission callbacks must not wait on their own submission loop.
++        drop(self.session.services.runtime_handle.spawn(async move {
++            if session
++                .interrupt_turn_if_no_pending_input(&turn_id, reply)
++                .await
++            {
++                session
++                    .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Interrupted)
++                    .await;
++            }
++        }));
+         tokio::select! {
+             biased;
+-            result = async {
+-                self.submit(Op::InterruptIfNoPendingInput {
+-                    turn_id: turn_id.to_owned(),
+-                    reply,
+-                }).await?;
+-                (&mut result).await.map_err(|_| CodexErr::InternalAgentDied)
+-            } => result,
++            result = &mut result => result.map_err(|_| CodexErr::InternalAgentDied),
+             // An earlier interrupt may already be waiting for this tool callback to finish.
+             // Cancellation can also race with a decision sent by this request.
+             _ = cancellation_token.cancelled() => match result.try_recv() {
+@@ -62,7 +72,7 @@ impl Session {
+         self: &Arc<Self>,
+         turn_id: &str,
+         reply: oneshot::Sender<bool>,
+-    ) {
++    ) -> bool {
+         let active_turn = {
+             let mut active = self.active_turn.lock().await;
+             let Some(turn) = active.as_ref().filter(|turn| {
+@@ -71,20 +81,21 @@ impl Session {
+                     .is_some_and(|task| task.turn_context.sub_id == turn_id)
+             }) else {
+                 let _ = reply.send(false);
+-                return;
++                return false;
+             };
+             if !turn.turn_state.lock().await.pending_input.is_empty()
+                 || self.input_queue.has_pending_mailbox_items().await
+                 || reply.is_closed()
+             {
+                 let _ = reply.send(false);
+-                return;
++                return false;
+             }
+             self.mark_interrupted();
+             active.take()
+         };
+         // The caller may be inside the task that cancellation must join.
+         let _ = reply.send(active_turn.is_some());
++        let accepted = active_turn.is_some();
+         if let Some(active_turn) = active_turn {
+             self.finish_turn_abort(
+                 active_turn,
+@@ -93,6 +104,7 @@ impl Session {
+             )
+             .await;
+         }
++        accepted
+     }
+
+     pub(crate) async fn interrupt_turn_with_warning(
+diff --git a/codex-rs/core/src/session/extension_interruption_tests.rs b/codex-rs/core/src/session/extension_interruption_tests.rs
+index 7e46b02e3..6373e2c82 100644
+--- a/codex-rs/core/src/session/extension_interruption_tests.rs
++++ b/codex-rs/core/src/session/extension_interruption_tests.rs
+@@ -10,6 +10,7 @@ use crate::thread_startup_metadata::ThreadStartupMetadata;
+ use codex_protocol::config_types::ApprovalsReviewer;
+ use codex_protocol::protocol::AgentStatus;
+ use codex_protocol::protocol::AskForApproval;
++use codex_protocol::protocol::Op;
+ use codex_protocol::protocol::SessionConfiguredEvent;
+ use codex_protocol::protocol::SessionSource;
+ use pretty_assertions::assert_eq;
+@@ -17,9 +18,32 @@ use std::time::Duration;
+ use tokio::sync::Notify;
+ use tokio::sync::watch;
+
+-#[tokio::test]
+-async fn interrupt_if_no_pending_input_handles_cancelled_submission() {
+-    let (session, turn_context, rx_event) = make_session_and_context_with_rx().await;
++async fn fixture_with_idle(
++    idle: Option<async_channel::Sender<()>>,
++) -> (
++    CodexThread,
++    Arc<Session>,
++    String,
++    async_channel::Receiver<crate::session::Submission>,
++) {
++    let (mut session, turn_context, rx_event) = make_session_and_context_with_rx().await;
++    if let Some(sender) = idle {
++        struct Recorder(async_channel::Sender<()>);
++        impl codex_extension_api::ThreadLifecycleContributor<crate::config::Config> for Recorder {
++            fn on_thread_idle<'a>(
++                &'a self,
++                _input: codex_extension_api::ThreadIdleInput<'a>,
++            ) -> codex_extension_api::ExtensionFuture<'a, ()> {
++                Box::pin(async move {
++                    self.0.send(()).await.unwrap();
++                })
++            }
++        }
++        let mut builder =
++            codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++        builder.thread_lifecycle_contributor(Arc::new(Recorder(sender)));
++        Arc::get_mut(&mut session).unwrap().services.extensions = Arc::new(builder.build());
++    }
+     session
+         .spawn_task(
+             Arc::clone(&turn_context),
+@@ -30,17 +54,6 @@ async fn interrupt_if_no_pending_input_handles_cancelled_submission() {
+             },
+         )
+         .await;
+-    let cancellation_token = session
+-        .active_turn
+-        .lock()
+-        .await
+-        .as_ref()
+-        .expect("active turn")
+-        .task
+-        .as_ref()
+-        .expect("active task")
+-        .cancellation_token
+-        .clone();
+     let (tx_sub, rx_sub) = async_channel::bounded(/*cap*/ 1);
+     let thread = CodexThread::new(
+         Arc::clone(&session),
+@@ -72,21 +85,93 @@ async fn interrupt_if_no_pending_input_handles_cancelled_submission() {
+         /*rollout_path*/ None,
+         SessionSource::Cli,
+     );
++    (thread, session, turn_context.sub_id.clone(), rx_sub)
++}
++
++#[tokio::test]
++async fn conditional_interrupt_bypasses_blocked_submission_loop() {
++    let (thread, session, turn_id, rx_sub) = fixture_with_idle(None).await;
+     thread.submit(Op::Interrupt).await.expect("fill the queue");
++    assert!(
++        tokio::time::timeout(
++            Duration::from_secs(1),
++            thread.interrupt_if_no_pending_input(&turn_id)
++        )
++        .await
++        .expect("must not wait for submission loop")
++        .unwrap()
++    );
++    assert_eq!(rx_sub.len(), 1);
++    assert!(session.active_turn.lock().await.is_none());
++}
+
+-    let interrupt = thread.interrupt_if_no_pending_input(&turn_context.sub_id);
+-    tokio::pin!(interrupt);
++#[tokio::test]
++async fn dropped_conditional_interrupt_does_not_abort_turn() {
++    let (thread, session, turn_id, _rx_sub) = fixture_with_idle(None).await;
++    // Poll once to enqueue independent work, then drop before it obtains the turn lock.
++    let mut interrupt = Box::pin(thread.interrupt_if_no_pending_input(&turn_id));
+     assert!(futures::poll!(interrupt.as_mut()).is_pending());
+-    // The pending submission still owns its reply sender when cancellation wins.
++    drop(interrupt);
++    tokio::task::yield_now().await;
++    assert!(session.active_turn.lock().await.is_some());
++    session.abort_all_tasks(TurnAbortReason::Interrupted).await;
++}
++
++#[tokio::test]
++async fn interrupt_if_no_pending_input_handles_cancelled_submission() {
++    let (thread, session, turn_id, rx_sub) = fixture_with_idle(None).await;
++    let cancellation_token = session
++        .active_turn
++        .lock()
++        .await
++        .as_ref()
++        .unwrap()
++        .task
++        .as_ref()
++        .unwrap()
++        .cancellation_token
++        .clone();
++    thread.submit(Op::Interrupt).await.expect("fill the queue");
+     cancellation_token.cancel();
+-    assert_eq!(
+-        tokio::time::timeout(Duration::from_secs(/*secs*/ 1), interrupt)
+-            .await
+-            .expect("cancellation should unblock the submission")
+-            .expect("cancelling a submission does not mean the agent died"),
+-        false,
++    assert!(
++        !tokio::time::timeout(
++            Duration::from_secs(1),
++            thread.interrupt_if_no_pending_input(&turn_id)
++        )
++        .await
++        .expect("cancellation should unblock the submission")
++        .unwrap()
+     );
+-    assert!(!rx_sub.is_closed());
+     assert_eq!(rx_sub.len(), 1);
+     session.abort_all_tasks(TurnAbortReason::Interrupted).await;
+ }
++
++#[tokio::test]
++async fn conditional_interrupt_emits_idle_after_abort() {
++    let (sender, idle) = async_channel::bounded(1);
++    let (thread, session, turn_id, rx_sub) = fixture_with_idle(Some(sender)).await;
++    // Serve queued interrupts just like the submission loop, so this test isolates
++    // idle delivery even when testing the older queue-based implementation.
++    let responder_session = Arc::clone(&session);
++    let responder = tokio::spawn(async move {
++        if let Ok(submission) = rx_sub.recv().await {
++            let Op::InterruptIfNoPendingInput { turn_id, reply } = submission.op else {
++                panic!("unexpected submission");
++            };
++            responder_session
++                .interrupt_turn_if_no_pending_input(&turn_id, reply)
++                .await;
++        }
++    });
++    let accepted = tokio::time::timeout(
++        Duration::from_secs(1),
++        thread.interrupt_if_no_pending_input(&turn_id),
++    )
++    .await;
++    let notification = tokio::time::timeout(Duration::from_secs(1), idle.recv()).await;
++    responder.abort();
++    let _ = responder.await;
++    assert!(accepted.expect("interrupt acceptance").unwrap());
++    notification.expect("idle notification").unwrap();
++    assert!(session.active_turn.lock().await.is_none());
++}
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
 index c569b04ec..4277638f9 100644
 --- a/codex-rs/core/src/session/handlers.rs
@@ -21568,7 +21835,7 @@ index 9dca956b9..fa6766674 100644
      turn_context.session_telemetry.counter(
          "codex.skill.injected",
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index bfc9c1341..4985aece6 100644
+index bfc9c1341..3aa8c224c 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -312,9 +312,9 @@ impl Session {
@@ -21622,6 +21889,78 @@ index bfc9c1341..4985aece6 100644
          let (last_agent_message, abort_reason) = match task_result {
              Ok(last_agent_message) => (last_agent_message, None),
              Err(err) if matches!(err.details(), CodexErrorDetails::TurnAborted) => {
+@@ -662,6 +678,10 @@ impl Session {
+         let turn_state = {
+             let mut active = self.active_turn.lock().await;
+             active.as_mut().and_then(|active_turn| {
++                // Independent interruption can replace the turn after this task checked cancellation.
++                if active_turn.task.as_ref()?.turn_context.sub_id != turn_context.sub_id {
++                    return None;
++                }
+                 let task = active_turn.task.take()?;
+                 task.handle.detach();
+                 Some(Arc::clone(&active_turn.turn_state))
+diff --git a/codex-rs/core/src/tasks/mod_tests.rs b/codex-rs/core/src/tasks/mod_tests.rs
+index 86a0dbf56..3666e3dcd 100644
+--- a/codex-rs/core/src/tasks/mod_tests.rs
++++ b/codex-rs/core/src/tasks/mod_tests.rs
+@@ -493,3 +493,56 @@ fn emit_compact_metric_records_auto_local() {
+         ])
+     );
+ }
++
++#[tokio::test]
++async fn stale_task_completion_preserves_replacement_turn() {
++    let (session, old_context, receiver) = make_session_and_context_with_rx().await;
++    let mut replacement = old_context
++        .with_model(
++            old_context.model_info().slug.clone(),
++            &session.services.models_manager,
++        )
++        .await;
++    replacement.sub_id = format!("{}-replacement", old_context.sub_id);
++    let replacement = Arc::new(replacement);
++    session
++        .spawn_task(Arc::clone(&replacement), Vec::new(), PendingTask)
++        .await;
++    let replacement_state = Arc::clone(
++        &session
++            .active_turn
++            .lock()
++            .await
++            .as_ref()
++            .unwrap()
++            .turn_state,
++    );
++    // Resume old completion after its cancellation check, once a replacement has been registered.
++    session.on_task_finished(old_context, Ok(None)).await;
++    {
++        let active = session.active_turn.lock().await;
++        let turn = active
++            .as_ref()
++            .expect("old completion must not clear the replacement");
++        let task = turn
++            .task
++            .as_ref()
++            .expect("old completion must not take the replacement task");
++        assert_eq!(task.turn_context.sub_id, replacement.sub_id);
++        assert!(Arc::ptr_eq(&turn.turn_state, &replacement_state));
++        assert!(!task.cancellation_token.is_cancelled());
++    }
++    while let Ok(event) = receiver.try_recv() {
++        assert!(
++            !matches!(
++                event.msg,
++                codex_protocol::protocol::EventMsg::TurnComplete(_)
++                    | codex_protocol::protocol::EventMsg::TurnAborted(_)
++            ),
++            "stale completion must not publish a terminal event"
++        );
++    }
++    session
++        .abort_all_tasks(codex_protocol::protocol::TurnAbortReason::Interrupted)
++        .await;
++}
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
 index ea4dee313..a4f6f78b3 100644
 --- a/codex-rs/core/src/thread_manager.rs
@@ -27853,7 +28192,7 @@ index 45f586651..386c5fdd7 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 5dfc3ad7b..5d8d9f25d 100644
+index 5dfc3ad7b..b8a419985 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -233,6 +233,10 @@ mod link_hover;
@@ -27927,7 +28266,18 @@ index 5dfc3ad7b..5d8d9f25d 100644
                      if self.backtrack.primed && !pasted.is_empty() {
                          if self.backtrack.overlay_preview_active {
                              self.cancel_transcript_browsing(tui);
-@@ -1168,7 +1195,84 @@ impl App {
+@@ -1153,6 +1180,10 @@ impl App {
+         }
+         // Both transcript owners must consume completions before automatic work advances.
+         if idle_draw {
++            if crate::mod_surface::complete_clipboard(tui.clipboard.poll().cloned()) {
++                tui.frame_requester()
++                    .schedule_frame_in(std::time::Duration::from_millis(50));
++            }
+             tui.clipboard.advance(tui.frame_requester());
+         }
+         Ok(AppRunControl::Continue)
+@@ -1168,7 +1199,84 @@ impl App {
          Ok(())
      }
 
@@ -28012,7 +28362,7 @@ index 5dfc3ad7b..5d8d9f25d 100644
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1188,33 +1292,47 @@ impl App {
+@@ -1188,33 +1296,47 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -28067,7 +28417,7 @@ index 5dfc3ad7b..5d8d9f25d 100644
              Ok(rendered_area)
          })
      }
-@@ -1224,6 +1342,7 @@ impl App {
+@@ -1224,6 +1346,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -28212,6 +28562,19 @@ index 1c6a9b00f..95e7c372f 100644
              | ServerRequest::ApplyPatchApproval { .. }
              | ServerRequest::ExecCommandApproval { .. } => false,
          }
+diff --git a/codex-rs/tui/src/app/clipboard.rs b/codex-rs/tui/src/app/clipboard.rs
+index 0ecad1d8b..1505cf376 100644
+--- a/codex-rs/tui/src/app/clipboard.rs
++++ b/codex-rs/tui/src/app/clipboard.rs
+@@ -35,6 +35,8 @@ impl App {
+     pub(super) fn finish_clipboard(&mut self, tui: &mut tui::Tui, event: &TuiEvent) {
+         let current = tui.is_owned_screen() && self.overlay.is_none();
+         if let Some(completion) = tui.clipboard.poll() {
++            // Consume mod receipts before this input event can start another copy.
++            crate::mod_surface::complete_clipboard(Some(completion.clone()));
+             if let Some(characters) = self.chat_widget.finish_clipboard(completion, current) {
+                 self.transcript_view
+                     .show_copy_feedback(&completion.1, characters);
 diff --git a/codex-rs/tui/src/app/empty_state_animation_tests.rs b/codex-rs/tui/src/app/empty_state_animation_tests.rs
 index a1a9a66c1..edb47d77e 100644
 --- a/codex-rs/tui/src/app/empty_state_animation_tests.rs
@@ -35317,6 +35680,36 @@ index cfa2d8623..da410cdc6 100644
      /// Optional user prompt to start the session.
      #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
      pub prompt: Option<String>,
+diff --git a/codex-rs/tui/src/clipboard_copy/worker.rs b/codex-rs/tui/src/clipboard_copy/worker.rs
+index b86047441..67748ecc2 100644
+--- a/codex-rs/tui/src/clipboard_copy/worker.rs
++++ b/codex-rs/tui/src/clipboard_copy/worker.rs
+@@ -221,6 +221,25 @@ impl ClipboardWorker {
+         Ok(CopyStatus::Pending(id))
+     }
+
++    #[cfg(test)]
++    pub(crate) fn mock_copy_backend(&mut self, frames: FrameRequester, confirmed: bool) {
++        self.start(
++            frames,
++            move |_, _, _| {
++                (
++                    Ok(if confirmed {
++                        super::CopyOutcome::Copied(None)
++                    } else {
++                        super::CopyOutcome::Requested
++                    }),
++                    None,
++                )
++            },
++            |_| Err("unexpected clipboard read".into()),
++        )
++        .unwrap();
++    }
++
+     fn ensure_started(&mut self, frames: FrameRequester) -> Result<(), String> {
+         if self.requests.is_none() {
+             self.start(
 diff --git a/codex-rs/tui/src/collaboration_modes.rs b/codex-rs/tui/src/collaboration_modes.rs
 index 612a2752e..7843deaf3 100644
 --- a/codex-rs/tui/src/collaboration_modes.rs
@@ -47368,7 +47761,7 @@ index 000000000..1107a39d5
 +codex-login = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..5691bf39b
+index 000000000..5afd86ca8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2254 @@
@@ -47957,7 +48350,7 @@ index 000000000..5691bf39b
 +                    origin.clone(),
 +                    active,
 +                    |caller, call| match &dispatcher {
-+                        Some(dispatch) => dispatch(thread, caller, call, &active),
++                        Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
 +                        None => Err(std::io::Error::other(
 +                            "host_operation_unavailable: no session dispatcher",
 +                        )),
@@ -48251,7 +48644,7 @@ index 000000000..5691bf39b
 +            origin,
 +            active,
 +            |caller, call| match &dispatcher {
-+                Some(dispatch) => dispatch(thread, caller, call, &active),
++                Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
 +                None => Err(std::io::Error::other(
 +                    "host_operation_unavailable: no session dispatcher",
 +                )),
@@ -49377,7 +49770,7 @@ index 000000000..5691bf39b
 +            origin,
 +            active,
 +            |caller, call| match &dispatcher {
-+                Some(dispatch) => dispatch(&thread, caller, call, &active),
++                Some(dispatch) => dispatch(&thread, caller, None, None, call, &active),
 +                None => Err(std::io::Error::other(
 +                    "host_operation_unavailable: no session dispatcher",
 +                )),
@@ -54437,10 +54830,10 @@ index 000000000..c4f9be011
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 000000000..624325277
+index 000000000..2107c9b7a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,286 @@
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_omd::data_store::Origin;
@@ -54661,6 +55054,7 @@ index 000000000..624325277
 +    runtime_grants: Option<codex_omd::ModGrants>,
 +    workspace: &WorkspaceAuthority,
 +    data_root: &Path,
++    environment: Option<&codex_omd::host::Environment>,
 +    protected: Vec<PathBuf>,
 +    caller: &str,
 +    origin: Origin,
@@ -54677,6 +55071,7 @@ index 000000000..624325277
 +    Host {
 +        authority: &authority,
 +        data_root,
++        environment,
 +        active,
 +        record_changes,
 +    }
@@ -55584,10 +55979,10 @@ index 000000000..0c9f8faf5
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..3ef019120
+index 000000000..349addbd3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1675 @@
+@@ -0,0 +1,1694 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -55810,6 +56205,7 @@ index 000000000..3ef019120
 +    pub protected: &'a [PathBuf],
 +    pub os_access: Option<&'a codex_omd::ModOsAccess>,
 +    pub blit: Option<&'a BlitSink>,
++    pub environment: Option<&'a codex_omd::host::EnvironmentValues>,
 +}
 +
 +struct ManagedProcess {
@@ -56159,6 +56555,7 @@ index 000000000..3ef019120
 +            protected,
 +            os_access,
 +            blit,
++            environment,
 +        } = owner;
 +        if !active()
 +            || !repository.is_absolute()
@@ -56221,7 +56618,7 @@ index 000000000..3ef019120
 +                    #[serde(default)]
 +                    keys: Option<String>,
 +                }
-+                let input: Input =
++                let mut input: Input =
 +                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
 +                let component = |id: &String| {
 +                    !id.is_empty()
@@ -56316,6 +56713,15 @@ index 000000000..3ef019120
 +                {
 +                    return Err("process_program_or_arguments_invalid".into());
 +                }
++                if let Some(environment) = environment {
++                    codex_omd::host::validate_environment(environment)?;
++                    for (name, value) in environment {
++                        input
++                            .environment
++                            .entry(name.clone())
++                            .or_insert_with(|| Some(value.clone()));
++                    }
++                }
 +                let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
 +                if !metadata.is_file()
 +                    || metadata.len() > 128 * 1024 * 1024
@@ -56405,6 +56811,10 @@ index 000000000..3ef019120
 +                            command
 +                        }
 +                    };
++                    command
++                        .env("TMPDIR", &scratch)
++                        .env("XDG_CACHE_HOME", &scratch)
++                        .env("PYTHONDONTWRITEBYTECODE", "1");
 +                    for (name, value) in &input.environment {
 +                        match value {
 +                            Some(value) => {
@@ -56417,9 +56827,6 @@ index 000000000..3ef019120
 +                    }
 +                    let mut child = command
 +                        .current_dir(repository)
-+                        .env("TMPDIR", &scratch)
-+                        .env("XDG_CACHE_HOME", &scratch)
-+                        .env("PYTHONDONTWRITEBYTECODE", "1")
 +                        .stdin(Stdio::piped())
 +                        .stdout(Stdio::piped())
 +                        .stderr(Stdio::null())
@@ -56784,6 +57191,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: None,
 +            blit: None,
 +        };
@@ -56850,6 +57258,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: None,
 +            blit: None,
 +        };
@@ -56901,6 +57310,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: Some(&access),
 +            blit: Some(&sink),
 +        };
@@ -56995,6 +57405,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: Some(&access),
 +            blit: None,
 +        };
@@ -57104,6 +57515,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: Some(&access),
 +            blit: None,
 +        };
@@ -57145,6 +57557,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: None,
 +            blit: None,
 +        };
@@ -57234,6 +57647,7 @@ index 000000000..3ef019120
 +            repository: &repository,
 +            policy: &policy,
 +            protected: &[],
++            environment: None,
 +            os_access: None,
 +            blit: None,
 +        };
@@ -57265,10 +57679,10 @@ index 000000000..3ef019120
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..90e1acf18
+index 000000000..4fdb478ab
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2386 @@
+@@ -0,0 +1,2380 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -57425,6 +57839,7 @@ index 000000000..90e1acf18
 +    host: Arc<Host>,
 +    runtime: Arc<Mutex<ModHost>>,
 +    input_runtime: Arc<Mutex<ModHost>>,
++    environment: Arc<codex_omd::host::Environment>,
 +    agents: agents::Agents,
 +    services: services::Services,
 +    views: Arc<view::Views>,
@@ -57695,6 +58110,7 @@ index 000000000..90e1acf18
 +            host,
 +            runtime,
 +            input_runtime,
++            environment: Arc::default(),
 +            services: services::Services::default(),
 +            views,
 +            expansion: expansion::State::default(),
@@ -59191,15 +59607,11 @@ index 000000000..90e1acf18
 +            }
 +            self.host.accounts.forget_thread(&lead.thread.to_string());
 +            expansion::release_thread(self, lead.thread);
-+            codex_omd::host::clear_environment(
-+                &self.host.root,
-+                Some(&lead.thread.to_string()),
-+                None,
-+            );
 +            if let Ok(mut invokers) = self.expansion.invokers.lock() {
 +                invokers.remove(&lead.thread.to_string());
 +            }
 +            if lead.owner != "lead" {
++                self.environment.clear(Some(&lead.thread.to_string()), None);
 +                return;
 +            }
 +            self.expansion.forget_inventory(lead.thread);
@@ -59214,11 +59626,7 @@ index 000000000..90e1acf18
 +            .await;
 +            self.event("stop", Value::Null, Some(&*lead)).await;
 +            expansion::release_thread(self, lead.thread);
-+            codex_omd::host::clear_environment(
-+                &self.host.root,
-+                Some(&lead.thread.to_string()),
-+                None,
-+            );
++            self.environment.clear(Some(&lead.thread.to_string()), None);
 +            lead.session.processes.cleanup();
 +            lead.session.access.cleanup();
 +            let _ = lead.session.persist_cost_capture();
@@ -60426,10 +60834,10 @@ index 000000000..bfbebeaa6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..483a60ab2
+index 000000000..f10c879cc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2536 @@
+@@ -0,0 +1,2560 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -61535,12 +61943,16 @@ index 000000000..483a60ab2
 +            .attest_execution(caller, lead.thread, candidate, evidence, outcome)
 +    }
 +
++    #[expect(clippy::too_many_arguments)]
 +    pub(super) async fn execute_snapshot(
 +        &self,
 +        lead: &Lead,
 +        caller: &operations::Caller<'_>,
 +        mut arguments: Value,
 +        cancelled: &Arc<AtomicBool>,
++        environment: Arc<codex_omd::host::Environment>,
++        mut authority: crate::workspace_operations::WorkspaceAuthority,
++        policy: Option<codex_protocol::models::PermissionProfile>,
 +    ) -> Result<Value, String> {
 +        if !caller
 +            .grants
@@ -61562,15 +61974,19 @@ index 000000000..483a60ab2
 +                .map_err(|_| "snapshot_lock_poisoned")?;
 +            snapshots.get(caller, lead.thread, &reference)?
 +        };
-+        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
++        let parent_permissions = authority.context.permissions.clone();
++        if let Some(policy) = &policy {
++            let permissions =
++                execution::intersect(&parent_permissions, policy, &authority.repository)?;
++            authority.policy = permissions.file_system_sandbox_policy();
++            authority.context.permissions = permissions;
++        }
 +        snapshots::permitted(&snapshot, &authority, &lead.host.protected_paths())?;
 +        let mut parent = (*parent_config(lead).await?).clone();
 +        parent
 +            .permissions
 +            .set_permission_profile_from_session_snapshot(
-+                codex_protocol::models::PermissionProfileSnapshot::legacy(
-+                    authority.context.permissions,
-+                ),
++                codex_protocol::models::PermissionProfileSnapshot::legacy(parent_permissions),
 +            )
 +            .map_err(|error| error.to_string())?;
 +        let session = lead.session.clone();
@@ -61594,14 +62010,25 @@ index 000000000..483a60ab2
 +            let mut cleanup = IntegrationScratch { parent: session.scratch.clone(), directory: Some(directory.clone()) };
 +            let root = codex_omd::create_worktree(&snapshot, &directory, host.config.snapshot_bytes).map_err(|e| e.to_string())?;
 +            let config = execution::isolated(&parent, &root, &host.config.toolchain_reads, &host.protected_paths(), arguments["write"] == true)?;
-+            let profile = config.permissions.effective_permission_profile();
++            let mut profile = config.permissions.effective_permission_profile();
++            if let Some(policy) = &policy {
++                profile = execution::intersect(&profile, policy, &host.repository)?;
++            }
 +            let workspace = crate::workspace_operations::WorkspaceAuthority {
 +                repository: root.clone(), session_root: None, session_database: None,
 +                policy: profile.file_system_sandbox_policy(),
 +                context: codex_file_system::FileSystemSandboxContext::from_permission_profile(profile,
 +                    codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)),
 +            };
-+            let result = crate::generic_host::call(grants, &workspace, &host.root, host.protected_paths(),
++            let declared = &grants.as_ref().ok_or("host_caller_inactive")?.exec_environment;
++            let environment = environment.snapshot(&thread.to_string(), &id, &source, declared)?;
++            let mut effective = environment.values(Some(&thread.to_string()), &id, &source, declared)?;
++            let explicit: codex_omd::host::EnvironmentValues = serde_json::from_value(
++                arguments.get("env").cloned().unwrap_or_else(|| json!({})))
++                .map_err(|error| error.to_string())?;
++            effective.extend(explicit.clone());
++            let environment_evidence = codex_omd::host::environment_evidence(&effective);
++            let result = crate::generic_host::call(grants, &workspace, &host.root, Some(&environment), host.protected_paths(),
 +                &id, origin, Some(&thread.to_string()), codex_omd::ModHostCall {
 +                    operation: "exec.run".into(), arguments: arguments.clone(),
 +                }, &active, false)?;
@@ -61610,9 +62037,14 @@ index 000000000..483a60ab2
 +                return Err("snapshot_execution_changed_source".into());
 +            }
 +            if !active() { return Err("snapshot_execution_cancelled".into()); }
++            let mut recorded_arguments = arguments;
++            if recorded_arguments.get("env").is_some() {
++                recorded_arguments["env"] = codex_omd::host::environment_evidence(&explicit);
++            }
 +            let recorded = session.evidence(&format!("execution-{}.json", ThreadId::new()),
 +                &json!({"caller": id, "source_sha256": source, "generation": generation, "thread": thread,
-+                    "candidate_sha256": candidate, "arguments": arguments, "result": result}))?;
++                    "candidate_sha256": candidate, "arguments": recorded_arguments,
++                    "environment": environment_evidence, "result": result}))?;
 +            let sha = recorded["sha256"].as_str().ok_or("execution_digest_missing")?.to_owned();
 +            let evidence = codex_omd::resource_data::ResourceRef { reference: format!("execution:{sha}"), sha256: sha };
 +            cleanup.cleanup()?;
@@ -63997,10 +64429,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..ff73c2a21
+index 000000000..1b79d0ba8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,741 @@
+@@ -0,0 +1,778 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -64064,7 +64496,7 @@ index 000000000..ff73c2a21
 +    "events.cancel",
 +];
 +
-+type Timers = BTreeMap<(String, String, String), (String, tokio::task::JoinHandle<()>)>;
++type Timers = BTreeMap<(String, String, String), (String, u64, tokio::task::JoinHandle<()>)>;
 +
 +#[derive(Default)]
 +pub(super) struct State {
@@ -64094,6 +64526,7 @@ index 000000000..ff73c2a21
 +    pending: Mutex<std::collections::VecDeque<delivery::Pending>>,
 +    dropped: AtomicU64,
 +    timers: Mutex<Timers>,
++    timer_sequence: AtomicU64,
 +    timer_deliveries: Mutex<std::collections::HashMap<(ThreadId, String), std::time::Instant>>,
 +    core: std::sync::OnceLock<std::sync::Weak<Core>>,
 +    pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
@@ -64341,7 +64774,20 @@ index 000000000..ff73c2a21
 +    event: &'static str,
 +    payload: Value,
 +) -> Option<Result<Value, String>> {
++    invoke_one_guarded(core, lead, id, event, payload, None).await
++}
++
++async fn invoke_one_guarded(
++    core: &Core,
++    lead: &Lead,
++    id: String,
++    event: &'static str,
++    payload: Value,
++    timer: Option<(String, String, u64)>,
++) -> Option<Result<Value, String>> {
 +    let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
++    let timer_core = core.this.upgrade()?;
++    let timer_thread = lead.thread.to_string();
 +    run(
 +        core,
 +        lead,
@@ -64350,6 +64796,29 @@ index 000000000..ff73c2a21
 +        move |runtime, host, active| {
 +            let (generation, before) = {
 +                let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
++                if let Some((key, source, incarnation)) = &timer {
++                    // Validate source and schedule identity at the generation capture boundary.
++                    let mut timers = timer_core
++                        .expansion
++                        .timers
++                        .lock()
++                        .map_err(|_| "timer_state_poisoned")?;
++                    let slot = (timer_thread.clone(), id.clone(), key.clone());
++                    if timers
++                        .get(&slot)
++                        .is_none_or(|(_, current, _)| current != incarnation)
++                    {
++                        return Ok(Value::Null);
++                    }
++                    timers.remove(&slot);
++                    if !runtime
++                        .owners()
++                        .iter()
++                        .any(|(owner, active)| owner == &id && active.sha256 == *source)
++                    {
++                        return Ok(Value::Null);
++                    }
++                }
 +                if !runtime.registered(&id, event) {
 +                    return Ok(Value::Null);
 +                }
@@ -65440,10 +65909,10 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..f871a88f7
+index 000000000..2321b43e2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,721 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -65472,10 +65941,12 @@ index 000000000..f871a88f7
 +        owner: String,
 +        key: String,
 +        source: String,
++        incarnation: u64,
 +    },
 +}
 +
-+pub(super) fn push(state: &State, pending: Pending) {
++pub(super) fn push(state: &State, pending: Pending) -> bool {
++    let mut admitted = false;
 +    if let Ok(mut queue) = state.pending.lock() {
 +        if let Pending::Timer {
 +            thread, owner, key, ..
@@ -65503,13 +65974,41 @@ index 000000000..f871a88f7
 +            && session == last_session
 +        {
 +            *total = total.saturating_add(*bytes);
++            admitted = true;
 +        } else if queue.len() < 1024 {
 +            queue.push_back(pending);
++            admitted = true;
 +        } else {
 +            state.dropped.fetch_add(1, Ordering::Relaxed);
 +        }
 +    }
 +    state.wake.notify_one();
++    admitted
++}
++
++// The slot lock serializes producers with replacement/cancellation and quota accounting.
++pub(super) fn push_timer(state: &State, pending: Pending) {
++    let Pending::Timer {
++        thread,
++        owner,
++        key,
++        incarnation,
++        ..
++    } = &pending
++    else {
++        return;
++    };
++    let Ok(mut timers) = state.timers.lock() else {
++        return;
++    };
++    let slot = (thread.to_string(), owner.clone(), key.clone());
++    if timers
++        .get(&slot)
++        .is_some_and(|(_, current, _)| current == incarnation)
++        && !push(state, pending)
++    {
++        timers.remove(&slot);
++    }
 +}
 +
 +pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Option<ThreadId>) {
@@ -65756,19 +66255,29 @@ index 000000000..f871a88f7
 +            owner,
 +            key,
 +            source,
++            incarnation,
 +        } => {
 +            let Some(lead) = core.expansion.thread(thread) else {
++                if let Ok(mut timers) = core.expansion.timers.lock() {
++                    let slot = (thread.to_string(), owner, key);
++                    if timers
++                        .get(&slot)
++                        .is_some_and(|(_, current, _)| *current == incarnation)
++                    {
++                        timers.remove(&slot);
++                    }
++                }
 +                return;
 +            };
-+            if !core.runtime.lock().is_ok_and(|runtime| {
-+                runtime
-+                    .owners()
-+                    .iter()
-+                    .any(|(id, active)| id == &owner && active.sha256 == source)
-+            }) {
-+                return;
-+            }
-+            invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
++            invoke_one_guarded(
++                core,
++                &lead,
++                owner,
++                "timer",
++                json!({"key": key}),
++                Some((key, source, incarnation)),
++            )
++            .await;
 +        }
 +    }
 +}
@@ -65969,7 +66478,6 @@ index 000000000..f871a88f7
 +        .timers
 +        .lock()
 +        .map_err(|_| "timer_state_poisoned")?;
-+    timers.retain(|_, (_, task)| !task.is_finished());
 +    let slot = (
 +        lead.thread.to_string(),
 +        caller.id.to_owned(),
@@ -65992,21 +66500,28 @@ index 000000000..f871a88f7
 +        });
 +    }
 +    let source = caller.source.to_owned();
++    let incarnation = core
++        .expansion
++        .timer_sequence
++        .fetch_add(1, Ordering::Relaxed);
 +    let task = tokio::spawn(async move {
 +        tokio::time::sleep(std::time::Duration::from_millis(input.delay_ms)).await;
 +        if let Some(core) = weak.upgrade() {
-+            push(
++            push_timer(
 +                &core.expansion,
 +                Pending::Timer {
 +                    thread,
 +                    owner,
 +                    key,
 +                    source,
++                    incarnation,
 +                },
 +            );
 +        }
 +    });
-+    if let Some((_, previous)) = timers.insert(slot, (caller.source.to_owned(), task)) {
++    if let Some((_, _, previous)) =
++        timers.insert(slot, (caller.source.to_owned(), incarnation, task))
++    {
 +        previous.abort();
 +    }
 +    Ok(json!({"key": input.key, "delay_ms": input.delay_ms}))
@@ -66019,13 +66534,13 @@ index 000000000..f871a88f7
 +    arguments: &Value,
 +) -> Result<Value, String> {
 +    let key = arguments["key"].as_str().ok_or("timer_invalid")?;
-+    let removed = core
++    let mut timers = core
 +        .expansion
 +        .timers
 +        .lock()
-+        .map_err(|_| "timer_state_poisoned")?
-+        .remove(&(lead.thread.to_string(), caller.to_owned(), key.to_owned()));
-+    if let Some((_, task)) = &removed {
++        .map_err(|_| "timer_state_poisoned")?;
++    let removed = timers.remove(&(lead.thread.to_string(), caller.to_owned(), key.to_owned()));
++    if let Some((_, _, task)) = &removed {
 +        task.abort();
 +    }
 +    let mut cancelled = removed.is_some();
@@ -66041,24 +66556,24 @@ index 000000000..f871a88f7
 +}
 +
 +pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
-+    codex_omd::host::retain_environment(&core.host.root, sources);
-+    if let Ok(mut queue) = core.expansion.pending.lock() {
-+        queue.retain(|item| {
-+            !matches!(item, Pending::Timer { owner, source, .. }
-+            if sources.get(owner) != Some(source))
-+        });
-+    }
-+    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
-+        rates.retain(|(_, owner), _| sources.contains_key(owner));
-+    }
++    core.environment.retain(sources);
 +    if let Ok(mut timers) = core.expansion.timers.lock() {
-+        timers.retain(|(_, owner, _), (source, task)| {
++        timers.retain(|(_, owner, _), (source, _, task)| {
 +            let keep = sources.get(owner) == Some(source);
 +            if !keep {
 +                task.abort();
 +            }
 +            keep
 +        });
++        if let Ok(mut queue) = core.expansion.pending.lock() {
++            queue.retain(|item| {
++                !matches!(item, Pending::Timer { owner, source, .. }
++                    if sources.get(owner) != Some(source))
++            });
++        }
++    }
++    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
++        rates.retain(|(_, owner), _| sources.contains_key(owner));
 +    }
 +    if let Ok(watches) = core.expansion.watches.lock()
 +        && let Some(watches) = watches.as_ref()
@@ -66068,7 +66583,7 @@ index 000000000..f871a88f7
 +}
 +
 +pub(in crate::mods) fn release_owner(core: &Core, owner: &str) {
-+    codex_omd::host::clear_environment(&core.host.root, None, Some(owner));
++    core.environment.clear(None, Some(owner));
 +    clear_timers(core, None, Some(owner));
 +    if let Ok(watches) = core.expansion.watches.lock()
 +        && let Some(watches) = watches.as_ref()
@@ -66086,7 +66601,7 @@ index 000000000..f871a88f7
 +        thread.is_none_or(|thread| thread.to_string() == t) && owner.is_none_or(|owner| owner == id)
 +    };
 +    if let Ok(mut timers) = core.expansion.timers.lock() {
-+        timers.retain(|(t, id, _), (_, task)| {
++        timers.retain(|(t, id, _), (_, _, task)| {
 +            if matches(t, id) {
 +                task.abort();
 +                false
@@ -66094,12 +66609,12 @@ index 000000000..f871a88f7
 +                true
 +            }
 +        });
-+    }
-+    if let Ok(mut queue) = core.expansion.pending.lock() {
-+        queue.retain(|item| {
-+            !matches!(item, Pending::Timer { thread, owner, .. }
-+            if matches(&thread.to_string(), owner))
-+        });
++        if let Ok(mut queue) = core.expansion.pending.lock() {
++            queue.retain(|item| {
++                !matches!(item, Pending::Timer { thread, owner, .. }
++                if matches(&thread.to_string(), owner))
++            });
++        }
 +    }
 +    if let Ok(mut rates) = core.expansion.timer_deliveries.lock() {
 +        rates.retain(|(thread, owner), _| !matches(&thread.to_string(), owner));
@@ -66728,10 +67243,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..af0f8351b
+index 000000000..dcc4fae21
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,3917 @@
+@@ -0,0 +1,4625 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -66769,7 +67284,7 @@ index 000000000..af0f8351b
 +    let path = path.canonicalize().unwrap();
 +    let inspected = ModStore::inspect_package(&path).unwrap();
 +    store
-+        .trust(
++        .trust_with_secrets(
 +            path.clone(),
 +            inspected["sha256"].as_str().unwrap(),
 +            package
@@ -66778,6 +67293,14 @@ index 000000000..af0f8351b
 +                .map(|c| (*c).to_owned())
 +                .collect(),
 +            "user",
++            manifest["exec_environment"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .filter_map(Value::as_str)
++                .filter(|name| codex_omd::host::secret_like(name))
++                .map(str::to_owned)
++                .collect(),
 +        )
 +        .unwrap();
 +    store.enable(&path, true).unwrap();
@@ -66818,6 +67341,7 @@ index 000000000..af0f8351b
 +        host: host.clone(),
 +        runtime,
 +        input_runtime,
++        environment: Arc::default(),
 +        services: services::Services::default(),
 +        views,
 +        expansion: State::default(),
@@ -66868,10 +67392,18 @@ index 000000000..af0f8351b
 +}
 +
 +async fn attach_thread(fixture: &mut Fixture) -> Arc<codex_core::ThreadManager> {
++    attach_thread_with_sandbox_mode(fixture, None).await
++}
++
++async fn attach_thread_with_sandbox_mode(
++    fixture: &mut Fixture,
++    sandbox_mode: Option<codex_protocol::config_types::SandboxMode>,
++) -> Arc<codex_core::ThreadManager> {
 +    let mut config = codex_core::config::ConfigBuilder::default()
 +        .codex_home(fixture._dir.path().join("codex"))
 +        .harness_overrides(codex_core::config::ConfigOverrides {
 +            cwd: Some(fixture.lead.host.repository.clone()),
++            sandbox_mode,
 +            ..Default::default()
 +        })
 +        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
@@ -67005,6 +67537,35 @@ index 000000000..af0f8351b
 +            json!({"accepted": false})
 +        );
 +    }
++    let (grants, generation) = {
++        let runtime = fixture.core.runtime.lock().unwrap();
++        (runtime.grants("control"), runtime.generation())
++    };
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let cancelled = Arc::new(AtomicBool::new(true));
++    assert_eq!(
++        super::operations::dispatch(
++            &fixture.core,
++            &fixture.lead,
++            Caller {
++                id: "control",
++                source: &source,
++                grants,
++                generation,
++                origin: Origin::Event,
++                record_changes: false,
++            },
++            None,
++            ModHostCall {
++                operation: "turns.abort".into(),
++                arguments: json!({"turn_id": "stale"}),
++            },
++            &cancelled,
++        )
++        .await
++        .unwrap_err(),
++        "callback_cancelled"
++    );
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -67012,7 +67573,7 @@ index 000000000..af0f8351b
 +    let Some(mut fixture) = fixture(&[Package {
 +        id: "control",
 +        capabilities: &["exec"],
-+        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
++        manifest: json!({"exec_environment": ["FIXTURE_VALUE", "PYTHONDONTWRITEBYTECODE", "E0", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"]}),
 +        source: "export default () => {}",
 +    }]) else {
 +        return;
@@ -67068,16 +67629,115 @@ index 000000000..af0f8351b
 +    )
 +    .await
 +    .unwrap();
++    for name in [
++        "PYTHONDONTWRITEBYTECODE",
++        "E0",
++        "E1",
++        "E2",
++        "E3",
++        "E4",
++        "E5",
++        "E6",
++        "E7",
++        "E8",
++    ] {
++        control_call(
++            &fixture,
++            Origin::Event,
++            "environment.set",
++            json!({"name": name, "value": "0"}),
++        )
++        .await
++        .unwrap();
++    }
 +    assert!(
 +        control_call(
 +            &fixture,
 +            Origin::Event,
 +            "process.start",
-+            json!({"session": "large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"]})
++            json!({"session": "large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"],
++                "arguments": ["-c", "printf '{\"length\":%s,\"python\":\"%s\"}\\n' \"${#FIXTURE_VALUE}\" \"$PYTHONDONTWRITEBYTECODE\"; read marker"], "framing": "ndjson"})
 +        )
 +        .await
-+        .is_err()
++        .is_ok()
 +    );
++    let result = control_call(
++        &fixture,
++        Origin::Event,
++        "process.exchange",
++        json!({"session": "large", "wait_ms": 1000}),
++    )
++    .await
++    .unwrap();
++    assert_eq!(
++        result["messages"][0],
++        json!({"length": 1025, "python": "0"})
++    );
++    control_call(
++        &fixture,
++        Origin::Event,
++        "process.stop",
++        json!({"session": "large"}),
++    )
++    .await
++    .unwrap();
++    assert!(control_call(&fixture, Origin::Event, "process.start", json!({"session": "explicit_large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": {"FIXTURE_VALUE": "x".repeat(1025)}})).await.is_err());
++    for name in [
++        "FIXTURE_VALUE",
++        "PYTHONDONTWRITEBYTECODE",
++        "E0",
++        "E1",
++        "E2",
++        "E3",
++        "E4",
++        "E5",
++        "E6",
++        "E7",
++        "E8",
++    ] {
++        control_call(
++            &fixture,
++            Origin::Event,
++            "environment.set",
++            json!({"name": name, "value": null}),
++        )
++        .await
++        .unwrap();
++    }
++    for name in ["FIXTURE_VALUE", "E0", "E1", "E2"] {
++        control_call(
++            &fixture,
++            Origin::Event,
++            "environment.set",
++            json!({"name": name, "value": "y".repeat(4096)}),
++        )
++        .await
++        .unwrap();
++    }
++    control_call(&fixture, Origin::Event, "process.start", json!({"session": "separate_bounds", "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": {"E3": "z".repeat(1024)},
++        "arguments": ["-c", "printf '{\"persistent\":%s,\"explicit\":%s}\\n' \"${#FIXTURE_VALUE}\" \"${#E3}\"; read marker"], "framing": "ndjson"})).await.unwrap();
++    let result = control_call(
++        &fixture,
++        Origin::Event,
++        "process.exchange",
++        json!({"session": "separate_bounds", "wait_ms": 1000}),
++    )
++    .await
++    .unwrap();
++    assert_eq!(
++        result["messages"][0],
++        json!({"persistent": 4096, "explicit": 1024})
++    );
++    control_call(
++        &fixture,
++        Origin::Event,
++        "process.stop",
++        json!({"session": "separate_bounds"}),
++    )
++    .await
++    .unwrap();
++    let result = control_call(&fixture, Origin::Event, "exec.run", json!({"program": "sh", "argv": ["-c", "printf '%s:%s' \"${#FIXTURE_VALUE}\" \"${#E3}\""], "env": {"E3": "z".repeat(1024)}})).await.unwrap();
++    assert_eq!(result["stdout"], "4096:1024");
 +    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
 +    let package = fixture
 +        ._dir
@@ -67087,6 +67747,10 @@ index 000000000..af0f8351b
 +        .unwrap();
 +    store.enable(&package, false).unwrap();
 +    fixture.core.runtime.lock().unwrap().reload().unwrap();
++    fixture
++        .core
++        .event("idle", Value::Null, Some(&fixture.lead))
++        .await;
 +    store.enable(&package, true).unwrap();
 +    fixture.core.runtime.lock().unwrap().reload().unwrap();
 +    let value = control_call(
@@ -67097,7 +67761,354 @@ index 000000000..af0f8351b
 +    )
 +    .await
 +    .unwrap();
-+    assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "x".repeat(1025));
++    assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "y".repeat(4096));
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["exec", "fs.read", "fs.write"],
++        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
++        source: "export default () => {}",
++    }]) else {
++        return;
++    };
++    let _manager = attach_thread_with_sandbox_mode(
++        &mut fixture,
++        Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
++    )
++    .await;
++    fixture.core.expansion.thread_started(&fixture.lead);
++    super::intercept::install_dispatcher(&fixture.core);
++    let source = fixture
++        .core
++        .runtime
++        .lock()
++        .unwrap()
++        .grants("control")
++        .unwrap()
++        .source_sha256;
++    let thread = fixture.lead.thread.to_string();
++    let call = |source: &str, operation: &str, arguments: Value| {
++        codex_omd::host::session_call(
++            &thread,
++            "control",
++            Some(source),
++            None,
++            ModHostCall {
++                operation: operation.into(),
++                arguments,
++            },
++            &|| true,
++        )
++    };
++    call(
++        &source,
++        "environment.set",
++        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
++    )
++    .unwrap();
++    for (operation, arguments) in [
++        ("environment.read", json!({"names": ["FIXTURE_VALUE"]})),
++        (
++            "environment.set",
++            json!({"name": "FIXTURE_VALUE", "value": "foreign"}),
++        ),
++    ] {
++        assert_eq!(
++            call("different-source", operation, arguments)
++                .unwrap_err()
++                .to_string(),
++            "host_caller_source_changed"
++        );
++    }
++    let value = call(
++        &source,
++        "environment.read",
++        json!({"names": ["FIXTURE_VALUE"]}),
++    )
++    .unwrap();
++    assert_eq!(value["values"]["FIXTURE_VALUE"]["value"], "scoped");
++    let write = json!({"program": "sh", "argv": ["-c", "printf forbidden > scoped-policy-proof"], "write": true});
++    let result = call(&source, "exec.run", write.clone()).unwrap();
++    assert_eq!(result["exit_code"], 0);
++    let proof = fixture.lead.host.repository.join("scoped-policy-proof");
++    assert_eq!(std::fs::read_to_string(&proof).unwrap(), "forbidden");
++    std::fs::remove_file(&proof).unwrap();
++    let policy =
++        serde_json::to_value(codex_protocol::models::PermissionProfile::read_only()).unwrap();
++    let read = codex_omd::host::session_call(
++        &thread,
++        "control",
++        Some(&source),
++        Some(&policy),
++        ModHostCall {
++            operation: "exec.run".into(),
++            arguments: json!({"program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""]}),
++        },
++        &|| true,
++    )
++    .unwrap();
++    assert_eq!(read["exit_code"], 0);
++    assert_eq!(read["stdout"], "scoped");
++    assert!(
++        std::process::Command::new("git")
++            .args(["init", "--quiet"])
++            .current_dir(&fixture.lead.host.repository)
++            .status()
++            .unwrap()
++            .success()
++    );
++    let snapshot = control_call(&fixture, Origin::Event, "workspace.snapshot", json!({}))
++        .await
++        .unwrap();
++    let read_snapshot = codex_omd::host::session_call(
++        &thread, "control", Some(&source), Some(&policy), ModHostCall {
++            operation: "exec.run".into(),
++            arguments: json!({"snapshot": snapshot["snapshot"], "program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""]}),
++        }, &|| true,
++    ).unwrap();
++    assert_eq!(read_snapshot["exit_code"], 0);
++    assert_eq!(read_snapshot["stdout"], "scoped");
++    let denied = codex_omd::host::session_call(
++        &thread,
++        "control",
++        Some(&source),
++        Some(&policy),
++        ModHostCall {
++            operation: "exec.run".into(),
++            arguments: write,
++        },
++        &|| true,
++    )
++    .unwrap_err();
++    assert_eq!(denied.to_string(), "exec_cwd_unavailable");
++    assert!(
++        !fixture
++            .lead
++            .host
++            .repository
++            .join("scoped-policy-proof")
++            .exists()
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn scoped_environment_pre_rename_children_keep_mod_and_thread_scope() {
++    let source = r#"export default api => api.on('workspace_pre_rename', () => {
++      const sh = api.host.call('process.which', { names: ['sh'] }).found[0];
++      api.host.call('process.start', { session: 'rename', name: 'sh', path: sh.path, sha256: sh.sha256,
++        arguments: ['-c', 'printf \'{"value":"%s"}\\n\' "${FIXTURE_VALUE-unset}"; read marker'], framing: 'ndjson' });
++      const result = api.host.call('process.exchange', { session: 'rename', wait_ms: 1000 });
++      api.state.set(result.messages[0].value);
++      api.host.call('process.stop', { session: 'rename' });
++      return { status: 'fallback', reason: 'fixture' };
++    });"#;
++    let manifest = json!({"exec_environment": ["FIXTURE_VALUE"]});
++    let capabilities = &["exec", "fs.read", "fs.write", "store"];
++    let Some(mut fixture) = fixture(&[
++        Package {
++            id: "control",
++            capabilities,
++            manifest: manifest.clone(),
++            source,
++        },
++        Package {
++            id: "observer",
++            capabilities,
++            manifest,
++            source,
++        },
++    ]) else {
++        return;
++    };
++    let _manager = attach_thread(&mut fixture).await;
++    std::fs::write(fixture.lead.host.repository.join("old.ts"), "export {};\n").unwrap();
++    control_call(
++        &fixture,
++        Origin::Event,
++        "environment.set",
++        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
++    )
++    .await
++    .unwrap();
++    for (thread, expected) in [
++        (fixture.lead.thread.to_string(), "scoped"),
++        (ThreadId::new().to_string(), "unset"),
++    ] {
++        let authority = crate::workspace_operations::WorkspaceAuthority::for_platform(
++            &fixture.lead.host.repository,
++            PermissionProfile::from_runtime_permissions(
++                &codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted(),
++                codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
++            ),
++        )
++        .unwrap();
++        let runtime = fixture.core.input_runtime.clone();
++        let processes = fixture.lead.session.processes.clone();
++        let environment = fixture.core.environment.clone();
++        let result = tokio::task::spawn_blocking(move || {
++            let mut runtime = runtime.lock().unwrap();
++            let generation = runtime.generation();
++            authority.request_rename(
++                json!({"old": "old.ts", "new": "new.ts"}),
++                &mut runtime,
++                &processes,
++                &[],
++                generation,
++                &thread,
++                &environment,
++                || true,
++            )
++        })
++        .await
++        .unwrap()
++        .unwrap();
++        assert_eq!(result["status"], "fallback");
++        let runtime = fixture.core.input_runtime.lock().unwrap();
++        assert_eq!(runtime.state("control"), Some(&json!(expected)));
++        assert_eq!(runtime.state("observer"), Some(&json!("unset")));
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn scoped_environment_survives_observer_reload_and_stop_callbacks() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["exec", "store", "lifecycle"],
++        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
++        source: r#"export default api => api.on('stop', () => api.state.set(api.host.call('exec.run', { program: 'sh', argv: ['-c', 'printf %s "$FIXTURE_VALUE"'] }).stdout));"#,
++    }]) else {
++        return;
++    };
++    let _manager = attach_thread(&mut fixture).await;
++    control_call(
++        &fixture,
++        Origin::Event,
++        "environment.set",
++        json!({"name": "FIXTURE_VALUE", "value": "cleanup"}),
++    )
++    .await
++    .unwrap();
++    let path = fixture.lead.host.root.join("mods.json");
++    let saved = std::fs::read(&path).unwrap();
++    let mut empty: Value = serde_json::from_slice(&saved).unwrap();
++    empty["mods"] = json!([]);
++    std::fs::write(&path, serde_json::to_vec(&empty).unwrap()).unwrap();
++    fixture.core.input_runtime.lock().unwrap().reload().unwrap();
++    std::fs::write(&path, saved).unwrap();
++    let read = control_call(
++        &fixture,
++        Origin::Event,
++        "environment.read",
++        json!({"names": ["FIXTURE_VALUE"]}),
++    )
++    .await
++    .unwrap();
++    assert_eq!(read["values"]["FIXTURE_VALUE"]["value"], "cleanup");
++    let thread_store = ExtensionData::new("thread");
++    thread_store.insert(fixture.lead.clone());
++    mods(&fixture.core)
++        .on_thread_stop(ThreadStopInput {
++            session_store: &ExtensionData::new("session"),
++            thread_store: &thread_store,
++        })
++        .await;
++    assert_eq!(
++        fixture.core.runtime.lock().unwrap().state("control"),
++        Some(&json!("cleanup"))
++    );
++    let read = control_call(
++        &fixture,
++        Origin::Event,
++        "environment.read",
++        json!({"names": ["FIXTURE_VALUE"]}),
++    )
++    .await
++    .unwrap();
++    assert_ne!(read["values"]["FIXTURE_VALUE"]["value"], "cleanup");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn scoped_environment_snapshot_execution_records_effective_values_and_secret_hashes() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["exec", "fs.read"],
++        manifest: json!({"exec_environment": ["FIXTURE_VALUE", "FIXTURE_TOKEN"]}),
++        source: "export default () => {}",
++    }]) else {
++        return;
++    };
++    let _manager = attach_thread(&mut fixture).await;
++    assert!(
++        std::process::Command::new("git")
++            .args(["init", "--quiet"])
++            .current_dir(&fixture.lead.host.repository)
++            .status()
++            .unwrap()
++            .success()
++    );
++    for (name, value) in [
++        ("FIXTURE_VALUE", "scoped"),
++        ("FIXTURE_TOKEN", "private-token"),
++    ] {
++        control_call(
++            &fixture,
++            Origin::Event,
++            "environment.set",
++            json!({"name": name, "value": value}),
++        )
++        .await
++        .unwrap();
++    }
++    let snapshot = control_call(&fixture, Origin::Event, "workspace.snapshot", json!({}))
++        .await
++        .unwrap();
++    for (explicit, expected) in [
++        (json!({}), "scoped"),
++        (json!({"FIXTURE_VALUE": "explicit"}), "explicit"),
++    ] {
++        let result = control_call(
++            &fixture,
++            Origin::Event,
++            "exec.run",
++            json!({
++                "program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""],
++                "snapshot": snapshot["snapshot"], "env": explicit,
++            }),
++        )
++        .await
++        .unwrap();
++        assert_eq!(result["exit_code"], 0);
++        assert_eq!(result["stdout"], expected);
++        let evidence = std::fs::read_dir(&fixture.lead.session.evidence)
++            .unwrap()
++            .map(|entry| entry.unwrap().path())
++            .filter(|path| {
++                path.file_name()
++                    .unwrap()
++                    .to_string_lossy()
++                    .starts_with("execution-")
++            })
++            .map(|path| std::fs::read(path).unwrap())
++            .find(|bytes| json!(crate::execution::hash(bytes)) == result["evidence"]["sha256"])
++            .unwrap();
++        let recorded: Value = serde_json::from_slice(&evidence).unwrap();
++        assert_eq!(
++            recorded["environment"]["FIXTURE_VALUE"],
++            json!({"value": expected})
++        );
++        assert_eq!(
++            recorded["environment"]["FIXTURE_TOKEN"],
++            json!({"sha256": crate::execution::hash(b"private-token")})
++        );
++        assert!(
++            !String::from_utf8(evidence)
++                .unwrap()
++                .contains("private-token")
++        );
++    }
 +}
 +
 +fn command(core: &Core, id: &str, name: &str) -> Value {
@@ -68981,6 +69992,7 @@ index 000000000..af0f8351b
 +        owner: owner.into(),
 +        key: key.into(),
 +        source: "source".into(),
++        incarnation: 0,
 +    };
 +    for item in [
 +        timer("a", "one"),
@@ -70649,12 +71661,223 @@ index 000000000..af0f8351b
 +    );
 +    assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
 +}
++
++#[tokio::test]
++async fn timer_replacement_rejects_an_old_producer_after_queue_cleanup() {
++    let state = State::default();
++    let thread = ThreadId::new();
++    let slot = (thread.to_string(), "observer".to_owned(), "tick".to_owned());
++    let task = tokio::spawn(async {});
++    // Resume an old producer after replacement installed incarnation 2 and cleared its queue.
++    state
++        .timers
++        .lock()
++        .unwrap()
++        .insert(slot, ("source".into(), 2, task));
++    let pending = |incarnation| delivery::Pending::Timer {
++        thread,
++        owner: "observer".into(),
++        key: "tick".into(),
++        source: "source".into(),
++        incarnation,
++    };
++    delivery::push_timer(&state, pending(1));
++    assert!(state.pending.lock().unwrap().is_empty());
++    delivery::push_timer(&state, pending(2));
++    assert_eq!(state.pending.lock().unwrap().len(), 1);
++    state.pending.lock().unwrap().clear();
++    for _ in 0..1024 {
++        delivery::push(
++            &state,
++            delivery::Pending::Broadcast {
++                event: "idle",
++                payload: Value::Null,
++            },
++        );
++    }
++    delivery::push_timer(&state, pending(2));
++    assert!(state.timers.lock().unwrap().is_empty());
++    assert_eq!(state.dropped.load(Ordering::Relaxed), 1);
++    for (_, (_, _, task)) in std::mem::take(&mut *state.timers.lock().unwrap()) {
++        task.abort();
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn timer_pending_ticks_keep_their_quota_after_producers_finish() {
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["events"],
++        manifest: Value::Null,
++        source: "export default function(api) { api.on('timer', () => {}); }\n",
++    }]) else {
++        return;
++    };
++    let core = &fixture.core;
++    let _ = core.expansion.core.set(Arc::downgrade(core));
++    let grants = core.runtime.lock().unwrap().grants("observer");
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let caller = Caller {
++        id: "observer",
++        source: &source,
++        grants,
++        generation: core.runtime.lock().unwrap().generation(),
++        origin: Origin::Event,
++        record_changes: false,
++    };
++    let limit = fixture.lead.host.config.mod_limits.bounded().timers_per_mod;
++    for index in 0..limit {
++        let key = format!("pending-{index}");
++        let mut task = tokio::spawn(async {});
++        (&mut task).await.unwrap();
++        core.expansion.timers.lock().unwrap().insert(
++            (
++                fixture.lead.thread.to_string(),
++                "observer".into(),
++                key.clone(),
++            ),
++            (source.clone(), index as u64, task),
++        );
++        delivery::push_timer(
++            &core.expansion,
++            delivery::Pending::Timer {
++                thread: fixture.lead.thread,
++                owner: "observer".into(),
++                key,
++                source: source.clone(),
++                incarnation: index as u64,
++            },
++        );
++    }
++    assert_eq!(
++        delivery::schedule(
++            core,
++            &fixture.lead,
++            &caller,
++            json!({"key": "overflow", "delay_ms": 100})
++        )
++        .unwrap_err(),
++        "timer_limit"
++    );
++    delivery::push(
++        &core.expansion,
++        delivery::Pending::Broadcast {
++            event: "idle",
++            payload: Value::Null,
++        },
++    );
++    assert_eq!(core.expansion.pending.lock().unwrap().len(), limit + 1);
++    assert_eq!(core.expansion.dropped.load(Ordering::Relaxed), 0);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn timer_invocation_rechecks_source_and_incarnation_at_generation_capture() {
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["events", "store", "commands"],
++        manifest: Value::Null,
++        source: "export default function(api) { api.on('timer', () => api.state.set('old')); api.command('seen', () => api.state.get()); }\n",
++    }]) else {
++        return;
++    };
++    let core = &fixture.core;
++    let old_source = core
++        .runtime
++        .lock()
++        .unwrap()
++        .grants("observer")
++        .unwrap()
++        .source_sha256
++        .clone();
++    let slot = (
++        fixture.lead.thread.to_string(),
++        "observer".to_owned(),
++        "tick".to_owned(),
++    );
++    core.expansion.timers.lock().unwrap().insert(
++        slot.clone(),
++        (old_source.clone(), 1, tokio::spawn(async {})),
++    );
++    // The old event was already popped/validated. Reload before invocation captures generation.
++    let path = fixture
++        ._dir
++        .path()
++        .join("packages/observer")
++        .canonicalize()
++        .unwrap();
++    std::fs::write(path.join("index.ts"), "export default function(api) { api.on('timer', () => api.state.set('replacement')); api.command('seen', () => api.state.get()); }\n").unwrap();
++    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
++    let inspected = ModStore::inspect_package(&path).unwrap();
++    store
++        .trust(
++            path.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["events".into(), "store".into(), "commands".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&path, true).unwrap();
++    core.runtime.lock().unwrap().reload().unwrap();
++    assert!(core.runtime.lock().unwrap().registered("observer", "timer"));
++    invoke_one_guarded(
++        core,
++        &fixture.lead,
++        "observer".into(),
++        "timer",
++        json!({"key":"tick"}),
++        Some(("tick".into(), old_source, 1)),
++    )
++    .await
++    .unwrap()
++    .unwrap();
++    let _thread = codex_omd::StateThread::enter(Some(fixture.lead.thread.to_string()));
++    assert_eq!(command(core, "observer", "seen"), Value::Null);
++    let source = core
++        .runtime
++        .lock()
++        .unwrap()
++        .grants("observer")
++        .unwrap()
++        .source_sha256
++        .clone();
++    core.expansion
++        .timers
++        .lock()
++        .unwrap()
++        .insert(slot.clone(), (source.clone(), 3, tokio::spawn(async {})));
++    invoke_one_guarded(
++        core,
++        &fixture.lead,
++        "observer".into(),
++        "timer",
++        json!({"key":"tick"}),
++        Some(("tick".into(), source.clone(), 2)),
++    )
++    .await
++    .unwrap()
++    .unwrap();
++    assert_eq!(command(core, "observer", "seen"), Value::Null);
++    assert!(core.expansion.timers.lock().unwrap().contains_key(&slot));
++    invoke_one_guarded(
++        core,
++        &fixture.lead,
++        "observer".into(),
++        "timer",
++        json!({"key":"tick"}),
++        Some(("tick".into(), source, 3)),
++    )
++    .await
++    .unwrap()
++    .unwrap();
++    assert_eq!(command(core, "observer", "seen"), json!("replacement"));
++    assert!(core.expansion.timers.lock().unwrap().is_empty());
++}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 000000000..873f9843e
+index 000000000..6bf58ecf9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,193 @@
 +use super::*;
 +use codex_omd::data_store::Origin;
 +use operations::Caller;
@@ -70757,7 +71980,12 @@ index 000000000..873f9843e
 +    let weak = Arc::downgrade(core);
 +    let session = tokio::runtime::Handle::try_current().ok();
 +    let dispatcher: codex_omd::host::SessionDispatcher = Arc::new(
-+        move |thread: &str, caller: &str, request: ModHostCall, active: &dyn Fn() -> bool| {
++        move |thread: &str,
++              caller: &str,
++              expected_source: Option<&str>,
++              policy: Option<&Value>,
++              request: ModHostCall,
++              active: &dyn Fn() -> bool| {
 +            let unavailable = |reason: &str| {
 +                std::io::Error::other(format!("host_operation_unavailable: {reason}"))
 +            };
@@ -70800,10 +72028,15 @@ index 000000000..873f9843e
 +                )
 +            };
 +            let cancelled = Arc::new(AtomicBool::new(false));
++            if expected_source.is_some_and(|expected| expected != source) {
++                return Err(std::io::Error::other("host_caller_source_changed"));
++            }
++            let policy: Option<codex_protocol::models::PermissionProfile> =
++                policy.cloned().map(serde_json::from_value).transpose()?;
 +            let _cancellation = Cancellation(cancelled.clone());
 +            let future = async {
 +                tokio::select! {
-+                    value = operations::dispatch(
++                    value = operations::dispatch_with_policy(
 +                        &core,
 +                        &lead,
 +                        Caller {
@@ -70817,6 +72050,7 @@ index 000000000..873f9843e
 +                        None,
 +                        request,
 +                        &cancelled,
++                        policy.as_ref(),
 +                    ) => value.map_err(std::io::Error::other),
 +                    () = async {
 +                        while active() {
@@ -71238,10 +72472,10 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..d3916b736
+index 000000000..16ce04c93
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,724 @@
+@@ -0,0 +1,756 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -71551,10 +72785,22 @@ index 000000000..d3916b736
 +    request: ModHostCall,
 +    cancelled: &Arc<AtomicBool>,
 +) -> Result<Value, String> {
++    dispatch_with_policy(core, lead, caller, call, request, cancelled, None).await
++}
++
++pub(super) async fn dispatch_with_policy(
++    core: &Core,
++    lead: &Lead,
++    caller: Caller<'_>,
++    call: Option<&ToolCall<'_>>,
++    request: ModHostCall,
++    cancelled: &Arc<AtomicBool>,
++    policy: Option<&codex_protocol::models::PermissionProfile>,
++) -> Result<Value, String> {
 +    let id = caller.id.to_owned();
 +    let audited =
 +        codex_omd::access_receipt(&id, &request, Ok(&Value::Null)).map(|_| request.clone());
-+    let result = run(core, lead, caller, call, request, cancelled).await;
++    let result = run(core, lead, caller, call, request, cancelled, policy).await;
 +    if let Some(request) = audited
 +        && let Some(receipt) =
 +            codex_omd::access_receipt(&id, &request, result.as_ref().map_err(Clone::clone))
@@ -71569,8 +72815,9 @@ index 000000000..d3916b736
 +    lead: &Lead,
 +    caller: Caller<'_>,
 +    call: Option<&ToolCall<'_>>,
-+    mut request: ModHostCall,
++    request: ModHostCall,
 +    cancelled: &Arc<AtomicBool>,
++    policy: Option<&codex_protocol::models::PermissionProfile>,
 +) -> Result<Value, String> {
 +    let host = &lead.host;
 +    let operation = request.operation.clone();
@@ -71585,6 +72832,19 @@ index 000000000..d3916b736
 +        move || !cancelled.load(Ordering::Acquire)
 +    };
 +    if codex_omd::host::served(&operation) {
++        let mut authority = authority(lead, call).await?;
++        if operation == "exec.run"
++            && request.arguments.get("snapshot").is_none()
++            && let Some(policy) = policy
++        {
++            let permissions = crate::execution::intersect(
++                &authority.context.permissions,
++                policy,
++                &authority.repository,
++            )?;
++            authority.policy = permissions.file_system_sandbox_policy();
++            authority.context.permissions = permissions;
++        }
 +        if operation == "exec.run" && request.arguments.get("snapshot").is_some() {
 +            if request.arguments.get("guards").is_some()
 +                || request.arguments.get("required_access").is_some()
@@ -71594,14 +72854,17 @@ index 000000000..d3916b736
 +            if request.arguments.get("sandbox").is_some() {
 +                return Err("exec_snapshot_requires_sandbox".into());
 +            }
-+            let authority = authority(lead, call).await?;
-+            let scoped = Lead {
-+                permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
-+                ..lead.clone()
-+            };
 +            return core
 +                .agents
-+                .execute_snapshot(&scoped, &caller, request.arguments, cancelled)
++                .execute_snapshot(
++                    lead,
++                    &caller,
++                    request.arguments,
++                    cancelled,
++                    core.environment.clone(),
++                    authority,
++                    policy.cloned(),
++                )
 +                .await;
 +        }
 +        let _guard = workspace_guard(
@@ -71609,15 +72872,16 @@ index 000000000..d3916b736
 +            &request.arguments,
 +            &lead.session.repository_identity,
 +        )?;
-+        let authority = authority(lead, call).await?;
 +        let (root, protected) = (host.root.clone(), host.protected_paths());
 +        let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
 +        let (grants, origin, record) = (caller.grants, caller.origin, caller.record_changes);
++        let environment = core.environment.clone();
 +        return tokio::task::spawn_blocking(move || {
 +            crate::generic_host::call(
 +                grants,
 +                &authority,
 +                &root,
++                Some(&environment),
 +                protected,
 +                &id,
 +                origin,
@@ -71661,6 +72925,8 @@ index 000000000..d3916b736
 +        let processes = lead.session.processes.clone();
 +        let generation = caller.generation;
 +        let protected = host.protected_paths();
++        let thread = lead.thread.to_string();
++        let environment = core.environment.clone();
 +        return tokio::task::spawn_blocking(move || {
 +            let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
 +            authority.request_rename(
@@ -71669,6 +72935,8 @@ index 000000000..d3916b736
 +                &processes,
 +                &protected,
 +                generation,
++                &thread,
++                &environment,
 +                active,
 +            )
 +        })
@@ -71676,30 +72944,17 @@ index 000000000..d3916b736
 +        .map_err(|e| e.to_string())?;
 +    }
 +    if operation.starts_with("process.") {
-+        if operation == "process.start" {
++        let environment = if operation == "process.start" {
 +            let grants = caller.grants.as_ref().ok_or("host_caller_inactive")?;
-+            let overrides = codex_omd::host::environment_overrides(
-+                &host.root,
++            core.environment.values(
 +                Some(&lead.thread.to_string()),
 +                caller.id,
 +                caller.source,
 +                &grants.exec_environment,
-+            )?;
-+            if !overrides.is_empty() {
-+                let arguments = request
-+                    .arguments
-+                    .as_object_mut()
-+                    .ok_or("process_arguments_invalid")?;
-+                let environment = arguments
-+                    .entry("environment")
-+                    .or_insert_with(|| json!({}))
-+                    .as_object_mut()
-+                    .ok_or("process_arguments_invalid")?;
-+                for (name, value) in overrides {
-+                    environment.entry(name).or_insert(json!(value));
-+                }
-+            }
-+        }
++            )?
++        } else {
++            Default::default()
++        };
 +        crate::generic_host::process_request_allowed(caller.grants.as_ref(), &request)?;
 +        let authority = authority(lead, call).await?;
 +        let processes = lead.session.processes.clone();
@@ -71726,6 +72981,7 @@ index 000000000..d3916b736
 +                    protected: &protected,
 +                    os_access: os_access.as_ref(),
 +                    blit: blit.as_ref(),
++                    environment: Some(&environment),
 +                },
 +                &request.operation,
 +                request.arguments,
@@ -71886,10 +73142,20 @@ index 000000000..d3916b736
 +                .get_thread(lead.thread)
 +                .await
 +                .map_err(|error| error.to_string())?;
-+            let accepted = thread
-+                .interrupt_if_no_pending_input(&input.turn_id)
-+                .await
-+                .map_err(|error| error.to_string())?;
++            if cancelled.load(Ordering::Acquire) {
++                return Err("callback_cancelled".into());
++            }
++            let interrupt = thread.interrupt_if_no_pending_input(&input.turn_id);
++            tokio::pin!(interrupt);
++            let accepted = tokio::select! {
++                    biased;
++                    _ = async {
++                        while !cancelled.load(Ordering::Acquire) {
++                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++                        }
++                    } => return Err("callback_cancelled".into()),
++                    result = &mut interrupt => result.map_err(|error| error.to_string())?,
++            };
 +            Ok(json!({"accepted": accepted}))
 +        }
 +        "turns.queue" | "turns.queued" | "turns.dequeue" => {
@@ -74791,10 +76057,10 @@ index 000000000..738976d38
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 000000000..7df187aab
+index 000000000..4f07d65c1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,664 @@
+@@ -0,0 +1,691 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -75057,6 +76323,10 @@ index 000000000..7df187aab
 +        Ok(json!({"status":"renamed","files":result["files"]}))
 +    }
 +
++    #[expect(
++        clippy::too_many_arguments,
++        reason = "callbacks retain their runtime, process and environment authority"
++    )]
 +    pub fn request_rename(
 +        &self,
 +        arguments: Value,
@@ -75064,6 +76334,8 @@ index 000000000..7df187aab
 +        processes: &crate::managed_process::ManagedProcesses,
 +        protected: &[PathBuf],
 +        generation: u64,
++        thread: &str,
++        environment: &codex_omd::host::Environment,
 +        active: impl Fn() -> bool,
 +    ) -> Result<Value, String> {
 +        #[derive(Deserialize)]
@@ -75078,12 +76350,18 @@ index 000000000..7df187aab
 +        if !runtime.has_event("workspace_pre_rename") {
 +            return Ok(json!({"status":"fallback","reason":"no_pre_rename_handler"}));
 +        }
++        let grants = runtime
++            .owners()
++            .into_iter()
++            .filter_map(|(id, _)| runtime.grants(&id).map(|grants| (id, grants)))
++            .collect::<std::collections::BTreeMap<_, _>>();
 +        let proposals = runtime.event_guarded_with(
 +            "workspace_pre_rename",
 +            payload.clone(),
 +            &active,
 +            |id, call| {
-+                let result = match call.operation.as_str() {
++                let operation = call.operation.clone();
++                let result = match operation.as_str() {
 +                    "workspace.read" => self.call(&call.operation, call.arguments, &active),
 +                    "process.start"
 +                        if call
@@ -75093,21 +76371,36 @@ index 000000000..7df187aab
 +                    {
 +                        Err("pre_rename_operation_unavailable".into())
 +                    }
-+                    operation if operation.starts_with("process.") => processes.call(
-+                        crate::managed_process::ProcessOwner {
-+                            thread: None,
-+                            id,
-+                            generation,
-+                            repository: &self.repository,
-+                            policy: &self.policy,
-+                            protected,
-+                            os_access: None,
-+                            blit: None,
-+                        },
-+                        operation,
-+                        call.arguments,
-+                        &active,
-+                    ),
++                    operation if operation.starts_with("process.") => (|| {
++                        let grants = grants.get(id).ok_or("host_caller_inactive")?;
++                        crate::generic_host::process_request_allowed(Some(grants), &call)?;
++                        let overrides = if operation == "process.start" {
++                            environment.values(
++                                Some(thread),
++                                id,
++                                &grants.source_sha256,
++                                &grants.exec_environment,
++                            )?
++                        } else {
++                            Default::default()
++                        };
++                        processes.call(
++                            crate::managed_process::ProcessOwner {
++                                thread: Some(thread),
++                                id,
++                                generation,
++                                repository: &self.repository,
++                                policy: &self.policy,
++                                protected,
++                                environment: Some(&overrides),
++                                os_access: None,
++                                blit: None,
++                            },
++                            operation,
++                            call.arguments,
++                            &active,
++                        )
++                    })(),
 +                    _ => Err("pre_rename_operation_unavailable".into()),
 +                };
 +                result.map_err(std::io::Error::other)
@@ -89863,10 +91156,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..3fd0f6b1d
+index 000000000..983ae4dde
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1625 @@
+@@ -0,0 +1,1642 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -89895,7 +91188,7 @@ index 000000000..3fd0f6b1d
 +use std::time::Instant;
 +
 +mod environment;
-+pub use environment::{clear_environment, environment_overrides, retain_environment};
++pub use environment::{Environment, EnvironmentValues, environment_evidence, validate_environment};
 +
 +pub const RESERVED_EXEC_ENVIRONMENT: &[&str] = &[
 +    "PATH",
@@ -89972,6 +91265,7 @@ index 000000000..3fd0f6b1d
 +pub struct Host<'a> {
 +    pub authority: &'a dyn Authority,
 +    pub data_root: &'a Path,
++    pub environment: Option<&'a Environment>,
 +    pub active: &'a dyn Fn() -> bool,
 +    pub record_changes: bool,
 +}
@@ -90011,9 +91305,16 @@ index 000000000..3fd0f6b1d
 +        .collect()
 +}
 +
-+/// Serves one session host call for a thread: `(thread, caller, call, active)`.
++/// Serves one session host call under an optional captured source binding.
 +pub type SessionDispatcher = Arc<
-+    dyn Fn(&str, &str, crate::ModHostCall, &dyn Fn() -> bool) -> std::io::Result<Value>
++    dyn Fn(
++            &str,
++            &str,
++            Option<&str>,
++            Option<&Value>,
++            crate::ModHostCall,
++            &dyn Fn() -> bool,
++        ) -> std::io::Result<Value>
 +        + Send
 +        + Sync,
 +>;
@@ -90030,6 +91331,8 @@ index 000000000..3fd0f6b1d
 +pub fn session_call(
 +    thread: &str,
 +    caller: &str,
++    source: Option<&str>,
++    policy: Option<&Value>,
 +    call: crate::ModHostCall,
 +    active: &dyn Fn() -> bool,
 +) -> std::io::Result<Value> {
@@ -90040,7 +91343,7 @@ index 000000000..3fd0f6b1d
 +        .ok_or_else(|| {
 +            std::io::Error::other("host_operation_unavailable: no session in this process")
 +        })?;
-+    dispatcher(thread, caller, call, active)
++    dispatcher(thread, caller, source, policy, call, active)
 +}
 +
 +/// Denies mod commands reading or writing protected paths, Codex home and credential locations.
@@ -90103,7 +91406,11 @@ index 000000000..3fd0f6b1d
 +    }
 +}
 +
-+fn environment(root: &Path, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
++fn environment(
++    state: Option<&Environment>,
++    caller: &Caller<'_>,
++    arguments: Value,
++) -> Result<Value, String> {
 +    #[derive(Deserialize)]
 +    #[serde(deny_unknown_fields)]
 +    struct Input {
@@ -90114,13 +91421,17 @@ index 000000000..3fd0f6b1d
 +        return Err("environment_names_invalid".into());
 +    }
 +    let mut values = serde_json::Map::new();
-+    let overrides = environment_overrides(
-+        root,
-+        caller.thread,
-+        caller.id,
-+        caller.source_sha256,
-+        caller.exec_environment,
-+    )?;
++    let overrides = state
++        .map(|state| {
++            state.values(
++                caller.thread,
++                caller.id,
++                caller.source_sha256,
++                caller.exec_environment,
++            )
++        })
++        .transpose()?
++        .unwrap_or_default();
 +    for name in input.names {
 +        if !caller.exec_environment.contains(&name) {
 +            return Err(format!("exec_environment_undeclared: {name}"));
@@ -90128,7 +91439,7 @@ index 000000000..3fd0f6b1d
 +        let value = overrides
 +            .get(&name)
 +            .cloned()
-+            .unwrap_or_else(|| std::env::var(&name).ok())
++            .or_else(|| std::env::var(&name).ok())
 +            .filter(|value| value.len() <= 4096);
 +        let entry = if secret_like(&name) {
 +            json!({"set": value.is_some()})
@@ -90574,6 +91885,7 @@ index 000000000..3fd0f6b1d
 +        let host = Host {
 +            authority: &authority,
 +            data_root: self.data_root,
++            environment: self.environment,
 +            active: self.active,
 +            record_changes: false,
 +        };
@@ -90658,8 +91970,11 @@ index 000000000..3fd0f6b1d
 +            "workspace.transaction" => self.transaction(caller, arguments),
 +            "workspace.backup" => self.backup(caller, arguments),
 +            "workspace.restore" => self.restore(caller, arguments),
-+            "environment.read" => environment(self.data_root, caller, arguments),
-+            "environment.set" => environment::set(self.data_root, caller, arguments),
++            "environment.read" => environment(self.environment, caller, arguments),
++            "environment.set" => self
++                .environment
++                .ok_or("environment_thread_required")?
++                .set(caller, arguments),
 +            operation if operation.starts_with("store.") => {
 +                let key = repository_key(self.repository());
 +                DataStore {
@@ -90738,21 +92053,6 @@ index 000000000..3fd0f6b1d
 +        }
 +        let mut input: Input =
 +            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-+        let overrides = environment_overrides(
-+            self.data_root,
-+            caller.thread,
-+            caller.id,
-+            caller.source_sha256,
-+            caller.exec_environment,
-+        )?;
-+        for (name, value) in &overrides {
-+            if let Some(value) = value {
-+                input
-+                    .env
-+                    .entry(name.clone())
-+                    .or_insert_with(|| value.clone());
-+            }
-+        }
 +        if !(self.active)() {
 +            return Err("exec_cancelled".into());
 +        }
@@ -90818,6 +92118,21 @@ index 000000000..3fd0f6b1d
 +                .any(|name| !caller.exec_environment.contains(name))
 +        {
 +            return Err("exec_arguments_invalid".into());
++        }
++        let overrides = self
++            .environment
++            .map(|state| {
++                state.values(
++                    caller.thread,
++                    caller.id,
++                    caller.source_sha256,
++                    caller.exec_environment,
++                )
++            })
++            .transpose()?
++            .unwrap_or_default();
++        for (name, value) in overrides {
++            input.env.entry(name).or_insert(value);
 +        }
 +        let mut timeout = Duration::from_millis(
 +            input
@@ -91004,11 +92319,6 @@ index 000000000..3fd0f6b1d
 +            })
 +            .stdout(Stdio::piped())
 +            .stderr(Stdio::piped());
-+        for (name, value) in &overrides {
-+            if value.is_none() {
-+                command.env_remove(name);
-+            }
-+        }
 +        command.envs(&input.env);
 +        let started = Instant::now();
 +        let mut child = Child(
@@ -91494,114 +92804,166 @@ index 000000000..3fd0f6b1d
 +}
 diff --git a/codex-rs/omd/src/host/environment.rs b/codex-rs/omd/src/host/environment.rs
 new file mode 100644
-index 000000000..e962102cf
+index 000000000..837fc701c
 --- /dev/null
 +++ b/codex-rs/omd/src/host/environment.rs
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,150 @@
 +use super::*;
 +
-+type Scope = (PathBuf, String, String, String);
-+type Values = BTreeMap<String, Option<String>>;
-+static OVERRIDES: std::sync::LazyLock<Mutex<BTreeMap<Scope, Values>>> =
-+    std::sync::LazyLock::new(|| Mutex::new(BTreeMap::new()));
++type Scope = (String, String, String);
++pub type EnvironmentValues = BTreeMap<String, String>;
 +
-+pub fn environment_overrides(
-+    root: &Path,
-+    thread: Option<&str>,
-+    owner: &str,
-+    source: &str,
-+    declared: &[String],
-+) -> Result<Values, String> {
-+    let Some(thread) = thread else {
-+        return Ok(BTreeMap::new());
-+    };
-+    let values = OVERRIDES
-+        .lock()
-+        .map_err(|_| "environment_state_poisoned")?
-+        .get(&(
-+            root.to_owned(),
++#[derive(Default)]
++pub struct Environment(Mutex<BTreeMap<Scope, EnvironmentValues>>);
++
++impl Environment {
++    pub fn values(
++        &self,
++        thread: Option<&str>,
++        owner: &str,
++        source: &str,
++        declared: &[String],
++    ) -> Result<EnvironmentValues, String> {
++        let Some(thread) = thread else {
++            return Ok(BTreeMap::new());
++        };
++        let values = self
++            .0
++            .lock()
++            .map_err(|_| "environment_state_poisoned")?
++            .get(&(thread.to_owned(), owner.to_owned(), source.to_owned()))
++            .cloned()
++            .unwrap_or_default();
++        if values.keys().any(|name| !declared.contains(name)) {
++            return Err("exec_environment_undeclared".into());
++        }
++        Ok(values)
++    }
++
++    pub fn snapshot(
++        &self,
++        thread: &str,
++        owner: &str,
++        source: &str,
++        declared: &[String],
++    ) -> Result<Self, String> {
++        let values = self.values(Some(thread), owner, source, declared)?;
++        Ok(Self(Mutex::new(BTreeMap::from([(
++            (thread.to_owned(), owner.to_owned(), source.to_owned()),
++            values,
++        )]))))
++    }
++
++    pub fn clear(&self, thread: Option<&str>, owner: Option<&str>) {
++        if let Ok(mut values) = self.0.lock() {
++            values.retain(|(t, id, _), _| {
++                thread.is_some_and(|thread| thread != t) || owner.is_some_and(|owner| owner != id)
++            });
++        }
++    }
++
++    pub fn retain(&self, sources: &BTreeMap<String, String>) {
++        if let Ok(mut values) = self.0.lock() {
++            values.retain(|(_, id, source), _| sources.get(id) == Some(source));
++        }
++    }
++
++    pub(super) fn set(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
++        #[derive(Deserialize)]
++        #[serde(deny_unknown_fields)]
++        struct Input {
++            name: String,
++            value: Value,
++        }
++        let input: Input =
++            serde_json::from_value(arguments).map_err(|_| "environment_arguments_invalid")?;
++        let thread = caller.thread.ok_or("environment_thread_required")?;
++        let name = &input.name;
++        if !caller.exec_environment.contains(name) {
++            return Err("exec_environment_undeclared".into());
++        }
++        if !environment_name_valid(name) {
++            return Err("environment_name_invalid".into());
++        }
++        let set = !input.value.is_null();
++        let value = match input.value {
++            Value::Null => None,
++            Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
++            _ => return Err("environment_value_invalid".into()),
++        };
++        let mut scopes = self.0.lock().map_err(|_| "environment_state_poisoned")?;
++        let key = (
 +            thread.to_owned(),
-+            owner.to_owned(),
-+            source.to_owned(),
-+        ))
-+        .cloned()
-+        .unwrap_or_default();
-+    if values.keys().any(|name| !declared.contains(name)) {
-+        return Err("exec_environment_undeclared".into());
-+    }
-+    Ok(values)
-+}
-+
-+pub fn clear_environment(root: &Path, thread: Option<&str>, owner: Option<&str>) {
-+    if let Ok(mut values) = OVERRIDES.lock() {
-+        values.retain(|(path, t, id, _), _| {
-+            path != root
-+                || thread.is_some_and(|thread| thread != t)
-+                || owner.is_some_and(|owner| owner != id)
-+        });
++            caller.id.to_owned(),
++            caller.source_sha256.to_owned(),
++        );
++        let mut values = scopes.get(&key).cloned().unwrap_or_default();
++        if let Some(value) = value {
++            values.insert(name.clone(), value);
++        } else {
++            values.remove(name);
++        }
++        validate_environment(&values)?;
++        if values.is_empty() {
++            scopes.remove(&key);
++        } else {
++            scopes.insert(key, values);
++        }
++        Ok(json!({"name": name, "set": set}))
 +    }
 +}
 +
-+pub fn retain_environment(root: &Path, sources: &BTreeMap<String, String>) {
-+    if let Ok(mut values) = OVERRIDES.lock() {
-+        values.retain(|(path, _, id, source), _| path != root || sources.get(id) == Some(source));
-+    }
-+}
-+
-+pub(super) fn set(root: &Path, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
-+    #[derive(Deserialize)]
-+    #[serde(deny_unknown_fields)]
-+    struct Input {
-+        name: String,
-+        value: Value,
-+    }
-+    let input: Input =
-+        serde_json::from_value(arguments).map_err(|_| "environment_arguments_invalid")?;
-+    let thread = caller.thread.ok_or("environment_thread_required")?;
-+    let name = &input.name;
-+    if !caller.exec_environment.contains(name) {
-+        return Err("exec_environment_undeclared".into());
-+    }
-+    if name.is_empty()
-+        || name.len() > 64
-+        || name.as_bytes()[0].is_ascii_digit()
-+        || !name
++pub fn environment_name_valid(name: &str) -> bool {
++    !name.is_empty()
++        && name.len() <= 64
++        && !name.as_bytes()[0].is_ascii_digit()
++        && name
 +            .bytes()
 +            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-+        || RESERVED_EXEC_ENVIRONMENT.contains(&name.as_str())
-+        || RESERVED_EXEC_PREFIXES
++        && !RESERVED_EXEC_ENVIRONMENT.contains(&name)
++        && !RESERVED_EXEC_PREFIXES
 +            .iter()
 +            .any(|prefix| name.starts_with(prefix))
-+    {
-+        return Err("environment_name_invalid".into());
-+    }
-+    let set = !input.value.is_null();
-+    let value = match input.value {
-+        Value::Null => None,
-+        Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
-+        _ => return Err("environment_value_invalid".into()),
-+    };
-+    let mut scopes = OVERRIDES.lock().map_err(|_| "environment_state_poisoned")?;
-+    let key = (
-+        root.to_owned(),
-+        thread.to_owned(),
-+        caller.id.to_owned(),
-+        caller.source_sha256.to_owned(),
-+    );
-+    let mut values = scopes.get(&key).cloned().unwrap_or_default();
-+    values.insert(name.clone(), value);
-+    if values.len() > 16 || values.values().flatten().map(String::len).sum::<usize>() > 16 * 1024 {
++        && name != "XDG_CACHE_HOME"
++}
++
++pub fn validate_environment(values: &EnvironmentValues) -> Result<(), String> {
++    if values.len() > 16 || values.values().map(String::len).sum::<usize>() > 16 * 1024 {
 +        return Err("environment_limit".into());
 +    }
-+    scopes.insert(key, values);
-+    Ok(json!({"name": name, "set": set}))
++    if values.keys().any(|name| !environment_name_valid(name)) {
++        return Err("environment_name_invalid".into());
++    }
++    if values
++        .values()
++        .any(|value| value.len() > 4096 || value.contains('\0'))
++    {
++        return Err("environment_value_invalid".into());
++    }
++    Ok(())
++}
++
++pub fn environment_evidence(values: &EnvironmentValues) -> Value {
++    Value::Object(
++        values
++            .iter()
++            .map(|(name, value)| {
++                let value = if secret_like(name) {
++                    json!({"sha256": format!("{:x}", Sha256::digest(value.as_bytes()))})
++                } else {
++                    json!({"value": value})
++                };
++                (name.clone(), value)
++            })
++            .collect(),
++    )
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..d84cc5ca1
+index 000000000..b702e7020
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,235 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -91705,6 +93067,7 @@ index 000000000..d84cc5ca1
 +pub use mods::AUTHORITY_CAPABILITIES;
 +pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::DELEGABLE_APPROVAL_KINDS;
++pub use mods::HOST_RECEIPT_BYTES;
 +pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
 +pub use mods::MANAGED_POLICY_FILE;
 +pub use mods::MANAGED_POLICY_KEY;
@@ -91737,9 +93100,6 @@ index 000000000..d84cc5ca1
 +pub use mods::ModBoxAccent;
 +pub use mods::ModBoxBorder;
 +pub use mods::ModBoxStyle;
-+pub use mods::ModDirection;
-+pub use mods::ModPaint;
-+pub use mods::ModSpacing;
 +pub use mods::ModChain;
 +pub use mods::ModColor;
 +pub use mods::ModCommand;
@@ -91749,6 +93109,7 @@ index 000000000..d84cc5ca1
 +pub use mods::ModComponentAction;
 +pub use mods::ModConfiguration;
 +pub use mods::ModDensity;
++pub use mods::ModDirection;
 +pub use mods::ModFind;
 +pub use mods::ModFsAccess;
 +pub use mods::ModFsRoot;
@@ -91776,6 +93137,7 @@ index 000000000..d84cc5ca1
 +pub use mods::ModPackagePlan;
 +pub use mods::ModPackageSource;
 +pub use mods::ModPackageTrust;
++pub use mods::ModPaint;
 +pub use mods::ModPanel;
 +pub use mods::ModPeerAccess;
 +pub use mods::ModPolicyScope;
@@ -91786,6 +93148,7 @@ index 000000000..d84cc5ca1
 +pub use mods::ModSelection;
 +pub use mods::ModSidebarSide;
 +pub use mods::ModSiteMode;
++pub use mods::ModSpacing;
 +pub use mods::ModSpan;
 +pub use mods::ModSplit;
 +pub use mods::ModStore;
@@ -93727,10 +95090,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..1821e1fe2
+index 000000000..80e8dad03
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5134 @@
+@@ -0,0 +1,5122 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -93975,6 +95338,11 @@ index 000000000..1821e1fe2
 +pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 +pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
 +pub const MOD_HOST_FEATURES: &[&str] = &[
++    "turn_abort_v1",
++    "terminal_selection_v1",
++    "terminal_copy_v1",
++    "environment_overrides_v1",
++    "timers_100ms_v1",
 +    "author_diagnostics_v1",
 +    "author_offline_runner_v1",
 +    "author_tooling_v1",
@@ -96676,7 +98044,6 @@ index 000000000..1821e1fe2
 +            Err(error) => {
 +                if !self.loaded.is_empty() {
 +                    self.loaded.clear();
-+                    crate::host::clear_environment(&self.store.root, None, None);
 +                    self.order.clear();
 +                    self.generation += 1;
 +                    self.dynamic_tools.clear();
@@ -96786,14 +98153,6 @@ index 000000000..1821e1fe2
 +            })
 +        });
 +        if self.loaded.len() != retained {
-+            crate::host::retain_environment(
-+                &self.store.root,
-+                &self
-+                    .owners()
-+                    .into_iter()
-+                    .map(|(id, owner)| (id, owner.sha256))
-+                    .collect(),
-+            );
 +            self.generation += 1;
 +            self.dynamic_tools.clear();
 +        }
@@ -96985,14 +98344,6 @@ index 000000000..1821e1fe2
 +        }
 +        self.rejected = rejected;
 +        self.admit();
-+        crate::host::retain_environment(
-+            &self.store.root,
-+            &self
-+                .owners()
-+                .into_iter()
-+                .map(|(id, owner)| (id, owner.sha256))
-+                .collect(),
-+        );
 +        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
 +        self.generation += 1;
@@ -98867,7 +100218,7 @@ index 000000000..1821e1fe2
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..820477c93
+index 000000000..7c95fa4c9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
 @@ -0,0 +1,853 @@
@@ -98980,7 +100331,7 @@ index 000000000..820477c93
 +            "events.schedule" => {
 +                let delay = call.arguments["delay_ms"]
 +                    .as_u64()
-+                    .filter(|delay| (1000..=86_400_000).contains(delay))
++                    .filter(|delay| (100..=86_400_000).contains(delay))
 +                    .ok_or_else(|| failure("timer_delay_invalid"))?;
 +                self.timers
 +                    .insert((caller.to_owned(), key.clone()), self.now_ms + delay);
@@ -99726,10 +101077,10 @@ index 000000000..820477c93
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..5625167ec
+index 000000000..a1718d10b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,373 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -99985,7 +101336,9 @@ index 000000000..5625167ec
 +            let call_started = Instant::now();
 +            let exempt = !crate::client_surface::SURFACE_OPERATIONS
 +                .contains(&call.operation.as_str())
-+                || crate::client_surface::awaits_user(&call.operation, &call.arguments);
++                || crate::client_surface::awaits_user(&call.operation, &call.arguments)
++                // Clipboard delivery is external work bounded by the surface call lifetime.
++                || call.operation == "terminal.copy";
 +            scope.charge_call()?;
 +            let result = host(call.clone());
 +            let mut receipt = match result {
@@ -117725,10 +119078,10 @@ index 000000000..6cf3616c8
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..a41ba839b
+index 000000000..8bffd24c9
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2025 @@
+@@ -0,0 +1,2147 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -117748,6 +119101,7 @@ index 000000000..a41ba839b
 +use codex_omd::resolve_contract;
 +use serde_json::Value;
 +use serde_json::json;
++use sha2::{Digest, Sha256};
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::process::Command;
@@ -117839,9 +119193,11 @@ index 000000000..a41ba839b
 +fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
 +    let _slot = exec_slot();
 +    let (_temp, _, data, authority) = setup();
++    let environment = codex_omd::host::Environment::default();
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: Some(&environment),
 +        active: &|| true,
 +        record_changes: false,
 +    };
@@ -117898,12 +119254,116 @@ index 000000000..a41ba839b
 +        "explicit"
 +    );
 +    set(&who, "FIXTURE_VALUE", json!("private")).unwrap();
-+    codex_omd::host::clear_environment(&data, Some("other-thread"), None);
++    environment.clear(Some("other-thread"), None);
 +    assert_eq!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
-+    codex_omd::host::retain_environment(&data, &Default::default());
++    environment.retain(&Default::default());
 +    assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
 +    who.thread = None;
 +    assert!(set(&who, "FIXTURE_VALUE", json!("private")).is_err());
++}
++
++#[test]
++fn scoped_environment_restores_inheritance_reclaims_capacity_and_is_owned() {
++    let _slot = exec_slot();
++    let (_temp, _, data, authority) = setup();
++    let environment = codex_omd::host::Environment::default();
++    let independent = codex_omd::host::Environment::default();
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        environment: Some(&environment),
++        active: &|| true,
++        record_changes: false,
++    };
++    let caps = strings(&["exec"]);
++    let mut names = (0..16).map(|i| format!("FIXTURE_{i}")).collect::<Vec<_>>();
++    names.extend(strings(&["RUST_MIN_STACK", "XDG_CACHE_HOME"]));
++    let who = caller(&caps, &names, Origin::Event);
++    let set = |name: &str, value: Value| {
++        host.call(
++            &who,
++            "environment.set",
++            json!({"name": name, "value": value}),
++        )
++    };
++    for name in &names[..16] {
++        set(name, json!("value")).unwrap();
++    }
++    let explicit = host.call(&who, "exec.run", json!({"program": "sh", "argv": ["-c", "printf %s \"$RUST_MIN_STACK\""], "env": {"RUST_MIN_STACK": "8192"}})).unwrap();
++    assert_eq!(explicit["stdout"], "8192");
++    set("FIXTURE_0", Value::Null).unwrap();
++    set("RUST_MIN_STACK", json!("override")).unwrap();
++    assert!(set("XDG_CACHE_HOME", json!("bad")).is_err());
++    assert!(
++        independent
++            .values(who.thread, who.id, who.source_sha256, &names)
++            .unwrap()
++            .is_empty()
++    );
++    independent.clear(None, None);
++    assert_eq!(
++        environment
++            .values(who.thread, who.id, who.source_sha256, &names)
++            .unwrap()["RUST_MIN_STACK"],
++        "override"
++    );
++    set("RUST_MIN_STACK", Value::Null).unwrap();
++    let inherited = host
++        .call(
++            &who,
++            "environment.read",
++            json!({"names": ["RUST_MIN_STACK"]}),
++        )
++        .unwrap();
++    let baseline = std::env::var("RUST_MIN_STACK").expect("test harness sets RUST_MIN_STACK");
++    assert_eq!(
++        inherited["values"]["RUST_MIN_STACK"]["value"],
++        json!(baseline)
++    );
++    set("FIXTURE_0", json!("reused")).unwrap();
++}
++
++#[test]
++fn scoped_environment_snapshot_and_evidence_bind_values_without_disclosing_secrets() {
++    let (_temp, _, data, authority) = setup();
++    let environment = codex_omd::host::Environment::default();
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        environment: Some(&environment),
++        active: &|| true,
++        record_changes: false,
++    };
++    let caps = strings(&["exec"]);
++    let names = strings(&["FIXTURE_VALUE", "FIXTURE_TOKEN"]);
++    let who = caller(&caps, &names, Origin::Event);
++    for (name, value) in [("FIXTURE_VALUE", "before"), ("FIXTURE_TOKEN", "secret")] {
++        host.call(
++            &who,
++            "environment.set",
++            json!({"name": name, "value": value}),
++        )
++        .unwrap();
++    }
++    let snapshot = environment
++        .snapshot(who.thread.unwrap(), who.id, who.source_sha256, &names)
++        .unwrap();
++    host.call(
++        &who,
++        "environment.set",
++        json!({"name": "FIXTURE_VALUE", "value": "after"}),
++    )
++    .unwrap();
++    let values = snapshot
++        .values(who.thread, who.id, who.source_sha256, &names)
++        .unwrap();
++    let evidence = codex_omd::host::environment_evidence(&values);
++    assert_eq!(evidence["FIXTURE_VALUE"], json!({"value": "before"}));
++    assert_eq!(
++        evidence["FIXTURE_TOKEN"],
++        json!({"sha256": format!("{:x}", Sha256::digest(b"secret"))})
++    );
++    assert!(!evidence.to_string().contains("secret"));
 +}
 +
 +fn exec_slot() -> std::sync::MutexGuard<'static, ()> {
@@ -117932,6 +119392,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118009,6 +119470,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118051,6 +119513,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118098,6 +119561,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118164,6 +119628,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118202,6 +119667,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118278,6 +119744,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118335,6 +119802,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118483,6 +119951,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118506,6 +119975,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: true,
 +    };
@@ -118656,6 +120126,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -118805,6 +120276,7 @@ index 000000000..a41ba839b
 +    let cancelled = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &inactive,
 +        record_changes: false,
 +    };
@@ -119225,6 +120697,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -119506,6 +120979,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -119634,6 +121108,7 @@ index 000000000..a41ba839b
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: true,
 +    };
@@ -121517,10 +122992,10 @@ index 000000000..976c84151
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..ab4fc128d
+index 000000000..5a057dbb9
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4534 @@
+@@ -0,0 +1,4587 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -122326,6 +123801,21 @@ index 000000000..ab4fc128d
 +            "{error}"
 +        );
 +    }
++}
++
++#[test]
++fn host_control_features_are_available_for_admission() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let path = package(&root, "controls", "export default () => {}", &[]);
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["compatibility"] = json!({"required_features": [
++        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_100ms_v1"
++    ]});
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    ModStore::inspect_package(&path).unwrap();
 +}
 +
 +#[test]
@@ -124358,8 +125848,9 @@ index 000000000..ab4fc128d
 +        &root,
 +        "sdk",
 +        "export default api => { \
-+         const pulse = api.time.every('pulse', 1000, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
++         const pulse = api.time.every('pulse', 100, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
 +         api.command('start', () => { pulse.start(); return api.package; }); \
++         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:99})); \
 +         api.command('nap', () => api.time.sleep(1500)); \
 +         api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
 +         api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
@@ -124388,7 +125879,8 @@ index 000000000..ab4fc128d
 +                {"type": "invoke", "mod": "sdk", "event": "command", "name": "look", "expect": {"exists": true,
 +                    "canonical": {"path": "src/a.ts", "kind": "file", "sha256": "abc"}, "ancestors": [{"path": "package.json", "kind": "file"}]}},
 +                {"type": "invoke", "mod": "sdk", "event": "command", "name": "label", "expect": "yes"},
-+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"}
++                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"},
++                {"type": "invoke", "mod": "sdk", "event": "command", "name": "invalid_timer", "expect_error": "timer_delay_invalid"}
 +            ]
 +        }))
 +        .unwrap();
@@ -124399,7 +125891,7 @@ index 000000000..ab4fc128d
 +            .iter()
 +            .map(|tick| tick["at_ms"].as_u64().unwrap())
 +            .collect::<Vec<_>>(),
-+        [2000, 3000, 4000],
++        [1100, 1200, 1300],
 +        "the repeating timer stops when its handler returns false"
 +    );
 +    assert_eq!(result["virtual_time_ms"], 4500);
@@ -126054,6 +127546,42 @@ index 000000000..ab4fc128d
 +    let refused = reset("grants.json");
 +    assert!(!refused.status.success());
 +    assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
++}
++
++#[test]
++fn clipboard_delivery_wait_is_not_callback_execution() {
++    let (temp, store, path) = fixture(
++        "export default api => api.command('copy', () => { api.host.call('terminal.copy', {text:'one'}); return api.host.call('terminal.copy', {text:'two'}); })",
++        &["commands", "terminal"],
++    );
++    let manifest = path.join("mod.json");
++    let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    package["hook_budget_ms"] = json!(250);
++    std::fs::write(&manifest, serde_json::to_vec(&package).unwrap()).unwrap();
++    trust(&store, &path, &["commands", "terminal"]);
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let mut copies = 0;
++    let result = runtime
++        .invoke_with(
++            "fixture",
++            generation,
++            "command",
++            "copy",
++            json!(""),
++            || true,
++            |call| {
++                assert_eq!(call.operation, "terminal.copy");
++                // Each external delivery is within its 5s surface deadline; their sum exceeds
++                // the callback execution budget and each exceeds the per-hook budget.
++                std::thread::sleep(std::time::Duration::from_millis(2_600));
++                copies += 1;
++                Ok(json!({"status": "confirmed"}))
++            },
++        )
++        .unwrap();
++    assert_eq!(copies, 2);
++    assert_eq!(result, json!({"status": "confirmed"}));
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
@@ -129080,10 +130608,10 @@ index 000000000..ec1840ecb
 +}
 diff --git a/codex-rs/omd/tests/thread_store.rs b/codex-rs/omd/tests/thread_store.rs
 new file mode 100644
-index 000000000..7a39deb67
+index 000000000..9f4056fd7
 --- /dev/null
 +++ b/codex-rs/omd/tests/thread_store.rs
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,124 @@
 +use codex_omd::data_store::Origin;
 +use codex_omd::data_store::fork_thread_data;
 +use codex_omd::data_store::remove_thread_data;
@@ -129141,6 +130669,7 @@ index 000000000..7a39deb67
 +    let host = Host {
 +        authority: &authority,
 +        data_root: &data,
++        environment: None,
 +        active: &active,
 +        record_changes: false,
 +    };
@@ -132930,10 +134459,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..9f9f37f82
+index 000000000..8eab8d62d
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1942 @@
+@@ -0,0 +1,2084 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -132951,12 +134480,24 @@ index 000000000..9f9f37f82
 +const IMPORT_BYTES: u64 = 8 * 1024 * 1024;
 +
 +fn selection_result(mut text: Option<String>) -> Value {
-+    let truncated = text.as_ref().is_some_and(|text| text.len() > 65_536);
++    let mut truncated = false;
 +    if let Some(text) = text.as_mut() {
-+        let mut end = text.len().min(65_536);
-+        while !text.is_char_boundary(end) {
-+            end -= 1;
++        // Reserve both receipt envelopes and the text repeated in terminal.copy arguments.
++        let limit = codex_omd::HOST_RECEIPT_BYTES / 2 - 256;
++        let (mut end, mut encoded) = (0, 2);
++        for character in text.chars() {
++            let bytes = match character {
++                '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
++                '\u{0}'..='\u{1f}' => 6,
++                _ => character.len_utf8(),
++            };
++            if encoded + bytes > limit {
++                break;
++            }
++            encoded += bytes;
++            end += character.len_utf8();
 +        }
++        truncated = end < text.len();
 +        text.truncate(end);
 +    }
 +    json!({"text": text, "truncated": truncated})
@@ -134169,22 +135710,30 @@ index 000000000..9f9f37f82
 +                    Ok(selection_result(text))
 +                }
 +            }
-+            "terminal.copy" => copy_text(&call.arguments).and_then(|text| {
-+                tui.clipboard
-+                    .copy(
++            "terminal.copy" => {
++                crate::mod_surface::complete_clipboard(tui.clipboard.poll().cloned());
++                let result = copy_text(&call.arguments).and_then(|text| {
++                    tui.clipboard.copy(
 +                        text.into(),
 +                        crate::clipboard_copy::CopyFormat::PlainText,
 +                        tui.frame_requester(),
 +                    )
-+                    .map(|status| {
-+                        json!({"status": match status {
-+                            crate::clipboard_copy::CopyStatus::Confirmed => "confirmed",
-+                            crate::clipboard_copy::CopyStatus::Unconfirmed => "unconfirmed",
-+                            crate::clipboard_copy::CopyStatus::Pending(_) => "pending",
-+                            crate::clipboard_copy::CopyStatus::Busy => "busy",
-+                        }})
-+                    })
-+            }),
++                });
++                match result {
++                    Ok(crate::clipboard_copy::CopyStatus::Pending(id)) => {
++                        crate::mod_surface::hold_clipboard(id, call);
++                        tui.frame_requester().schedule_frame();
++                        return;
++                    }
++                    Ok(status) => Ok(json!({"status": match status {
++                        crate::clipboard_copy::CopyStatus::Confirmed => "confirmed",
++                        crate::clipboard_copy::CopyStatus::Unconfirmed => "unconfirmed",
++                        crate::clipboard_copy::CopyStatus::Busy => "busy",
++                        crate::clipboard_copy::CopyStatus::Pending(_) => unreachable!(),
++                    }})),
++                    Err(error) => Err(error),
++                }
++            }
 +            "terminal.blit" => {
 +                tui.frame_requester().schedule_frame();
 +                let key = call.arguments["key"].as_str().unwrap_or_default();
@@ -134591,14 +136140,32 @@ index 000000000..9f9f37f82
 +        );
 +        let text = "界".repeat(21_846);
 +        let selected = selection_result(Some(text.clone()));
-+        assert_eq!(selected["text"].as_str().unwrap().len(), 65_535);
++        assert_eq!(selected["text"].as_str().unwrap().len(), 65_277);
 +        assert_eq!(selected["truncated"], true);
 +        assert!(copy_text(&json!({"text": text})).is_err());
 +        assert!(copy_text(&json!({"text": "ok", "thread": "other"})).is_err());
 +        assert_eq!(
 +            copy_text(&json!({"text": selected["text"]})).unwrap().len(),
-+            65_535
++            65_277
 +        );
++    }
++
++    #[test]
++    fn selection_and_copy_fit_one_callback_receipt_budget() {
++        for text in [
++            "a".repeat(65_536),
++            "界".repeat(21_846),
++            "\u{1}".repeat(65_536),
++        ] {
++            let selected = selection_result(Some(text));
++            let receipts = json!([
++                {"call": {"operation": "terminal.selection", "arguments": {}}, "value": selected},
++                {"call": {"operation": "terminal.copy", "arguments": {"text": selected["text"]}},
++                 "value": {"status": "confirmed"}}
++            ]);
++            assert!(serde_json::to_vec(&receipts).unwrap().len() <= codex_omd::HOST_RECEIPT_BYTES);
++            assert!(copy_text(&json!({"text": selected["text"]})).is_ok());
++        }
 +    }
 +
 +    #[tokio::test]
@@ -134754,6 +136321,110 @@ index 000000000..9f9f37f82
 +        .unwrap();
 +        store.enable(&package, false).unwrap();
 +        assert!(materialize("capture_fixture", Some("thread-b"), &reference).is_err());
++    }
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn terminal_copy_dispatch_waits_for_backend_delivery() -> color_eyre::Result<()> {
++        let mut app = crate::app::test_support::make_test_app().await;
++        let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
++        for confirmed in [true, false] {
++            let mut tui = crate::tui::test_support::make_test_tui()?;
++            tui.clipboard
++                .mock_copy_backend(tui.frame_requester(), confirmed);
++            let (reply, answer) = std::sync::mpsc::sync_channel(1);
++            let mut call = SurfaceCall {
++                validity: codex_omd::client_surface::Validity(std::sync::Arc::new(|| true)),
++                caller: codex_omd::broker::HOST_CALLER.into(),
++                operation: "terminal.copy".into(),
++                arguments: json!({"text": "copy"}),
++                context: codex_omd::app_routes::InvocationContext::User,
++                remote: false,
++                thread: None,
++                authority: None,
++                confirm: None,
++                reply,
++                lifetime: Default::default(),
++            };
++            crate::mod_surface::bind_test_call(&mut call);
++            app.run_mod_surface_call(&mut tui, &mut server, call, None)
++                .await;
++            assert!(
++                answer.try_recv().is_err(),
++                "dispatch must defer its reply until delivery"
++            );
++            let result = tokio::time::timeout(std::time::Duration::from_secs(1), async {
++                loop {
++                    crate::mod_surface::complete_clipboard(tui.clipboard.poll().cloned());
++                    if let Ok(result) = answer.try_recv() {
++                        break result;
++                    }
++                    tokio::task::yield_now().await;
++                }
++            })
++            .await
++            .expect("mock clipboard completion")
++            .unwrap();
++            assert_eq!(
++                result["status"],
++                if confirmed {
++                    "confirmed"
++                } else {
++                    "unconfirmed"
++                }
++            );
++        }
++        Ok(())
++    }
++
++    #[tokio::test]
++    #[serial_test::serial]
++    async fn terminal_copy_completes_on_key_without_draw() -> color_eyre::Result<()> {
++        let mut app = crate::app::test_support::make_test_app().await;
++        let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
++        let mut tui = crate::tui::test_support::make_test_tui()?;
++        tui.clipboard.mock_copy_backend(tui.frame_requester(), true);
++        let (reply, answer) = std::sync::mpsc::sync_channel(1);
++        let mut call = SurfaceCall {
++            validity: codex_omd::client_surface::Validity(std::sync::Arc::new(|| true)),
++            caller: codex_omd::broker::HOST_CALLER.into(),
++            operation: "terminal.copy".into(),
++            arguments: json!({"text": "copy"}),
++            context: codex_omd::app_routes::InvocationContext::User,
++            remote: false,
++            thread: None,
++            authority: None,
++            confirm: None,
++            reply,
++            lifetime: Default::default(),
++        };
++        crate::mod_surface::bind_test_call(&mut call);
++        app.run_mod_surface_call(&mut tui, &mut server, call, None)
++            .await;
++        let key = crate::tui::TuiEvent::Key(crossterm::event::KeyEvent::new(
++            crossterm::event::KeyCode::Char('c'),
++            crossterm::event::KeyModifiers::CONTROL,
++        ));
++        tokio::time::timeout(std::time::Duration::from_secs(1), async {
++            loop {
++                // This is the production completion path before a key can start another
++                // native copy and replace the worker's single retained completion.
++                app.finish_clipboard(&mut tui, &key);
++                if !tui.clipboard.is_busy() {
++                    break;
++                }
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .expect("mock clipboard completion");
++        assert_eq!(
++            answer
++                .try_recv()
++                .expect("key must deliver mod receipt before another copy"),
++            Ok(json!({"status": "confirmed"}))
++        );
++        Ok(())
 +    }
 +
 +    #[tokio::test]
@@ -143378,10 +145049,10 @@ index 000000000..9c07cf291
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..332792184
+index 000000000..17e118035
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1372 @@
+@@ -0,0 +1,1408 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -143946,6 +145617,41 @@ index 000000000..332792184
 +        )));
 +    }
 +    let grants = grants.ok_or_else(|| std::io::Error::other("host_caller_inactive"))?;
++    if matches!(
++        call.operation.as_str(),
++        "environment.read" | "environment.set" | "exec.run"
++    ) {
++        if !grants
++            .capabilities
++            .iter()
++            .any(|capability| capability == "exec")
++        {
++            return Err(std::io::Error::other("capability_denied: exec"));
++        }
++        if !(scope.active)() {
++            return Err(std::io::Error::other("host_operation_cancelled"));
++        }
++        if let Some(thread) = scope.thread {
++            if call.operation == "exec.run" && call.arguments["network"] == "loopback" {
++                return Err(std::io::Error::other(
++                    "exec_network_unavailable_in_commands",
++                ));
++            }
++            return codex_omd::host::session_call(
++                thread,
++                caller,
++                Some(&grants.source_sha256),
++                Some(&serde_json::to_value(
++                    codex_protocol::models::PermissionProfile::from_runtime_permissions(
++                        policy,
++                        codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
++                    ),
++                )?),
++                call,
++                scope.active.as_ref(),
++            );
++        }
++    }
 +    let mut protected = paths.protected.clone();
 +    protected.push(codex_omd::workspace_lease::directory());
 +    protected.push(paths.evidence.clone());
@@ -143961,6 +145667,7 @@ index 000000000..332792184
 +    codex_omd::host::Host {
 +        authority: &authority,
 +        data_root: &data_root,
++        environment: None,
 +        active: scope.active.as_ref(),
 +        record_changes: true,
 +    }
@@ -144756,10 +146463,10 @@ index 000000000..332792184
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..bd3d54fb0
+index 000000000..d57b83491
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,719 @@
+@@ -0,0 +1,951 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -145388,6 +147095,238 @@ index 000000000..bd3d54fb0
 +
 +#[cfg(target_os = "macos")]
 +#[test]
++fn scoped_environment_commands_share_session_state_and_keep_local_fallbacks() {
++    const CHILD: &str = "OMD_ENVIRONMENT_DISPATCH_TEST_CHILD";
++    if std::env::var_os(CHILD).is_none() {
++        let result = std::process::Command::new(std::env::current_exe().unwrap())
++            .args(["--exact", "mod_runtime::tests::scoped_environment_commands_share_session_state_and_keep_local_fallbacks", "--nocapture"])
++            .env(CHILD, "1").output().unwrap();
++        assert!(
++            result.status.success(),
++            "{}\n{}",
++            String::from_utf8_lossy(&result.stdout),
++            String::from_utf8_lossy(&result.stderr)
++        );
++        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
++        return;
++    }
++    let temp = tempfile::tempdir().unwrap();
++    let repository = temp.path().canonicalize().unwrap();
++    let data = repository.join("store");
++    std::fs::create_dir(&data).unwrap();
++    let paths = crate::omd::ModPaths {
++        repository: repository.clone(),
++        evidence: data.clone(),
++        store: Some(data.clone()),
++        protected: vec![],
++    };
++    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted();
++    let grants = codex_omd::ModGrants {
++        api: codex_omd::MOD_API_VERSION.into(),
++        source_sha256: "a".repeat(64),
++        capabilities: vec!["exec".into(), "fs.write".into()],
++        exec_environment: vec!["FIXTURE_VALUE".into()],
++        ..Default::default()
++    };
++    let routed = Arc::new(Mutex::new(Vec::new()));
++    let calls = routed.clone();
++    let admitted = grants.clone();
++    let environment = codex_omd::host::Environment::default();
++    codex_omd::host::install_session_dispatcher(Arc::new(
++        move |thread, id, source, policy, call, active| {
++            assert_eq!(source, Some(admitted.source_sha256.as_str()));
++            calls
++                .lock()
++                .unwrap()
++                .push((thread.to_owned(), call.operation.clone()));
++            let authority = CommandAuthority {
++                repository: &repository,
++                protected: &[],
++                policy: &serde_json::from_value::<codex_protocol::models::PermissionProfile>(
++                    policy.cloned().unwrap(),
++                )
++                .unwrap()
++                .file_system_sandbox_policy(),
++            };
++            codex_omd::host::Host {
++                authority: &authority,
++                data_root: &data,
++                environment: Some(&environment),
++                active,
++                record_changes: false,
++            }
++            .call(
++                &codex_omd::host::Caller {
++                    id,
++                    thread: Some(thread),
++                    source_sha256: &admitted.source_sha256,
++                    capabilities: &admitted.capabilities,
++                    exec_environment: &admitted.exec_environment,
++                    os_access: None,
++                    fs_access: None,
++                    origin: codex_omd::data_store::Origin::UserCommand,
++                },
++                &call.operation,
++                call.arguments,
++            )
++            .map_err(std::io::Error::other)
++        },
++    ));
++    let scope = CallScope {
++        epoch: 0,
++        context: codex_omd::app_routes::InvocationContext::User,
++        thread: Some("captured-thread"),
++        active: Arc::new(|| true),
++    };
++    let request = |operation: &str, arguments: Value| codex_omd::ModHostCall {
++        operation: operation.into(),
++        arguments,
++    };
++    let invoke = |scope: &CallScope<'_>, operation: &str, arguments: Value| {
++        command_host_guarded(
++            &paths,
++            &policy,
++            Some(grants.clone()),
++            "fixture",
++            request(operation, arguments),
++            scope,
++        )
++    };
++    invoke(
++        &scope,
++        "environment.set",
++        serde_json::json!({"name": "FIXTURE_VALUE", "value": "session"}),
++    )
++    .unwrap();
++    let read = invoke(
++        &scope,
++        "environment.read",
++        serde_json::json!({"names": ["FIXTURE_VALUE"]}),
++    )
++    .unwrap();
++    assert_eq!(read["values"]["FIXTURE_VALUE"]["value"], "session");
++    let run = invoke(
++        &scope,
++        "exec.run",
++        serde_json::json!({"program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""]}),
++    )
++    .unwrap();
++    assert_eq!(run["stdout"], "session");
++    for context in [
++        codex_omd::app_routes::InvocationContext::User,
++        codex_omd::app_routes::InvocationContext::Event,
++    ] {
++        let read_only = CallScope {
++            epoch: scope.epoch,
++            context,
++            thread: scope.thread,
++            active: scope.active.clone(),
++        };
++        let write = request(
++            "exec.run",
++            serde_json::json!({"program": "sh", "argv": ["-c", "printf forbidden > proof"], "write": true}),
++        );
++        assert_eq!(
++            command_host_guarded(
++                &paths,
++                &FileSystemSandboxPolicy::read_only(),
++                Some(grants.clone()),
++                "fixture",
++                write,
++                &read_only
++            )
++            .unwrap_err()
++            .to_string(),
++            "exec_cwd_unavailable"
++        );
++    }
++    assert!(!paths.repository.join("proof").exists());
++    assert_eq!(
++        invoke(
++            &scope,
++            "exec.run",
++            serde_json::json!({"program": "sh", "network": "loopback"})
++        )
++        .unwrap_err()
++        .to_string(),
++        "exec_network_unavailable_in_commands"
++    );
++    let denied = codex_omd::ModGrants {
++        capabilities: Vec::new(),
++        ..grants.clone()
++    };
++    assert_eq!(
++        command_host_guarded(
++            &paths,
++            &policy,
++            Some(denied),
++            "fixture",
++            request(
++                "environment.read",
++                serde_json::json!({"names": ["FIXTURE_VALUE"]})
++            ),
++            &scope
++        )
++        .unwrap_err()
++        .to_string(),
++        "capability_denied: exec"
++    );
++    let cancelled = CallScope {
++        epoch: scope.epoch,
++        context: scope.context,
++        thread: scope.thread,
++        active: Arc::new(|| false),
++    };
++    assert_eq!(
++        invoke(
++            &cancelled,
++            "environment.read",
++            serde_json::json!({"names": ["FIXTURE_VALUE"]})
++        )
++        .unwrap_err()
++        .to_string(),
++        "host_operation_cancelled"
++    );
++    let local = CallScope {
++        thread: None,
++        ..scope
++    };
++    assert!(
++        invoke(
++            &local,
++            "environment.set",
++            serde_json::json!({"name": "FIXTURE_VALUE", "value": "local"})
++        )
++        .is_err()
++    );
++    let read = invoke(
++        &local,
++        "environment.read",
++        serde_json::json!({"names": ["FIXTURE_VALUE"]}),
++    )
++    .unwrap();
++    assert_ne!(read["values"]["FIXTURE_VALUE"]["value"], "session");
++    let run = invoke(
++        &local,
++        "exec.run",
++        serde_json::json!({"program": "sh", "argv": ["-c", "printf local"]}),
++    )
++    .unwrap();
++    assert_eq!(run["stdout"], "local");
++    assert_eq!(
++        *routed.lock().unwrap(),
++        vec![
++            ("captured-thread".into(), "environment.set".into()),
++            ("captured-thread".into(), "environment.read".into()),
++            ("captured-thread".into(), "exec.run".into()),
++            ("captured-thread".into(), "exec.run".into()),
++            ("captured-thread".into(), "exec.run".into())
++        ]
++    );
++}
++
++#[cfg(target_os = "macos")]
++#[test]
 +fn mod_commands_cannot_read_protected_paths() {
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
@@ -145481,10 +147420,10 @@ index 000000000..bd3d54fb0
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..62384eaad
+index 000000000..788f4383e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,919 @@
+@@ -0,0 +1,980 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -145557,6 +147496,7 @@ index 000000000..62384eaad
 +    requested: BTreeMap<String, String>,
 +    delivering: bool,
 +    pending: BTreeMap<u64, SurfaceCall>,
++    clipboard: Option<(u64, SurfaceCall)>,
 +    next: u64,
 +    notified: Option<Instant>,
 +    keys: Option<Vec<(String, Option<String>)>>,
@@ -145607,6 +147547,11 @@ index 000000000..62384eaad
 +        })
 +        .map(|item| item["sha256"].clone());
 +    json!({"thread": current_thread(), "repository": crate::omd::mod_paths().map(|paths| paths.repository), "epoch": CONTEXT_EPOCH.load(std::sync::atomic::Ordering::Acquire), "generation": status["generation"], "source": source})
++}
++
++#[cfg(test)]
++pub(crate) fn bind_test_call(call: &mut SurfaceCall) {
++    call.lifetime.binding = Some(call_binding(&call.caller));
 +}
 +
 +pub(crate) fn validate_call(call: &SurfaceCall) -> Result<(), String> {
@@ -146171,6 +148116,43 @@ index 000000000..62384eaad
 +    }
 +}
 +
++pub(crate) fn hold_clipboard(id: u64, call: SurfaceCall) {
++    if let Some((_, previous)) = with(|state| state.clipboard.replace((id, call))) {
++        let _ = previous
++            .reply
++            .send(Err("clipboard_request_replaced".into()));
++    }
++}
++
++pub(crate) fn complete_clipboard(
++    completion: Option<(u64, crate::clipboard_copy::worker::CopyResult)>,
++) -> bool {
++    let Some((id, call)) = with(|state| state.clipboard.take()) else {
++        return false;
++    };
++    let result = match validate_call(&call) {
++        Err(error) => Err(error),
++        Ok(()) => match completion.filter(|(completed, _)| *completed == id) {
++            Some((_, Ok(crate::clipboard_copy::CopyStatus::Pending(_)))) => {
++                with(|state| state.clipboard = Some((id, call)));
++                return true;
++            }
++            Some((_, result)) => result.map(|status| serde_json::json!({"status": match status {
++                crate::clipboard_copy::CopyStatus::Confirmed => "confirmed",
++                crate::clipboard_copy::CopyStatus::Unconfirmed => "unconfirmed",
++                crate::clipboard_copy::CopyStatus::Busy => "busy",
++                crate::clipboard_copy::CopyStatus::Pending(_) => unreachable!("pending handled above"),
++            }})),
++            None => {
++                with(|state| state.clipboard = Some((id, call)));
++                return true;
++            }
++        },
++    };
++    let _ = call.reply.send(result);
++    false
++}
++
 +pub(crate) fn hold(call: SurfaceCall) -> u64 {
 +    with(|state| {
 +        state.next += 1;
@@ -146332,6 +148314,16 @@ index 000000000..62384eaad
 +        );
 +    }
 +    match operation {
++        "environment.set" | "environment.read" | "exec.run" => {
++            let thread = scope.thread.map(str::to_owned).or_else(current_thread);
++            let scoped = crate::mod_runtime::CallScope {
++                epoch: scope.epoch,
++                context: scope.context,
++                thread: thread.as_deref(),
++                active: scope.active.clone(),
++            };
++            crate::mod_runtime::command_host_guarded(paths, policy, grants, caller, call, &scoped)
++        }
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
 +        "model.complete" | "model.fork" | "session.info" | "tools.list" | "turns.abort" => {
 +            let thread = scope
@@ -146339,7 +148331,15 @@ index 000000000..62384eaad
 +                .map(str::to_owned)
 +                .or_else(current_thread)
 +                .ok_or_else(|| other("model_call_requires_a_session_thread"))?;
-+            codex_omd::host::session_call(&thread, caller, call, scope.active.as_ref())
++            let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
++            codex_omd::host::session_call(
++                &thread,
++                caller,
++                Some(&grants.source_sha256),
++                None,
++                call,
++                scope.active.as_ref(),
++            )
 +        }
 +        "turns.activity" => {
 +            let thread = scope
@@ -146406,10 +148406,10 @@ index 000000000..62384eaad
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..6865d56a6
+index 000000000..b77423b77
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,775 @@
+@@ -0,0 +1,830 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -147184,6 +149184,61 @@ index 000000000..6865d56a6
 +    assert_eq!(batches[2]["events"][0], key("3"));
 +    assert_eq!(batches[3]["events"].as_array().map(Vec::len), Some(7));
 +    assert_eq!(batches.len(), 4);
++}
++
++#[test]
++#[serial_test::serial]
++fn clipboard_surface_waits_for_matching_completion_and_cleans_cancelled_calls() {
++    let previous = state().take();
++    let make_call = || {
++        let (reply, answer) = std::sync::mpsc::sync_channel(1);
++        let caller = codex_omd::broker::HOST_CALLER.to_string();
++        let mut lifetime = codex_omd::client_surface::CallLifetime::default();
++        lifetime.binding = Some(call_binding(&caller));
++        (
++            SurfaceCall {
++                validity: codex_omd::client_surface::Validity(Arc::new(|| true)),
++                caller,
++                operation: "terminal.copy".into(),
++                arguments: json!({"text": "copy"}),
++                context: InvocationContext::User,
++                remote: false,
++                thread: None,
++                authority: None,
++                confirm: None,
++                reply,
++                lifetime,
++            },
++            answer,
++        )
++    };
++    for status in [
++        crate::clipboard_copy::CopyStatus::Confirmed,
++        crate::clipboard_copy::CopyStatus::Unconfirmed,
++    ] {
++        let (call, answer) = make_call();
++        hold_clipboard(7, call);
++        assert!(complete_clipboard(None));
++        assert!(complete_clipboard(Some((6, Ok(status)))));
++        assert!(answer.try_recv().is_err());
++        assert!(!complete_clipboard(Some((7, Ok(status)))));
++        assert_eq!(
++            answer.recv().unwrap().unwrap()["status"],
++            if status == crate::clipboard_copy::CopyStatus::Confirmed {
++                "confirmed"
++            } else {
++                "unconfirmed"
++            }
++        );
++        assert!(with(|state| state.clipboard.is_none()));
++    }
++    let (mut call, answer) = make_call();
++    call.validity = codex_omd::client_surface::Validity(Arc::new(|| false));
++    hold_clipboard(8, call);
++    assert!(!complete_clipboard(None));
++    assert_eq!(answer.recv().unwrap(), Err("client_context_changed".into()));
++    assert!(with(|state| state.clipboard.is_none()));
++    *state() = previous;
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644

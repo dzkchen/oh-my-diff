@@ -36,6 +36,12 @@ excluded host release rejects the package before activation and tells the user
 which host/package side must change. Missing optional features are reported but
 do not disable the mod.
 
+Require `turn_abort_v1` for `turns.abort`, `terminal_selection_v1` for
+`terminal.selection`, `terminal_copy_v1` for `terminal.copy`,
+`environment_overrides_v1` for `environment.set`, and `timers_100ms_v1` for
+100–999 ms timers. These labels reject older hosts before activation even when
+their API version matches.
+
 ## Stability and change rules
 
 - `stable` means additions preserve the published contract. A breaking stable

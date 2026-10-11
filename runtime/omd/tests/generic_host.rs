@@ -17,6 +17,7 @@ use codex_omd::host::Host;
 use codex_omd::resolve_contract;
 use serde_json::Value;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -108,9 +109,11 @@ static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
     let _slot = exec_slot();
     let (_temp, _, data, authority) = setup();
+    let environment = codex_omd::host::Environment::default();
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: Some(&environment),
         active: &|| true,
         record_changes: false,
     };
@@ -167,12 +170,116 @@ fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
         "explicit"
     );
     set(&who, "FIXTURE_VALUE", json!("private")).unwrap();
-    codex_omd::host::clear_environment(&data, Some("other-thread"), None);
+    environment.clear(Some("other-thread"), None);
     assert_eq!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
-    codex_omd::host::retain_environment(&data, &Default::default());
+    environment.retain(&Default::default());
     assert_ne!(read(&who)["values"]["FIXTURE_VALUE"]["value"], "private");
     who.thread = None;
     assert!(set(&who, "FIXTURE_VALUE", json!("private")).is_err());
+}
+
+#[test]
+fn scoped_environment_restores_inheritance_reclaims_capacity_and_is_owned() {
+    let _slot = exec_slot();
+    let (_temp, _, data, authority) = setup();
+    let environment = codex_omd::host::Environment::default();
+    let independent = codex_omd::host::Environment::default();
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: Some(&environment),
+        active: &|| true,
+        record_changes: false,
+    };
+    let caps = strings(&["exec"]);
+    let mut names = (0..16).map(|i| format!("FIXTURE_{i}")).collect::<Vec<_>>();
+    names.extend(strings(&["RUST_MIN_STACK", "XDG_CACHE_HOME"]));
+    let who = caller(&caps, &names, Origin::Event);
+    let set = |name: &str, value: Value| {
+        host.call(
+            &who,
+            "environment.set",
+            json!({"name": name, "value": value}),
+        )
+    };
+    for name in &names[..16] {
+        set(name, json!("value")).unwrap();
+    }
+    let explicit = host.call(&who, "exec.run", json!({"program": "sh", "argv": ["-c", "printf %s \"$RUST_MIN_STACK\""], "env": {"RUST_MIN_STACK": "8192"}})).unwrap();
+    assert_eq!(explicit["stdout"], "8192");
+    set("FIXTURE_0", Value::Null).unwrap();
+    set("RUST_MIN_STACK", json!("override")).unwrap();
+    assert!(set("XDG_CACHE_HOME", json!("bad")).is_err());
+    assert!(
+        independent
+            .values(who.thread, who.id, who.source_sha256, &names)
+            .unwrap()
+            .is_empty()
+    );
+    independent.clear(None, None);
+    assert_eq!(
+        environment
+            .values(who.thread, who.id, who.source_sha256, &names)
+            .unwrap()["RUST_MIN_STACK"],
+        "override"
+    );
+    set("RUST_MIN_STACK", Value::Null).unwrap();
+    let inherited = host
+        .call(
+            &who,
+            "environment.read",
+            json!({"names": ["RUST_MIN_STACK"]}),
+        )
+        .unwrap();
+    let baseline = std::env::var("RUST_MIN_STACK").expect("test harness sets RUST_MIN_STACK");
+    assert_eq!(
+        inherited["values"]["RUST_MIN_STACK"]["value"],
+        json!(baseline)
+    );
+    set("FIXTURE_0", json!("reused")).unwrap();
+}
+
+#[test]
+fn scoped_environment_snapshot_and_evidence_bind_values_without_disclosing_secrets() {
+    let (_temp, _, data, authority) = setup();
+    let environment = codex_omd::host::Environment::default();
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        environment: Some(&environment),
+        active: &|| true,
+        record_changes: false,
+    };
+    let caps = strings(&["exec"]);
+    let names = strings(&["FIXTURE_VALUE", "FIXTURE_TOKEN"]);
+    let who = caller(&caps, &names, Origin::Event);
+    for (name, value) in [("FIXTURE_VALUE", "before"), ("FIXTURE_TOKEN", "secret")] {
+        host.call(
+            &who,
+            "environment.set",
+            json!({"name": name, "value": value}),
+        )
+        .unwrap();
+    }
+    let snapshot = environment
+        .snapshot(who.thread.unwrap(), who.id, who.source_sha256, &names)
+        .unwrap();
+    host.call(
+        &who,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "after"}),
+    )
+    .unwrap();
+    let values = snapshot
+        .values(who.thread, who.id, who.source_sha256, &names)
+        .unwrap();
+    let evidence = codex_omd::host::environment_evidence(&values);
+    assert_eq!(evidence["FIXTURE_VALUE"], json!({"value": "before"}));
+    assert_eq!(
+        evidence["FIXTURE_TOKEN"],
+        json!({"sha256": format!("{:x}", Sha256::digest(b"secret"))})
+    );
+    assert!(!evidence.to_string().contains("secret"));
 }
 
 fn exec_slot() -> std::sync::MutexGuard<'static, ()> {
@@ -201,6 +308,7 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -278,6 +386,7 @@ fn exec_output_store_evicts_oldest_artifacts_instead_of_failing() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -320,6 +429,7 @@ fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -367,6 +477,7 @@ fn exec_guards_recheck_output_before_a_write() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -433,6 +544,7 @@ fn exec_guards_fail_closed_on_command_failure_and_truncation() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -471,6 +583,7 @@ fn workspace_access_checks_named_paths_and_guarded_write_authority() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -547,6 +660,7 @@ fn exec_run_admits_only_inherited_user_sockets() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -604,6 +718,7 @@ fn exec_run_bounds_program_environment_output_time_and_authority() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -752,6 +867,7 @@ fn exec_run_bounds_program_environment_output_time_and_authority() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -775,6 +891,7 @@ fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: true,
     };
@@ -925,6 +1042,7 @@ fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -1074,6 +1192,7 @@ fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
     let cancelled = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &inactive,
         record_changes: false,
     };
@@ -1494,6 +1613,7 @@ fn outside_author_uses_owned_asset_and_paged_exec_output() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -1775,6 +1895,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: false,
     };
@@ -1903,6 +2024,7 @@ fn external_roots_keep_canonical_paths_expected_versions_and_grant_scope() {
     let host = Host {
         authority: &authority,
         data_root: &data,
+        environment: None,
         active: &active,
         record_changes: true,
     };

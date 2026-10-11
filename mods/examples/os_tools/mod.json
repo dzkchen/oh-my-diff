@@ -17,7 +17,8 @@
   },
   "compatibility": {
     "required_features": [
-      "unrestricted_process_v1"
+      "unrestricted_process_v1",
+      "environment_overrides_v1"
     ]
   }
 }

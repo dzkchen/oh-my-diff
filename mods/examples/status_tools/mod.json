@@ -7,6 +7,6 @@
   "license": "MIT",
   "capabilities": ["lifecycle", "tools", "events", "store", "commands", "threads"],
   "compatibility": {
-    "required_features": ["dynamic_tools_v1", "timers_v1"]
+    "required_features": ["dynamic_tools_v1", "timers_100ms_v1", "turn_abort_v1"]
   }
 }

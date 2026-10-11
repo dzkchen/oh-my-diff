@@ -53,6 +53,10 @@ test('host control examples preserve clipboard status and scoped arguments', () 
   assert.equal(empty.host_call, null);
   assert.deepEqual(run('os_tools', 'command', 'C', { name: 'locale' }).host_call, { operation: 'environment.set', arguments: { name: 'LANG', value: 'C' } });
   assert.deepEqual(run('os_tools', 'command', '', { name: 'locale' }).host_call, { operation: 'environment.set', arguments: { name: 'LANG', value: null } });
+  assert.deepEqual(run('os_tools', 'command', '', { name: 'locale', receipts: [{
+    call: { operation: 'environment.set', arguments: { name: 'LANG', value: null } },
+    value: { name: 'LANG', set: false },
+  }] }).value, { display: 'Future child locale: inherited' });
   assert.deepEqual(run('status_tools', 'command', ' turn-a ', { name: 'abort_turn' }).host_call, { operation: 'turns.abort', arguments: { turn_id: 'turn-a' } });
 });
 

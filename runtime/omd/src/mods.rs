@@ -242,6 +242,11 @@ pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
 pub const MOD_HOST_FEATURES: &[&str] = &[
+    "turn_abort_v1",
+    "terminal_selection_v1",
+    "terminal_copy_v1",
+    "environment_overrides_v1",
+    "timers_100ms_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -2943,7 +2948,6 @@ impl ModHost {
             Err(error) => {
                 if !self.loaded.is_empty() {
                     self.loaded.clear();
-                    crate::host::clear_environment(&self.store.root, None, None);
                     self.order.clear();
                     self.generation += 1;
                     self.dynamic_tools.clear();
@@ -3053,14 +3057,6 @@ impl ModHost {
             })
         });
         if self.loaded.len() != retained {
-            crate::host::retain_environment(
-                &self.store.root,
-                &self
-                    .owners()
-                    .into_iter()
-                    .map(|(id, owner)| (id, owner.sha256))
-                    .collect(),
-            );
             self.generation += 1;
             self.dynamic_tools.clear();
         }
@@ -3252,14 +3248,6 @@ impl ModHost {
         }
         self.rejected = rejected;
         self.admit();
-        crate::host::retain_environment(
-            &self.store.root,
-            &self
-                .owners()
-                .into_iter()
-                .map(|(id, owner)| (id, owner.sha256))
-                .collect(),
-        );
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
         self.generation += 1;

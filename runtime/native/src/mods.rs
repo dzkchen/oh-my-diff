@@ -154,6 +154,7 @@ pub(super) struct Core {
     host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
+    environment: Arc<codex_omd::host::Environment>,
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
@@ -424,6 +425,7 @@ pub(super) fn install(
             host,
             runtime,
             input_runtime,
+            environment: Arc::default(),
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),
@@ -1920,15 +1922,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
             }
             self.host.accounts.forget_thread(&lead.thread.to_string());
             expansion::release_thread(self, lead.thread);
-            codex_omd::host::clear_environment(
-                &self.host.root,
-                Some(&lead.thread.to_string()),
-                None,
-            );
             if let Ok(mut invokers) = self.expansion.invokers.lock() {
                 invokers.remove(&lead.thread.to_string());
             }
             if lead.owner != "lead" {
+                self.environment.clear(Some(&lead.thread.to_string()), None);
                 return;
             }
             self.expansion.forget_inventory(lead.thread);
@@ -1943,11 +1941,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             .await;
             self.event("stop", Value::Null, Some(&*lead)).await;
             expansion::release_thread(self, lead.thread);
-            codex_omd::host::clear_environment(
-                &self.host.root,
-                Some(&lead.thread.to_string()),
-                None,
-            );
+            self.environment.clear(Some(&lead.thread.to_string()), None);
             lead.session.processes.cleanup();
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
