@@ -327,7 +327,12 @@ impl Frames {
     }
 }
 
-fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::AtomicBool>) -> Frames {
+fn blit_worker(
+    key: String,
+    sink: BlitSink,
+    alive: Arc<std::sync::atomic::AtomicBool>,
+    stop: impl Fn() + Send + 'static,
+) -> Frames {
     let shared = Arc::new((Mutex::new(None::<Option<Value>>), std::sync::Condvar::new()));
     let frames = shared.clone();
     std::thread::spawn(move || {
@@ -346,11 +351,20 @@ fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::Atomic
             let Some(image) = image else {
                 return;
             };
-            let wait = match sink(json!({"key": key, "image": image}), active.clone()) {
+            let arguments = if let Some(pixels) = image.get("pixels") {
+                json!({"key": key, "pixels": pixels})
+            } else {
+                json!({"key": key, "image": image})
+            };
+            let wait = match sink(arguments, active.clone()) {
                 Ok(reply) if reply["status"] == "backpressure" => Some(Duration::from_millis(
-                    reply["retry_after_ms"].as_u64().unwrap_or(33).min(1_000),
+                    reply["retry_after_ms"].as_u64().unwrap_or(16).min(1_000),
                 )),
                 Ok(_) => None,
+                Err(_) if image.get("pixels").is_some() => {
+                    stop();
+                    return;
+                }
                 Err(_) if !active() => return,
                 Err(_) => (attempts < BLIT_ATTEMPTS).then_some(BLIT_RETRY),
             };
@@ -877,12 +891,15 @@ impl ManagedProcesses {
                     });
                     let (sender, receiver) = mpsc::sync_channel(128);
                     let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-                    let frames = raster.as_ref().map(|(key, _, sink)| {
-                        blit_worker(key.clone(), sink.clone(), alive.clone())
-                    });
                     let group = child.id();
                     let reaped = Arc::new(Mutex::new(false));
-                    let binding = raster.as_ref().map(|(key, keys, _)| {
+                    let frames = raster.as_ref().map(|(key, _, sink)| {
+                        let reaped = reaped.clone();
+                        blit_worker(key.clone(), sink.clone(), alive.clone(), move || {
+                            kill_group_if_alive(group, &reaped)
+                        })
+                    });
+                    let mut binding = raster.as_ref().map(|(key, keys, _)| {
                         let mut components =
                             vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
                         components.extend(
@@ -896,6 +913,21 @@ impl ManagedProcesses {
                             input_sink(writer_sender.clone(), group, reaped.clone()),
                         )
                     });
+                    if let Some(binding) = &mut binding {
+                        let initialized = binding
+                            .pixels(&scratch.join("pixels.raw"), Some(generation))
+                            .and_then(|message| {
+                                input_sink(writer_sender.clone(), group, reaped.clone())(message)
+                                    .then_some(())
+                                    .ok_or("process_pixels_init_failed".to_owned())
+                            });
+                        if let Err(error) = initialized {
+                            let _ = kill_process_group(child.id());
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            return Err(error);
+                        }
+                    }
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
                     let reader_reaped = Arc::clone(&reaped);
@@ -1261,6 +1293,65 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn raw_buffer_sandbox_allows_private_files_but_denies_named_shared_memory() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            thread: None,
+            id: "raw-sandbox",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            environment: None,
+            os_access: None,
+            blit: None,
+        };
+        let found = processes
+            .call(owner, "process.which", json!({"names":["python3"]}), || {
+                true
+            })
+            .unwrap();
+        let python = &found["found"][0];
+        let probe = r#"import ctypes,errno,json,os
+lib=ctypes.CDLL(None,use_errno=True)
+name=('/omdprobe_'+str(os.getpid())).encode()
+fd=lib.shm_open(name,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o600)
+error=ctypes.get_errno()
+if fd >= 0:
+ os.close(fd)
+ lib.shm_unlink(name)
+with open(os.path.join(os.environ['HOME'],'pixels.raw'),'wb') as f: f.write(bytes([1,2,3]))
+print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno.EACCES),'file':True}),flush=True)
+"#;
+        processes
+            .call(
+                owner,
+                "process.start",
+                json!({"session":"probe","name":"python3","path":python["path"],
+            "sha256":python["sha256"],"arguments":["-c",probe],"framing":"ndjson"}),
+                || true,
+            )
+            .unwrap();
+        let answer = processes
+            .call(
+                owner,
+                "process.exchange",
+                json!({"session":"probe","wait_ms":1000}),
+                || true,
+            )
+            .unwrap();
+        let result = &answer["messages"][0];
+        assert_eq!(result["shm_fd"], -1, "{answer}");
+        assert_eq!(result["denied"], true, "{answer}");
+        assert_eq!(result["file"], true, "{answer}");
+        eprintln!("raw sandbox probe: {result}");
+    }
+
+    #[test]
     fn a_child_that_breaks_the_framed_channel_is_stopped() {
         let directory = tempfile::tempdir().unwrap();
         let repository = directory.path().canonicalize().unwrap();
@@ -1331,7 +1422,7 @@ mod tests {
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
         let sha256 = program_sha256(&sh).unwrap();
-        let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
+        let script = r#"IFS= read -r init; printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
         let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
             processes.call(
                 owner,
@@ -1500,6 +1591,7 @@ mod tests {
                 Ok(Value::Null)
             }),
             Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            || {},
         );
         frames.offer(Value::Null);
         assert!(receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"].is_null());
@@ -1509,6 +1601,22 @@ mod tests {
             "AA=="
         );
         frames.stop();
+        assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
+    }
+
+    #[test]
+    fn invalid_raw_frame_stops_its_producer_without_retrying() {
+        let (sender, receiver) = mpsc::channel();
+        let frames = blit_worker(
+            "raw-frame".into(),
+            Arc::new(|_, _| Err("terminal_blit_pixels_invalid".into())),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            move || {
+                sender.send(()).unwrap();
+            },
+        );
+        frames.offer(json!({"pixels":{"format":"invalid"}}));
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
     }
 

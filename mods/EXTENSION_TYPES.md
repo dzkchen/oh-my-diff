@@ -84,6 +84,7 @@ contains only the packages labeled `bundled` below.
 | `quiet_inline@1.0.0` | `mod` | `mods/examples/quiet_inline` | Keeps inline scrollback free of every mod sidebar and header for screen readers and plain terminals. |
 | `image_preview@1.0.0` | `mod` | `mods/examples/image_preview` | Renders an imported image inside a live terminal render site and opens links after native confirmation. |
 | `layout_explorer@1.0.0` | `mod` | `mods/examples/layout_explorer` | Replaces the live terminal layout with splits, tabs, documents and diffs. |
+| `frame_stream@1.0.0` | `mod` | `mods/examples/frame_stream` | Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look. |
 | `raster_canvas@1.0.0` | `mod` | `mods/examples/raster_canvas` | Draws an animated raster with pointer hover, drag and an anchored overlay. |
 | `box_model@1.0.0` | `mod` | `mods/examples/box_model` | Draws bordered cards, flat filled panels, flex rows, hover and focus accents and a gapped split layout with the box model. |
 | `external_client@1.0.0` | `mod` | `mods/examples/external_client` | Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol. |

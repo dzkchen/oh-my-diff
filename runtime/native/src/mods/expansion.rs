@@ -642,6 +642,7 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
 
 /// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
 pub(in crate::mods) fn blit_sink(
+    core: &Core,
     lead: &Lead,
     caller: &Caller<'_>,
 ) -> Option<crate::managed_process::BlitSink> {
@@ -660,7 +661,23 @@ pub(in crate::mods) fn blit_sink(
         caller.generation,
         lead.thread.to_string(),
     );
+    let runtime = core.runtime.clone();
+    let owner = id.clone();
+    let admitted_source = source.clone();
+    let capabilities = grants.capabilities.clone();
+    let current: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+        let mut runtime = runtime
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        runtime.reload().is_ok()
+            && runtime.generation() == generation
+            && runtime.grants(&owner).is_some_and(|grants| {
+                grants.source_sha256 == admitted_source && grants.capabilities == capabilities
+            })
+    });
     Some(Arc::new(move |arguments, active| {
+        let current = current.clone();
+        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || active() && current());
         codex_omd::client_surface::with_admission(&source, generation, None, || {
             codex_omd::client_surface::call(
                 &id,

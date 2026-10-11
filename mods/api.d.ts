@@ -438,7 +438,7 @@ export interface HostOperations {
   'terminal.panes': { arguments: Record<string, never>; result: { panes: { id: string; visible: boolean; collapsed: boolean; focused: boolean; scroll: number }[] } };
   'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
     result: { shown: true; model?: boolean } | { cleared: boolean } };
-  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } };
+  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };

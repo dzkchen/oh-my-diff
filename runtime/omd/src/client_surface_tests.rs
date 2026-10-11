@@ -5,6 +5,56 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Echo;
 
 #[test]
+fn raw_snapshot_waits_for_admission_and_shares_the_accepted_frame() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pixels");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let received = seen.clone();
+    let mut binding = crate::process_raster::bind(
+        None,
+        "raw-admission",
+        vec![(
+            "raw-admission-frame".into(),
+            crate::process_raster::Role::Raster,
+        )],
+        Arc::new(move |value| {
+            received.lock().unwrap().push(value);
+            true
+        }),
+    );
+    let initialized = binding.pixels(&path, None).unwrap();
+    std::fs::write(&path, [1, 2, 3]).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(true));
+    let lifetime = CallLifetime {
+        upstream_cancelled: Some(cancelled.clone()),
+        ..Default::default()
+    };
+    let retained = lifetime.pixels.clone();
+    let call = SurfaceCall {
+        validity: Validity(Arc::new(|| true)),
+        caller: "raw-admission".into(),
+        operation: "terminal.blit".into(),
+        arguments: json!({"key":"raw-admission-frame","pixels":{"source":initialized["pixels"]["source"],"format":"rgb","width":1,"height":1,"sequence":1}}),
+        context: InvocationContext::Event,
+        remote: false,
+        thread: None,
+        authority: None,
+        confirm: None,
+        reply: sync_channel(1).0,
+        lifetime,
+    };
+    assert!(call.snapshot_pixels().is_err());
+    assert!(seen.lock().unwrap().is_empty());
+    assert!(retained.get().is_none());
+    cancelled.store(false, Ordering::Release);
+    let accepted = call.snapshot_pixels().unwrap().unwrap();
+    assert!(Arc::ptr_eq(retained.get().unwrap(), &accepted));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert!(call.snapshot_pixels().is_err());
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn encoded_blits_need_ownership_but_not_cell_dimensions() {
     let image = json!({"key":"frame","image":{"media_type":"image/png","base64":"AA=="}});
     assert!(blit_request("owner", Some("owner"), None, &image).is_ok());
@@ -170,6 +220,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
             caller,
             operation,
             arguments,
+            ..
         } = observed
         {
             log.lock().unwrap().push((caller, operation, arguments));
@@ -355,7 +406,7 @@ fn only_accepted_mirrored_operations_are_mirrored() {
             Ok(json!({"status": "backpressure", "retry_after_ms": 5})),
             0,
         ),
-        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 33})), 1),
+        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 16})), 1),
     ] {
         let registration = register(Arc::new(Answers(answer.clone())));
         let blit = call(

@@ -37,6 +37,15 @@ pub fn with_admission<T>(
     action()
 }
 
+pub fn current_generation() -> Option<u64> {
+    CALL_ADMISSION.with(|value| {
+        value
+            .borrow()
+            .as_ref()
+            .and_then(|(binding, _)| binding["generation"].as_u64())
+    })
+}
+
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
     "credentials.request",
@@ -108,6 +117,7 @@ impl std::fmt::Debug for Validity {
 #[derive(Clone, Debug, Default)]
 pub struct CallLifetime {
     pub admission: Option<Value>,
+    pub pixels: Arc<std::sync::OnceLock<Arc<crate::process_raster::PixelFrame>>>,
     upstream_cancelled: Option<Arc<AtomicBool>>,
     cancelled: Arc<AtomicBool>,
     phase: Arc<AtomicU8>,
@@ -230,6 +240,42 @@ pub struct SurfaceCall {
     pub lifetime: CallLifetime,
 }
 
+impl SurfaceCall {
+    pub fn snapshot_pixels(
+        &self,
+    ) -> Result<Option<Arc<crate::process_raster::PixelFrame>>, String> {
+        let Some(value) = self.arguments.get("pixels") else {
+            return Ok(None);
+        };
+        if !(self.validity.0)() || !self.lifetime.active() {
+            return Err("callback_cancelled_or_expired".into());
+        }
+        self.lifetime.begin_execution()?;
+        let source =
+            serde_json::from_value(value.clone()).map_err(|_| "terminal_blit_pixels_invalid")?;
+        let component = self.arguments["key"]
+            .as_str()
+            .ok_or("terminal_blit_invalid")?;
+        let snapshot = || {
+            crate::process_raster::snapshot(self.thread.as_deref(), &self.caller, component, source)
+        };
+        let pixels = if let Some(admission) = &self.lifetime.admission {
+            with_admission(
+                admission["source"].as_str().unwrap_or_default(),
+                admission["generation"]
+                    .as_u64()
+                    .ok_or("client_surface_admission_changed")?,
+                None,
+                snapshot,
+            )?
+        } else {
+            snapshot()?
+        };
+        let _ = self.lifetime.pixels.set(pixels.clone());
+        Ok(Some(pixels))
+    }
+}
+
 /// Operations only the user at the terminal may cause, never an attached client.
 pub fn needs_terminal(operation: &str, arguments: &Value) -> bool {
     USER_ONLY_OPERATIONS.contains(&operation)
@@ -278,6 +324,7 @@ pub enum Observed {
         caller: String,
         operation: String,
         arguments: Value,
+        pixels: Option<Arc<crate::process_raster::PixelFrame>>,
     },
 }
 
@@ -815,25 +862,24 @@ pub fn call(
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     let mirrored = (MIRRORED_OPERATIONS.contains(&operation) && !hub().observers.is_empty())
         .then(|| arguments.clone());
-    let answer = wait(
-        submit_bound(
-            caller,
-            operation,
-            arguments,
-            context,
-            remote,
-            thread,
-            confirm,
-            active.clone(),
-        )?,
-        active.as_ref(),
-        deadline,
+    let pending = submit_bound(
+        caller,
+        operation,
+        arguments,
+        context,
+        remote,
+        thread,
+        confirm,
+        active.clone(),
     )?;
+    let pixels = pending.lifetime.pixels.clone();
+    let answer = wait(pending, active.as_ref(), deadline)?;
     if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
         notify(Observed::Mirrored {
             caller: caller.to_owned(),
             operation: operation.to_owned(),
             arguments,
+            pixels: pixels.get().cloned(),
         });
     }
     Ok(answer)
@@ -1057,7 +1103,7 @@ pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
     }
 }
 
-pub const BLIT_FRAME: Duration = Duration::from_millis(33);
+pub const BLIT_FRAME: Duration = Duration::from_millis(16);
 pub const BLIT_QUEUE_UPDATES: usize = 32;
 pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
 
@@ -1098,9 +1144,12 @@ struct WireBlit {
     rect: Option<BlitRect>,
     cells: Option<Vec<WireCell>>,
     image: Option<WireImage>,
+    pixels: Option<crate::process_raster::PixelSource>,
 }
 
 pub enum BlitContent {
+    Source(crate::process_raster::PixelSource),
+    Pixels(Arc<crate::process_raster::PixelFrame>),
     Cells {
         rect: BlitRect,
         cells: Vec<BlitCell>,
@@ -1124,6 +1173,7 @@ pub struct Blit {
 pub const IMAGE_PIXELS: u32 = 4096;
 
 pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    let _stage = crate::frame_metrics::stage("decode");
     if bytes.len() > 8 * 1024 * 1024 {
         return Err("backdrop_image_too_large".into());
     }
@@ -1144,6 +1194,7 @@ pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
 
 /// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
 pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<Vec<BlitCell>> {
+    let _stage = crate::frame_metrics::stage("half_block");
     let pixels = image
         .resize(
             u32::from(width),
@@ -1174,7 +1225,15 @@ pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<V
 pub fn frame_cells(arguments: &Value, size: (u16, u16)) -> Option<Value> {
     let image = arguments.get("image")?;
     let bytes = STANDARD.decode(image["base64"].as_str()?).ok()?;
-    let rows = half_block(&decode_image(&bytes).ok()?, size.0, size.1);
+    Some(pixel_cells(
+        &arguments["key"],
+        &decode_image(&bytes).ok()?,
+        size,
+    ))
+}
+
+pub fn pixel_cells(key: &Value, image: &image::DynamicImage, size: (u16, u16)) -> Value {
+    let rows = half_block(image, size.0, size.1);
     let cells = (0..usize::from(size.1)).flat_map(|y| {
         let rows = &rows;
         (0..usize::from(size.0)).map(move |x| {
@@ -1184,16 +1243,26 @@ pub fn frame_cells(arguments: &Value, size: (u16, u16)) -> Option<Value> {
             )
         })
     });
-    Some(serde_json::json!({
-        "key": arguments["key"],
+    serde_json::json!({
+        "key": key,
         "rect": {"x": 0, "y": 0, "width": size.0, "height": size.1},
         "cells": cells.collect::<Vec<_>>(),
-    }))
+    })
 }
 
 impl Blit {
     /// Image frames are only header-checked here; pixels are decoded when first drawn.
-    pub fn checked(mut self) -> Result<Self, String> {
+    pub fn checked(
+        mut self,
+        pixels: Option<Arc<crate::process_raster::PixelFrame>>,
+    ) -> Result<Self, String> {
+        if let BlitContent::Source(source) = &self.content {
+            let pixels = pixels
+                .filter(|pixels| &pixels.source == source)
+                .ok_or("terminal_blit_source_unavailable")?;
+            self.bytes = pixels.source.byte_len()?;
+            self.content = BlitContent::Pixels(pixels);
+        }
         if let BlitContent::Encoded { media_type, base64 } = &self.content {
             let format = match media_type.as_str() {
                 "image/png" => image::ImageFormat::Png,
@@ -1234,9 +1303,10 @@ pub fn blit_request(
     }
     let blit: WireBlit =
         serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
-    let (rect, image) = match (blit.rect, blit.cells, blit.image) {
-        (Some(rect), Some(cells), None) => (Some((rect, cells)), None),
-        (None, None, Some(image)) => (None, Some(image)),
+    let (rect, image, pixels) = match (blit.rect, blit.cells, blit.image, blit.pixels) {
+        (Some(rect), Some(cells), None, None) => (Some((rect, cells)), None, None),
+        (None, None, Some(image), None) => (None, Some(image), None),
+        (None, None, None, Some(pixels)) => (None, None, Some(pixels)),
         _ => return Err("terminal_blit_invalid".into()),
     };
     match owner {
@@ -1275,7 +1345,7 @@ pub fn blit_request(
             media_type: image.media_type,
             base64: image.base64,
         },
-        (None, None) => return Err("terminal_blit_invalid".into()),
+        (None, None) => BlitContent::Source(pixels.ok_or("terminal_blit_invalid")?),
     };
     Ok(Blit {
         key: blit.key,

@@ -247,7 +247,7 @@ class Ghostty(Terminal):
 
     def start(self, env):
         self.process = subprocess.Popen(["open", "-n", "-W", "/Applications/Ghostty.app", "--args", f"--window-width={COLUMNS}",
-                                         f"--window-height={ROWS}", "--confirm-close-surface=false", "-e", "sh", str(self.script)],
+                                         f"--window-height={ROWS}", "--confirm-close-surface=false", "--window-save-state=never", "-e", "sh", str(self.script)],
                                         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def pid(self):

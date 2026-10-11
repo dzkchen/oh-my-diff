@@ -1479,9 +1479,9 @@
       "observe": "the `terminal` event carries `client` graphics, pointer, reduced-motion and cell-pixel facts; pointer components report `enter`, `leave`, `move`, `down`, `up` and `drag` with half-cell rows",
       "alter": "`terminal.blit` queues partial cell updates into the mod's own `raster`; named sites may be overlays anchored to the screen or a component with z-order and clipping",
       "replace": null,
-      "timing": "one queued blit applied per 33 ms frame; latest-wins pointer motion; a press captures until release",
+      "timing": "one queued blit applied per 16 ms frame; newest image or raw-pixel frame replaces pending frames; latest-wins pointer motion; a press captures until release",
       "ownership": "mod: its own rasters, overlays and images; host: frame pacing, hit-testing layers, image ids and teardown",
-      "limits": "rasters 200x40 cells, 16 per mod, 32 queued updates or 256 KiB; overlay z 0–9; images 8 MiB and 4,096 px",
+      "limits": "rasters 200x40 cells, 16 per mod, 32 queued cell updates or 256 KiB; overlay z 0–9; encoded images 8 MiB and 4,096 px; raw RGB/RGBA 4,096 px per side (64 MiB maximum), one immutable newest frame per raster, process and generation scoped handles",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],

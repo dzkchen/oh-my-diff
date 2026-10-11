@@ -1038,6 +1038,35 @@ take `raster: KEY` (one of the caller's raster ids) and optionally `keys: ID`
 are drawn into that raster by the host as `terminal.blit {key, image}` from the
 mod, with the same validation, but without a callback per frame: the newest
 frame wins and a frame the terminal cannot take yet is retried for up to 5 s.
+The host also creates a private raw buffer and sends
+`{"pixels": {"source": HANDLE, "path": PATH}}` on stdin. The child opens that
+file, writes exactly `width * height * channels` packed bytes at offset zero,
+and publishes `{"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba",
+"width": W, "height": H, "sequence": N}}}`. The equivalent mod call is
+`terminal.blit {key, pixels: {...}}`. Sequence numbers start at 1 and increase
+for each publication. The child must not modify the buffer until stdin
+acknowledges `{"pixels": {"source": HANDLE, "sequence": N, "ready": true,
+"error": null}}`; an owned invalid descriptor or failed copy returns
+`ready: false` with an error. Fatal raw publications stop the managed producer
+instead of retrying a consumed sequence. Backpressure neither copies nor
+acknowledges the buffer, so the same publication can be retried safely.
+The host retains the original descriptor, copies a bounded immutable frame,
+and never reopens a child-supplied path. Replacing the pathname cannot redirect
+the read. Handles are bound to the thread, mod generation, raster and process lifetime;
+stopping/reloading the process revokes them. Frames are limited to 4096 pixels
+per side (64 MiB for RGBA), with one newest pending image per raster. General
+POSIX shared memory is not granted by the sandbox; the private file works
+under the existing process sandbox. Raw frames reach Kitty without PNG
+encoding; inline-image terminals and external PNG/JPEG clients receive encoded
+snapshots, and cells-only clients receive half-blocks. Host paths and handles
+never reach external renderers.
+
+Experimental pacing changed from 33 to 16 ms in Batch 4gh. Use `frame_ms` and
+`retry_after_ms` instead of hardcoded timing. Existing encoded messages keep
+their shape; producers should ignore stdin messages they do not use.
+For local profiling, `OMD_FRAME_TRACE=/absolute/new/file.jsonl` enables
+per-stage wall and thread-CPU timings; the file must not already exist.
+
 Other messages reach `process_event` and `process.exchange` as usual. Pointer
 events on the raster are written to its stdin as `{"pointer": {action, button,
 x, y, inside}}` with `x`/`y` in the drawn frame's pixels (null before a frame;
@@ -1656,7 +1685,7 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   has not received in a view yet, such as one returned by the same callback,
   is `terminal_blit_unknown`): `cells` lists the rect's cells
   row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
-  null. Updates queue per raster and apply one per 33 ms frame, so a timer
+  null. Updates queue per raster and apply one per 16 ms frame, so a timer
   tick can enqueue an animation; at 32 queued updates or 256 KiB the call
   returns `{status: 'backpressure', retry_after_ms}` instead of
   `{frame, queued, frame_ms}`; one call over 256 KiB is
@@ -1921,7 +1950,7 @@ attached clients in both modes, blits only to clients listing `cells`; others
 draw a raster's `alt`. Headless, the host answers those three itself with the
 terminal's validation: a blit is checked against `component_owners`
 (`terminal_blit_not_owned`, `terminal_blit_unknown`) and the raster's size and
-paced at one frame per 33 ms with the same 32-update backpressure, a notice
+paced at one frame per 16 ms with the same 32-update backpressure, a notice
 fails with `terminal_notice_invalid` like in the terminal, and a
 `model`-audience notice is still queued for the model.
 
