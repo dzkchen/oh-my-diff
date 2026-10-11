@@ -6,18 +6,21 @@ final class MouseLook: @unchecked Sendable {
     var origin = CGPoint.zero
     var deadline = Date.distantPast
     var foreground: pid_t?
+    var monitor: Any?
     func report(_ value: [String: Any]) {
         if let data = try? JSONSerialization.data(withJSONObject: value) {
             FileHandle.standardOutput.write(data)
             FileHandle.standardOutput.write(Data([10]))
         }
     }
-    func release() {
+    func release(_ reason: String = "input") {
         guard locked else { return }
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
         CGAssociateMouseAndMouseCursorPosition(1)
         CGDisplayShowCursor(CGMainDisplayID())
         locked = false
-        report(["locked": false])
+        report(["locked": false, "reason": reason])
     }
     func lock() {
         guard !locked else { return }
@@ -28,20 +31,28 @@ final class MouseLook: @unchecked Sendable {
         foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
         deadline = Date().addingTimeInterval(10)
         CGDisplayHideCursor(CGMainDisplayID())
+        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .leftMouseDown]) { [self] event in
+            guard locked, NSWorkspace.shared.frontmostApplication?.processIdentifier == foreground else { return }
+            if event.modifierFlags.contains(.command) { release("command"); return }
+            if event.type == .leftMouseDown { return }
+            if event.deltaX != 0 || event.deltaY != 0 { report(["dx": event.deltaX, "dy": event.deltaY]) }
+        }
+        guard monitor != nil else { report(["error": "mouse_monitor"]); release("mouse_monitor"); return }
         report(["locked": true])
     }
     func tick() {
         guard locked else { return }
-        if Date() >= deadline || NSWorkspace.shared.frontmostApplication?.processIdentifier != foreground
-            || CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand)
-            || CGEventSource.keyState(.combinedSessionState, key: 53) { release(); return }
-        let delta = CGGetLastMouseDelta()
+        if Date() >= deadline { release("timeout"); return }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != foreground { release("focus"); return }
+        if CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand) { release("command"); return }
+        if CGEventSource.keyState(.combinedSessionState, key: 53) { release("escape"); return }
         guard CGWarpMouseCursorPosition(origin) == .success else { release(); return }
-        if delta.x != 0 || delta.y != 0 { report(["dx": delta.x, "dy": delta.y]) }
     }
 }
 
 let look = MouseLook()
+let application = NSApplication.shared
+application.setActivationPolicy(.prohibited)
 let timer = DispatchSource.makeTimerSource(queue: .main)
 timer.schedule(deadline: .now(), repeating: .milliseconds(8))
 timer.setEventHandler { look.tick() }
@@ -58,4 +69,4 @@ DispatchQueue.global().async {
     }
     DispatchQueue.main.async { look.release(); exit(0) }
 }
-dispatchMain()
+application.run()
