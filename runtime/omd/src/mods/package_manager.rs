@@ -667,6 +667,7 @@ impl ModStore {
             })
             .collect::<Vec<_>>();
         let mut lifecycle = Vec::new();
+        let mut evicted = Vec::new();
         for package in &plan.packages {
             match lock.packages.get(&package.id) {
                 None => lifecycle.push((package.clone(), "install")),
@@ -678,7 +679,7 @@ impl ModStore {
             if let Some(previous) = lock.packages.insert(package.id.clone(), package.clone())
                 && previous.integrity != package.integrity
             {
-                push_history(&mut lock, &package.id, previous)?;
+                evicted.extend(push_history(&mut lock, &package.id, previous));
             }
             let selection = config
                 .mods
@@ -716,14 +717,86 @@ impl ModStore {
             .ok_or_else(|| failure("revision_overflow"))?;
         let event =
             json!({"packages": plan.packages.iter().map(package_event).collect::<Vec<_>>()});
-        self.commit_package_transaction(
+        let lock = self.commit_package_transaction(
             lock,
             config,
             &lifecycle,
             &plan.action,
             event,
             if online { &plan.packages } else { &[] },
-        )
+        )?;
+        self.prune_evicted_local_snapshots(&lock, &evicted);
+        Ok(lock)
+    }
+
+    fn prune_evicted_local_snapshots(&self, lock: &ModPackageLock, evicted: &[ModLockedPackage]) {
+        if evicted.is_empty() {
+            return;
+        }
+        let (Ok(config), Ok(managed)) = (self.configuration(), self.managed_deployment()) else {
+            return;
+        };
+        let mut paths = lock
+            .packages
+            .values()
+            .chain(lock.history.values().flatten())
+            .flat_map(|package| [&package.path, &package.cache_path])
+            .chain(config.mods.iter().map(|selection| &selection.path))
+            .collect::<Vec<_>>();
+        let mut integrities = config
+            .mods
+            .iter()
+            .map(|selection| &selection.sha256)
+            .collect::<BTreeSet<_>>();
+        let mut generation = Some(&managed);
+        while let Some(deployment) = generation {
+            for package in &deployment.packages {
+                paths.push(&package.path);
+                integrities.insert(&package.sha256);
+                integrities.extend(&package.dependencies);
+            }
+            generation = deployment.previous.as_deref();
+        }
+        let paths = paths
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+            .collect::<Vec<_>>();
+        for package in evicted {
+            let ModPackageSource::Local { path: source } = &package.source else {
+                continue;
+            };
+            if !identifier(&package.id)
+                || package.integrity.len() != 64
+                || !package
+                    .integrity
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || !source.is_absolute()
+                || source.starts_with(&self.root)
+                || source
+                    .canonicalize()
+                    .is_ok_and(|path| path.starts_with(&self.root))
+            {
+                continue;
+            }
+            let cache = self.root.join("package-cache");
+            let base = cache.join(&package.id);
+            let expected = base.join(&package.integrity);
+            if package.cache_path != expected
+                || [&cache, &base, &expected].iter().any(|path| {
+                    !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+                })
+                || !expected.canonicalize().is_ok_and(|path| path == expected)
+                || paths.iter().any(|path| path.starts_with(&expected))
+                || integrities.contains(&package.integrity)
+                || !store::package(&expected).is_ok_and(|(manifest, _, integrity)| {
+                    manifest.id == package.id && integrity == package.integrity
+                })
+            {
+                continue;
+            }
+            let _ = std::fs::remove_dir_all(expected);
+        }
     }
 
     pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -2517,13 +2590,14 @@ fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
     Ok(())
 }
 
-fn push_history(lock: &mut ModPackageLock, id: &str, package: ModLockedPackage) -> Result<()> {
+fn push_history(
+    lock: &mut ModPackageLock,
+    id: &str,
+    package: ModLockedPackage,
+) -> Option<ModLockedPackage> {
     let history = lock.history.entry(id.to_owned()).or_default();
     history.push(package);
-    if history.len() > PACKAGE_HISTORY_LIMIT {
-        history.remove(0);
-    }
-    Ok(())
+    (history.len() > PACKAGE_HISTORY_LIMIT).then(|| history.remove(0))
 }
 
 fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {

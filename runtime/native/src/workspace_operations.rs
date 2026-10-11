@@ -270,6 +270,8 @@ impl WorkspaceAuthority {
         processes: &crate::managed_process::ManagedProcesses,
         protected: &[PathBuf],
         generation: u64,
+        thread: &str,
+        environment: &codex_omd::host::Environment,
         active: &impl Fn() -> bool,
     ) -> Result<Value, String> {
         if !crate::generic_host::event_allows("workspace_pre_rename", &call.operation) {
@@ -290,18 +292,27 @@ impl WorkspaceAuthority {
                 Err("pre_rename_operation_unavailable".into())
             }
             _ => {
-                crate::generic_host::process_request_allowed(
-                    Some(grants.ok_or("host_caller_inactive")?),
-                    &call,
-                )?;
+                let grants = grants.ok_or("host_caller_inactive")?;
+                crate::generic_host::process_request_allowed(Some(grants), &call)?;
+                let overrides = if call.operation == "process.start" {
+                    environment.values(
+                        Some(thread),
+                        id,
+                        &grants.source_sha256,
+                        &grants.exec_environment,
+                    )?
+                } else {
+                    Default::default()
+                };
                 processes.call(
                     crate::managed_process::ProcessOwner {
-                        thread: None,
+                        thread: Some(thread),
                         id,
                         generation,
                         repository: &self.repository,
                         policy: &self.policy,
                         protected,
+                        environment: Some(&overrides),
                         os_access: None,
                         blit: None,
                     },
@@ -313,6 +324,10 @@ impl WorkspaceAuthority {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "callbacks retain their runtime, process and environment authority"
+    )]
     pub fn request_rename(
         &self,
         arguments: Value,
@@ -320,6 +335,8 @@ impl WorkspaceAuthority {
         lead: &crate::Lead,
         protected: &[PathBuf],
         generation: u64,
+        thread: &str,
+        environment: &codex_omd::host::Environment,
         active: impl Fn() -> bool,
     ) -> Result<Value, String> {
         #[derive(Deserialize)]
@@ -344,8 +361,8 @@ impl WorkspaceAuthority {
             payload.clone(),
             &active,
             |id, call| {
-                let audited = codex_omd::access_receipt(id, &call, Ok(&Value::Null))
-                    .map(|_| call.clone());
+                let audited =
+                    codex_omd::access_receipt(id, &call, Ok(&Value::Null)).map(|_| call.clone());
                 let result = self.pre_rename_call(
                     id,
                     call,
@@ -354,6 +371,8 @@ impl WorkspaceAuthority {
                     &lead.session.processes,
                     protected,
                     generation,
+                    thread,
+                    environment,
                     &active,
                 );
                 if let Some(call) = audited
@@ -699,6 +718,8 @@ mod tests {
                 &processes,
                 &[],
                 1,
+                "thread",
+                &codex_omd::host::Environment::default(),
                 &|| true,
             )
         };

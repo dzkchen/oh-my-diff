@@ -35,7 +35,7 @@ fn install(store: &ModStore, dir: &Path, package: &Package<'_>) {
     let path = path.canonicalize().unwrap();
     let inspected = ModStore::inspect_package(&path).unwrap();
     store
-        .trust(
+        .trust_with_secrets(
             path.clone(),
             inspected["sha256"].as_str().unwrap(),
             package
@@ -44,6 +44,14 @@ fn install(store: &ModStore, dir: &Path, package: &Package<'_>) {
                 .map(|c| (*c).to_owned())
                 .collect(),
             "user",
+            manifest["exec_environment"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|name| codex_omd::host::secret_like(name))
+                .map(str::to_owned)
+                .collect(),
         )
         .unwrap();
     store.enable(&path, true).unwrap();
@@ -76,7 +84,9 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         manager: std::sync::Weak::new(),
         epoch: 1,
     });
-    let runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let runtime = ModHost::open(root.clone()).unwrap();
+    let environment = runtime.environment();
+    let runtime = Arc::new(Mutex::new(runtime));
     let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
     let views = Arc::new(view::Views::new());
     let core = Arc::new_cyclic(|core| Core {
@@ -84,6 +94,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         host: host.clone(),
         runtime,
         input_runtime,
+        environment,
         services: services::Services::default(),
         views,
         expansion: State::default(),
@@ -130,6 +141,722 @@ fn mods(core: &Arc<Core>) -> Mods {
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
+    }
+}
+
+async fn attach_thread(fixture: &mut Fixture) -> Arc<codex_core::ThreadManager> {
+    attach_thread_with_sandbox_mode(fixture, None).await
+}
+
+async fn attach_thread_with_sandbox_mode(
+    fixture: &mut Fixture,
+    sandbox_mode: Option<codex_protocol::config_types::SandboxMode>,
+) -> Arc<codex_core::ThreadManager> {
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            sandbox_mode,
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    config.model_provider.base_url = Some("http://127.0.0.1:9/v1".into());
+    let policy = codex_config::CloudConfigBundlePolicy::default();
+    let mut snapshot = codex_config::CloudConfigBundleSnapshot {
+        bundle: Ok(None),
+        binding: None,
+    };
+    policy.publish_snapshot(&mut snapshot);
+    config.config_layer_stack = config
+        .config_layer_stack
+        .with_cloud_config_binding(snapshot.binding);
+    *fixture.lead.permission_profile.lock().unwrap() =
+        config.permissions.effective_permission_profile();
+    let manager = Arc::new(
+        codex_core::test_support::thread_manager_with_models_provider(
+            codex_login::CodexAuth::from_api_key("test"),
+            config.model_provider.clone(),
+        ),
+    );
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions::new(config))
+        .await
+        .unwrap();
+    let host = &fixture.lead.host;
+    fixture.lead.host = Arc::new(Host {
+        root: host.root.clone(),
+        repository: host.repository.clone(),
+        repository_identity: host.repository_identity.clone(),
+        config: host.config.clone(),
+        routes: Mutex::new(crate::RouteTable {
+            stamp: None,
+            config: Arc::new(host.config.clone()),
+            error: None,
+        }),
+        accounts: host.accounts.clone(),
+        manager: Arc::downgrade(&manager),
+        epoch: host.epoch,
+    });
+    fixture.lead.thread = started.thread_id;
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    manager
+}
+
+async fn control_call(
+    fixture: &Fixture,
+    origin: Origin,
+    operation: &str,
+    arguments: Value,
+) -> Result<Value, String> {
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("control"), runtime.generation())
+    };
+    let source = grants
+        .as_ref()
+        .unwrap_or_else(|| {
+            panic!(
+                "missing control grants: {:?}",
+                fixture.core.runtime.lock().unwrap().status()
+            )
+        })
+        .source_sha256
+        .clone();
+    super::operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        Caller {
+            id: "control",
+            source: &source,
+            grants,
+            generation,
+            origin,
+            record_changes: false,
+        },
+        None,
+        ModHostCall {
+            operation: operation.into(),
+            arguments,
+        },
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turn_abort_requires_event_or_user_and_stays_in_current_thread() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["threads"],
+        manifest: Value::Null,
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    assert!(
+        control_call(
+            &fixture,
+            Origin::Tool,
+            "turns.abort",
+            json!({"turn_id": "stale"})
+        )
+        .await
+        .unwrap_err()
+        .contains("user_or_event_only")
+    );
+    for origin in [Origin::UserCommand, Origin::Event] {
+        for arguments in [
+            json!({}),
+            json!({"turn_id": ""}),
+            json!({"turn_id": "x".repeat(129)}),
+            json!({"turn_id": "stale", "thread_id": ThreadId::new().to_string()}),
+        ] {
+            assert_eq!(
+                control_call(&fixture, origin, "turns.abort", arguments)
+                    .await
+                    .unwrap_err(),
+                "turn_abort_arguments_invalid"
+            );
+        }
+        assert_eq!(
+            control_call(&fixture, origin, "turns.abort", json!({"turn_id": "stale"}))
+                .await
+                .unwrap(),
+            json!({"accepted": false})
+        );
+    }
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("control"), runtime.generation())
+    };
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let cancelled = Arc::new(AtomicBool::new(true));
+    assert_eq!(
+        super::operations::dispatch(
+            &fixture.core,
+            &fixture.lead,
+            Caller {
+                id: "control",
+                source: &source,
+                grants,
+                generation,
+                origin: Origin::Event,
+                record_changes: false,
+            },
+            None,
+            ModHostCall {
+                operation: "turns.abort".into(),
+                arguments: json!({"turn_id": "stale"}),
+            },
+            &cancelled,
+        )
+        .await
+        .unwrap_err(),
+        "callback_cancelled"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["exec"],
+        manifest: json!({"exec_environment": ["FIXTURE_VALUE", "PYTHONDONTWRITEBYTECODE", "E0", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"]}),
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    control_call(
+        &fixture,
+        Origin::Event,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
+    )
+    .await
+    .unwrap();
+    let found = control_call(
+        &fixture,
+        Origin::Event,
+        "process.which",
+        json!({"names": ["sh"]}),
+    )
+    .await
+    .unwrap();
+    let sh = &found["found"][0];
+    for (session, explicit, expected) in [
+        ("scoped", json!({}), "scoped"),
+        ("explicit", json!({"FIXTURE_VALUE": "explicit"}), "explicit"),
+        ("unset", json!({"FIXTURE_VALUE": null}), "unset"),
+    ] {
+        control_call(&fixture, Origin::Event, "process.start", json!({"session": session, "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": explicit,
+            "arguments": ["-c", "printf '{\"value\":\"%s\"}\\n' \"${FIXTURE_VALUE-unset}\"; read marker"], "framing": "ndjson"})).await.unwrap();
+        let result = control_call(
+            &fixture,
+            Origin::Event,
+            "process.exchange",
+            json!({"session": session, "wait_ms": 1000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["messages"][0]["value"], expected);
+        control_call(
+            &fixture,
+            Origin::Event,
+            "process.stop",
+            json!({"session": session}),
+        )
+        .await
+        .unwrap();
+    }
+    control_call(
+        &fixture,
+        Origin::Event,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "x".repeat(1025)}),
+    )
+    .await
+    .unwrap();
+    for name in [
+        "PYTHONDONTWRITEBYTECODE",
+        "E0",
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "E5",
+        "E6",
+        "E7",
+        "E8",
+    ] {
+        control_call(
+            &fixture,
+            Origin::Event,
+            "environment.set",
+            json!({"name": name, "value": "0"}),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(
+        control_call(
+            &fixture,
+            Origin::Event,
+            "process.start",
+            json!({"session": "large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"],
+                "arguments": ["-c", "printf '{\"length\":%s,\"python\":\"%s\"}\\n' \"${#FIXTURE_VALUE}\" \"$PYTHONDONTWRITEBYTECODE\"; read marker"], "framing": "ndjson"})
+        )
+        .await
+        .is_ok()
+    );
+    let result = control_call(
+        &fixture,
+        Origin::Event,
+        "process.exchange",
+        json!({"session": "large", "wait_ms": 1000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result["messages"][0],
+        json!({"length": 1025, "python": "0"})
+    );
+    control_call(
+        &fixture,
+        Origin::Event,
+        "process.stop",
+        json!({"session": "large"}),
+    )
+    .await
+    .unwrap();
+    assert!(control_call(&fixture, Origin::Event, "process.start", json!({"session": "explicit_large", "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": {"FIXTURE_VALUE": "x".repeat(1025)}})).await.is_err());
+    for name in [
+        "FIXTURE_VALUE",
+        "PYTHONDONTWRITEBYTECODE",
+        "E0",
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "E5",
+        "E6",
+        "E7",
+        "E8",
+    ] {
+        control_call(
+            &fixture,
+            Origin::Event,
+            "environment.set",
+            json!({"name": name, "value": null}),
+        )
+        .await
+        .unwrap();
+    }
+    for name in ["FIXTURE_VALUE", "E0", "E1", "E2"] {
+        control_call(
+            &fixture,
+            Origin::Event,
+            "environment.set",
+            json!({"name": name, "value": "y".repeat(4096)}),
+        )
+        .await
+        .unwrap();
+    }
+    control_call(&fixture, Origin::Event, "process.start", json!({"session": "separate_bounds", "name": "sh", "path": sh["path"], "sha256": sh["sha256"], "environment": {"E3": "z".repeat(1024)},
+        "arguments": ["-c", "printf '{\"persistent\":%s,\"explicit\":%s}\\n' \"${#FIXTURE_VALUE}\" \"${#E3}\"; read marker"], "framing": "ndjson"})).await.unwrap();
+    let result = control_call(
+        &fixture,
+        Origin::Event,
+        "process.exchange",
+        json!({"session": "separate_bounds", "wait_ms": 1000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result["messages"][0],
+        json!({"persistent": 4096, "explicit": 1024})
+    );
+    control_call(
+        &fixture,
+        Origin::Event,
+        "process.stop",
+        json!({"session": "separate_bounds"}),
+    )
+    .await
+    .unwrap();
+    let result = control_call(&fixture, Origin::Event, "exec.run", json!({"program": "sh", "argv": ["-c", "printf '%s:%s' \"${#FIXTURE_VALUE}\" \"${#E3}\""], "env": {"E3": "z".repeat(1024)}})).await.unwrap();
+    assert_eq!(result["stdout"], "4096:1024");
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    let package = fixture
+        ._dir
+        .path()
+        .join("packages/control")
+        .canonicalize()
+        .unwrap();
+    store.enable(&package, false).unwrap();
+    fixture.core.runtime.lock().unwrap().reload().unwrap();
+    store.enable(&package, true).unwrap();
+    fixture.core.runtime.lock().unwrap().reload().unwrap();
+    let value = control_call(
+        &fixture,
+        Origin::Event,
+        "environment.read",
+        json!({"names": ["FIXTURE_VALUE"]}),
+    )
+    .await
+    .unwrap();
+    assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "y".repeat(4096));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["exec", "fs.read", "fs.write"],
+        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread_with_sandbox_mode(
+        &mut fixture,
+        Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
+    )
+    .await;
+    fixture.core.expansion.thread_started(&fixture.lead);
+    super::intercept::install_dispatcher(&fixture.core);
+    let source = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("control")
+        .unwrap()
+        .source_sha256;
+    let thread = fixture.lead.thread.to_string();
+    let call = |source: &str, operation: &str, arguments: Value| {
+        codex_omd::host::session_call(
+            &thread,
+            "control",
+            Some(source),
+            None,
+            ModHostCall {
+                operation: operation.into(),
+                arguments,
+            },
+            &|| true,
+        )
+    };
+    call(
+        &source,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
+    )
+    .unwrap();
+    for (operation, arguments) in [
+        ("environment.read", json!({"names": ["FIXTURE_VALUE"]})),
+        (
+            "environment.set",
+            json!({"name": "FIXTURE_VALUE", "value": "foreign"}),
+        ),
+    ] {
+        assert_eq!(
+            call("different-source", operation, arguments)
+                .unwrap_err()
+                .to_string(),
+            "host_caller_source_changed"
+        );
+    }
+    let value = call(
+        &source,
+        "environment.read",
+        json!({"names": ["FIXTURE_VALUE"]}),
+    )
+    .unwrap();
+    assert_eq!(value["values"]["FIXTURE_VALUE"]["value"], "scoped");
+    let write = json!({"program": "sh", "argv": ["-c", "printf forbidden > scoped-policy-proof"], "write": true});
+    let result = call(&source, "exec.run", write.clone()).unwrap();
+    assert_eq!(result["exit_code"], 0);
+    let proof = fixture.lead.host.repository.join("scoped-policy-proof");
+    assert_eq!(std::fs::read_to_string(&proof).unwrap(), "forbidden");
+    std::fs::remove_file(&proof).unwrap();
+    let policy =
+        serde_json::to_value(codex_protocol::models::PermissionProfile::read_only()).unwrap();
+    let read = codex_omd::host::session_call(
+        &thread,
+        "control",
+        Some(&source),
+        Some(&policy),
+        ModHostCall {
+            operation: "exec.run".into(),
+            arguments: json!({"program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""]}),
+        },
+        &|| true,
+    )
+    .unwrap();
+    assert_eq!(read["exit_code"], 0);
+    assert_eq!(read["stdout"], "scoped");
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&fixture.lead.host.repository)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let snapshot = control_call(&fixture, Origin::Event, "workspace.snapshot", json!({}))
+        .await
+        .unwrap();
+    let read_snapshot = codex_omd::host::session_call(
+        &thread, "control", Some(&source), Some(&policy), ModHostCall {
+            operation: "exec.run".into(),
+            arguments: json!({"snapshot": snapshot["snapshot"], "program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""]}),
+        }, &|| true,
+    ).unwrap();
+    assert_eq!(read_snapshot["exit_code"], 0);
+    assert_eq!(read_snapshot["stdout"], "scoped");
+    let denied = codex_omd::host::session_call(
+        &thread,
+        "control",
+        Some(&source),
+        Some(&policy),
+        ModHostCall {
+            operation: "exec.run".into(),
+            arguments: write,
+        },
+        &|| true,
+    )
+    .unwrap_err();
+    assert_eq!(denied.to_string(), "exec_cwd_unavailable");
+    assert!(
+        !fixture
+            .lead
+            .host
+            .repository
+            .join("scoped-policy-proof")
+            .exists()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_environment_pre_rename_children_keep_mod_and_thread_scope() {
+    let source = r#"export default api => api.on('workspace_pre_rename', () => {
+      const sh = api.host.call('process.which', { names: ['sh'] }).found[0];
+      api.host.call('process.start', { session: 'rename', name: 'sh', path: sh.path, sha256: sh.sha256,
+        arguments: ['-c', 'printf \'{"value":"%s"}\\n\' "${FIXTURE_VALUE-unset}"; read marker'], framing: 'ndjson' });
+      const result = api.host.call('process.exchange', { session: 'rename', wait_ms: 1000 });
+      api.state.set(result.messages[0].value);
+      api.host.call('process.stop', { session: 'rename' });
+      return { status: 'fallback', reason: 'fixture' };
+    });"#;
+    let manifest = json!({"exec_environment": ["FIXTURE_VALUE"]});
+    let capabilities = &["exec", "fs.read", "fs.write", "store"];
+    let Some(mut fixture) = fixture(&[
+        Package {
+            id: "control",
+            capabilities,
+            manifest: manifest.clone(),
+            source,
+        },
+        Package {
+            id: "observer",
+            capabilities,
+            manifest,
+            source,
+        },
+    ]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    std::fs::write(fixture.lead.host.repository.join("old.ts"), "export {};\n").unwrap();
+    control_call(
+        &fixture,
+        Origin::Event,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "scoped"}),
+    )
+    .await
+    .unwrap();
+    for (thread, expected) in [
+        (fixture.lead.thread.to_string(), "scoped"),
+        (ThreadId::new().to_string(), "unset"),
+    ] {
+        let authority = crate::workspace_operations::WorkspaceAuthority::for_platform(
+            &fixture.lead.host.repository,
+            PermissionProfile::from_runtime_permissions(
+                &codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted(),
+                codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
+            ),
+        )
+        .unwrap();
+        let runtime = fixture.core.input_runtime.clone();
+        let lead = fixture.lead.clone();
+        let environment = fixture.core.environment.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut runtime = runtime.lock().unwrap();
+            let generation = runtime.generation();
+            authority.request_rename(
+                json!({"old": "old.ts", "new": "new.ts"}),
+                &mut runtime,
+                &lead,
+                &[],
+                generation,
+                &thread,
+                &environment,
+                || true,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result["status"], "fallback");
+        let runtime = fixture.core.input_runtime.lock().unwrap();
+        assert_eq!(runtime.state("control"), Some(&json!(expected)));
+        assert_eq!(runtime.state("observer"), Some(&json!("unset")));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_environment_survives_observer_reload_and_stop_callbacks() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["exec", "store", "lifecycle"],
+        manifest: json!({"exec_environment": ["FIXTURE_VALUE"]}),
+        source: r#"export default api => api.on('stop', () => api.state.set(api.host.call('exec.run', { program: 'sh', argv: ['-c', 'printf %s "$FIXTURE_VALUE"'] }).stdout));"#,
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    control_call(
+        &fixture,
+        Origin::Event,
+        "environment.set",
+        json!({"name": "FIXTURE_VALUE", "value": "cleanup"}),
+    )
+    .await
+    .unwrap();
+    let path = fixture.lead.host.root.join("mods.json");
+    let saved = std::fs::read(&path).unwrap();
+    let mut empty: Value = serde_json::from_slice(&saved).unwrap();
+    empty["mods"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&empty).unwrap()).unwrap();
+    fixture.core.input_runtime.lock().unwrap().reload().unwrap();
+    std::fs::write(&path, saved).unwrap();
+    let read = control_call(
+        &fixture,
+        Origin::Event,
+        "environment.read",
+        json!({"names": ["FIXTURE_VALUE"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read["values"]["FIXTURE_VALUE"]["value"], "cleanup");
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    mods(&fixture.core)
+        .on_thread_stop(ThreadStopInput {
+            session_store: &ExtensionData::new("session"),
+            thread_store: &thread_store,
+        })
+        .await;
+    assert_eq!(
+        fixture.core.runtime.lock().unwrap().state("control"),
+        Some(&json!("cleanup"))
+    );
+    let read = control_call(
+        &fixture,
+        Origin::Event,
+        "environment.read",
+        json!({"names": ["FIXTURE_VALUE"]}),
+    )
+    .await
+    .unwrap();
+    assert_ne!(read["values"]["FIXTURE_VALUE"]["value"], "cleanup");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_environment_snapshot_execution_records_effective_values_and_secret_hashes() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["exec", "fs.read"],
+        manifest: json!({"exec_environment": ["FIXTURE_VALUE", "FIXTURE_TOKEN"]}),
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&fixture.lead.host.repository)
+            .status()
+            .unwrap()
+            .success()
+    );
+    for (name, value) in [
+        ("FIXTURE_VALUE", "scoped"),
+        ("FIXTURE_TOKEN", "private-token"),
+    ] {
+        control_call(
+            &fixture,
+            Origin::Event,
+            "environment.set",
+            json!({"name": name, "value": value}),
+        )
+        .await
+        .unwrap();
+    }
+    let snapshot = control_call(&fixture, Origin::Event, "workspace.snapshot", json!({}))
+        .await
+        .unwrap();
+    for (explicit, expected) in [
+        (json!({}), "scoped"),
+        (json!({"FIXTURE_VALUE": "explicit"}), "explicit"),
+    ] {
+        let result = control_call(
+            &fixture,
+            Origin::Event,
+            "exec.run",
+            json!({
+                "program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""],
+                "snapshot": snapshot["snapshot"], "env": explicit,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"], expected);
+        let evidence = std::fs::read_dir(&fixture.lead.session.evidence)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("execution-")
+            })
+            .map(|path| std::fs::read(path).unwrap())
+            .find(|bytes| json!(crate::execution::hash(bytes)) == result["evidence"]["sha256"])
+            .unwrap();
+        let recorded: Value = serde_json::from_slice(&evidence).unwrap();
+        assert_eq!(
+            recorded["environment"]["FIXTURE_VALUE"],
+            json!({"value": expected})
+        );
+        assert_eq!(
+            recorded["environment"]["FIXTURE_TOKEN"],
+            json!({"sha256": crate::execution::hash(b"private-token")})
+        );
+        assert!(
+            !String::from_utf8(evidence)
+                .unwrap()
+                .contains("private-token")
+        );
     }
 }
 
@@ -816,11 +1543,18 @@ fn background_threads(core: &Arc<Core>, first: &Lead) -> Lead {
 }
 
 async fn background_call(core: &Core, lead: &Lead, operation: &str, arguments: Value) -> Value {
+    let source = core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("observer")
+        .unwrap()
+        .source_sha256;
     let caller = {
         let runtime = core.runtime.lock().unwrap();
         Caller {
             id: "observer",
-            source: "source",
+            source: &source,
             grants: runtime.grants("observer"),
             generation: runtime.generation(),
             origin: Origin::Event,
@@ -954,7 +1688,7 @@ async fn background_timers_replace_and_cancel_only_in_the_calling_thread() {
             &fixture.core,
             lead,
             "events.schedule",
-            json!({"key": "hop", "delay_ms": 1000}),
+            json!({"key": "hop", "delay_ms": 100}),
         )
         .await;
     }
@@ -977,7 +1711,7 @@ async fn background_timers_replace_and_cancel_only_in_the_calling_thread() {
         .await["cancelled"],
         false
     );
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     delivery::deliver(&fixture.core).await;
     for (lead, expected) in [(&fixture.lead, Value::Null), (&second, json!(["hop"]))] {
         let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
@@ -1995,6 +2729,39 @@ fn process_output_notices_coalesce_per_session_and_keep_exit_order() {
             ("a".to_owned(), None),
             ("a".to_owned(), Some(5)),
         ]
+    );
+}
+
+#[test]
+fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
+    let state = State::default();
+    let thread = ThreadId::new();
+    let timer = |owner: &str, key: &str| delivery::Pending::Timer {
+        thread,
+        owner: owner.into(),
+        key: key.into(),
+        source: "source".into(),
+        incarnation: 0,
+    };
+    for item in [
+        timer("a", "one"),
+        timer("a", "one"),
+        timer("a", "two"),
+        timer("b", "one"),
+    ] {
+        delivery::push(&state, item);
+    }
+    assert_eq!(state.pending.lock().unwrap().len(), 3);
+    let now = std::time::Instant::now();
+    assert!(
+        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, key, .. }) if owner == "a" && key == "one")
+    );
+    assert!(
+        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, .. }) if owner == "b")
+    );
+    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(99)).is_none());
+    assert!(
+        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(100)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
     );
 }
 
@@ -3665,4 +4432,215 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         json!({"phase": "created", "path": "/scratch/agent", "owner": "agent"})
     );
     assert_eq!(log[6]["roots"]["added"], json!(["/extra"]));
+}
+
+#[tokio::test]
+async fn timer_replacement_rejects_an_old_producer_after_queue_cleanup() {
+    let state = State::default();
+    let thread = ThreadId::new();
+    let slot = (thread.to_string(), "observer".to_owned(), "tick".to_owned());
+    let task = tokio::spawn(async {});
+    // Resume an old producer after replacement installed incarnation 2 and cleared its queue.
+    state
+        .timers
+        .lock()
+        .unwrap()
+        .insert(slot, ("source".into(), 2, task));
+    let pending = |incarnation| delivery::Pending::Timer {
+        thread,
+        owner: "observer".into(),
+        key: "tick".into(),
+        source: "source".into(),
+        incarnation,
+    };
+    delivery::push_timer(&state, pending(1));
+    assert!(state.pending.lock().unwrap().is_empty());
+    delivery::push_timer(&state, pending(2));
+    assert_eq!(state.pending.lock().unwrap().len(), 1);
+    state.pending.lock().unwrap().clear();
+    for _ in 0..1024 {
+        delivery::push(
+            &state,
+            delivery::Pending::Broadcast {
+                event: "idle",
+                payload: Value::Null,
+            },
+        );
+    }
+    delivery::push_timer(&state, pending(2));
+    assert!(state.timers.lock().unwrap().is_empty());
+    assert_eq!(state.dropped.load(Ordering::Relaxed), 1);
+    for (_, (_, _, task)) in std::mem::take(&mut *state.timers.lock().unwrap()) {
+        task.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timer_pending_ticks_keep_their_quota_after_producers_finish() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["events"],
+        manifest: Value::Null,
+        source: "export default function(api) { api.on('timer', () => {}); }\n",
+    }]) else {
+        return;
+    };
+    let core = &fixture.core;
+    let _ = core.expansion.core.set(Arc::downgrade(core));
+    let grants = core.runtime.lock().unwrap().grants("observer");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let caller = Caller {
+        id: "observer",
+        source: &source,
+        grants,
+        generation: core.runtime.lock().unwrap().generation(),
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let limit = fixture.lead.host.config.mod_limits.bounded().timers_per_mod;
+    for index in 0..limit {
+        let key = format!("pending-{index}");
+        let mut task = tokio::spawn(async {});
+        (&mut task).await.unwrap();
+        core.expansion.timers.lock().unwrap().insert(
+            (
+                fixture.lead.thread.to_string(),
+                "observer".into(),
+                key.clone(),
+            ),
+            (source.clone(), index as u64, task),
+        );
+        delivery::push_timer(
+            &core.expansion,
+            delivery::Pending::Timer {
+                thread: fixture.lead.thread,
+                owner: "observer".into(),
+                key,
+                source: source.clone(),
+                incarnation: index as u64,
+            },
+        );
+    }
+    assert_eq!(
+        delivery::schedule(
+            core,
+            &fixture.lead,
+            &caller,
+            json!({"key": "overflow", "delay_ms": 100})
+        )
+        .unwrap_err(),
+        "timer_limit"
+    );
+    delivery::push(
+        &core.expansion,
+        delivery::Pending::Broadcast {
+            event: "idle",
+            payload: Value::Null,
+        },
+    );
+    assert_eq!(core.expansion.pending.lock().unwrap().len(), limit + 1);
+    assert_eq!(core.expansion.dropped.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timer_invocation_rechecks_source_and_incarnation_at_generation_capture() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["events", "store", "commands"],
+        manifest: Value::Null,
+        source: "export default function(api) { api.on('timer', () => api.state.set('old')); api.command('seen', () => api.state.get()); }\n",
+    }]) else {
+        return;
+    };
+    let core = &fixture.core;
+    let old_source = core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("observer")
+        .unwrap()
+        .source_sha256
+        .clone();
+    let slot = (
+        fixture.lead.thread.to_string(),
+        "observer".to_owned(),
+        "tick".to_owned(),
+    );
+    core.expansion.timers.lock().unwrap().insert(
+        slot.clone(),
+        (old_source.clone(), 1, tokio::spawn(async {})),
+    );
+    // The old event was already popped/validated. Reload before invocation captures generation.
+    let path = fixture
+        ._dir
+        .path()
+        .join("packages/observer")
+        .canonicalize()
+        .unwrap();
+    std::fs::write(path.join("index.ts"), "export default function(api) { api.on('timer', () => api.state.set('replacement')); api.command('seen', () => api.state.get()); }\n").unwrap();
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    let inspected = ModStore::inspect_package(&path).unwrap();
+    store
+        .trust(
+            path.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            vec!["events".into(), "store".into(), "commands".into()],
+            "user",
+        )
+        .unwrap();
+    store.enable(&path, true).unwrap();
+    core.runtime.lock().unwrap().reload().unwrap();
+    assert!(core.runtime.lock().unwrap().registered("observer", "timer"));
+    invoke_one_guarded(
+        core,
+        &fixture.lead,
+        "observer".into(),
+        "timer",
+        json!({"key":"tick"}),
+        Some(("tick".into(), old_source, 1)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let _thread = codex_omd::StateThread::enter(Some(fixture.lead.thread.to_string()));
+    assert_eq!(command(core, "observer", "seen"), Value::Null);
+    let source = core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("observer")
+        .unwrap()
+        .source_sha256
+        .clone();
+    core.expansion
+        .timers
+        .lock()
+        .unwrap()
+        .insert(slot.clone(), (source.clone(), 3, tokio::spawn(async {})));
+    invoke_one_guarded(
+        core,
+        &fixture.lead,
+        "observer".into(),
+        "timer",
+        json!({"key":"tick"}),
+        Some(("tick".into(), source.clone(), 2)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(command(core, "observer", "seen"), Value::Null);
+    assert!(core.expansion.timers.lock().unwrap().contains_key(&slot));
+    invoke_one_guarded(
+        core,
+        &fixture.lead,
+        "observer".into(),
+        "timer",
+        json!({"key":"tick"}),
+        Some(("tick".into(), source, 3)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(command(core, "observer", "seen"), json!("replacement"));
+    assert!(core.expansion.timers.lock().unwrap().is_empty());
 }

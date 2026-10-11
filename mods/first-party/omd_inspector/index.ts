@@ -61,5 +61,8 @@ export default function activate(api: ModAPI) {
   api.on('component_event', event => {
     if (event.component.startsWith('omd_inspector_') && event.events?.some(input => 'key' in input && input.key === 'Esc')) save({ ...saved(), open: false });
   });
-  api.on('terminal', input => view(input.identity, input.ledger));
+  api.on('terminal', input => {
+    if (input.event === 'startup' && saved().open) save({ ...saved(), open: false });
+    return view(input.identity, input.ledger);
+  });
 }

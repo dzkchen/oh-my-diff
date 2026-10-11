@@ -197,7 +197,7 @@ test('reactive atoms track reads, recompute derived values and run keyed subscri
 
 test('repeating timers stop when cancelled inside their handler and keep running after a throw', () => {
   const source = `export default api => {
-    const poll = api.time.every('poll', 1000, () => { if (api.state.get()?.stop) poll.cancel(); if (api.state.get()?.boom) throw new Error('boom'); });
+    const poll = api.time.every('poll', 100, () => { if (api.state.get()?.stop) poll.cancel(); if (api.state.get()?.boom) throw new Error('boom'); });
   }`;
   const tick = (state, receipts = []) => run(source, { capabilities: ['events', 'store'], event: 'timer', payload: { key: 'time:poll' }, state, receipts });
   const stopping = tick({ stop: true });
@@ -207,6 +207,8 @@ test('repeating timers stop when cancelled inside their handler and keep running
   assert.deepEqual(stopped.calls.map(call => call.operation), ['events.cancel']);
   const failing = tick({ boom: true });
   assert.equal(failing.host_call.operation, 'events.schedule');
+  assert.equal(failing.host_call.arguments.delay_ms, 100);
+  assert.match(run(source.replace("'poll', 100,", "'poll', 99,"), { capabilities: ['events', 'store'] }).error, /invalid_timer_interval/);
   assert.match(tick({ boom: true }, [{ call: failing.host_call, value: null }]).error, /boom/);
 });
 

@@ -83,7 +83,12 @@ fn write_cost_capture(account: &Account, durable: bool) -> Result<(), TransportE
     let (directory, name) = account
         .cost_capture
         .parent()
-        .zip(account.cost_capture.file_name().and_then(|name| name.to_str()))
+        .zip(
+            account
+                .cost_capture
+                .file_name()
+                .and_then(|name| name.to_str()),
+        )
         .ok_or_else(|| denied("cost_capture_path_invalid"))?;
     crate::persist(directory, name, &bytes, durable).map_err(denied)
 }
@@ -569,7 +574,7 @@ impl Accounts {
                     origin.clone(),
                     active,
                     |caller, call| match &dispatcher {
-                        Some(dispatch) => dispatch(thread, caller, call, &active),
+                        Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
                         None => Err(std::io::Error::other(
                             "host_operation_unavailable: no session dispatcher",
                         )),
@@ -863,7 +868,7 @@ impl Accounts {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(thread, caller, call, &active),
+                Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),
@@ -1989,7 +1994,7 @@ impl Attempt {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(&thread, caller, call, &active),
+                Some(dispatch) => dispatch(&thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),

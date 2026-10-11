@@ -18,15 +18,15 @@ export default function activate(api: ModAPI) {
   });
   api.command('stream', () => {
     api.host.call('events.publish', { channel: 'stream', data: null });
-    return { display: 'Streaming status once a second for ten ticks.' };
+    return { display: 'Streaming status every 100 ms for ten ticks.' };
   });
   api.on('channel', ({ channel }) => {
-    if (channel === 'reactive_dashboard/stream') api.host.call('events.schedule', { key: 'tick', delay_ms: 1000 });
+    if (channel === 'reactive_dashboard/stream') api.host.call('events.schedule', { key: 'tick', delay_ms: 100 });
   });
   api.on('timer', ({ key }) => {
     if (key !== 'tick') return;
     ticks.update(count => count + 1);
-    if (ticks.get() % 10) api.host.call('events.schedule', { key: 'tick', delay_ms: 1000 });
+    if (ticks.get() % 10) api.host.call('events.schedule', { key: 'tick', delay_ms: 100 });
   });
 
   api.on('terminal', (): TerminalPatch => ({

@@ -94,7 +94,11 @@ export default function activate(api: ModAPI) {
       show({ status: 'error', message: /service_provider_missing/.test(error.message) ? 'enable omd_lsp_sync, which runs the language servers' : error.message });
     }
   });
-  api.on('terminal', () => {
+  api.on('component_event', event => {
+    if (event.component.startsWith('omd_lsp_view_') && event.events?.some(input => 'key' in input && input.key === 'Esc') && !view()?.pane) show(null);
+  });
+  api.on('terminal', input => {
+    if (input.event === 'startup' && view() && !view()?.pane) show(null);
     const { view: current, servers, open } = saved();
     const serverCards: TerminalComponent[] = open ? [{ type: 'pane', id: 'omd_lsp_view_servers', label: 'Language servers, /lsp servers hides', title: 'Language servers', style: { direction: 'row' as const, gap: 2 }, children: servers.length ? servers.map((entry, index): TerminalComponent => ({
       type: 'box', id: `omd_lsp_view_server_${index}`, label: `${entry.adapter} language server`, children: [

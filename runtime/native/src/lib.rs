@@ -713,8 +713,9 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
         assert_eq!(
-            std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&path).unwrap().permissions())
-                & 0o777,
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(&path).unwrap().permissions()
+            ) & 0o777,
             0o600
         );
     }

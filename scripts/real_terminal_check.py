@@ -12,7 +12,7 @@ import time
 import zlib
 
 from client_acceptance import reply, store_with
-from pty_session import ROOT, call, environment, fresh, git, provider
+from pty_session import ROOT, Session, call, environment, fresh, git, provider
 
 KITTY = Path("/Applications/kitty.app/Contents/MacOS")
 WEZTERM = Path("/Applications/WezTerm.app/Contents/MacOS/wezterm")
@@ -53,6 +53,106 @@ PROBE_SOURCE = """export default function activate(api) {
   });
 }
 """
+
+CONTROL_SOURCE = """export default function activate(api) {
+  const read = () => api.state.get() ?? {};
+  const write = patch => api.state.set({ ...read(), ...patch });
+  api.on('terminal', input => {
+    if (JSON.stringify(read().client) !== JSON.stringify(input.client)) write({ client: input.client });
+    return { sites: { header: { components: [
+      { type: 'button', id: 'read_selection', label: 'Read selection', text: 'READ SELECTION', action: { command: 'terminal_probe:selection' } },
+      { type: 'button', id: 'copy_control', label: 'Copy control', text: 'COPY CONTROL', action: { command: 'terminal_probe:copy' } },
+    ] } } };
+  });
+  api.command('selection', () => {
+    write({ selection: api.host.call('terminal.selection', {}) });
+    return { display: 'SELECTION_RECORDED' };
+  }, { immediate: true });
+  api.command('copy', () => {
+    write({ copy: api.host.call('terminal.copy', { text: 'OMD_CONTROL_COPY' }) });
+    return { display: 'COPY_SUBMITTED' };
+  }, { immediate: true });
+  api.command('watch', () => { write({ watch: true }); return { display: 'WATCH_ARMED' }; });
+  api.on('turn_start', ({ turn_id }) => {
+    write({ turn_id });
+    if (read().watch) api.host.call('events.schedule', { key: 'abort', delay_ms: 100 });
+  });
+  api.on('timer', ({ key }) => {
+    if (key !== 'abort') return;
+    const turn_id = read().turn_id;
+    write({ abort: api.host.call('turns.abort', { turn_id }), aborted_turn: turn_id, watch: false });
+  });
+  api.on('turn_end', end => write({ ends: [...(read().ends ?? []), end] }));
+}
+"""
+
+
+class PseudoTerminal:
+    drives_keys = True
+
+    def __init__(self, binary, repo, env, base):
+        self.session = Session(binary, repo, env)
+        self.base = base
+
+    def send(self, text):
+        self.session.type(text)
+
+    def key(self, name):
+        self.session.keys({"enter": b"\r", "esc": b"\x1b"}[name])
+
+    def screen(self):
+        self.session.pump()
+        return self.session.text()
+
+    def close(self):
+        self.session.close(self.base / "trace.ansi")
+
+
+def control_check(terminal, store, results):
+    def observed(predicate):
+        terminal.screen()
+        return predicate(state(store, "terminal_probe"))
+
+    def command(name, predicate):
+        terminal.send(f"/terminal_probe:{name}")
+        time.sleep(0.5)
+        started = time.monotonic()
+        terminal.key("enter")
+        value = wait(name, lambda: observed(predicate))
+        results.setdefault("command_ms", {})[name] = round((time.monotonic() - started) * 1000)
+        return value
+
+    command("selection", lambda s: "selection" in s)
+    assert state(store, "terminal_probe")["selection"] == {"text": None, "truncated": False}
+    command("copy", lambda s: s.get("copy"))
+    command("watch", lambda s: s.get("watch"))
+    terminal.send("SLOW_TURN controlled cancellation")
+    time.sleep(0.5)
+    terminal.key("enter")
+    wait("running turn aborted", lambda: observed(lambda s: s.get("abort", {}).get("accepted")
+         and any(e["turn_id"] == s["aborted_turn"] and e["outcome"] == "aborted" for e in s.get("ends", []))))
+    terminal.send("continue after cancellation")
+    time.sleep(0.5)
+    terminal.key("enter")
+    wait("subsequent turn completed", lambda: observed(lambda s: any(e["outcome"] == "completed" for e in s.get("ends", []))), 45)
+    if isinstance(terminal, PseudoTerminal):
+        import pyte
+        terminal.session.pump(0.5)
+        screen = pyte.Screen(COLUMNS, ROWS)
+        pyte.Stream(screen).feed(terminal.session.raw.decode(errors="replace"))
+        def position(text):
+            for row, line in enumerate(screen.display):
+                if text in line:
+                    return line.index(text) + 1, row + 1
+            raise AssertionError(f"missing {text}: {screen.display}")
+        column, row = position("FIXTURE_DONE")
+        mouse = lambda button, x, y, suffix: f"\x1b[<{button};{x};{y}{suffix}".encode()
+        terminal.session.keys(mouse(0, column, row, "M") + mouse(32, column + 12, row, "M") + mouse(0, column + 12, row, "m"))
+        column, row = position("READ SELECTION")
+        terminal.session.keys(mouse(0, column, row, "M") + mouse(0, column, row, "m"))
+        wait("selected transcript returned", lambda: observed(lambda s: "FIXTURE_DONE" in (s.get("selection", {}).get("text") or "")))
+    results["controls"] = state(store, "terminal_probe")
+    results["zero_first_party"] = True
 
 
 def png(width=48, height=16):
@@ -191,10 +291,13 @@ def main():
     parser = argparse.ArgumentParser(description="Real-terminal check: runs patched codex with example mods and a scripted local provider; "
                                                  "Orca is launched and inspected through computer use.")
     parser.add_argument("--binaries", type=Path, required=True)
-    parser.add_argument("--terminal", choices=["kitty", "ghostty", "wezterm", "orca"], required=True)
+    parser.add_argument("--terminal", choices=["kitty", "ghostty", "wezterm", "orca", "pty"], required=True)
+    parser.add_argument("--controls", action="store_true", help="check cancellation and clipboard with only the independent probe mod")
     parser.add_argument("--reduced-motion", action="store_true")
     parser.add_argument("--keep-open", action="store_true", help="leave the terminal running for pointer checks driven by hand or computer use")
     args = parser.parse_args()
+    if args.terminal == "pty" and not args.controls:
+        parser.error("--terminal pty requires --controls")
     base = fresh(f"terminal-{args.terminal}")
     call(["swiftc", "-O", "-o", base / "macos_window", ROOT / "scripts/macos_window.swift"], ROOT)
     repo = base / "repo"
@@ -205,17 +308,30 @@ def main():
     git(repo, "commit", "-qm", "fixture")
     probe = base / "mods/terminal_probe"
     probe.mkdir(parents=True)
-    (probe / "mod.json").write_text(json.dumps(PROBE_MANIFEST))
-    (probe / "index.ts").write_text(PROBE_SOURCE % base64.b64encode(png()).decode())
+    manifest = {**PROBE_MANIFEST, "capabilities": [*PROBE_MANIFEST["capabilities"], "threads", "events"]} if args.controls else PROBE_MANIFEST
+    (probe / "mod.json").write_text(json.dumps(manifest))
+    (probe / "index.ts").write_text(CONTROL_SOURCE if args.controls else PROBE_SOURCE % base64.b64encode(png()).decode())
     store = base / "store"
-    store_with(args.binaries / "omd-mod", store, [ROOT / "mods/examples/raster_canvas", ROOT / "mods/examples/approval_desk", probe])
+    store_with(args.binaries / "omd-mod", store, [probe] if args.controls else [ROOT / "mods/examples/raster_canvas", ROOT / "mods/examples/approval_desk", probe])
+    if args.controls:
+        status = json.loads(call([args.binaries / "omd-mod", "status", store], ROOT).stdout)
+        assert status["order"] == ["terminal_probe"], status
+        (base / "mod-status.json").write_text(json.dumps(status, indent=2))
     server, url = provider(reply)
     terminal = None
     try:
         env = environment(base, args.binaries, repo, store, url)
-        env.pop("TERM")
+        if args.terminal != "pty":
+            env.pop("TERM")
         env.pop("NO_COLOR", None)
         env.pop("FORCE_COLOR", None)
+        if args.terminal == "pty":
+            terminal = PseudoTerminal(args.binaries / "codex", repo, env, base)
+            wait("probe saw the PTY", lambda: state(store, "terminal_probe").get("client") if terminal.screen() else None, 90)
+            results = {"terminal": "pty", "run": str(base)}
+            control_check(terminal, store, results)
+            finish(results, base)
+            return
         script = base / "run.sh"
         overrides = ["-c", "tui.animations=false"] if args.reduced_motion else []
         script.write_text("#!/bin/sh\nunset NO_COLOR FORCE_COLOR\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env.items())
@@ -226,6 +342,14 @@ def main():
         terminal.start({key: value for key, value in os.environ.items()
                         if not key.startswith(("TERM_PROGRAM", "LC_TERMINAL", "COLORTERM", "TMUX", "KITTY_", "WEZTERM_", "GHOSTTY_", "NO_COLOR", "FORCE_COLOR"))})
         client = wait("probe saw the terminal", lambda: state(store, "terminal_probe").get("client"), 90)
+        if args.controls:
+            results["client"] = client
+            if terminal.drives_keys:
+                control_check(terminal, store, results)
+            finish(results, base)
+            if args.keep_open:
+                terminal.wait_for_exit()
+            return
         image = wait("probe image written", lambda: state(store, "terminal_probe").get("image"))
         results["client"] = client
         results["pid"] = terminal.pid()

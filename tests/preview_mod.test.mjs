@@ -54,6 +54,17 @@ function invoke(repository, state, event, payload, name, settings = {}) {
   }
 }
 
+test('preview dismisses its popup on owned Escape or startup while preserving watches with thumbnails off', () => {
+  const state = { inline: { title: 'Preview', kind: 'markdown', text: 'Content' }, revision: 1, watch: ['README.md'], hashes: {}, images: [] };
+  const escaped = invoke(tmpdir(), state, 'component_event', { component: 'omd_preview_close', events: [{ key: 'Esc' }] }, undefined, { thumbnails: false });
+  assert.equal(escaped.state.inline, null);
+  assert.deepEqual(escaped.state.watch, state.watch);
+  assert.equal(invoke(tmpdir(), escaped.state, 'terminal', { event: 'idle' }, undefined, { thumbnails: false }).value, null);
+  assert.equal(invoke(tmpdir(), state, 'terminal', { event: 'startup' }, undefined, { thumbnails: false }).state.inline, null);
+  assert.ok(invoke(tmpdir(), state, 'terminal', null, undefined, { thumbnails: false }).value.sites.dialog);
+  assert.deepEqual(invoke(tmpdir(), state, 'component_event', { component: 'other_dialog', events: [{ key: 'Esc' }] }, undefined, { thumbnails: false }).state.inline, state.inline);
+});
+
 test('preview renders sanitized HTML for responses and files, keeps watched files fresh and shows inline dialogs', () => {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-')));
   try {
@@ -78,13 +89,20 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     const watched = command('docs/a.md --watch');
     assert.equal(watched.value.display, 'Opened docs/a.md in the browser');
     assert.deepEqual(watched.state.watch, ['docs/a.md']);
+    assert.ok(watched.calls.findIndex(call => call.operation === 'events.publish') > watched.calls.findIndex(call => call.operation === 'terminal.open'));
+    assert.equal(watched.state.hashes['docs/a.md'], createHash('sha256').update(readFileSync(join(repository, 'docs/a.md'))).digest('hex'));
+    const early = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
+    assert.deepEqual(early.calls.at(-1).arguments, { key: 'poll', delay_ms: 2000 });
+    assert.equal(invoke(repository, null, 'timer', { key: 'poll' }).calls.length, 0);
     const page = readFileSync(join(repository, '.omd/preview/docs__a.md.html'), 'utf8');
     assert.match(page, /data-watch="1"/);
     assert.match(page, /src="\.\.\/\.\.\/docs\/pic\.png"/);
     assert.match(page, /<span class="math">\\\(x\^2\\\)<\/span>/);
     assert.match(page, /mermaid@12\.0\.0\/dist\/mermaid\.min\.js" integrity="sha384-/);
 
-    const synced = invoke(repository, watched.state, 'channel', { channel: 'omd_preview/watch', data: null });
+    writeFileSync(join(repository, 'docs/a.md'), '# First change before polling\n');
+    const synced = invoke(repository, watched.state, 'timer', { key: 'poll' });
+    assert.match(readFileSync(join(repository, '.omd/preview/docs__a.md.html'), 'utf8'), /First change before polling/);
     assert.deepEqual(synced.calls.at(-1).arguments, { key: 'poll', delay_ms: 2000 });
     writeFileSync(join(repository, 'docs/a.md'), '# Changed [[Other note|see]]\n');
     const polled = invoke(repository, synced.state, 'timer', { key: 'poll' });

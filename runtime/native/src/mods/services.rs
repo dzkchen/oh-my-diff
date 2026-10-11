@@ -491,13 +491,12 @@ impl Services {
         } else if !grant.network || grant.credentials.len() > 32 {
             return Err("credential_gateway_requires_network".into());
         } else {
-            let (url, registration) =
-                crate::credential_gateway::register(
-                    host.root.clone(),
-                    mod_id.to_owned(),
-                    grant.credentials.clone(),
-                )
-                .map_err(|error| error.to_string())?;
+            let (url, registration) = crate::credential_gateway::register(
+                host.root.clone(),
+                mod_id.to_owned(),
+                grant.credentials.clone(),
+            )
+            .map_err(|error| error.to_string())?;
             config
                 .permissions
                 .shell_environment_policy

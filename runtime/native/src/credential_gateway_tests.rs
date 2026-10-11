@@ -14,7 +14,8 @@ fn only_registered_sidecars_reach_approved_profiles_until_revoked() {
         .create("up", "provider", Some("up"), Some("https://up.example"))
         .unwrap();
     let other = profiles.create("other", "api_key", None, None).unwrap();
-    let (base, registration) = register(store, "mod".into(), BTreeSet::from([approved.id.clone()])).unwrap();
+    let (base, registration) =
+        register(store, "mod".into(), BTreeSet::from([approved.id.clone()])).unwrap();
     let port = base.rsplit_once('/').unwrap().0;
     assert_eq!(
         get(&format!("{port}/unknown/{}/v1", approved.id)),
@@ -96,8 +97,13 @@ fn fixture(gateway: &Gateway, listener: &TcpListener) -> (tempfile::TempDir, Str
     document["profiles"][0]["origin"] =
         serde_json::json!(format!("http://{}", listener.local_addr().unwrap()));
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-    let (base, registration) =
-        register_at(gateway, store, "mod".into(), BTreeSet::from([profile.id.clone()])).unwrap();
+    let (base, registration) = register_at(
+        gateway,
+        store,
+        "mod".into(),
+        BTreeSet::from([profile.id.clone()]),
+    )
+    .unwrap();
     (temp, format!("{base}/{}/v1", profile.id), registration)
 }
 

@@ -806,6 +806,21 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
 }
 
 #[test]
+fn host_control_features_are_available_for_admission() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let path = package(&root, "controls", "export default () => {}", &[]);
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["compatibility"] = json!({"required_features": [
+        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_100ms_v1"
+    ]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    ModStore::inspect_package(&path).unwrap();
+}
+
+#[test]
 fn host_versions_and_storage_schemas_are_reported_independently() {
     let (temp, _, _) = fixture("export default () => {}", &[]);
     let status = host(&temp).status();
@@ -2840,8 +2855,9 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
         &root,
         "sdk",
         "export default api => { \
-         const pulse = api.time.every('pulse', 1000, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
+         const pulse = api.time.every('pulse', 100, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
          api.command('start', () => { pulse.start(); return api.package; }); \
+         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:99})); \
          api.command('nap', () => api.time.sleep(1500)); \
          api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
          api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
@@ -2870,7 +2886,8 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "look", "expect": {"exists": true,
                     "canonical": {"path": "src/a.ts", "kind": "file", "sha256": "abc"}, "ancestors": [{"path": "package.json", "kind": "file"}]}},
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "label", "expect": "yes"},
-                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"}
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"},
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "invalid_timer", "expect_error": "timer_delay_invalid"}
             ]
         }))
         .unwrap();
@@ -2881,7 +2898,7 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
             .iter()
             .map(|tick| tick["at_ms"].as_u64().unwrap())
             .collect::<Vec<_>>(),
-        [2000, 3000, 4000],
+        [1100, 1200, 1300],
         "the repeating timer stops when its handler returns false"
     );
     assert_eq!(result["virtual_time_ms"], 4500);
@@ -3670,7 +3687,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
     let consumer = package(
         &root,
         "consumer",
-        "export default api => api.command('go', () => [() => api.host.call('store.get', {secret: 'argument'}), () => api.host.call('credentials.list', {secret: 'argument'}), () => api.host.call('exec.run', {secret: 'argument'}), () => api.host.call('workspace.stat', {secret: 'argument'})].map(call => { try { return call(); } catch (error) { return null; } }))",
+        "export default api => api.command('go', () => [() => api.host.call('store.get', {secret: 'argument'}), () => api.host.call('credentials.list', {secret: 'argument'}), () => api.host.call('exec.run', {secret: 'argument'}), () => api.host.call('environment.read', {names: ['FIXTURE']}), () => api.host.call('environment.set', {name: 'FIXTURE', value: 'secret-override'}), () => api.host.call('workspace.stat', {secret: 'argument'})].map(call => { try { return call(); } catch (error) { return null; } }))",
         &["commands", "store", "credentials", "exec", "fs.read"],
     );
     let granted = &["commands", "store", "credentials", "exec", "fs.read"];
@@ -3702,7 +3719,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
         )
         .unwrap();
     let events = seen.as_array().unwrap();
-    assert_eq!(events.len(), 8, "{seen}");
+    assert_eq!(events.len(), 12, "{seen}");
     for event in events {
         let operation = event["operation"].as_str().unwrap();
         assert_eq!(event["caller"], "consumer");
@@ -4632,4 +4649,40 @@ fn omd_mod_reset_moves_only_resettable_store_files_aside() {
     let refused = reset("grants.json");
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
+}
+
+#[test]
+fn clipboard_delivery_wait_is_not_callback_execution() {
+    let (temp, store, path) = fixture(
+        "export default api => api.command('copy', () => { api.host.call('terminal.copy', {text:'one'}); return api.host.call('terminal.copy', {text:'two'}); })",
+        &["commands", "terminal"],
+    );
+    let manifest = path.join("mod.json");
+    let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    package["hook_budget_ms"] = json!(250);
+    std::fs::write(&manifest, serde_json::to_vec(&package).unwrap()).unwrap();
+    trust(&store, &path, &["commands", "terminal"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let mut copies = 0;
+    let result = runtime
+        .invoke_with(
+            "fixture",
+            generation,
+            "command",
+            "copy",
+            json!(""),
+            || true,
+            |call| {
+                assert_eq!(call.operation, "terminal.copy");
+                // Each external delivery is within its 5s surface deadline; their sum exceeds
+                // the callback execution budget and each exceeds the per-hook budget.
+                std::thread::sleep(std::time::Duration::from_millis(2_600));
+                copies += 1;
+                Ok(json!({"status": "confirmed"}))
+            },
+        )
+        .unwrap();
+    assert_eq!(copies, 2);
+    assert_eq!(result, json!({"status": "confirmed"}));
 }

@@ -10,7 +10,7 @@ Plugins outside this launch collection are not shipped; see the
 - `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
   PDF, and Jupyter notebook reading through existing approved host tools. Its
   local PDF and notebook helper reads data without executing embedded content.
-- `omd-code-execution` supplies guidance for persistent V8, Python, and Bun
+- `omd-code-execution` supplies guidance for V8, Python, and Bun
   cells. It has no own interpreter, tool server, sandbox, or process supervisor.
 - `omd-anchored-edit` supplies per-line `LINE#HASH` editing guidance and a
   separately trusted mod component for host-authorized file transactions.
@@ -52,15 +52,17 @@ composed tool calls help a task. The OMD+ package installs the matching
 stages this plugin's source; it does not bundle Python or Bun.
 Activate experimental code mode explicitly with
 `codex -c features.code_mode.enabled=true`; the plugin never edits shared Codex
-config. Opt in to Python and Bun cells with
-`-c features.code_mode.omd_kernels=true` and install the interpreters separately.
+config. Configure Python and Bun in `features.code_mode.kernels` with the
+installed driver paths and exact SHA-256 hashes shown in the
+[code-execution skill](bundled/oh-my-diff/plugins/omd-code-execution/skills/omd-code-execution/SKILL.md),
+and install the interpreters separately.
 Each worker keeps one bound loopback port and receives a fresh cell token. Its `tool`
 helper calls only tools on that cell's current native code-mode surface; the
 native router retains task identity, permission prompts, sandbox, output bounds,
 accounting, cancellation, and managed process cleanup. Python keeps module
 globals; Bun keeps `globalThis` state. The existing V8 path remains available.
 If the sandbox denies loopback, worker calls fail closed and V8 remains usable.
-Remove the plugin to remove its instructions, and disable `omd_kernels` to
+Remove the plugin to remove its instructions, and remove the kernel entries to
 remove the optional worker tool.
 
 Five-language LSP operations are TypeScript mods (`omd_lsp_sync` and
