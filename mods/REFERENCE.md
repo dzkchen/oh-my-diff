@@ -1022,8 +1022,13 @@ during activation, including when their native event is already registered.
 `process.start` takes `framing: "content-length"` (default), `"ndjson"` or
 `"raw"` and `network: "none"` or `"loopback"`; the protocol-named transports are removed.
 `process.exchange` returns at most 64 messages or 4 MiB per call and leaves
-the rest queued; output still queued when the process exits is returned
-before the exchange that fails with the stop.
+the rest queued. Once the process exits, its readers get one second to deliver
+what it wrote; output queued by then is returned before the exchange that fails
+with `process_stopped`, `process.status` reports `running: true` until it has
+been exchanged, and an exchange's `send` is dropped. `stdin: "null"` starts the
+process with standard input at end of file, for commands that would otherwise
+wait on an open pipe; its exchanges cannot `send` (`process_stdin_null`) and it
+cannot take `raster`.
 
 Experimental (`process_streams_v1`): under `raw` the host reads stdout and stderr as written and
 queues each read (at most 64 KiB) as `{stream: "stdout" | "stderr", data}`,

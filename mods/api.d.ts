@@ -371,7 +371,7 @@ export interface HostOperations {
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
   /** Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
