@@ -29106,7 +29106,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 3fcd0cd23..cd1cabee5 100644
+index 3fcd0cd23..f2350059b 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -63,8 +63,9 @@ impl App {
@@ -29120,15 +29120,16 @@ index 3fcd0cd23..cd1cabee5 100644
              })
          };
          changed || search_changed
-@@ -75,6 +76,7 @@ impl App {
+@@ -75,6 +76,8 @@ impl App {
          tui: &mut tui::Tui,
          screen_size: Size,
      ) -> Result<Rect> {
++        let _stage = codex_omd::frame_metrics::stage("owned_frame");
 +        let _footer_frame = crate::mod_ui::footer_frame();
          self.chat_widget.sync_warnings(&self.transcript_cells);
          let motion = MotionMode::from_animations_enabled(
              self.local_settings.tui.animations && self.local_settings.tui.effects.shimmer,
-@@ -85,8 +87,22 @@ impl App {
+@@ -85,8 +88,22 @@ impl App {
          } else {
              "esc latest"
          };
@@ -29153,7 +29154,7 @@ index 3fcd0cd23..cd1cabee5 100644
          let composer_hint = self.composer_hint(transcript_width);
          let now = Instant::now();
          let turn_tip = self.turn_tip(transcript_width, now, &tui.frame_requester());
-@@ -101,8 +117,7 @@ impl App {
+@@ -101,8 +118,7 @@ impl App {
          let mut composer_gap = (!self.chat_widget.has_active_view()
              && !self.chat_widget.is_external_writer_view())
          .then(crate::bottom_pane::ComposerGap::default);
@@ -29163,7 +29164,7 @@ index 3fcd0cd23..cd1cabee5 100644
          let chat_widget = &self.chat_widget;
          let view = &mut self.transcript_view;
          let active_key = chat_widget.active_cell_transcript_key();
-@@ -112,17 +127,14 @@ impl App {
+@@ -112,17 +128,14 @@ impl App {
              tui.frame_requester().schedule_frame();
          }
          let footer_area = crate::bottom_pane::inset_footer_hint_area(Rect::new(
@@ -29186,7 +29187,7 @@ index 3fcd0cd23..cd1cabee5 100644
          let bottom =
              chat_widget.bottom_pane_renderable(crate::bottom_pane::ComposerRenderOptions {
                  max_height: Some(max_composer_height),
-@@ -140,20 +152,13 @@ impl App {
+@@ -140,20 +153,13 @@ impl App {
              .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
              .is_some();
          let bottom_height = if dashboard_visible {
@@ -29211,7 +29212,7 @@ index 3fcd0cd23..cd1cabee5 100644
          let mut rendered_cursor = None;
          let mut footer_height_changed = false;
          let mut feedback_tick = None;
-@@ -161,16 +166,11 @@ impl App {
+@@ -161,16 +167,11 @@ impl App {
          let mut transcript_bottom = available.saturating_sub(u16::from(composer_gap.is_none()));
          tui.draw(screen_size.height, |frame| {
              ratatui::widgets::Clear.render(
@@ -29230,7 +29231,7 @@ index 3fcd0cd23..cd1cabee5 100644
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -209,45 +209,44 @@ impl App {
+@@ -209,45 +210,44 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -29302,7 +29303,7 @@ index 3fcd0cd23..cd1cabee5 100644
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -260,8 +259,8 @@ impl App {
+@@ -260,8 +260,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -29313,7 +29314,7 @@ index 3fcd0cd23..cd1cabee5 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -270,16 +269,29 @@ impl App {
+@@ -270,16 +270,29 @@ impl App {
              .filter(|_| chat_widget.no_modal_or_popup_active());
              feedback_tick =
                  view.render_composer_gap(follow_area, composer_hint.as_ref(), frame.buffer, now);
@@ -29350,7 +29351,7 @@ index 3fcd0cd23..cd1cabee5 100644
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -290,12 +302,20 @@ impl App {
+@@ -290,12 +303,20 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
@@ -35736,10 +35737,18 @@ index 612a2752e..7843deaf3 100644
      }
      filtered_presets(model_catalog)
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
-index 60081516b..599fc2211 100644
+index 60081516b..37e37b287 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
 +++ b/codex-rs/tui/src/custom_terminal.rs
-@@ -439,6 +439,14 @@ where
+@@ -299,6 +299,7 @@ where
+     }
+
+     fn flush_updates(&mut self, updates: Vec<DrawCommand>) -> io::Result<()> {
++        let _stage = codex_omd::frame_metrics::stage("cell_write");
+         let last_put_command = updates.iter().rfind(|command| command.is_put());
+         if let Some(&DrawCommand::Put { x, y, .. }) = last_put_command {
+             self.last_known_cursor_pos = Position { x, y };
+@@ -439,9 +440,19 @@ where
          let cursor_position = frame.cursor_position;
          let cursor_style = frame.cursor_style;
 
@@ -35753,8 +35762,13 @@ index 60081516b..599fc2211 100644
 +
          // Not every terminal or multiplexer hides intermediate cursor moves inside a
          // synchronized update, especially when the frame spans multiple writes.
++        let stage = codex_omd::frame_metrics::stage("cell_diff");
          let updates = diff_buffers(self.previous_buffer(), self.current_buffer());
-@@ -628,7 +636,10 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
++        drop(stage);
+         if !updates.is_empty() && !self.hidden_cursor {
+             self.hide_cursor()?;
+         }
+@@ -628,7 +639,10 @@ fn diff_buffers(a: &Buffer, b: &Buffer) -> Vec<DrawCommand> {
              if cell.symbol() != " "
                  || cell.bg != bg
                  || cell.modifier != Modifier::empty()
@@ -40398,6 +40412,28 @@ index 3ed439eec..013a3de5b 100644
          }
      }
  }
+diff --git a/codex-rs/tui/src/tui/frame_requester.rs b/codex-rs/tui/src/tui/frame_requester.rs
+index 9dc117bd4..4575803b8 100644
+--- a/codex-rs/tui/src/tui/frame_requester.rs
++++ b/codex-rs/tui/src/tui/frame_requester.rs
+@@ -103,6 +103,7 @@ impl FrameScheduler {
+
+             tokio::select! {
+                 draw_at = self.receiver.recv() => {
++                    let _stage = codex_omd::frame_metrics::stage("schedule_request");
+                     let Some(draw_at) = draw_at else {
+                         // All senders dropped; exit the scheduler.
+                         break
+@@ -116,7 +117,9 @@ impl FrameScheduler {
+                     continue;
+                 }
+                 _ = &mut deadline => {
++                    let _stage = codex_omd::frame_metrics::stage("schedule_emit");
+                     if next_deadline.is_some() {
++                        codex_omd::frame_metrics::waited("schedule_lateness", target);
+                         next_deadline = None;
+                         self.rate_limiter.mark_emitted(Instant::now());
+                         let _ = self.draw_tx.send(());
 diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
 index 7cb12c874..c62574d44 100644
 --- a/codex-rs/tui/src/tui/job_control.rs
@@ -41752,10 +41788,10 @@ index 000000000..aef1c863b
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 000000000..9a464a48e
+index 000000000..2b4a5ac12
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,791 @@
+@@ -0,0 +1,926 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -41843,7 +41879,7 @@ index 000000000..9a464a48e
 +struct Attached {
 +    client_id: String,
 +    operations: Vec<String>,
-+    formats: Arc<Mutex<Vec<OmdRenderFormat>>>,
++    renderer: Arc<Mutex<OmdRenderer>>,
 +    view: Arc<tokio::sync::Mutex<View>>,
 +    _observer: client_surface::Registration,
 +    _entry: client_surface::Registration,
@@ -41924,58 +41960,177 @@ index 000000000..9a464a48e
 +    }
 +}
 +
-+/// The image format of a mirrored raster frame.
-+fn blit_format(arguments: &Value) -> Option<OmdRenderFormat> {
-+    match arguments["image"]["media_type"].as_str()? {
-+        "image/png" => Some(OmdRenderFormat::Png),
-+        "image/jpeg" => Some(OmdRenderFormat::Jpeg),
-+        _ => None,
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum Mirror {
++    Unchanged,
++    Cells,
++    Image(OmdRenderFormat),
++    Raw,
++}
++
++impl Mirror {
++    fn of(observed: &Observed) -> Option<Self> {
++        let Observed::Mirrored {
++            operation,
++            arguments,
++            pixels,
++            ..
++        } = observed
++        else {
++            return Some(Self::Unchanged);
++        };
++        if operation != "terminal.blit" {
++            return Some(Self::Unchanged);
++        }
++        if arguments.get("pixels").is_some() {
++            return pixels.is_some().then_some(Self::Raw);
++        }
++        Some(match arguments["image"]["media_type"].as_str() {
++            Some("image/png") => Self::Image(OmdRenderFormat::Png),
++            Some("image/jpeg") => Self::Image(OmdRenderFormat::Jpeg),
++            _ => Self::Cells,
++        })
++    }
++
++    fn reaches(self, renderer: &Mutex<OmdRenderer>) -> bool {
++        let carries = |format| carries(renderer, format);
++        match self {
++            Self::Unchanged => true,
++            Self::Cells => carries(OmdRenderFormat::Cells),
++            Self::Image(format) => carries(format) || carries(OmdRenderFormat::Cells),
++            Self::Raw => [
++                OmdRenderFormat::Png,
++                OmdRenderFormat::Jpeg,
++                OmdRenderFormat::Cells,
++            ]
++            .into_iter()
++            .any(carries),
++        }
 +    }
 +}
 +
-+fn carries(formats: &Mutex<Vec<OmdRenderFormat>>, format: OmdRenderFormat) -> bool {
-+    formats
++fn carries(renderer: &Mutex<OmdRenderer>, format: OmdRenderFormat) -> bool {
++    renderer
 +        .lock()
 +        .unwrap_or_else(PoisonError::into_inner)
++        .formats
 +        .contains(&format)
 +}
 +
-+/// Marks image frames that a later frame for the same raster in the batch replaces.
-+fn superseded_frames(batch: &[Observed]) -> Vec<bool> {
-+    let key = |observed: &Observed| match observed {
-+        Observed::Mirrored {
-+            operation,
-+            arguments,
-+            ..
-+        } if operation == "terminal.blit" && blit_format(arguments).is_some() => {
-+            arguments["key"].as_str().map(str::to_owned)
-+        }
-+        _ => None,
-+    };
-+    let mut newest = std::collections::HashSet::new();
-+    let mut superseded = batch
-+        .iter()
-+        .rev()
-+        .map(|observed| key(observed).is_some_and(|key| !newest.insert(key)))
-+        .collect::<Vec<_>>();
-+    superseded.reverse();
-+    superseded
-+}
-+
-+/// What a client with `formats` receives of a mirrored blit: the frame as sent, half-block cells, or nothing.
 +fn blit_for(
-+    formats: &Mutex<Vec<OmdRenderFormat>>,
++    renderer: &Mutex<OmdRenderer>,
++    format: OmdRenderFormat,
 +    arguments: &Value,
 +    size: Option<(u16, u16)>,
 +) -> Option<Value> {
-+    match blit_format(arguments) {
-+        Some(format) if carries(formats, format) => Some(arguments.clone()),
-+        Some(_) if carries(formats, OmdRenderFormat::Cells) => {
-+            client_surface::frame_cells(arguments, size?)
-+        }
-+        Some(_) => None,
-+        None => carries(formats, OmdRenderFormat::Cells).then(|| arguments.clone()),
++    if carries(renderer, format) {
++        return Some(arguments.clone());
 +    }
++    if carries(renderer, OmdRenderFormat::Cells) {
++        return client_surface::frame_cells(arguments, size?);
++    }
++    None
++}
++
++fn raw_blit_for(
++    renderer: &Mutex<OmdRenderer>,
++    arguments: &Value,
++    size: Option<(u16, u16)>,
++    pixels: &codex_omd::process_raster::PixelFrame,
++) -> Option<Value> {
++    use base64::Engine;
++    let format = if carries(renderer, OmdRenderFormat::Png) {
++        Some((false, "image/png"))
++    } else if carries(renderer, OmdRenderFormat::Jpeg) {
++        Some((true, "image/jpeg"))
++    } else {
++        None
++    };
++    let bounds = size.map_or((u32::MAX, u32::MAX), |(columns, rows)| {
++        let cell = renderer
++            .lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .cell_px
++            .as_ref()
++            .map_or((8, 16), |cell| (cell.width.max(1), cell.height.max(1)));
++        (
++            u32::from(columns).saturating_mul(cell.0),
++            u32::from(rows).saturating_mul(cell.1),
++        )
++    });
++    if let Some(encoded) =
++        format.and_then(|(jpeg, media_type)| Some((media_type, pixels.encoded(jpeg, bounds)?)))
++    {
++        return Some(
++            serde_json::json!({"key": arguments["key"], "image": {"media_type": encoded.0,
++            "base64": base64::engine::general_purpose::STANDARD.encode(encoded.1)}}),
++        );
++    }
++    carries(renderer, OmdRenderFormat::Cells)
++        .then(|| {
++            size.map(|size| client_surface::pixel_cells(&arguments["key"], &pixels.image, size))
++        })
++        .flatten()
++}
++
++struct Queued {
++    observed: Observed,
++    mirror: Mirror,
++    frame: Option<((String, String), usize)>,
++}
++
++fn queue_observation(
++    queue: &mut std::collections::VecDeque<Queued>,
++    observed: Observed,
++    mirror: Mirror,
++) {
++    let frame = match (&observed, mirror) {
++        (
++            Observed::Mirrored {
++                caller,
++                arguments,
++                pixels,
++                ..
++            },
++            Mirror::Image(_) | Mirror::Raw,
++        ) => arguments["key"].as_str().map(|key| {
++            (
++                (caller.clone(), key.to_owned()),
++                pixels.as_ref().map_or_else(
++                    || arguments["image"]["base64"].as_str().map_or(0, str::len),
++                    |pixels| pixels.image.as_bytes().len(),
++                ),
++            )
++        }),
++        _ => None,
++    };
++    if let Some((key, bytes)) = &frame {
++        queue.retain(|queued| queued.frame.as_ref().is_none_or(|(other, _)| other != key));
++        let (mut count, mut total) = queue
++            .iter()
++            .filter_map(|queued| queued.frame.as_ref())
++            .fold((0, 0), |(count, total), (_, bytes)| {
++                (count + 1, total + bytes)
++            });
++        while count >= 32 || total + bytes > 64 * 1024 * 1024 {
++            let Some(index) = queue.iter().position(|queued| queued.frame.is_some()) else {
++                return;
++            };
++            if let Some(Queued {
++                frame: Some((_, removed)),
++                ..
++            }) = queue.remove(index)
++            {
++                count -= 1;
++                total -= removed;
++            }
++        }
++    }
++    queue.push_back(Queued {
++        observed,
++        mirror,
++        frame,
++    });
 +}
 +
 +/// The renderer as mods see it: snake_case, unlike the camelCase wire.
@@ -42130,7 +42285,7 @@ index 000000000..9a464a48e
 +            "client-{}",
 +            self.next_client.fetch_add(1, Ordering::Relaxed) + 1
 +        );
-+        let formats = Arc::new(Mutex::new(params.renderer.formats.clone()));
++        let renderer = Arc::new(Mutex::new(params.renderer.clone()));
 +        let entry = client_surface::attach(client_surface::ClientEntry {
 +            id: client_id.clone(),
 +            name: params.name,
@@ -42148,7 +42303,7 @@ index 000000000..9a464a48e
 +        let observer = client_surface::register_observer(self.observer(
 +            connection_id,
 +            Arc::clone(&view),
-+            Arc::clone(&formats),
++            Arc::clone(&renderer),
 +        ));
 +        let headless = self.headless.load(Ordering::Acquire);
 +        let delegable = params
@@ -42160,7 +42315,7 @@ index 000000000..9a464a48e
 +        let attached = Attached {
 +            client_id: client_id.clone(),
 +            operations: params.operations,
-+            formats,
++            renderer,
 +            view,
 +            _observer: observer,
 +            _entry: entry,
@@ -42196,23 +42351,27 @@ index 000000000..9a464a48e
 +        self: &Arc<Self>,
 +        connection_id: ConnectionId,
 +        view: Arc<tokio::sync::Mutex<View>>,
-+        formats: Arc<Mutex<Vec<OmdRenderFormat>>>,
++        renderer: Arc<Mutex<OmdRenderer>>,
 +    ) -> Arc<dyn Fn(Observed) + Send + Sync> {
 +        let clients = Arc::downgrade(self);
-+        let delivery = Arc::clone(&formats);
-+        // One task per connection delivers in observation order.
-+        let (sender, mut observations) = tokio::sync::mpsc::unbounded_channel();
++        let delivery = Arc::clone(&renderer);
++        let pending = Arc::new(Mutex::new(std::collections::VecDeque::new()));
++        let receiving = pending.clone();
++        let (ready, mut notified) = tokio::sync::mpsc::channel::<()>(1);
 +        tokio::spawn(async move {
-+            while let Some(first) = observations.recv().await {
-+                let mut batch = vec![first];
-+                while let Ok(next) = observations.try_recv() {
-+                    batch.push(next);
++            while notified.recv().await.is_some() {
++                let batch: Vec<_> = receiving
++                    .lock()
++                    .unwrap_or_else(PoisonError::into_inner)
++                    .drain(..)
++                    .collect();
++                if clients.upgrade().is_none() {
++                    return;
 +                }
-+                let superseded = superseded_frames(&batch);
-+                for (observed, superseded) in batch.into_iter().zip(superseded) {
-+                    if superseded {
-+                        continue;
-+                    }
++                for Queued {
++                    observed, mirror, ..
++                } in batch
++                {
 +                    let Some(clients) = clients.upgrade() else {
 +                        return;
 +                    };
@@ -42231,16 +42390,25 @@ index 000000000..9a464a48e
 +                            caller,
 +                            operation,
 +                            mut arguments,
++                            pixels,
 +                        } => {
-+                            if operation == "terminal.blit" && blit_format(&arguments).is_some() {
++                            if let Mirror::Image(_) | Mirror::Raw = mirror {
 +                                let size = clients::published().and_then(|snapshot| {
 +                                    snapshot
 +                                        .view
 +                                        .raster_size(arguments["key"].as_str().unwrap_or_default())
 +                                });
-+                                let formats = Arc::clone(&delivery);
++                                let renderer = Arc::clone(&delivery);
 +                                let routed = tokio::task::spawn_blocking(move || {
-+                                    blit_for(&formats, &arguments, size)
++                                    match (mirror, pixels.as_deref()) {
++                                        (Mirror::Image(format), _) => {
++                                            blit_for(&renderer, format, &arguments, size)
++                                        }
++                                        (_, Some(pixels)) => {
++                                            raw_blit_for(&renderer, &arguments, size, pixels)
++                                        }
++                                        (_, None) => None,
++                                    }
 +                                })
 +                                .await;
 +                                let Ok(Some(routed)) = routed else {
@@ -42263,13 +42431,16 @@ index 000000000..9a464a48e
 +            }
 +        });
 +        Arc::new(move |observed| {
-+            if !matches!(&observed, Observed::Mirrored { operation, arguments, .. }
-+                if operation == "terminal.blit"
-+                    && !carries(&formats, blit_format(arguments).unwrap_or(OmdRenderFormat::Cells))
-+                    && !carries(&formats, OmdRenderFormat::Cells))
-+            {
-+                let _ = sender.send(observed);
-+            }
++            let Some(mirror) = Mirror::of(&observed).filter(|mirror| mirror.reaches(&renderer))
++            else {
++                return;
++            };
++            queue_observation(
++                &mut pending.lock().unwrap_or_else(PoisonError::into_inner),
++                observed,
++                mirror,
++            );
++            let _ = ready.try_send(());
 +        })
 +    }
 +
@@ -42314,9 +42485,9 @@ index 000000000..9a464a48e
 +            let attached = attached.get(&connection_id).ok_or_else(not_attached)?;
 +            if let Some(renderer) = &params.renderer {
 +                *attached
-+                    .formats
++                    .renderer
 +                    .lock()
-+                    .unwrap_or_else(PoisonError::into_inner) = renderer.formats.clone();
++                    .unwrap_or_else(PoisonError::into_inner) = renderer.clone();
 +            }
 +            attached.client_id.clone()
 +        };
@@ -42549,10 +42720,10 @@ index 000000000..9a464a48e
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_clients_tests.rs b/codex-rs/app-server/src/omd_clients_tests.rs
 new file mode 100644
-index 000000000..23d7d5c2b
+index 000000000..1463ec371
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients_tests.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,348 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingEnvelope;
 +use crate::transport::OutgoingMessage;
@@ -42560,6 +42731,16 @@ index 000000000..23d7d5c2b
 +use pretty_assertions::assert_eq;
 +use serde_json::json;
 +use tokio::sync::mpsc;
++
++fn renderer(formats: &[OmdRenderFormat]) -> Mutex<OmdRenderer> {
++    Mutex::new(OmdRenderer {
++        kind: OmdRendererKind::Terminal,
++        formats: formats.to_vec(),
++        pointer: OmdPointer::None,
++        reduced_motion: false,
++        cell_px: None,
++    })
++}
 +
 +fn attach(clients: &OmdClients, connection: u64, operations: &[&str]) {
 +    let operations = operations
@@ -42580,7 +42761,7 @@ index 000000000..23d7d5c2b
 +        Attached {
 +            client_id: format!("test-{connection}"),
 +            operations,
-+            formats: Arc::default(),
++            renderer: Arc::new(renderer(&[])),
 +            view: Arc::default(),
 +            _observer: client_surface::register_observer(Arc::new(|_| {})),
 +            _entry: entry,
@@ -42757,8 +42938,14 @@ index 000000000..23d7d5c2b
 +fn mirrored_image_frames_reach_clients_as_sent_cells_or_not_at_all() {
 +    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 +    let frame = json!({"key": "r", "image": {"media_type": "image/png", "base64": png}});
-+    let route =
-+        |formats: &[OmdRenderFormat]| blit_for(&Mutex::new(formats.to_vec()), &frame, Some((4, 2)));
++    let route = |formats: &[OmdRenderFormat]| {
++        blit_for(
++            &renderer(formats),
++            OmdRenderFormat::Png,
++            &frame,
++            Some((4, 2)),
++        )
++    };
 +    assert_eq!(
 +        route(&[OmdRenderFormat::Png, OmdRenderFormat::Cells]),
 +        Some(frame.clone())
@@ -42771,11 +42958,67 @@ index 000000000..23d7d5c2b
 +    assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
 +    assert_eq!(cells["cells"][0][0], "▀");
 +    assert_eq!(route(&[OmdRenderFormat::Jpeg, OmdRenderFormat::Svg]), None);
++    use base64::Engine;
++    let pixels = codex_omd::process_raster::PixelFrame::new(
++        serde_json::from_value(json!({"source":"private-handle", "format":"rgba", "width":1, "height":1, "sequence":1})).unwrap(),
++        client_surface::decode_image(&base64::engine::general_purpose::STANDARD.decode(png).unwrap()).unwrap(),
++    );
++    let raw = json!({"key":"r", "pixels":{"source":"private-handle"}});
++    assert_eq!(
++        Mirror::of(&Observed::Mirrored {
++            caller: "demo".to_string(),
++            operation: "terminal.blit".to_string(),
++            arguments: raw.clone(),
++            pixels: None,
++        }),
++        None
++    );
++    for format in [
++        OmdRenderFormat::Png,
++        OmdRenderFormat::Jpeg,
++        OmdRenderFormat::Cells,
++    ] {
++        assert!(Mirror::Raw.reaches(&renderer(&[format])));
++        let routed = raw_blit_for(&renderer(&[format]), &raw, Some((4, 2)), &pixels).unwrap();
++        assert!(routed.get("pixels").is_none());
++        assert!(!routed.to_string().contains("private-handle"));
++        if let Some(encoded) = routed.get("image") {
++            assert!(
++                client_surface::decode_image(
++                    &base64::engine::general_purpose::STANDARD
++                        .decode(encoded["base64"].as_str().unwrap())
++                        .unwrap()
++                )
++                .is_ok()
++            );
++        } else {
++            assert_eq!(routed["cells"].as_array().unwrap().len(), 8);
++        }
++    }
++    let wide = "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAAN0lEQVR42u3PMQ0AAAgDsN3zLwpZaOAkaVIDzbSvRUBAQEBAQEBAQEBAQEBAQEBAQEBAQEDgagHkqOBbyTe6MAAAAABJRU5ErkJggg==";
++    let wide = codex_omd::process_raster::PixelFrame::new(
++        serde_json::from_value(json!({"source":"private-handle", "format":"rgb", "width":64, "height":32, "sequence":1})).unwrap(),
++        client_surface::decode_image(&base64::engine::general_purpose::STANDARD.decode(wide).unwrap()).unwrap(),
++    );
++    let small = renderer(&[OmdRenderFormat::Png]);
++    small.lock().unwrap().cell_px = Some(OmdCellPx {
++        width: 2,
++        height: 4,
++    });
++    let routed = raw_blit_for(&small, &raw, Some((4, 2)), &wide).unwrap();
++    let encoded = client_surface::decode_image(
++        &base64::engine::general_purpose::STANDARD
++            .decode(routed["image"]["base64"].as_str().unwrap())
++            .unwrap(),
++    )
++    .unwrap();
++    assert_eq!((encoded.width(), encoded.height()), (8, 4));
 +}
 +
 +#[test]
 +fn a_backlog_of_image_frames_keeps_only_the_newest_per_raster() {
 +    let blit = |key: &str, image: bool| Observed::Mirrored {
++        pixels: None,
 +        caller: "demo".to_string(),
 +        operation: "terminal.blit".to_string(),
 +        arguments: if image {
@@ -42792,17 +43035,49 @@ index 000000000..23d7d5c2b
 +        Observed::Redraw,
 +        blit("b", false),
 +    ];
++    let mut queue = std::collections::VecDeque::new();
++    let queue_one = |queue: &mut std::collections::VecDeque<Queued>, observed: Observed| {
++        let mirror = Mirror::of(&observed).unwrap();
++        queue_observation(queue, observed, mirror);
++    };
++    for observed in batch {
++        queue_one(&mut queue, observed);
++    }
++    assert_eq!(queue.len(), 5);
++    for n in 0..40 {
++        queue_one(&mut queue, blit(&format!("r{n}"), true));
++    }
++    let frames = |queue: &std::collections::VecDeque<Queued>| {
++        queue
++            .iter()
++            .filter_map(|queued| queued.frame.clone())
++            .collect::<Vec<_>>()
++    };
++    assert_eq!(frames(&queue).len(), 32);
++    assert_eq!(frames(&queue).last().unwrap().0.1, "r39");
++    let large = |key: &str| Observed::Mirrored {
++        pixels: None,
++        caller: "demo".to_string(),
++        operation: "terminal.blit".to_string(),
++        arguments: json!({"key": key, "image": {"media_type": "image/png", "base64": "A".repeat(20 << 20)}}),
++    };
++    for key in ["big1", "big2", "big3", "big4"] {
++        queue_one(&mut queue, large(key));
++    }
 +    assert_eq!(
-+        superseded_frames(&batch),
-+        vec![true, false, false, false, false, false]
++        frames(&queue)
++            .iter()
++            .map(|((_, key), bytes)| (key.as_str(), *bytes))
++            .collect::<Vec<_>>(),
++        [("big2", 20 << 20), ("big3", 20 << 20), ("big4", 20 << 20)]
 +    );
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 000000000..e7dcb14ac
+index 000000000..0b9e04e38
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
-@@ -0,0 +1,324 @@
+@@ -0,0 +1,359 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -43025,12 +43300,16 @@ index 000000000..e7dcb14ac
 +    }
 +}
 +
++type FrameState = Arc<Mutex<(u64, Instant)>>;
++
 +/// Paces mirrored `terminal.blit` frames like a drawing surface's queue: one frame per interval.
 +#[derive(Default)]
-+struct Frames(Mutex<HashMap<String, (u64, Instant)>>);
++struct Frames(Mutex<HashMap<String, FrameState>>);
 +
 +impl Frames {
-+    fn blit(&self, caller: &str, arguments: &Value, now: Instant) -> Result<Value, String> {
++    fn blit(&self, call: &SurfaceCall, now: Instant) -> Result<Value, String> {
++        let caller = &call.caller;
++        let arguments = &call.arguments;
 +        let key = arguments["key"].as_str().unwrap_or_default();
 +        let published = codex_omd_extension::clients::published();
 +        let owner = published
@@ -43040,21 +43319,55 @@ index 000000000..e7dcb14ac
 +        let size = published
 +            .as_ref()
 +            .and_then(|snapshot| snapshot.view.raster_size(key));
-+        let blit = client_surface::blit_request(caller, owner, size, arguments)?.checked()?;
-+        Ok(self.pace(blit.key, now))
++        let blit = client_surface::blit_request(caller, owner, size, arguments)?;
++        let key = blit.key.clone();
++        self.admit(&key, now, |next| {
++            blit.checked(|source| call.snapshot_pixels(source, next))
++                .map(|_| ())
++        })
 +    }
 +
++    fn admit(
++        &self,
++        key: &str,
++        now: Instant,
++        snapshot: impl FnOnce(Instant) -> Result<(), String>,
++    ) -> Result<Value, String> {
++        let state = self
++            .0
++            .lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .entry(key.to_owned())
++            .or_insert_with(|| Arc::new(Mutex::new((0, now))))
++            .clone();
++        let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
++        if let Some(reply) = Self::backpressure(&state, now) {
++            return Ok(reply);
++        }
++        snapshot(state.1.max(now) + client_surface::BLIT_FRAME)?;
++        Ok(Self::accept(&mut state, now))
++    }
++
++    #[cfg(test)]
 +    fn pace(&self, key: String, now: Instant) -> Value {
-+        let mut frames = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-+        let (frame, drained) = frames.entry(key).or_insert((0, now));
++        self.admit(&key, now, |_| Ok(())).unwrap()
++    }
++
++    fn backpressure((_, drained): &(u64, Instant), now: Instant) -> Option<Value> {
 +        let queued = drained.saturating_duration_since(now).as_millis()
 +            / client_surface::BLIT_FRAME.as_millis();
 +        if queued >= client_surface::BLIT_QUEUE_UPDATES as u128 {
 +            let wait = drained.saturating_duration_since(now)
 +                - client_surface::BLIT_FRAME * (client_surface::BLIT_QUEUE_UPDATES as u32 - 1);
-+            return json!({"status": "backpressure",
-+                "retry_after_ms": wait.as_millis().max(1) as u64});
++            return Some(json!({"status": "backpressure",
++                "retry_after_ms": wait.as_millis().max(1) as u64}));
 +        }
++        None
++    }
++
++    fn accept((frame, drained): &mut (u64, Instant), now: Instant) -> Value {
++        let queued = drained.saturating_duration_since(now).as_millis()
++            / client_surface::BLIT_FRAME.as_millis();
 +        *drained = (*drained).max(now) + client_surface::BLIT_FRAME;
 +        *frame += 1;
 +        json!({
@@ -43073,10 +43386,7 @@ index 000000000..e7dcb14ac
 +                Ok(json!({"delivered": false, "method": "none", "reason": "headless"}))
 +            }
 +            "terminal.notice" => notice(&call),
-+            "terminal.blit" => self
-+                .0
-+                .frames
-+                .blit(&call.caller, &call.arguments, Instant::now()),
++            "terminal.blit" => self.0.frames.blit(&call, Instant::now()),
 +            _ if client_surface::USER_ONLY_OPERATIONS.contains(&operation)
 +                || operation == "prompts.consent" =>
 +            {
@@ -43129,16 +43439,45 @@ index 000000000..e7dcb14ac
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_surface_tests.rs b/codex-rs/app-server/src/omd_surface_tests.rs
 new file mode 100644
-index 000000000..af6c41392
+index 000000000..148627587
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface_tests.rs
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,215 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingMessageSender;
 +use codex_app_server_protocol::OmdRecoveryReadResponse;
 +use codex_app_server_transport::OutgoingResponse;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
++
++#[test]
++fn raw_raster_snapshot_does_not_serialize_other_rasters() {
++    let frames = Arc::new(Frames::default());
++    let now = Instant::now();
++    let copying = frames.clone();
++    let (started, wait) = std::sync::mpsc::channel();
++    let (release, released) = std::sync::mpsc::channel();
++    let copy = std::thread::spawn(move || {
++        copying
++            .admit("copying", now, |_| {
++                started.send(()).unwrap();
++                released.recv().unwrap();
++                Ok(())
++            })
++            .unwrap()
++    });
++    wait.recv_timeout(std::time::Duration::from_secs(1))
++        .unwrap();
++    let other = frames.clone();
++    let (sender, receiver) = std::sync::mpsc::channel();
++    let worker =
++        std::thread::spawn(move || sender.send(other.pace("independent".into(), now)).unwrap());
++    let reply = receiver.recv_timeout(std::time::Duration::from_secs(1));
++    release.send(()).unwrap();
++    worker.join().unwrap();
++    copy.join().unwrap();
++    assert_eq!(reply.unwrap()["frame"], 1);
++}
 +
 +fn surface(transport: &mpsc::Sender<TransportEvent>) -> AppServerSurface {
 +    let (sender, _outgoing) = mpsc::channel(8);
@@ -56029,10 +56368,10 @@ index 000000000..ce09c5741
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..349addbd3
+index 000000000..1eeddb40c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1694 @@
+@@ -0,0 +1,1942 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -56313,22 +56652,10 @@ index 000000000..349addbd3
 +    Ndjson,
 +}
 +
-+type Stamp = (u64, u64, u64, i64, i64, i64, i64);
-+
-+/// A program's sha256, hashed again only when its device, inode, size, mtime or ctime changes (any write changes the ctime).
 +fn program_sha256(path: &Path) -> io::Result<String> {
-+    use std::os::unix::fs::MetadataExt;
-+    static HASHES: Mutex<BTreeMap<PathBuf, (Stamp, String)>> = Mutex::new(BTreeMap::new());
-+    let metadata = fs::metadata(path)?;
-+    let stamp = (
-+        metadata.dev(),
-+        metadata.ino(),
-+        metadata.len(),
-+        metadata.mtime(),
-+        metadata.mtime_nsec(),
-+        metadata.ctime(),
-+        metadata.ctime_nsec(),
-+    );
++    static HASHES: Mutex<BTreeMap<PathBuf, (codex_omd::FileStamp, String)>> =
++        Mutex::new(BTreeMap::new());
++    let stamp = codex_omd::file_stamp(&fs::metadata(path)?);
 +    if let Some((known, sha256)) = HASHES
 +        .lock()
 +        .unwrap_or_else(PoisonError::into_inner)
@@ -56348,21 +56675,28 @@ index 000000000..349addbd3
 +/// The newest frame waiting for the blit thread; older ones are dropped.
 +struct Frames(Arc<(Mutex<Option<Option<Value>>>, std::sync::Condvar)>);
 +
-+impl Frames {
-+    fn offer(&self, image: Value) {
-+        let (slot, ready) = &*self.0;
-+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Some(image));
-+        ready.notify_one();
-+    }
-+
-+    fn stop(&self) {
++impl Drop for Frames {
++    fn drop(&mut self) {
 +        let (slot, ready) = &*self.0;
 +        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(None);
 +        ready.notify_one();
 +    }
 +}
 +
-+fn blit_worker(key: String, sink: BlitSink, alive: Arc<std::sync::atomic::AtomicBool>) -> Frames {
++impl Frames {
++    fn offer(&self, image: Value) {
++        let (slot, ready) = &*self.0;
++        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Some(image));
++        ready.notify_one();
++    }
++}
++
++fn blit_worker(
++    key: String,
++    sink: BlitSink,
++    alive: Arc<std::sync::atomic::AtomicBool>,
++    stop: impl Fn() + Send + 'static,
++) -> Frames {
 +    let shared = Arc::new((Mutex::new(None::<Option<Value>>), std::sync::Condvar::new()));
 +    let frames = shared.clone();
 +    std::thread::spawn(move || {
@@ -56381,15 +56715,36 @@ index 000000000..349addbd3
 +            let Some(image) = image else {
 +                return;
 +            };
-+            let wait = match sink(json!({"key": key, "image": image}), active.clone()) {
++            let arguments = if let Some(pixels) = image.get("pixels") {
++                json!({"key": key, "pixels": pixels})
++            } else {
++                json!({"key": key, "image": image})
++            };
++            let wait = match sink(arguments, active.clone()) {
 +                Ok(reply) if reply["status"] == "backpressure" => Some(Duration::from_millis(
-+                    reply["retry_after_ms"].as_u64().unwrap_or(33).min(1_000),
++                    reply["retry_after_ms"].as_u64().unwrap_or(16).min(1_000),
 +                )),
 +                Ok(_) => None,
 +                Err(_) if !active() => return,
-+                Err(_) => (attempts < BLIT_ATTEMPTS).then_some(BLIT_RETRY),
++                Err(error) if error == "process_raster_revoked" => {
++                    stop();
++                    return;
++                }
++                Err(error)
++                    if image.get("pixels").is_some()
++                        && !codex_omd::client_surface::blit_retryable(&error) =>
++                {
++                    stop();
++                    return;
++                }
++                Err(_) => (image.get("pixels").is_some() || attempts < BLIT_ATTEMPTS)
++                    .then_some(BLIT_RETRY),
 +            };
-+            attempts = if wait.is_some() { attempts + 1 } else { 0 };
++            attempts = if wait.is_some() {
++                attempts.saturating_add(1)
++            } else {
++                0
++            };
 +            if let Some(wait) = wait {
 +                slot.lock()
 +                    .unwrap_or_else(PoisonError::into_inner)
@@ -56667,6 +57022,8 @@ index 000000000..349addbd3
 +                    raster: Option<String>,
 +                    #[serde(default)]
 +                    keys: Option<String>,
++                    #[serde(default)]
++                    pixels: bool,
 +                }
 +                let mut input: Input =
 +                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -56679,7 +57036,7 @@ index 000000000..349addbd3
 +                        })
 +                };
 +                let raster = match (&input.raster, &input.keys) {
-+                    (None, None) => None,
++                    (None, None) if !input.pixels => None,
 +                    (Some(raster), keys)
 +                        if input.framing.as_deref() == Some("ndjson")
 +                            && component(raster)
@@ -56912,25 +57269,52 @@ index 000000000..349addbd3
 +                    });
 +                    let (sender, receiver) = mpsc::sync_channel(128);
 +                    let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-+                    let frames = raster.as_ref().map(|(key, _, sink)| {
-+                        blit_worker(key.clone(), sink.clone(), alive.clone())
-+                    });
 +                    let group = child.id();
 +                    let reaped = Arc::new(Mutex::new(false));
-+                    let binding = raster.as_ref().map(|(key, keys, _)| {
-+                        let mut components =
-+                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
-+                        components.extend(
-+                            keys.iter()
-+                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
-+                        );
-+                        codex_omd::process_raster::bind(
-+                            thread,
-+                            id,
-+                            components,
-+                            input_sink(writer_sender.clone(), group, reaped.clone()),
-+                        )
++                    let frames = raster.as_ref().map(|(key, _, sink)| {
++                        let reaped = reaped.clone();
++                        blit_worker(key.clone(), sink.clone(), alive.clone(), move || {
++                            kill_group_if_alive(group, &reaped)
++                        })
 +                    });
++                    let raster_input = raster
++                        .as_ref()
++                        .map(|_| input_sink(writer_sender.clone(), group, reaped.clone()));
++                    let mut binding =
++                        raster
++                            .as_ref()
++                            .zip(raster_input.as_ref())
++                            .map(|((key, keys, _), sink)| {
++                                let mut components =
++                                    vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
++                                components.extend(keys.iter().map(|keys| {
++                                    (keys.clone(), codex_omd::process_raster::Role::Keys)
++                                }));
++                                codex_omd::process_raster::Binding::prepare(
++                                    thread,
++                                    id,
++                                    components,
++                                    sink.clone(),
++                                )
++                            });
++                    if let Some(binding) = &mut binding {
++                        if input.pixels {
++                            let initialized = binding
++                                .pixels(&scratch.join("pixels.raw"), Some(generation))
++                                .and_then(|message| {
++                                    raster_input.as_ref().unwrap()(message)
++                                        .then_some(())
++                                        .ok_or("process_pixels_init_failed".to_owned())
++                                });
++                            if let Err(error) = initialized {
++                                let _ = kill_process_group(child.id());
++                                let _ = child.kill();
++                                let _ = child.wait();
++                                return Err(error);
++                            }
++                        }
++                        binding.publish();
++                    }
 +                    let notifier = self.notifier.get().cloned();
 +                    let (owner, session) = (id.to_owned(), input.session.clone());
 +                    let reader_reaped = Arc::clone(&reaped);
@@ -56958,9 +57342,6 @@ index 000000000..349addbd3
 +                            };
 +                            if sender.send(result).is_err() || terminal {
 +                                alive.store(false, std::sync::atomic::Ordering::Release);
-+                                if let Some(frames) = &frames {
-+                                    frames.stop();
-+                                }
 +                                if let Some(notifier) = &notifier {
 +                                    notifier(ProcessNotice {
 +                                        owner: owner.clone(),
@@ -57296,6 +57677,65 @@ index 000000000..349addbd3
 +    }
 +
 +    #[test]
++    #[cfg(target_os = "macos")]
++    fn raw_buffer_sandbox_allows_private_files_but_denies_named_shared_memory() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let owner = ProcessOwner {
++            thread: None,
++            id: "raw-sandbox",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++            protected: &[],
++            environment: None,
++            os_access: None,
++            blit: None,
++        };
++        let found = processes
++            .call(owner, "process.which", json!({"names":["python3"]}), || {
++                true
++            })
++            .unwrap();
++        let python = &found["found"][0];
++        let probe = r#"import ctypes,errno,json,os
++lib=ctypes.CDLL(None,use_errno=True)
++name=('/omdprobe_'+str(os.getpid())).encode()
++fd=lib.shm_open(name,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o600)
++error=ctypes.get_errno()
++if fd >= 0:
++ os.close(fd)
++ lib.shm_unlink(name)
++with open(os.path.join(os.environ['HOME'],'pixels.raw'),'wb') as f: f.write(bytes([1,2,3]))
++print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno.EACCES),'file':True}),flush=True)
++"#;
++        processes
++            .call(
++                owner,
++                "process.start",
++                json!({"session":"probe","name":"python3","path":python["path"],
++            "sha256":python["sha256"],"arguments":["-c",probe],"framing":"ndjson"}),
++                || true,
++            )
++            .unwrap();
++        let answer = processes
++            .call(
++                owner,
++                "process.exchange",
++                json!({"session":"probe","wait_ms":1000}),
++                || true,
++            )
++            .unwrap();
++        let result = &answer["messages"][0];
++        assert_eq!(result["shm_fd"], -1, "{answer}");
++        assert_eq!(result["denied"], true, "{answer}");
++        assert_eq!(result["file"], true, "{answer}");
++        eprintln!("raw sandbox probe: {result}");
++    }
++
++    #[test]
 +    fn a_child_that_breaks_the_framed_channel_is_stopped() {
 +        let directory = tempfile::tempdir().unwrap();
 +        let repository = directory.path().canonicalize().unwrap();
@@ -57436,6 +57876,32 @@ index 000000000..349addbd3
 +            "pr-frame",
 +            json!({"pointer": {}})
 +        ));
++        let echo = |session: &str, raster: Option<&str>| {
++            processes.call(
++                owner,
++                "process.start",
++                json!({"session": session, "name": "sh", "path": sh, "sha256": sha256, "sandbox": "none",
++                    "framing": "ndjson", "raster": raster, "pixels": true, "arguments": ["-c", "exec cat"]}),
++                || true,
++            )
++        };
++        assert_eq!(echo("unbound", None).unwrap_err(), "process_raster_invalid");
++        echo("raw", Some("pr-frame")).unwrap();
++        let initialized = processes
++            .call(
++                owner,
++                "process.exchange",
++                json!({"session":"raw","wait_ms":2000}),
++                || true,
++            )
++            .unwrap();
++        assert!(
++            initialized["messages"][0]["pixels"]["path"].is_string(),
++            "{initialized}"
++        );
++        processes
++            .call(owner, "process.stop", json!({"session":"raw"}), || true)
++            .unwrap();
 +    }
 +
 +    #[test]
@@ -57535,6 +58001,7 @@ index 000000000..349addbd3
 +                Ok(Value::Null)
 +            }),
 +            Arc::new(std::sync::atomic::AtomicBool::new(true)),
++            || {},
 +        );
 +        frames.offer(Value::Null);
 +        assert!(receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"].is_null());
@@ -57543,8 +58010,128 @@ index 000000000..349addbd3
 +            receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"]["base64"],
 +            "AA=="
 +        );
-+        frames.stop();
++        drop(frames);
 +        assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
++    }
++
++    #[test]
++    fn raw_frame_transient_failures_retry_and_cancellation_does_not_kill() {
++        for error in [
++            "client_surface_closed",
++            "callback_execution_budget",
++            "callback_cancelled",
++            "terminal_blit_unknown",
++            "terminal_blit_not_owned",
++            "terminal_blit_limit",
++        ] {
++            let (sender, receiver) = mpsc::channel();
++            let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
++            let calls = attempts.clone();
++            let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
++            let stop = stopped.clone();
++            let failures = if error == "callback_cancelled" {
++                BLIT_ATTEMPTS as usize + 1
++            } else {
++                1
++            };
++            let frames = blit_worker(
++                "raw-retry".into(),
++                Arc::new(move |_, _| {
++                    if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failures {
++                        Err(error.into())
++                    } else {
++                        sender.send(()).unwrap();
++                        Ok(Value::Null)
++                    }
++                }),
++                Arc::new(std::sync::atomic::AtomicBool::new(true)),
++                move || {
++                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
++                },
++            );
++            frames.offer(json!({"pixels": {}}));
++            receiver.recv_timeout(Duration::from_secs(8)).unwrap();
++            assert_eq!(
++                attempts.load(std::sync::atomic::Ordering::SeqCst),
++                failures + 1
++            );
++            assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
++        }
++        let (sender, receiver) = mpsc::channel();
++        let frames = blit_worker(
++            "raw-cancel".into(),
++            Arc::new(|_, _| Err("terminal_blit_pixels_invalid".into())),
++            Arc::new(std::sync::atomic::AtomicBool::new(false)),
++            move || {
++                sender.send(()).unwrap();
++            },
++        );
++        frames.offer(json!({"pixels": {}}));
++        assert!(matches!(
++            receiver.recv_timeout(Duration::from_secs(1)),
++            Err(mpsc::RecvTimeoutError::Disconnected)
++        ));
++    }
++
++    #[test]
++    fn raw_frame_revocation_stops_raw_and_encoded_producers() {
++        for image in [
++            json!({"pixels":{}}),
++            json!({"media_type":"image/png", "base64":"AA=="}),
++        ] {
++            let (sender, receiver) = mpsc::channel();
++            let frames = blit_worker(
++                "revoked".into(),
++                Arc::new(|_, _| Err("process_raster_revoked".into())),
++                Arc::new(std::sync::atomic::AtomicBool::new(true)),
++                move || {
++                    sender.send(()).unwrap();
++                },
++            );
++            frames.offer(image);
++            receiver.recv_timeout(Duration::from_secs(1)).unwrap();
++            assert!(matches!(
++                receiver.recv_timeout(Duration::from_secs(1)),
++                Err(mpsc::RecvTimeoutError::Disconnected)
++            ));
++        }
++    }
++
++    #[test]
++    fn raw_frame_worker_drop_releases_idle_state() {
++        let (sender, receiver) = mpsc::channel::<()>();
++        let frames = blit_worker(
++            "raw-idle".into(),
++            Arc::new(move |_, _| {
++                let _ = &sender;
++                Ok(Value::Null)
++            }),
++            Arc::new(std::sync::atomic::AtomicBool::new(true)),
++            || {},
++        );
++        drop(frames);
++        assert!(matches!(
++            receiver.recv_timeout(Duration::from_secs(1)),
++            Err(mpsc::RecvTimeoutError::Disconnected)
++        ));
++    }
++
++    #[test]
++    fn invalid_or_unclassified_raw_frame_errors_stop_the_producer_without_retrying() {
++        for error in ["terminal_blit_pixels_invalid", "terminal_blit_unclassified"] {
++            let (sender, receiver) = mpsc::channel();
++            let frames = blit_worker(
++                "raw-frame".into(),
++                Arc::new(move |_, _| Err(error.into())),
++                Arc::new(std::sync::atomic::AtomicBool::new(true)),
++                move || {
++                    sender.send(()).unwrap();
++                },
++            );
++            frames.offer(json!({"pixels":{"format":"invalid"}}));
++            receiver.recv_timeout(Duration::from_secs(1)).unwrap();
++            assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
++        }
 +    }
 +
 +    #[test]
@@ -64506,10 +65093,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..1b79d0ba8
+index 000000000..5341311d9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,778 @@
+@@ -0,0 +1,832 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -65154,6 +65741,7 @@ index 000000000..1b79d0ba8
 +
 +/// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
 +pub(in crate::mods) fn blit_sink(
++    core: &Core,
 +    lead: &Lead,
 +    caller: &Caller<'_>,
 +) -> Option<crate::managed_process::BlitSink> {
@@ -65172,7 +65760,60 @@ index 000000000..1b79d0ba8
 +        caller.generation,
 +        lead.thread.to_string(),
 +    );
++    let runtime = core.runtime.clone();
++    let owner = id.clone();
++    let admitted_source = source.clone();
++    let capabilities = grants.capabilities.clone();
++    let verified = Arc::new(Mutex::new(None::<std::time::Instant>));
++    let last = verified.clone();
++    let current = move || {
++        let age = last
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .map(|at| at.elapsed());
++        if age.is_some_and(|age| age < std::time::Duration::from_millis(250)) {
++            return Ok(());
++        }
++        let mut runtime = match runtime.try_lock() {
++            Ok(runtime) => runtime,
++            Err(std::sync::TryLockError::WouldBlock)
++                if age.is_some_and(|age| age < std::time::Duration::from_secs(2)) =>
++            {
++                return Ok(());
++            }
++            Err(std::sync::TryLockError::WouldBlock) => runtime
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner),
++            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
++        };
++        let result = runtime
++            .reload()
++            .map_err(|_| "callback_cancelled".to_owned())
++            .and_then(|_| {
++                (runtime.generation() == generation
++                    && runtime.grants(&owner).is_some_and(|grants| {
++                        grants.source_sha256 == admitted_source
++                            && grants.capabilities == capabilities
++                    }))
++                .then_some(())
++                .ok_or_else(|| "process_raster_revoked".to_owned())
++            });
++        *last
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner) =
++            result.is_ok().then(std::time::Instant::now);
++        result
++    };
 +    Some(Arc::new(move |arguments, active| {
++        current()?;
++        let verified = verified.clone();
++        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
++            active()
++                && verified
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner)
++                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
++        });
 +        codex_omd::client_surface::with_admission(&source, generation, None, || {
 +            codex_omd::client_surface::call(
 +                &id,
@@ -67325,10 +67966,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..a4023deda
+index 000000000..aabdd40fe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4646 @@
+@@ -0,0 +1,4724 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -70097,6 +70738,84 @@ index 000000000..a4023deda
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn raw_frame_sink_detects_external_revocation_without_an_event() {
++    let fixture = fixture(&[Package {
++        id: "control",
++        capabilities: &["terminal"],
++        manifest: Value::Null,
++        source: "export default function () {}\n",
++    }])
++    .unwrap();
++    let grants = fixture.core.runtime.lock().unwrap().grants("control");
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let generation = fixture.core.runtime.lock().unwrap().generation();
++    let caller = Caller {
++        id: "control",
++        source: &source,
++        grants,
++        generation,
++        origin: Origin::Event,
++        record_changes: false,
++    };
++    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
++    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
++    let package = fixture
++        ._dir
++        .path()
++        .join("packages/control")
++        .canonicalize()
++        .unwrap();
++    struct LateValidity;
++    impl codex_omd::client_surface::ClientSurface for LateValidity {
++        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
++            std::thread::sleep(std::time::Duration::from_millis(2_100));
++            let valid = (call.validity.0)();
++            call.reply
++                .send(Ok(json!({"valid": valid})))
++                .map_err(|error| error.to_string())
++        }
++    }
++    let surface = codex_omd::client_surface::register(Arc::new(LateValidity));
++    let (sender, receiver) = std::sync::mpsc::channel();
++    let late = sink.clone();
++    std::thread::spawn(move || {
++        let _ = sender.send(late(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
++    });
++    std::thread::sleep(std::time::Duration::from_millis(200));
++    let held = fixture.core.runtime.lock().unwrap();
++    let late = receiver
++        .recv_timeout(std::time::Duration::from_secs(4))
++        .expect("a late validity check does not wait for the mod runtime");
++    assert!(
++        !late.is_ok_and(|reply| reply["valid"] == true),
++        "a verification older than two seconds is not trusted"
++    );
++    drop((held, surface));
++    let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
++    assert_ne!(first, "process_raster_revoked");
++    let held = fixture.core.runtime.lock().unwrap();
++    let (sender, receiver) = std::sync::mpsc::channel();
++    let busy = sink.clone();
++    std::thread::spawn(move || {
++        let _ = sender.send(busy(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
++    });
++    assert_eq!(
++        receiver
++            .recv_timeout(std::time::Duration::from_secs(1))
++            .unwrap()
++            .unwrap_err(),
++        first
++    );
++    drop(held);
++    store.enable(&package, false).unwrap();
++    std::thread::sleep(std::time::Duration::from_millis(300));
++    assert_eq!(
++        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
++        "process_raster_revoked"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn event_context_refuses_user_only_app_methods_before_the_client() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "steerer",
@@ -72575,7 +73294,7 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..45ce11f00
+index 000000000..0e1f07448
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,753 @@
@@ -73070,7 +73789,7 @@ index 000000000..45ce11f00
 +        let blit = started
 +            .as_ref()
 +            .filter(|arguments| arguments.get("raster").is_some())
-+            .and_then(|_| super::expansion::blit_sink(lead, &caller));
++            .and_then(|_| super::expansion::blit_sink(core, lead, &caller));
 +        let thread = lead.thread.to_string();
 +        let result = tokio::task::spawn_blocking(move || {
 +            processes.call(
@@ -86229,10 +86948,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..cb68a6119
+index 000000000..8d68fbbee
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1289 @@
+@@ -0,0 +1,1370 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -86270,6 +86989,15 @@ index 000000000..cb68a6119
 +    });
 +    let _reset = Reset(previous);
 +    action()
++}
++
++pub fn current_generation() -> Option<u64> {
++    CALL_ADMISSION.with(|value| {
++        value
++            .borrow()
++            .as_ref()
++            .and_then(|(binding, _)| binding["generation"].as_u64())
++    })
 +}
 +
 +pub const SURFACE_OPERATIONS: &[&str] = &[
@@ -86343,6 +87071,7 @@ index 000000000..cb68a6119
 +#[derive(Clone, Debug, Default)]
 +pub struct CallLifetime {
 +    pub admission: Option<Value>,
++    pub pixels: Arc<std::sync::OnceLock<Arc<crate::process_raster::PixelFrame>>>,
 +    upstream_cancelled: Option<Arc<AtomicBool>>,
 +    cancelled: Arc<AtomicBool>,
 +    phase: Arc<AtomicU8>,
@@ -86465,6 +87194,45 @@ index 000000000..cb68a6119
 +    pub lifetime: CallLifetime,
 +}
 +
++impl SurfaceCall {
++    pub fn snapshot_pixels(
++        &self,
++        source: &crate::process_raster::PixelSource,
++        next: std::time::Instant,
++    ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
++        if !(self.validity.0)() {
++            return Err("callback_cancelled_or_expired".into());
++        }
++        self.lifetime.begin_execution()?;
++        let component = self.arguments["key"]
++            .as_str()
++            .ok_or("terminal_blit_invalid")?;
++        let snapshot = || {
++            crate::process_raster::snapshot(
++                self.thread.as_deref(),
++                &self.caller,
++                component,
++                source.clone(),
++                next,
++            )
++        };
++        let pixels = if let Some(admission) = &self.lifetime.admission {
++            with_admission(
++                admission["source"].as_str().unwrap_or_default(),
++                admission["generation"]
++                    .as_u64()
++                    .ok_or("client_surface_admission_changed")?,
++                None,
++                snapshot,
++            )?
++        } else {
++            snapshot()?
++        };
++        let _ = self.lifetime.pixels.set(pixels.clone());
++        Ok(pixels)
++    }
++}
++
 +/// Operations only the user at the terminal may cause, never an attached client.
 +pub fn needs_terminal(operation: &str, arguments: &Value) -> bool {
 +    USER_ONLY_OPERATIONS.contains(&operation)
@@ -86513,6 +87281,7 @@ index 000000000..cb68a6119
 +        caller: String,
 +        operation: String,
 +        arguments: Value,
++        pixels: Option<Arc<crate::process_raster::PixelFrame>>,
 +    },
 +}
 +
@@ -87050,25 +87819,24 @@ index 000000000..cb68a6119
 +        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
 +    let mirrored = (MIRRORED_OPERATIONS.contains(&operation) && !hub().observers.is_empty())
 +        .then(|| arguments.clone());
-+    let answer = wait(
-+        submit_bound(
-+            caller,
-+            operation,
-+            arguments,
-+            context,
-+            remote,
-+            thread,
-+            confirm,
-+            active.clone(),
-+        )?,
-+        active.as_ref(),
-+        deadline,
++    let pending = submit_bound(
++        caller,
++        operation,
++        arguments,
++        context,
++        remote,
++        thread,
++        confirm,
++        active.clone(),
 +    )?;
++    let pixels = pending.lifetime.pixels.clone();
++    let answer = wait(pending, active.as_ref(), deadline)?;
 +    if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
 +        notify(Observed::Mirrored {
 +            caller: caller.to_owned(),
 +            operation: operation.to_owned(),
 +            arguments,
++            pixels: pixels.get().cloned(),
 +        });
 +    }
 +    Ok(answer)
@@ -87292,7 +88060,7 @@ index 000000000..cb68a6119
 +    }
 +}
 +
-+pub const BLIT_FRAME: Duration = Duration::from_millis(33);
++pub const BLIT_FRAME: Duration = Duration::from_millis(16);
 +pub const BLIT_QUEUE_UPDATES: usize = 32;
 +pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
 +
@@ -87333,9 +88101,12 @@ index 000000000..cb68a6119
 +    rect: Option<BlitRect>,
 +    cells: Option<Vec<WireCell>>,
 +    image: Option<WireImage>,
++    pixels: Option<crate::process_raster::PixelSource>,
 +}
 +
 +pub enum BlitContent {
++    Source(crate::process_raster::PixelSource),
++    Pixels(Arc<crate::process_raster::PixelFrame>),
 +    Cells {
 +        rect: BlitRect,
 +        cells: Vec<BlitCell>,
@@ -87359,6 +88130,7 @@ index 000000000..cb68a6119
 +pub const IMAGE_PIXELS: u32 = 4096;
 +
 +pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
++    let _stage = crate::frame_metrics::stage("decode");
 +    if bytes.len() > 8 * 1024 * 1024 {
 +        return Err("backdrop_image_too_large".into());
 +    }
@@ -87379,6 +88151,7 @@ index 000000000..cb68a6119
 +
 +/// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
 +pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<Vec<BlitCell>> {
++    let _stage = crate::frame_metrics::stage("half_block");
 +    let pixels = image
 +        .resize(
 +            u32::from(width),
@@ -87409,7 +88182,15 @@ index 000000000..cb68a6119
 +pub fn frame_cells(arguments: &Value, size: (u16, u16)) -> Option<Value> {
 +    let image = arguments.get("image")?;
 +    let bytes = STANDARD.decode(image["base64"].as_str()?).ok()?;
-+    let rows = half_block(&decode_image(&bytes).ok()?, size.0, size.1);
++    Some(pixel_cells(
++        &arguments["key"],
++        &decode_image(&bytes).ok()?,
++        size,
++    ))
++}
++
++pub fn pixel_cells(key: &Value, image: &image::DynamicImage, size: (u16, u16)) -> Value {
++    let rows = half_block(image, size.0, size.1);
 +    let cells = (0..usize::from(size.1)).flat_map(|y| {
 +        let rows = &rows;
 +        (0..usize::from(size.0)).map(move |x| {
@@ -87419,16 +88200,26 @@ index 000000000..cb68a6119
 +            )
 +        })
 +    });
-+    Some(serde_json::json!({
-+        "key": arguments["key"],
++    serde_json::json!({
++        "key": key,
 +        "rect": {"x": 0, "y": 0, "width": size.0, "height": size.1},
 +        "cells": cells.collect::<Vec<_>>(),
-+    }))
++    })
 +}
 +
 +impl Blit {
 +    /// Image frames are only header-checked here; pixels are decoded when first drawn.
-+    pub fn checked(mut self) -> Result<Self, String> {
++    pub fn checked(
++        mut self,
++        snapshot: impl FnOnce(
++            &crate::process_raster::PixelSource,
++        ) -> Result<Arc<crate::process_raster::PixelFrame>, String>,
++    ) -> Result<Self, String> {
++        if let BlitContent::Source(source) = &self.content {
++            let pixels = snapshot(source)?;
++            self.bytes = pixels.source.byte_len()?;
++            self.content = BlitContent::Pixels(pixels);
++        }
 +        if let BlitContent::Encoded { media_type, base64 } = &self.content {
 +            let format = match media_type.as_str() {
 +                "image/png" => image::ImageFormat::Png,
@@ -87456,6 +88247,14 @@ index 000000000..cb68a6119
 +    }
 +}
 +
++pub fn blit_retryable(error: &str) -> bool {
++    matches!(
++        error,
++        "terminal_blit_unknown" | "terminal_blit_not_owned" | "terminal_blit_limit"
++    ) || error.starts_with("callback_")
++        || error.starts_with("client_surface_")
++}
++
 +/// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
 +pub fn blit_request(
 +    caller: &str,
@@ -87469,9 +88268,10 @@ index 000000000..cb68a6119
 +    }
 +    let blit: WireBlit =
 +        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
-+    let (rect, image) = match (blit.rect, blit.cells, blit.image) {
-+        (Some(rect), Some(cells), None) => (Some((rect, cells)), None),
-+        (None, None, Some(image)) => (None, Some(image)),
++    let (rect, image, pixels) = match (blit.rect, blit.cells, blit.image, blit.pixels) {
++        (Some(rect), Some(cells), None, None) => (Some((rect, cells)), None, None),
++        (None, None, Some(image), None) => (None, Some(image), None),
++        (None, None, None, Some(pixels)) => (None, None, Some(pixels)),
 +        _ => return Err("terminal_blit_invalid".into()),
 +    };
 +    match owner {
@@ -87510,7 +88310,7 @@ index 000000000..cb68a6119
 +            media_type: image.media_type,
 +            base64: image.base64,
 +        },
-+        (None, None) => return Err("terminal_blit_invalid".into()),
++        (None, None) => BlitContent::Source(pixels.ok_or("terminal_blit_invalid")?),
 +    };
 +    Ok(Blit {
 +        key: blit.key,
@@ -87524,15 +88324,66 @@ index 000000000..cb68a6119
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..6c4047fda
+index 000000000..2b65a3b02
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,769 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
 +
 +struct Echo;
++
++#[test]
++fn raw_snapshot_waits_for_admission_and_shares_the_accepted_frame() {
++    let directory = tempfile::tempdir().unwrap();
++    let path = directory.path().join("pixels");
++    let seen = Arc::new(Mutex::new(Vec::new()));
++    let received = seen.clone();
++    let mut binding = crate::process_raster::bind(
++        None,
++        "raw-admission",
++        vec![(
++            "raw-admission-frame".into(),
++            crate::process_raster::Role::Raster,
++        )],
++        Arc::new(move |value| {
++            received.lock().unwrap().push(value);
++            true
++        }),
++    );
++    let initialized = binding.pixels(&path, None).unwrap();
++    std::fs::write(&path, [1, 2, 3]).unwrap();
++    let cancelled = Arc::new(AtomicBool::new(true));
++    let lifetime = CallLifetime {
++        upstream_cancelled: Some(cancelled.clone()),
++        ..Default::default()
++    };
++    let retained = lifetime.pixels.clone();
++    let call = SurfaceCall {
++        validity: Validity(Arc::new(|| true)),
++        caller: "raw-admission".into(),
++        operation: "terminal.blit".into(),
++        arguments: json!({"key":"raw-admission-frame","pixels":{"source":initialized["pixels"]["source"],"format":"rgb","width":1,"height":1,"sequence":1}}),
++        context: InvocationContext::Event,
++        remote: false,
++        thread: None,
++        authority: None,
++        confirm: None,
++        reply: sync_channel(1).0,
++        lifetime,
++    };
++    let source = serde_json::from_value(call.arguments["pixels"].clone()).unwrap();
++    assert!(call.snapshot_pixels(&source, std::time::Instant::now()).is_err());
++    assert!(seen.lock().unwrap().is_empty());
++    assert!(retained.get().is_none());
++    cancelled.store(false, Ordering::Release);
++    let accepted = call.snapshot_pixels(&source, std::time::Instant::now()).unwrap();
++    assert!(Arc::ptr_eq(retained.get().unwrap(), &accepted));
++    assert_eq!(seen.lock().unwrap().len(), 1);
++    assert!(call.snapshot_pixels(&source, std::time::Instant::now()).is_err());
++    assert_eq!(seen.lock().unwrap().len(), 1);
++}
 +
 +#[test]
 +fn encoded_blits_need_ownership_but_not_cell_dimensions() {
@@ -87700,6 +88551,7 @@ index 000000000..6c4047fda
 +            caller,
 +            operation,
 +            arguments,
++            ..
 +        } = observed
 +        {
 +            log.lock().unwrap().push((caller, operation, arguments));
@@ -87885,7 +88737,7 @@ index 000000000..6c4047fda
 +            Ok(json!({"status": "backpressure", "retry_after_ms": 5})),
 +            0,
 +        ),
-+        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 33})), 1),
++        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 16})), 1),
 +    ] {
 +        let registration = register(Arc::new(Answers(answer.clone())));
 +        let blit = call(
@@ -90952,6 +91804,85 @@ index 000000000..2f7615cc4
 +        (0, 0)
 +    );
 +}
+diff --git a/codex-rs/omd/src/frame_metrics.rs b/codex-rs/omd/src/frame_metrics.rs
+new file mode 100644
+index 000000000..7f016fb39
+--- /dev/null
++++ b/codex-rs/omd/src/frame_metrics.rs
+@@ -0,0 +1,73 @@
++use std::fs::File;
++use std::io::Write;
++use std::os::unix::fs::OpenOptionsExt;
++use std::sync::LazyLock;
++use std::sync::Mutex;
++use std::time::Instant;
++
++static TRACE: LazyLock<Option<Mutex<File>>> = LazyLock::new(|| {
++    let path = std::env::var_os("OMD_FRAME_TRACE")?;
++    File::options()
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(path)
++        .ok()
++        .map(Mutex::new)
++});
++
++fn cpu() -> u64 {
++    let mut time = libc::timespec {
++        tv_sec: 0,
++        tv_nsec: 0,
++    };
++    unsafe {
++        libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time);
++    }
++    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
++}
++
++pub struct Stage {
++    stage: &'static str,
++    start: Option<(Instant, u64)>,
++}
++
++pub fn stage(name: &'static str) -> Stage {
++    Stage {
++        stage: name,
++        start: TRACE.as_ref().map(|_| (Instant::now(), cpu())),
++    }
++}
++
++impl Drop for Stage {
++    fn drop(&mut self) {
++        if let Some((start, before)) = self.start {
++            record(
++                self.stage,
++                start.elapsed().as_nanos(),
++                cpu().saturating_sub(before),
++            );
++        }
++    }
++}
++
++pub fn waited(name: &'static str, deadline: Instant) {
++    if TRACE.is_some() {
++        record(name, deadline.elapsed().as_nanos(), 0);
++    }
++}
++
++fn record(name: &str, wall: u128, used: u64) {
++    if let Some(trace) = TRACE.as_ref()
++        && let Ok(mut file) = trace.lock()
++    {
++        let at = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_or(0, |time| time.as_nanos());
++        let _ = writeln!(
++            file,
++            "{{\"stage\":\"{}\",\"wall_ns\":{},\"cpu_ns\":{},\"at_ns\":{}}}",
++            name, wall, used, at
++        );
++    }
++}
 diff --git a/codex-rs/omd/src/history.rs b/codex-rs/omd/src/history.rs
 new file mode 100644
 index 000000000..90a086ea7
@@ -93195,10 +94126,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..b702e7020
+index 000000000..799888f55
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,238 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -93212,6 +94143,7 @@ index 000000000..b702e7020
 +pub mod data_store;
 +pub mod drafts;
 +pub mod event_bus;
++pub mod frame_metrics;
 +pub mod history;
 +pub mod host;
 +pub mod mod_limits;
@@ -93302,6 +94234,7 @@ index 000000000..b702e7020
 +pub use mods::AUTHORITY_CAPABILITIES;
 +pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::DELEGABLE_APPROVAL_KINDS;
++pub use mods::FileStamp;
 +pub use mods::HOST_RECEIPT_BYTES;
 +pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
 +pub use mods::MANAGED_POLICY_FILE;
@@ -93413,6 +94346,7 @@ index 000000000..b702e7020
 +pub use mods::continue_operation;
 +pub use mods::effective_settings;
 +pub use mods::event_shared;
++pub use mods::file_stamp;
 +pub use mods::host_namespace;
 +pub use mods::intercept_shared;
 +pub use mods::invalid_render_tree;
@@ -95325,10 +96259,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..50bd3cfb5
+index 000000000..8e8aab568
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5150 @@
+@@ -0,0 +1,5225 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -95624,6 +96558,7 @@ index 000000000..50bd3cfb5
 +    "contracts_v2",
 +    "framed_process_v1",
 +    "process_raster_v1",
++    "raster_pixels_v1",
 +    "kernels_v1",
 +    "terminal_lists_v1",
 +    "adapters_v1",
@@ -97696,7 +98631,65 @@ index 000000000..50bd3cfb5
 +const MOD_FAULT_LIMIT: u32 = 5;
 +const BROKER_REFRESH: Duration = Duration::from_secs(2);
 +
++pub type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
++
++pub fn file_stamp(metadata: &std::fs::Metadata) -> FileStamp {
++    use std::os::unix::fs::MetadataExt;
++    (
++        metadata.dev(),
++        metadata.ino(),
++        metadata.len(),
++        metadata.mtime(),
++        metadata.mtime_nsec(),
++        metadata.ctime(),
++        metadata.ctime_nsec(),
++    )
++}
++
++fn configuration_stamp(path: &Path) -> Option<FileStamp> {
++    std::fs::symlink_metadata(path)
++        .ok()
++        .filter(|metadata| metadata.is_file())
++        .map(|metadata| file_stamp(&metadata))
++}
++
 +type Brokered = Option<(u64, BTreeSet<String>)>;
++
++#[cfg(test)]
++mod reload_tests {
++    use super::*;
++
++    #[test]
++    fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap().join("store");
++        ModStore::create(
++            root.clone(),
++            std::env::var_os("OMD_TEST_NODE").unwrap().into(),
++        )
++        .unwrap();
++        let mut host = ModHost::open(root.clone()).unwrap();
++        let reads = store::READS.get();
++        for _ in 0..100 {
++            assert!(!host.reload().unwrap());
++        }
++        assert_eq!(store::READS.get(), reads);
++        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
++        assert!(!host.reload().unwrap());
++        assert!(store::READS.get() > reads);
++        let path = root.join("mods.json");
++        let original = std::fs::read(&path).unwrap();
++        std::fs::write(&path, b"invalid").unwrap();
++        assert!(host.reload().is_err());
++        assert!(host.reload().is_err());
++        std::fs::write(&path, original).unwrap();
++        assert!(!host.reload().unwrap());
++        let moved = root.join("moved.json");
++        std::fs::rename(&path, &moved).unwrap();
++        std::os::unix::fs::symlink(&moved, &path).unwrap();
++        assert!(host.reload().is_err());
++    }
++}
 +type Authority = (
 +    Brokered,
 +    Option<Managed>,
@@ -97748,6 +98741,7 @@ index 000000000..50bd3cfb5
 +    node: PathBuf,
 +    generation: u64,
 +    configuration_sha256: String,
++    configuration_stamp: Option<FileStamp>,
 +    selections: (usize, usize),
 +    loaded: BTreeMap<String, Loaded>,
 +    order: Vec<String>,
@@ -98198,6 +99192,7 @@ index 000000000..50bd3cfb5
 +            node: PathBuf::new(),
 +            generation: 0,
 +            configuration_sha256: String::new(),
++            configuration_stamp: None,
 +            selections: (0, 0),
 +            loaded: BTreeMap::new(),
 +            order: Vec::new(),
@@ -98231,6 +99226,7 @@ index 000000000..50bd3cfb5
 +
 +    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
 +    pub fn set_checkout(&mut self, repository: &Path) {
++        self.configuration_stamp = None;
 +        self.project = repository.canonicalize().ok();
 +        self.checkout = repository
 +            .ancestors()
@@ -98283,6 +99279,17 @@ index 000000000..50bd3cfb5
 +
 +    pub fn reload(&mut self) -> Result<bool> {
 +        let path = self.store.root.join("mods.json");
++        let stamp = configuration_stamp(&path);
++        if stamp.is_some()
++            && stamp == self.configuration_stamp
++            && self
++                .brokered
++                .as_ref()
++                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
++        {
++            return Ok(false);
++        }
++        self.configuration_stamp = None;
 +        let bytes = store::read(&path, 65_536);
 +        let sha256 = digest(bytes.as_deref().unwrap_or_default());
 +        let (brokered, managed, deployment) = match self.authority(&sha256) {
@@ -98322,6 +99329,7 @@ index 000000000..50bd3cfb5
 +            self.project.as_deref().unwrap_or(Path::new("")).display()
 +        );
 +        if hash == self.configuration_sha256 {
++            self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
 +            return Ok(false);
 +        }
 +        let configured = bytes
@@ -98595,6 +99603,7 @@ index 000000000..50bd3cfb5
 +        self.retain_environment();
 +        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
++        self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
 +        self.generation += 1;
 +        self.dynamic_tools.clear();
 +        self.reload_error = None;
@@ -109240,10 +110249,10 @@ index 000000000..7b3fbaa3e
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..8868a7eb6
+index 000000000..05327549e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1109 @@
+@@ -0,0 +1,1114 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -109354,7 +110363,12 @@ index 000000000..8868a7eb6
 +    )))
 +}
 +
++#[cfg(test)]
++thread_local! { pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
++
 +pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
++    #[cfg(test)]
++    READS.set(READS.get() + 1);
 +    let file = OpenOptions::new()
 +        .read(true)
 +        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
@@ -114809,17 +115823,24 @@ index 000000000..f8b869378
 +}
 diff --git a/codex-rs/omd/src/process_raster.rs b/codex-rs/omd/src/process_raster.rs
 new file mode 100644
-index 000000000..357a7f6a0
+index 000000000..334cbf27e
 --- /dev/null
 +++ b/codex-rs/omd/src/process_raster.rs
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,926 @@
 +use serde_json::Value;
 +use std::collections::BTreeMap;
++use std::fs::File;
++use std::os::unix::fs::FileExt;
++use std::os::unix::fs::OpenOptionsExt;
++use std::path::Path;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++use std::sync::OnceLock;
 +use std::sync::PoisonError;
 +use std::sync::atomic::AtomicU64;
 +use std::sync::atomic::Ordering;
++use std::time::Duration;
++use std::time::Instant;
 +
 +/// Accepts bounded input without blocking the UI thread.
 +pub type Sink = Arc<dyn Fn(Value) -> bool + Send + Sync>;
@@ -114835,6 +115856,255 @@ index 000000000..357a7f6a0
 +
 +static BOUND: Mutex<Bound> = Mutex::new(BTreeMap::new());
 +static SERIAL: AtomicU64 = AtomicU64::new(0);
++static PIXELS: Mutex<BTreeMap<String, Arc<Mutex<PixelBuffer>>>> = Mutex::new(BTreeMap::new());
++
++struct PixelBuffer {
++    key: Key,
++    serial: u64,
++    file: File,
++    accepted: Option<Arc<PixelFrame>>,
++    generation: Option<u64>,
++    /// When the last ready acknowledgement goes out, and how long the producer then takes to publish.
++    released: Option<Instant>,
++    lead: Duration,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct PixelSource {
++    pub source: String,
++    pub format: String,
++    pub width: u32,
++    pub height: u32,
++    pub sequence: u64,
++}
++
++#[derive(Debug)]
++pub struct PixelFrame {
++    pub source: PixelSource,
++    pub id: String,
++    pub image: image::DynamicImage,
++    encoded: Mutex<BTreeMap<(bool, u32, u32), Encoding>>,
++}
++
++type Encoding = Arc<OnceLock<Option<Arc<[u8]>>>>;
++
++impl PixelFrame {
++    pub fn new(source: PixelSource, image: image::DynamicImage) -> Self {
++        Self {
++            id: format!("{}:{}", source.source, source.sequence),
++            source,
++            image,
++            encoded: Mutex::new(BTreeMap::new()),
++        }
++    }
++
++    pub fn encoded(&self, jpeg: bool, bounds: (u32, u32)) -> Option<Arc<[u8]>> {
++        let size = fit_within((self.image.width(), self.image.height()), bounds);
++        let cache = self
++            .encoded
++            .lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .entry((jpeg, size.0, size.1))
++            .or_default()
++            .clone();
++        cache
++            .get_or_init(|| {
++                encode(&self.image, size, jpeg)
++                    .filter(|bytes| bytes.len() <= crate::blob_store::IMAGE_BYTES)
++                    .map(Arc::from)
++            })
++            .clone()
++    }
++}
++
++pub fn fit_within((width, height): (u32, u32), bounds: (u32, u32)) -> (u32, u32) {
++    let scale = (f64::from(bounds.0) / f64::from(width.max(1)))
++        .min(f64::from(bounds.1) / f64::from(height.max(1)))
++        .min(1.0);
++    let scaled = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
++    (scaled(width), scaled(height))
++}
++
++pub fn resized(
++    image: &image::DynamicImage,
++    (width, height): (u32, u32),
++) -> std::borrow::Cow<'_, image::DynamicImage> {
++    if (width, height) == (image.width(), image.height()) {
++        std::borrow::Cow::Borrowed(image)
++    } else {
++        std::borrow::Cow::Owned(image.resize_exact(
++            width,
++            height,
++            image::imageops::FilterType::Triangle,
++        ))
++    }
++}
++
++pub fn encode(image: &image::DynamicImage, size: (u32, u32), jpeg: bool) -> Option<Vec<u8>> {
++    let image = resized(image, size);
++    let mut encoded = std::io::Cursor::new(Vec::new());
++    if jpeg {
++        image::DynamicImage::ImageRgb8(image.to_rgb8())
++            .write_to(&mut encoded, image::ImageFormat::Jpeg)
++            .ok()?;
++    } else {
++        image.write_to(&mut encoded, image::ImageFormat::Png).ok()?;
++    }
++    Some(encoded.into_inner())
++}
++
++impl PixelSource {
++    pub fn byte_len(&self) -> Result<usize, String> {
++        let channels = match self.format.as_str() {
++            "rgb" => 3,
++            "rgba" => 4,
++            _ => return Err("terminal_blit_pixels_invalid".into()),
++        };
++        if !(1..=crate::client_surface::IMAGE_PIXELS).contains(&self.width)
++            || !(1..=crate::client_surface::IMAGE_PIXELS).contains(&self.height)
++            || self.sequence == 0
++        {
++            return Err("terminal_blit_pixels_invalid".into());
++        }
++        Ok(self.width as usize * self.height as usize * channels)
++    }
++}
++
++pub fn snapshot(
++    thread: Option<&str>,
++    owner: &str,
++    component: &str,
++    source: PixelSource,
++    next: Instant,
++) -> Result<Arc<PixelFrame>, String> {
++    let arrived = Instant::now();
++    let _stage = crate::frame_metrics::stage("raw_snapshot");
++    let key = key(thread, owner, component);
++    let (sink, serial, buffer) = {
++        let table = bound();
++        let (_, role, sink, serial) = table.get(&key).ok_or("terminal_blit_source_unavailable")?;
++        if *role != Role::Raster {
++            return Err("terminal_blit_source_not_owned".into());
++        }
++        let buffer = PIXELS
++            .lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .get(&source.source)
++            .cloned()
++            .ok_or("terminal_blit_source_not_owned")?;
++        (sink.clone(), *serial, buffer)
++    };
++    let mut buffer = buffer.lock().unwrap_or_else(PoisonError::into_inner);
++    if !(buffer.key == key
++        && buffer.serial == serial
++        && buffer.generation == crate::client_surface::current_generation())
++    {
++        return Err("terminal_blit_source_not_owned".into());
++    }
++    if let Some(accepted) = buffer
++        .accepted
++        .as_ref()
++        .filter(|accepted| accepted.source == source)
++    {
++        return Ok(accepted.clone());
++    }
++    let result = (|| {
++        let length = source.byte_len()?;
++        if buffer
++            .accepted
++            .as_ref()
++            .is_some_and(|accepted| source.sequence <= accepted.source.sequence)
++        {
++            return Err("terminal_blit_sequence_stale".into());
++        }
++        if buffer
++            .file
++            .metadata()
++            .map_err(|_| "terminal_blit_pixels_io".to_owned())?
++            .len()
++            != length as u64
++        {
++            return Err("terminal_blit_pixels_length".to_owned());
++        }
++        let mut bytes = vec![0; length];
++        buffer
++            .file
++            .read_exact_at(&mut bytes, 0)
++            .map_err(|_| "terminal_blit_pixels_io".to_owned())?;
++        let image = if source.format == "rgb" {
++            image::DynamicImage::ImageRgb8(
++                image::RgbImage::from_raw(source.width, source.height, bytes)
++                    .ok_or("terminal_blit_pixels_invalid")?,
++            )
++        } else {
++            image::DynamicImage::ImageRgba8(
++                image::RgbaImage::from_raw(source.width, source.height, bytes)
++                    .ok_or("terminal_blit_pixels_invalid")?,
++            )
++        };
++        if !bound()
++            .get(&key)
++            .is_some_and(|(_, _, current, current_serial)| {
++                *current_serial == serial && Arc::ptr_eq(current, &sink)
++            })
++        {
++            return Err("terminal_blit_source_unavailable".into());
++        }
++        if let Some(released) = buffer.released {
++            let lead = arrived
++                .saturating_duration_since(released)
++                .min(crate::client_surface::BLIT_FRAME);
++            buffer.lead = lead.max(buffer.lead - buffer.lead.saturating_sub(lead) / 8);
++        }
++        let frame = Arc::new(PixelFrame::new(source.clone(), image));
++        buffer.accepted = Some(frame.clone());
++        Ok(frame)
++    })();
++    let release = next
++        .checked_sub(buffer.lead)
++        .filter(|release| result.is_ok() && *release > Instant::now());
++    buffer.released = Some(release.unwrap_or_else(Instant::now));
++    drop(buffer);
++    let ack = serde_json::json!({"pixels": {"source": source.source, "sequence": source.sequence,
++        "ready": result.is_ok(), "error": result.as_ref().err()}});
++    match release {
++        Some(release) => acknowledge_at(release, sink, ack),
++        None => {
++            sink(ack);
++        }
++    }
++    result
++}
++
++fn acknowledge_at(release: Instant, sink: Sink, ack: Value) {
++    static TIMER: OnceLock<std::sync::mpsc::Sender<(Instant, Sink, Value)>> = OnceLock::new();
++    let timer = TIMER.get_or_init(|| {
++        let (sender, receiver) = std::sync::mpsc::channel();
++        std::thread::spawn(move || {
++            let mut pending: Vec<(Instant, Sink, Value)> = Vec::new();
++            loop {
++                let received = match pending.iter().map(|(at, _, _)| *at).min() {
++                    Some(at) => receiver.recv_timeout(at.saturating_duration_since(Instant::now())),
++                    None => receiver
++                        .recv()
++                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected),
++                };
++                match received {
++                    Ok(item) => pending.push(item),
++                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
++                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
++                }
++                let now = Instant::now();
++                for (_, sink, ack) in pending.extract_if(.., |(at, _, _)| *at <= now) {
++                    sink(ack);
++                }
++            }
++        });
++        sender
++    });
++    let _ = timer.send((release, sink, ack));
++}
 +
 +fn bound() -> std::sync::MutexGuard<'static, Bound> {
 +    BOUND.lock().unwrap_or_else(PoisonError::into_inner)
@@ -114842,8 +116112,84 @@ index 000000000..357a7f6a0
 +
 +/// A managed process bound to its thread's owned components; dropping it unbinds them.
 +pub struct Binding {
-+    components: Vec<Key>,
++    components: Vec<(Key, Role)>,
 +    sink: Sink,
++    pixels: Option<String>,
++    serial: u64,
++}
++
++impl Binding {
++    pub fn prepare(
++        thread: Option<&str>,
++        owner: &str,
++        components: Vec<(String, Role)>,
++        sink: Sink,
++    ) -> Self {
++        Self {
++            components: components
++                .into_iter()
++                .map(|(component, role)| (key(thread, owner, &component), role))
++                .collect(),
++            sink,
++            pixels: None,
++            serial: SERIAL.fetch_add(1, Ordering::Relaxed),
++        }
++    }
++
++    pub fn publish(&self) {
++        let mut table = bound();
++        for (key, role) in &self.components {
++            if table
++                .get(key)
++                .is_none_or(|(_, _, _, serial)| *serial < self.serial)
++            {
++                table.insert(
++                    key.clone(),
++                    (key.1.clone(), *role, self.sink.clone(), self.serial),
++                );
++            }
++        }
++        drop(table);
++        crate::client_surface::redraw();
++    }
++
++    pub fn pixels(&mut self, path: &Path, generation: Option<u64>) -> Result<Value, String> {
++        if self.pixels.is_some() {
++            return Err("terminal_blit_source_exists".into());
++        }
++        let key = self
++            .components
++            .iter()
++            .find(|(_, role)| *role == Role::Raster)
++            .map(|(key, _)| key.clone())
++            .ok_or("terminal_blit_source_unavailable")?;
++        let serial = self.serial;
++        let file = File::options()
++            .read(true)
++            .write(true)
++            .create_new(true)
++            .mode(0o600)
++            .open(path)
++            .map_err(|_| "terminal_blit_pixels_io".to_owned())?;
++        let source = format!("pixels-{}-{serial}", std::process::id());
++        PIXELS
++            .lock()
++            .unwrap_or_else(PoisonError::into_inner)
++            .insert(
++                source.clone(),
++                Arc::new(Mutex::new(PixelBuffer {
++                    key,
++                    serial,
++                    file,
++                    accepted: None,
++                    generation,
++                    released: None,
++                    lead: Duration::ZERO,
++                })),
++            );
++        self.pixels = Some(source.clone());
++        Ok(serde_json::json!({"pixels": {"source": source, "path": path}}))
++    }
 +}
 +
 +pub fn bind(
@@ -114852,33 +116198,24 @@ index 000000000..357a7f6a0
 +    components: Vec<(String, Role)>,
 +    sink: Sink,
 +) -> Binding {
-+    let mut table = bound();
-+    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
-+    for (component, role) in &components {
-+        table.insert(
-+            key(thread, owner, component),
-+            (owner.to_owned(), *role, sink.clone(), serial),
-+        );
-+    }
-+    drop(table);
-+    crate::client_surface::redraw();
-+    Binding {
-+        components: components
-+            .into_iter()
-+            .map(|(component, _)| key(thread, owner, &component))
-+            .collect(),
-+        sink,
-+    }
++    let binding = Binding::prepare(thread, owner, components, sink);
++    binding.publish();
++    binding
 +}
 +
 +impl Drop for Binding {
 +    fn drop(&mut self) {
 +        let mut table = bound();
-+        for component in &self.components {
-+            if table
-+                .get(component)
-+                .is_some_and(|(_, _, sink, _)| Arc::ptr_eq(sink, &self.sink))
-+            {
++        if let Some(source) = &self.pixels {
++            PIXELS
++                .lock()
++                .unwrap_or_else(PoisonError::into_inner)
++                .remove(source);
++        }
++        for (component, _) in &self.components {
++            if table.get(component).is_some_and(|(_, _, sink, serial)| {
++                *serial == self.serial && Arc::ptr_eq(sink, &self.sink)
++            }) {
 +                table.remove(component);
 +            }
 +        }
@@ -114946,6 +116283,391 @@ index 000000000..357a7f6a0
 +mod tests {
 +    use super::*;
 +    use serde_json::json;
++
++    #[test]
++    fn raw_binding_initializes_before_input_can_find_it() {
++        let directory = tempfile::tempdir().unwrap();
++        let messages = Arc::new(Mutex::new(Vec::new()));
++        let received = messages.clone();
++        let sink: Sink = Arc::new(move |message| {
++            received.lock().unwrap().push(message);
++            true
++        });
++        let mut binding = Binding::prepare(
++            Some("init-thread"),
++            "init-owner",
++            vec![("init-frame".into(), Role::Raster)],
++            sink.clone(),
++        );
++        assert!(!send(
++            Some("init-thread"),
++            "init-owner",
++            "init-frame",
++            json!({"box": {}})
++        ));
++        let message = binding
++            .pixels(&directory.path().join("pixels"), None)
++            .unwrap();
++        assert!(sink(message));
++        binding.publish();
++        assert!(send(
++            Some("init-thread"),
++            "init-owner",
++            "init-frame",
++            json!({"box": {}})
++        ));
++        let messages = messages.lock().unwrap();
++        assert!(messages[0]["pixels"]["path"].is_string());
++        assert!(messages[1]["box"].is_object());
++    }
++
++    #[test]
++    fn raw_frame_encoding_is_shared_per_format_and_fits_its_bounds() {
++        let frame = PixelFrame::new(
++            PixelSource {
++                source: "cache".into(),
++                format: "rgb".into(),
++                width: 64,
++                height: 32,
++                sequence: 1,
++            },
++            image::DynamicImage::new_rgb8(64, 32),
++        );
++        for jpeg in [false, true] {
++            let first = frame.encoded(jpeg, (64, 64)).unwrap();
++            let second = frame.encoded(jpeg, (100, 32)).unwrap();
++            assert!(Arc::ptr_eq(&first, &second));
++            let scaled = image::load_from_memory(&frame.encoded(jpeg, (8, 8)).unwrap()).unwrap();
++            assert_eq!((scaled.width(), scaled.height()), (8, 4));
++            assert_eq!(
++                image::guess_format(&first).unwrap(),
++                if jpeg {
++                    image::ImageFormat::Jpeg
++                } else {
++                    image::ImageFormat::Png
++                }
++            );
++            assert_eq!(image::load_from_memory(&first).unwrap().width(), 64);
++        }
++    }
++
++    #[test]
++    fn raw_buffer_wait_does_not_lock_other_bindings_and_rechecks_revocation() {
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join("pixels");
++        let mut binding = bind(
++            Some("copy-thread"),
++            "copy-owner",
++            vec![("copy-frame".into(), Role::Raster)],
++            Arc::new(|_| true),
++        );
++        let initialized = binding.pixels(&path, None).unwrap();
++        std::fs::write(&path, [1, 2, 3]).unwrap();
++        let source = PixelSource {
++            source: initialized["pixels"]["source"].as_str().unwrap().into(),
++            format: "rgb".into(),
++            width: 1,
++            height: 1,
++            sequence: 1,
++        };
++        let buffer = PIXELS.lock().unwrap().get(&source.source).unwrap().clone();
++        let held = buffer.lock().unwrap();
++        let (sender, receiver) = std::sync::mpsc::channel();
++        let worker = std::thread::spawn(move || {
++            sender.send(()).unwrap();
++            snapshot(
++                Some("copy-thread"),
++                "copy-owner",
++                "copy-frame",
++                source,
++                Instant::now(),
++            )
++        });
++        receiver.recv().unwrap();
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
++        while Arc::strong_count(&buffer) < 3 && std::time::Instant::now() < deadline {
++            std::thread::yield_now();
++        }
++        assert_eq!(Arc::strong_count(&buffer), 3);
++        let unlocked = || BOUND.try_lock().is_ok() && PIXELS.try_lock().is_ok();
++        let available = loop {
++            if unlocked() {
++                break true;
++            }
++            if std::time::Instant::now() >= deadline {
++                break false;
++            }
++            std::thread::yield_now();
++        };
++        assert!(available);
++        let mut other = bind(
++            Some("other-copy"),
++            "other-owner",
++            vec![("frame".into(), Role::Raster)],
++            Arc::new(|_| true),
++        );
++        assert!(target(Some("other-copy"), "other-owner", "frame").is_some());
++        let other_path = directory.path().join("other-pixels");
++        let initialized = other.pixels(&other_path, None).unwrap();
++        std::fs::write(&other_path, [4, 5, 6]).unwrap();
++        let other_frame = snapshot(
++            Some("other-copy"),
++            "other-owner",
++            "frame",
++            PixelSource {
++                source: initialized["pixels"]["source"].as_str().unwrap().into(),
++                format: "rgb".into(),
++                width: 1,
++                height: 1,
++                sequence: 1,
++            },
++            Instant::now(),
++        )
++        .unwrap();
++        assert_eq!(other_frame.image.as_bytes(), &[4, 5, 6]);
++        drop(binding);
++        drop(held);
++        assert!(worker.join().unwrap().is_err());
++        drop(other);
++    }
++
++    #[test]
++    fn raw_frames_are_owned_immutable_and_revoked_with_the_binding() {
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join("pixels");
++        let replies = Arc::new(Mutex::new(Vec::new()));
++        let received = replies.clone();
++        let mut binding = bind(
++            Some("pixels-thread"),
++            "pixels-owner",
++            vec![("pixels-frame".into(), Role::Raster)],
++            Arc::new(move |value| {
++                received.lock().unwrap().push(value);
++                true
++            }),
++        );
++        let initialized = binding.pixels(&path, None).unwrap();
++        let mut source = PixelSource {
++            source: initialized["pixels"]["source"].as_str().unwrap().to_owned(),
++            format: "rgb".into(),
++            width: 1,
++            height: 1,
++            sequence: 1,
++        };
++        std::fs::write(&path, [1, 2, 3]).unwrap();
++        assert!(
++            snapshot(
++                Some("foreign-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                source.clone(),
++                Instant::now()
++            )
++            .is_err()
++        );
++        assert!(
++            snapshot(
++                Some("pixels-thread"),
++                "foreign-owner",
++                "pixels-frame",
++                source.clone(),
++                Instant::now()
++            )
++            .is_err()
++        );
++        assert!(replies.lock().unwrap().is_empty());
++        assert!(
++            crate::client_surface::with_admission("source", 99, None, || snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                source.clone(),
++                Instant::now()
++            ))
++            .is_err()
++        );
++        assert!(replies.lock().unwrap().is_empty());
++        let frame = snapshot(
++            Some("pixels-thread"),
++            "pixels-owner",
++            "pixels-frame",
++            source.clone(),
++            Instant::now(),
++        )
++        .unwrap();
++        assert_eq!(frame.image.as_bytes(), &[1, 2, 3]);
++        std::fs::write(&path, [4, 5, 6]).unwrap();
++        assert_eq!(frame.image.as_bytes(), &[1, 2, 3]);
++        assert_eq!(replies.lock().unwrap()[0]["pixels"]["ready"], true);
++        let retried = snapshot(
++            Some("pixels-thread"),
++            "pixels-owner",
++            "pixels-frame",
++            source.clone(),
++            Instant::now(),
++        )
++        .unwrap();
++        assert!(Arc::ptr_eq(&retried, &frame));
++        assert_eq!(replies.lock().unwrap().len(), 1);
++        assert!(
++            snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                PixelSource {
++                    height: 0,
++                    ..source.clone()
++                },
++                Instant::now()
++            )
++            .is_err()
++        );
++        assert_eq!(
++            replies.lock().unwrap().last().unwrap()["pixels"]["error"],
++            "terminal_blit_pixels_invalid"
++        );
++        source.sequence = 2;
++        let renamed = directory.path().join("original");
++        std::fs::rename(&path, &renamed).unwrap();
++        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
++        assert_eq!(
++            snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                source.clone(),
++                Instant::now()
++            )
++            .unwrap()
++            .image
++            .as_bytes(),
++            &[4, 5, 6]
++        );
++        assert!(
++            snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                PixelSource {
++                    sequence: 1,
++                    ..source.clone()
++                },
++                Instant::now()
++            )
++            .is_err()
++        );
++        assert_eq!(
++            replies.lock().unwrap().last().unwrap()["pixels"]["error"],
++            "terminal_blit_sequence_stale"
++        );
++        source.sequence = 3;
++        source.format = "rgba".into();
++        assert!(
++            snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                source.clone(),
++                Instant::now()
++            )
++            .is_err()
++        );
++        assert_eq!(
++            replies.lock().unwrap().last().unwrap()["pixels"]["ready"],
++            false
++        );
++        std::fs::write(&renamed, [7, 8, 9, 10]).unwrap();
++        assert_eq!(
++            snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                source.clone(),
++                Instant::now()
++            )
++            .unwrap()
++            .image
++            .as_bytes(),
++            &[7, 8, 9, 10]
++        );
++        assert!(
++            PixelSource {
++                width: 4097,
++                ..source.clone()
++            }
++            .byte_len()
++            .is_err()
++        );
++        assert!(
++            PixelSource {
++                height: 0,
++                ..source.clone()
++            }
++            .byte_len()
++            .is_err()
++        );
++        drop(binding);
++        source.sequence = 5;
++        assert!(
++            snapshot(
++                Some("pixels-thread"),
++                "pixels-owner",
++                "pixels-frame",
++                source,
++                Instant::now()
++            )
++            .is_err()
++        );
++    }
++
++    #[test]
++    fn raw_acknowledgements_wait_until_the_producer_must_start_the_next_frame() {
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join("pixels");
++        let (sender, acks) = std::sync::mpsc::channel();
++        let mut binding = bind(
++            Some("paced-thread"),
++            "paced-owner",
++            vec![("paced-frame".into(), Role::Raster)],
++            Arc::new(move |value| sender.send((Instant::now(), value)).is_ok()),
++        );
++        let initialized = binding.pixels(&path, None).unwrap();
++        let handle = initialized["pixels"]["source"].as_str().unwrap().to_owned();
++        let mut source = PixelSource {
++            source: handle.clone(),
++            format: "rgb".into(),
++            width: 1,
++            height: 1,
++            sequence: 1,
++        };
++        std::fs::write(&path, [1, 2, 3]).unwrap();
++        let released = || PIXELS.lock().unwrap()[&handle].lock().unwrap().released;
++        let frame = crate::client_surface::BLIT_FRAME;
++        let snap = |source: &PixelSource, next| {
++            snapshot(
++                Some("paced-thread"),
++                "paced-owner",
++                "paced-frame",
++                source.clone(),
++                next,
++            )
++        };
++        let next = Instant::now() + frame * 3;
++        snap(&source, next).unwrap();
++        assert_eq!(released(), Some(next));
++        let (at, ack) = acks.recv().unwrap();
++        assert!(at >= next);
++        assert_eq!(ack["pixels"]["ready"], true);
++        std::thread::sleep(frame * 2);
++        source.sequence = 2;
++        let next = Instant::now() + frame * 3;
++        snap(&source, next).unwrap();
++        assert_eq!(released(), Some(next - frame));
++        assert!(acks.recv().unwrap().0 >= next - frame);
++        source.sequence = 3;
++        assert!(snap(&source, Instant::now()).is_ok());
++        assert_eq!(acks.try_recv().unwrap().1["pixels"]["sequence"], 3);
++    }
 +
 +    #[test]
 +    fn bindings_isolate_identical_components_across_threads() {
@@ -115018,6 +116740,17 @@ index 000000000..357a7f6a0
 +        drop(binding);
 +        assert!(!send(None, "owner", "pr-frame", json!(3)));
 +        assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
++    }
++
++    #[test]
++    fn a_late_publish_does_not_replace_a_newer_binding() {
++        let sink: Sink = Arc::new(|_| true);
++        let component = || vec![("late-frame".to_owned(), Role::Raster)];
++        let older = Binding::prepare(None, "owner", component(), sink.clone());
++        let newer = Binding::prepare(None, "owner", component(), sink);
++        newer.publish();
++        older.publish();
++        assert_eq!(serial(None, "owner", "late-frame"), Some(newer.serial));
 +    }
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
@@ -135205,10 +136938,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..b3e46ef2a
+index 000000000..13e7881b2
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2114 @@
+@@ -0,0 +1,2124 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -136496,15 +138229,23 @@ index 000000000..b3e46ef2a
 +                }
 +            }
 +            "terminal.blit" => {
-+                tui.frame_requester().schedule_frame();
 +                let key = call.arguments["key"].as_str().unwrap_or_default();
-+                crate::mod_raster::blit(
-+                    &call.caller,
-+                    crate::mod_ui::component_owner(key),
-+                    crate::mod_ui::raster_size(key),
-+                    &call.arguments,
-+                    std::time::Instant::now(),
-+                )
++                (|| {
++                    let reply = crate::mod_raster::blit(
++                        &call.caller,
++                        crate::mod_ui::component_owner(key),
++                        crate::mod_ui::raster_size(key),
++                        &call.arguments,
++                        std::time::Instant::now(),
++                        |source, next| call.snapshot_pixels(source, next),
++                    )?;
++                    if let Some(delay) =
++                        crate::mod_raster::pending_delay(key, std::time::Instant::now())
++                    {
++                        tui.frame_requester().schedule_frame_in(delay);
++                    }
++                    Ok(reply)
++                })()
 +            }
 +            "terminal.prompt" => {
 +                let title = match (
@@ -136718,7 +138459,9 @@ index 000000000..b3e46ef2a
 +            operation => Err(format!("unsupported_host_operation: {operation}")),
 +        };
 +        let _ = call.reply.send(result);
-+        tui.frame_requester().schedule_frame();
++        if call.operation != "terminal.blit" {
++            tui.frame_requester().schedule_frame();
++        }
 +    }
 +
 +    fn mod_notice(&mut self, tui: &mut tui::Tui, call: &SurfaceCall) -> Result<Value, String> {
@@ -139956,10 +141699,10 @@ index 000000000..15d84aafe
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..f4fc2152b
+index 000000000..786539c8e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,1006 @@
+@@ -0,0 +1,1010 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -140708,6 +142451,7 @@ index 000000000..f4fc2152b
 +    rows: u16,
 +    shared: bool,
 +) -> String {
++    let _stage = codex_omd::frame_metrics::stage("terminal_transmission");
 +    let header = format!(
 +        "a=T,U=1,f={},s={},v={},i={id},c={columns},r={rows},q=2",
 +        if pixels.alpha { 32 } else { 24 },
@@ -140811,6 +142555,7 @@ index 000000000..f4fc2152b
 +}
 +
 +fn write(sequences: Vec<String>) {
++    let _stage = codex_omd::frame_metrics::stage("terminal_write");
 +    if sequences.is_empty() {
 +        return;
 +    }
@@ -140942,6 +142687,7 @@ index 000000000..f4fc2152b
 +    if !facts().iip {
 +        return;
 +    }
++    let stage = codex_omd::frame_metrics::stage("iip_transmission");
 +    let mut images = images();
 +    let emitted = mark(previous, current, &mut images.inline);
 +    let sequences = emitted
@@ -140960,6 +142706,7 @@ index 000000000..f4fc2152b
 +        })
 +        .collect();
 +    drop(images);
++    drop(stage);
 +    write(sequences);
 +}
 +
@@ -140968,10 +142715,10 @@ index 000000000..f4fc2152b
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..3cdf91a9a
+index 000000000..500ee1f77
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,688 @@
 +use super::*;
 +use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
@@ -141249,6 +142996,7 @@ index 000000000..3cdf91a9a
 +            Some((4, 2)),
 +            &frame(color),
 +            at,
++            |_, _| unreachable!(),
 +        )
 +        .expect("queued")
 +    };
@@ -141288,6 +143036,7 @@ index 000000000..3cdf91a9a
 +        Some((4, 2)),
 +        &json!({"key": "raster-kitty", "rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
 +        later + crate::mod_raster::FRAME,
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    draw(later + crate::mod_raster::FRAME);
@@ -141309,6 +143058,7 @@ index 000000000..3cdf91a9a
 +        Some((6, 2)),
 +        &frame([0, 255, 0]),
 +        resized,
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    assert_eq!(
@@ -141354,8 +143104,15 @@ index 000000000..3cdf91a9a
 +    let frame = json!({"key": "raster-pixels", "image": {"media_type": "image/png",
 +        "base64": base64::engine::general_purpose::STANDARD.encode(png)}});
 +    let start = std::time::Instant::now();
-+    crate::mod_raster::blit("owner", Some("owner".into()), Some((4, 2)), &frame, start)
-+        .expect("queued");
++    crate::mod_raster::blit(
++        "owner",
++        Some("owner".into()),
++        Some((4, 2)),
++        &frame,
++        start,
++        |_, _| unreachable!(),
++    )
++    .expect("queued");
 +    assert_eq!(
 +        crate::mod_raster::pixel("raster-pixels", 1, 0, Some(1), None),
 +        None,
@@ -141408,8 +143165,15 @@ index 000000000..3cdf91a9a
 +            ..Facts::default()
 +        });
 +        crate::mod_raster::retain(&BTreeSet::new());
-+        crate::mod_raster::blit("owner", Some("owner".into()), Some(size), &frame, start)
-+            .expect("queued");
++        crate::mod_raster::blit(
++            "owner",
++            Some("owner".into()),
++            Some(size),
++            &frame,
++            start,
++            |_, _| unreachable!(),
++        )
++        .expect("queued");
 +        crate::mod_raster::rows(
 +            "raster-wide",
 +            Some("owner"),
@@ -141600,6 +143364,7 @@ index 000000000..3cdf91a9a
 +        Some((20, 5)),
 +        &json!({"key": "box-raster", "rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
 +        std::time::Instant::now(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("blit");
 +    crate::mod_raster::retain(&BTreeSet::new());
@@ -141644,10 +143409,10 @@ index 000000000..3cdf91a9a
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..804833276
+index 000000000..1ec84e2a2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,644 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -141834,21 +143599,49 @@ index 000000000..804833276
 +    (scaled(width), scaled(height))
 +}
 +
-+/// The placement's raw pixels, scaled down only when the picture is larger than the placement; Kitty scales up.
++fn placed(
++    decoded: &image::DynamicImage,
++    columns: u16,
++    rows: u16,
++    cell: (u16, u16),
++) -> std::borrow::Cow<'_, image::DynamicImage> {
++    codex_omd::process_raster::resized(decoded, placed_size(decoded, columns, rows, cell))
++}
++
++fn placed_size(
++    decoded: &image::DynamicImage,
++    columns: u16,
++    rows: u16,
++    cell: (u16, u16),
++) -> (u32, u32) {
++    codex_omd::process_raster::fit_within(
++        (decoded.width(), decoded.height()),
++        kitty_pixels(columns, rows, cell),
++    )
++}
++
++fn inline_png(
++    pixels: &image::DynamicImage,
++    columns: u16,
++    rows: u16,
++    cell: (u16, u16),
++) -> Option<Vec<u8>> {
++    let _stage = codex_omd::frame_metrics::stage("iip_encode");
++    codex_omd::process_raster::encode(
++        pixels,
++        placed_size(pixels, columns, rows, cell),
++        /*jpeg*/ false,
++    )
++}
++
 +fn placement_pixels(
 +    decoded: &image::DynamicImage,
 +    columns: u16,
 +    rows: u16,
 +    cell: (u16, u16),
 +) -> crate::mod_client::Pixels {
-+    let (width, height) = kitty_pixels(columns, rows, cell);
-+    let resized;
-+    let decoded = if decoded.width() <= width && decoded.height() <= height {
-+        decoded
-+    } else {
-+        resized = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
-+        &resized
-+    };
++    let _stage = codex_omd::frame_metrics::stage("placement_pixels");
++    let decoded = placed(decoded, columns, rows, cell);
 +    let translucent = decoded
 +        .color()
 +        .has_alpha()
@@ -141886,6 +143679,7 @@ index 000000000..804833276
 +    load: &dyn Fn() -> Option<Vec<u8>>,
 +    prefix: &str,
 +    inline: bool,
++    pixels: Option<&image::DynamicImage>,
 +) -> Option<Vec<Line<'static>>> {
 +    let (width, height) = (
 +        width.min(crate::mod_client::max_placeholder_cells()),
@@ -141894,19 +143688,29 @@ index 000000000..804833276
 +    let key = format!("{sha256}:{width}:{height}:{}x{}", cell.0, cell.1);
 +    let (id, columns, rows) = if inline {
 +        crate::mod_client::iip_image(component, &key, || {
-+            let bytes = Arc::<[u8]>::from(load()?);
-+            let (columns, rows) = fit(dimensions(&bytes)?, width, height, cell);
-+            Some((bytes, columns, rows))
++            let (bytes, size) = if let Some(pixels) = pixels {
++                let size = (pixels.width(), pixels.height());
++                let (columns, rows) = fit(size, width, height, cell);
++                (inline_png(pixels, columns, rows, cell)?, size)
++            } else {
++                let bytes = load()?;
++                let size = dimensions(&bytes)?;
++                (bytes, size)
++            };
++            let (columns, rows) = fit(size, width, height, cell);
++            Some((Arc::<[u8]>::from(bytes), columns, rows))
 +        })?
 +    } else {
 +        crate::mod_client::kitty_image(component, &key, || {
-+            let decoded = decode_once(sha256, load)?;
-+            let (columns, rows) = fit((decoded.width(), decoded.height()), width, height, cell);
-+            Some((
-+                placement_pixels(&decoded, columns, rows, cell),
-+                columns,
-+                rows,
-+            ))
++            let decoded;
++            let pixels = if let Some(pixels) = pixels {
++                pixels
++            } else {
++                decoded = decode_once(sha256, load)?;
++                &decoded
++            };
++            let (columns, rows) = fit((pixels.width(), pixels.height()), width, height, cell);
++            Some((placement_pixels(pixels, columns, rows, cell), columns, rows))
 +        })?
 +    };
 +    Some(crate::mod_client::placeholder_rows(
@@ -141923,6 +143727,7 @@ index 000000000..804833276
 +    height: u16,
 +    prefix: &str,
 +    load: &dyn Fn() -> Option<Vec<u8>>,
++    pixels: Option<&image::DynamicImage>,
 +) -> Option<Vec<Line<'static>>> {
 +    let client = crate::mod_client::facts();
 +    if (client.placeholders || client.iip)
@@ -141935,6 +143740,7 @@ index 000000000..804833276
 +            load,
 +            prefix,
 +            client.iip,
++            pixels,
 +        )
 +    {
 +        return Some(rows);
@@ -141947,8 +143753,14 @@ index 000000000..804833276
 +    {
 +        return Some(rows.clone());
 +    }
-+    let decoded = decode_once(sha256, load)?;
-+    let rows = codex_omd::client_surface::half_block(&decoded, width, height)
++    let decoded;
++    let pixels = if let Some(pixels) = pixels {
++        pixels
++    } else {
++        decoded = decode_once(sha256, load)?;
++        &decoded
++    };
++    let rows = codex_omd::client_surface::half_block(pixels, width, height)
 +        .iter()
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
@@ -141987,6 +143799,7 @@ index 000000000..804833276
 +        height,
 +        prefix,
 +        &|| host.resources().blob(&blob).ok(),
++        None,
 +    )
 +    .unwrap_or_else(|| vec![Line::from(format!("{prefix}[image unavailable: {alt}]")).dim()])
 +}
@@ -142246,10 +144059,10 @@ index 000000000..804833276
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..bf733c265
+index 000000000..4b697c0fb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,357 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -142538,6 +144351,45 @@ index 000000000..bf733c265
 +
 +#[test]
 +#[serial_test::serial]
++fn raw_inline_frames_skip_the_encoded_input_limit_and_encode_at_the_placement_size() {
++    let mut random = 1u32;
++    let bytes = (0..1800 * 1800 * 3)
++        .map(|_| {
++            random ^= random << 13;
++            random ^= random >> 17;
++            random ^= random << 5;
++            random as u8
++        })
++        .collect();
++    let pixels =
++        image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(1800, 1800, bytes).unwrap());
++    let mut encoded = std::io::Cursor::new(Vec::new());
++    pixels
++        .write_to(&mut encoded, image::ImageFormat::Png)
++        .unwrap();
++    assert!(encoded.get_ref().len() > 8 * 1024 * 1024);
++    assert!(dimensions(encoded.get_ref()).is_none());
++    assert!(
++        marker_rows(
++            "raw-inline-limit",
++            "raw-inline-limit",
++            4,
++            2,
++            (8, 16),
++            &|| None,
++            "",
++            true,
++            Some(&pixels)
++        )
++        .is_some()
++    );
++    let placed = image::load_from_memory(&inline_png(&pixels, 4, 2, (8, 16)).unwrap()).unwrap();
++    assert_eq!((placed.width(), placed.height()), (32, 32));
++    crate::mod_client::forget("raw-inline-limit");
++}
++
++#[test]
++#[serial_test::serial]
 +fn a_picture_is_decoded_once_across_redraws_and_pictures_keep_their_own_cached_rows() {
 +    let loads = std::cell::Cell::new(0);
 +    let load = |color| {
@@ -142550,7 +144402,7 @@ index 000000000..bf733c265
 +    };
 +    let rows =
 +        |component: &str, sha: &str, key: &str, width, load: &dyn Fn() -> Option<Vec<u8>>| {
-+            picture_rows(component, sha, key, width, 2, "", load).expect("rows")
++            picture_rows(component, sha, key, width, 2, "", load, None).expect("rows")
 +        };
 +    let component = rows("pic", "sha-pic", "pic:4", 4, &load([1, 1, 1]));
 +    assert_eq!(loads.get(), 1);
@@ -142954,10 +144806,10 @@ index 000000000..b6e0959f6
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..2400497ed
+index 000000000..416115c09
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,314 @@
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -143152,6 +145004,10 @@ index 000000000..2400497ed
 +    })
 +}
 +
++pub(crate) fn hide() {
++    with(|state| state.last = Placement::default());
++}
++
 +pub(crate) fn tab_line(bar: &TabBar) -> Vec<(String, bool)> {
 +    bar.titles
 +        .iter()
@@ -143270,10 +145126,10 @@ index 000000000..2400497ed
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 000000000..0d6e33f22
+index 000000000..d6972010f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,119 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -143381,6 +145237,10 @@ index 000000000..0d6e33f22
 +    assert!(pointer(at(MouseEventKind::Up(MouseButton::Left), 30)));
 +    let placement = place(&layout, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("site:files/tree"), Some(Rect::new(0, 0, 30, 10)));
++    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
++    hide();
++    assert!(!pointer(at(MouseEventKind::Down(MouseButton::Left), 31)));
++    let placement = place(&layout, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +}
 +
@@ -144032,10 +145892,10 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..05cd86599
+index 000000000..bc91a399d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,369 @@
+@@ -0,0 +1,451 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -144058,6 +145918,7 @@ index 000000000..05cd86599
 +use codex_omd::client_surface::BlitCell as Cell;
 +use codex_omd::client_surface::BlitContent;
 +const RASTERS_PER_MOD: usize = 16;
++const HIDDEN_RETRY: Duration = Duration::from_millis(250);
 +
 +struct Raster {
 +    owner: String,
@@ -144065,12 +145926,13 @@ index 000000000..05cd86599
 +    width: u16,
 +    height: u16,
 +    cells: Vec<Cell>,
-+    frame: Option<(String, std::sync::Arc<[u8]>)>,
++    frame: Option<BlitContent>,
 +    drawn: bool,
 +    queue: VecDeque<Update>,
 +    queued_bytes: usize,
 +    applied: Option<Instant>,
 +    frames: u64,
++    shown: u64,
 +    /// The drawn frame's pixel size and the cells it covers.
 +    placed: Option<((u32, u32), (u16, u16))>,
 +}
@@ -144089,11 +145951,13 @@ index 000000000..05cd86599
 +            queued_bytes: 0,
 +            applied: None,
 +            frames: 0,
++            shown: 0,
 +            placed: None,
 +        }
 +    }
 +
 +    fn apply(&mut self, update: Update) {
++        let _stage = codex_omd::frame_metrics::stage("raster_apply");
 +        match update.content {
 +            BlitContent::Cells { rect, cells } => {
 +                self.frame = None;
@@ -144107,11 +145971,11 @@ index 000000000..05cd86599
 +                    }
 +                }
 +            }
-+            BlitContent::Image { sha256, bytes } => {
++            frame @ (BlitContent::Image { .. } | BlitContent::Pixels(_)) => {
 +                self.cells.fill(Cell::default());
-+                self.frame = Some((sha256, bytes));
++                self.frame = Some(frame);
 +            }
-+            BlitContent::Encoded { .. } => {}
++            BlitContent::Encoded { .. } | BlitContent::Source(_) => {}
 +        }
 +        self.queued_bytes -= update.bytes;
 +        self.frames += 1;
@@ -144130,8 +145994,22 @@ index 000000000..05cd86599
 +        }
 +        let update = self.queue.pop_front()?;
 +        self.apply(update);
-+        self.applied = Some(now);
-+        (!self.queue.is_empty()).then_some(FRAME)
++        let applied = self.next_tick(now);
++        self.applied = Some(applied);
++        (!self.queue.is_empty()).then(|| FRAME.saturating_sub(now - applied))
++    }
++
++    fn next_tick(&self, now: Instant) -> Instant {
++        self.applied
++            .filter(|applied| now.saturating_duration_since(*applied) < FRAME * 2)
++            .map_or(now, |applied| applied + FRAME)
++    }
++
++    fn hidden(&self, now: Instant) -> bool {
++        self.frames != self.shown
++            && self
++                .applied
++                .is_some_and(|applied| now.saturating_duration_since(applied) >= FRAME * 4)
 +    }
 +}
 +
@@ -144198,6 +146076,10 @@ index 000000000..05cd86599
 +    size: Option<(u16, u16)>,
 +    arguments: &Value,
 +    now: Instant,
++    snapshot: impl FnOnce(
++        &codex_omd::process_raster::PixelSource,
++        Instant,
++    ) -> Result<std::sync::Arc<codex_omd::process_raster::PixelFrame>, String>,
 +) -> Result<Value, String> {
 +    let mut update =
 +        codex_omd::client_surface::blit_request(caller, owner.as_deref(), size, arguments)?;
@@ -144208,32 +146090,61 @@ index 000000000..05cd86599
 +    {
 +        return Err("terminal_blit_invalid".into());
 +    }
-+    let (width, height) = size.ok_or("terminal_blit_unknown")?;
-+    let (key, bytes) = (std::mem::take(&mut update.key), update.bytes);
-+    let update = update.checked()?;
-+    let image = matches!(update.content, BlitContent::Image { .. });
++    let (width, height) = size
++        .filter(|(width, height)| *width > 0 && *height > 0)
++        .ok_or("terminal_blit_unknown")?;
++    let key = std::mem::take(&mut update.key);
 +    let binding = codex_omd::process_raster::serial(
 +        crate::mod_surface::current_thread().as_deref(),
 +        caller,
 +        &key,
 +    );
++    let limited = |rasters: &BTreeMap<String, Raster>| {
++        !rasters.contains_key(&key)
++            && rasters
++                .values()
++                .filter(|raster| raster.owner == caller)
++                .count()
++                >= RASTERS_PER_MOD
++    };
++    let reusable = |raster: &Raster| {
++        (raster.width, raster.height) == (width, height)
++            && raster.owner == caller
++            && raster.binding == binding
++    };
++    let mut next = now + FRAME;
++    if matches!(update.content, BlitContent::Source(_)) {
++        let mut rasters = rasters();
++        if limited(&rasters) {
++            return Err("terminal_blit_limit".into());
++        }
++        if let Some(raster) = rasters.get_mut(&key).filter(|raster| reusable(raster)) {
++            if raster.hidden(now) {
++                return Ok(
++                    json!({"status": "backpressure", "retry_after_ms": HIDDEN_RETRY.as_millis() as u64}),
++                );
++            }
++            raster.advance(now);
++            if !raster.queue.is_empty() {
++                return Ok(backpressure(raster, now));
++            }
++            next = raster.next_tick(now) + FRAME;
++        }
++    }
++    let update = update.checked(|source| snapshot(source, next))?;
 +    let mut rasters = rasters();
-+    if !rasters.contains_key(&key)
-+        && rasters
-+            .values()
-+            .filter(|raster| raster.owner == caller)
-+            .count()
-+            >= RASTERS_PER_MOD
-+    {
++    if limited(&rasters) {
 +        return Err("terminal_blit_limit".into());
 +    }
++    let bytes = update.bytes;
++    let image = matches!(
++        update.content,
++        BlitContent::Image { .. } | BlitContent::Pixels(_)
++    );
 +    let raster = rasters
 +        .entry(key.clone())
 +        .and_modify(|raster| {
-+            if (raster.width, raster.height) != (width, height)
-+                || raster.owner != caller
-+                || raster.binding != binding
-+            {
++            if !reusable(raster) {
 +                if raster.drawn {
 +                    crate::mod_client::forget(&key);
 +                }
@@ -144249,12 +146160,7 @@ index 000000000..05cd86599
 +        raster.advance(now);
 +    }
 +    if full(raster) {
-+        let wait = raster.applied.map_or(FRAME, |applied| {
-+            FRAME
-+                .saturating_sub(now - applied)
-+                .max(Duration::from_millis(1))
-+        });
-+        return Ok(json!({"status": "backpressure", "retry_after_ms": wait.as_millis() as u64}));
++        return Ok(backpressure(raster, now));
 +    }
 +    if image {
 +        raster.queue.clear();
@@ -144267,6 +146173,15 @@ index 000000000..05cd86599
 +        "queued": raster.queue.len(),
 +        "frame_ms": FRAME.as_millis() as u64,
 +    }))
++}
++
++fn backpressure(raster: &Raster, now: Instant) -> Value {
++    let wait = raster.applied.map_or(FRAME, |applied| {
++        FRAME
++            .saturating_sub(now - applied)
++            .max(Duration::from_millis(1))
++    });
++    json!({"status": "backpressure", "retry_after_ms": wait.as_millis() as u64})
 +}
 +
 +pub(crate) fn span(cell: &Cell, no_color: bool) -> Span<'static> {
@@ -144285,6 +146200,19 @@ index 000000000..05cd86599
 +        &cell.symbol
 +    };
 +    Span::styled(symbol.to_owned(), style)
++}
++
++pub(crate) fn pending_delay(key: &str, now: Instant) -> Option<Duration> {
++    let rasters = rasters();
++    let raster = rasters.get(key)?;
++    if raster.frames != raster.shown {
++        return Some(Duration::ZERO);
++    }
++    (!raster.queue.is_empty()).then(|| {
++        raster.applied.map_or(Duration::ZERO, |applied| {
++            FRAME.saturating_sub(now.saturating_duration_since(applied))
++        })
++    })
 +}
 +
 +#[allow(clippy::too_many_arguments)]
@@ -144313,31 +146241,45 @@ index 000000000..05cd86599
 +        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], None);
 +    };
 +    let next = raster.advance(now);
++    raster.shown = raster.frames;
 +    if std::mem::replace(&mut raster.drawn, raster.frame.is_some()) && raster.frame.is_none() {
 +        crate::mod_client::forget(id);
 +    }
 +    if raster.frames == 0 {
 +        return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], next);
 +    }
-+    if let Some((sha256, bytes)) = &raster.frame {
++    if let Some(frame) = &raster.frame {
++        let (sha256, bytes, pixels, dimensions) = match frame {
++            BlitContent::Image { sha256, bytes } => (
++                sha256.as_str(),
++                Some(bytes),
++                None,
++                crate::mod_components::dimensions(bytes),
++            ),
++            BlitContent::Pixels(frame) => (
++                frame.id.as_str(),
++                None,
++                Some(&frame.image),
++                Some((frame.image.width(), frame.image.height())),
++            ),
++            _ => unreachable!(),
++        };
 +        if no_color {
 +            return (vec![Line::from(format!("{prefix}[{alt}]")).dim()], next);
 +        }
 +        let (columns, high) = (width.min(size.0), size.1);
 +        let key = format!("{sha256}:{columns}:{high}:{prefix}");
-+        let load = || Some(bytes.to_vec());
-+        let rows =
-+            crate::mod_components::picture_rows(id, sha256, &key, columns, high, prefix, &load);
-+        raster.placed = rows
-+            .as_ref()
-+            .zip(crate::mod_components::dimensions(bytes))
-+            .map(|(rows, size)| {
-+                let wide = rows.first().map_or(0, |row| row.width() - prefix.width());
-+                (
-+                    size,
-+                    (u16::try_from(wide).unwrap_or(u16::MAX), rows.len() as u16),
-+                )
-+            });
++        let load = || bytes.map(|bytes| bytes.to_vec());
++        let rows = crate::mod_components::picture_rows(
++            id, sha256, &key, columns, high, prefix, &load, pixels,
++        );
++        raster.placed = rows.as_ref().zip(dimensions).map(|(rows, size)| {
++            let wide = rows.first().map_or(0, |row| row.width() - prefix.width());
++            (
++                size,
++                (u16::try_from(wide).unwrap_or(u16::MAX), rows.len() as u16),
++            )
++        });
 +        return (
 +            rows.unwrap_or_else(|| vec![Line::from(format!("{prefix}[{alt}]")).dim()]),
 +            next,
@@ -144407,10 +146349,10 @@ index 000000000..05cd86599
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..14322cc08
+index 000000000..8773d6788
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,599 @@
+@@ -0,0 +1,829 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -144435,6 +146377,7 @@ index 000000000..14322cc08
 +        Some((4, 2)),
 +        &json!({"key": key, "rect": value["rect"], "cells": value["cells"]}),
 +        now,
++        |_, _| unreachable!(),
 +    )
 +}
 +
@@ -144452,7 +146395,7 @@ index 000000000..14322cc08
 +            start,
 +        )
 +        .expect("queued");
-+        assert_eq!(reply["frame_ms"], 33);
++        assert_eq!(reply["frame_ms"], 16);
 +    }
 +    let (rows, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", start);
 +    assert_eq!(text(&rows), vec![" aa ", "    "]);
@@ -144468,7 +146411,11 @@ index 000000000..14322cc08
 +        start + Duration::from_millis(5),
 +    );
 +    assert_eq!(text(&rows), vec![" aa ", "    "]);
-+    assert_eq!(next, Some(Duration::from_millis(28)));
++    assert_eq!(next, Some(Duration::from_millis(11)));
++    assert_eq!(
++        pending_delay(key, start + Duration::from_millis(5)),
++        Some(Duration::from_millis(11))
++    );
 +    let (rows, next) = super::rows(
 +        key,
 +        Some("owner"),
@@ -144493,6 +146440,56 @@ index 000000000..14322cc08
 +
 +#[test]
 +#[serial_test::serial]
++fn raster_cadence_recovers_small_delays_without_catching_up_after_stalls() {
++    let start = Instant::now();
++    let key = "raster-cadence";
++    for glyph in ["a", "b", "c", "d"] {
++        blit_at(
++            key,
++            "owner",
++            json!({"rect":{"x":0,"y":0,"width":1,"height":1},"cells":[glyph]}),
++            start,
++        )
++        .unwrap();
++    }
++    let draw = |millis| {
++        super::rows(
++            key,
++            Some("owner"),
++            "chart",
++            4,
++            (4, 2),
++            false,
++            "",
++            start + Duration::from_millis(millis),
++        )
++    };
++    assert_eq!(draw(0).1, Some(FRAME));
++    let (rows, next) = draw(20);
++    assert_eq!(text(&rows)[0], "b   ");
++    assert_eq!(next, Some(Duration::from_millis(12)));
++    assert_eq!(text(&draw(20).0)[0], "b   ");
++    let (rows, next) = draw(48);
++    assert_eq!(text(&rows)[0], "c   ");
++    assert_eq!(next, Some(FRAME));
++    assert_eq!(text(&draw(48).0)[0], "c   ");
++    assert_eq!(draw(64).1, None);
++    blit_at(
++        key,
++        "owner",
++        json!({"rect":{"x":0,"y":0,"width":1,"height":1},"cells":["e"]}),
++        start + Duration::from_millis(200),
++    )
++    .unwrap();
++    assert_eq!(text(&draw(200).0)[0], "e   ");
++    assert_eq!(
++        rasters().get(key).unwrap().applied,
++        Some(start + Duration::from_millis(200))
++    );
++}
++
++#[test]
++#[serial_test::serial]
 +fn blits_refuse_other_owners_bad_rects_and_report_backpressure() {
 +    let now = Instant::now();
 +    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
@@ -144506,7 +146503,8 @@ index 000000000..14322cc08
 +            None,
 +            None,
 +            &json!({"key": "drawn-later", "rect": cell["rect"], "cells": cell["cells"]}),
-+            now
++            now,
++            |_, _| unreachable!(),
 +        ),
 +        Err("terminal_blit_unknown".into())
 +    );
@@ -144541,7 +146539,7 @@ index 000000000..14322cc08
 +    }
 +    assert_eq!(
 +        blit_at("raster-refuse", "owner", cell, now).expect("reply"),
-+        json!({"status": "backpressure", "retry_after_ms": 33})
++        json!({"status": "backpressure", "retry_after_ms": 16})
 +    );
 +}
 +
@@ -144794,6 +146792,7 @@ index 000000000..14322cc08
 +        Some((4, 2)),
 +        &json!({"key": key, "rect": {"x": 1, "y": 0, "width": 1, "height": 1}, "cells": ["c"]}),
 +        now + FRAME,
++        |_, _| unreachable!(),
 +    )
 +    .expect("new owner queued");
 +    let (lines, next) = super::rows(
@@ -144826,6 +146825,7 @@ index 000000000..14322cc08
 +        Some((4, 2)),
 +        &json!({"key": key, "image": image}),
 +        now,
++        |_, _| unreachable!(),
 +    )
 +}
 +
@@ -144886,6 +146886,171 @@ index 000000000..14322cc08
 +
 +#[test]
 +#[serial_test::serial]
++fn raw_raster_admission_precedes_snapshot() {
++    retain(&BTreeSet::new());
++    let source = json!({"source":"owned", "format":"rgb", "width":1, "height":1, "sequence":1});
++    let now = Instant::now();
++    for size in [None, Some((0, 0))] {
++        assert!(
++            blit(
++                "owner",
++                Some("owner".into()),
++                size,
++                &json!({"key":"hidden", "pixels":source}),
++                now,
++                |_, _| panic!("snapshot before layout admission")
++            )
++            .is_err()
++        );
++    }
++    for n in 0..RASTERS_PER_MOD {
++        rasters().insert(format!("occupied-{n}"), Raster::new("owner", 4, 2));
++    }
++    assert_eq!(
++        blit(
++            "owner",
++            Some("owner".into()),
++            Some((4, 2)),
++            &json!({"key":"overflow", "pixels":source}),
++            now,
++            |_, _| panic!("snapshot before capacity admission")
++        ),
++        Err("terminal_blit_limit".into())
++    );
++    retain(&BTreeSet::new());
++    let mut snapshots = 0;
++    blit(
++        "owner",
++        Some("owner".into()),
++        Some((4, 2)),
++        &json!({"key":"admitted", "pixels":source}),
++        now,
++        |_, _| {
++            snapshots += 1;
++            assert!(
++                RASTERS.try_lock().is_ok(),
++                "the copy runs outside the raster lock"
++            );
++            Ok(std::sync::Arc::new(
++                codex_omd::process_raster::PixelFrame::new(
++                    serde_json::from_value(source.clone()).unwrap(),
++                    image::DynamicImage::new_rgb8(1, 1),
++                ),
++            ))
++        },
++    )
++    .unwrap();
++    assert_eq!(snapshots, 1);
++    retain(&BTreeSet::new());
++}
++
++fn raw_at(key: &str, sequence: u64, now: Instant, next: Option<Instant>) -> Result<Value, String> {
++    let source =
++        json!({"source":"owned", "format":"rgb", "width":1, "height":1, "sequence":sequence});
++    blit(
++        "owner",
++        Some("owner".into()),
++        Some((4, 2)),
++        &json!({"key":key, "pixels":source}),
++        now,
++        |source, due| {
++            assert_eq!(
++                Some(due),
++                next,
++                "a frame waiting for its tick is not copied, and the next one is due a tick after this one shows"
++            );
++            Ok(std::sync::Arc::new(
++                codex_omd::process_raster::PixelFrame::new(
++                    source.clone(),
++                    image::DynamicImage::new_rgb8(1, 1),
++                ),
++            ))
++        },
++    )
++}
++
++#[test]
++#[serial_test::serial]
++fn raw_frames_wait_for_the_pending_frame_and_frames_applied_by_a_blit_are_drawn() {
++    let key = "raw-pending";
++    let start = Instant::now();
++    raw_at(key, 1, start, Some(start + FRAME)).unwrap();
++    raw_at(key, 2, start, Some(start + FRAME * 2)).unwrap();
++    assert_eq!(
++        pending_delay(key, start),
++        Some(Duration::ZERO),
++        "the first frame, applied by the second blit, is drawn at once"
++    );
++    assert_eq!(
++        raw_at(key, 3, start, None).unwrap(),
++        json!({"status": "backpressure", "retry_after_ms": 16})
++    );
++    super::rows(key, Some("owner"), "raw", 4, (4, 2), false, "", start);
++    assert_eq!(pending_delay(key, start), Some(FRAME));
++    assert_eq!(
++        raw_at(key, 3, start + FRAME, Some(start + FRAME * 3)).unwrap()["queued"],
++        1
++    );
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn raw_frames_to_an_undrawn_raster_back_off_without_a_copy_until_it_is_drawn() {
++    let key = "raw-hidden";
++    let start = Instant::now();
++    raw_at(key, 1, start, Some(start + FRAME)).unwrap();
++    raw_at(key, 2, start + FRAME, Some(start + FRAME * 3)).unwrap();
++    let later = start + FRAME * 6;
++    assert_eq!(
++        raw_at(key, 3, later, None).unwrap(),
++        json!({"status": "backpressure", "retry_after_ms": 250})
++    );
++    super::rows(key, Some("owner"), "raw", 4, (4, 2), false, "", later);
++    assert_eq!(
++        raw_at(key, 3, later, Some(later + FRAME * 2)).unwrap()["queued"],
++        1
++    );
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn raw_raster_frames_fold_to_newest_and_keep_pointer_dimensions() {
++    let key = "raw-raster";
++    let start = Instant::now();
++    for (sequence, color) in [(1, [255, 0, 0]), (2, [0, 255, 0])] {
++        let source =
++            json!({"source":"owned", "format":"rgb", "width":8, "height":2, "sequence":sequence});
++        let pixels = std::sync::Arc::new(codex_omd::process_raster::PixelFrame::new(
++            serde_json::from_value(source.clone()).unwrap(),
++            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 2, image::Rgb(color))),
++        ));
++        assert_eq!(
++            blit(
++                "owner",
++                Some("owner".into()),
++                Some((4, 2)),
++                &json!({"key":key, "pixels":source}),
++                start,
++                |_, _| Ok(pixels)
++            )
++            .unwrap()["queued"],
++            1
++        );
++    }
++    let (rows, _) = super::rows(key, Some("owner"), "raw", 4, (4, 2), false, "", start);
++    assert_eq!(text(&rows), vec!["▀▀▀▀"]);
++    assert_eq!(
++        rows[0].spans[1].style.fg,
++        Some(crate::mod_ui::color(ModColor::Rgb(0, 255, 0)))
++    );
++    assert_eq!(rasters().get(key).unwrap().placed.unwrap().0, (8, 2));
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
 +fn invalid_image_frames_are_refused_before_queueing() {
 +    let now = Instant::now();
 +    let key = "raster-frame-refuse";
@@ -144907,7 +147072,14 @@ index 000000000..14322cc08
 +        json!({"key": key, "rect": cell["rect"], "image": png}),
 +    ] {
 +        assert_eq!(
-+            blit("owner", Some("owner".into()), Some((4, 2)), &arguments, now),
++            blit(
++                "owner",
++                Some("owner".into()),
++                Some((4, 2)),
++                &arguments,
++                now,
++                |_, _| unreachable!()
++            ),
 +            Err("terminal_blit_invalid".into())
 +        );
 +    }
@@ -150045,10 +152217,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..b1b8985b8
+index 000000000..8437cfa99
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4505 @@
+@@ -0,0 +1,4510 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -152441,6 +154613,7 @@ index 000000000..b1b8985b8
 +                        rows_high.unwrap_or(RASTER_HEIGHT),
 +                    ),
 +                );
++                let started = std::time::Instant::now();
 +                let (lines, next) = crate::mod_raster::rows(
 +                    id,
 +                    interaction.component_owners.get(id).map(String::as_str),
@@ -152452,10 +154625,10 @@ index 000000000..b1b8985b8
 +                    ),
 +                    crate::mod_client::facts().no_color,
 +                    "",
-+                    std::time::Instant::now(),
++                    started,
 +                );
 +                if let Some(next) = next {
-+                    crate::mod_render::schedule_frame(next);
++                    crate::mod_render::schedule_frame(next.saturating_sub(started.elapsed()));
 +                }
 +                push_region_rows(&mut rows, id, label, lines, *pointer);
 +            }
@@ -153031,11 +155204,15 @@ index 000000000..b1b8985b8
 +}
 +
 +fn placement(screen: Rect, snapshot: &ModViewSnapshot) -> Option<crate::mod_layout::Placement> {
-+    let layout = snapshot
++    let Some(layout) = snapshot
 +        .view
 +        .layout
 +        .as_ref()
-+        .filter(|_| layout_fits(screen))?;
++        .filter(|_| layout_fits(screen))
++    else {
++        crate::mod_layout::hide();
++        return None;
++    };
 +    let placement = crate::mod_layout::place(layout, screen);
 +    placement
 +        .chat()
@@ -154556,10 +156733,10 @@ index 000000000..b1b8985b8
 +}
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 000000000..d4290e259
+index 000000000..6b753fb28
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,254 @@
 +use super::*;
 +use std::sync::Arc;
 +
@@ -154797,6 +156974,7 @@ index 000000000..d4290e259
 +            ));
 +        }
 +        preview(ModViewSnapshot::default());
++        assert!(placement(screen, &ModViewSnapshot::default()).is_none());
 +    }
 +
 +    #[test]
@@ -154815,10 +156993,10 @@ index 000000000..d4290e259
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..a532864ab
+index 000000000..7c884c62f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2435 @@
+@@ -0,0 +1,2439 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -156374,6 +158552,7 @@ index 000000000..a532864ab
 +        Some((3, 1)),
 +        &serde_json::json!({"key":"band_chart","rect":{"x":0,"y":0,"width":3,"height":1},"cells":["x","y","z"]}),
 +        std::time::Instant::now(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    INTERACTION
@@ -156481,6 +158660,7 @@ index 000000000..a532864ab
 +        &serde_json::json!({"key":"nested_chart","rect":{"x":0,"y":0,"width":6,"height":2},
 +            "cells":["a","b","c","d","e","f","g","h","i","j","k","l"]}),
 +        std::time::Instant::now(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    let area = Rect::new(0, 0, 80, 24);
@@ -156786,6 +158966,7 @@ index 000000000..a532864ab
 +        Some((6, 3)),
 +        &serde_json::json!({"key":"bound_chart","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]}),
 +        std::time::Instant::now(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    let area = Rect::new(0, 0, 80, 24);
@@ -156888,6 +159069,7 @@ index 000000000..a532864ab
 +        &serde_json::json!({"key":"chart","rect":{"x":0,"y":0,"width":6,"height":3},
 +            "cells":["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r"]}),
 +        std::time::Instant::now(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    let area = Rect::new(0, 0, 80, 24);
