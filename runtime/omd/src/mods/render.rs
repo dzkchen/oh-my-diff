@@ -113,6 +113,7 @@ pub fn component_shared(
         .map_err(|_| failure("mod_runtime_poisoned"))?
         .generation;
     let instance = frame["instance"].as_str().unwrap_or(component).to_owned();
+    let owner = frame["client"].as_str().unwrap_or_default().to_owned();
     let value = invoke_shared(
         runtime,
         id,
@@ -136,14 +137,19 @@ pub fn component_shared(
             || serde_json::to_vec(&value["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
         .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
     }) {
-        process::unmount(id, &instance);
+        process::unmount(&owner, id, &instance);
         return Err(failure(format!("invalid_component_tree: {reason}")));
     }
     Ok(value)
 }
 
 pub fn component_unmount(id: &str, component: &str) {
-    process::unmount(id, component);
+    process::unmount("", id, component);
+}
+
+/// Unmounts every component module instance a detached client had mounted.
+pub fn component_detach(client: &str) {
+    process::detach(client);
 }
 
 /// A component's input event as the key and pointer events a component module receives.

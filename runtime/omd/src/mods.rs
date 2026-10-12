@@ -11,6 +11,7 @@ pub use chain::continue_operation;
 pub use chain::intercept_shared;
 pub use render::MOD_RENDER_COMPONENTS;
 pub use render::component_events;
+pub use render::component_detach;
 pub use render::component_shared;
 pub use render::component_unmount;
 pub use render::render_shared;
@@ -2713,7 +2714,7 @@ const SLEEP_LIMIT_MS: u64 = 60_000;
 
 /// Callbacks documented to run without host operations.
 fn hostless(event: &str, payload: &Value) -> bool {
-    event == "terminal"
+    matches!(event, "terminal" | "component")
         || event == "intercept"
             && matches!(
                 payload["surface"].as_str(),

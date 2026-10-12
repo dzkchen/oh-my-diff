@@ -46,6 +46,7 @@ INTERCEPTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 REGISTRATIONS = {"tool": "tools", "command": "commands", "middleware": "middleware", "provide": "services", "contract": "contracts"}
 NATIVE_KEY = re.compile(r"""['"`](alt\+[bdfrvx]|ctrl\+shift\+f|f8)['"`]""", re.IGNORECASE)
+RELATIVE_IMPORT = re.compile(r"""^\s*(?:import|export)(?!\s+type\b)\b[^;]*?\bfrom\s*['"]\.\.?/""", re.MULTILINE)
 
 
 def manifest(path):
@@ -175,8 +176,10 @@ def problems_from_status(status, label, paths):
 
 def static_problems(path):
     found = []
-    schema = manifest(path).get("settings_schema", {}).get("properties", {})
+    package = manifest(path)
+    schema = package.get("settings_schema", {}).get("properties", {})
     found += [f"setting {key} has no default" for key, value in schema.items() if "default" not in value]
+    needed = {"package_text_assets_v1"} if package.get("assets") else set()
     commands, tools = [], 0
     for source in path.rglob("*.ts"):
         if "node_modules" in source.parts or source.name.endswith(".d.ts"):
@@ -187,6 +190,10 @@ def static_problems(path):
             found.append(f"{source.name}: {size} bytes exceeds the 131072-byte package file limit")
         commands += re.findall(r"api\.command\(\s*'([^']+)'", text)
         tools += len(re.findall(r"api\.tool\(", text))
+        if RELATIVE_IMPORT.search(text):
+            needed.add("package_imports_v1")
+    required = set(package.get("compatibility", {}).get("required_features", []))
+    found += [f"declared assets or relative imports need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]
     found += [f"{count} {kind} exceed the limit of 16" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 16]

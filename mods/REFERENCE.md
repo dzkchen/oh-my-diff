@@ -1680,8 +1680,9 @@ Component modules (experimental): `api.component(module, {init?, view,
 key?, pointer?, every?})`, registered during activation under the `terminal`
 capability (at most 16 per mod), draws `{type: 'module', id, label, module,
 props?, height?, keys?, pointer?}` nodes. Each mounted node runs in its own
-runner that stays alive while the node is in the view (at most four at once;
-older ones remount), so `init(props, ui)` runs once
+runner that stays alive while the node is in the view (at most four at once
+for the terminal and four for each external client; older ones remount), so
+`init(props, ui)` runs once
 and the state handlers return carries over between frames (returning
 `undefined` keeps it). A step runs at most once per 16 ms frame and only when
 something is pending: a mount, new props or size, queued input, or a due
@@ -1698,13 +1699,17 @@ coalesced. `view(state, ui)` returns a render tree (`box` without style, `line`,
 KiB). `ui` is `{columns, rows, props, post(data)}`: `post` hands the mod's
 `component_post` hooks `{component, module, data}` at most once per frame (a
 later post in the same frame replaces it; 64 KiB). Handlers have no host
-authority (`host_operation_unavailable`) and cannot write state; a throw, a
-step over 8 ms (`component_overrun`) or an invalid tree unmounts the node,
+authority (`host_operation_unavailable`, `time.sleep` included) and cannot
+write state; a throw, three consecutive steps over 8 ms after the mounting one
+(`component_overrun`) or an invalid tree unmounts the node,
 which then draws one dim error line until the next view revision mounts it
 again. Without `height` the region is as tall as its latest tree. External
 clients read a node's tree with `omd/render {slot: 'module', props:
-{component}}` (their own instance, `effective.next_ms` says when the next tick
-is due) and send it key and pointer events through `omd/client/event`.
+{component, columns?, rows?}}` (their own instance, sized as given or as last
+rendered, 80×24 by default; `effective.next_ms` says when the next tick is due)
+and send it key and pointer events through `omd/client/event`; their posts reach
+`component_post` as `{component, module, client, data}`, and detaching
+unmounts their instances.
 
 Raster, pointer and overlays (`terminal_raster_v1`):
 
@@ -1936,7 +1941,7 @@ runtime or published view in this host), `command_unavailable` and
 | `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
 | `omd/client/event` | `{epoch, component, event}` with `event` one of `{kind: 'change', value}`, `{kind: 'change', values}` (strings), `{kind: 'pointer', pointer: {column, row, half?: 0\|1\|null, action: 'down'\|'up'\|'scroll_up'\|'scroll_down'\|'move'\|'drag'\|'enter'\|'leave', button: 'left'\|'right'\|'middle'\|null}}`, `{kind: 'scroll', offset}`, `{kind: 'key', key, text?}` or `{kind: 'focus'}` | `{delivered}`, answered in the order the connection sent its events and actions; the owner (from `component_owners`) gets `component_event` with `client: clientId` and only the kind's fields above (`origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped); `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing or malformed field the kind requires or an event over 64 KiB |
 | `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
-| `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}`; slot `module` with `props: {component}` steps the client's own instance of that view's component module and answers its `tree` with `effective: {next_ms}` |
+| `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}`; slot `module` with `props: {component, columns?, rows?}` (1–65535 cells) steps the client's own instance of that view's component module and answers its `tree` with `effective: {next_ms}` |
 | `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
 | `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails with `recovery_unavailable_during_turn` while the lead thread's turn runs. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
@@ -3106,8 +3111,8 @@ follow the required/optional waits of continuation middleware.
 
 The host answers each host call, including `next` and `time.sleep`, inside the
 running callback, so a callback runs once and makes at most 128 host calls.
-`Date.now()` and `new Date()` return the callback's start time throughout the
-callback, including a state-conflict retry. `hook_budget_ms` bounds the callback's own JavaScript time. A separate 5 s total bounds the callback's JavaScript time plus its waits on terminal operations that need no user answer; exceeding it fails the callback with `callback_execution_budget`. Confirmations and prompts may wait longer, and other host operations keep their own timeouts.
+`Date.now()` and `new Date()` return the callback's start time, advanced only by
+each `time.sleep`'s `slept_ms`, including in a state-conflict retry. `hook_budget_ms` bounds the callback's own JavaScript time. A separate 5 s total bounds the callback's JavaScript time plus its waits on terminal operations that need no user answer; exceeding it fails the callback with `callback_execution_budget`. Confirmations and prompts may wait longer, and other host operations keep their own timeouts.
 Offline runners without an interactive host replay the callback once per host
 call instead.
 

@@ -58,7 +58,7 @@ fn reap() {
             loop {
                 std::thread::sleep(Duration::from_secs(1));
                 for runner in
-                    retire_warm(|runner| !runner.pinned && runner.used.elapsed() >= WARM_IDLE)
+                    retire_warm(|runner| runner.pinned.is_none() && runner.used.elapsed() >= WARM_IDLE)
                 {
                     runner.stop();
                 }
@@ -208,8 +208,10 @@ struct Warm {
     errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
     serve: bool,
-    /// A mounted component's runner: never idle-retired, only unmounted or displaced by newer ones.
-    pinned: bool,
+    /// A mounted component's runner and its owner (`""` for the terminal, else the client): never
+    /// idle-retired, only unmounted or displaced by the owner's newer ones.
+    pinned: Option<String>,
+    born: Instant,
     /// Bytes of the activation request outside its serve fields.
     base: usize,
 }
@@ -228,11 +230,27 @@ pub(super) fn invalidate_warm(key: &str) {
     }
 }
 
-pub(super) fn unmount(id: &str, component: &str) {
-    let instance = format!(":component:{id}:{component}:");
-    for runner in retire_warm(|runner| runner.pinned && runner.key.contains(&instance)) {
+/// Unmounts that a runner mid-step outside the pool must honour when it returns: owner, key part, time.
+static UNMOUNTED: Mutex<Vec<(String, String, Instant)>> = Mutex::new(Vec::new());
+
+fn retire_pinned(owner: &str, part: String) {
+    if let Ok(mut unmounted) = UNMOUNTED.lock() {
+        unmounted.retain(|(.., at)| at.elapsed() < WARM_IDLE);
+        unmounted.push((owner.to_owned(), part.clone(), Instant::now()));
+    }
+    for runner in
+        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part))
+    {
         runner.stop();
     }
+}
+
+pub(super) fn unmount(owner: &str, id: &str, component: &str) {
+    retire_pinned(owner, format!(":component:{id}:{component}:"));
+}
+
+pub(super) fn detach(client: &str) {
+    retire_pinned(client, ":component:".to_owned());
 }
 
 static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
@@ -274,7 +292,8 @@ fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
         errors,
         used: Instant::now(),
         serve,
-        pinned: false,
+        pinned: None,
+        born: Instant::now(),
         base: 0,
     })
 }
@@ -327,7 +346,8 @@ where
         None => {
             let bytes = request_line(request)?;
             let mut warm = warm_runner(node, key, request["serve"] == true)?;
-            warm.pinned = request["event"] == "component";
+            warm.pinned = (request["event"] == "component")
+                .then(|| request["payload"]["client"].as_str().unwrap_or_default().to_owned());
             warm.base = bytes.len().saturating_sub(serve.len());
             (warm, bytes)
         }
@@ -358,29 +378,41 @@ fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
 }
 
 /// Returns a runner to the pool, stopping the least recently used ones of its kind beyond that
-/// kind's size.
+/// kind's size, or stopping it if it was unmounted while out of the pool.
 fn pool(mut runner: Warm) {
     runner.used = Instant::now();
-    let kind = (runner.serve, runner.pinned);
+    let kind = (runner.serve, runner.pinned.clone());
     let size = match kind {
-        (_, true) => PINNED_RUNNERS,
-        (true, false) => WARM_RUNNERS,
-        (false, false) => REUSED_RUNNERS,
+        (_, Some(_)) => PINNED_RUNNERS,
+        (true, None) => WARM_RUNNERS,
+        (false, None) => REUSED_RUNNERS,
     };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {
+            let unmounted = kind.1.as_ref().is_some_and(|owner| {
+                UNMOUNTED.lock().is_ok_and(|unmounted| {
+                    unmounted.iter().any(|(by, part, at)| {
+                        by == owner && runner.key.contains(part) && runner.born <= *at
+                    })
+                })
+            });
+            if unmounted {
+                drop(runners);
+                runner.stop();
+                return;
+            }
             runners.push(runner);
             let mut evicted = Vec::new();
             while runners
                 .iter()
-                .filter(|runner| (runner.serve, runner.pinned) == kind)
+                .filter(|runner| (runner.serve, &runner.pinned) == (kind.0, &kind.1))
                 .count()
                 > size
             {
                 let oldest = runners
                     .iter()
                     .enumerate()
-                    .filter(|(_, runner)| (runner.serve, runner.pinned) == kind)
+                    .filter(|(_, runner)| (runner.serve, &runner.pinned) == (kind.0, &kind.1))
                     .min_by_key(|(_, runner)| runner.used)
                     .map_or(0, |(index, _)| index);
                 evicted.push(runners.swap_remove(oldest));

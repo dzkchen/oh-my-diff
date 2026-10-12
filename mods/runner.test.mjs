@@ -86,6 +86,12 @@ test('typed module context callback', () => {
   const reply = run('export default (api: any) => api.on("context", () => ({text:"hello"}))', { capabilities: ['context'], event: 'context' });
   assert.deepEqual(reply.value, { text: 'hello' });
 });
+test('a callback clock stands still except across its own sleeps', () => {
+  const source = 'export default api => api.command("wait", async () => { const start = Date.now(); api.host.call("session.info", null); const mid = Date.now(); await api.time.sleep(40); return [mid - start, Date.now() - start, new Date().getTime() - start]; })';
+  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, surface: currentSurface, event: 'command', name: 'wait', virtual_time_ms: 1000 };
+  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {}, []);
+  assert.deepEqual(reply.value, [0, 40, 40]);
+});
 test('the test harness kills an interactive callback that never returns', () => {
   const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', surface: currentSurface, hook_budget_ms: 50 };
   assert.throws(() => callback(request, () => null, []), /runner_timed_out/);
@@ -116,8 +122,12 @@ test('component module steps deliver input, ticks and one post without host auth
   assert.match(run(source, { capabilities: ['commands'] }).error, /capability_denied: terminal/);
   const writer = 'export default api => api.component("w", { view: () => { api.state.set(1); return []; } })';
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
-  const slow = 'export default api => api.component("s", { view: () => { const end = Date.now(); for (let i = 0; i < 3e7; i += 1) {} return []; } })';
-  assert.match(run(slow, { capabilities: ['terminal'], event: 'component', name: 's', payload: { now: 0, events: [] } }).error, /component_overrun: s/);
+  const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
+    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface: currentSurface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
+  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+    input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
+  }).stdout.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
   assert.match(run('export default api => api.component("x", { view: 1 })', { capabilities: ['terminal'] }).error, /handler_required: x/);
   const paused = start => `export default api => api.component("p", { init: () => ${start}, every: { ms: n => n ? null : 20, tick: n => n + 1 }, view: n => [{ type: "text", id: "n", label: "N", text: String(n) }] })`;
   const pausedStep = start => run(paused(start), { capabilities: ['terminal'], event: 'component', name: 'p', payload: { now: 100, events: [] } }).value.next_ms;

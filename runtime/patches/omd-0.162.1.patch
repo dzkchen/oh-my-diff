@@ -41985,10 +41985,10 @@ index 000000000..aef1c863b
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 000000000..694a68856
+index 000000000..a184bcda3
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,927 @@
+@@ -0,0 +1,931 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -42477,7 +42477,9 @@ index 000000000..694a68856
 +        }
 +        let epoch = wire_epoch(clients::published().as_deref());
 +        let replaced = self.attached().remove(&connection_id);
-+        drop(replaced);
++        if let Some(replaced) = replaced {
++            clients::detached(&replaced.client_id);
++        }
 +        let client_id = format!(
 +            "client-{}",
 +            self.next_client.fetch_add(1, Ordering::Relaxed) + 1
@@ -42908,7 +42910,9 @@ index 000000000..694a68856
 +
 +    pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
 +        let detached = self.attached().remove(&connection_id);
-+        drop(detached);
++        if let Some(detached) = detached {
++            clients::detached(&detached.client_id);
++        }
 +        self.fail_calls(connection_id).await;
 +    }
 +}
@@ -51866,10 +51870,10 @@ index 000000000..dee9d2781
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..5e6a8cd38
+index 000000000..19af6e769
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,747 @@
+@@ -0,0 +1,815 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -52089,8 +52093,20 @@ index 000000000..5e6a8cd38
 +        .collect())
 +}
 +
-+/// Steps this client's own instance of a component module, delivering `events` and any due ticks.
-+fn module_step(client: &str, component: &str, events: Vec<Value>) -> Result<Value, String> {
++/// Each client's module instances and the size it last rendered them at.
++static MODULE_SIZES: Mutex<BTreeMap<(String, String), (u64, u64)>> = Mutex::new(BTreeMap::new());
++/// Undelivered `component_post` payloads by owner, the latest per client instance.
++static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
++static POSTING: Coalesce = Coalesce::new();
++
++/// Steps this client's own instance of a component module, delivering `events` and any due ticks
++/// at the size given or last rendered (80×24 by default).
++fn module_step(
++    client: &str,
++    component: &str,
++    size: Option<(u64, u64)>,
++    events: Vec<Value>,
++) -> Result<Value, String> {
 +    static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 +    let core = core()?;
 +    let snapshot = snapshot(&core)?;
@@ -52099,32 +52115,76 @@ index 000000000..5e6a8cd38
 +        .view
 +        .module(component)
 +        .ok_or_else(|| format!("view_stale: {component}"))?;
++    let (columns, rows) = {
++        let mut sizes = MODULE_SIZES.lock().map_err(|_| "mod_runtime_poisoned")?;
++        let size = size.unwrap_or_else(|| {
++            sizes
++                .get(&(client.to_owned(), component.to_owned()))
++                .copied()
++                .unwrap_or((80, 24))
++        });
++        sizes.insert((client.to_owned(), component.to_owned()), size);
++        size
++    };
 +    let _thread =
 +        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
-+    let frame = json!({"instance": format!("client.{client}.{component}"), "props": props,
-+        "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
-+        "columns": 80, "rows": 24, "events": events});
++    let frame = json!({"instance": format!("client.{client}.{component}"), "client": client,
++        "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
++        "columns": columns, "rows": rows, "events": events});
 +    let step = codex_omd::component_shared(&core.runtime, &owner, module, frame, || true)
 +        .map_err(|error| error.to_string())?;
-+    if let Some(post) = step["post"].as_object()
-+        && core
-+            .runtime
-+            .lock()
-+            .map_err(|_| "mod_runtime_poisoned")?
-+            .registered(&owner, "component_post")
-+    {
-+        let lead = Lead {
-+            permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
-+            ..session(&core)?
-+        };
-+        let payload = json!({"component": component, "client": client, "data": post["data"]});
-+        block(expansion::REMOTE.scope(
-+            true,
-+            expansion::invoke_one(&core, &lead, owner, "component_post", payload),
-+        ))?
-+        .ok_or("mod_runtime_poisoned")??;
++    if let Some(post) = step["post"].as_object() {
++        let payload = json!({"component": component, "module": module, "client": client,
++            "data": post["data"]});
++        if let Ok(mut posts) = POSTS.lock() {
++            posts.retain(|(queued, queued_payload)| {
++                *queued != owner
++                    || queued_payload["component"] != payload["component"]
++                    || queued_payload["client"] != payload["client"]
++            });
++            posts.push((owner, payload));
++        }
++        POSTING.request(deliver_posts);
 +    }
 +    Ok(step)
++}
++
++/// Delivers queued posts to their owners' `component_post` hooks off the client's request.
++fn deliver_posts() {
++    while let Some((owner, payload)) = POSTS
++        .lock()
++        .ok()
++        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
++    {
++        let Ok(core) = core() else {
++            return;
++        };
++        let registered = core
++            .runtime
++            .lock()
++            .is_ok_and(|runtime| runtime.registered(&owner, "component_post"));
++        let Ok(lead) = session(&core) else {
++            return;
++        };
++        if registered {
++            let lead = Lead {
++                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
++                ..lead
++            };
++            let _ = block(expansion::REMOTE.scope(
++                true,
++                expansion::invoke_one(&core, &lead, owner, "component_post", payload),
++            ));
++        }
++    }
++}
++
++/// Unmounts a detached client's module instances.
++pub fn detached(client: &str) {
++    if let Ok(mut sizes) = MODULE_SIZES.lock() {
++        sizes.retain(|(owner, _), _| owner != client);
++    }
++    codex_omd::component_detach(client);
 +}
 +
 +pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
@@ -52134,7 +52194,7 @@ index 000000000..5e6a8cd38
 +    let owner = owner(&snapshot, component)?.to_owned();
 +    if snapshot.view.module(component).is_some() {
 +        let events = codex_omd::component_events(&Value::Object(payload));
-+        module_step(client, component, events)?;
++        module_step(client, component, None, events)?;
 +        return Ok(json!({"delivered": true}));
 +    }
 +    payload.insert("component".into(), component.into());
@@ -52263,7 +52323,19 @@ index 000000000..5e6a8cd38
 +        let component = props["component"]
 +            .as_str()
 +            .ok_or("render_props_invalid: a module render names its view component")?;
-+        let step = module_step(client, component, Vec::new())?;
++        let dimension = |name: &str| match &props[name] {
++            Value::Null => Ok(None),
++            value => value
++                .as_u64()
++                .filter(|cells| (1..=u64::from(u16::MAX)).contains(cells))
++                .map(Some)
++                .ok_or_else(|| format!("render_props_invalid: {name} must be 1 to 65535 cells")),
++        };
++        let size = match (dimension("columns")?, dimension("rows")?) {
++            (None, None) => None,
++            (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(24))),
++        };
++        let step = module_step(client, component, size, Vec::new())?;
 +        return Ok(json!({"original": props, "effective": {"next_ms": step["next_ms"]},
 +            "tree": step["tree"], "answeredBy": null}));
 +    }
@@ -94386,10 +94458,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..527ef54d3
+index 000000000..64af4b249
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,243 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -94608,6 +94680,7 @@ index 000000000..527ef54d3
 +pub use mods::event_shared;
 +pub use mods::file_stamp;
 +pub use mods::host_namespace;
++pub use mods::component_detach;
 +pub use mods::component_events;
 +pub use mods::component_shared;
 +pub use mods::component_unmount;
@@ -96523,10 +96596,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..718395781
+index 000000000..10020ed4e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5676 @@
+@@ -0,0 +1,5677 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -96540,6 +96613,7 @@ index 000000000..718395781
 +pub use chain::intercept_shared;
 +pub use render::MOD_RENDER_COMPONENTS;
 +pub use render::component_events;
++pub use render::component_detach;
 +pub use render::component_shared;
 +pub use render::component_unmount;
 +pub use render::render_shared;
@@ -99242,7 +99316,7 @@ index 000000000..718395781
 +
 +/// Callbacks documented to run without host operations.
 +fn hostless(event: &str, payload: &Value) -> bool {
-+    event == "terminal"
++    matches!(event, "terminal" | "component")
 +        || event == "intercept"
 +            && matches!(
 +                payload["surface"].as_str(),
@@ -108975,10 +109049,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..4b6ca0cb1
+index 000000000..99b0f7ab9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,489 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -109039,7 +109113,7 @@ index 000000000..4b6ca0cb1
 +            loop {
 +                std::thread::sleep(Duration::from_secs(1));
 +                for runner in
-+                    retire_warm(|runner| !runner.pinned && runner.used.elapsed() >= WARM_IDLE)
++                    retire_warm(|runner| runner.pinned.is_none() && runner.used.elapsed() >= WARM_IDLE)
 +                {
 +                    runner.stop();
 +                }
@@ -109189,8 +109263,10 @@ index 000000000..4b6ca0cb1
 +    errors: std::thread::JoinHandle<Vec<u8>>,
 +    used: Instant,
 +    serve: bool,
-+    /// A mounted component's runner: never idle-retired, only unmounted or displaced by newer ones.
-+    pinned: bool,
++    /// A mounted component's runner and its owner (`""` for the terminal, else the client): never
++    /// idle-retired, only unmounted or displaced by the owner's newer ones.
++    pinned: Option<String>,
++    born: Instant,
 +    /// Bytes of the activation request outside its serve fields.
 +    base: usize,
 +}
@@ -109209,11 +109285,27 @@ index 000000000..4b6ca0cb1
 +    }
 +}
 +
-+pub(super) fn unmount(id: &str, component: &str) {
-+    let instance = format!(":component:{id}:{component}:");
-+    for runner in retire_warm(|runner| runner.pinned && runner.key.contains(&instance)) {
++/// Unmounts that a runner mid-step outside the pool must honour when it returns: owner, key part, time.
++static UNMOUNTED: Mutex<Vec<(String, String, Instant)>> = Mutex::new(Vec::new());
++
++fn retire_pinned(owner: &str, part: String) {
++    if let Ok(mut unmounted) = UNMOUNTED.lock() {
++        unmounted.retain(|(.., at)| at.elapsed() < WARM_IDLE);
++        unmounted.push((owner.to_owned(), part.clone(), Instant::now()));
++    }
++    for runner in
++        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part))
++    {
 +        runner.stop();
 +    }
++}
++
++pub(super) fn unmount(owner: &str, id: &str, component: &str) {
++    retire_pinned(owner, format!(":component:{id}:{component}:"));
++}
++
++pub(super) fn detach(client: &str) {
++    retire_pinned(client, ":component:".to_owned());
 +}
 +
 +static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
@@ -109255,7 +109347,8 @@ index 000000000..4b6ca0cb1
 +        errors,
 +        used: Instant::now(),
 +        serve,
-+        pinned: false,
++        pinned: None,
++        born: Instant::now(),
 +        base: 0,
 +    })
 +}
@@ -109308,7 +109401,8 @@ index 000000000..4b6ca0cb1
 +        None => {
 +            let bytes = request_line(request)?;
 +            let mut warm = warm_runner(node, key, request["serve"] == true)?;
-+            warm.pinned = request["event"] == "component";
++            warm.pinned = (request["event"] == "component")
++                .then(|| request["payload"]["client"].as_str().unwrap_or_default().to_owned());
 +            warm.base = bytes.len().saturating_sub(serve.len());
 +            (warm, bytes)
 +        }
@@ -109339,29 +109433,41 @@ index 000000000..4b6ca0cb1
 +}
 +
 +/// Returns a runner to the pool, stopping the least recently used ones of its kind beyond that
-+/// kind's size.
++/// kind's size, or stopping it if it was unmounted while out of the pool.
 +fn pool(mut runner: Warm) {
 +    runner.used = Instant::now();
-+    let kind = (runner.serve, runner.pinned);
++    let kind = (runner.serve, runner.pinned.clone());
 +    let size = match kind {
-+        (_, true) => PINNED_RUNNERS,
-+        (true, false) => WARM_RUNNERS,
-+        (false, false) => REUSED_RUNNERS,
++        (_, Some(_)) => PINNED_RUNNERS,
++        (true, None) => WARM_RUNNERS,
++        (false, None) => REUSED_RUNNERS,
 +    };
 +    let evicted = match WARM.lock() {
 +        Ok(mut runners) => {
++            let unmounted = kind.1.as_ref().is_some_and(|owner| {
++                UNMOUNTED.lock().is_ok_and(|unmounted| {
++                    unmounted.iter().any(|(by, part, at)| {
++                        by == owner && runner.key.contains(part) && runner.born <= *at
++                    })
++                })
++            });
++            if unmounted {
++                drop(runners);
++                runner.stop();
++                return;
++            }
 +            runners.push(runner);
 +            let mut evicted = Vec::new();
 +            while runners
 +                .iter()
-+                .filter(|runner| (runner.serve, runner.pinned) == kind)
++                .filter(|runner| (runner.serve, &runner.pinned) == (kind.0, &kind.1))
 +                .count()
 +                > size
 +            {
 +                let oldest = runners
 +                    .iter()
 +                    .enumerate()
-+                    .filter(|(_, runner)| (runner.serve, runner.pinned) == kind)
++                    .filter(|(_, runner)| (runner.serve, &runner.pinned) == (kind.0, &kind.1))
 +                    .min_by_key(|(_, runner)| runner.used)
 +                    .map_or(0, |(index, _)| index);
 +                evicted.push(runners.swap_remove(oldest));
@@ -109932,10 +110038,10 @@ index 000000000..1fc4e43b8
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..a6e6c5fc2
+index 000000000..11c0cf2fd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,276 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -110051,6 +110157,7 @@ index 000000000..a6e6c5fc2
 +        .map_err(|_| failure("mod_runtime_poisoned"))?
 +        .generation;
 +    let instance = frame["instance"].as_str().unwrap_or(component).to_owned();
++    let owner = frame["client"].as_str().unwrap_or_default().to_owned();
 +    let value = invoke_shared(
 +        runtime,
 +        id,
@@ -110074,14 +110181,19 @@ index 000000000..a6e6c5fc2
 +            || serde_json::to_vec(&value["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
 +        .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
 +    }) {
-+        process::unmount(id, &instance);
++        process::unmount(&owner, id, &instance);
 +        return Err(failure(format!("invalid_component_tree: {reason}")));
 +    }
 +    Ok(value)
 +}
 +
 +pub fn component_unmount(id: &str, component: &str) {
-+    process::unmount(id, component);
++    process::unmount("", id, component);
++}
++
++/// Unmounts every component module instance a detached client had mounted.
++pub fn component_detach(client: &str) {
++    process::detach(client);
 +}
 +
 +/// A component's input event as the key and pointer events a component module receives.
@@ -110553,10 +110665,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..5b4843f5d
+index 000000000..87be280a7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,910 @@
+@@ -0,0 +1,917 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -110675,6 +110787,11 @@ index 000000000..5b4843f5d
 +  return value;
 +}
 +function hostTryCall(operation, arguments_ = null) {
++  const result = hostReply(operation, arguments_);
++  if (result.ok && operation === 'time.sleep' && Number.isSafeInteger(now) && Number.isSafeInteger(result.value?.slept_ms)) now += result.value.slept_ms;
++  return result;
++}
++function hostReply(operation, arguments_) {
 +  if (activating) throw new Error('host_call_during_registration');
 +  if (pending) throw new Error('concurrent_host_call');
 +  const call = structuredCloneFallback({ operation, arguments: arguments_ });
@@ -111012,8 +111129,9 @@ index 000000000..5b4843f5d
 +    if (encoded.length > 65536) throw new Error('component_post_limit');
 +    posted = { data: JSON.parse(encoded) };
 +  } });
-+  if (!instance || frame.mount) {
-+    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined };
++  const mounting = !instance || frame.mount;
++  if (mounting) {
++    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined, overruns: 0 };
 +    instances.set(address, instance);
 +    if (definition.init) instance.state = definition.init(instance.props, context());
 +  } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
@@ -111047,7 +111165,8 @@ index 000000000..5b4843f5d
 +    next = ms === null ? null : instance.last + ms - frame.now;
 +  }
 +  const tree = definition.view(instance.state, context());
-+  if (clock() - started > 8) throw new Error('component_overrun: ' + request.name);
++  instance.overruns = !mounting && clock() - started > 8 ? instance.overruns + 1 : 0;
++  if (instance.overruns >= 3) throw new Error('component_overrun: ' + request.name);
 +  return { tree: Array.isArray(tree) ? tree : [tree], post: posted, next_ms: next };
 +}
 +function workspacePath(path) {
@@ -126592,10 +126711,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..ee2fa9872
+index 000000000..6cd52bc01
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5321 @@
+@@ -0,0 +1,5367 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131810,6 +131929,52 @@ index 000000000..ee2fa9872
 +            .starts_with("invalid_component_tree")
 +    );
 +    assert_eq!(step("b", "x", ""), Ok(json!("1")));
++}
++
++#[test]
++fn component_runners_belong_to_their_owner_and_cannot_sleep() {
++    let source = "export default api => api.component('tally', { init: () => 0, \
++         key: (n, event) => { if (event.text === 's') api.time.sleep(5000); \
++         if (event.text === 'w') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return n + 1; }, \
++         view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
++    let (temp, _, _) = fixture(source, &["terminal", "events"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let step = |client: Option<&str>, instance: &str, text: &str| {
++        codex_omd::component_shared(
++            &runtime,
++            "fixture",
++            "tally",
++            json!({"instance": instance, "client": client, "now": 0, "columns": 20, "rows": 1,
++                "events": [{"kind": "key", "key": null, "text": text}]}),
++            || true,
++        )
++        .map(|step| step["tree"][0]["text"].clone())
++        .map_err(|error| error.to_string())
++    };
++    let started = std::time::Instant::now();
++    assert!(
++        step(None, "sleeper", "s")
++            .unwrap_err()
++            .contains("time.sleep is not available during component")
++    );
++    assert!(started.elapsed() < std::time::Duration::from_secs(3));
++    for client in ["owner1", "owner2"] {
++        for instance in ["a", "b", "c", "d"] {
++            assert_eq!(step(Some(client), &format!("{client}.{instance}"), "x"), Ok(json!("1")));
++        }
++    }
++    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
++    codex_omd::component_detach("owner1");
++    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("1")));
++    assert_eq!(step(Some("owner2"), "owner2.a", "x"), Ok(json!("2")));
++    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
++    std::thread::scope(|scope| {
++        let busy = scope.spawn(|| step(None, "busy", "w"));
++        std::thread::sleep(std::time::Duration::from_millis(150));
++        codex_omd::component_unmount("fixture", "busy");
++        assert_eq!(busy.join().unwrap(), Ok(json!("2")));
++    });
++    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
 +}
 +
 +#[test]

@@ -167,8 +167,9 @@ async function headless() {
   say({ step: 'inputs', note: 'reviewed by desk', kinds: ['exec'] });
 
   await until('module node', () => component(desk.view(), 'client_tag'));
-  const tag = await desk.session.render('module', { component: 'client_tag' });
+  const tag = await desk.session.render('module', { component: 'client_tag', columns: 30, rows: 1 });
   assert.equal(tag.tree[0].text, 'Click this tag');
+  await rejects(desk.session.render('module', { component: 'client_tag', columns: 0 }), 'render_props_invalid');
   assert.deepEqual(await text.session.event('client_tag', { kind: 'pointer', pointer: { column: 3, row: 0, action: 'down', button: 'left' } }), { delivered: true });
   await until('module post reached its hook', () => component(desk.view(), 'client_tag_clicked')?.text === 'Last click at column 3, row 0');
   say({ step: 'modules', tree: tag.tree[0].text });

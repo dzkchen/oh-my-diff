@@ -216,6 +216,7 @@ pub use mods::effective_settings;
 pub use mods::event_shared;
 pub use mods::file_stamp;
 pub use mods::host_namespace;
+pub use mods::component_detach;
 pub use mods::component_events;
 pub use mods::component_shared;
 pub use mods::component_unmount;

@@ -116,6 +116,11 @@ function canonical(value) {
   return value;
 }
 function hostTryCall(operation, arguments_ = null) {
+  const result = hostReply(operation, arguments_);
+  if (result.ok && operation === 'time.sleep' && Number.isSafeInteger(now) && Number.isSafeInteger(result.value?.slept_ms)) now += result.value.slept_ms;
+  return result;
+}
+function hostReply(operation, arguments_) {
   if (activating) throw new Error('host_call_during_registration');
   if (pending) throw new Error('concurrent_host_call');
   const call = structuredCloneFallback({ operation, arguments: arguments_ });
@@ -453,8 +458,9 @@ function step(frame) {
     if (encoded.length > 65536) throw new Error('component_post_limit');
     posted = { data: JSON.parse(encoded) };
   } });
-  if (!instance || frame.mount) {
-    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined };
+  const mounting = !instance || frame.mount;
+  if (mounting) {
+    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined, overruns: 0 };
     instances.set(address, instance);
     if (definition.init) instance.state = definition.init(instance.props, context());
   } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
@@ -488,7 +494,8 @@ function step(frame) {
     next = ms === null ? null : instance.last + ms - frame.now;
   }
   const tree = definition.view(instance.state, context());
-  if (clock() - started > 8) throw new Error('component_overrun: ' + request.name);
+  instance.overruns = !mounting && clock() - started > 8 ? instance.overruns + 1 : 0;
+  if (instance.overruns >= 3) throw new Error('component_overrun: ' + request.name);
   return { tree: Array.isArray(tree) ? tree : [tree], post: posted, next_ms: next };
 }
 function workspacePath(path) {

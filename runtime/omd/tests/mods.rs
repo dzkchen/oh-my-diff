@@ -5215,6 +5215,52 @@ fn component_modules_keep_state_in_their_runner_until_unmounted() {
 }
 
 #[test]
+fn component_runners_belong_to_their_owner_and_cannot_sleep() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: (n, event) => { if (event.text === 's') api.time.sleep(5000); \
+         if (event.text === 'w') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return n + 1; }, \
+         view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal", "events"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |client: Option<&str>, instance: &str, text: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "client": client, "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": text}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    let started = std::time::Instant::now();
+    assert!(
+        step(None, "sleeper", "s")
+            .unwrap_err()
+            .contains("time.sleep is not available during component")
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    for client in ["owner1", "owner2"] {
+        for instance in ["a", "b", "c", "d"] {
+            assert_eq!(step(Some(client), &format!("{client}.{instance}"), "x"), Ok(json!("1")));
+        }
+    }
+    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
+    codex_omd::component_detach("owner1");
+    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("1")));
+    assert_eq!(step(Some("owner2"), "owner2.a", "x"), Ok(json!("2")));
+    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+    std::thread::scope(|scope| {
+        let busy = scope.spawn(|| step(None, "busy", "w"));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        codex_omd::component_unmount("fixture", "busy");
+        assert_eq!(busy.join().unwrap(), Ok(json!("2")));
+    });
+    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+}
+
+#[test]
 fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
