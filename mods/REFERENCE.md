@@ -1456,7 +1456,7 @@ recorded sessions that allow memory, and `sessions.read {session_id, revision,
 handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
 `message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
 `arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
-each redacted for credentials and cut to 2,048 characters with `truncated`.
+each with credential lines replaced by `[redacted]` (`redacted`; line endings kept) and cut to 2,048 characters with `truncated`.
 Reasoning and other item types are left out. Pages hold at most 16 KiB, a
 session at most 4,096 records (`projection_truncated`), and a changed rollout
 fails the read against its `revision`.
@@ -2191,8 +2191,8 @@ with `executed: false` and never run.
 Both return `{status, text, content, tool_calls, stop_reason, error, route,
 model, request_ids, usage, cache, cost, timing}` from the
 worker's `model_response` records: `usage` is the last request's raw value,
-`cache` sums `read_tokens` and `write_tokens` over the call's requests (`null`
-when a request did not report them), `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
+`cache` sums `read_tokens` and `write_tokens` over the call's requests that reported them (`null`
+when none did), `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
 the provider cut at its token limit returns `status: 'incomplete'` with the
 text that streamed and `stop_reason` (`max_output_tokens`). A provider
 failure returns `status: 'failed'` with `error`; a timeout (at most 300 s) or
@@ -2216,8 +2216,8 @@ cache routing (OpenAI Responses caches prefixes automatically), and sends
 `input[ITEM].content[PART]` of the final body, for provider transports with
 explicit breakpoints: `omd_profiles` turns it into Anthropic `cache_control`
 on that block (or on the system prompt when it falls in the leading developer
-messages) and passes it on in Chat Completions content for providers such as
-OpenRouter. Cache reads and writes come back in `cache` and in each request's
+messages) and, for profiles set up with `--cache-control`, passes it on in Chat
+Completions content for providers such as OpenRouter. Cache reads and writes come back in `cache` and in each request's
 `model_response` record, priced with the route's cached and cache-write rates;
 a provider that ignores the mark reports no reads.
 
@@ -2296,7 +2296,8 @@ summary and its replacement history). Return `{entries}` with only `text`
 changed, or pass a changed input to `next`; a reordered, added, dropped or
 relabelled entry is rejected. A text longer than 96 KiB arrives as consecutive
 entries with the same index, and a batch is split across callbacks of at most
-96 KiB of text, so a pattern spanning a split is not seen whole. Item ids, call
+96 KiB of text; a long text splits after its last whitespace within 96 KiB, so
+only a run of more than 96 KiB without whitespace is cut inside a token. Item ids, call
 ids, roles, order and count never change; a rewritten response item carries
 `rewritten {revision, op: "redact", by: "mod:<id>"}` and reads as not original,
 and a rewritten user message drops its text elements. The interceptor gets no

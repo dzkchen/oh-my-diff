@@ -156,6 +156,7 @@ pub(super) struct Core {
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
     persist_runtime: Arc<Mutex<ModHost>>,
+    intercepted: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
     agents: agents::Agents,
     services: services::Services,
@@ -419,6 +420,7 @@ pub(super) fn install(
         .map_err(|e| e.to_string())?;
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
+    let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts.install_mod_runtime(runtime.clone(), required);
@@ -432,6 +434,7 @@ pub(super) fn install(
             runtime,
             input_runtime,
             persist_runtime,
+            intercepted,
             environment,
             services: services::Services::default(),
             views,
@@ -1395,7 +1398,11 @@ impl TurnLifecycleContributor for Mods {
         &'a self,
         input: codex_extension_api::PersistedTextInput<'a>,
     ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
-        Box::pin(persisted::rewrite(self.core.persist_runtime.clone(), input))
+        Box::pin(persisted::rewrite(
+            self.core.persist_runtime.clone(),
+            &self.core.intercepted,
+            input,
+        ))
     }
 
     fn intercept_user_input<'a>(

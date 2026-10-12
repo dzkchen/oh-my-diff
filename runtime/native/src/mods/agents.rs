@@ -45,6 +45,13 @@ pub(super) fn classify_error(
         "message":message.chars().take(1024).collect::<String>()})
 }
 
+pub(super) fn cache_total(responses: &[Value], key: &str) -> Option<u64> {
+    responses
+        .iter()
+        .filter_map(|response| response["cache"][key].as_u64())
+        .reduce(|sum, tokens| sum + tokens)
+}
+
 fn strip_private(value: &mut Value) {
     match value {
         Value::Object(fields) => {
@@ -1971,20 +1978,12 @@ impl Agents {
             .iter()
             .filter_map(|response| response["cost"]["basis"].as_str())
             .collect::<BTreeSet<_>>();
-        let cached = |key: &str| {
-            responses
-                .iter()
-                .map(|response| response["cache"][key].as_u64())
-                .collect::<Option<Vec<_>>>()
-                .filter(|tokens| !tokens.is_empty())
-                .map(|tokens| tokens.iter().sum::<u64>())
-        };
         Ok(json!({"status": status, "text": text,
             "content": if text.is_empty() { json!([]) } else { json!([{"type": "text", "text": text}]) },
             "tool_calls": tool_calls, "stop_reason": last["stop_reason"], "error": error,
             "route": route, "model": last["served_model"].as_str().or(last["requested_model"].as_str()),
             "request_ids": responses.iter().map(|response| response["request_id"].clone()).collect::<Vec<_>>(),
-            "usage": last["usage"], "cache": {"read_tokens": cached("read_tokens"), "write_tokens": cached("write_tokens")},
+            "usage": last["usage"], "cache": {"read_tokens": cache_total(&responses, "read_tokens"), "write_tokens": cache_total(&responses, "write_tokens")},
             "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.iter().sum::<u64>()),
                 "basis": match bases.len() { 0 => "unknown", 1 => bases.first().copied().unwrap_or("unknown"), _ => "mixed" }},
             "timing": {"duration_ms": started.elapsed().as_millis() as u64,

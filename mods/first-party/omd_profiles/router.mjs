@@ -102,7 +102,7 @@ export function turns(body, profile = null, cache = null) {
 }
 
 export function chatRequest(body, profile, cache = null) {
-  const { system, systemCache, list, table } = turns(body, null, cache);
+  const { system, systemCache, list, table } = turns(body, null, profile.cache_control ? cache : null);
   const messages = system ? [{ role: 'system', content: systemCache ? [{ type: 'text', text: system, ...ephemeral({ cache: true }) }] : system }] : [];
   for (const turn of list) {
     if (turn.role === 'tool') {
@@ -118,7 +118,8 @@ export function chatRequest(body, profile, cache = null) {
       continue;
     }
     const text = content.every(part => part.type === 'text' && !part.cache_control) ? content.map(part => part.text).join('\n') : null;
-    messages.push({ role: turn.role, content: turn.role === 'assistant' ? text || null : text ?? content, ...calls.length ? { tool_calls: calls } : {} });
+    const said = content.filter(part => part.type === 'text');
+    messages.push({ role: turn.role, content: turn.role === 'assistant' ? text || (said.some(part => part.cache_control) ? said : null) : text ?? content, ...calls.length ? { tool_calls: calls } : {} });
   }
   const effort = body.reasoning?.effort;
   const chatEffort = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' }[effort];
@@ -315,7 +316,7 @@ export async function forward(body, profile, inbound, response, signal) {
   emitter.finish(emitter.usage ?? { input_tokens: input, input_tokens_details: { cached_tokens: 0 }, output_tokens: output, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + output, omd_usage_estimated: true });
 }
 
-// Reasoning produced before a switch stays with its account: every later request on that conversation drops it.
+// Reasoning produced before a switch stays with its account: every later request on that conversation drops it (cache-marked worker requests share their key across calls and skip this).
 export function prepare(body, profile, last, foreign = new Map()) {
   const key = body.prompt_cache_key;
   const identity = item => item.id ?? item.encrypted_content;
@@ -376,7 +377,7 @@ async function serve(routePath) {
       if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
       const tokens = estimate(body.input);
       if (profile.window && tokens > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${tokens} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });
-      await forward(prepare(body, profile, last, foreign), profile, request.headers, response, controller.signal);
+      await forward(request.headers['x-omd-cache-breakpoint'] ? body : prepare(body, profile, last, foreign), profile, request.headers, response, controller.signal);
     } catch (error) {
       const message = String(error?.message ?? 'profile_transport_failed').slice(0, 500);
       if (!response.headersSent) response.writeHead(error?.status ?? 502, { 'content-type': 'application/json' });

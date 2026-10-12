@@ -53,9 +53,11 @@ test('host cache breakpoints become cache_control on the marked system or contex
   assert.equal(anthropic.system, 'base\n\nmod system');
   assert.deepEqual(anthropic.messages[0].content.map(part => part.cache_control ?? null), [null, ephemeral, null]);
   assert.deepEqual(anthropicRequest(body, {}, [0, 0]).system, [{ type: 'text', text: 'base\n\nmod system', cache_control: ephemeral }]);
-  const chat = chatRequest(body, {}, [1, 0]);
+  const chat = chatRequest(body, { cache_control: true }, [1, 0]);
   assert.deepEqual(chat.messages[1].content[0], { type: 'text', text: 'context one', cache_control: ephemeral });
-  assert.equal(typeof chatRequest(body, {}).messages[1].content, 'string');
+  assert.deepEqual(chatRequest(body, {}, [1, 0]).messages.map(message => typeof message.content), ['string', 'string']);
+  const forked = { instructions: 'base', input: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'earlier answer' }] }, body.input[1]] };
+  assert.deepEqual(chatRequest(forked, { cache_control: true }, [0, 0]).messages[1].content, [{ type: 'text', text: 'earlier answer', cache_control: ephemeral }]);
 });
 
 test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {
@@ -108,8 +110,8 @@ test('router adapts Responses requests to each protocol through the credential g
       { type: 'function_call_output', call_id: 'old', output: '/repo' },
     ];
     const tools = [{ type: 'function', name: 'exec_command', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }, { type: 'custom', name: 'apply_patch', description: 'patch' }];
-    const ask = async (model, authorization = `Bearer ${token}`, history = input) => {
-      const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json' },
+    const ask = async (model, authorization = `Bearer ${token}`, history = input, headers = {}) => {
+      const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json', ...headers },
         body: JSON.stringify({ model, instructions: 'sys', input: history, tools, reasoning: { effort: 'high' }, stream: true, prompt_cache_key: 'conversation' }) });
       const text = await reply.text();
       return { status: reply.status, events: text.split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
@@ -126,6 +128,8 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
     await ask('b/up');
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
+    await ask('a/up', `Bearer ${token}`, input, { 'x-omd-cache-breakpoint': '1:0' });
+    assert.deepEqual(seen['/responses'].body.input, input);
 
     const chat = await ask('c/up');
     assert.deepEqual(seen['/chat'].body.messages, [

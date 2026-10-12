@@ -317,9 +317,13 @@ test('tool history example pairs the latest session tool calls with their result
   const list = { call: listed.host_call, value: { sessions: [session] } };
   const read = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list] });
   assert.deepEqual(read.host_call, { operation: 'sessions.read', arguments: session });
-  const records = [{ kind: 'message', role: 'user', text: 'Run it.' }, { kind: 'tool_call', name: 'exec_command', call_id: 'c1', arguments: '{}' },
-    { kind: 'tool_result', call_id: 'c1', output: 'ok\nmore' }, { kind: 'tool_call', name: 'apply_patch', call_id: 'c2', arguments: '' }];
-  const shown = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list, { call: read.host_call, value: { records } }] });
+  const first = { call: read.host_call, value: { records: [{ kind: 'message', role: 'user', text: 'Run it.' },
+    { kind: 'tool_call', name: 'exec_command', call_id: 'c1', arguments: '{}' }], cursor: 2 } };
+  const next = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list, first] });
+  assert.deepEqual(next.host_call, { operation: 'sessions.read', arguments: { ...session, cursor: 2 } });
+  const second = { call: next.host_call, value: { records: [{ kind: 'tool_result', call_id: 'c1', output: 'ok\nmore' },
+    { kind: 'tool_call', name: 'apply_patch', call_id: 'c2', arguments: '' }], cursor: null } };
+  const shown = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list, first, second] });
   assert.equal(shown.value.display, 'exec_command: ok\napply_patch: no result');
   assert.equal(run('tool_history', 'command', null, { name: 'recent_tools', receipts: [{ call: listed.host_call, value: { sessions: [] } }] }).value.display,
     'No recorded sessions in this repository.');

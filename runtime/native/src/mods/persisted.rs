@@ -5,19 +5,37 @@ use codex_extension_api::PersistedTextRewrite;
 const CHUNK_BYTES: usize = 98_304;
 const WITHHELD: &str = "[withheld: a required history_persist interceptor failed]";
 
+/// Where a chunk of `text` ends: the last whitespace within `CHUNK_BYTES`, so a token stays whole.
+pub(super) fn cut(text: &str) -> usize {
+    let end = text.floor_char_boundary(CHUNK_BYTES);
+    if end == text.len() {
+        return end;
+    }
+    text[..end]
+        .rfind(|c: char| c.is_ascii_whitespace())
+        .map_or(end, |at| at + 1)
+}
+
 /// Runs `history_persist` interceptors over the texts in chunks that fit one callback;
 /// a longer text arrives as consecutive entries with the same index.
 pub(super) async fn rewrite(
     runtime: Arc<Mutex<ModHost>>,
+    intercepted: &Mutex<Vec<&'static str>>,
     input: PersistedTextInput<'_>,
 ) -> Option<PersistedTextRewrite> {
+    if !intercepted
+        .lock()
+        .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
+    {
+        return None;
+    }
     let thread = input.thread_store.get::<Lead>()?.thread.to_string();
     let mut chunks: Vec<Vec<(usize, Value)>> = vec![Vec::new()];
     let mut size = 0;
     for (index, entry) in input.entries.iter().enumerate() {
         let mut rest = entry.text.as_str();
         loop {
-            let cut = rest.floor_char_boundary(CHUNK_BYTES);
+            let cut = cut(rest);
             if size + cut > CHUNK_BYTES {
                 chunks.push(Vec::new());
                 size = 0;

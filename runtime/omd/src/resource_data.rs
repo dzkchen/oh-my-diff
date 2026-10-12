@@ -25,8 +25,10 @@ pub fn token(value: &str) -> bool {
 
 pub fn redact(text: &str) -> String {
     let mut private_key = false;
-    text.lines()
-        .map(|line| {
+    text.split_inclusive('\n')
+        .map(|segment| {
+            let line = segment.strip_suffix('\n').unwrap_or(segment);
+            let line = line.strip_suffix('\r').unwrap_or(line);
             let lower = line.to_ascii_lowercase();
             let begins_key = lower.contains("-----begin") && lower.contains("private key-----");
             let ends_key = lower.contains("-----end") && lower.contains("private key-----");
@@ -61,13 +63,12 @@ pub fn redact(text: &str) -> String {
                 private_key = false;
             }
             if sensitive {
-                "[redacted]".to_owned()
+                format!("[redacted]{}", &segment[line.len()..])
             } else {
-                line.to_owned()
+                segment.to_owned()
             }
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
 pub fn contains_secret(text: &str) -> bool {
