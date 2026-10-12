@@ -1054,12 +1054,15 @@ before the following 16 ms tick, using the time the producer took from its
 previous acknowledgement to publish. A producer that renders on each
 acknowledgement shows fresh frames with one copy per shown frame. An owned
 invalid descriptor or failed copy returns `ready: false` with an error at once. A failed copy does not consume the sequence, so
-direct callers may retry the same publication. A managed producer's pending raw
+direct callers may retry the same publication; retrying an accepted publication
+reuses its copy without a second acknowledgement. A managed producer's pending raw
 publication is retried while the process is active only for surface, layout and
 callback admission errors (`terminal_blit_unknown`, `terminal_blit_not_owned`,
 `terminal_blit_limit`, `callback_*`, `client_surface_*`); any other error, and
 confirmed owner revocation, stops the process. While a raw frame waits for its
-16 ms tick, a newer raw publication gets backpressure. Backpressure neither copies nor
+16 ms tick, a newer raw publication gets backpressure; a raster whose last frame
+stayed undrawn for four ticks (an inactive tab or unplaced layout) answers
+`retry_after_ms: 250` until it is drawn again. Backpressure neither copies nor
 acknowledges the buffer, so the same publication can be retried safely.
 The host retains the original descriptor, copies a bounded immutable frame,
 and never reopens a child-supplied path. Replacing the pathname cannot redirect

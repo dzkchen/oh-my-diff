@@ -278,7 +278,6 @@ enum Framing {
     Ndjson,
 }
 
-/// A program's sha256, hashed again only when its file stamp changes.
 fn program_sha256(path: &Path) -> io::Result<String> {
     static HASHES: Mutex<BTreeMap<PathBuf, (codex_omd::FileStamp, String)>> =
         Mutex::new(BTreeMap::new());
@@ -304,7 +303,9 @@ struct Frames(Arc<(Mutex<Option<Option<Value>>>, std::sync::Condvar)>);
 
 impl Drop for Frames {
     fn drop(&mut self) {
-        self.stop();
+        let (slot, ready) = &*self.0;
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(None);
+        ready.notify_one();
     }
 }
 
@@ -312,12 +313,6 @@ impl Frames {
     fn offer(&self, image: Value) {
         let (slot, ready) = &*self.0;
         *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(Some(image));
-        ready.notify_one();
-    }
-
-    fn stop(&self) {
-        let (slot, ready) = &*self.0;
-        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(None);
         ready.notify_one();
     }
 }
@@ -973,9 +968,6 @@ impl ManagedProcesses {
                             };
                             if sender.send(result).is_err() || terminal {
                                 alive.store(false, std::sync::atomic::Ordering::Release);
-                                if let Some(frames) = &frames {
-                                    frames.stop();
-                                }
                                 if let Some(notifier) = &notifier {
                                     notifier(ProcessNotice {
                                         owner: owner.clone(),
@@ -1644,7 +1636,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             receiver.recv_timeout(Duration::from_secs(1)).unwrap()["image"]["base64"],
             "AA=="
         );
-        frames.stop();
+        drop(frames);
         assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
     }
 

@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "1f91dbc6790c906dbdef70a6ad66185084f03b0e6c092e23f124544baa9e7084"
+    "sha256": "cb898cc78c74ae292e90d24b8a8f91a5993ad7d5e9172e9ba933c0ee84541ef7"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -201,11 +201,11 @@
     },
     "codex-rs/app-server/src/omd_clients.rs": {
       "before": null,
-      "after": "604d20308763eefc36f101aab218d595e077783aed1d4a0d281ddbfec9718a1b"
+      "after": "9e8d091f65c623efaaf0f6fd39f8be13f1672beb2f53f685a3fb5dbea21a01f9"
     },
     "codex-rs/app-server/src/omd_clients_tests.rs": {
       "before": null,
-      "after": "1907f9101c069f289c0a7f68e795b689c88bc0bf7682ee3f9586ca296d3d4bf9"
+      "after": "590682440b503855a2909b8eb61648af10b44ea281c0fef27208b94a8101dc51"
     },
     "codex-rs/app-server/src/omd_surface.rs": {
       "before": null,
@@ -829,7 +829,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "b10274bd1a9eeca34de8c46f7b9a888dd7603e987dc12ca02654e55ea91e1f55"
+      "after": "1ba6f71c96df87d30ccb160a38ab37c8368e3cf77580296d409ec811b8dfdc7a"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
@@ -1053,7 +1053,7 @@
     },
     "codex-rs/omd/src/client_surface.rs": {
       "before": null,
-      "after": "7909ee8ed03ef059251900e8b7effa799468f70c8d3ffc62c7ea7ed4b4d00d8d"
+      "after": "ce6a2338c29cc2834e2f19536f15119446e9307d7913893dec5c34f8eaec5e14"
     },
     "codex-rs/omd/src/client_surface_tests.rs": {
       "before": null,
@@ -1141,7 +1141,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "e53cbcd8620d7a63112271cf8dc6ff7bf49c543e3d844f99400d80da4ecd61ac"
+      "after": "844350cc716b0877396bae08de21ac8551d1d2782be2d8ec8aef4a83d1f5324e"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1229,7 +1229,7 @@
     },
     "codex-rs/omd/src/process_raster.rs": {
       "before": null,
-      "after": "91d0b6723be9958227cb4efe79a6b468c0e12a8c808eb7cb7226cfaccff1c295"
+      "after": "1a6f3119e462369b605d4dae3866b826d46ef0db379316f8fea7fd6103905338"
     },
     "codex-rs/omd/src/resource_data.rs": {
       "before": null,
@@ -2377,7 +2377,7 @@
     },
     "codex-rs/tui/src/mod_components.rs": {
       "before": null,
-      "after": "8b7afbccb3cb85b8074e6b636b6f0a2410c4edfdff15c294377be6f11224f21b"
+      "after": "b91e64987edb4f672e9bca16e1fd5c100e1029158e7a2098966eb68c93fe1424"
     },
     "codex-rs/tui/src/mod_components_tests.rs": {
       "before": null,
@@ -2389,7 +2389,7 @@
     },
     "codex-rs/tui/src/mod_layout.rs": {
       "before": null,
-      "after": "011e620bd9b0b80bce3823fd36bdeec70b621f44e6dba3f68a864bd688b0c862"
+      "after": "75d3fcce92a733e5c3806d7bc4d8acd25a7bfbfd4a67e8c0f302e325ad300156"
     },
     "codex-rs/tui/src/mod_layout_tests.rs": {
       "before": null,
@@ -2401,11 +2401,11 @@
     },
     "codex-rs/tui/src/mod_raster.rs": {
       "before": null,
-      "after": "aad55394216f9d662170f0c581b400fdbde8f70e6b30072ad1547a82150f1c87"
+      "after": "5c53376b7d5b0fb75e265623a946176bb5d8e2cbb34bdc75e49c62be07627e23"
     },
     "codex-rs/tui/src/mod_raster_tests.rs": {
       "before": null,
-      "after": "16d3dbc478482810b6b6cdb71b82ee72f4f5ab42a2ddc74d4157aaded4bbe8b8"
+      "after": "fdd9590433543ba496fcdaddb3c43f049656fbcdd111886e28dec75d2f09f8fb"
     },
     "codex-rs/tui/src/mod_render.rs": {
       "before": null,

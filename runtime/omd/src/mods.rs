@@ -2368,7 +2368,6 @@ const BROKER_REFRESH: Duration = Duration::from_secs(2);
 
 pub type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
 
-/// A file's device, inode, size, mtime and ctime; any write changes the ctime.
 pub fn file_stamp(metadata: &std::fs::Metadata) -> FileStamp {
     use std::os::unix::fs::MetadataExt;
     (

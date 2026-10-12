@@ -33,7 +33,7 @@ struct PixelBuffer {
     key: Key,
     serial: u64,
     file: File,
-    sequence: u64,
+    accepted: Option<Arc<PixelFrame>>,
     generation: Option<u64>,
     /// When the last ready acknowledgement goes out, and how long the producer then takes to publish.
     released: Option<Instant>,
@@ -70,14 +70,8 @@ impl PixelFrame {
         }
     }
 
-    /// The frame as PNG or JPEG, scaled down to fit `bounds`, shared per format and size; `None` past the encoded-image limit.
     pub fn encoded(&self, jpeg: bool, bounds: (u32, u32)) -> Option<Arc<[u8]>> {
-        let (width, height) = (self.image.width(), self.image.height());
-        let scale = (f64::from(bounds.0) / f64::from(width))
-            .min(f64::from(bounds.1) / f64::from(height))
-            .min(1.0);
-        let scaled = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
-        let size = (scaled(width), scaled(height));
+        let size = fit_within((self.image.width(), self.image.height()), bounds);
         let cache = self
             .encoded
             .lock()
@@ -87,32 +81,48 @@ impl PixelFrame {
             .clone();
         cache
             .get_or_init(|| {
-                self.encode(jpeg, size)
+                encode(&self.image, size, jpeg)
                     .filter(|bytes| bytes.len() <= crate::blob_store::IMAGE_BYTES)
+                    .map(Arc::from)
             })
             .clone()
     }
+}
 
-    fn encode(&self, jpeg: bool, (width, height): (u32, u32)) -> Option<Arc<[u8]>> {
-        let resized;
-        let image = if (width, height) == (self.image.width(), self.image.height()) {
-            &self.image
-        } else {
-            resized = self
-                .image
-                .resize_exact(width, height, image::imageops::FilterType::Triangle);
-            &resized
-        };
-        let mut encoded = std::io::Cursor::new(Vec::new());
-        if jpeg {
-            image::DynamicImage::ImageRgb8(image.to_rgb8())
-                .write_to(&mut encoded, image::ImageFormat::Jpeg)
-                .ok()?;
-        } else {
-            image.write_to(&mut encoded, image::ImageFormat::Png).ok()?;
-        }
-        Some(encoded.into_inner().into())
+pub fn fit_within((width, height): (u32, u32), bounds: (u32, u32)) -> (u32, u32) {
+    let scale = (f64::from(bounds.0) / f64::from(width.max(1)))
+        .min(f64::from(bounds.1) / f64::from(height.max(1)))
+        .min(1.0);
+    let scaled = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
+    (scaled(width), scaled(height))
+}
+
+pub fn resized(
+    image: &image::DynamicImage,
+    (width, height): (u32, u32),
+) -> std::borrow::Cow<'_, image::DynamicImage> {
+    if (width, height) == (image.width(), image.height()) {
+        std::borrow::Cow::Borrowed(image)
+    } else {
+        std::borrow::Cow::Owned(image.resize_exact(
+            width,
+            height,
+            image::imageops::FilterType::Triangle,
+        ))
     }
+}
+
+pub fn encode(image: &image::DynamicImage, size: (u32, u32), jpeg: bool) -> Option<Vec<u8>> {
+    let image = resized(image, size);
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    if jpeg {
+        image::DynamicImage::ImageRgb8(image.to_rgb8())
+            .write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .ok()?;
+    } else {
+        image.write_to(&mut encoded, image::ImageFormat::Png).ok()?;
+    }
+    Some(encoded.into_inner())
 }
 
 impl PixelSource {
@@ -163,9 +173,20 @@ pub fn snapshot(
     {
         return Err("terminal_blit_source_not_owned".into());
     }
+    if let Some(accepted) = buffer
+        .accepted
+        .as_ref()
+        .filter(|accepted| accepted.source == source)
+    {
+        return Ok(accepted.clone());
+    }
     let result = (|| {
         let length = source.byte_len()?;
-        if source.sequence <= buffer.sequence {
+        if buffer
+            .accepted
+            .as_ref()
+            .is_some_and(|accepted| source.sequence <= accepted.source.sequence)
+        {
             return Err("terminal_blit_sequence_stale".into());
         }
         if buffer
@@ -201,14 +222,15 @@ pub fn snapshot(
         {
             return Err("terminal_blit_source_unavailable".into());
         }
-        buffer.sequence = source.sequence;
         if let Some(released) = buffer.released {
             let lead = arrived
                 .saturating_duration_since(released)
                 .min(crate::client_surface::BLIT_FRAME);
             buffer.lead = lead.max(buffer.lead - buffer.lead.saturating_sub(lead) / 8);
         }
-        Ok(Arc::new(PixelFrame::new(source.clone(), image)))
+        let frame = Arc::new(PixelFrame::new(source.clone(), image));
+        buffer.accepted = Some(frame.clone());
+        Ok(frame)
     })();
     let release = next
         .checked_sub(buffer.lead)
@@ -218,17 +240,41 @@ pub fn snapshot(
     let ack = serde_json::json!({"pixels": {"source": source.source, "sequence": source.sequence,
         "ready": result.is_ok(), "error": result.as_ref().err()}});
     match release {
-        Some(release) => {
-            std::thread::spawn(move || {
-                std::thread::sleep(release.saturating_duration_since(Instant::now()));
-                sink(ack);
-            });
-        }
+        Some(release) => acknowledge_at(release, sink, ack),
         None => {
             sink(ack);
         }
     }
     result
+}
+
+fn acknowledge_at(release: Instant, sink: Sink, ack: Value) {
+    static TIMER: OnceLock<std::sync::mpsc::Sender<(Instant, Sink, Value)>> = OnceLock::new();
+    let timer = TIMER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut pending: Vec<(Instant, Sink, Value)> = Vec::new();
+            loop {
+                let received = match pending.iter().map(|(at, _, _)| *at).min() {
+                    Some(at) => receiver.recv_timeout(at.saturating_duration_since(Instant::now())),
+                    None => receiver
+                        .recv()
+                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected),
+                };
+                match received {
+                    Ok(item) => pending.push(item),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+                let now = Instant::now();
+                for (_, sink, ack) in pending.extract_if(.., |(at, _, _)| *at <= now) {
+                    sink(ack);
+                }
+            }
+        });
+        sender
+    });
+    let _ = timer.send((release, sink, ack));
 }
 
 fn bound() -> std::sync::MutexGuard<'static, Bound> {
@@ -306,7 +352,7 @@ impl Binding {
                     key,
                     serial,
                     file,
-                    sequence: 0,
+                    accepted: None,
                     generation,
                     released: None,
                     lead: Duration::ZERO,
@@ -500,7 +546,13 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
             sender.send(()).unwrap();
-            snapshot(Some("copy-thread"), "copy-owner", "copy-frame", source, Instant::now())
+            snapshot(
+                Some("copy-thread"),
+                "copy-owner",
+                "copy-frame",
+                source,
+                Instant::now(),
+            )
         });
         receiver.recv().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -618,20 +670,16 @@ mod tests {
         std::fs::write(&path, [4, 5, 6]).unwrap();
         assert_eq!(frame.image.as_bytes(), &[1, 2, 3]);
         assert_eq!(replies.lock().unwrap()[0]["pixels"]["ready"], true);
-        assert!(
-            snapshot(
-                Some("pixels-thread"),
-                "pixels-owner",
-                "pixels-frame",
-                source.clone(),
-                Instant::now()
-            )
-            .is_err()
-        );
-        assert_eq!(
-            replies.lock().unwrap().last().unwrap()["pixels"]["error"],
-            "terminal_blit_sequence_stale"
-        );
+        let retried = snapshot(
+            Some("pixels-thread"),
+            "pixels-owner",
+            "pixels-frame",
+            source.clone(),
+            Instant::now(),
+        )
+        .unwrap();
+        assert!(Arc::ptr_eq(&retried, &frame));
+        assert_eq!(replies.lock().unwrap().len(), 1);
         assert!(
             snapshot(
                 Some("pixels-thread"),
@@ -665,6 +713,23 @@ mod tests {
             .image
             .as_bytes(),
             &[4, 5, 6]
+        );
+        assert!(
+            snapshot(
+                Some("pixels-thread"),
+                "pixels-owner",
+                "pixels-frame",
+                PixelSource {
+                    sequence: 1,
+                    ..source.clone()
+                },
+                Instant::now()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            replies.lock().unwrap().last().unwrap()["pixels"]["error"],
+            "terminal_blit_sequence_stale"
         );
         source.sequence = 3;
         source.format = "rgba".into();

@@ -1293,7 +1293,6 @@ impl Blit {
     }
 }
 
-/// Whether a `terminal.blit` error reflects surface or raster state that can change, so the same frame may succeed later.
 pub fn blit_retryable(error: &str) -> bool {
     matches!(
         error,
