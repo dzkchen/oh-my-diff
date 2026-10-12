@@ -19093,7 +19093,7 @@ index 24f2964ff..29f30edc1 100644
                  &self.client.request_contributors,
                  &self.client.state.thread_id.to_string(),
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 8d2cd8351..5bda488ee 100644
+index 8d2cd8351..8e46541eb 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -320,6 +320,32 @@ impl CodexThread {
@@ -19129,6 +19129,15 @@ index 8d2cd8351..5bda488ee 100644
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
+@@ -940,7 +966,7 @@ impl CodexThread {
+             .map_err(|err| ThreadStoreError::Internal {
+                 message: err.to_string(),
+             })?;
+-        live_thread.append_items(items).await
++        self.session.append_rollout(live_thread, items).await
+     }
+
+     pub fn state_db(&self) -> Option<StateDbHandle> {
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
 index f4db71b68..be2415cfa 100644
 --- a/codex-rs/core/src/compact.rs
@@ -20629,10 +20638,18 @@ index b53b8445c..be5ecce8e 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index bc086f866..1dafb02cf 100644
+index bc086f866..25cbf4866 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -516,7 +516,64 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -256,6 +256,7 @@ mod mcp_prewarm;
+ mod mcp_refresh;
+ mod mcp_runtime;
+ pub(crate) mod multi_agents;
++mod persisted_text;
+ mod plugin_selection;
+ mod realtime_history;
+ mod retained_context;
+@@ -516,7 +517,64 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
@@ -20697,7 +20714,7 @@ index bc086f866..1dafb02cf 100644
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1112,6 +1169,22 @@ impl SessionIo {
+@@ -1112,6 +1170,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -20720,7 +20737,7 @@ index bc086f866..1dafb02cf 100644
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1493,6 +1566,100 @@ impl Session {
+@@ -1493,6 +1567,100 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -20821,7 +20838,7 @@ index bc086f866..1dafb02cf 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -1946,6 +2113,20 @@ impl Session {
+@@ -1946,6 +2114,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -20842,7 +20859,7 @@ index bc086f866..1dafb02cf 100644
 
              let previous_config = notify_config_contributors
                  .then(|| self.build_effective_session_config(&state.session_configuration));
-@@ -3764,6 +3945,7 @@ impl Session {
+@@ -3764,6 +3946,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -20850,7 +20867,7 @@ index bc086f866..1dafb02cf 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3771,6 +3953,27 @@ impl Session {
+@@ -3771,6 +3954,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -20878,7 +20895,7 @@ index bc086f866..1dafb02cf 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4185,6 +4388,10 @@ impl Session {
+@@ -4185,6 +4389,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -20889,7 +20906,7 @@ index bc086f866..1dafb02cf 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4194,6 +4401,7 @@ impl Session {
+@@ -4194,6 +4402,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -20897,7 +20914,7 @@ index bc086f866..1dafb02cf 100644
                  })
                  .await
              {
-@@ -4281,6 +4489,10 @@ impl Session {
+@@ -4281,6 +4490,10 @@ impl Session {
                  }
              }
          }
@@ -20908,7 +20925,7 @@ index bc086f866..1dafb02cf 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4290,6 +4502,7 @@ impl Session {
+@@ -4290,6 +4503,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -20916,8 +20933,70 @@ index bc086f866..1dafb02cf 100644
                  })
                  .await
              {
+@@ -4487,7 +4701,7 @@ impl Session {
+     #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
+     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
+         if let Some(live_thread) = self.live_thread()
+-            && let Err(e) = live_thread.append_items(items).await
++            && let Err(e) = self.append_rollout(live_thread, items).await
+         {
+             error!("failed to record rollout items: {e:#}");
+             return false;
+diff --git a/codex-rs/core/src/session/realtime_history.rs b/codex-rs/core/src/session/realtime_history.rs
+index 5b1acf487..cb8af77ba 100644
+--- a/codex-rs/core/src/session/realtime_history.rs
++++ b/codex-rs/core/src/session/realtime_history.rs
+@@ -33,16 +33,17 @@ impl Session {
+         if effects.items.is_empty() {
+             return Ok(());
+         }
+-        self.live_thread_for_persistence("append realtime history")?
+-            .append_items(
+-                &effects
+-                    .items
+-                    .iter()
+-                    .cloned()
+-                    .map(RolloutItem::RealtimeItem)
+-                    .collect::<Vec<_>>(),
+-            )
+-            .await?;
++        let live_thread = self.live_thread_for_persistence("append realtime history")?;
++        self.append_rollout(
++            live_thread,
++            &effects
++                .items
++                .iter()
++                .cloned()
++                .map(RolloutItem::RealtimeItem)
++                .collect::<Vec<_>>(),
++        )
++        .await?;
+         for item in effects.items {
+             if !matches!(&item.content, RealtimeItemContent::TranscriptSegment { .. }) {
+                 self.deliver_event_raw(event(RealtimeEvent::HistoryItemStarted(item.clone())))
+diff --git a/codex-rs/core/src/session/retained_context.rs b/codex-rs/core/src/session/retained_context.rs
+index 8c4203bf1..930f6ad99 100644
+--- a/codex-rs/core/src/session/retained_context.rs
++++ b/codex-rs/core/src/session/retained_context.rs
+@@ -104,11 +104,11 @@ impl Session {
+         if let Some(live_thread) = self.live_thread() {
+             // Capture settings under the same permit as the instruction, including when a
+             // goal creates the rollout. No fallible settings catch-up runs after publication.
+-            live_thread
+-                .append_items(&[
+-                    RolloutItem::EventMsg(thread_settings::applied_event(self).await),
+-                    RolloutItem::ResponseItem(item.clone()),
+-                ])
++            let items = [
++                RolloutItem::EventMsg(thread_settings::applied_event(self).await),
++                RolloutItem::ResponseItem(item.clone()),
++            ];
++            self.append_rollout(live_thread, &items)
+                 .await
+                 .map_err(std::io::Error::other)?;
+         }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 263f08f2f..f8a0b809a 100644
+index 263f08f2f..72665ae1f 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -58,6 +58,8 @@ type McpToolApprovalMetadataMap =
@@ -20929,7 +21008,16 @@ index 263f08f2f..f8a0b809a 100644
      pub(crate) thread_id: ThreadId,
      pub(crate) installation_id: String,
      pub(super) tx_event: Sender<Event>,
-@@ -797,6 +799,31 @@ impl Session {
+@@ -97,6 +99,8 @@ pub(crate) struct Session {
+     pub(super) fork_persistence: ForkPersistence,
+     pub(super) forked_from_ordinal_exclusive: Option<u64>,
+     pub(super) next_internal_sub_id: AtomicU64,
++    /// Keeps rollout appends in call order while store-time text rewrites run.
++    pub(super) rollout_order: Mutex<()>,
+ }
+
+ #[derive(Clone)]
+@@ -797,6 +801,31 @@ impl Session {
          git_enrichment_policy: GitEnrichmentPolicy,
          windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
      ) -> anyhow::Result<Arc<Self>> {
@@ -20961,7 +21049,7 @@ index 263f08f2f..f8a0b809a 100644
          debug!(
              "Configuring session: model={}; provider={:?}",
              session_configuration
-@@ -1012,6 +1039,12 @@ impl Session {
+@@ -1012,6 +1041,12 @@ impl Session {
              thread_extension_init,
          );
          thread_extension_data.insert(crate::context::GuardianReviewEvidence::default());
@@ -20974,7 +21062,7 @@ index 263f08f2f..f8a0b809a 100644
          // Kick off independent async setup tasks in parallel to reduce startup latency.
          //
          // - initialize thread persistence with new or resumed session info
-@@ -1682,6 +1715,9 @@ impl Session {
+@@ -1682,6 +1717,9 @@ impl Session {
                  extension_metrics::from_session_telemetry(session_telemetry.clone());
              let workspace_routing = thread_extension_data
                  .get_or_init(|| config.workspace_routing_context());
@@ -20984,7 +21072,7 @@ index 263f08f2f..f8a0b809a 100644
              for contributor in extensions.thread_lifecycle_contributors() {
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
-@@ -1812,6 +1848,7 @@ impl Session {
+@@ -1812,6 +1850,7 @@ impl Session {
              };
              let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
              let sess = Arc::new(Session {
@@ -20992,6 +21080,14 @@ index 263f08f2f..f8a0b809a 100644
                  thread_id,
                  installation_id,
                  tx_event: tx_event.clone(),
+@@ -1844,6 +1883,7 @@ impl Session {
+                 fork_persistence,
+                 forked_from_ordinal_exclusive,
+                 next_internal_sub_id: AtomicU64::new(0),
++                rollout_order: Mutex::new(()),
+             });
+             if let Some(startup) = &startup {
+                 startup.set_session(Arc::clone(&sess));
 diff --git a/codex-rs/core/src/session/step_activation.rs b/codex-rs/core/src/session/step_activation.rs
 index c7a5de027..724125dbc 100644
 --- a/codex-rs/core/src/session/step_activation.rs
@@ -21014,10 +21110,19 @@ index c7a5de027..724125dbc 100644
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 496114a11..3358a42d4 100644
+index 496114a11..b8e084128 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -6545,11 +6545,12 @@ async fn relative_cwd_update_without_environments_resolves_under_session_cwd() {
+@@ -5,6 +5,8 @@ mod notification_tests;
+ use super::mcp_refresh::McpRefresh;
+ #[path = "turn_start_mcp_tests.rs"]
+ mod turn_start_mcp_tests;
++#[path = "persisted_text_tests.rs"]
++mod persisted_text_tests;
+ use super::step_settings::ResolvedStepSettings;
+ use super::step_settings::StepSettings;
+ use super::step_settings::StepSettingsUpdate;
+@@ -6545,11 +6547,12 @@ async fn relative_cwd_update_without_environments_resolves_under_session_cwd() {
 
  #[tokio::test]
  async fn environment_settings_preserve_explicit_primary_cwd() {
@@ -21031,7 +21136,7 @@ index 496114a11..3358a42d4 100644
          let environments = vec![local(environment_cwd.clone())];
          (original_cwd, environment_cwd, environments)
      };
-@@ -6575,6 +6576,16 @@ async fn environment_settings_preserve_explicit_primary_cwd() {
+@@ -6575,6 +6578,16 @@ async fn environment_settings_preserve_explicit_primary_cwd() {
      );
  }
 
@@ -21048,7 +21153,7 @@ index 496114a11..3358a42d4 100644
  #[tokio::test]
  async fn absolute_cwd_update_with_turn_environment_is_allowed() {
      let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
-@@ -7062,6 +7073,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -7062,6 +7075,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
      };
 
      let session = Session {
@@ -21056,7 +21161,15 @@ index 496114a11..3358a42d4 100644
          thread_id,
          installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
          tx_event,
-@@ -8324,10 +8336,11 @@ fn submission_dispatch_span_uses_debug_for_realtime_audio() {
+@@ -7094,6 +7108,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+         fork_persistence: ForkPersistence::Copied,
+         forked_from_ordinal_exclusive: None,
+         next_internal_sub_id: AtomicU64::new(0),
++        rollout_order: tokio::sync::Mutex::new(()),
+     };
+     let per_turn_config = session.build_per_turn_config(
+         &session_configuration,
+@@ -8324,10 +8339,11 @@ fn submission_dispatch_span_uses_debug_for_realtime_audio() {
 
  #[tokio::test]
  async fn turn_environments_set_primary_environment() {
@@ -21069,7 +21182,7 @@ index 496114a11..3358a42d4 100644
 
      let (turn_context, _) = session
          .new_turn_with_sub_id(
-@@ -8444,10 +8457,11 @@ async fn new_task_does_not_change_an_already_running_tasks_environments() {
+@@ -8444,10 +8460,11 @@ async fn new_task_does_not_change_an_already_running_tasks_environments() {
 
  #[tokio::test]
  async fn task_turn_does_not_overlay_legacy_fallback_cwd_onto_stored_thread_environments() {
@@ -21082,7 +21195,7 @@ index 496114a11..3358a42d4 100644
      session
          .update_settings(SessionSettingsUpdate {
              environments: Some(TurnEnvironmentSelections::new(
-@@ -9330,6 +9344,7 @@ where
+@@ -9330,6 +9347,7 @@ where
      };
 
      let session = Arc::new(Session {
@@ -21090,7 +21203,15 @@ index 496114a11..3358a42d4 100644
          thread_id,
          installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
          tx_event,
-@@ -9445,6 +9460,33 @@ pub(crate) async fn make_session_and_context_with_rx() -> (
+@@ -9362,6 +9380,7 @@ where
+         fork_persistence: ForkPersistence::Copied,
+         forked_from_ordinal_exclusive: None,
+         next_internal_sub_id: AtomicU64::new(0),
++        rollout_order: tokio::sync::Mutex::new(()),
+     });
+     let per_turn_config = session.build_per_turn_config(
+         &session_configuration,
+@@ -9445,6 +9464,33 @@ pub(crate) async fn make_session_and_context_with_rx() -> (
      make_session_and_context_with_dynamic_tools_and_rx(Vec::new()).await
  }
 
@@ -21124,7 +21245,7 @@ index 496114a11..3358a42d4 100644
  #[tokio::test]
  async fn cancelled_step_capture_finishes_warning_delivery() {
      struct WarningProvider {
-@@ -12990,6 +13032,106 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
+@@ -12990,6 +13036,106 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
      );
  }
 
@@ -21231,6 +21352,25 @@ index 496114a11..3358a42d4 100644
  #[tokio::test]
  async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
      let (sess, tc, _rx) = make_session_and_context_with_rx().await;
+diff --git a/codex-rs/core/src/session/thread_settings.rs b/codex-rs/core/src/session/thread_settings.rs
+index c45ce098c..c0a78ea37 100644
+--- a/codex-rs/core/src/session/thread_settings.rs
++++ b/codex-rs/core/src/session/thread_settings.rs
+@@ -21,9 +21,11 @@ impl Session {
+     pub(crate) async fn checkpoint_thread_settings(&self) -> ThreadStoreResult<()> {
+         let _settings_guard = acquire_persistence_lock(self).await;
+         if let Some(live_thread) = self.live_thread() {
+-            live_thread
+-                .append_items(&[RolloutItem::EventMsg(applied_event(self).await)])
+-                .await?;
++            self.append_rollout(
++                live_thread,
++                &[RolloutItem::EventMsg(applied_event(self).await)],
++            )
++            .await?;
+             live_thread.flush().await?;
+         }
+         Ok(())
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
 index 64e8786a1..0223239c7 100644
 --- a/codex-rs/core/src/session/turn.rs
@@ -26452,7 +26592,7 @@ index d93373861..857e8752e 100644
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 61cdbe4da..2694f0211 100644
+index 61cdbe4da..2212150e7 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -26486,7 +26626,7 @@ index 61cdbe4da..2694f0211 100644
  pub use thread_lifecycle::ThreadIdleCause;
  pub use thread_lifecycle::ThreadIdleInput;
  pub use thread_lifecycle::ThreadOriginator;
-@@ -44,23 +50,48 @@ pub use thread_lifecycle::ThreadReadyInput;
+@@ -44,23 +50,51 @@ pub use thread_lifecycle::ThreadReadyInput;
  pub use thread_lifecycle::ThreadResumeInput;
  pub use thread_lifecycle::ThreadStartInput;
  pub use thread_lifecycle::ThreadStopInput;
@@ -26521,6 +26661,9 @@ index 61cdbe4da..2694f0211 100644
 +pub use turn_lifecycle::ElicitationInterceptInput;
 +pub use turn_lifecycle::ElicitationResultInput;
 +pub use turn_lifecycle::InstructionsLoadedInput;
++pub use turn_lifecycle::PersistedText;
++pub use turn_lifecycle::PersistedTextInput;
++pub use turn_lifecycle::PersistedTextRewrite;
 +pub use turn_lifecycle::PromptExpandedInput;
 +pub use turn_lifecycle::ToolBatchEndInput;
  pub use turn_lifecycle::TurnAbortInput;
@@ -26535,7 +26678,7 @@ index 61cdbe4da..2694f0211 100644
  pub use world_state::PreviousWorldStateSection;
  pub use world_state::RenderedWorldStateFragment;
  pub use world_state::WorldStateContributionInput;
-@@ -234,6 +265,14 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -234,6 +268,14 @@ pub trait TurnLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -26550,7 +26693,7 @@ index 61cdbe4da..2694f0211 100644
      /// Called before the host drops the completed turn runtime and turn store.
      /// The callback completes before the host emits the turn-complete event.
      fn on_turn_stop<'a>(&'a self, input: TurnStopInput<'a>) -> ExtensionFuture<'a, ()> {
-@@ -259,6 +298,85 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -259,6 +301,93 @@ pub trait TurnLifecycleContributor: Send + Sync {
              let _input = input;
          })
      }
@@ -26564,6 +26707,14 @@ index 61cdbe4da..2694f0211 100644
 +            let _input = input;
 +            UserInputDecision::Keep
 +        })
++    }
++
++    /// Rewrites history text before it is persisted; the live history keeps the original.
++    fn rewrite_persisted_text<'a>(
++        &'a self,
++        _input: PersistedTextInput<'a>,
++    ) -> ExtensionFuture<'a, Option<PersistedTextRewrite>> {
++        Box::pin(std::future::ready(None))
 +    }
 +
 +    fn disabled_collaboration_modes(&self) -> Vec<String> {
@@ -26636,7 +26787,7 @@ index 61cdbe4da..2694f0211 100644
  }
 
  /// Extension contribution that can add turn-local model input.
-@@ -285,6 +403,18 @@ pub trait TurnInputContributor: Send + Sync {
+@@ -285,6 +414,18 @@ pub trait TurnInputContributor: Send + Sync {
  /// Implementations should treat the supplied values as immutable before/after
  /// snapshots of the effective thread configuration.
  pub trait ConfigContributor<C>: Send + Sync {
@@ -26655,7 +26806,7 @@ index 61cdbe4da..2694f0211 100644
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -371,6 +501,17 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -371,6 +512,17 @@ pub trait ToolLifecycleContributor: Send + Sync {
      /// Excludes nested code-mode calls. Observers must return promptly.
      fn on_tool_dispatch(&self, _input: ToolDispatchInput<'_>) {}
 
@@ -26673,7 +26824,7 @@ index 61cdbe4da..2694f0211 100644
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -387,6 +528,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -387,6 +539,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -26685,7 +26836,7 @@ index 61cdbe4da..2694f0211 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -405,6 +551,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -405,6 +562,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -26929,10 +27080,10 @@ index 3b31eaaf5..92e18ac0b 100644
 
  /// The execution interval represented by a tool timing observation.
 diff --git a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
-index 7361c20c5..ecefc84a5 100644
+index 7361c20c5..de6998af4 100644
 --- a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
-@@ -70,3 +70,180 @@ pub struct TurnErrorInput<'a> {
+@@ -70,3 +70,204 @@ pub struct TurnErrorInput<'a> {
      /// Store scoped to this turn runtime.
      pub turn_store: &'a ExtensionData,
  }
@@ -26974,6 +27125,30 @@ index 7361c20c5..ecefc84a5 100644
 +    Keep,
 +    Rewrite { text: String, notice: String },
 +    Deny { notice: String },
++}
++
++/// One text field of a history entry about to be persisted.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct PersistedText {
++    /// The response item type, `event:user_message`, `event:agent_message`,
++    /// `compacted`, `delivered_message`, `sender_user_messages` or `inter_agent_communication`.
++    pub kind: &'static str,
++    pub role: Option<String>,
++    pub call_id: Option<String>,
++    pub text: String,
++}
++
++pub struct PersistedTextInput<'a> {
++    pub entries: &'a [PersistedText],
++    pub session_store: &'a ExtensionData,
++    pub thread_store: &'a ExtensionData,
++}
++
++/// Replacement texts in entry order and who supplied them.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct PersistedTextRewrite {
++    pub texts: Vec<String>,
++    pub by: String,
 +}
 +
 +pub struct CompactionLifecycleInput<'a> {
@@ -27114,7 +27289,7 @@ index 7361c20c5..ecefc84a5 100644
 +    pub thread_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index c8436c8fe..321b131dc 100644
+index c8436c8fe..27dd63f5f 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -7,6 +7,8 @@ mod tool_policy;
@@ -27138,7 +27313,7 @@ index c8436c8fe..321b131dc 100644
  pub use codex_context_fragments::ContextualUserFragment;
  pub use codex_mcp::McpProtocolMode;
  pub use codex_mcp::ToolInfo as McpToolInfo;
-@@ -44,14 +51,32 @@ pub use codex_tools::TurnItemEmissionFuture;
+@@ -44,21 +51,43 @@ pub use codex_tools::TurnItemEmissionFuture;
  pub use codex_tools::TurnItemEmitter;
  pub use codex_tools::parse_tool_input_schema;
  pub use codex_tools::parse_tool_input_schema_without_compaction;
@@ -27171,15 +27346,18 @@ index c8436c8fe..321b131dc 100644
  pub use contributors::McpServerContribution;
  pub use contributors::McpServerContributionContext;
  pub use contributors::McpServerContributor;
-@@ -59,6 +84,7 @@ pub use contributors::McpToolContext;
+ pub use contributors::McpToolContext;
  pub use contributors::McpToolResultInput;
  pub use contributors::McpToolSource;
++pub use contributors::PersistedText;
++pub use contributors::PersistedTextInput;
++pub use contributors::PersistedTextRewrite;
  pub use contributors::PreviousWorldStateSection;
 +pub use contributors::PromptExpandedInput;
  pub use contributors::PromptFragment;
  pub use contributors::PromptSlot;
  pub use contributors::RenderedWorldStateFragment;
-@@ -70,6 +96,8 @@ pub use contributors::SkillInvocationContributor;
+@@ -70,6 +99,8 @@ pub use contributors::SkillInvocationContributor;
  pub use contributors::SkillInvocationInput;
  pub use contributors::SkillInvocationKind;
  pub use contributors::SynchronousApprovalReviewer;
@@ -27188,7 +27366,7 @@ index c8436c8fe..321b131dc 100644
  pub use contributors::ThreadIdleCause;
  pub use contributors::ThreadIdleInput;
  pub use contributors::ThreadLifecycleContributor;
-@@ -79,16 +107,35 @@ pub use contributors::ThreadResumeInput;
+@@ -79,16 +110,35 @@ pub use contributors::ThreadResumeInput;
  pub use contributors::ThreadStartInput;
  pub use contributors::ThreadStopInput;
  pub use contributors::TokenUsageContributor;
@@ -27224,7 +27402,7 @@ index c8436c8fe..321b131dc 100644
  pub use contributors::TurnErrorInput;
  pub use contributors::TurnInputContext;
  pub use contributors::TurnInputContributor;
-@@ -98,8 +145,11 @@ pub use contributors::TurnLifecycleContributor;
+@@ -98,8 +148,11 @@ pub use contributors::TurnLifecycleContributor;
  pub use contributors::TurnStartInput;
  pub use contributors::TurnStartPhase;
  pub use contributors::TurnStopInput;
@@ -45365,6 +45543,454 @@ index 000000000..e90443b07
 +        );
 +    }
 +}
+diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
+new file mode 100644
+index 000000000..a8a4cca11
+--- /dev/null
++++ b/codex-rs/core/src/session/persisted_text.rs
+@@ -0,0 +1,266 @@
++use std::borrow::Cow;
++
++use codex_extension_api::PersistedText;
++use codex_extension_api::PersistedTextInput;
++use codex_history::HistoryRewriteProvenance;
++use codex_history::ResponseItemEnvelope;
++use codex_history::RolloutItem;
++use codex_protocol::items::AgentMessageContent;
++use codex_protocol::items::TurnItem;
++use codex_protocol::models::AgentMessageInputContent;
++use codex_protocol::models::ContentItem;
++use codex_protocol::models::FunctionCallOutputBody;
++use codex_protocol::models::FunctionCallOutputContentItem;
++use codex_protocol::models::ResponseItem;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::user_input::UserInput;
++use codex_thread_store::LiveThread;
++use codex_thread_store::ThreadStoreResult;
++
++use super::Session;
++
++/// Receives each text field with its kind, role and call id; returns whether it changed the text.
++type Visit<'v> = dyn FnMut(&'static str, Option<&str>, Option<&str>, &mut String) -> bool + 'v;
++
++impl Session {
++    pub(crate) async fn append_rollout(
++        &self,
++        live_thread: &LiveThread,
++        items: &[RolloutItem],
++    ) -> ThreadStoreResult<()> {
++        let _order = self.rollout_order.lock().await;
++        live_thread.append_items(&self.persisted(items).await).await
++    }
++
++    /// Offers the texts of items about to be persisted to store-time rewrites.
++    pub(crate) async fn persisted<'a>(&self, items: &'a [RolloutItem]) -> Cow<'a, [RolloutItem]> {
++        let contributors = self.services.extensions.turn_lifecycle_contributors();
++        if contributors.is_empty() || !items.iter().any(offered) {
++            return Cow::Borrowed(items);
++        }
++        let mut owned = items.to_vec();
++        let mut entries = Vec::new();
++        let unchanged = HistoryRewriteProvenance {
++            revision: String::new(),
++            op: String::new(),
++            source: None,
++            by: String::new(),
++        };
++        for item in &mut owned {
++            rollout_item(item, &unchanged, &mut |kind, role, call_id, text| {
++                entries.push(PersistedText {
++                    kind,
++                    role: role.map(str::to_owned),
++                    call_id: call_id.map(str::to_owned),
++                    text: text.clone(),
++                });
++                false
++            });
++        }
++        if entries.is_empty() {
++            return Cow::Borrowed(items);
++        }
++        let mut by = Vec::new();
++        for contributor in contributors {
++            let Some(rewrite) = contributor
++                .rewrite_persisted_text(PersistedTextInput {
++                    entries: &entries,
++                    session_store: &self.services.session_extension_data,
++                    thread_store: &self.services.thread_extension_data,
++                })
++                .await
++            else {
++                continue;
++            };
++            if rewrite.texts.len() == entries.len() {
++                for (entry, text) in entries.iter_mut().zip(rewrite.texts) {
++                    entry.text = text;
++                }
++                by.push(rewrite.by);
++            }
++        }
++        if by.is_empty() {
++            return Cow::Borrowed(items);
++        }
++        let provenance = HistoryRewriteProvenance {
++            revision: self.thread_id().to_string(),
++            op: "redact".to_owned(),
++            source: None,
++            by: by.join(", "),
++        };
++        let mut texts = entries.into_iter().map(|entry| entry.text);
++        for item in &mut owned {
++            rollout_item(item, &provenance, &mut |_, _, _, text| {
++                let Some(replacement) = texts.next() else {
++                    return false;
++                };
++                let changed = *text != replacement;
++                *text = replacement;
++                changed
++            });
++        }
++        Cow::Owned(owned)
++    }
++}
++
++fn offered(item: &RolloutItem) -> bool {
++    matches!(
++        item,
++        RolloutItem::ResponseItem(_)
++            | RolloutItem::Compacted(_)
++            | RolloutItem::InterAgentCommunication(_)
++            | RolloutItem::EventMsg(
++                EventMsg::UserMessage(_) | EventMsg::AgentMessage(_) | EventMsg::ItemCompleted(_)
++            )
++    )
++}
++
++fn rollout_item(
++    item: &mut RolloutItem,
++    provenance: &HistoryRewriteProvenance,
++    visit: &mut Visit<'_>,
++) {
++    match item {
++        RolloutItem::ResponseItem(item) => envelope(item, provenance, visit),
++        RolloutItem::Compacted(compacted) => {
++            visit("compacted", None, None, &mut compacted.message);
++            for item in compacted.replacement_history.iter_mut().flatten() {
++                envelope(item, provenance, visit);
++            }
++        }
++        RolloutItem::InterAgentCommunication(communication) => {
++            visit(
++                "inter_agent_communication",
++                None,
++                None,
++                &mut communication.content,
++            );
++        }
++        RolloutItem::EventMsg(EventMsg::UserMessage(event)) => {
++            if visit("event:user_message", Some("user"), None, &mut event.message) {
++                event.text_elements.clear();
++            }
++        }
++        RolloutItem::EventMsg(EventMsg::AgentMessage(event)) => {
++            visit(
++                "event:agent_message",
++                Some("assistant"),
++                None,
++                &mut event.message,
++            );
++        }
++        RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => match &mut event.item {
++            TurnItem::UserMessage(message) => {
++                for input in &mut message.content {
++                    if let UserInput::Text {
++                        text,
++                        text_elements,
++                    } = input
++                        && visit("event:user_message", Some("user"), None, text)
++                    {
++                        text_elements.clear();
++                    }
++                }
++            }
++            TurnItem::AgentMessage(message) => {
++                for AgentMessageContent::Text { text } in &mut message.content {
++                    visit("event:agent_message", Some("assistant"), None, text);
++                }
++            }
++            _ => {}
++        },
++        _ => {}
++    }
++}
++
++fn envelope(
++    envelope: &mut ResponseItemEnvelope,
++    provenance: &HistoryRewriteProvenance,
++    visit: &mut Visit<'_>,
++) {
++    let mut changed = response_item(&mut envelope.item, visit);
++    if let Some(metadata) = envelope.metadata.as_mut() {
++        if let Some(text) = metadata.delivered_assistant_message.as_mut() {
++            changed |= visit("delivered_message", Some("assistant"), None, text);
++        }
++        if let Some(messages) = metadata.sender_user_messages.as_mut() {
++            changed |= visit(
++                "sender_user_messages",
++                Some("user"),
++                None,
++                &mut messages.text,
++            );
++        }
++    }
++    if changed {
++        envelope.metadata.get_or_insert_default().rewritten = Some(provenance.clone());
++    }
++}
++
++fn response_item(item: &mut ResponseItem, visit: &mut Visit<'_>) -> bool {
++    let mut changed = false;
++    match item {
++        ResponseItem::Message { role, content, .. } => {
++            for part in content {
++                if let ContentItem::InputText { text } | ContentItem::OutputText { text } = part {
++                    changed |= visit("message", Some(role), None, text);
++                }
++            }
++        }
++        ResponseItem::AgentMessage { content, .. } => {
++            for part in content {
++                if let AgentMessageInputContent::InputText { text } = part {
++                    changed |= visit("agent_message", None, None, text);
++                }
++            }
++        }
++        ResponseItem::FunctionCall {
++            arguments, call_id, ..
++        } => changed |= visit("function_call", None, Some(call_id), arguments),
++        ResponseItem::CustomToolCall { input, call_id, .. } => {
++            changed |= visit("custom_tool_call", None, Some(call_id), input);
++        }
++        ResponseItem::FunctionCallOutput {
++            call_id, output, ..
++        } => {
++            changed |= body(
++                "function_call_output",
++                call_id.as_deref(),
++                &mut output.body,
++                visit,
++            );
++        }
++        ResponseItem::CustomToolCallOutput {
++            call_id, output, ..
++        } => {
++            changed |= body(
++                "custom_tool_call_output",
++                Some(call_id),
++                &mut output.body,
++                visit,
++            );
++        }
++        _ => {}
++    }
++    changed
++}
++
++fn body(
++    kind: &'static str,
++    call_id: Option<&str>,
++    body: &mut FunctionCallOutputBody,
++    visit: &mut Visit<'_>,
++) -> bool {
++    match body {
++        FunctionCallOutputBody::Text(text) => visit(kind, None, call_id, text),
++        FunctionCallOutputBody::ContentItems(items) => {
++            let mut changed = false;
++            for item in items {
++                if let FunctionCallOutputContentItem::InputText { text } = item {
++                    changed |= visit(kind, None, call_id, text);
++                }
++            }
++            changed
++        }
++    }
++}
+diff --git a/codex-rs/core/src/session/persisted_text_tests.rs b/codex-rs/core/src/session/persisted_text_tests.rs
+new file mode 100644
+index 000000000..0180237c7
+--- /dev/null
++++ b/codex-rs/core/src/session/persisted_text_tests.rs
+@@ -0,0 +1,170 @@
++use super::*;
++use pretty_assertions::assert_eq;
++
++struct Redactor;
++
++impl codex_extension_api::TurnLifecycleContributor for Redactor {
++    fn rewrite_persisted_text<'a>(
++        &'a self,
++        input: codex_extension_api::PersistedTextInput<'a>,
++    ) -> codex_extension_api::ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>>
++    {
++        Box::pin(async move {
++            Some(codex_extension_api::PersistedTextRewrite {
++                texts: input
++                    .entries
++                    .iter()
++                    .map(|entry| entry.text.replace("secret-sentinel", "[redacted]"))
++                    .collect(),
++                by: "mod:redactor".to_owned(),
++            })
++        })
++    }
++}
++
++#[tokio::test]
++async fn persisted_text_is_rewritten_at_rest_while_live_history_keeps_the_original() {
++    let (mut session, turn_context) = make_session_and_context().await;
++    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++    builder.turn_lifecycle_contributor(Arc::new(Redactor));
++    session.services.extensions = Arc::new(builder.build());
++    let rollout_path = attach_thread_persistence(&mut session).await;
++    let message_id = ResponseItemId::with_suffix("msg", "secret");
++    let items = [
++        ResponseItem::Message {
++            id: Some(message_id.clone()),
++            role: "user".to_owned(),
++            content: vec![ContentItem::InputText {
++                text: "token secret-sentinel".to_owned(),
++            }],
++            phase: None,
++            internal_chat_message_metadata_passthrough: None,
++        },
++        ResponseItem::FunctionCall {
++            id: None,
++            name: "exec_command".to_owned(),
++            namespace: None,
++            arguments: "{\"cmd\":\"echo secret-sentinel\"}".to_owned(),
++            encrypted_function_args: None,
++            call_id: "call-secret".to_owned(),
++            internal_chat_message_metadata_passthrough: None,
++        },
++        ResponseItem::FunctionCallOutput {
++            id: None,
++            call_id: Some("call-secret".to_owned()),
++            name: None,
++            namespace: None,
++            output: FunctionCallOutputPayload::from_text("secret-sentinel".to_owned()),
++            internal_chat_message_metadata_passthrough: None,
++        },
++    ];
++    session
++        .record_conversation_items(&turn_context, turn_context.model_info(), &items)
++        .await;
++    session
++        .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
++            UserMessageEvent {
++                message: "token secret-sentinel".to_owned(),
++                ..Default::default()
++            },
++        ))])
++        .await;
++    session.flush_rollout().await.expect("rollout should flush");
++
++    let live = session.clone_history().await;
++    assert!(live.raw_items().any(|item| {
++        serde_json::to_string(item).is_ok_and(|text| text.contains("secret-sentinel"))
++    }));
++    let stored = std::fs::read_to_string(&rollout_path).expect("read rollout");
++    assert!(!stored.contains("secret-sentinel"));
++    let InitialHistory::Resumed(resumed) = RolloutRecorder::get_rollout_history(&rollout_path)
++        .await
++        .expect("read rollout history")
++    else {
++        panic!("expected resumed rollout history");
++    };
++    let envelopes = resumed
++        .history
++        .iter()
++        .filter_map(|item| match item {
++            RolloutItem::ResponseItem(envelope) => Some(envelope),
++            _ => None,
++        })
++        .collect::<Vec<_>>();
++    let message = envelopes
++        .iter()
++        .find(|envelope| envelope.item.id() == Some(&message_id))
++        .expect("message keeps its id");
++    assert_eq!(
++        message
++            .metadata
++            .as_ref()
++            .and_then(|metadata| metadata.rewritten.as_ref())
++            .map(|rewritten| (rewritten.op.as_str(), rewritten.by.as_str())),
++        Some(("redact", "mod:redactor"))
++    );
++    assert_eq!(
++        envelopes
++            .iter()
++            .filter_map(|envelope| match &envelope.item {
++                ResponseItem::FunctionCall { call_id, .. }
++                | ResponseItem::FunctionCallOutput {
++                    call_id: Some(call_id),
++                    ..
++                } => Some(call_id.as_str()),
++                _ => None,
++            })
++            .collect::<Vec<_>>(),
++        ["call-secret", "call-secret"]
++    );
++    assert!(stored.contains("[redacted]"));
++}
++
++struct SlowRewriter;
++
++impl codex_extension_api::TurnLifecycleContributor for SlowRewriter {
++    fn rewrite_persisted_text<'a>(
++        &'a self,
++        input: codex_extension_api::PersistedTextInput<'a>,
++    ) -> codex_extension_api::ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>>
++    {
++        Box::pin(async move {
++            if input
++                .entries
++                .iter()
++                .any(|entry| entry.text.contains("slow"))
++            {
++                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++            }
++            None
++        })
++    }
++}
++
++#[tokio::test]
++async fn rollout_appends_keep_call_order_while_a_rewrite_is_pending() {
++    let (mut session, _turn_context) = make_session_and_context().await;
++    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++    builder.turn_lifecycle_contributor(Arc::new(SlowRewriter));
++    session.services.extensions = Arc::new(builder.build());
++    let rollout_path = attach_thread_persistence(&mut session).await;
++    let message = |text: &str| {
++        RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
++            message: text.to_owned(),
++            ..Default::default()
++        }))
++    };
++    let slow = [message("slow first")];
++    tokio::join!(session.persist_rollout_items(&slow), async {
++        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++        session
++            .persist_rollout_items(&[message("fast second")])
++            .await
++    });
++    session.flush_rollout().await.expect("rollout should flush");
++
++    let stored = std::fs::read_to_string(&rollout_path).expect("read rollout");
++    let first = stored.find("slow first").expect("first message stored");
++    let second = stored.find("fast second").expect("second message stored");
++    assert!(first < second);
++}
 diff --git a/codex-rs/core/src/tools/approval_gate.rs b/codex-rs/core/src/tools/approval_gate.rs
 new file mode 100644
 index 000000000..3a3b0dfed
@@ -48296,10 +48922,10 @@ index 000000000..71f55c55f
 +codex-login = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..b492115ba
+index 000000000..7b960bbee
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2245 @@
+@@ -0,0 +1,2322 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -48420,6 +49046,8 @@ index 000000000..b492115ba
 +    pub credential: Option<String>,
 +    pub context_window: Option<i64>,
 +    pub max_output_tokens: Option<u64>,
++    /// `"system"` or a context block index: the end of the caller's cacheable prefix.
++    pub cache_through: Option<Value>,
 +    pub capture_tools: bool,
 +}
 +
@@ -48432,6 +49060,30 @@ index 000000000..b492115ba
 +const ROUTE_HEADER: &str = "x-omd-route";
 +const REQUEST_HEADER: &str = "x-omd-request-id";
 +const SYNTHETIC_HEADER: &str = "x-omd-synthetic";
++const CACHE_HEADER: &str = "x-omd-cache-breakpoint";
++
++/// The last cacheable `input[item].content[part]`: the block before the turn's user message
++/// for `"system"`, else that message's context block.
++fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
++    let items = input.as_array()?;
++    let user = items
++        .iter()
++        .rposition(|item| item["type"] == "message" && item["role"] == "user")?;
++    match through.as_u64() {
++        Some(block) => {
++            let block = usize::try_from(block).ok()?;
++            (block + 1 < items[user]["content"].as_array()?.len()).then_some((user, block))
++        }
++        None => {
++            let item = user.checked_sub(1)?;
++            let parts = items[item]["content"]
++                .as_array()
++                .filter(|parts| items[item]["type"] == "message" && !parts.is_empty())?
++                .len();
++            Some((item, parts - 1))
++        }
++    }
++}
 +const SUMMARY_TEXT_BYTES: usize = 4096;
 +const COLLECTED_TEXT_BYTES: usize = 32_768;
 +
@@ -49447,6 +50099,57 @@ index 000000000..b492115ba
 +            edited = true;
 +        } else if let Some(tokens) = account.max_output_tokens {
 +            value["max_output_tokens"] = tokens.into();
++            edited = true;
++        }
++        if let Some((item, part)) = account
++            .cache_through
++            .as_ref()
++            .and_then(|through| cache_breakpoint(&value["input"], through))
++        {
++            let mut prefix = value["input"].as_array().cloned().unwrap_or_default();
++            prefix.truncate(item + 1);
++            if let Some(content) = prefix[item]["content"].as_array_mut() {
++                content.truncate(part + 1);
++            }
++            for entry in &mut prefix {
++                if let Some(entry) = entry.as_object_mut() {
++                    entry.retain(|key, _| {
++                        matches!(
++                            key.as_str(),
++                            "type"
++                                | "role"
++                                | "content"
++                                | "name"
++                                | "namespace"
++                                | "arguments"
++                                | "input"
++                                | "call_id"
++                                | "output"
++                                | "summary"
++                                | "encrypted_content"
++                        )
++                    });
++                }
++            }
++            let key = json!([
++                value["model"],
++                value["instructions"],
++                value["tools"],
++                prefix
++            ]);
++            let key = format!(
++                "omd-cache-{}",
++                &crate::execution::hash(key.to_string().as_bytes())[..32]
++            );
++            // The ChatGPT backend routes prompt caches by session id, not by the body key.
++            request
++                .headers
++                .insert("session-id", key.parse().map_err(denied)?);
++            value["prompt_cache_key"] = key.into();
++            request.headers.insert(
++                CACHE_HEADER,
++                format!("{item}:{part}").parse().map_err(denied)?,
++            );
 +            edited = true;
 +        }
 +        if let Some(mods) = &mods {
@@ -50547,10 +51250,10 @@ index 000000000..b492115ba
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..dee9d2781
+index 000000000..2cf761b75
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1311 @@
+@@ -0,0 +1,1351 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -50592,6 +51295,7 @@ index 000000000..dee9d2781
 +        credential: None,
 +        context_window: Some(1000),
 +        max_output_tokens: None,
++        cache_through: None,
 +        capture_tools: false,
 +    }
 +}
@@ -51254,6 +51958,45 @@ index 000000000..dee9d2781
 +        capped["output"]["text"], "one, two, three",
 +        "the capped answer keeps what streamed"
 +    );
++}
++
++#[test]
++fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports() {
++    let (_root, accounts, _task, mut request, _) = setup();
++    let mut mark = |through: Value, prompt: &str| {
++        accounts
++            .0
++            .lock()
++            .unwrap()
++            .get_mut("child")
++            .unwrap()
++            .cache_through = Some(through);
++        let body = json!({"model":"fixture-model","stream":true,"max_output_tokens":128,"instructions":"base","input":[
++            {"type":"message","id":format!("msg_{prompt}"),"role":"developer","content":[{"type":"input_text","text":"system"}]},
++            {"type":"message","role":"user","content":[{"type":"input_text","text":"document"},{"type":"input_text","text":prompt}]}]});
++        let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
++        accounts.prepare(&mut request, &mut encoded).unwrap();
++        let prepared: Value = serde_json::from_slice(encoded.unwrap().as_bytes()).unwrap();
++        assert_eq!(
++            request.headers["session-id"],
++            prepared["prompt_cache_key"].as_str().unwrap()
++        );
++        (
++            request.headers["x-omd-cache-breakpoint"]
++                .to_str()
++                .unwrap()
++                .to_owned(),
++            prepared["prompt_cache_key"].as_str().unwrap().to_owned(),
++        )
++    };
++    let (first_breakpoint, first) = mark(json!(0), "first question");
++    let (_, second) = mark(json!(0), "second question");
++    let (system_breakpoint, system) = mark(json!("system"), "first question");
++    assert_eq!(first_breakpoint, "1:0");
++    assert_eq!(system_breakpoint, "0:0");
++    assert!(first.starts_with("omd-cache-"));
++    assert_eq!(first, second, "calls sharing the marked prefix share a key");
++    assert_ne!(first, system);
 +}
 +
 +#[test]
@@ -55836,10 +56579,10 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..ce09c5741
+index 000000000..c4354f220
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,722 @@
+@@ -0,0 +1,723 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -56373,6 +57116,7 @@ index 000000000..ce09c5741
 +            credential: route.and_then(|route| route.credential.clone()),
 +            context_window: config.and_then(|config| config.model_context_window),
 +            max_output_tokens: None,
++            cache_through: None,
 +            capture_tools: false,
 +        };
 +        let mut accounts = self
@@ -58512,10 +59256,10 @@ index 000000000..1eeddb40c
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..0c95487c5
+index 000000000..1812fe566
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2381 @@
+@@ -0,0 +1,2401 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -58530,6 +59274,7 @@ index 000000000..0c95487c5
 +mod launch_snapshot;
 +mod operations;
 +mod peering;
++mod persisted;
 +mod roles;
 +pub(crate) mod services;
 +mod snapshots;
@@ -58672,6 +59417,8 @@ index 000000000..0c95487c5
 +    host: Arc<Host>,
 +    runtime: Arc<Mutex<ModHost>>,
 +    input_runtime: Arc<Mutex<ModHost>>,
++    persist_runtime: Arc<Mutex<ModHost>>,
++    intercepted: Arc<Mutex<Vec<&'static str>>>,
 +    environment: Arc<codex_omd::host::Environment>,
 +    agents: agents::Agents,
 +    services: services::Services,
@@ -58931,19 +59678,25 @@ index 000000000..0c95487c5
 +        .map_err(|e| e.to_string())?;
 +    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
 +        .map_err(|e| e.to_string())?;
++    let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
++        .map_err(|e| e.to_string())?;
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
 +    let required = runtime.required_surfaces();
++    let intercepted = runtime.intercepted_surfaces();
 +    let environment = runtime.environment();
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    host.accounts.install_mod_runtime(runtime.clone(), required);
 +    let views = Arc::new(view::Views::new());
 +    let input_runtime = Arc::new(Mutex::new(input_runtime));
++    let persist_runtime = Arc::new(Mutex::new(persist_runtime));
 +    let extension = Arc::new(Mods {
 +        core: Arc::new_cyclic(|core| Core {
 +            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
 +            host,
 +            runtime,
 +            input_runtime,
++            persist_runtime,
++            intercepted,
 +            environment,
 +            services: services::Services::default(),
 +            views,
@@ -59901,6 +60654,17 @@ index 000000000..0c95487c5
 +                .flatten()
 +                .collect(),
 +        }
++    }
++
++    fn rewrite_persisted_text<'a>(
++        &'a self,
++        input: codex_extension_api::PersistedTextInput<'a>,
++    ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
++        Box::pin(persisted::rewrite(
++            self.core.persist_runtime.clone(),
++            &self.core.intercepted,
++            input,
++        ))
 +    }
 +
 +    fn intercept_user_input<'a>(
@@ -61668,10 +62432,10 @@ index 000000000..bfbebeaa6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..8e806b28e
+index 000000000..f8cce145f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2586 @@
+@@ -0,0 +1,2611 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -61717,6 +62481,13 @@ index 000000000..8e806b28e
 +    };
 +    json!({"category":category,"code":code,
 +        "message":message.chars().take(1024).collect::<String>()})
++}
++
++pub(super) fn cache_total(responses: &[Value], key: &str) -> Option<u64> {
++    responses
++        .iter()
++        .filter_map(|response| response["cache"][key].as_u64())
++        .reduce(|sum, tokens| sum + tokens)
 +}
 +
 +fn strip_private(value: &mut Value) {
@@ -62503,12 +63274,20 @@ index 000000000..8e806b28e
 +    tools: Option<Vec<String>>,
 +    #[serde(default)]
 +    timeout_ms: Option<u64>,
++    #[serde(default)]
++    cache: Option<CompleteCache>,
 +}
 +
 +#[derive(Deserialize)]
 +#[serde(deny_unknown_fields)]
 +struct CompleteOutput {
 +    schema: Value,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct CompleteCache {
++    through: Value,
 +}
 +
 +/// Completion and fork options layered on an ordinary worker spawn.
@@ -62519,6 +63298,7 @@ index 000000000..8e806b28e
 +    schema: Option<Value>,
 +    effort: Option<String>,
 +    max_output_tokens: Option<u64>,
++    cache_through: Option<Value>,
 +    history: Option<Vec<ResponseItem>>,
 +    capture_tools: bool,
 +    collect: bool,
@@ -63487,6 +64267,13 @@ index 000000000..8e806b28e
 +            || request
 +                .max_output_tokens
 +                .is_some_and(|tokens| tokens == 0 || tokens > 128_000)
++            || request.cache.as_ref().is_some_and(|cache| {
++                cache.through != "system"
++                    && !cache
++                        .through
++                        .as_u64()
++                        .is_some_and(|block| block < request.context.len() as u64)
++            })
 +        {
 +            return Err("model_call_option_invalid".into());
 +        }
@@ -63526,6 +64313,7 @@ index 000000000..8e806b28e
 +                    schema: request.output.map(|output| output.schema),
 +                    effort: request.effort,
 +                    max_output_tokens: request.max_output_tokens,
++                    cache_through: request.cache.map(|cache| cache.through),
 +                    history,
 +                    capture_tools,
 +                    collect: true,
@@ -63633,7 +64421,7 @@ index 000000000..8e806b28e
 +            "tool_calls": tool_calls, "stop_reason": last["stop_reason"], "error": error,
 +            "route": route, "model": last["served_model"].as_str().or(last["requested_model"].as_str()),
 +            "request_ids": responses.iter().map(|response| response["request_id"].clone()).collect::<Vec<_>>(),
-+            "usage": last["usage"], "cache": last["cache"],
++            "usage": last["usage"], "cache": {"read_tokens": cache_total(&responses, "read_tokens"), "write_tokens": cache_total(&responses, "write_tokens")},
 +            "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.iter().sum::<u64>()),
 +                "basis": match bases.len() { 0 => "unknown", 1 => bases.first().copied().unwrap_or("unknown"), _ => "mixed" }},
 +            "timing": {"duration_ms": started.elapsed().as_millis() as u64,
@@ -64034,6 +64822,7 @@ index 000000000..8e806b28e
 +        {
 +            account.capture_tools = shape.capture_tools;
 +            account.max_output_tokens = shape.max_output_tokens;
++            account.cache_through = shape.cache_through.clone();
 +        }
 +        if shape.collect {
 +            host.accounts.collect(&thread_id.to_string());
@@ -68162,10 +68951,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..aabdd40fe
+index 000000000..66adb1c4d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4724 @@
+@@ -0,0 +1,4768 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -68254,14 +69043,18 @@ index 000000000..aabdd40fe
 +    });
 +    let runtime = ModHost::open(root.clone()).unwrap();
 +    let environment = runtime.environment();
++    let intercepted = runtime.intercepted_surfaces();
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
 +    let views = Arc::new(view::Views::new());
 +    let core = Arc::new_cyclic(|core| Core {
 +        agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
 +        host: host.clone(),
 +        runtime,
 +        input_runtime,
++        persist_runtime,
++        intercepted,
 +        environment,
 +        services: services::Services::default(),
 +        views,
@@ -71060,6 +71853,46 @@ index 000000000..aabdd40fe
 +        unattached.starts_with("client_surface_unavailable"),
 +        "{unattached}"
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn persisted_text_skips_the_runtime_without_interceptors_and_splits_at_whitespace() {
++    let token = format!("{} sk-{}", "a".repeat(98_300), "b".repeat(40));
++    assert_eq!(persisted::cut(&token), 98_301);
++    assert_eq!(persisted::cut(&"a".repeat(98_400)), 98_304);
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let thread_store = ExtensionData::new("thread");
++    thread_store.insert(fixture.lead.clone());
++    let entries = [codex_extension_api::PersistedText {
++        kind: "message",
++        role: Some("user".to_owned()),
++        call_id: None,
++        text: "hi".to_owned(),
++    }];
++    let (extension, session_store) = (mods(&fixture.core), ExtensionData::new("session"));
++    let _held = fixture.core.persist_runtime.lock().unwrap();
++    let rewrite = tokio::time::timeout(
++        std::time::Duration::from_secs(5),
++        extension.rewrite_persisted_text(codex_extension_api::PersistedTextInput {
++            entries: &entries,
++            session_store: &session_store,
++            thread_store: &thread_store,
++        }),
++    );
++    assert_eq!(rewrite.await.ok(), Some(None));
++}
++
++#[test]
++fn completion_cache_totals_sum_the_requests_that_reported_them() {
++    let responses = [
++        json!({"cache": null}),
++        json!({"cache": {"read_tokens": 3, "write_tokens": null}}),
++        json!({"cache": {"read_tokens": 4, "write_tokens": null}}),
++    ];
++    assert_eq!(agents::cache_total(&responses, "read_tokens"), Some(7));
++    assert_eq!(agents::cache_total(&responses, "write_tokens"), None);
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -74506,6 +75339,146 @@ index 000000000..89d5c4e69
 +        Some(Err(error)) => ("failed", Some(error.chars().take(512).collect())),
 +        _ => ("delivered", None),
 +    }
++}
+diff --git a/codex-rs/ext/omd/src/mods/persisted.rs b/codex-rs/ext/omd/src/mods/persisted.rs
+new file mode 100644
+index 000000000..dbf380e2e
+--- /dev/null
++++ b/codex-rs/ext/omd/src/mods/persisted.rs
+@@ -0,0 +1,134 @@
++use super::*;
++use codex_extension_api::PersistedTextInput;
++use codex_extension_api::PersistedTextRewrite;
++
++const CHUNK_BYTES: usize = 98_304;
++const WITHHELD: &str = "[withheld: a required history_persist interceptor failed]";
++
++/// Where a chunk of `text` ends: the last whitespace within `CHUNK_BYTES`, so a token stays whole.
++pub(super) fn cut(text: &str) -> usize {
++    let end = text.floor_char_boundary(CHUNK_BYTES);
++    if end == text.len() {
++        return end;
++    }
++    text[..end]
++        .rfind(|c: char| c.is_ascii_whitespace())
++        .map_or(end, |at| at + 1)
++}
++
++/// Runs `history_persist` interceptors over the texts in chunks that fit one callback;
++/// a longer text arrives as consecutive entries with the same index.
++pub(super) async fn rewrite(
++    runtime: Arc<Mutex<ModHost>>,
++    intercepted: &Mutex<Vec<&'static str>>,
++    input: PersistedTextInput<'_>,
++) -> Option<PersistedTextRewrite> {
++    if !intercepted
++        .lock()
++        .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
++    {
++        return None;
++    }
++    let thread = input.thread_store.get::<Lead>()?.thread.to_string();
++    let mut chunks: Vec<Vec<(usize, Value)>> = vec![Vec::new()];
++    let mut size = 0;
++    for (index, entry) in input.entries.iter().enumerate() {
++        let mut rest = entry.text.as_str();
++        loop {
++            let cut = cut(rest);
++            if size + cut > CHUNK_BYTES {
++                chunks.push(Vec::new());
++                size = 0;
++            }
++            size += cut;
++            chunks.last_mut()?.push((
++                index,
++                json!({"index":index,"kind":entry.kind,"role":entry.role,
++                    "call_id":entry.call_id,"text":&rest[..cut]}),
++            ));
++            rest = &rest[cut..];
++            if rest.is_empty() {
++                break;
++            }
++        }
++    }
++    let count = input.entries.len();
++    tokio::task::spawn_blocking(move || {
++        let _thread = codex_omd::StateThread::enter(Some(thread.clone()));
++        let required = {
++            let mut runtime = runtime.lock().ok()?;
++            runtime.turn_boundary();
++            runtime.intercepts("history_persist")?
++        };
++        let mut texts = vec![String::new(); count];
++        let mut withheld = vec![false; count];
++        let mut by = Vec::new();
++        for chunk in chunks {
++            let entries = chunk.iter().map(|(_, entry)| entry.clone()).collect::<Vec<_>>();
++            let chain = codex_omd::intercept_shared(
++                &runtime,
++                "history_persist",
++                required,
++                json!({"thread_id":thread,"entries":entries}),
++                json!({"caller":"host","thread_id":thread}),
++                || true,
++                |_, call| {
++                    Err(std::io::Error::other(format!(
++                        "host_operation_unavailable: history_persist interceptors run while history is persisted ({})",
++                        call.operation
++                    )))
++                },
++                |input| Ok(json!({"entries": input["entries"]})),
++            )
++            .ok();
++            let rewritten = chain
++                .as_ref()
++                .and_then(|chain| chain.result["entries"].as_array());
++            for (position, (index, original)) in chunk.iter().enumerate() {
++                let given = original["text"].as_str().unwrap_or_default();
++                let text = rewritten
++                    .and_then(|entries| entries.get(position))
++                    .and_then(|entry| entry["text"].as_str());
++                match (text, &chain) {
++                    (Some(text), Some(chain)) => {
++                        if text != given {
++                            by.extend(
++                                chain
++                                    .trace
++                                    .iter()
++                                    .filter(|entry| {
++                                        matches!(entry["outcome"].as_str(), Some("returned" | "passed"))
++                                    })
++                                    .filter_map(|entry| entry["mod"].as_str())
++                                    .filter(|id| *id != "engine")
++                                    .map(|id| format!("mod:{id}")),
++                            );
++                        }
++                        texts[*index].push_str(text);
++                    }
++                    _ => {
++                        withheld[*index] |= required;
++                        texts[*index].push_str(given);
++                    }
++                }
++            }
++        }
++        for (text, withheld) in texts.iter_mut().zip(&withheld) {
++            if *withheld {
++                *text = WITHHELD.to_owned();
++            }
++        }
++        if withheld.contains(&true) {
++            by.push("host".to_owned());
++        }
++        by.sort();
++        by.dedup();
++        (!by.is_empty()).then(|| PersistedTextRewrite {
++            texts,
++            by: by.join(", "),
++        })
++    })
++    .await
++    .ok()
++    .flatten()
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
@@ -96464,10 +97437,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..a1e64942a
+index 000000000..182dcabd3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5651 @@
+@@ -0,0 +1,5670 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -96865,6 +97838,8 @@ index 000000000..a1e64942a
 +    "user_submissions_v1",
 +    "terminal_raster_v1",
 +    "svg_assets_v1",
++    "history_persist_v1",
++    "model_cache_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -97167,6 +98142,7 @@ index 000000000..a1e64942a
 +    ("peer_receive", "peers"),
 +    ("turn_stop", "autonomous"),
 +    ("compaction", "compaction"),
++    ("history_persist", "history"),
 +    ("elicitation", "approvals"),
 +    ("composer_edit", "composer"),
 +    ("component_change", "terminal"),
@@ -99068,6 +100044,7 @@ index 000000000..a1e64942a
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
 +    brokered: Option<(Instant, String, Authority)>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
++    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    environment: Arc<crate::host::Environment>,
 +    policies: Vec<PathBuf>,
 +    managed: Option<Managed>,
@@ -99182,6 +100159,7 @@ index 000000000..a1e64942a
 +                        | "admission"
 +                        | "composer_edit"
 +                        | "component_change"
++                        | "history_persist"
 +                )
 +            )
 +}
@@ -99531,6 +100509,7 @@ index 000000000..a1e64942a
 +            admissions: BTreeMap::new(),
 +            brokered: None,
 +            required_surfaces: Arc::default(),
++            intercepted_surfaces: Arc::default(),
 +            environment: Arc::default(),
 +            policies: Vec::new(),
 +            managed: None,
@@ -99637,7 +100616,7 @@ index 000000000..a1e64942a
 +                .collect(),
 +            reason,
 +        )];
-+        self.publish_required_surfaces();
++        self.publish_surfaces();
 +        self.configuration_sha256.clear();
 +    }
 +
@@ -99752,7 +100731,7 @@ index 000000000..a1e64942a
 +            .filter(|m| m.enabled && m.capabilities.iter().any(|c| c == "request_policy"))
 +            .map(|m| m.path.clone())
 +            .collect();
-+        self.publish_required_surfaces();
++        self.publish_surfaces();
 +        let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
 +        let retained = self.loaded.len();
 +        self.loaded.retain(|_, loaded| {
@@ -99782,7 +100761,7 @@ index 000000000..a1e64942a
 +            self.dynamic_tools.clear();
 +        }
 +        self.unserved = self.unserved_targets(&user);
-+        self.publish_required_surfaces();
++        self.publish_surfaces();
 +        let selection_profile = Profile::new("selection_verification");
 +        let selected = Self::select(
 +            &selections,
@@ -99999,7 +100978,7 @@ index 000000000..a1e64942a
 +        self.generation += 1;
 +        self.dynamic_tools.clear();
 +        self.reload_error = None;
-+        self.publish_required_surfaces();
++        self.publish_surfaces();
 +        if let Err(error) = self.write_installed_service_types() {
 +            self.reload_error = Some(format!("derived_types_unavailable: {error}"));
 +        }
@@ -100009,6 +100988,11 @@ index 000000000..a1e64942a
 +    /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
 +    pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
 +        self.required_surfaces.clone()
++    }
++
++    /// Intercept surfaces with any interceptor, readable while another caller holds the runtime.
++    pub fn intercepted_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
++        self.intercepted_surfaces.clone()
 +    }
 +
 +    pub fn environment(&self) -> Arc<crate::host::Environment> {
@@ -100025,7 +101009,7 @@ index 000000000..a1e64942a
 +        );
 +    }
 +
-+    fn publish_required_surfaces(&self) {
++    fn publish_surfaces(&self) {
 +        let surfaces = MOD_INTERCEPT_SURFACES
 +            .iter()
 +            .map(|(surface, _)| *surface)
@@ -100036,6 +101020,14 @@ index 000000000..a1e64942a
 +            .collect();
 +        if let Ok(mut published) = self.required_surfaces.lock() {
 +            *published = surfaces;
++        }
++        let intercepted = MOD_INTERCEPT_SURFACES
++            .iter()
++            .map(|(surface, _)| *surface)
++            .filter(|surface| self.intercepts(surface).is_some())
++            .collect();
++        if let Ok(mut published) = self.intercepted_surfaces.lock() {
++            *published = intercepted;
 +        }
 +    }
 +
@@ -103416,10 +104408,10 @@ index 000000000..41f123b51
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..fb8a76c46
+index 000000000..2746825db
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1836 @@
+@@ -0,0 +1,1866 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -103688,6 +104680,7 @@ index 000000000..fb8a76c46
 +        "agent_spawn" => &["definition", "prompt", "model", "effort", "cwd", "tools"],
 +        "peer_send" | "peer_receive" => &["data"],
 +        "compaction" => &["summary_prompt"],
++        "history_persist" => &["entries"],
 +        "composer_edit" => &["edit"],
 +        "component_change" => &["to"],
 +        _ => &[],
@@ -103744,6 +104737,7 @@ index 000000000..fb8a76c46
 +        "agent_spawn" => spawn_request(input, before),
 +        "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
 +        "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
++        "history_persist" => persisted_entries(&input["entries"], &before["entries"]),
 +        "component_change" => component_change(&input["kind"], &input["to"]),
 +        "compaction" => {
 +            input["summary_prompt"] == before["summary_prompt"]
@@ -103784,6 +104778,30 @@ index 000000000..fb8a76c46
 +        && edit["text"]
 +            .as_str()
 +            .is_some_and(|text| text.len() <= 65_536)
++}
++
++/// Persisted entries keep their count, order and fields; only each entry's text may change.
++fn persisted_entries(entries: &Value, given: &Value) -> bool {
++    entries
++        .as_array()
++        .zip(given.as_array())
++        .is_some_and(|(entries, given)| {
++            entries.len() == given.len()
++                && entries.iter().zip(given).all(|(entry, given)| {
++                    entry
++                        .as_object()
++                        .zip(given.as_object())
++                        .is_some_and(|(entry, given)| {
++                            entry.len() == given.len()
++                                && entry.iter().all(|(key, value)| {
++                                    key == "text" || given.get(key) == Some(value)
++                                })
++                        })
++                        && entry["text"].as_str().is_some_and(|text| {
++                            text.len() <= given["text"].as_str().map_or(0, str::len).max(65_536)
++                        })
++                })
++        })
 +}
 +
 +/// Tool specs may drop, defer or re-describe tools they were given, never add or rename one.
@@ -104043,6 +105061,10 @@ index 000000000..fb8a76c46
 +        "composer_edit" => {
 +            deny || object.is_some_and(|object| object.len() == 1)
 +                && composer_edit(&result["edit"], &input["edit"])
++        }
++        "history_persist" => {
++            object.is_some_and(|object| object.len() == 1)
++                && persisted_entries(&result["entries"], &input["entries"])
 +        }
 +        "component_change" => {
 +            let key = if input["kind"] == "focus" {
@@ -110403,7 +111425,7 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..45c3c390a
+index 000000000..5054ec72d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
 @@ -0,0 +1,817 @@
@@ -111046,7 +112068,7 @@ index 000000000..45c3c390a
 +      + (options.instructions ? ' ' + options.instructions : '') + ' Reply with JSON {"label": <label>}.';
 +    const call = { route: options.route, prompt: text, system: instructions,
 +      output: { schema: { type: 'object', properties: { label: { type: 'string', enum: labels } }, required: ['label'], additionalProperties: false } } };
-+    for (const key of ['effort', 'timeout_ms', 'max_output_tokens']) if (options[key] !== undefined) call[key] = options[key];
++    for (const key of ['effort', 'timeout_ms', 'max_output_tokens', 'cache']) if (options[key] !== undefined) call[key] = options[key];
 +    const result = hostCall('model.complete', call);
 +    let label = null;
 +    try {
@@ -117923,10 +118945,10 @@ index 000000000..334cbf27e
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 000000000..19b7c69ae
+index 000000000..9a978b298
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,307 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use sha2::{Digest, Sha256};
@@ -117954,8 +118976,10 @@ index 000000000..19b7c69ae
 +
 +pub fn redact(text: &str) -> String {
 +    let mut private_key = false;
-+    text.lines()
-+        .map(|line| {
++    text.split_inclusive('\n')
++        .map(|segment| {
++            let line = segment.strip_suffix('\n').unwrap_or(segment);
++            let line = line.strip_suffix('\r').unwrap_or(line);
 +            let lower = line.to_ascii_lowercase();
 +            let begins_key = lower.contains("-----begin") && lower.contains("private key-----");
 +            let ends_key = lower.contains("-----end") && lower.contains("private key-----");
@@ -117990,13 +119014,12 @@ index 000000000..19b7c69ae
 +                private_key = false;
 +            }
 +            if sensitive {
-+                "[redacted]".to_owned()
++                format!("[redacted]{}", &segment[line.len()..])
 +            } else {
-+                line.to_owned()
++                segment.to_owned()
 +            }
 +        })
-+        .collect::<Vec<_>>()
-+        .join("\n")
++        .collect()
 +}
 +
 +pub fn contains_secret(text: &str) -> bool {
@@ -118600,10 +119623,10 @@ index 000000000..c0fb9b585
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 000000000..bcc07501d
+index 000000000..16d27fb5e
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,522 @@
+@@ -0,0 +1,566 @@
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
@@ -118924,28 +119947,72 @@ index 000000000..bcc07501d
 +                    .to_owned();
 +                continue;
 +            }
-+            if !in_scope
-+                || value["type"] != "response_item"
-+                || payload["type"] != "message"
-+                || !matches!(payload["role"].as_str(), Some("user" | "assistant"))
-+                || payload["channel"] == "analysis"
-+            {
++            if !in_scope || value["type"] != "response_item" {
 +                continue;
 +            }
-+            let text = payload["content"]
-+                .as_array()
-+                .into_iter()
-+                .flatten()
-+                .filter(|item| matches!(item["type"].as_str(), Some("input_text" | "output_text")))
-+                .filter_map(|item| item["text"].as_str())
-+                .collect::<Vec<_>>()
-+                .join("\n");
-+            if text.is_empty() {
-+                continue;
-+            }
++            let parts = |content: &Value| {
++                content
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .filter(|item| {
++                        matches!(item["type"].as_str(), Some("input_text" | "output_text"))
++                    })
++                    .filter_map(|item| item["text"].as_str())
++                    .collect::<Vec<_>>()
++                    .join("\n")
++            };
++            let mut record = json!({"session_id":id,"turn_id":turn,"item":index+1,"timestamp":value["timestamp"],"untrusted":true});
++            let (field, text) = match payload["type"].as_str() {
++                Some("message")
++                    if matches!(payload["role"].as_str(), Some("user" | "assistant"))
++                        && payload["channel"] != "analysis" =>
++                {
++                    let text = parts(&payload["content"]);
++                    if text.is_empty() {
++                        continue;
++                    }
++                    record["kind"] = json!("message");
++                    record["role"] = payload["role"].clone();
++                    ("text", text)
++                }
++                Some(kind @ ("function_call" | "custom_tool_call" | "local_shell_call")) => {
++                    let name = if kind == "local_shell_call" {
++                        "local_shell"
++                    } else {
++                        payload["name"].as_str().unwrap_or_default()
++                    };
++                    let arguments = match kind {
++                        "function_call" => {
++                            payload["arguments"].as_str().unwrap_or_default().to_owned()
++                        }
++                        "custom_tool_call" => {
++                            payload["input"].as_str().unwrap_or_default().to_owned()
++                        }
++                        _ => payload["action"].to_string(),
++                    };
++                    record["kind"] = json!("tool_call");
++                    record["name"] = json!(name.chars().take(128).collect::<String>());
++                    record["call_id"] = payload["call_id"].clone();
++                    ("arguments", arguments)
++                }
++                Some("function_call_output" | "custom_tool_call_output") => {
++                    record["kind"] = json!("tool_result");
++                    record["call_id"] = payload["call_id"].clone();
++                    let output = match &payload["output"] {
++                        Value::String(text) => text.clone(),
++                        content => parts(content),
++                    };
++                    ("output", output)
++                }
++                _ => continue,
++            };
 +            let redacted = redact(&text);
 +            let limited: String = redacted.chars().take(2048).collect();
-+            records.push(json!({"session_id":id,"turn_id":turn,"item":index+1,"role":payload["role"],"text":limited,"truncated":limited.len()<redacted.len(),"redacted":redacted!=text,"timestamp":value["timestamp"],"untrusted":true}));
++            record["truncated"] = json!(limited.len() < redacted.len());
++            record["redacted"] = json!(redacted != text);
++            record[field] = json!(limited);
++            records.push(record);
 +            if records.len() >= 4096 {
 +                return Ok((records, true));
 +            }
@@ -119057,7 +120124,7 @@ index 000000000..bcc07501d
 +                }
 +                let end = start.saturating_add(limit).min(rows.len());
 +                Ok(
-+                    json!({"sessions":rows[start..end],"cursor":(end<rows.len()).then(||format!("{revision}:{end}")),"revision":revision,"scan_truncated":truncated,"unavailable":unavailable,"projection":"local_visible_message_records"}),
++                    json!({"sessions":rows[start..end],"cursor":(end<rows.len()).then(||format!("{revision}:{end}")),"revision":revision,"scan_truncated":truncated,"unavailable":unavailable,"projection":"local_visible_records"}),
 +                )
 +            }
 +            "sessions.read" => {
@@ -119110,7 +120177,7 @@ index 000000000..bcc07501d
 +                    return Err(io::Error::other("session_record_exceeds_page"));
 +                }
 +                Ok(
-+                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_message_records","projection_truncated":projection_truncated}),
++                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_records","projection_truncated":projection_truncated}),
 +                )
 +            }
 +            _ => Err(io::Error::other("session_operation_unavailable")),
@@ -126297,10 +127364,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..046513e26
+index 000000000..9f303d54c
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5177 @@
+@@ -0,0 +1,5224 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131272,6 +132339,53 @@ index 000000000..046513e26
 +}
 +
 +#[test]
++fn history_persist_interceptors_rewrite_only_entry_text() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let path = package(
++        &root,
++        "redact",
++        "export default api => api.intercept('history_persist', (e, next) => {
++            if (e.entries.some(entry => entry.text === 'swap')) return {entries: [...e.entries].reverse()};
++            if (e.entries.some(entry => entry.text === 'rename')) return {entries: e.entries.map(entry => ({...entry, call_id: 'other'}))};
++            return next({...e, entries: e.entries.map(entry => ({...entry, text: entry.text.replaceAll('sk-live', '[redacted]')}))});
++        })",
++        &["history"],
++    );
++    trust(&store, &path, &["history"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let persist = |texts: &[&str]| {
++        let entries = texts
++            .iter()
++            .enumerate()
++            .map(|(index, text)| json!({"index": index, "kind": "function_call_output", "role": null, "call_id": "c", "text": text}))
++            .collect::<Vec<_>>();
++        codex_omd::continue_operation(
++            &runtime,
++            "history_persist",
++            json!({"thread_id": "t", "entries": entries}),
++            json!({"caller": "host", "thread_id": "t"}),
++            || true,
++            |_, _| Err(std::io::Error::other("unexpected host call")),
++            |input| Ok(json!({"entries": input["entries"]})),
++        )
++        .unwrap()["entries"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .map(|entry| entry["text"].as_str().unwrap().to_owned())
++            .collect::<Vec<_>>()
++    };
++    assert_eq!(
++        persist(&["key sk-live-1", "plain"]),
++        ["key [redacted]-1", "plain"]
++    );
++    assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
++    assert_eq!(persist(&["rename"]), ["rename"]);
++}
++
++#[test]
 +fn component_change_interceptors_answer_only_for_the_components_owner() {
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
@@ -134225,10 +135339,10 @@ index 000000000..aca1c2bf7
 +}
 diff --git a/codex-rs/omd/tests/sessions.rs b/codex-rs/omd/tests/sessions.rs
 new file mode 100644
-index 000000000..9237f8944
+index 000000000..b113f1f31
 --- /dev/null
 +++ b/codex-rs/omd/tests/sessions.rs
-@@ -0,0 +1,530 @@
+@@ -0,0 +1,593 @@
 +use codex_omd::sessions::SessionIndex;
 +use serde_json::{Value, json};
 +use std::fs;
@@ -134317,6 +135431,69 @@ index 000000000..9237f8944
 +        .call("sessions.list", json!({}), || true)
 +        .is_err()
 +    );
++}
++
++#[test]
++fn tool_calls_and_results_are_read_beside_messages_with_bounded_payloads() {
++    let (_temp, repo, sessions) = fixture();
++    let rows = [
++        json!({"type":"session_meta","payload":{"id":"session-t","session_id":"task-t","cwd":repo,"timestamp":"2026-09-26T12:00:00Z","memory_mode":"enabled"}}),
++        json!({"type":"turn_context","payload":{"turn_id":"turn-t","cwd":repo}}),
++        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run it."}]}}),
++        json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"ls\"}"}}),
++        json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"x".repeat(3000)}}),
++        json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call-2","input":"*** Begin Patch\r\n*** End Patch\n"}}),
++        json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","output":[{"type":"input_text","text":"Authorization: Bearer private-sentinel"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}}),
++        json!({"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"hidden-reasoning-sentinel"}]}}),
++    ];
++    fs::write(
++        sessions.join("t.jsonl"),
++        rows.iter()
++            .map(|row| row.to_string() + "\n")
++            .collect::<String>(),
++    )
++    .unwrap();
++    let index = SessionIndex {
++        database: None,
++        root: &sessions,
++        repository: &repo,
++        enabled: true,
++    };
++    let list = index.call("sessions.list", json!({}), || true).unwrap();
++    let summary = &list["sessions"][0];
++    let result = index
++        .call(
++            "sessions.read",
++            json!({"session_id":"session-t","revision":summary["revision"],"handle":summary["handle"]}),
++            || true,
++        )
++        .unwrap();
++    let records = result["records"].as_array().unwrap();
++    assert_eq!(result["projection"], "local_visible_records");
++    assert_eq!(
++        records
++            .iter()
++            .map(|record| record["kind"].clone())
++            .collect::<Vec<_>>(),
++        [
++            "message",
++            "tool_call",
++            "tool_result",
++            "tool_call",
++            "tool_result"
++        ]
++    );
++    assert_eq!(records[1]["name"], "exec_command");
++    assert_eq!(records[1]["call_id"], "call-1");
++    assert_eq!(records[1]["arguments"], "{\"cmd\":\"ls\"}");
++    assert_eq!(records[2]["output"].as_str().unwrap().len(), 2048);
++    assert_eq!(records[2]["truncated"], true);
++    assert_eq!(records[3]["arguments"], "*** Begin Patch\r\n*** End Patch\n");
++    assert_eq!(records[3]["redacted"], false);
++    assert_eq!(records[4]["redacted"], true);
++    assert!(!result.to_string().contains("private-sentinel"));
++    assert!(!result.to_string().contains("hidden-reasoning-sentinel"));
++    assert!(!result.to_string().contains("base64"));
 +}
 +
 +#[test]

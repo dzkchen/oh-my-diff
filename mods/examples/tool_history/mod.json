@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "tool_history",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "MIT",
+  "capabilities": [
+    "sessions",
+    "commands"
+  ]
+}

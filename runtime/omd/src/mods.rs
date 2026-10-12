@@ -395,6 +395,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "user_submissions_v1",
     "terminal_raster_v1",
     "svg_assets_v1",
+    "history_persist_v1",
+    "model_cache_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -697,6 +699,7 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("peer_receive", "peers"),
     ("turn_stop", "autonomous"),
     ("compaction", "compaction"),
+    ("history_persist", "history"),
     ("elicitation", "approvals"),
     ("composer_edit", "composer"),
     ("component_change", "terminal"),
@@ -2598,6 +2601,7 @@ pub struct ModHost {
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
@@ -2712,6 +2716,7 @@ fn hostless(event: &str, payload: &Value) -> bool {
                         | "admission"
                         | "composer_edit"
                         | "component_change"
+                        | "history_persist"
                 )
             )
 }
@@ -3061,6 +3066,7 @@ impl ModHost {
             admissions: BTreeMap::new(),
             brokered: None,
             required_surfaces: Arc::default(),
+            intercepted_surfaces: Arc::default(),
             environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
@@ -3167,7 +3173,7 @@ impl ModHost {
                 .collect(),
             reason,
         )];
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         self.configuration_sha256.clear();
     }
 
@@ -3282,7 +3288,7 @@ impl ModHost {
             .filter(|m| m.enabled && m.capabilities.iter().any(|c| c == "request_policy"))
             .map(|m| m.path.clone())
             .collect();
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
@@ -3312,7 +3318,7 @@ impl ModHost {
             self.dynamic_tools.clear();
         }
         self.unserved = self.unserved_targets(&user);
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         let selection_profile = Profile::new("selection_verification");
         let selected = Self::select(
             &selections,
@@ -3529,7 +3535,7 @@ impl ModHost {
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         if let Err(error) = self.write_installed_service_types() {
             self.reload_error = Some(format!("derived_types_unavailable: {error}"));
         }
@@ -3539,6 +3545,11 @@ impl ModHost {
     /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
     pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
         self.required_surfaces.clone()
+    }
+
+    /// Intercept surfaces with any interceptor, readable while another caller holds the runtime.
+    pub fn intercepted_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
+        self.intercepted_surfaces.clone()
     }
 
     pub fn environment(&self) -> Arc<crate::host::Environment> {
@@ -3555,7 +3566,7 @@ impl ModHost {
         );
     }
 
-    fn publish_required_surfaces(&self) {
+    fn publish_surfaces(&self) {
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
@@ -3566,6 +3577,14 @@ impl ModHost {
             .collect();
         if let Ok(mut published) = self.required_surfaces.lock() {
             *published = surfaces;
+        }
+        let intercepted = MOD_INTERCEPT_SURFACES
+            .iter()
+            .map(|(surface, _)| *surface)
+            .filter(|surface| self.intercepts(surface).is_some())
+            .collect();
+        if let Ok(mut published) = self.intercepted_surfaces.lock() {
+            *published = intercepted;
         }
     }
 

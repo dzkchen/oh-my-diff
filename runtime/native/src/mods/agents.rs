@@ -45,6 +45,13 @@ pub(super) fn classify_error(
         "message":message.chars().take(1024).collect::<String>()})
 }
 
+pub(super) fn cache_total(responses: &[Value], key: &str) -> Option<u64> {
+    responses
+        .iter()
+        .filter_map(|response| response["cache"][key].as_u64())
+        .reduce(|sum, tokens| sum + tokens)
+}
+
 fn strip_private(value: &mut Value) {
     match value {
         Value::Object(fields) => {
@@ -829,12 +836,20 @@ struct Complete {
     tools: Option<Vec<String>>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    #[serde(default)]
+    cache: Option<CompleteCache>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CompleteOutput {
     schema: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompleteCache {
+    through: Value,
 }
 
 /// Completion and fork options layered on an ordinary worker spawn.
@@ -845,6 +860,7 @@ struct Shape {
     schema: Option<Value>,
     effort: Option<String>,
     max_output_tokens: Option<u64>,
+    cache_through: Option<Value>,
     history: Option<Vec<ResponseItem>>,
     capture_tools: bool,
     collect: bool,
@@ -1813,6 +1829,13 @@ impl Agents {
             || request
                 .max_output_tokens
                 .is_some_and(|tokens| tokens == 0 || tokens > 128_000)
+            || request.cache.as_ref().is_some_and(|cache| {
+                cache.through != "system"
+                    && !cache
+                        .through
+                        .as_u64()
+                        .is_some_and(|block| block < request.context.len() as u64)
+            })
         {
             return Err("model_call_option_invalid".into());
         }
@@ -1852,6 +1875,7 @@ impl Agents {
                     schema: request.output.map(|output| output.schema),
                     effort: request.effort,
                     max_output_tokens: request.max_output_tokens,
+                    cache_through: request.cache.map(|cache| cache.through),
                     history,
                     capture_tools,
                     collect: true,
@@ -1959,7 +1983,7 @@ impl Agents {
             "tool_calls": tool_calls, "stop_reason": last["stop_reason"], "error": error,
             "route": route, "model": last["served_model"].as_str().or(last["requested_model"].as_str()),
             "request_ids": responses.iter().map(|response| response["request_id"].clone()).collect::<Vec<_>>(),
-            "usage": last["usage"], "cache": last["cache"],
+            "usage": last["usage"], "cache": {"read_tokens": cache_total(&responses, "read_tokens"), "write_tokens": cache_total(&responses, "write_tokens")},
             "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.iter().sum::<u64>()),
                 "basis": match bases.len() { 0 => "unknown", 1 => bases.first().copied().unwrap_or("unknown"), _ => "mixed" }},
             "timing": {"duration_ms": started.elapsed().as_millis() as u64,
@@ -2360,6 +2384,7 @@ impl Agents {
         {
             account.capture_tools = shape.capture_tools;
             account.max_output_tokens = shape.max_output_tokens;
+            account.cache_through = shape.cache_through.clone();
         }
         if shape.collect {
             host.accounts.collect(&thread_id.to_string());
