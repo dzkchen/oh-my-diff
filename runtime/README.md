@@ -31,8 +31,8 @@ python3 scripts/normalize_upstream_lock.py /path/to/codex
 python3 scripts/apply_runtime_patch.py /path/to/codex
 ```
 
-For development, `scripts/batch_tree.py` creates a patched scratch tree and
-regenerates the patch, manifest and these mirrors; see [`AGENTS.md`](../AGENTS.md).
+The patch, manifest and these mirrors are regenerated from a patched scratch
+tree by the maintainer's tooling.
 
 `patches/manifest.json` binds every before/after file hash. Application is
 idempotent, rejects modified destinations, and leaves unrelated files and the
