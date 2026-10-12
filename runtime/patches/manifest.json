@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "092c350108fa6aefd46a960d2efddf97d165097cdb5557df3b7fb43018db9b27"
+    "sha256": "7288e003046a9c8f12f01228d1cd42d59bbf297b2b3ccab19b52ad57874cd8f7"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -989,7 +989,7 @@
     },
     "codex-rs/omd/Cargo.toml": {
       "before": null,
-      "after": "2949c1b85705afc933b5b388fa007d292c6bc83aa25c16911df48b8657c8fe61"
+      "after": "24c0380d1fc49606125e414238b8dfad942b4192a88e9637cc41e2ba3de931da"
     },
     "codex-rs/omd/README.md": {
       "before": null,

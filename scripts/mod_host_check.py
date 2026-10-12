@@ -177,11 +177,19 @@ def static_problems(path):
     found = []
     schema = manifest(path).get("settings_schema", {}).get("properties", {})
     found += [f"setting {key} has no default" for key, value in schema.items() if "default" not in value]
+    commands, tools = [], 0
     for source in path.rglob("*.ts"):
         if "node_modules" in source.parts or source.name.endswith(".d.ts"):
             continue
-        found += [f"{source.name}: key {key} belongs to the native keymap"
-                  for key in sorted(set(NATIVE_KEY.findall(source.read_text())))]
+        text = source.read_text()
+        found += [f"{source.name}: key {key} belongs to the native keymap" for key in sorted(set(NATIVE_KEY.findall(text)))]
+        if (size := len(text.encode())) > 65_536:
+            found.append(f"{source.name}: {size} bytes exceeds the 65536-byte package file limit")
+        commands += re.findall(r"api\.command\(\s*'([^']+)'", text)
+        tools += len(re.findall(r"api\.tool\(", text))
+    if path.parent.name == "first-party":
+        found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]
+    found += [f"{count} {kind} exceed the limit of 16" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 16]
     return found
 
 
@@ -238,24 +246,29 @@ def main():
     parser.add_argument("--no-commands", action="store_true", help="skip running each registered command")
     parser.add_argument("--scenarios", action="store_true", help="also run each package's offline mod.test.json scenario")
     parser.add_argument("--json", action="store_true", help="print the full report as JSON")
+    parser.add_argument("--static", action="store_true", help="only the source checks; needs no omd-mod")
     parser.add_argument("packages", nargs="*", help="limit to these package directory names or mod IDs")
     args = parser.parse_args()
-    if not args.omd_mod:
-        parser.error("omd-mod not found; pass --omd-mod")
-    node = args.node or subprocess.run(["mise", "which", "node"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
-    every = packages([])
-    providers = {manifest(path)["id"]: path for path in every}
-    providers |= {service["name"]: path for path in every
-                  for service in manifest(path).get("services", {}).get("exports", [])}
-    with tempfile.TemporaryDirectory(prefix="omd-host-check-") as work:
-        report = check(Host(Path(args.omd_mod).resolve(), node, Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
+    if args.static:
+        report = {f"{path.parent.name}/{path.name}": found for path in packages(args.packages) if (found := static_problems(path))}
+    else:
+        if not args.omd_mod:
+            parser.error("omd-mod not found; pass --omd-mod")
+        node = args.node or subprocess.run(["mise", "which", "node"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        every = packages([])
+        providers = {manifest(path)["id"]: path for path in every}
+        providers |= {service["name"]: path for path in every
+                      for service in manifest(path).get("services", {}).get("exports", [])}
+        with tempfile.TemporaryDirectory(prefix="omd-host-check-") as work:
+            report = check(Host(Path(args.omd_mod).resolve(), node, Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         for name, found in report.items():
             print(name)
             print("".join(f"  {line}\n" for line in found), end="")
-        print(f"{len(report)} package groups with problems" if report else "every package loads cleanly on the real host")
+        print(f"{len(report)} package groups with problems" if report else
+              "no static problems" if args.static else "every package loads cleanly on the real host")
     return 1 if report else 0
 
 
