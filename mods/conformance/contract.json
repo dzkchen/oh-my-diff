@@ -735,11 +735,11 @@
       "group": "context_recovery",
       "decision": "Durable per-mod data and evidence",
       "observe": "`store.get`, `store.list` and `evidence.read` read the caller's namespace",
-      "alter": "`store.put`/`store.delete` with the current revision; `store.reset` with the current generation; `evidence.write` stores content-addressed evidence; `api.state` per mod store, session thread or Git checkout through the manifest `state_scope`",
+      "alter": "`store.put`/`store.delete` with the current revision; `store.reset` with the current generation; `evidence.write` stores content-addressed evidence; `api.state` per mod store, session thread or Git checkout through the manifest `state_scope`; experimental `api.uiState` is terminal-capability session/package-scoped ephemeral data, with revision checks, a 64 KiB bound, command/component-event writes and cleanup on reload, revoke and exit",
       "replace": null,
       "timing": "any callback; `migrate` on a state-version change",
       "ownership": "mod: keys and values; host: namespaces, revisions, provenance, bounds and export",
-      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 64 KiB per mod store or 192 KiB per thread or checkout, compare-and-swap writes retried at most twice by replaying recorded host results",
+      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 64 KiB per mod store or 192 KiB per thread or checkout, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
       "native": "native hooks hold no state between invocations",
       "covers": {
         "capabilities": [
@@ -763,6 +763,9 @@
       "evidence": [
         "rust:store_is_namespaced_compare_and_set_with_host_attested_provenance",
         "rust:mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates",
+        "rust:ui_state_is_shared_per_session_isolated_and_cleared_on_reload",
+        "rust:ui_state_invalidates_render_hooks_without_durable_reads",
+        "rust:ui_state_command_views_validate_ownership_and_preserve_other_contributions",
         "rust:conflict_retries_replay_host_results_and_refuse_divergent_callbacks",
         "rust:scoped_state_follows_the_session_thread_or_the_git_checkout",
         "patch:config_contributors_receive_the_thread_id_the_new_thread_uses",

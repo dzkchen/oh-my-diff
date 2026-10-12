@@ -511,6 +511,135 @@ fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
 }
 
 #[test]
+fn cancellation_after_an_unchanged_reload_keeps_the_host() {
+    let (temp, _store, _) = fixture(COUNTER, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let calls = AtomicUsize::new(0);
+    runtime.turn_boundary_guarded(&|| calls.fetch_add(1, Ordering::Relaxed) == 0);
+    assert_eq!(runtime.generation(), generation);
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap(),
+        json!(1)
+    );
+}
+
+#[test]
+fn late_host_calls_fail_their_own_callback_and_never_reach_another_mod() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let leaving = package(
+        &root,
+        "leaving",
+        "export default api => api.command('leave', () => { (async () => { for (let i = 0; i < 1000; i++) await null; api.host.call('workspace.read', {path:'file'}); })(); return 'left'; });",
+        &["commands", "fs.read"],
+    );
+    trust(&store, &leaving, &["commands", "fs.read"]);
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.command('run', () => 'ran');",
+        &["commands"],
+    );
+    trust(&store, &other, &["commands"]);
+    let mut host = ModHost::open(root.join("store")).unwrap();
+    let generation = host.generation();
+    assert!(
+        host.invoke("leaving", generation, "command", "leave", Value::Null)
+            .is_err()
+    );
+    assert_eq!(
+        host.invoke("other", generation, "command", "run", Value::Null)
+            .unwrap(),
+        "ran"
+    );
+}
+
+#[test]
+fn host_open_cancels_registration_and_admission_before_publication() {
+    for admission in [false, true] {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = ModStore::create(root.join("store"), node()).unwrap();
+        let source = if admission {
+            "export default api => api.intercept('admission', {required:true}, () => { while(true) {} });"
+        } else {
+            "export default () => { while(true) {} };"
+        };
+        let caps = if admission { vec!["policy"] } else { vec![] };
+        let guard = package(&root, "guard", source, &caps);
+        if admission {
+            let manifest = guard.join("mod.json");
+            let mut value: Value =
+                serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+            value["policy"] = json!({"namespaces":["store"]});
+            std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        trust(&store, &guard, &caps);
+        let target = package(&root, "target", "export default () => {};", &[]);
+        trust(&store, &target, &[]);
+        let started = std::time::Instant::now();
+        let result = ModHost::open_in_guarded(root.join("store"), |_| Ok(()), &root, &|| {
+            started.elapsed() < std::time::Duration::from_millis(200)
+        });
+        let error = result.err().expect("cancelled host must not be returned");
+        assert_eq!(error.to_string(), "callback_cancelled");
+        assert!(!root.join("store/installed-contracts.d.ts").exists());
+    }
+}
+
+#[test]
+fn cancelled_admission_reload_revokes_the_partial_host_and_can_recover() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let allowed =
+        "export default api => api.intercept('admission', {required:true}, (e,next) => next(e));";
+    let guard = package(&root, "guard", allowed, &["policy"]);
+    let manifest = guard.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["policy"] = json!({"namespaces":["store"]});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &guard, &["policy"]);
+    let target = package(
+        &root,
+        "target",
+        "export default api => api.command('run', () => 'ran');",
+        &["commands"],
+    );
+    trust(&store, &target, &["commands"]);
+    let mut host = ModHost::open(root.join("store")).unwrap();
+    let generation = host.generation();
+    assert_eq!(
+        host.invoke("target", generation, "command", "run", Value::Null)
+            .unwrap(),
+        "ran"
+    );
+    std::fs::write(guard.join("index.ts"), "export default api => api.intercept('admission', {required:true}, () => { while(true) {} });").unwrap();
+    trust(&store, &guard, &["policy"]);
+    let started = std::time::Instant::now();
+    host.turn_boundary_guarded(&|| started.elapsed() < std::time::Duration::from_millis(200));
+    assert_eq!(host.status()["reload_error"], "callback_cancelled");
+    assert_eq!(host.status()["mods"], json!([]));
+    assert!(host.generation() > generation);
+    assert!(
+        host.invoke("target", host.generation(), "command", "run", Value::Null)
+            .is_err()
+    );
+    std::fs::write(guard.join("index.ts"), allowed).unwrap();
+    trust(&store, &guard, &["policy"]);
+    host.reload().unwrap();
+    assert_eq!(
+        host.invoke("target", host.generation(), "command", "run", Value::Null)
+            .unwrap(),
+        "ran"
+    );
+}
+
+#[test]
 fn mod_context_is_bounded_and_callback_failure_is_isolated() {
     let (temp, store, _) = fixture(
         "export default api => api.on('context', () => ({text:'x'.repeat(1025)}))",
@@ -993,7 +1122,7 @@ fn host_error_receipts_are_catchable_without_repeating_operations() {
 
 #[test]
 fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
-    let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
+    let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; if (arg === 'recover') { try { api.host.call('task.status'); } catch {} return api.host.call('task.status'); } api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
     let (temp, _, _) = fixture(source, &["commands", "agents"]);
     let mut runtime = host(&temp);
     let generation = runtime.generation();
@@ -1012,6 +1141,47 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
         error.to_string().starts_with("Error: host_result_limit"),
         "{error}"
     );
+    let mut calls = 0;
+    let error = runtime
+        .invoke_with(
+            "fixture",
+            generation,
+            "command",
+            "run",
+            json!("cumulative"),
+            || true,
+            |_| {
+                calls += 1;
+                Ok(json!({"text": "x".repeat(70_000)}))
+            },
+        )
+        .unwrap_err();
+    assert_eq!(calls, 2);
+    assert!(
+        error.to_string().starts_with("Error: host_result_limit"),
+        "{error}"
+    );
+    let mut calls = 0;
+    let recovered = runtime
+        .invoke_with(
+            "fixture",
+            generation,
+            "command",
+            "run",
+            json!("recover"),
+            || true,
+            |_| {
+                calls += 1;
+                Ok(if calls == 1 {
+                    json!({"text": "x".repeat(140_000)})
+                } else {
+                    json!("recovered")
+                })
+            },
+        )
+        .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(recovered, json!("recovered"));
     assert_eq!(
         runtime
             .invoke_with(
@@ -1343,6 +1513,59 @@ fn a_render_racing_a_state_write_is_drawn_again() {
 }
 
 #[test]
+fn ui_state_invalidates_render_hooks_without_durable_reads() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let frame = package(
+        &root,
+        "frame",
+        "export default api => { \
+         api.intercept('render', {match:{component:'notice'}}, () => ({tree:[{type:'text',id:'label',label:'Label',text:String(api.uiState.get()) + ':' + Math.random()}]})); \
+         api.command('label', value => { api.uiState.set(value); return null; }); }",
+        &["terminal", "commands"],
+    );
+    trust(&store, &frame, &["terminal", "commands"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let render = || {
+        codex_omd::render_shared(
+            &runtime,
+            json!({"component":"notice","id":"notice-1","surface":"fullscreen","viewport":{"columns":80,"rows":24},
+                "lifecycle":"final","owner":null,"props":{"text":"hello"}}),
+            || true,
+        )
+        .unwrap()
+        .result
+    };
+    render();
+    let first = render();
+    assert_eq!(render(), first);
+    {
+        let mut runtime = runtime.lock().unwrap();
+        let generation = runtime.generation();
+        runtime
+            .invoke_with(
+                "frame",
+                generation,
+                "command",
+                "label",
+                json!("changed"),
+                || true,
+                |_| Ok(Value::Null),
+            )
+            .unwrap();
+    }
+    let changed = render();
+    assert!(
+        changed["tree"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("changed:")
+    );
+    assert_eq!(render(), changed);
+}
+
+#[test]
 fn render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -1492,7 +1715,8 @@ fn command_outcomes_are_validated() {
         ModCommandOutcome {
             display: Some("shown".into()),
             insert: None,
-            submit: Some("send this".into())
+            submit: Some("send this".into()),
+            terminal: None,
         }
     );
     assert_eq!(
@@ -1517,6 +1741,239 @@ fn command_outcomes_are_validated() {
     ] {
         assert!(ModCommandOutcome::parse(&invalid).is_err(), "{invalid}");
     }
+}
+
+#[test]
+fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
+    let source = "export default api => { api.command('write', value => { api.uiState.set(value); return null; }); api.command('read', () => api.uiState.get()); api.command('race', () => { const before = api.uiState.get() ?? 0; api.host.call('workspace.read', {path:'file'}); api.uiState.set(before + 1); return before + 1; }); api.on('terminal', () => ({title:String(api.uiState.get() ?? 'empty')})); };";
+    let (temp, store, path) = fixture(source, &["commands", "terminal", "fs.read"]);
+    let mut first = host(&temp);
+    let mut second = host(&temp);
+    let invoke = |host: &mut ModHost, name: &str, value| {
+        host.invoke("fixture", host.generation(), "command", name, value)
+            .unwrap()
+    };
+    assert!(invoke(&mut first, "read", Value::Null).is_null());
+    invoke(&mut first, "write", json!(2));
+    assert_eq!(invoke(&mut second, "read", Value::Null), 2);
+    assert!(first.state("fixture").unwrap().is_null());
+    let mut raced = false;
+    let value = first
+        .invoke_with(
+            "fixture",
+            first.generation(),
+            "command",
+            "race",
+            Value::Null,
+            || true,
+            |_| {
+                assert!(!raced);
+                raced = true;
+                invoke(&mut second, "write", json!(10));
+                Ok(json!("contents"))
+            },
+        )
+        .unwrap();
+    assert_eq!(value, 11);
+    assert_eq!(invoke(&mut second, "read", Value::Null), 11);
+    store.enable(&path, false).unwrap();
+    first.turn_boundary();
+    assert!(invoke(&mut second, "read", Value::Null).is_null());
+    store.enable(&path, true).unwrap();
+    first.reload().unwrap();
+    invoke(&mut first, "write", json!(4));
+    store.reload().unwrap();
+    assert!(invoke(&mut second, "read", Value::Null).is_null());
+    invoke(&mut first, "write", json!(5));
+    first.turn_boundary();
+    {
+        let _thread = codex_omd::StateThread::enter(Some("another".into()));
+        assert!(invoke(&mut first, "read", Value::Null).is_null());
+    }
+    assert_eq!(invoke(&mut second, "read", Value::Null), 5);
+    assert_eq!(invoke(&mut first, "read", Value::Null), 5);
+    let error = first
+        .invoke(
+            "fixture",
+            first.generation(),
+            "command",
+            "write",
+            json!("x".repeat(65_537)),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("ui_state_limit"));
+}
+
+#[test]
+fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() {
+    let source = "export default api => { api.command('view', () => { api.uiState.set('open'); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('close', () => ({terminal:null})); api.command('change', () => api.uiState.set('changed')); api.command('durable', () => api.state.set('changed')); api.command('bad', () => { api.uiState.set('bad'); return {terminal:{title:'x'.repeat(10000)}}; }); api.on('terminal', () => ({title:'First'})); };";
+    let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
+    let root = temp.path().canonicalize().unwrap();
+    let other = package(
+        &root,
+        "other",
+        "export default api => { api.command('change', () => api.uiState.set('Changed')); api.on('terminal', () => ({status:[api.uiState.get() ?? 'Other']})); };",
+        &["commands", "terminal"],
+    );
+    trust(&store, &other, &["commands", "terminal"]);
+    let mut runtime = host(&temp);
+    runtime.terminal_view(json!({}), || true);
+    let value = runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "view",
+            Value::Null,
+        )
+        .unwrap();
+    let view = runtime
+        .command_view(
+            "fixture",
+            runtime.generation(),
+            value["terminal"].clone(),
+            &json!({}),
+        )
+        .unwrap();
+    assert_eq!(view.component_owners["own"], "fixture");
+    assert_eq!(view.view.status, ["Other"]);
+    runtime
+        .invoke(
+            "other",
+            runtime.generation(),
+            "command",
+            "change",
+            Value::Null,
+        )
+        .unwrap();
+    let refreshed = runtime.terminal_view(json!({}), || true);
+    assert_eq!(refreshed.component_owners["own"], "fixture");
+    assert_eq!(refreshed.view.status, ["Changed"]);
+    assert!(
+        runtime
+            .command_view("missing", runtime.generation(), json!({}), &json!({}))
+            .is_err()
+    );
+    assert!(
+        runtime
+            .command_view("fixture", runtime.generation() + 1, json!({}), &json!({}))
+            .is_err()
+    );
+    assert!(
+        runtime
+            .invoke(
+                "fixture",
+                runtime.generation(),
+                "command",
+                "bad",
+                Value::Null
+            )
+            .is_err()
+    );
+    let closed = runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "close",
+            Value::Null,
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .command_view(
+                "fixture",
+                runtime.generation(),
+                closed["terminal"].clone(),
+                &json!({})
+            )
+            .unwrap()
+            .view
+            .sites
+            .get("dialog")
+            .is_none()
+    );
+    assert!(
+        runtime
+            .terminal_view(json!({}), || true)
+            .view
+            .title
+            .is_none()
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(
+        runtime
+            .terminal_view(json!({}), || true)
+            .view
+            .title
+            .as_deref(),
+        Some("First")
+    );
+    for change in ["change", "durable"] {
+        let value = runtime
+            .invoke(
+                "fixture",
+                runtime.generation(),
+                "command",
+                "view",
+                Value::Null,
+            )
+            .unwrap();
+        runtime
+            .invoke(
+                "fixture",
+                runtime.generation(),
+                "command",
+                change,
+                Value::Null,
+            )
+            .unwrap();
+        runtime
+            .command_view(
+                "fixture",
+                runtime.generation(),
+                value["terminal"].clone(),
+                &json!({}),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime
+                .terminal_view(json!({}), || true)
+                .view
+                .title
+                .as_deref(),
+            Some("First")
+        );
+    }
+    let value = {
+        let _thread = codex_omd::StateThread::enter(Some("thread-a".into()));
+        runtime
+            .invoke(
+                "fixture",
+                runtime.generation(),
+                "command",
+                "view",
+                Value::Null,
+            )
+            .unwrap()
+    };
+    let payload = json!({"ledger":{"thread_id":"thread-b"}});
+    runtime
+        .command_view(
+            "fixture",
+            runtime.generation(),
+            value["terminal"].clone(),
+            &payload,
+        )
+        .unwrap();
+    assert_eq!(
+        runtime
+            .terminal_view(payload, || true)
+            .view
+            .title
+            .as_deref(),
+        Some("First")
+    );
 }
 
 #[test]
@@ -3135,16 +3592,29 @@ fn rich_lines_and_boxes_are_bounded() {
 #[test]
 fn an_invalid_terminal_view_keeps_the_last_valid_one_and_names_the_field() {
     let (temp, _, _) = fixture(
-        "export default api => api.on('terminal', input => ({status:[input.bad ? 'x'.repeat(41) : 'ok']}))",
-        &["terminal"],
+        "export default api => { api.command('write', () => api.state.set('updated')); api.on('terminal', input => ({status:[input.bad ? 'x'.repeat(41) : api.state.get() ?? 'ok']})); }",
+        &["terminal", "commands", "store"],
     );
     let mut runtime = host(&temp);
     assert_eq!(
         runtime.terminal_view(json!({}), || true).view.status,
         ["ok"]
     );
+    runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "write",
+            Value::Null,
+        )
+        .unwrap();
+    assert_eq!(
+        runtime.terminal_view(json!({}), || true).view.status,
+        ["updated"]
+    );
     let terminal = runtime.terminal_view(json!({"bad": true}), || true);
-    assert_eq!(terminal.view.status, ["ok"]);
+    assert_eq!(terminal.view.status, ["updated"]);
     assert!(
         terminal.diagnostics[0].contains("invalid_terminal_patch: status"),
         "{:?}",
@@ -3315,8 +3785,9 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
     );
     let manifest = path.join("mod.json");
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    value["settings_schema"] = json!({"type":"object","required":["mode"],"properties":{
-        "mode":{"type":"string","enum":["a","b"],"default":"a"},"count":{"type":"number"}}});
+    value["settings_schema"] = json!({"type":"object","required":["mode","nullable"],"properties":{
+        "mode":{"type":"string","enum":["a","b"],"default":"a"},"count":{"type":"number"},
+        "nullable":{"type":"null","default":null}}});
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     trust(&store, &path, &["commands"]);
     let read = |runtime: &mut ModHost| {
@@ -3325,14 +3796,32 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
             .invoke("fixture", generation, "command", "read", Value::Null)
             .unwrap()
     };
-    assert_eq!(read(&mut host(&temp)), json!(r#"{"mode":"a"}"#));
+    let mut runtime = host(&temp);
+    assert_eq!(read(&mut runtime), json!(r#"{"mode":"a","nullable":null}"#));
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["settings_origin"],
+        json!({"mode":"default","nullable":"default"})
+    );
     assert_eq!(
         codex_omd::write_settings(&store, "fixture", &json!({"mode":"b","count":2})).unwrap(),
-        json!({"settings":{"mode":"b","count":2}})
+        json!({"settings":{"mode":"b","count":2,"nullable":null}})
+    );
+    runtime.reload().unwrap();
+    assert_eq!(
+        read(&mut runtime),
+        json!(r#"{"count":2,"mode":"b","nullable":null}"#)
+    );
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["settings_origin"],
+        json!({"count":"user","mode":"user","nullable":"default"})
     );
     assert!(codex_omd::write_settings(&store, "fixture", &json!({"mode":"c"})).is_err());
     codex_omd::write_settings(&store, "fixture", &json!({"mode":null})).unwrap();
-    assert_eq!(read(&mut host(&temp)), json!(r#"{"count":2,"mode":"a"}"#));
+    runtime.reload().unwrap();
+    assert_eq!(
+        read(&mut runtime),
+        json!(r#"{"count":2,"mode":"a","nullable":null}"#)
+    );
 }
 
 #[test]

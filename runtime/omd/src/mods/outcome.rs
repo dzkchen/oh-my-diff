@@ -7,6 +7,7 @@ pub struct ModCommandOutcome {
     pub display: Option<String>,
     pub insert: Option<String>,
     pub submit: Option<String>,
+    pub terminal: Option<Value>,
 }
 
 fn text(value: &Value, limit: usize) -> Result<String> {
@@ -47,11 +48,12 @@ impl ModCommandOutcome {
             }),
             Value::Object(object)
                 if !object.is_empty()
-                    && object
-                        .keys()
-                        .all(|key| ["display", "insert", "submit"].contains(&key.as_str())) =>
+                    && object.keys().all(|key| {
+                        ["display", "insert", "submit", "terminal"].contains(&key.as_str())
+                    }) =>
             {
                 let outcome = Self {
+                    terminal: object.get("terminal").cloned(),
                     display: object
                         .get("display")
                         .map(|v| text(v, TEXT_LIMIT))

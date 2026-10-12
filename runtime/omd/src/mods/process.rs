@@ -81,9 +81,12 @@ fn reap() {
 }
 
 fn spawn(node: &Path) -> Result<Child> {
+    let _profile = super::Profile::new("runner_spawn");
     command(node)?
         .args([
             "--max-old-space-size=64",
+            "--no-compilation-cache",
+            "--no-lazy",
             "--enable-source-maps",
             "--no-warnings",
             "--experimental-vm-modules",
@@ -98,6 +101,7 @@ fn spawn(node: &Path) -> Result<Child> {
 }
 
 fn runner(node: &Path) -> Result<Child> {
+    let _profile = super::Profile::new("spare_acquisition");
     let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
     let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
     spares.1 = Some(Instant::now());
@@ -155,7 +159,7 @@ fn converse(
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
-) -> (Result<Vec<u8>>, Instant) {
+) -> (Result<Option<Value>>, Instant) {
     let mut deadline = Instant::now() + budget + Duration::from_millis(250);
     if let Err(error) = stdin.write_all(bytes) {
         return (Err(error), deadline);
@@ -168,14 +172,15 @@ fn converse(
             Ok(line) => line,
             Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
             Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
-            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(Vec::new()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
         };
         if line.len() > 262_144 {
             break Err(failure("output_limit"));
         }
         let frame = match serde_json::from_slice::<Value>(&line) {
             Ok(frame) if frame.get("call").is_some() => frame,
-            _ => break Ok(line),
+            Ok(frame) => break Ok(Some(frame)),
+            Err(_) => break Ok(None),
         };
         let started = Instant::now();
         let receipt = match host(frame) {
@@ -200,6 +205,7 @@ struct Warm {
     reader: std::thread::JoinHandle<()>,
     errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
+    serve: bool,
     /// Bytes of the activation request outside its serve fields.
     base: usize,
 }
@@ -220,9 +226,10 @@ pub(super) fn invalidate_warm(key: &str) {
 
 static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
 const WARM_RUNNERS: usize = 4;
+const REUSED_RUNNERS: usize = 2;
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
-fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
+fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
     let mut child = runner(node)?;
     let stderr = child
         .stderr
@@ -254,26 +261,40 @@ fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
         reader,
         errors,
         used: Instant::now(),
+        serve,
         base: 0,
     })
 }
 
 /// Evaluates a render callback in a runner that stays activated for later renders with the same
-/// `key`: the package, its settings and state, everything except the render's own input.
-pub(super) fn evaluate_warm(
+/// `key`: the package, its settings and state, everything except the render's own input. Other
+/// callbacks reuse a runner only of the same package identity, each in a fresh context.
+pub(super) fn evaluate_warm<R>(
     node: &Path,
     key: &str,
-    request: &Value,
+    request: &R,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
-) -> Result<Value> {
-    let serve = request_line(
-        &["name", "payload", "receipts", "state"]
-            .map(|field| (field, &request[field]))
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    )?;
+) -> Result<Value>
+where
+    R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
+{
+    let _profile = super::Profile::new(if request["serve"] == true {
+        "render_callback"
+    } else {
+        "fresh_callback"
+    });
+    let serve = if request["reuse"] == true {
+        request_line(request)?
+    } else {
+        request_line(
+            &["name", "payload", "receipts", "state"]
+                .map(|field| (field, &request[field]))
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        )?
+    };
     let mut reused = WARM.lock().ok().and_then(|mut runners| {
         let index = runners.iter().position(|runner| runner.key == key)?;
         Some(runners.swap_remove(index))
@@ -292,7 +313,7 @@ pub(super) fn evaluate_warm(
         }
         None => {
             let bytes = request_line(request)?;
-            let mut warm = warm_runner(node, key)?;
+            let mut warm = warm_runner(node, key, request["serve"] == true)?;
             warm.base = bytes.len().saturating_sub(serve.len());
             (warm, bytes)
         }
@@ -305,7 +326,7 @@ pub(super) fn evaluate_warm(
             return Err(error);
         }
     };
-    let Ok(value) = serde_json::from_slice::<Value>(&output) else {
+    let Some(value) = output else {
         return Err(process_failure(&warm.stop()));
     };
     if let Some(error) = value.get("error") {
@@ -322,17 +343,26 @@ fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
         .unwrap_or_default()
 }
 
-/// Returns a runner to the pool, stopping the least recently used ones beyond its size.
+/// Returns a runner to the pool, stopping the least recently used ones of its kind beyond that
+/// kind's size.
 fn pool(mut runner: Warm) {
     runner.used = Instant::now();
+    let serve = runner.serve;
+    let size = if serve { WARM_RUNNERS } else { REUSED_RUNNERS };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {
             runners.push(runner);
             let mut evicted = Vec::new();
-            while runners.len() > WARM_RUNNERS {
+            while runners
+                .iter()
+                .filter(|runner| runner.serve == serve)
+                .count()
+                > size
+            {
                 let oldest = runners
                     .iter()
                     .enumerate()
+                    .filter(|(_, runner)| runner.serve == serve)
                     .min_by_key(|(_, runner)| runner.used)
                     .map_or(0, |(index, _)| index);
                 evicted.push(runners.swap_remove(oldest));
@@ -360,7 +390,7 @@ fn process_failure(errors: &[u8]) -> std::io::Error {
 
 pub(super) fn evaluate(
     node: &Path,
-    request: &Value,
+    request: &impl serde::Serialize,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
@@ -395,7 +425,7 @@ pub(super) fn evaluate(
     let errors = errors.join().unwrap_or_default();
     let output = output?;
     let status = status?;
-    let value: Value = serde_json::from_slice(&output).map_err(|_| process_failure(&errors))?;
+    let value = output.ok_or_else(|| process_failure(&errors))?;
     if !status.success() || value.get("error").is_some() {
         return Err(failure(
             value["error"].as_str().unwrap_or("mod_process_failed"),

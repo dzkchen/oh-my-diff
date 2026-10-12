@@ -258,7 +258,7 @@ export type RenderTree = { tree: TerminalComponent[] };
 export type Widen<T extends Json> = T extends string ? string : T extends number ? number : T extends boolean ? boolean : T;
 export type Atom<T extends Json = Json> = { readonly key: string; get(): T; set(value: T): void; update(change: (value: T) => T): void };
 export type Derived<T extends Json = Json> = { readonly key: null; get(): T };
-export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
+export type CommandResult = Json | { display?: string; insert?: string; submit?: string; terminal?: TerminalPatch | null };
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
 
 export type ExecResult = { exit_code: number | null; signal: string | null; stdout: string; stdout_sha256: string; stdout_bytes: number; output_artifact: ResourceRef | null; stderr: string; stdout_truncated: boolean; stdout_preview_truncated: boolean; stderr_truncated: boolean; stderr_preview_truncated: boolean; timed_out: boolean; duration_ms: number; program: { path: string; sha256: string }; guards_verified: number };
@@ -588,6 +588,8 @@ export interface ModAPI {
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string; args_hint?: string; immediate?: boolean }): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
+  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */
+  readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;
   /** One member of a map-valued atom. */

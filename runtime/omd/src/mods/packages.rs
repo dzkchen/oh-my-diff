@@ -125,11 +125,16 @@ impl ModStore {
         let to = package.state_version;
         let mut loaded = Loaded {
             package,
-            source,
-            assets: BTreeMap::new(),
+            source: source.into(),
+            assets: Arc::new(BTreeMap::new()),
+            request_metadata: Arc::new(OnceLock::new()),
             selection: selection.clone(),
             adapter: None,
             state: previous["value"].clone(),
+            ui: None,
+            ui_state: Value::Null,
+            ui_revision: 0,
+            command_view: None,
             registrations: Registrations::default(),
             source_use: ModSourceUse::default(),
             unused_grants: Vec::new(),

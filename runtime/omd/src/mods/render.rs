@@ -89,6 +89,8 @@ impl ModHost {
                     id,
                     loaded.selection.sha256,
                     loaded.selection.settings,
+                    thread,
+                    self.ui_binding(id, thread.as_deref()),
                     selected
                 ])
             })

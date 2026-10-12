@@ -227,6 +227,7 @@ pub use mods::mod_component_id;
 pub use mods::mod_counts;
 pub use mods::mod_key_name;
 pub use mods::namespace_matches;
+pub use mods::profile;
 pub use mods::render_shared;
 pub use mods::valid_glyphs;
 pub use mods::write_settings;

@@ -1809,6 +1809,22 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     let grants = runtime.grants("modern").unwrap();
     assert_eq!(grants.exec_environment, vec!["FIXTURE_ENV"]);
     assert!(grants.capabilities.contains(&"exec".to_owned()));
+    store.enable(&old_event, false).unwrap();
+    std::fs::write(adapter.join("shim.mjs"), "export const answer = 43;").unwrap();
+    trust(&store, &adapter);
+    runtime.reload().unwrap();
+    assert_eq!(
+        runtime
+            .invoke(
+                "adapted",
+                runtime.generation(),
+                "command",
+                "answer",
+                Value::Null
+            )
+            .unwrap(),
+        json!(43)
+    );
 }
 
 #[test]
