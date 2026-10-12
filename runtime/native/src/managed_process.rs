@@ -278,22 +278,11 @@ enum Framing {
     Ndjson,
 }
 
-type Stamp = (u64, u64, u64, i64, i64, i64, i64);
-
-/// A program's sha256, hashed again only when its device, inode, size, mtime or ctime changes (any write changes the ctime).
+/// A program's sha256, hashed again only when its file stamp changes.
 fn program_sha256(path: &Path) -> io::Result<String> {
-    use std::os::unix::fs::MetadataExt;
-    static HASHES: Mutex<BTreeMap<PathBuf, (Stamp, String)>> = Mutex::new(BTreeMap::new());
-    let metadata = fs::metadata(path)?;
-    let stamp = (
-        metadata.dev(),
-        metadata.ino(),
-        metadata.len(),
-        metadata.mtime(),
-        metadata.mtime_nsec(),
-        metadata.ctime(),
-        metadata.ctime_nsec(),
-    );
+    static HASHES: Mutex<BTreeMap<PathBuf, (codex_omd::FileStamp, String)>> =
+        Mutex::new(BTreeMap::new());
+    let stamp = codex_omd::file_stamp(&fs::metadata(path)?);
     if let Some((known, sha256)) = HASHES
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -374,17 +363,7 @@ fn blit_worker(
                 }
                 Err(error)
                     if image.get("pixels").is_some()
-                        && matches!(
-                            error.as_str(),
-                            "terminal_blit_pixels_invalid"
-                                | "terminal_blit_pixels_length"
-                                | "terminal_blit_pixels_io"
-                                | "terminal_blit_sequence_stale"
-                                | "terminal_blit_source_not_owned"
-                                | "terminal_blit_source_unavailable"
-                                | "terminal_blit_invalid"
-                                | "terminal_blit_too_large"
-                        ) =>
+                        && !codex_omd::client_surface::blit_retryable(&error) =>
                 {
                     stop();
                     return;
@@ -1540,10 +1519,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 || true,
             )
         };
-        assert_eq!(
-            echo("unbound", None).unwrap_err(),
-            "process_raster_invalid"
-        );
+        assert_eq!(echo("unbound", None).unwrap_err(), "process_raster_invalid");
         echo("raw", Some("pr-frame")).unwrap();
         let initialized = processes
             .call(
@@ -1680,6 +1656,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             "callback_cancelled",
             "terminal_blit_unknown",
             "terminal_blit_not_owned",
+            "terminal_blit_limit",
         ] {
             let (sender, receiver) = mpsc::channel();
             let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1774,19 +1751,21 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
     }
 
     #[test]
-    fn invalid_raw_frame_stops_its_producer_without_retrying() {
-        let (sender, receiver) = mpsc::channel();
-        let frames = blit_worker(
-            "raw-frame".into(),
-            Arc::new(|_, _| Err("terminal_blit_pixels_invalid".into())),
-            Arc::new(std::sync::atomic::AtomicBool::new(true)),
-            move || {
-                sender.send(()).unwrap();
-            },
-        );
-        frames.offer(json!({"pixels":{"format":"invalid"}}));
-        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
+    fn invalid_or_unclassified_raw_frame_errors_stop_the_producer_without_retrying() {
+        for error in ["terminal_blit_pixels_invalid", "terminal_blit_unclassified"] {
+            let (sender, receiver) = mpsc::channel();
+            let frames = blit_worker(
+                "raw-frame".into(),
+                Arc::new(move |_, _| Err(error.into())),
+                Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                move || {
+                    sender.send(()).unwrap();
+                },
+            );
+            frames.offer(json!({"pixels":{"format":"invalid"}}));
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert!(receiver.recv_timeout(Duration::from_secs(1)).is_err());
+        }
     }
 
     #[test]

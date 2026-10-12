@@ -2793,6 +2793,32 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
         .join("packages/control")
         .canonicalize()
         .unwrap();
+    struct LateValidity;
+    impl codex_omd::client_surface::ClientSurface for LateValidity {
+        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            std::thread::sleep(std::time::Duration::from_millis(2_100));
+            let valid = (call.validity.0)();
+            call.reply
+                .send(Ok(json!({"valid": valid})))
+                .map_err(|error| error.to_string())
+        }
+    }
+    let surface = codex_omd::client_surface::register(Arc::new(LateValidity));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let late = sink.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(late(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
+    });
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let held = fixture.core.runtime.lock().unwrap();
+    let late = receiver
+        .recv_timeout(std::time::Duration::from_secs(4))
+        .expect("a late validity check does not wait for the mod runtime");
+    assert!(
+        !late.is_ok_and(|reply| reply["valid"] == true),
+        "a verification older than two seconds is not trusted"
+    );
+    drop((held, surface));
     let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
     assert_ne!(first, "process_raster_revoked");
     let held = fixture.core.runtime.lock().unwrap();

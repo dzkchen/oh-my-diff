@@ -50,9 +50,10 @@ pub struct PixelFrame {
     pub source: PixelSource,
     pub id: String,
     pub image: image::DynamicImage,
-    png: OnceLock<Option<Arc<[u8]>>>,
-    jpeg: OnceLock<Option<Arc<[u8]>>>,
+    encoded: Mutex<BTreeMap<(bool, u32, u32), Encoding>>,
 }
+
+type Encoding = Arc<OnceLock<Option<Arc<[u8]>>>>;
 
 impl PixelFrame {
     pub fn new(source: PixelSource, image: image::DynamicImage) -> Self {
@@ -60,26 +61,50 @@ impl PixelFrame {
             id: format!("{}:{}", source.source, source.sequence),
             source,
             image,
-            png: OnceLock::new(),
-            jpeg: OnceLock::new(),
+            encoded: Mutex::new(BTreeMap::new()),
         }
     }
 
-    pub fn encoded(&self, jpeg: bool) -> Option<Arc<[u8]>> {
-        let cache = if jpeg { &self.jpeg } else { &self.png };
-        cache.get_or_init(|| self.encode(jpeg)).clone()
+    /// The frame as PNG or JPEG, scaled down to fit `bounds`, shared per format and size; `None` past the encoded-image limit.
+    pub fn encoded(&self, jpeg: bool, bounds: (u32, u32)) -> Option<Arc<[u8]>> {
+        let (width, height) = (self.image.width(), self.image.height());
+        let scale = (f64::from(bounds.0) / f64::from(width))
+            .min(f64::from(bounds.1) / f64::from(height))
+            .min(1.0);
+        let scaled = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
+        let size = (scaled(width), scaled(height));
+        let cache = self
+            .encoded
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry((jpeg, size.0, size.1))
+            .or_default()
+            .clone();
+        cache
+            .get_or_init(|| {
+                self.encode(jpeg, size)
+                    .filter(|bytes| bytes.len() <= crate::blob_store::IMAGE_BYTES)
+            })
+            .clone()
     }
 
-    fn encode(&self, jpeg: bool) -> Option<Arc<[u8]>> {
+    fn encode(&self, jpeg: bool, (width, height): (u32, u32)) -> Option<Arc<[u8]>> {
+        let resized;
+        let image = if (width, height) == (self.image.width(), self.image.height()) {
+            &self.image
+        } else {
+            resized = self
+                .image
+                .resize_exact(width, height, image::imageops::FilterType::Triangle);
+            &resized
+        };
         let mut encoded = std::io::Cursor::new(Vec::new());
         if jpeg {
-            image::DynamicImage::ImageRgb8(self.image.to_rgb8())
+            image::DynamicImage::ImageRgb8(image.to_rgb8())
                 .write_to(&mut encoded, image::ImageFormat::Jpeg)
                 .ok()?;
         } else {
-            self.image
-                .write_to(&mut encoded, image::ImageFormat::Png)
-                .ok()?;
+            image.write_to(&mut encoded, image::ImageFormat::Png).ok()?;
         }
         Some(encoded.into_inner().into())
     }
@@ -213,10 +238,15 @@ impl Binding {
     pub fn publish(&self) {
         let mut table = bound();
         for (key, role) in &self.components {
-            table.insert(
-                key.clone(),
-                (key.1.clone(), *role, self.sink.clone(), self.serial),
-            );
+            if table
+                .get(key)
+                .is_none_or(|(_, _, _, serial)| *serial < self.serial)
+            {
+                table.insert(
+                    key.clone(),
+                    (key.1.clone(), *role, self.sink.clone(), self.serial),
+                );
+            }
         }
         drop(table);
         crate::client_surface::redraw();
@@ -389,21 +419,23 @@ mod tests {
     }
 
     #[test]
-    fn raw_frame_encoding_is_shared_per_format() {
+    fn raw_frame_encoding_is_shared_per_format_and_fits_its_bounds() {
         let frame = PixelFrame::new(
             PixelSource {
                 source: "cache".into(),
                 format: "rgb".into(),
-                width: 1,
-                height: 1,
+                width: 64,
+                height: 32,
                 sequence: 1,
             },
-            image::DynamicImage::new_rgb8(1, 1),
+            image::DynamicImage::new_rgb8(64, 32),
         );
         for jpeg in [false, true] {
-            let first = frame.encoded(jpeg).unwrap();
-            let second = frame.encoded(jpeg).unwrap();
+            let first = frame.encoded(jpeg, (64, 64)).unwrap();
+            let second = frame.encoded(jpeg, (100, 32)).unwrap();
             assert!(Arc::ptr_eq(&first, &second));
+            let scaled = image::load_from_memory(&frame.encoded(jpeg, (8, 8)).unwrap()).unwrap();
+            assert_eq!((scaled.width(), scaled.height()), (8, 4));
             assert_eq!(
                 image::guess_format(&first).unwrap(),
                 if jpeg {
@@ -412,7 +444,7 @@ mod tests {
                     image::ImageFormat::Png
                 }
             );
-            assert_eq!(image::load_from_memory(&first).unwrap().width(), 1);
+            assert_eq!(image::load_from_memory(&first).unwrap().width(), 64);
         }
     }
 
@@ -726,5 +758,16 @@ mod tests {
         drop(binding);
         assert!(!send(None, "owner", "pr-frame", json!(3)));
         assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
+    }
+
+    #[test]
+    fn a_late_publish_does_not_replace_a_newer_binding() {
+        let sink: Sink = Arc::new(|_| true);
+        let component = || vec![("late-frame".to_owned(), Role::Raster)];
+        let older = Binding::prepare(None, "owner", component(), sink.clone());
+        let newer = Binding::prepare(None, "owner", component(), sink);
+        newer.publish();
+        older.publish();
+        assert_eq!(serial(None, "owner", "late-frame"), Some(newer.serial));
     }
 }

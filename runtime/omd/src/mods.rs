@@ -293,6 +293,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "contracts_v2",
     "framed_process_v1",
     "process_raster_v1",
+    "raster_pixels_v1",
     "kernels_v1",
     "terminal_lists_v1",
     "adapters_v1",
@@ -2365,14 +2366,12 @@ struct ModTelemetry {
 const MOD_FAULT_LIMIT: u32 = 5;
 const BROKER_REFRESH: Duration = Duration::from_secs(2);
 
-type ConfigurationStamp = (u64, u64, u64, i64, i64, i64, i64);
+pub type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
 
-fn configuration_stamp(path: &Path) -> Option<ConfigurationStamp> {
+/// A file's device, inode, size, mtime and ctime; any write changes the ctime.
+pub fn file_stamp(metadata: &std::fs::Metadata) -> FileStamp {
     use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::symlink_metadata(path)
-        .ok()
-        .filter(|metadata| metadata.is_file())?;
-    Some((
+    (
         metadata.dev(),
         metadata.ino(),
         metadata.len(),
@@ -2380,7 +2379,14 @@ fn configuration_stamp(path: &Path) -> Option<ConfigurationStamp> {
         metadata.mtime_nsec(),
         metadata.ctime(),
         metadata.ctime_nsec(),
-    ))
+    )
+}
+
+fn configuration_stamp(path: &Path) -> Option<FileStamp> {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| file_stamp(&metadata))
 }
 
 type Brokered = Option<(u64, BTreeSet<String>)>;
@@ -2471,7 +2477,7 @@ pub struct ModHost {
     node: PathBuf,
     generation: u64,
     configuration_sha256: String,
-    configuration_stamp: Option<ConfigurationStamp>,
+    configuration_stamp: Option<FileStamp>,
     selections: (usize, usize),
     loaded: BTreeMap<String, Loaded>,
     order: Vec<String>,

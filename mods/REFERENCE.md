@@ -21,7 +21,7 @@ Before the release freeze names the API `1.0.0`, only safety fixes and the
 recorded launch gap list may change it. After launch, additions use minor
 versions; breaking changes require a major version and a migration note.
 
-The raster frame-stream (`terminal.blit`, `process_raster_v1`) remains experimental.
+The raster frame-stream (`terminal.blit`, `process_raster_v1`, `raster_pixels_v1`) remains experimental.
 Launch does not promise closure-based client modules, vendor kill switches,
 raw secret access, hosted mobile/desktop clients or rich children inside buttons.
 Buttons use their typed `text` field. [COMPATIBILITY.md](COMPATIBILITY.md) defines
@@ -1038,7 +1038,7 @@ take `raster: KEY` (one of the caller's raster ids) and optionally `keys: ID`
 are drawn into that raster by the host as `terminal.blit {key, image}` from the
 mod, with the same validation, but without a callback per frame: the newest
 frame wins and a frame the terminal cannot take yet is retried for up to 5 s.
-With `pixels: true` the host also creates a private raw buffer and sends
+With `raster_pixels_v1` and `pixels: true` the host also creates a private raw buffer and sends
 `{"pixels": {"source": HANDLE, "path": PATH}}` on stdin before bound input;
 without it the process gets no buffer and its raw publications stop it with
 `terminal_blit_source_not_owned`. The child opens that
@@ -1050,10 +1050,12 @@ for each publication. The child must not modify the buffer until stdin
 acknowledges `{"pixels": {"source": HANDLE, "sequence": N, "ready": true,
 "error": null}}`; an owned invalid descriptor or failed copy returns
 `ready: false` with an error. A failed copy does not consume the sequence, so
-direct callers may retry the same publication; managed producers stop on fatal
-raw errors. Temporary surface, layout and callback
-admission errors retain the pending raw publication for retry while the process
-is active; confirmed owner revocation stops it. Backpressure neither copies nor
+direct callers may retry the same publication. A managed producer's pending raw
+publication is retried while the process is active only for surface, layout and
+callback admission errors (`terminal_blit_unknown`, `terminal_blit_not_owned`,
+`terminal_blit_limit`, `callback_*`, `client_surface_*`); any other error, and
+confirmed owner revocation, stops the process. While a raw frame waits for its
+16 ms tick, a newer raw publication gets backpressure. Backpressure neither copies nor
 acknowledges the buffer, so the same publication can be retried safely.
 The host retains the original descriptor, copies a bounded immutable frame,
 and never reopens a child-supplied path. Replacing the pathname cannot redirect
@@ -1063,7 +1065,8 @@ per side (64 MiB for RGBA), with one newest pending image per raster. General
 POSIX shared memory is not granted by the sandbox; the private file works
 under the existing process sandbox. Raw frames reach Kitty without PNG
 encoding; inline-image terminals and external PNG/JPEG clients receive encoded
-snapshots, and cells-only clients receive half-blocks. Host paths and handles
+snapshots scaled down to the raster's pixel size (a client's `cell_px`, else
+8×16) and at most 8 MiB, and cells-only clients receive half-blocks. Host paths and handles
 never reach external renderers.
 
 Experimental pacing changed from 33 to 16 ms in Batch 4gh. Use `frame_ms` and

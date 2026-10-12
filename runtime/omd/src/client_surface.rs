@@ -243,21 +243,22 @@ pub struct SurfaceCall {
 impl SurfaceCall {
     pub fn snapshot_pixels(
         &self,
-    ) -> Result<Option<Arc<crate::process_raster::PixelFrame>>, String> {
-        let Some(value) = self.arguments.get("pixels") else {
-            return Ok(None);
-        };
-        if !(self.validity.0)() || !self.lifetime.active() {
+        source: &crate::process_raster::PixelSource,
+    ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
+        if !(self.validity.0)() {
             return Err("callback_cancelled_or_expired".into());
         }
         self.lifetime.begin_execution()?;
-        let source =
-            serde_json::from_value(value.clone()).map_err(|_| "terminal_blit_pixels_invalid")?;
         let component = self.arguments["key"]
             .as_str()
             .ok_or("terminal_blit_invalid")?;
         let snapshot = || {
-            crate::process_raster::snapshot(self.thread.as_deref(), &self.caller, component, source)
+            crate::process_raster::snapshot(
+                self.thread.as_deref(),
+                &self.caller,
+                component,
+                source.clone(),
+            )
         };
         let pixels = if let Some(admission) = &self.lifetime.admission {
             with_admission(
@@ -272,7 +273,7 @@ impl SurfaceCall {
             snapshot()?
         };
         let _ = self.lifetime.pixels.set(pixels.clone());
-        Ok(Some(pixels))
+        Ok(pixels)
     }
 }
 
@@ -1254,12 +1255,12 @@ impl Blit {
     /// Image frames are only header-checked here; pixels are decoded when first drawn.
     pub fn checked(
         mut self,
-        pixels: Option<Arc<crate::process_raster::PixelFrame>>,
+        snapshot: impl FnOnce(
+            &crate::process_raster::PixelSource,
+        ) -> Result<Arc<crate::process_raster::PixelFrame>, String>,
     ) -> Result<Self, String> {
         if let BlitContent::Source(source) = &self.content {
-            let pixels = pixels
-                .filter(|pixels| &pixels.source == source)
-                .ok_or("terminal_blit_source_unavailable")?;
+            let pixels = snapshot(source)?;
             self.bytes = pixels.source.byte_len()?;
             self.content = BlitContent::Pixels(pixels);
         }
@@ -1288,6 +1289,15 @@ impl Blit {
         }
         Ok(self)
     }
+}
+
+/// Whether a `terminal.blit` error reflects surface or raster state that can change, so the same frame may succeed later.
+pub fn blit_retryable(error: &str) -> bool {
+    matches!(
+        error,
+        "terminal_blit_unknown" | "terminal_blit_not_owned" | "terminal_blit_limit"
+    ) || error.starts_with("callback_")
+        || error.starts_with("client_surface_")
 }
 
 /// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.

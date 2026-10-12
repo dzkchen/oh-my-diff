@@ -43,14 +43,15 @@ fn raw_snapshot_waits_for_admission_and_shares_the_accepted_frame() {
         reply: sync_channel(1).0,
         lifetime,
     };
-    assert!(call.snapshot_pixels().is_err());
+    let source = serde_json::from_value(call.arguments["pixels"].clone()).unwrap();
+    assert!(call.snapshot_pixels(&source).is_err());
     assert!(seen.lock().unwrap().is_empty());
     assert!(retained.get().is_none());
     cancelled.store(false, Ordering::Release);
-    let accepted = call.snapshot_pixels().unwrap().unwrap();
+    let accepted = call.snapshot_pixels(&source).unwrap();
     assert!(Arc::ptr_eq(retained.get().unwrap(), &accepted));
     assert_eq!(seen.lock().unwrap().len(), 1);
-    assert!(call.snapshot_pixels().is_err());
+    assert!(call.snapshot_pixels(&source).is_err());
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
 

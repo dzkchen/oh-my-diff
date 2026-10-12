@@ -13,5 +13,5 @@
     "mouse_helper": {"type": "string", "default": ""},
     "transport": {"type": "string", "enum": ["raw", "png"], "default": "raw"}
   }},
-  "compatibility": {"required_features": ["terminal_raster_v1", "process_raster_v1", "timers_v1"]}
+  "compatibility": {"required_features": ["terminal_raster_v1", "process_raster_v1", "raster_pixels_v1", "timers_v1"]}
 }

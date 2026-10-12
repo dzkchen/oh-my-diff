@@ -1,14 +1,15 @@
 # Frame stream
 
-An author example of a full-pane raster fed by a managed Node process. The
-producer supports encoded PNG and file-backed RGB publication. The same raw
-transport works for video decoders, image viewers and simulations.
-The synthetic producer offers up to 120 frames/sec; the host's 16 ms raster
-cadence folds pending images to the newest frame.
+A conformance fixture (not packed in the author SDK) of a full-pane raster fed
+by a managed Node process. The producer supports encoded PNG and file-backed
+RGB publication (`raster_pixels_v1`). The same raw transport works for video
+decoders, image viewers and simulations. The synthetic producer offers up to
+120 frames/sec; the host's 16 ms raster cadence folds pending images to the
+newest frame.
 
-Set `producer` to the absolute path of `scripts/frame_producer.mjs` and
-`transport` to `raw` or `png`. Trust and enable the package through the normal
-mod author workflow. No model request is required. The producer writes timing
+From a repository checkout, set `producer` to the absolute path of
+`scripts/frame_producer.mjs` and `transport` to `raw` or `png`, then trust and
+enable this directory. No model request is required. The producer writes timing
 records inside its private process directory; the mod exposes their path as
 `state.metrics`.
 
@@ -18,8 +19,9 @@ and publishes its source handle, dimensions and increasing sequence number.
 It waits for the matching acknowledgement before overwriting that file. The
 host copies an immutable frame before acknowledging it. Handles are scoped to
 the process binding and package generation and disappear on process cleanup.
-Fatal invalid raw publications stop the producer; ordinary backpressure leaves
-the buffer unconsumed for retry.
+Raw errors other than temporary surface, layout and callback admission stop
+the producer; backpressure, including a newer frame arriving before the
+pending one is drawn, leaves the buffer unconsumed for retry.
 
 ## Optional mouse look on macOS
 

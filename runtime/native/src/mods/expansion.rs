@@ -665,12 +665,13 @@ pub(in crate::mods) fn blit_sink(
     let owner = id.clone();
     let admitted_source = source.clone();
     let capabilities = grants.capabilities.clone();
-    let verified = Mutex::new(None::<std::time::Instant>);
-    let current: Arc<dyn Fn() -> Result<(), String> + Send + Sync> = Arc::new(move || {
-        let mut verified = verified
+    let verified = Arc::new(Mutex::new(None::<std::time::Instant>));
+    let last = verified.clone();
+    let current = move || {
+        let age = last
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let age = verified.map(|at| at.elapsed());
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map(|at| at.elapsed());
         if age.is_some_and(|age| age < std::time::Duration::from_millis(250)) {
             return Ok(());
         }
@@ -686,24 +687,34 @@ pub(in crate::mods) fn blit_sink(
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         };
-        *verified = None;
-        runtime
+        let result = runtime
             .reload()
-            .map_err(|_| "callback_cancelled".to_owned())?;
-        (runtime.generation() == generation
-            && runtime.grants(&owner).is_some_and(|grants| {
-                grants.source_sha256 == admitted_source && grants.capabilities == capabilities
-            }))
-        .then_some(())
-        .ok_or_else(|| "process_raster_revoked".to_owned())?;
-        *verified = Some(std::time::Instant::now());
-        Ok(())
-    });
+            .map_err(|_| "callback_cancelled".to_owned())
+            .and_then(|_| {
+                (runtime.generation() == generation
+                    && runtime.grants(&owner).is_some_and(|grants| {
+                        grants.source_sha256 == admitted_source
+                            && grants.capabilities == capabilities
+                    }))
+                .then_some(())
+                .ok_or_else(|| "process_raster_revoked".to_owned())
+            });
+        *last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            result.is_ok().then(std::time::Instant::now);
+        result
+    };
     Some(Arc::new(move |arguments, active| {
         current()?;
-        let current = current.clone();
-        let active: Arc<dyn Fn() -> bool + Send + Sync> =
-            Arc::new(move || active() && current().is_ok());
+        let verified = verified.clone();
+        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            active()
+                && verified
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
+        });
         codex_omd::client_surface::with_admission(&source, generation, None, || {
             codex_omd::client_surface::call(
                 &id,
