@@ -89,6 +89,68 @@ fn repository_scope_opt_out_and_hidden_content_are_enforced() {
 }
 
 #[test]
+fn tool_calls_and_results_are_read_beside_messages_with_bounded_payloads() {
+    let (_temp, repo, sessions) = fixture();
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":"session-t","session_id":"task-t","cwd":repo,"timestamp":"2026-09-26T12:00:00Z","memory_mode":"enabled"}}),
+        json!({"type":"turn_context","payload":{"turn_id":"turn-t","cwd":repo}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run it."}]}}),
+        json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"ls\"}"}}),
+        json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"x".repeat(3000)}}),
+        json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call-2","input":"*** Begin Patch"}}),
+        json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","output":[{"type":"input_text","text":"Authorization: Bearer private-sentinel"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}}),
+        json!({"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"hidden-reasoning-sentinel"}]}}),
+    ];
+    fs::write(
+        sessions.join("t.jsonl"),
+        rows.iter()
+            .map(|row| row.to_string() + "\n")
+            .collect::<String>(),
+    )
+    .unwrap();
+    let index = SessionIndex {
+        database: None,
+        root: &sessions,
+        repository: &repo,
+        enabled: true,
+    };
+    let list = index.call("sessions.list", json!({}), || true).unwrap();
+    let summary = &list["sessions"][0];
+    let result = index
+        .call(
+            "sessions.read",
+            json!({"session_id":"session-t","revision":summary["revision"],"handle":summary["handle"]}),
+            || true,
+        )
+        .unwrap();
+    let records = result["records"].as_array().unwrap();
+    assert_eq!(result["projection"], "local_visible_records");
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record["kind"].clone())
+            .collect::<Vec<_>>(),
+        [
+            "message",
+            "tool_call",
+            "tool_result",
+            "tool_call",
+            "tool_result"
+        ]
+    );
+    assert_eq!(records[1]["name"], "exec_command");
+    assert_eq!(records[1]["call_id"], "call-1");
+    assert_eq!(records[1]["arguments"], "{\"cmd\":\"ls\"}");
+    assert_eq!(records[2]["output"].as_str().unwrap().len(), 2048);
+    assert_eq!(records[2]["truncated"], true);
+    assert_eq!(records[3]["arguments"], "*** Begin Patch");
+    assert_eq!(records[4]["redacted"], true);
+    assert!(!result.to_string().contains("private-sentinel"));
+    assert!(!result.to_string().contains("hidden-reasoning-sentinel"));
+    assert!(!result.to_string().contains("base64"));
+}
+
+#[test]
 fn frozen_revision_rejects_append_and_ignores_partial_record() {
     let (_temp, repo, sessions) = fixture();
     let path = sessions.join("a.jsonl");

@@ -17,7 +17,7 @@ const surface = {
   replacements: ['context', 'routing', 'compaction'],
   intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
     command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
-    composer_edit: 'composer' },
+    composer_edit: 'composer', history_persist: 'history' },
   middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
 };
 
@@ -308,4 +308,41 @@ test('composer examples suggest a recent prompt and tidy pastes through the edit
   assert.deepEqual(run('paste_tidy', 'intercept', paste('-----BEGIN OPENSSH PRIVATE KEY-----'), { name: '0' }).value, { result: { deny: 'the paste looks like a private key' } });
   const history = { ...paste('x '), input: { ...paste('x ').input, source: 'history' } };
   assert.deepEqual(run('paste_tidy', 'intercept', history, { name: '0' }).value, { unmatched: true });
+});
+
+test('tool history example pairs the latest session tool calls with their results', () => {
+  const listed = run('tool_history', 'command', null, { name: 'recent_tools' });
+  assert.deepEqual(listed.host_call, { operation: 'sessions.list', arguments: { limit: 1 } });
+  const session = { session_id: 's', revision: 'r', handle: 'h' };
+  const list = { call: listed.host_call, value: { sessions: [session] } };
+  const read = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list] });
+  assert.deepEqual(read.host_call, { operation: 'sessions.read', arguments: session });
+  const records = [{ kind: 'message', role: 'user', text: 'Run it.' }, { kind: 'tool_call', name: 'exec_command', call_id: 'c1', arguments: '{}' },
+    { kind: 'tool_result', call_id: 'c1', output: 'ok\nmore' }, { kind: 'tool_call', name: 'apply_patch', call_id: 'c2', arguments: '' }];
+  const shown = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list, { call: read.host_call, value: { records } }] });
+  assert.equal(shown.value.display, 'exec_command: ok\napply_patch: no result');
+  assert.equal(run('tool_history', 'command', null, { name: 'recent_tools', receipts: [{ call: listed.host_call, value: { sessions: [] } }] }).value.display,
+    'No recorded sessions in this repository.');
+});
+
+test('history redaction example rewrites only entry text before it is persisted', () => {
+  const entry = (index, text) => ({ index, kind: 'function_call_output', role: null, call_id: 'c1', text });
+  const batch = { thread_id: 't', entries: [entry(0, 'Authorization: Bearer abcdefghijklmnop'), entry(1, 'key sk-proj-ABCDEFGHIJKLMNOPQRST and AKIAABCDEFGHIJKLMNOP'), entry(2, 'plain')] };
+  const result = run('history_redact', 'intercept', { surface: 'history_persist', input: batch, origin: { caller: 'host' } }, { name: '0' });
+  assert.deepEqual(result.host_call, { operation: 'continuation.next', arguments: { input: { thread_id: 't',
+    entries: [entry(0, 'Authorization: Bearer [redacted]'), entry(1, 'key [redacted] and [redacted]'), entry(2, 'plain')] } } });
+});
+
+test('readme answers example marks the README context block as a cached prefix', () => {
+  const read = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme' });
+  assert.deepEqual(read.host_call, { operation: 'workspace.read', arguments: { paths: ['README.md'] } });
+  const file = { call: read.host_call, value: { files: { 'README.md': { text: 'Run install.sh.' } } } };
+  const asked = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme', receipts: [file] });
+  assert.equal(asked.host_call.operation, 'model.complete');
+  assert.deepEqual(asked.host_call.arguments.context, ['Run install.sh.']);
+  assert.deepEqual(asked.host_call.arguments.cache, { through: 0 });
+  const cache = { read_tokens: 1024, write_tokens: 0 };
+  const answered = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme',
+    receipts: [file, { call: asked.host_call, value: { text: 'Run install.sh.', cache } }] });
+  assert.deepEqual(answered.value, { answer: 'Run install.sh.', cache });
 });

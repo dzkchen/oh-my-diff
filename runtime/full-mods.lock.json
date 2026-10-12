@@ -266,11 +266,11 @@
       "files": {
         "index.ts": "930b893f05992a6ad87c2759b58d96e7689f4117d8b2dfa447facf18c3a84f58",
         "mod.json": "b7ece9218f001ca543fe5be1b4b732849f84c8020374b4959fb5f35efebec266",
-        "router.mjs": "e1045be52e1961f0b6d1800e30539d4a227cc1892e5f9b096a30c06669898b43",
+        "router.mjs": "c220f2e0a96781e5490b9e2bef0c631546f5dd69046133bc90096c3107c974f1",
         "setup.mjs": "d6f681f2221d258a21fca95f54fdd8dff72471eda031930189433580fdc8ee39"
       },
       "id": "omd_profiles",
-      "package_sha256": "431e26aa2add40fda9002edcc6dc70539231d7f1c55b164e2baabf83c12be442",
+      "package_sha256": "9d3ea59a88032d2504955ec4f2cca2d3c780da9800bfc720c9f2cf1afc6158c2",
       "source": "mods/first-party/omd_profiles",
       "version": "0.1.0-preview.2"
     },

@@ -261,6 +261,12 @@
       "why_mod": "Keeps one state per Git checkout that every OMD session working there shares."
     },
     {
+      "path": "mods/examples/readme_answers",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Answers questions from the README through one-shot completions whose README prefix is marked for the provider's prompt cache."
+    },
+    {
       "path": "mods/examples/quiet_inline",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -271,6 +277,12 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Renders an imported image inside a live terminal render site and opens links after native confirmation."
+    },
+    {
+      "path": "mods/examples/history_redact",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Redacts credentials from history text in the host's persistence path before the rollout is written."
     },
     {
       "path": "mods/examples/layout_explorer",
@@ -385,6 +397,12 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Defers and re-describes model-visible tool specs per route through the composable tool_specs chain."
+    },
+    {
+      "path": "mods/examples/tool_history",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Pages the latest repository session's tool calls and results through the host's scoped session reader."
     },
     {
       "path": "mods/examples/tool_workflows",

@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toolTable, chatRequest, anthropicRequest, Emitter } from './router.mjs';
+import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter } from './router.mjs';
 
 const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
@@ -39,6 +39,23 @@ test('provider tool aliases preserve colliding names and round-trip their origin
   const calls = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
   assert.deepEqual(calls.map(call => [call.namespace ?? '', call.name, call.type]),
     specs.map(spec => [spec.namespace ?? '', spec.name, spec.type === 'custom' ? 'custom_tool_call' : 'function_call']));
+});
+
+test('host cache breakpoints become cache_control on the marked system or context block', () => {
+  const body = { instructions: 'base', input: [
+    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'mod system' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'context one' }, { type: 'input_text', text: 'context two' }, { type: 'input_text', text: 'prompt' }] },
+  ] };
+  const ephemeral = { type: 'ephemeral' };
+  assert.deepEqual(breakpoint('1:1'), [1, 1]);
+  assert.equal(breakpoint('x'), null);
+  const anthropic = anthropicRequest(body, {}, breakpoint('1:1'));
+  assert.equal(anthropic.system, 'base\n\nmod system');
+  assert.deepEqual(anthropic.messages[0].content.map(part => part.cache_control ?? null), [null, ephemeral, null]);
+  assert.deepEqual(anthropicRequest(body, {}, [0, 0]).system, [{ type: 'text', text: 'base\n\nmod system', cache_control: ephemeral }]);
+  const chat = chatRequest(body, {}, [1, 0]);
+  assert.deepEqual(chat.messages[1].content[0], { type: 'text', text: 'context one', cache_control: ephemeral });
+  assert.equal(typeof chatRequest(body, {}).messages[1].content, 'string');
 });
 
 test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {

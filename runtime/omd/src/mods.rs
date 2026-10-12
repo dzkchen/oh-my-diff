@@ -395,6 +395,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "user_submissions_v1",
     "terminal_raster_v1",
     "svg_assets_v1",
+    "history_persist_v1",
+    "model_cache_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -697,6 +699,7 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("peer_receive", "peers"),
     ("turn_stop", "autonomous"),
     ("compaction", "compaction"),
+    ("history_persist", "history"),
     ("elicitation", "approvals"),
     ("composer_edit", "composer"),
     ("component_change", "terminal"),
@@ -2712,6 +2715,7 @@ fn hostless(event: &str, payload: &Value) -> bool {
                         | "admission"
                         | "composer_edit"
                         | "component_change"
+                        | "history_persist"
                 )
             )
 }

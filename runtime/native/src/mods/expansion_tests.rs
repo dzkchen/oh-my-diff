@@ -88,12 +88,14 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
     let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
     let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
     let views = Arc::new(view::Views::new());
     let core = Arc::new_cyclic(|core| Core {
         agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
         host: host.clone(),
         runtime,
         input_runtime,
+        persist_runtime,
         environment,
         services: services::Services::default(),
         views,
