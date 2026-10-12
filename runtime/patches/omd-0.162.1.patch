@@ -31718,7 +31718,7 @@ index 6ab14d1f6..e3de30f53 100644
          };
 
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index c919e31c9..6c4b5f6f2 100644
+index c919e31c9..ff30ccf4e 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -376,6 +376,7 @@ mod draft_state;
@@ -31814,6 +31814,15 @@ index c919e31c9..6c4b5f6f2 100644
 
          if self.history_search.is_none()
              && !self.popups.active()
+@@ -2085,7 +2119,7 @@ impl ChatComposer {
+         }
+         if key_event.code == KeyCode::Esc {
+             let next_mode = esc_hint_mode(self.footer.mode, self.is_task_running);
+-            if next_mode != self.footer.mode {
++            if next_mode != self.footer.mode && self.popups.argument.is_none() {
+                 self.footer.mode = next_mode;
+                 return (InputResult::None, true);
+             }
 @@ -2152,7 +2186,11 @@ impl ChatComposer {
                  };
 
