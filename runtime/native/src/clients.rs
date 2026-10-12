@@ -217,11 +217,54 @@ fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String
         .collect())
 }
 
+/// Steps this client's own instance of a component module, delivering `events` and any due ticks.
+fn module_step(client: &str, component: &str, events: Vec<Value>) -> Result<Value, String> {
+    static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let core = core()?;
+    let snapshot = snapshot(&core)?;
+    let owner = owner(&snapshot, component)?.to_owned();
+    let (module, props) = snapshot
+        .view
+        .module(component)
+        .ok_or_else(|| format!("view_stale: {component}"))?;
+    let _thread =
+        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
+    let frame = json!({"instance": format!("client.{client}.{component}"), "props": props,
+        "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
+        "columns": 80, "rows": 24, "events": events});
+    let step = codex_omd::component_shared(&core.runtime, &owner, module, frame, || true)
+        .map_err(|error| error.to_string())?;
+    if let Some(post) = step["post"].as_object()
+        && core
+            .runtime
+            .lock()
+            .map_err(|_| "mod_runtime_poisoned")?
+            .registered(&owner, "component_post")
+    {
+        let lead = Lead {
+            permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
+            ..session(&core)?
+        };
+        let payload = json!({"component": component, "client": client, "data": post["data"]});
+        block(expansion::REMOTE.scope(
+            true,
+            expansion::invoke_one(&core, &lead, owner, "component_post", payload),
+        ))?
+        .ok_or("mod_runtime_poisoned")??;
+    }
+    Ok(step)
+}
+
 pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
     let mut payload = event_payload(&event)?;
     let core = core()?;
     let snapshot = snapshot(&core)?;
     let owner = owner(&snapshot, component)?.to_owned();
+    if snapshot.view.module(component).is_some() {
+        let events = codex_omd::component_events(&Value::Object(payload));
+        module_step(client, component, events)?;
+        return Ok(json!({"delivered": true}));
+    }
     payload.insert("component".into(), component.into());
     payload.insert("client".into(), client.into());
     let lead = session(&core)?;
@@ -343,7 +386,15 @@ pub fn action(
     Ok(json!({"status": "completed", "result": result["result"]}))
 }
 
-pub fn render(slot: &str, props: Value) -> Result<Value, String> {
+pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
+    if slot == "module" {
+        let component = props["component"]
+            .as_str()
+            .ok_or("render_props_invalid: a module render names its view component")?;
+        let step = module_step(client, component, Vec::new())?;
+        return Ok(json!({"original": props, "effective": {"next_ms": step["next_ms"]},
+            "tree": step["tree"], "answeredBy": null}));
+    }
     if !codex_omd::MOD_RENDER_COMPONENTS
         .iter()
         .any(|(name, _)| *name == slot)

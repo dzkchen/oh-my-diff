@@ -38,8 +38,8 @@ do not disable the mod.
 
 Require `turn_abort_v1` for `turns.abort`, `terminal_selection_v1` for
 `terminal.selection`, `terminal_copy_v1` for `terminal.copy`,
-`environment_overrides_v1` for `environment.set`, and `timers_100ms_v1` for
-100–999 ms timers. These labels reject older hosts before activation even when
+`environment_overrides_v1` for `environment.set`, and `timers_16ms_v1` for
+16–999 ms timers. These labels reject older hosts before activation even when
 their API version matches.
 
 ## Stability and change rules

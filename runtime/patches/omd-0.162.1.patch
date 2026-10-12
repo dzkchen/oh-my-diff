@@ -37880,7 +37880,7 @@ index 047473ad5..88556bfb4 100644
      let mut modifiers = KeyModifiers::NONE;
      let mut key_name = None;
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index dc0fbd054..9e07ce4ea 100644
+index dc0fbd054..11643acf0 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -165,6 +165,7 @@ pub use insert_history::insert_history_lines;
@@ -37891,7 +37891,7 @@ index dc0fbd054..9e07ce4ea 100644
  mod keymap_setup;
  mod line_truncation;
  pub(crate) mod live_wrap;
-@@ -177,6 +178,18 @@ mod markdown_render;
+@@ -177,6 +178,19 @@ mod markdown_render;
  mod markdown_stream;
  mod markdown_text_merge;
  mod mention_codec;
@@ -37901,6 +37901,7 @@ index dc0fbd054..9e07ce4ea 100644
 +mod mod_components;
 +mod mod_document;
 +mod mod_layout;
++mod mod_module;
 +mod mod_pty;
 +mod mod_raster;
 +mod mod_render;
@@ -37910,7 +37911,7 @@ index dc0fbd054..9e07ce4ea 100644
  mod model_catalog;
  mod model_migration;
  mod motion;
-@@ -185,6 +198,7 @@ mod named_session_lookup;
+@@ -185,6 +199,7 @@ mod named_session_lookup;
  mod notifications;
  #[cfg(any(not(debug_assertions), test))]
  mod npm_registry;
@@ -37918,7 +37919,7 @@ index dc0fbd054..9e07ce4ea 100644
  pub(crate) mod onboarding;
  mod oss_selection;
  mod pager_overlay;
-@@ -563,6 +577,7 @@ async fn start_app_server(
+@@ -563,6 +578,7 @@ async fn start_app_server(
      state_db: &mut Option<StateDbHandle>,
      environment_manager: Arc<EnvironmentManager>,
      embedded_network_policy: codex_app_server_client::EmbeddedNetworkPolicy,
@@ -37926,7 +37927,7 @@ index dc0fbd054..9e07ce4ea 100644
  ) -> color_eyre::Result<AppServerClient> {
      let connection = if matches!(target, AppServerTarget::Embedded) {
          None
-@@ -594,7 +609,7 @@ async fn start_app_server(
+@@ -594,7 +610,7 @@ async fn start_app_server(
              Err(err) => return Err(err),
          }
      }
@@ -37935,7 +37936,7 @@ index dc0fbd054..9e07ce4ea 100644
          arg0_paths,
          config,
          cli_kv_overrides,
-@@ -606,6 +621,7 @@ async fn start_app_server(
+@@ -606,6 +622,7 @@ async fn start_app_server(
          state_db.clone(),
          environment_manager,
          embedded_network_policy,
@@ -37943,7 +37944,7 @@ index dc0fbd054..9e07ce4ea 100644
      )
      .await
      .map(AppServerClient::InProcess)
-@@ -636,6 +652,7 @@ pub(crate) async fn start_app_server_for_picker(
+@@ -636,6 +653,7 @@ pub(crate) async fn start_app_server_for_picker(
          &mut state_db,
          environment_manager,
          embedded_network_policy,
@@ -37951,7 +37952,7 @@ index dc0fbd054..9e07ce4ea 100644
      )
      .await?;
      Ok(
-@@ -663,6 +680,7 @@ pub(crate) async fn start_embedded_app_server_for_picker(
+@@ -663,6 +681,7 @@ pub(crate) async fn start_embedded_app_server_for_picker(
          &mut state_db,
          Arc::new(EnvironmentManager::default_for_tests()),
          Default::default(),
@@ -37959,7 +37960,7 @@ index dc0fbd054..9e07ce4ea 100644
      )
      .await?;
      Ok(
-@@ -1213,6 +1231,7 @@ async fn run_ratatui_app(
+@@ -1213,6 +1232,7 @@ async fn run_ratatui_app(
                  &mut state_db,
                  environment_manager.clone(),
                  embedded_network_policy.clone(),
@@ -37967,7 +37968,7 @@ index dc0fbd054..9e07ce4ea 100644
              ),
          )
          .await;
-@@ -1790,6 +1809,7 @@ async fn run_ratatui_app(
+@@ -1790,6 +1810,7 @@ async fn run_ratatui_app(
                      &mut state_db,
                      environment_manager.clone(),
                      embedded_network_policy.clone(),
@@ -37975,7 +37976,7 @@ index dc0fbd054..9e07ce4ea 100644
                  ),
              )
              .await
-@@ -1880,6 +1900,7 @@ async fn run_ratatui_app(
+@@ -1880,6 +1901,7 @@ async fn run_ratatui_app(
                      &mut state_db,
                      environment_manager.clone(),
                      embedded_network_policy.clone(),
@@ -41984,10 +41985,10 @@ index 000000000..aef1c863b
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 000000000..2b4a5ac12
+index 000000000..694a68856
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,926 @@
+@@ -0,0 +1,927 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -42781,8 +42782,9 @@ index 000000000..2b4a5ac12
 +        connection_id: ConnectionId,
 +        params: OmdRenderParams,
 +    ) -> Response {
-+        self.client(connection_id)?;
-+        let result = blocking(move || clients::render(&params.slot, params.props)).await?;
++        let (client_id, _) = self.client(connection_id)?;
++        let result =
++            blocking(move || clients::render(&client_id, &params.slot, params.props)).await?;
 +        Ok(Some(
 +            OmdRenderResponse {
 +                original: result["original"].clone(),
@@ -51864,10 +51866,10 @@ index 000000000..dee9d2781
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..8ae041f67
+index 000000000..5e6a8cd38
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,696 @@
+@@ -0,0 +1,747 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -52087,11 +52089,54 @@ index 000000000..8ae041f67
 +        .collect())
 +}
 +
++/// Steps this client's own instance of a component module, delivering `events` and any due ticks.
++fn module_step(client: &str, component: &str, events: Vec<Value>) -> Result<Value, String> {
++    static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
++    let core = core()?;
++    let snapshot = snapshot(&core)?;
++    let owner = owner(&snapshot, component)?.to_owned();
++    let (module, props) = snapshot
++        .view
++        .module(component)
++        .ok_or_else(|| format!("view_stale: {component}"))?;
++    let _thread =
++        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
++    let frame = json!({"instance": format!("client.{client}.{component}"), "props": props,
++        "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
++        "columns": 80, "rows": 24, "events": events});
++    let step = codex_omd::component_shared(&core.runtime, &owner, module, frame, || true)
++        .map_err(|error| error.to_string())?;
++    if let Some(post) = step["post"].as_object()
++        && core
++            .runtime
++            .lock()
++            .map_err(|_| "mod_runtime_poisoned")?
++            .registered(&owner, "component_post")
++    {
++        let lead = Lead {
++            permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
++            ..session(&core)?
++        };
++        let payload = json!({"component": component, "client": client, "data": post["data"]});
++        block(expansion::REMOTE.scope(
++            true,
++            expansion::invoke_one(&core, &lead, owner, "component_post", payload),
++        ))?
++        .ok_or("mod_runtime_poisoned")??;
++    }
++    Ok(step)
++}
++
 +pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
 +    let mut payload = event_payload(&event)?;
 +    let core = core()?;
 +    let snapshot = snapshot(&core)?;
 +    let owner = owner(&snapshot, component)?.to_owned();
++    if snapshot.view.module(component).is_some() {
++        let events = codex_omd::component_events(&Value::Object(payload));
++        module_step(client, component, events)?;
++        return Ok(json!({"delivered": true}));
++    }
 +    payload.insert("component".into(), component.into());
 +    payload.insert("client".into(), client.into());
 +    let lead = session(&core)?;
@@ -52213,7 +52258,15 @@ index 000000000..8ae041f67
 +    Ok(json!({"status": "completed", "result": result["result"]}))
 +}
 +
-+pub fn render(slot: &str, props: Value) -> Result<Value, String> {
++pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
++    if slot == "module" {
++        let component = props["component"]
++            .as_str()
++            .ok_or("render_props_invalid: a module render names its view component")?;
++        let step = module_step(client, component, Vec::new())?;
++        return Ok(json!({"original": props, "effective": {"next_ms": step["next_ms"]},
++            "tree": step["tree"], "answeredBy": null}));
++    }
 +    if !codex_omd::MOD_RENDER_COMPONENTS
 +        .iter()
 +        .any(|(name, _)| *name == slot)
@@ -66829,14 +66882,15 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..f1f75040a
+index 000000000..6bef268d1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,720 @@
+@@ -0,0 +1,723 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
 +const DELIVERIES_PER_ROUND: usize = 64;
++const TIMER_FLOOR_MS: u64 = 16;
 +
 +pub(in crate::mods) enum Pending {
 +    Process {
@@ -67026,7 +67080,7 @@ index 000000000..f1f75040a
 +                return;
 +            };
 +            if deliver(&core).await {
-+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++                tokio::time::sleep(std::time::Duration::from_millis(TIMER_FLOOR_MS)).await;
 +                core.expansion.wake.notify_one();
 +            }
 +        }
@@ -67099,7 +67153,9 @@ index 000000000..f1f75040a
 +    let index = queue.iter().position(|item| match item {
 +        Pending::Timer { thread, owner, .. } => rates
 +            .get(&(*thread, owner.clone()))
-+            .is_none_or(|last| now.duration_since(*last) >= std::time::Duration::from_millis(100)),
++            .is_none_or(|last| {
++                now.duration_since(*last) >= std::time::Duration::from_millis(TIMER_FLOOR_MS)
++            }),
 +        _ => true,
 +    })?;
 +    let next = queue.remove(index)?;
@@ -67383,7 +67439,7 @@ index 000000000..f1f75040a
 +        delay_ms: u64,
 +    }
 +    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-+    if input.key.is_empty() || input.key.len() > 64 || !(100..=86_400_000).contains(&input.delay_ms)
++    if input.key.is_empty() || input.key.len() > 64 || !(TIMER_FLOOR_MS..=86_400_000).contains(&input.delay_ms)
 +    {
 +        return Err("timer_invalid".into());
 +    }
@@ -68162,7 +68218,7 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..aabdd40fe
+index 000000000..0599dc91a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 @@ -0,0 +1,4724 @@
@@ -70927,9 +70983,9 @@ index 000000000..aabdd40fe
 +    assert!(
 +        matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, .. }) if owner == "b")
 +    );
-+    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(99)).is_none());
++    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(15)).is_none());
 +    assert!(
-+        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(100)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
++        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(16)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
 +    );
 +}
 +
@@ -94330,10 +94386,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..317719dc1
+index 000000000..527ef54d3
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,242 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -94552,6 +94608,9 @@ index 000000000..317719dc1
 +pub use mods::event_shared;
 +pub use mods::file_stamp;
 +pub use mods::host_namespace;
++pub use mods::component_events;
++pub use mods::component_shared;
++pub use mods::component_unmount;
 +pub use mods::intercept_shared;
 +pub use mods::invalid_render_tree;
 +pub use mods::invoke_shared;
@@ -96464,10 +96523,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..a1e64942a
+index 000000000..718395781
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5651 @@
+@@ -0,0 +1,5676 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -96480,6 +96539,9 @@ index 000000000..a1e64942a
 +pub use chain::continue_operation;
 +pub use chain::intercept_shared;
 +pub use render::MOD_RENDER_COMPONENTS;
++pub use render::component_events;
++pub use render::component_shared;
++pub use render::component_unmount;
 +pub use render::render_shared;
 +mod packages;
 +mod view;
@@ -96575,6 +96637,8 @@ index 000000000..a1e64942a
 +use std::sync::OnceLock;
 +use std::time::Duration;
 +use std::time::Instant;
++use std::time::SystemTime;
++use std::time::UNIX_EPOCH;
 +
 +fn profiling() -> bool {
 +    static PROFILING: OnceLock<bool> = OnceLock::new();
@@ -96727,7 +96791,7 @@ index 000000000..a1e64942a
 +
 +    fn charge_call(&self) -> Result<()> {
 +        let calls = self.calls.get();
-+        if calls >= 32 {
++        if calls >= MAX_HOST_CALLS {
 +            return Err(failure("host_call_limit"));
 +        }
 +        self.calls.set(calls + 1);
@@ -96749,6 +96813,7 @@ index 000000000..a1e64942a
 +}
 +
 +pub const HOST_RECEIPT_BYTES: usize = 131_072;
++pub const MAX_HOST_CALLS: usize = 128;
 +
 +pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 +pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -96758,7 +96823,7 @@ index 000000000..a1e64942a
 +    "terminal_selection_v1",
 +    "terminal_copy_v1",
 +    "environment_overrides_v1",
-+    "timers_100ms_v1",
++    "timers_16ms_v1",
 +    "author_diagnostics_v1",
 +    "author_offline_runner_v1",
 +    "author_tooling_v1",
@@ -96787,6 +96852,7 @@ index 000000000..a1e64942a
 +    "exec_output_artifacts_v1",
 +    "guarded_exec_v1",
 +    "package_text_assets_v1",
++    "package_imports_v1",
 +    "workspace_access_v1",
 +    "workspace_fs_v1",
 +    "workspace_snapshots_v1",
@@ -96848,6 +96914,7 @@ index 000000000..a1e64942a
 +    "terminal_tabs_v1",
 +    "terminal_inline_sites_v1",
 +    "render_hooks_v1",
++    "component_modules_v1",
 +    "ui_composition_v1",
 +    "ui_controls_v1",
 +    "reactive_state_v1",
@@ -97123,6 +97190,7 @@ index 000000000..a1e64942a
 +    ("channel", "events"),
 +    ("timer", "events"),
 +    ("component_event", "terminal"),
++    ("component_post", "terminal"),
 +    ("view", "terminal"),
 +    ("focus", "terminal"),
 +    ("completion", "composer"),
@@ -98322,7 +98390,7 @@ index 000000000..a1e64942a
 +            return Err(failure("invalid_lifecycle_scripts"));
 +        }
 +        let assets: BTreeSet<_> = self.assets.iter().collect();
-+        if self.assets.len() > 8
++        if self.assets.len() > 16
 +            || assets.len() != self.assets.len()
 +            || self
 +                .assets
@@ -98832,6 +98900,10 @@ index 000000000..a1e64942a
 +    interceptors: Vec<ModInterceptor>,
 +    #[serde(default)]
 +    agents: Vec<ModAgent>,
++    #[serde(default)]
++    modules: Vec<String>,
++    #[serde(default)]
++    components: Vec<String>,
 +}
 +
 +#[derive(Deserialize)]
@@ -99138,6 +99210,7 @@ index 000000000..a1e64942a
 +        "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
 +        "tool" if dynamic.iter().any(|tool| tool == name) => (),
 +        "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
++        "component" if loaded.registrations.components.iter().any(|c| c == name) => (),
 +        "intercept"
 +            if name
 +                .parse::<usize>()
@@ -99248,6 +99321,9 @@ index 000000000..a1e64942a
 +    let thread = state_thread(&payload);
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
++    let now_ms = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map_or(0, |elapsed| elapsed.as_millis() as u64);
 +    let mut replay: Vec<Value> = Vec::new();
 +    loop {
 +        let replaying = !replay.is_empty();
@@ -99341,7 +99417,7 @@ index 000000000..a1e64942a
 +                result
 +            },
 +            progress,
-+            invocation.virtual_time_ms,
++            Some(invocation.virtual_time_ms.unwrap_or(now_ms)),
 +            scope,
 +        )
 +    });
@@ -99824,9 +99900,9 @@ index 000000000..a1e64942a
 +                        package.id
 +                    )));
 +                }
-+                if files.values().map(String::len).sum::<usize>() > 128 * 1024 {
++                if source.len() + files.values().map(String::len).sum::<usize>() > 256 * 1024 {
 +                    return Err(failure(format!(
-+                        "package_text_asset_input_limit: {}",
++                        "package_text_input_limit: {}",
 +                        package.id
 +                    )));
 +                }
@@ -99902,8 +99978,15 @@ index 000000000..a1e64942a
 +                for tool in &registrations.tools {
 +                    (self.tool_validator)(&tool.parameters)?;
 +                }
++                let mut code = loaded.source.to_string();
++                for name in registrations.modules.iter().filter(|name| !name.ends_with(".json")) {
++                    if let Some(text) = loaded.assets.get(name).and_then(|asset| asset["text"].as_str()) {
++                        code.push('\n');
++                        code.push_str(text);
++                    }
++                }
 +                let (source_use, unused_grants, unused_environment) =
-+                    source_use(&loaded.source, &loaded.package, &registrations)?;
++                    source_use(&code, &loaded.package, &registrations)?;
 +                Ok((registrations, source_use, unused_grants, unused_environment))
 +            })();
 +            if !active() {
@@ -100521,6 +100604,7 @@ index 000000000..a1e64942a
 +            || registrations.contracts.len() > 4
 +            || registrations.builtins.len() > 1
 +            || registrations.services.len() > 8
++            || registrations.components.len() > 16
 +        {
 +            return Err(failure("registration_limit_or_capability_denied"));
 +        }
@@ -102121,10 +102205,10 @@ index 000000000..a1e64942a
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..7c95fa4c9
+index 000000000..29c8da298
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,853 @@
+@@ -0,0 +1,855 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -102234,7 +102318,7 @@ index 000000000..7c95fa4c9
 +            "events.schedule" => {
 +                let delay = call.arguments["delay_ms"]
 +                    .as_u64()
-+                    .filter(|delay| (100..=86_400_000).contains(delay))
++                    .filter(|delay| (16..=86_400_000).contains(delay))
 +                    .ok_or_else(|| failure("timer_delay_invalid"))?;
 +                self.timers
 +                    .insert((caller.to_owned(), key.clone()), self.now_ms + delay);
@@ -102722,6 +102806,7 @@ index 000000000..7c95fa4c9
 +                            | ModComponent::Pane { pointer: true, .. }
 +                            | ModComponent::Image { pointer: true, .. }
 +                            | ModComponent::Raster { pointer: true, .. }
++                            | ModComponent::Module { pointer: true, .. }
 +                    ) {
 +                        return Err(failure("offline_terminal_component_not_pointer"));
 +                    }
@@ -102825,7 +102910,8 @@ index 000000000..7c95fa4c9
 +            | ModComponent::Diff { id, .. }
 +            | ModComponent::Terminal { id, .. }
 +            | ModComponent::Image { id, .. }
-+            | ModComponent::Raster { id, .. } => (Some(id.as_str()), &[][..]),
++            | ModComponent::Raster { id, .. }
++            | ModComponent::Module { id, .. } => (Some(id.as_str()), &[][..]),
 +            ModComponent::Slot | ModComponent::Native { .. } => (None, &[][..]),
 +        };
 +        if component_id == Some(id) {
@@ -102980,16 +103066,13 @@ index 000000000..7c95fa4c9
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..41f123b51
+index 000000000..c601d818d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,413 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
-+
-+/// Host calls that suspend execution; the callback replays from its receipts once they settle.
-+pub(super) const SUSPENDING: &[&str] = &["continuation.next", "time.sleep"];
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
@@ -103180,7 +103263,7 @@ index 000000000..41f123b51
 +
 +/// The request fields fixed for a loaded package, and their digest: the package's runner identity.
 +fn metadata(loaded: &Loaded) -> (Value, String) {
-+    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join("index.ts"),
++    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join(&loaded.package.entrypoint),
 +        "api": MOD_API_VERSION,
 +        "assets": loaded.assets.as_ref(),
 +        "entrypoint": loaded.package.entrypoint,
@@ -103210,6 +103293,11 @@ index 000000000..41f123b51
 +    (request, identity)
 +}
 +
++/// A component instance keeps one runner, and with it its module state, for as long as it stays mounted.
++pub(super) fn component_key(node: &Path, id: &str, component: &str, identity: &str) -> String {
++    format!("{}:component:{id}:{component}:{identity}", node.display())
++}
++
 +#[allow(clippy::too_many_arguments)]
 +pub(super) fn run(
 +    node: &Path,
@@ -103221,7 +103309,7 @@ index 000000000..41f123b51
 +    active: &dyn Fn() -> bool,
 +    host: &mut dyn FnMut(ModHostCall) -> Result<Value>,
 +    progress: &mut dyn FnMut(String),
-+    virtual_time_ms: Option<u64>,
++    now_ms: Option<u64>,
 +    scope: &InvocationScope,
 +) -> Result<Reply> {
 +    let mut receipts = replay.to_vec();
@@ -103237,18 +103325,27 @@ index 000000000..41f123b51
 +        metadata,
 +        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
 +    };
-+    request.invocation["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
++    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(|| {
++        std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_or(0, |elapsed| elapsed.as_millis() as u64)
++    }));
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
-+    let warm = (render || loaded.package.environment.is_empty()).then(|| {
-+        request.invocation["serve"] = Value::Bool(render);
-+        request.invocation["reuse"] = Value::Bool(!render);
++    let component = event == "component";
++    let warm = (render || component || loaded.package.environment.is_empty()).then(|| {
++        request.invocation["serve"] = Value::Bool(render || component);
++        request.invocation["reuse"] = Value::Bool(!render && !component);
++        if component {
++            let instance = request["payload"]["instance"].as_str().unwrap_or(name);
++            return component_key(node, &loaded.package.id, instance, identity);
++        }
 +        if !render {
 +            return format!("{}:{identity}", node.display());
 +        }
 +        let mut key = Sha256::new();
 +        key.update(identity);
 +        for (field, value) in request.invocation.as_object().into_iter().flatten() {
-+            if !["name", "payload", "receipts"].contains(&field.as_str()) {
++            if !["name", "payload", "receipts", "virtual_time_ms"].contains(&field.as_str()) {
 +                key.update(field);
 +                key.update(value.to_string());
 +            }
@@ -103257,81 +103354,39 @@ index 000000000..41f123b51
 +    });
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
-+    // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
-+    let mut reply: Reply = loop {
-+        request.invocation["receipts"] = Value::Array(receipts.clone());
-+        let mut answer = |frame: Value| -> Result<Value> {
-+            if event == "inspect" {
-+                return Err(failure("invalid_host_call_sequence"));
-+            }
-+            let frame: Frame = serde_json::from_value(frame)?;
-+            forward(event, &frame.updates, &mut forwarded, progress)?;
-+            let call = frame.call;
-+            if expected.len() >= 32 {
-+                return Err(failure("host_call_limit"));
-+            }
-+            authorize(loaded, &call)?;
-+            if !active() {
-+                return Err(failure("callback_cancelled"));
-+            }
-+            let call_started = Instant::now();
-+            let exempt = !crate::client_surface::SURFACE_OPERATIONS
-+                .contains(&call.operation.as_str())
-+                || crate::client_surface::awaits_user(&call.operation, &call.arguments)
-+                // Clipboard delivery is external work bounded by the surface call lifetime.
-+                || call.operation == "terminal.copy";
-+            scope.charge_call()?;
-+            let (receipt, receipt_bytes) = {
-+                let _profile = super::Profile::new("host_call");
-+                receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
-+            };
-+            expected.push(call);
-+            receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
-+            receipts.push(receipt.clone());
-+            if receipts_bytes > HOST_RECEIPT_BYTES {
-+                return Err(failure("host_receipt_limit"));
-+            }
-+            scope.charge_receipt(receipt_bytes)?;
-+            if exempt {
-+                waited += call_started.elapsed();
-+            }
-+            scope.check_execution(started.elapsed().saturating_sub(waited))?;
-+            Ok(receipt)
-+        };
-+        let evaluated = match &warm {
-+            Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
-+            None => process::evaluate(node, &request, budget, active, &mut answer),
-+        }?;
-+        let reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
-+            if let Some(key) = &warm {
-+                process::invalidate_warm(key);
-+            }
-+        })?;
-+        let Some(call) = reply
-+            .host_call
-+            .clone()
-+            .filter(|call| SUSPENDING.contains(&call.operation.as_str()))
-+            .filter(|call| reply.calls.split_last() == Some((call, &expected[..])))
-+        else {
-+            break reply;
-+        };
-+        if call.operation == "continuation.next" && event != "intercept" {
++    request.invocation["receipts"] = Value::Array(receipts.clone());
++    let mut answer = |frame: Value| -> Result<Value> {
++        if event == "inspect" {
++            return Err(failure("invalid_host_call_sequence"));
++        }
++        let frame: Frame = serde_json::from_value(frame)?;
++        forward(event, &frame.updates, &mut forwarded, progress)?;
++        let call = frame.call;
++        if expected.len() >= MAX_HOST_CALLS {
++            return Err(failure("host_call_limit"));
++        }
++        let continuation = call.operation == "continuation.next";
++        if continuation && event != "intercept" {
 +            return Err(failure("continuation_outside_interceptor"));
 +        }
-+        if call.operation == "time.sleep" {
++        if !continuation {
 +            authorize(loaded, &call)?;
-+        }
-+        if expected.len() >= 32 {
-+            return Err(failure("host_call_limit"));
 +        }
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
 +        }
-+        scope.charge_call()?;
 +        let call_started = Instant::now();
-+        let (receipt, receipt_bytes) =
-+            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?;
-+        waited += call_started.elapsed();
++        let exempt = continuation
++            || call.operation == "time.sleep"
++            || !crate::client_surface::SURFACE_OPERATIONS.contains(&call.operation.as_str())
++            || crate::client_surface::awaits_user(&call.operation, &call.arguments)
++            // Clipboard delivery is external work bounded by the surface call lifetime.
++            || call.operation == "terminal.copy";
++        scope.charge_call()?;
++        let (receipt, receipt_bytes) = {
++            let _profile = super::Profile::new("host_call");
++            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
++        };
 +        expected.push(call);
 +        receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
 +        receipts.push(receipt.clone());
@@ -103339,7 +103394,21 @@ index 000000000..41f123b51
 +            return Err(failure("host_receipt_limit"));
 +        }
 +        scope.charge_receipt(receipt_bytes)?;
++        if exempt {
++            waited += call_started.elapsed();
++        }
++        scope.check_execution(started.elapsed().saturating_sub(waited))?;
++        Ok(receipt)
 +    };
++    let evaluated = match &warm {
++        Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
++        None => process::evaluate(node, &request, budget, active, &mut answer),
++    }?;
++    let mut reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
++        if let Some(key) = &warm {
++            process::invalidate_warm(key);
++        }
++    })?;
 +    let execution = started.elapsed().saturating_sub(waited);
 +    scope.charge_execution(execution)?;
 +    if event != "inspect" && reply.registrations != loaded.registrations {
@@ -105345,7 +105414,7 @@ index 000000000..383bf405b
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..d21155fd7
+index 000000000..2417d46b8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
 @@ -0,0 +1,2789 @@
@@ -107394,12 +107463,12 @@ index 000000000..d21155fd7
 +        std::fs::create_dir(&staging)?;
 +        let result = (|| {
 +            copy_file(source, &staging, "mod.json", 8192)?;
-+            copy_file(source, &staging, &package.entrypoint, 65_536)?;
++            copy_file(source, &staging, &package.entrypoint, store::PACKAGE_FILE_LIMIT)?;
 +            for asset in &package.assets {
-+                copy_file(source, &staging, asset, 65_536)?;
++                copy_file(source, &staging, asset, store::PACKAGE_FILE_LIMIT)?;
 +            }
 +            for script in package.lifecycle.values() {
-+                copy_file(source, &staging, script, 65_536)?;
++                copy_file(source, &staging, script, store::PACKAGE_FILE_LIMIT)?;
 +            }
 +            if store::package(&staging.canonicalize()?)?.2 != integrity {
 +                return Err(failure("package_integrity_changed_during_copy"));
@@ -107444,7 +107513,7 @@ index 000000000..d21155fd7
 +            .lifecycle
 +            .get(event)
 +            .ok_or_else(|| failure("lifecycle_script_missing"))?;
-+        let source = String::from_utf8(store::package_read(&package.path, script, 65_536)?)
++        let source = String::from_utf8(store::package_read(&package.path, script, store::PACKAGE_FILE_LIMIT)?)
 +            .map_err(failure)?;
 +        let node = self.configuration()?.node;
 +        let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
@@ -108906,10 +108975,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..719a7e37d
+index 000000000..4b6ca0cb1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,457 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -108969,7 +109038,9 @@ index 000000000..719a7e37d
 +        std::thread::spawn(|| {
 +            loop {
 +                std::thread::sleep(Duration::from_secs(1));
-+                for runner in retire_warm(|runner| runner.used.elapsed() >= WARM_IDLE) {
++                for runner in
++                    retire_warm(|runner| !runner.pinned && runner.used.elapsed() >= WARM_IDLE)
++                {
 +                    runner.stop();
 +                }
 +                let surplus = {
@@ -109033,7 +109104,7 @@ index 000000000..719a7e37d
 +    warm.map_or_else(|| spawn(node), Ok)
 +}
 +
-+const INPUT_LIMIT: usize = 524_288;
++const INPUT_LIMIT: usize = 1_048_576;
 +
 +fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 +    let mut bytes = serde_json::to_vec(request)?;
@@ -109118,6 +109189,8 @@ index 000000000..719a7e37d
 +    errors: std::thread::JoinHandle<Vec<u8>>,
 +    used: Instant,
 +    serve: bool,
++    /// A mounted component's runner: never idle-retired, only unmounted or displaced by newer ones.
++    pinned: bool,
 +    /// Bytes of the activation request outside its serve fields.
 +    base: usize,
 +}
@@ -109136,8 +109209,16 @@ index 000000000..719a7e37d
 +    }
 +}
 +
++pub(super) fn unmount(id: &str, component: &str) {
++    let instance = format!(":component:{id}:{component}:");
++    for runner in retire_warm(|runner| runner.pinned && runner.key.contains(&instance)) {
++        runner.stop();
++    }
++}
++
 +static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
 +const WARM_RUNNERS: usize = 4;
++const PINNED_RUNNERS: usize = 4;
 +const REUSED_RUNNERS: usize = 2;
 +const WARM_IDLE: Duration = Duration::from_secs(60);
 +
@@ -109174,6 +109255,7 @@ index 000000000..719a7e37d
 +        errors,
 +        used: Instant::now(),
 +        serve,
++        pinned: false,
 +        base: 0,
 +    })
 +}
@@ -109201,7 +109283,7 @@ index 000000000..719a7e37d
 +        request_line(request)?
 +    } else {
 +        request_line(
-+            &["name", "payload", "receipts", "state"]
++            &["name", "payload", "receipts", "state", "virtual_time_ms"]
 +                .map(|field| (field, &request[field]))
 +                .into_iter()
 +                .collect::<std::collections::BTreeMap<_, _>>(),
@@ -109226,6 +109308,7 @@ index 000000000..719a7e37d
 +        None => {
 +            let bytes = request_line(request)?;
 +            let mut warm = warm_runner(node, key, request["serve"] == true)?;
++            warm.pinned = request["event"] == "component";
 +            warm.base = bytes.len().saturating_sub(serve.len());
 +            (warm, bytes)
 +        }
@@ -109259,22 +109342,26 @@ index 000000000..719a7e37d
 +/// kind's size.
 +fn pool(mut runner: Warm) {
 +    runner.used = Instant::now();
-+    let serve = runner.serve;
-+    let size = if serve { WARM_RUNNERS } else { REUSED_RUNNERS };
++    let kind = (runner.serve, runner.pinned);
++    let size = match kind {
++        (_, true) => PINNED_RUNNERS,
++        (true, false) => WARM_RUNNERS,
++        (false, false) => REUSED_RUNNERS,
++    };
 +    let evicted = match WARM.lock() {
 +        Ok(mut runners) => {
 +            runners.push(runner);
 +            let mut evicted = Vec::new();
 +            while runners
 +                .iter()
-+                .filter(|runner| runner.serve == serve)
++                .filter(|runner| (runner.serve, runner.pinned) == kind)
 +                .count()
 +                > size
 +            {
 +                let oldest = runners
 +                    .iter()
 +                    .enumerate()
-+                    .filter(|(_, runner)| runner.serve == serve)
++                    .filter(|(_, runner)| (runner.serve, runner.pinned) == kind)
 +                    .min_by_key(|(_, runner)| runner.used)
 +                    .map_or(0, |(index, _)| index);
 +                evicted.push(runners.swap_remove(oldest));
@@ -109351,10 +109438,10 @@ index 000000000..719a7e37d
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..b67198134
+index 000000000..1fc4e43b8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,488 @@
 +use super::WARM;
 +use super::command;
 +use super::evaluate_warm;
@@ -109551,7 +109638,7 @@ index 000000000..b67198134
 +}
 +
 +#[test]
-+fn render_reuse_preserves_activation_state_across_suspensions() {
++fn render_reuse_preserves_activation_state_across_continuations() {
 +    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
 +    let input = json!({"component":"tool_call"});
 +    let mut request = json!({"source":"export default api => { const a = api.atom('value', 0); a.set(a.get() + 1); api.intercept('render', (e, next) => e.replay ? next({...e, value: a.get()}) : {value: a.get()}); };",
@@ -109572,17 +109659,6 @@ index 000000000..b67198134
 +        assert_eq!(reply["value"]["result"]["value"], 1);
 +        assert_eq!(reply["state"], json!({"value":0}));
 +    }
-+    request["payload"]["input"]["replay"] = json!(true);
-+    let reply = evaluate_warm(
-+        &node,
-+        "activation-state",
-+        &request,
-+        Duration::from_secs(2),
-+        &|| true,
-+        &mut |_| unreachable!(),
-+    )
-+    .unwrap();
-+    assert!(!reply["host_call"].is_null());
 +    let pid = || {
 +        WARM.lock()
 +            .unwrap()
@@ -109590,20 +109666,22 @@ index 000000000..b67198134
 +            .find(|runner| runner.key == "activation-state")
 +            .map(|runner| runner.child.id())
 +    };
-+    let suspended = pid().expect("a suspended render keeps its runner");
-+    request["receipts"] =
-+        json!([{"call":reply["host_call"],"value":{"result":{"value":1},"trace":[]}}]);
-+    let replay = evaluate_warm(
++    let warm = pid().expect("a render keeps its runner");
++    request["payload"]["input"]["replay"] = json!(true);
++    let continued = evaluate_warm(
 +        &node,
 +        "activation-state",
 +        &request,
 +        Duration::from_secs(2),
 +        &|| true,
-+        &mut |_| unreachable!(),
++        &mut |frame| {
++            assert_eq!(frame["call"]["arguments"]["input"]["value"], 1);
++            Ok(json!({"call": frame["call"], "value": {"result": {"value": 1}, "trace": []}}))
++        },
 +    )
 +    .unwrap();
-+    assert_eq!(replay["value"]["result"]["value"], 1);
-+    assert_eq!(pid(), Some(suspended));
++    assert_eq!(continued["value"]["result"]["value"], 1);
++    assert_eq!(pid(), Some(warm));
 +}
 +
 +#[test]
@@ -109854,10 +109932,10 @@ index 000000000..b67198134
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..ebd369158
+index 000000000..a6e6c5fc2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,270 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -109956,6 +110034,78 @@ index 000000000..ebd369158
 +            })
 +            .collect::<Vec<_>>();
 +        digest(Value::Array(values).to_string().as_bytes())
++    }
++}
++
++/// Runs one frame step of a mod's component module without host authority: its events, due ticks and
++/// view, answering `{tree, post, next_ms}`. An error stops the instance's runner, unmounting it.
++pub fn component_shared(
++    runtime: &Mutex<ModHost>,
++    id: &str,
++    component: &str,
++    frame: Value,
++    active: impl Fn() -> bool,
++) -> Result<Value> {
++    let generation = runtime
++        .lock()
++        .map_err(|_| failure("mod_runtime_poisoned"))?
++        .generation;
++    let instance = frame["instance"].as_str().unwrap_or(component).to_owned();
++    let value = invoke_shared(
++        runtime,
++        id,
++        generation,
++        "component",
++        component,
++        frame,
++        active,
++        |_, call| {
++            Err(failure(format!(
++                "host_operation_unavailable: {} is not available to component modules",
++                call.operation
++            )))
++        },
++        |_| {},
++    )?;
++    let tree = serde_json::from_value::<Vec<ModComponent>>(value["tree"].clone())
++        .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
++    if let Some(reason) = view::invalid_render_tree(&tree).or_else(|| {
++        (tree.iter().any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
++            || serde_json::to_vec(&value["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
++        .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
++    }) {
++        process::unmount(id, &instance);
++        return Err(failure(format!("invalid_component_tree: {reason}")));
++    }
++    Ok(value)
++}
++
++pub fn component_unmount(id: &str, component: &str) {
++    process::unmount(id, component);
++}
++
++/// A component's input event as the key and pointer events a component module receives.
++pub fn component_events(payload: &Value) -> Vec<Value> {
++    match payload["kind"].as_str() {
++        Some("input") => payload["events"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .map(|event| match event.get("paste") {
++                Some(paste) => json!({"kind": "key", "key": null, "text": paste}),
++                None => json!({"kind": "key", "key": event["key"], "text": event["text"]}),
++            })
++            .collect(),
++        Some("key") => vec![json!({"kind": "key", "key": payload["key"], "text": payload["text"]})],
++        Some("pointer") => {
++            let mut pointer = payload["pointer"].clone();
++            if let Some(object) = pointer.as_object_mut() {
++                object.remove("fraction");
++                object.insert("kind".into(), "pointer".into());
++            }
++            vec![pointer]
++        }
++        _ => Vec::new(),
 +    }
 +}
 +
@@ -110403,12 +110553,12 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..45c3c390a
+index 000000000..5b4843f5d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,910 @@
 +import { stripTypeScriptTypes } from 'node:module';
-+import { createContext, SourceTextModule } from 'node:vm';
++import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
 +
 +const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -110453,7 +110603,7 @@ index 000000000..45c3c390a
 +      break;
 +    }
 +    input = Buffer.concat([input, chunk.subarray(0, read)]);
-+    if (input.length > 524288) throw new Error('input_limit');
++    if (input.length > 1048576) throw new Error('input_limit');
 +  }
 +  const line = input.subarray(0, end).toString();
 +  input = input.subarray(end + 1);
@@ -110463,18 +110613,18 @@ index 000000000..45c3c390a
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
-+if (Number.isSafeInteger(request.virtual_time_ms)) {
-+  const fixed = request.virtual_time_ms;
++let now = request.virtual_time_ms;
++if (Number.isSafeInteger(now)) {
 +  globalThis.Date = class extends Date {
-+    constructor(...args) { super(...(args.length ? args : [fixed])); }
-+    static now() { return fixed; }
++    constructor(...args) { super(...(args.length ? args : [now])); }
++    static now() { return now; }
 +  };
 +}
 +const handlers = new Map();
 +const tools = new Map();
 +let dynamicTools = null;
 +const commands = new Map();
-+const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [] };
++const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [], components: [] };
 +const interceptors = [];
 +const surface = request.surface;
 +registrations.services = [];
@@ -110494,7 +110644,9 @@ index 000000000..45c3c390a
 +  reads.add(key);
 +  tracking?.add(key);
 +}
-+const rendering = request.event === 'intercept' && request.payload?.surface === 'render';
++const rendering = request.event === 'component' || (request.event === 'intercept' && request.payload?.surface === 'render');
++const base = request.filename.endsWith('/' + request.entrypoint) ? request.filename.slice(0, -request.entrypoint.length)
++  : request.filename.slice(0, request.filename.lastIndexOf('/') + 1);
 +let activating = true;
 +let activatedState;
 +let pending = null;
@@ -110505,6 +110657,7 @@ index 000000000..45c3c390a
 +  const next = JSON.parse(line);
 +  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
 +  receipts = request.receipts;
++  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
 +  state = structuredCloneFallback(activatedState);
 +  reads.clear();
 +  calls.length = 0;
@@ -110533,7 +110686,7 @@ index 000000000..45c3c390a
 +    if (receipt.error) return { ok: false, error: receipt.error };
 +    return { ok: true, value: structuredCloneFallback(receipt.value) };
 +  }
-+  if (request.interactive && operation !== 'continuation.next' && operation !== 'time.sleep') {
++  if (request.interactive) {
 +    const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
 +    return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
 +  }
@@ -110630,7 +110783,7 @@ index 000000000..45c3c390a
 +    origin: { value: deepFreeze(origin) },
 +    signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
 +    trace: { get: () => trace },
-+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 32 - calls.length); } }) },
++    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 128 - calls.length); } }) },
 +    is: { value: pattern => surfaces(pattern).includes(name) },
 +  });
 +  if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
@@ -110817,7 +110970,7 @@ index 000000000..45c3c390a
 +  requireCapability('events');
 +  if (!activating) throw new Error('timer_registration_outside_activation');
 +  if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,58}$/.test(key)) throw new Error('invalid_timer_key: ' + key);
-+  if (!Number.isSafeInteger(ms) || ms < 100 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
++  if (!Number.isSafeInteger(ms) || ms < 16 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
 +  if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
 +  const scheduled = 'time:' + key;
 +  if (timers.has(scheduled)) throw new Error('conflict: ' + scheduled);
@@ -110831,6 +110984,71 @@ index 000000000..45c3c390a
 +    start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
 +    cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
 +  });
++}
++const components = new Map();
++const instances = new Map();
++const interval = ms => Number.isSafeInteger(ms) && ms >= 16 && ms <= 86400000;
++function component(id, definition) {
++  requireCapability('terminal');
++  if (!activating) throw new Error('component_registration_outside_activation');
++  if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(id)) throw new Error('invalid_component_id: ' + id);
++  if (components.has(id)) throw new Error('conflict: ' + id);
++  for (const key of Object.keys(definition ?? {})) if (!['init', 'view', 'key', 'pointer', 'every'].includes(key)) throw new Error('unsupported_component_option: ' + key);
++  if (typeof definition?.view !== 'function' || ['init', 'key', 'pointer'].some(key => definition[key] !== undefined && typeof definition[key] !== 'function')) throw new Error('handler_required: ' + id);
++  const every = definition.every;
++  if (every !== undefined && ((typeof every?.ms !== 'function' && !interval(every?.ms)) || typeof every.tick !== 'function')) throw new Error('invalid_component_every: ' + id);
++  components.set(id, definition);
++  registrations.components.push(id);
++}
++function step(frame) {
++  const definition = components.get(request.name);
++  if (!definition) throw new Error('unknown_component: ' + request.name);
++  const started = clock();
++  let posted = null;
++  const address = String(frame.instance ?? request.name);
++  let instance = instances.get(address);
++  const context = () => Object.freeze({ columns: frame.columns, rows: frame.rows, props: instance.props, post(data) {
++    const encoded = JSON.stringify(data ?? null);
++    if (encoded.length > 65536) throw new Error('component_post_limit');
++    posted = { data: JSON.parse(encoded) };
++  } });
++  if (!instance || frame.mount) {
++    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined };
++    instances.set(address, instance);
++    if (definition.init) instance.state = definition.init(instance.props, context());
++  } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
++    instance.props = deepFreeze(structuredCloneFallback(frame.props));
++  }
++  const apply = (handler, ...input) => {
++    const next = handler(instance.state, ...input, context());
++    if (next !== undefined) instance.state = next;
++  };
++  const period = () => {
++    const ms = typeof definition.every.ms === 'function' ? definition.every.ms(instance.state) : definition.every.ms;
++    if (ms !== null && !interval(ms)) throw new Error('invalid_component_every: ' + request.name);
++    return ms;
++  };
++  if (definition.every && period() === null) instance.last = frame.now;
++  for (const event of frame.events ?? []) {
++    const handler = event?.kind === 'key' ? definition.key : event?.kind === 'pointer' ? definition.pointer : undefined;
++    if (handler) apply(handler, deepFreeze(structuredCloneFallback(event)));
++  }
++  let next = null;
++  if (definition.every) {
++    const { tick } = definition.every;
++    let ms = period();
++    if (ms === null) instance.last = frame.now;
++    for (let ticks = 0; ms !== null && frame.now - instance.last >= ms && ticks < 8; ticks += 1) {
++      apply(tick);
++      instance.last += ms;
++      ms = period();
++    }
++    if (ms !== null && frame.now - instance.last >= ms) instance.last = frame.now;
++    next = ms === null ? null : instance.last + ms - frame.now;
++  }
++  const tree = definition.view(instance.state, context());
++  if (clock() - started > 8) throw new Error('component_overrun: ' + request.name);
++  return { tree: Array.isArray(tree) ? tree : [tree], post: posted, next_ms: next };
 +}
 +function workspacePath(path) {
 +  if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\0')) throw new Error('invalid_workspace_path: ' + path);
@@ -110873,9 +111091,11 @@ index 000000000..45c3c390a
 +    if (typeof handler !== 'function') throw new Error('handler_required: ' + pattern);
 +    const known = ['match', 'required', 'before', 'after'];
 +    for (const key of Object.keys(options ?? {})) if (!known.includes(key)) throw new Error('unsupported_interceptor_option: ' + key);
-+    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => line.includes(request.filename)) ?? '';
-+    const at = frame.slice(frame.lastIndexOf(request.filename) + request.filename.length).split(')')[0];
-+    const entry = { handler, catch: null, matcher: options?.match ?? null, location: request.filename.slice(request.filename.lastIndexOf('/') + 1) + at };
++    const files = [request.filename, ...Object.keys(request.assets ?? {}).map(name => base + name)];
++    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => files.some(file => line.includes(file + ':'))) ?? '';
++    const file = files.find(file => frame.includes(file + ':')) ?? '';
++    const at = frame.slice(frame.lastIndexOf(file) + base.length).split(')')[0];
++    const entry = { handler, catch: null, matcher: options?.match ?? null, location: at };
 +    const registration = { pattern, match: entry.matcher === null ? null : serializeMatcher(entry.matcher), required: options?.required === true,
 +      before: [...(options?.before ?? [])], after: [...(options?.after ?? [])], catch: false, location: entry.location };
 +    interceptors.push(entry);
@@ -110888,6 +111108,7 @@ index 000000000..45c3c390a
 +    } });
 +  },
 +  hook,
++  component,
 +  match: Object.freeze({ glob: pattern => {
 +    if (typeof pattern !== 'string' || !pattern || pattern.length > 256) throw new Error('invalid_glob_matcher');
 +    return tagged('glob', pattern);
@@ -111084,7 +111305,7 @@ index 000000000..45c3c390a
 +  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
 +  pending: () => pending, ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
-+  }, suspension, serve };
++  }, suspension, serve, base, component: step };
 +`;
 +// Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 +let live = null;
@@ -111133,10 +111354,31 @@ index 000000000..45c3c390a
 +    }
 +  }
 +  context.__adapt = adapt;
-+  await mod.link(async specifier => {
++  const { base } = context.__omd;
++  const entry = request.filename.slice(base.length);
++  const linked = new Map([[entry, mod]]);
++  await mod.link(async (specifier, importer) => {
 +    if (aliases.has(specifier)) return aliases.get(specifier);
-+    throw new Error(`unsupported_import: ${specifier}; use type-only SDK imports and a self-contained module`);
++    if (/^\.\.?\//.test(specifier) && importer.identifier.startsWith(base)) {
++      const parts = importer.identifier.slice(base.length).split('/').slice(0, -1);
++      for (const part of specifier.split('/')) {
++        if (part === '..') { if (!parts.length) break; parts.pop(); } else if (part !== '.') parts.push(part);
++      }
++      const name = parts.join('/');
++      if (linked.has(name)) return linked.get(name);
++      const asset = Object.hasOwn(request.assets ?? {}, name) ? request.assets[name] : null;
++      if (asset) {
++        const identifier = base + name;
++        const module = name.endsWith('.json')
++          ? new SyntheticModule(['default'], function () { this.setExport('default', JSON.parse(asset.text)); }, { context, identifier })
++          : moduleFor(asset.text, context, identifier, name.endsWith('.ts'));
++        linked.set(name, module);
++        return module;
++      }
++    }
++    throw new Error(`unsupported_import: ${specifier}; import package assets by relative path, and the SDK by type only`);
 +  });
++  context.__omd.registrations.modules = [...linked.keys()].filter(name => name !== entry);
 +  await mod.evaluate({ timeout: request.hook_budget_ms });
 +  context.__activate = mod.namespace.default;
 +  const dispatch = moduleFor(`
@@ -111152,7 +111394,8 @@ index 000000000..45c3c390a
 +        : request.event === 'command' ? commands.get(request.name)
 +        : request.event === 'virtual_read' ? virtualReaders.get(request.name)
 +        : request.event === 'service' ? serviceHandlers.get(request.name)
-+        : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
++        : request.event === 'intercept' ? globalThis.__omd.intercept
++        : request.event === 'component' ? globalThis.__omd.component : handlers.get(request.event);
 +      if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
 +      if (handler) value = await handler(request.payload) ?? null;
 +      await globalThis.__omd.flushSubscriptions();
@@ -111181,7 +111424,7 @@ index 000000000..45c3c390a
 +        omd.serve(line);
 +        let value = null;
 +        try {
-+          value = await omd.intercept(omd.request.payload) ?? null;
++          value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
 +          if (omd.pending()) throw new Error('swallowed_host_suspension');
 +        } catch (error) {
 +          if (error !== omd.suspension) throw error;
@@ -111226,10 +111469,10 @@ index 000000000..45c3c390a
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..d4b6cae0f
+index 000000000..56acad826
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1291 @@
+@@ -0,0 +1,1293 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -111466,7 +111709,7 @@ index 000000000..d4b6cae0f
 +    let (manifest, manifest_identity) = read_identified(&manifest_path, 8192)?;
 +    let mut files = vec![(manifest_path, manifest_identity)];
 +    let mut read_file = |relative: &str| {
-+        let (bytes, identity) = package_read_identified(path, relative, 65_536)?;
++        let (bytes, identity) = package_read_identified(path, relative, PACKAGE_FILE_LIMIT)?;
 +        files.push((path.join(relative), identity));
 +        Ok::<_, std::io::Error>(bytes)
 +    };
@@ -111513,7 +111756,8 @@ index 000000000..d4b6cae0f
 +    user: Option<String>,
 +}
 +
-+pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
++pub(super) const STATE_LIMIT: usize = 196_608;
++pub(super) const PACKAGE_FILE_LIMIT: u64 = 131_072;
 +const SECURITY_EVENTS: &str = "security-events.jsonl";
 +const SECURITY_EVENT_LIMIT: usize = 65_536;
 +
@@ -111556,7 +111800,7 @@ index 000000000..d4b6cae0f
 +}
 +
 +fn directory_state(directory: &Path, name: &str, version: u32) -> Result<Value> {
-+    match read(&directory.join(name), SCOPED_STATE_LIMIT as u64) {
++    match read(&directory.join(name), STATE_LIMIT as u64) {
 +        Ok(bytes) => state_value(&bytes, version),
 +        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
 +        Err(error) => Err(error),
@@ -111584,7 +111828,7 @@ index 000000000..d4b6cae0f
 +    let bytes = serde_json::to_vec(
 +        &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
 +    )?;
-+    if bytes.len() > SCOPED_STATE_LIMIT {
++    if bytes.len() > STATE_LIMIT {
 +        return Err(failure("state_limit"));
 +    }
 +    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
@@ -111766,6 +112010,7 @@ index 000000000..d4b6cae0f
 +        let limit = match name {
 +            "packages.lock.json" => 524_288,
 +            "package-transaction.json" => 1_048_576,
++            name if name.starts_with("state-") => STATE_LIMIT,
 +            _ => 65_536,
 +        };
 +        if bytes.len() > limit {
@@ -112459,7 +112704,7 @@ index 000000000..d4b6cae0f
 +        if !identifier(id) {
 +            return Err(failure("invalid_mod_id"));
 +        }
-+        let bytes = match read(&self.root.join(Self::state_name(id, scope)), 65_536) {
++        let bytes = match read(&self.root.join(Self::state_name(id, scope)), STATE_LIMIT as u64) {
 +            Ok(bytes) => bytes,
 +            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
 +            Err(e) => return Err(e),
@@ -112523,10 +112768,10 @@ index 000000000..d4b6cae0f
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..733c7a0dd
+index 000000000..72c5c65c5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2250 @@
+@@ -0,0 +1,2300 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -113303,6 +113548,19 @@ index 000000000..733c7a0dd
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        action: Option<ModCommandAction>,
 +    },
++    Module {
++        id: String,
++        label: String,
++        module: String,
++        #[serde(default, skip_serializing_if = "Value::is_null")]
++        props: Value,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        height: Option<u16>,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        keys: bool,
++        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++        pointer: bool,
++    },
 +    Slot,
 +    Native {
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -113392,6 +113650,7 @@ index 000000000..733c7a0dd
 +            | Self::Terminal { id, .. }
 +            | Self::Image { id, .. }
 +            | Self::Raster { id, .. }
++            | Self::Module { id, .. }
 +            | Self::Diff { id, .. } => Some(id),
 +            Self::Slot | Self::Native { .. } => None,
 +        }
@@ -113795,6 +114054,25 @@ index 000000000..733c7a0dd
 +            .values()
 +            .find_map(|site| find(&site.components, id))
 +    }
++
++    /// The registered module and props a `module` component `id` mounts.
++    pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
++        let mut found = Vec::new();
++        for site in self.sites.values() {
++            for component in &site.components {
++                component.descendants(&mut found);
++            }
++        }
++        found.into_iter().find_map(|component| match component {
++            ModComponent::Module {
++                id: instance,
++                module,
++                props,
++                ..
++            } if instance == id => Some((module.as_str(), props)),
++            _ => None,
++        })
++    }
 +}
 +
 +pub fn mod_component_id(value: &str) -> bool {
@@ -114183,6 +114461,23 @@ index 000000000..733c7a0dd
 +                    && width.is_none_or(|width| (1..=200).contains(&width))
 +                    && height.is_none_or(|height| (1..=40).contains(&height))
 +            }
++            Self::Module {
++                id,
++                label,
++                module,
++                props,
++                height,
++                ..
++            } => {
++                identified(id, label, ids)
++                    && module.len() <= 64
++                    && !module.is_empty()
++                    && module
++                        .bytes()
++                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
++                    && props.to_string().len() <= 4096
++                    && height.is_none_or(|height| (1..=40).contains(&height))
++            }
 +            Self::Slot | Self::Native { .. } => {
 +                *slots += 1;
 +                *slots <= 1
@@ -114190,7 +114485,7 @@ index 000000000..733c7a0dd
 +        }
 +    }
 +
-+    fn contains(&self, found: &dyn Fn(&Self) -> bool) -> bool {
++    pub(super) fn contains(&self, found: &dyn Fn(&Self) -> bool) -> bool {
 +        found(self)
 +            || match self {
 +                Self::Box { children, .. }
@@ -126297,10 +126592,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..046513e26
+index 000000000..ee2fa9872
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5177 @@
+@@ -0,0 +1,5321 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -126425,7 +126720,7 @@ index 000000000..046513e26
 +
 +#[test]
 +fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() {
-+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return value; }); }";
++    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return value; }); }";
 +    let (temp, _, _) = fixture(source, &["commands", "store"]);
 +    let mut first = host(&temp);
 +    let mut second = host(&temp);
@@ -126451,7 +126746,7 @@ index 000000000..046513e26
 +
 +#[test]
 +fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
-+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return read.ok; }); }";
++    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
 +    let (temp, _, _) = fixture(source, &["commands", "store"]);
 +    let mut first = host(&temp);
 +    let mut second = host(&temp);
@@ -127246,7 +127541,7 @@ index 000000000..046513e26
 +    let mut manifest: Value =
 +        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
 +    manifest["compatibility"] = json!({"required_features": [
-+        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_100ms_v1"
++        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_16ms_v1"
 +    ]});
 +    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 +    ModStore::inspect_package(&path).unwrap();
@@ -127778,8 +128073,8 @@ index 000000000..046513e26
 +fn a_render_racing_a_state_write_is_drawn_again() {
 +    let (temp, _, _) = fixture(
 +        "export default api => { api.command('set', value => { api.state.set(value); return null; }); \
-+         api.intercept('render', () => { const seen = String(api.state.get()); const end = Date.now() + 400; \
-+           while (Date.now() < end) {} return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
++         api.intercept('render', () => { const seen = String(api.state.get()); \
++           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
 +        &["commands", "store", "terminal"],
 +    );
 +    let runtime = std::sync::Mutex::new(host(&temp));
@@ -129617,7 +129912,7 @@ index 000000000..046513e26
 +        "export default api => { \
 +         const pulse = api.time.every('pulse', 100, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
 +         api.command('start', () => { pulse.start(); return api.package; }); \
-+         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:99})); \
++         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:15})); \
 +         api.command('nap', () => api.time.sleep(1500)); \
 +         api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
 +         api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
@@ -131478,9 +131773,153 @@ index 000000000..046513e26
 +    assert_eq!(copies, 2);
 +    assert_eq!(result, json!({"status": "confirmed"}));
 +}
++
++#[test]
++fn component_modules_keep_state_in_their_runner_until_unmounted() {
++    let source = "export default api => api.component('tally', { init: () => 0, \
++         key: (n, event) => { if (event.text === 'h') api.host.call('session.info', null); return n + 1; }, \
++         view: (n, ui) => ui.props === 'native' ? [{type: 'native'}] : [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
++    let (temp, _, _) = fixture(source, &["terminal", "inventory"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let step = |instance: &str, text: &str, props: &str| {
++        codex_omd::component_shared(
++            &runtime,
++            "fixture",
++            "tally",
++            json!({"instance": instance, "props": props, "now": 0, "columns": 20, "rows": 1,
++                "events": [{"kind": "key", "key": null, "text": text}]}),
++            || true,
++        )
++        .map(|step| step["tree"][0]["text"].clone())
++        .map_err(|error| error.to_string())
++    };
++    assert_eq!(step("a", "x", ""), Ok(json!("1")));
++    assert_eq!(step("a", "x", ""), Ok(json!("2")));
++    assert_eq!(step("b", "x", ""), Ok(json!("1")));
++    assert!(
++        step("a", "h", "")
++            .unwrap_err()
++            .contains("host_operation_unavailable")
++    );
++    assert_eq!(step("a", "x", ""), Ok(json!("1")));
++    codex_omd::component_unmount("fixture", "b");
++    assert_eq!(step("b", "x", ""), Ok(json!("1")));
++    assert!(
++        step("b", "x", "native")
++            .unwrap_err()
++            .starts_with("invalid_component_tree")
++    );
++    assert_eq!(step("b", "x", ""), Ok(json!("1")));
++}
++
++#[test]
++fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let path = root.join("fixture");
++    std::fs::create_dir_all(path.join("lib")).unwrap();
++    std::fs::write(
++        path.join("mod.json"),
++        serde_json::to_vec(&json!({"schema":1,"id":"fixture","version":"1.0.0","api":CURRENT_API,
++            "state_version":1,"capabilities":["commands"],"assets":["lib/draw.ts","worker.mjs"]}))
++        .unwrap(),
++    )
++    .unwrap();
++    std::fs::write(
++        path.join("index.ts"),
++        "import { draw } from './lib/draw.ts'; export default api => api.command('draw', () => draw(2));",
++    )
++    .unwrap();
++    std::fs::write(path.join("worker.mjs"), "fetch('https://example.org');").unwrap();
++    let draw = |body: &str| {
++        std::fs::write(path.join("lib/draw.ts"), body).unwrap();
++        trust(&store, &path, &["commands"]);
++    };
++    draw("export const draw = (n: number) => { fetch('https://example.org'); return n; };");
++    assert!(activation_error(&temp, "fixture").contains("undeclared_environment_use: network"));
++    draw("export const draw = (n: number): string => '#'.repeat(n);");
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    assert_eq!(
++        runtime
++            .invoke("fixture", generation, "command", "draw", Value::Null)
++            .unwrap(),
++        json!("##")
++    );
++}
++
++#[test]
++fn continuations_run_code_before_next_once_with_a_fixed_clock() {
++    let source = "export default api => api.intercept('model_request', async (e, next) => { \
++         const before = Date.now(); const effort = ['low', 'medium', 'high'][Math.floor(Math.random() * 3)]; \
++         const result = await next({...e, effort}); \
++         if (Date.now() !== before || result.effort !== effort) throw new Error('replayed'); return result; })";
++    let (temp, _, _) = fixture(source, &["middleware"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    for _ in 0..6 {
++        let chain = codex_omd::intercept_shared(
++            &runtime,
++            "model_request",
++            false,
++            json!({"request_id":"r1","route":"sol","routes":[{"name":"sol"}],"effort":"high","sections":[]}),
++            json!({"caller":"engine"}),
++            || true,
++            |_, _| Err(std::io::Error::other("unexpected host call")),
++            |input| {
++                std::thread::sleep(std::time::Duration::from_millis(20));
++                Ok(json!({"route": input["route"], "effort": input["effort"]}))
++            },
++        )
++        .unwrap();
++        assert!(chain.trace.iter().all(|entry| entry["reason"].is_null()), "{:?}", chain.trace);
++    }
++}
++
++#[test]
++fn a_resumed_component_ticks_from_now_instead_of_replaying_its_pause() {
++    let source = "export default api => api.component('clock', { init: () => ({ paused: true, n: 0 }), \
++         key: s => ({ ...s, paused: false }), \
++         every: { ms: s => s.paused ? null : 50, tick: s => ({ ...s, n: s.n + 1 }) }, \
++         view: s => [{type: 'text', id: 't', label: 'T', text: String(s.n)}] })";
++    let (temp, _, _) = fixture(source, &["terminal"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let step = |now: u64, events: Value| {
++        let step = codex_omd::component_shared(
++            &runtime,
++            "fixture",
++            "clock",
++            json!({"instance": "c", "now": now, "columns": 20, "rows": 1, "events": events}),
++            || true,
++        )
++        .unwrap();
++        (step["tree"][0]["text"].clone(), step["next_ms"].clone())
++    };
++    assert_eq!(step(0, json!([])), (json!("0"), Value::Null));
++    let key = json!([{"kind": "key", "key": "Space", "text": " "}]);
++    assert_eq!(step(10_000, key), (json!("0"), json!(50)));
++    assert_eq!(step(10_120, json!([])), (json!("2"), json!(30)));
++}
++
++#[test]
++fn component_input_maps_keys_pastes_and_pointer_events() {
++    let input = json!({"kind": "input", "events": [{"key": "d", "text": "d"}, {"paste": " go"}]});
++    assert_eq!(
++        codex_omd::component_events(&input),
++        vec![
++            json!({"kind": "key", "key": "d", "text": "d"}),
++            json!({"kind": "key", "key": null, "text": " go"}),
++        ]
++    );
++    let pointer = json!({"kind": "pointer", "pointer": {"column": 2, "row": 1, "action": "down", "button": "left", "fraction": [0.5, 0.5]}});
++    assert_eq!(
++        codex_omd::component_events(&pointer),
++        vec![json!({"kind": "pointer", "column": 2, "row": 1, "action": "down", "button": "left"})]
++    );
++}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..58a507196
+index 000000000..456b9c43c
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
 @@ -0,0 +1,2160 @@
@@ -133167,9 +133606,9 @@ index 000000000..58a507196
 +        value["capabilities"] = json!(["commands"]);
 +        value["entrypoint"] = json!("big.ts");
 +    });
-+    std::fs::write(package.join("big.ts"), vec![b'/'; 65_536]).unwrap();
++    std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
 +    assert!(ModStore::inspect_package(&package).is_ok());
-+    std::fs::write(package.join("big.ts"), vec![b'/'; 65_537]).unwrap();
++    std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
 +    assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit"));
 +    std::fs::remove_file(package.join("big.ts")).unwrap();
 +    std::fs::create_dir(package.join("big.ts")).unwrap();
@@ -147007,6 +147446,368 @@ index 000000000..8e4a9d37f
 +    assert_eq!(distribute(10, &[1, 1, 1]), vec![3, 3, 4]);
 +    assert_eq!(distribute(7, &[3, 4]), vec![3, 4]);
 +}
+diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
+new file mode 100644
+index 000000000..54bd0c3b2
+--- /dev/null
++++ b/codex-rs/tui/src/mod_module.rs
+@@ -0,0 +1,356 @@
++use std::collections::HashMap;
++use std::sync::Mutex;
++use std::sync::OnceLock;
++use std::time::Duration;
++use std::time::Instant;
++
++use codex_omd::ModComponent;
++use ratatui::style::Stylize;
++use ratatui::text::Line;
++use serde_json::Value;
++use serde_json::json;
++
++const FRAME: Duration = Duration::from_millis(16);
++const RETRY: Duration = Duration::from_millis(100);
++const EVENTS: usize = 256;
++
++/// One mounted `module` component: its latest tree and the input waiting for its next frame step.
++struct Instance {
++    owner: String,
++    module: String,
++    props: Value,
++    columns: u16,
++    rows: u16,
++    events: Vec<Value>,
++    tree: Vec<ModComponent>,
++    mounted: bool,
++    changed: bool,
++    due: Option<Instant>,
++    stepped: Option<Instant>,
++    failed: Option<String>,
++}
++
++static INSTANCES: Mutex<Option<HashMap<String, Instance>>> = Mutex::new(None);
++static WORKER: OnceLock<std::thread::Thread> = OnceLock::new();
++static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
++
++fn instances<T>(run: impl FnOnce(&mut HashMap<String, Instance>) -> T) -> T {
++    let mut instances = INSTANCES
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    run(instances.get_or_insert_with(HashMap::new))
++}
++
++fn clock() -> u64 {
++    static ORIGIN: OnceLock<Instant> = OnceLock::new();
++    ORIGIN.get_or_init(Instant::now).elapsed().as_millis() as u64
++}
++
++fn wake() {
++    WORKER
++        .get_or_init(|| std::thread::spawn(work).thread().clone())
++        .unpark();
++}
++
++/// The rows a mounted module draws at `width`; mounting it, or changing its props or size, asks for a step.
++pub(crate) fn rows(
++    id: &str,
++    owner: Option<&str>,
++    module: &str,
++    props: &Value,
++    width: u16,
++    height: Option<u16>,
++) -> Vec<Line<'static>> {
++    let Some(owner) = owner else {
++        return vec![Line::from(format!("{module}: no owner")).dim()];
++    };
++    let rows = height.unwrap_or(0);
++    let (lines, step, replaced) = instances(|instances| {
++        let instance = instances
++            .entry(id.to_owned())
++            .or_insert_with(|| fresh(owner, module));
++        let mut replaced = None;
++        if instance.owner != owner || instance.module != module {
++            replaced = instance.mounted.then(|| instance.owner.clone());
++            *instance = fresh(owner, module);
++        }
++        if instance.props != *props || instance.columns != width || instance.rows != rows {
++            instance.props = props.clone();
++            instance.columns = width;
++            instance.rows = rows;
++            instance.changed = true;
++        }
++        let lines = match &instance.failed {
++            Some(error) => vec![Line::from(format!("{owner}: {module}: {error}")).dim()],
++            None => crate::mod_render::compose_lines(&instance.tree, width, None, Vec::new())
++                .into_iter()
++                .map(|line| line.line)
++                .collect(),
++        };
++        let step = instance.failed.is_none()
++            && (instance.changed || instance.due.is_some_and(|due| due <= Instant::now()));
++        (lines, step, replaced)
++    });
++    if let Some(previous) = replaced {
++        codex_omd::component_unmount(&previous, id);
++    }
++    if step {
++        wake();
++    }
++    let mut lines = lines;
++    if let Some(height) = height {
++        lines.resize(usize::from(height), Line::default());
++    } else if lines.is_empty() {
++        lines.push(Line::default());
++    }
++    lines
++}
++
++pub(crate) fn mounted(id: &str) -> bool {
++    instances(|instances| instances.contains_key(id))
++}
++
++/// Rows a module without a declared height takes: what its latest tree draws.
++pub(crate) fn height(id: &str) -> u16 {
++    instances(|instances| {
++        instances.get(id).map_or(1, |instance| {
++            let drawn = if instance.failed.is_some() {
++                1
++            } else {
++                crate::mod_render::compose_lines(&instance.tree, instance.columns.max(1), None, Vec::new())
++                    .len()
++            };
++            u16::try_from(drawn.max(1)).unwrap_or(u16::MAX)
++        })
++    })
++}
++
++fn fresh(owner: &str, module: &str) -> Instance {
++    Instance {
++        owner: owner.to_owned(),
++        module: module.to_owned(),
++        props: Value::Null,
++        columns: 0,
++        rows: 0,
++        events: Vec::new(),
++        tree: Vec::new(),
++        mounted: false,
++        changed: true,
++        due: None,
++        stepped: None,
++        failed: None,
++    }
++}
++
++/// Unmounts the modules whose nodes left the view, stopping their runners.
++pub(crate) fn retain(ids: &std::collections::BTreeSet<String>) {
++    let gone = instances(|instances| {
++        let mut gone = Vec::new();
++        instances.retain(|id, instance| {
++            let kept = ids.contains(id);
++            if !kept && instance.mounted {
++                gone.push((instance.owner.clone(), id.clone()));
++            }
++            kept
++        });
++        gone
++    });
++    for (owner, id) in gone {
++        codex_omd::component_unmount(&owner, &id);
++    }
++}
++
++/// Queues a key or pointer event for a mounted module; false leaves it to the component's other routes.
++pub(crate) fn accept(payload: &Value) -> bool {
++    let Some(component) = payload["component"].as_str() else {
++        return false;
++    };
++    let accepted = instances(|instances| {
++        let Some(instance) = instances.get_mut(component) else {
++            return false;
++        };
++        if instance.failed.is_some() {
++            return true;
++        }
++        for event in codex_omd::component_events(payload) {
++            let moved = |event: &Value| {
++                event["kind"] == "pointer" && matches!(event["action"].as_str(), Some("move" | "drag"))
++            };
++            if moved(&event) && instance.events.last().is_some_and(moved) {
++                instance.events.pop();
++            }
++            if instance.events.len() >= EVENTS {
++                instance.events.remove(0);
++            }
++            instance.events.push(event);
++        }
++        true
++    });
++    if accepted {
++        wake();
++    }
++    accepted
++}
++
++/// A new view revision mounts failed modules again.
++pub(crate) fn refresh() {
++    let retry = instances(|instances| {
++        let mut retry = false;
++        for instance in instances.values_mut().filter(|instance| instance.failed.is_some()) {
++            instance.failed = None;
++            instance.mounted = false;
++            instance.changed = true;
++            retry = true;
++        }
++        retry
++    });
++    if retry {
++        wake();
++    }
++}
++
++struct Job {
++    id: String,
++    owner: String,
++    module: String,
++    frame: Value,
++    events: Vec<Value>,
++}
++
++/// Takes the next instance that has a frame to step, or how long until one does.
++fn next_job() -> Result<Job, Option<Duration>> {
++    let now = Instant::now();
++    instances(|instances| {
++        let mut wait: Option<Duration> = None;
++        let mut ready = None;
++        for (id, instance) in instances.iter() {
++            if instance.failed.is_some() {
++                continue;
++            }
++            let wanted = if instance.changed || !instance.events.is_empty() {
++                Some(now)
++            } else {
++                instance.due
++            };
++            let Some(wanted) = wanted else {
++                continue;
++            };
++            let at = instance
++                .stepped
++                .map_or(wanted, |stepped| wanted.max(stepped + FRAME));
++            if at <= now {
++                ready = Some(id.clone());
++                break;
++            }
++            let until = at - now;
++            wait = Some(wait.map_or(until, |wait| wait.min(until)));
++        }
++        let Some(id) = ready else {
++            return Err(wait);
++        };
++        let instance = instances.get_mut(&id).ok_or(wait)?;
++        let events = std::mem::take(&mut instance.events);
++        let frame = json!({"instance": id, "mount": !instance.mounted, "props": instance.props,
++            "now": clock(), "columns": instance.columns, "rows": instance.rows, "events": events});
++        instance.changed = false;
++        instance.due = None;
++        instance.stepped = Some(now);
++        Ok(Job {
++            id,
++            owner: instance.owner.clone(),
++            module: instance.module.clone(),
++            frame,
++            events,
++        })
++    })
++}
++
++fn work() {
++    loop {
++        let job = match next_job() {
++            Ok(job) => job,
++            Err(wait) => {
++                match wait {
++                    Some(wait) => std::thread::park_timeout(wait),
++                    None => std::thread::park(),
++                }
++                continue;
++            }
++        };
++        let Some(result) = crate::mod_runtime::component(&job.owner, &job.module, job.frame) else {
++            instances(|instances| {
++                if let Some(instance) = instances.get_mut(&job.id) {
++                    let mut events = job.events;
++                    events.append(&mut instance.events);
++                    instance.events = events;
++                    instance.changed = true;
++                    instance.stepped = Some(Instant::now() + RETRY);
++                }
++            });
++            continue;
++        };
++        let post = instances(|instances| {
++            let instance = instances.get_mut(&job.id)?;
++            match result {
++                Ok(step) => {
++                    instance.mounted = true;
++                    instance.due = step["next_ms"]
++                        .as_u64()
++                        .map(|ms| Instant::now() + Duration::from_millis(ms));
++                    if let Ok(tree) = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
++                        && tree != instance.tree
++                    {
++                        instance.tree = tree;
++                        crate::mod_render::schedule_frame(Duration::ZERO);
++                    }
++                    step["post"]
++                        .as_object()
++                        .map(|post| (job.owner.clone(), json!({"component": job.id, "module": job.module, "data": post["data"]})))
++                }
++                Err(error) => {
++                    instance.failed = Some(error);
++                    instance.mounted = false;
++                    instance.tree.clear();
++                    crate::mod_render::schedule_frame(Duration::ZERO);
++                    None
++                }
++            }
++        });
++        if let Some(post) = post {
++            deliver(post);
++        }
++    }
++}
++
++/// A post reaches the owner's `component_post` hooks off the frame worker; a newer post from the same instance replaces an undelivered one.
++fn deliver(post: (String, Value)) {
++    static SENDER: OnceLock<std::thread::Thread> = OnceLock::new();
++    {
++        let mut posts = POSTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        posts.retain(|(owner, queued)| {
++            *owner != post.0 || queued["component"] != post.1["component"]
++        });
++        posts.push(post);
++    }
++    SENDER
++        .get_or_init(|| {
++            std::thread::spawn(|| {
++                loop {
++                    let next = {
++                        let mut posts =
++                            POSTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++                        (!posts.is_empty()).then(|| posts.remove(0))
++                    };
++                    match next {
++                        Some((owner, payload)) => {
++                            crate::mod_runtime::invoke_event(&owner, "component_post", payload);
++                        }
++                        None => std::thread::park(),
++                    }
++                }
++            })
++            .thread()
++            .clone()
++        })
++        .unpark();
++}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
 index 000000000..95bc511f4
@@ -148942,10 +149743,10 @@ index 000000000..8773d6788
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..bdee6023d
+index 000000000..e2751b67c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,665 @@
+@@ -0,0 +1,666 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -149213,6 +150014,7 @@ index 000000000..bdee6023d
 +    if !changed {
 +        return;
 +    }
++    crate::mod_module::refresh();
 +    match crate::mod_runtime::render_hooked() {
 +        Some(hooked) => {
 +            forget();
@@ -149782,10 +150584,10 @@ index 000000000..9c07cf291
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..6fa4c2189
+index 000000000..5ba14f754
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1534 @@
+@@ -0,0 +1,1546 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -151041,6 +151843,18 @@ index 000000000..6fa4c2189
 +            None
 +        }
 +        chain => Some(chain.ok()),
++    }
++}
++
++/// One frame step of a component module; `None` while the runtime is busy, so the step is asked again.
++pub(crate) fn component(owner: &str, module: &str, frame: Value) -> Option<Result<Value, String>> {
++    let _thread = codex_omd::StateThread::enter(crate::mod_surface::current_thread());
++    let Some(runtime) = lock_within(&HOST, LOCK_WAIT)?.clone() else {
++        return Some(Err("mods are not running".to_owned()));
++    };
++    match codex_omd::component_shared(&runtime, owner, module, frame, context_unchanged().1) {
++        Err(error) if error.to_string().starts_with("callback_cancelled") => None,
++        result => Some(result.map_err(|error| error.to_string())),
 +    }
 +}
 +
@@ -152400,10 +153214,10 @@ index 000000000..89bc25480
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..788f4383e
+index 000000000..b1411f976
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,980 @@
+@@ -0,0 +1,983 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -152899,6 +153713,9 @@ index 000000000..788f4383e
 +/// Pointer input on a raster, and key input on a keys component, bound to a managed process goes to its stdin instead of a callback.
 +pub(crate) fn to_process(thread: Option<&str>, owner: Option<&str>, payload: &Value) -> bool {
 +    use codex_omd::process_raster::Role;
++    if crate::mod_module::accept(payload) {
++        return true;
++    }
 +    let Some(component) = payload["component"].as_str() else {
 +        return false;
 +    };
@@ -154222,10 +155039,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..53ff92884
+index 000000000..41f9049fb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4512 @@
+@@ -0,0 +1,4558 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -155333,7 +156150,8 @@ index 000000000..53ff92884
 +        | ModComponent::Diff { id, .. }
 +        | ModComponent::Terminal { id, .. }
 +        | ModComponent::Image { id, .. }
-+        | ModComponent::Raster { id, .. } => {
++        | ModComponent::Raster { id, .. }
++        | ModComponent::Module { id, .. } => {
 +            interaction.ids.insert(id.clone());
 +        }
 +        ModComponent::Slot | ModComponent::Native { .. } => {}
@@ -155402,6 +156220,7 @@ index 000000000..53ff92884
 +            .cloned()
 +            .collect(),
 +    );
++    crate::mod_module::retain(&ids);
 +    if interaction
 +        .focused
 +        .as_ref()
@@ -155834,6 +156653,9 @@ index 000000000..53ff92884
 +            .unwrap_or(u16::MAX),
 +            ModComponent::Image { height, .. } => height.unwrap_or(12),
 +            ModComponent::Raster { height, .. } => height.unwrap_or(RASTER_HEIGHT),
++            ModComponent::Module { id, height, .. } => {
++                height.unwrap_or_else(|| crate::mod_module::height(id))
++            }
 +            ModComponent::Terminal { height, .. } => height.unwrap_or(16) + 1,
 +            ModComponent::Slot | ModComponent::Native { .. } => 0,
 +        })
@@ -156638,6 +157460,28 @@ index 000000000..53ff92884
 +                }
 +                push_region_rows(&mut rows, id, label, lines, *pointer);
 +            }
++            ModComponent::Module {
++                id,
++                label,
++                module,
++                props,
++                height,
++                keys,
++                pointer,
++            } => {
++                if *keys {
++                    interaction.key_panes.insert(id.clone());
++                }
++                let lines = crate::mod_module::rows(
++                    id,
++                    interaction.component_owners.get(id).map(String::as_str),
++                    module,
++                    props,
++                    width.max(1),
++                    *height,
++                );
++                push_region_rows(&mut rows, id, label, lines, *pointer || *keys);
++            }
 +            ModComponent::Slot | ModComponent::Native { .. } => {}
 +        }
 +    }
@@ -156780,6 +157624,13 @@ index 000000000..53ff92884
 +            .entry(id.clone())
 +            .and_modify(|anchor| *anchor = anchor.union(area))
 +            .or_insert(area);
++    }
++    if let Some(id) = &row.id
++        && row.target.is_none()
++        && interaction.key_panes.contains(id)
++        && !interaction.order.contains(id)
++    {
++        interaction.order.push(id.clone());
 +    }
 +    if let Some(target) = row.target {
 +        let id = row.id.unwrap_or_default();
@@ -158284,6 +159135,11 @@ index 000000000..53ff92884
 +        })
 +        .and_then(|payload| payload["component"].as_str())
 +        .map(str::to_owned);
++    let keyed = events
++        .iter()
++        .filter_map(|payload| payload["component"].as_str())
++        .find(|id| interaction.key_panes.contains(*id) && crate::mod_module::mounted(id))
++        .map(str::to_owned);
 +    for payload in events {
 +        let owner = payload["component"]
 +            .as_str()
@@ -158299,6 +159155,13 @@ index 000000000..53ff92884
 +            ),
 +            _ => crate::mod_surface::component_event(payload),
 +        }
++    }
++    // A keyed region takes the pointer from the card around it, and a click there gives it the keys.
++    if consumed && let Some(keyed) = keyed {
++        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
++            interaction.focused = Some(keyed);
++        }
++        return Some(ModPointer::Consumed);
 +    }
 +    if consumed && hit.is_none() {
 +        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -158740,10 +159603,10 @@ index 000000000..53ff92884
 +}
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 000000000..6b753fb28
+index 000000000..e0cb74377
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,255 @@
 +use super::*;
 +use std::sync::Arc;
 +
@@ -158864,6 +159727,7 @@ index 000000000..6b753fb28
 +    targets(&rows, &mut ids);
 +    let key_panes = ids
 +        .into_iter()
++        .chain(rows.iter().filter_map(|row| row.id.clone()))
 +        .filter(|id| interaction.key_panes.contains(id))
 +        .collect();
 +    let layout = Arc::new(FooterLayout {
@@ -159000,10 +159864,10 @@ index 000000000..6b753fb28
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..7c884c62f
+index 000000000..29cb50c0b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2439 @@
+@@ -0,0 +1,2502 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -161441,6 +162305,69 @@ index 000000000..7c884c62f
 +    assert!(top.contains("╔ Settings ═"), "{top}");
 +    let buttons = row(dialog.y + 1);
 +    assert!(buttons.contains("║ [ OK ] [ Cancel ]   "), "{buttons}");
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn clicking_a_keyed_module_inside_a_card_gives_it_the_keys() {
++    let mut view = snapshot(
++        serde_json::json!({"layout":{"split":"vertical","children":[{"content":"transcript"},{"content":"composer"}]},
++            "sites": {"above_composer": {"components": [
++            {"type":"pane","id":"card","label":"Card","title":"Card","children":[
++                {"type":"module","id":"game","label":"Game","module":"board","height":2,"keys":true}
++            ]}
++        ]}}}),
++    );
++    view.component_owners = [("game".to_owned(), "demo".to_owned())]
++        .into_iter()
++        .collect();
++    let screen = Rect::new(0, 0, 80, 24);
++    let area = Rect::new(2, 14, 60, 6);
++    preview(view.clone());
++    let mut buffer = Buffer::empty(screen);
++    let _frame = footer_frame();
++    footer_layout(area.width).render(area, &mut buffer);
++    render(screen, screen, &mut buffer, &view);
++    let region = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .regions
++        .iter()
++        .find(|region| region.id == "game")
++        .cloned()
++        .expect("module region");
++    for kind in [
++        MouseEventKind::Down(MouseButton::Left),
++        MouseEventKind::Up(MouseButton::Left),
++    ] {
++        pointer(MouseEvent {
++            kind,
++            column: region.area.x + 1,
++            row: region.area.y,
++            modifiers: KeyModifiers::NONE,
++        });
++    }
++    assert_eq!(
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused
++            .as_deref(),
++        Some("game")
++    );
++    assert!(matches!(
++        input(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)),
++        Some(ModInput::Consumed)
++    ));
++    assert!(
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .order
++            .contains(&"game".to_owned()),
++        "Tab reaches a keyed module without a pointer"
++    );
 +    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

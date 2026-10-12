@@ -57,7 +57,9 @@ fn reap() {
         std::thread::spawn(|| {
             loop {
                 std::thread::sleep(Duration::from_secs(1));
-                for runner in retire_warm(|runner| runner.used.elapsed() >= WARM_IDLE) {
+                for runner in
+                    retire_warm(|runner| !runner.pinned && runner.used.elapsed() >= WARM_IDLE)
+                {
                     runner.stop();
                 }
                 let surplus = {
@@ -121,7 +123,7 @@ fn runner(node: &Path) -> Result<Child> {
     warm.map_or_else(|| spawn(node), Ok)
 }
 
-const INPUT_LIMIT: usize = 524_288;
+const INPUT_LIMIT: usize = 1_048_576;
 
 fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
@@ -206,6 +208,8 @@ struct Warm {
     errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
     serve: bool,
+    /// A mounted component's runner: never idle-retired, only unmounted or displaced by newer ones.
+    pinned: bool,
     /// Bytes of the activation request outside its serve fields.
     base: usize,
 }
@@ -224,8 +228,16 @@ pub(super) fn invalidate_warm(key: &str) {
     }
 }
 
+pub(super) fn unmount(id: &str, component: &str) {
+    let instance = format!(":component:{id}:{component}:");
+    for runner in retire_warm(|runner| runner.pinned && runner.key.contains(&instance)) {
+        runner.stop();
+    }
+}
+
 static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
 const WARM_RUNNERS: usize = 4;
+const PINNED_RUNNERS: usize = 4;
 const REUSED_RUNNERS: usize = 2;
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
@@ -262,6 +274,7 @@ fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
         errors,
         used: Instant::now(),
         serve,
+        pinned: false,
         base: 0,
     })
 }
@@ -289,7 +302,7 @@ where
         request_line(request)?
     } else {
         request_line(
-            &["name", "payload", "receipts", "state"]
+            &["name", "payload", "receipts", "state", "virtual_time_ms"]
                 .map(|field| (field, &request[field]))
                 .into_iter()
                 .collect::<std::collections::BTreeMap<_, _>>(),
@@ -314,6 +327,7 @@ where
         None => {
             let bytes = request_line(request)?;
             let mut warm = warm_runner(node, key, request["serve"] == true)?;
+            warm.pinned = request["event"] == "component";
             warm.base = bytes.len().saturating_sub(serve.len());
             (warm, bytes)
         }
@@ -347,22 +361,26 @@ fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
 /// kind's size.
 fn pool(mut runner: Warm) {
     runner.used = Instant::now();
-    let serve = runner.serve;
-    let size = if serve { WARM_RUNNERS } else { REUSED_RUNNERS };
+    let kind = (runner.serve, runner.pinned);
+    let size = match kind {
+        (_, true) => PINNED_RUNNERS,
+        (true, false) => WARM_RUNNERS,
+        (false, false) => REUSED_RUNNERS,
+    };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {
             runners.push(runner);
             let mut evicted = Vec::new();
             while runners
                 .iter()
-                .filter(|runner| runner.serve == serve)
+                .filter(|runner| (runner.serve, runner.pinned) == kind)
                 .count()
                 > size
             {
                 let oldest = runners
                     .iter()
                     .enumerate()
-                    .filter(|(_, runner)| runner.serve == serve)
+                    .filter(|(_, runner)| (runner.serve, runner.pinned) == kind)
                     .min_by_key(|(_, runner)| runner.used)
                     .map_or(0, |(index, _)| index);
                 evicted.push(runners.swap_remove(oldest));

@@ -291,6 +291,18 @@
       "why_mod": "Draws an animated raster with pointer hover, drag and an anchored overlay."
     },
     {
+      "path": "mods/examples/game_input",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Runs a keyboard and pointer game in a component module on the frame clock and posts scores to its hooks."
+    },
+    {
+      "path": "mods/examples/client_tag",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Ports Claude Code's Tag Client example to a component module that posts pointer clicks to its hooks."
+    },
+    {
       "path": "mods/examples/box_model",
       "extension_type": "mod",
       "role": "conformance_fixture",

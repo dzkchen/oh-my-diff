@@ -5,13 +5,15 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runnerSync } from './mod_runner.mjs';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const mod = new URL('../mods/first-party/omd_preview/', import.meta.url);
-const source = readFileSync(new URL('index.ts', mod), 'utf8');
-const renderer = readFileSync(new URL('render.mjs', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
+const read = name => readFileSync(new URL(name, mod), 'utf8');
+const source = read('index.ts');
+const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
 const surface = { events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', composer: 'composer', component_event: 'terminal' },
   intercept: { render: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 let responses = ['Latest **answer** with <script>alert(1)</script> and [x](javascript:alert(1))', 'Earlier answer'];
@@ -21,8 +23,8 @@ function invoke(repository, state, event, payload, name, settings = {}) {
   const receipts = [];
   const calls = [];
   for (;;) {
-    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings, event, name, payload,
-      receipts, surface, hook_budget_ms: 10000, assets: { 'render.mjs': { text: renderer, sha256: '0' } } };
+    const request = { source, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings, event, name, payload,
+      receipts, surface, hook_budget_ms: 10000, assets };
     const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
     if (!output.host_call) return { value: output.value, state: output.state, calls, registrations: output.registrations };

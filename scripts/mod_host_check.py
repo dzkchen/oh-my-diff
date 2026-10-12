@@ -183,8 +183,8 @@ def static_problems(path):
             continue
         text = source.read_text()
         found += [f"{source.name}: key {key} belongs to the native keymap" for key in sorted(set(NATIVE_KEY.findall(text)))]
-        if (size := len(text.encode())) > 65_536:
-            found.append(f"{source.name}: {size} bytes exceeds the 65536-byte package file limit")
+        if (size := len(text.encode())) > 131_072:
+            found.append(f"{source.name}: {size} bytes exceeds the 131072-byte package file limit")
         commands += re.findall(r"api\.command\(\s*'([^']+)'", text)
         tools += len(re.findall(r"api\.tool\(", text))
     if path.parent.name == "first-party":

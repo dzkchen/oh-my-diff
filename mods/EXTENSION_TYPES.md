@@ -86,6 +86,8 @@ contains only the packages labeled `bundled` below.
 | `layout_explorer@1.0.0` | `mod` | `mods/examples/layout_explorer` | Replaces the live terminal layout with splits, tabs, documents and diffs. |
 | `frame_stream@1.0.0` | `mod` | `mods/examples/frame_stream` | Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look. |
 | `raster_canvas@1.0.0` | `mod` | `mods/examples/raster_canvas` | Draws an animated raster with pointer hover, drag and an anchored overlay. |
+| `game_input@1.0.0` | `mod` | `mods/examples/game_input` | Runs a keyboard and pointer game in a component module on the frame clock and posts scores to its hooks. |
+| `client_tag@1.0.0` | `mod` | `mods/examples/client_tag` | Ports Claude Code's Tag Client example to a component module that posts pointer clicks to its hooks. |
 | `box_model@1.0.0` | `mod` | `mods/examples/box_model` | Draws bordered cards, flat filled panels, flex rows, hover and focus accents and a gapped split layout with the box model. |
 | `external_client@1.0.0` | `mod` | `mods/examples/external_client` | Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol. |
 | `approval_desk@1.0.0` | `mod` | `mods/examples/approval_desk` | Keeps a filterable approval desk beside other sidebars, with a client adapter that answers approvals over the client protocol. |

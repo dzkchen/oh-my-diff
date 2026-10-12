@@ -194,7 +194,7 @@ fn render_heap_exhaustion_retains_the_memory_failure_diagnostic() {
 }
 
 #[test]
-fn render_reuse_preserves_activation_state_across_suspensions() {
+fn render_reuse_preserves_activation_state_across_continuations() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let input = json!({"component":"tool_call"});
     let mut request = json!({"source":"export default api => { const a = api.atom('value', 0); a.set(a.get() + 1); api.intercept('render', (e, next) => e.replay ? next({...e, value: a.get()}) : {value: a.get()}); };",
@@ -215,17 +215,6 @@ fn render_reuse_preserves_activation_state_across_suspensions() {
         assert_eq!(reply["value"]["result"]["value"], 1);
         assert_eq!(reply["state"], json!({"value":0}));
     }
-    request["payload"]["input"]["replay"] = json!(true);
-    let reply = evaluate_warm(
-        &node,
-        "activation-state",
-        &request,
-        Duration::from_secs(2),
-        &|| true,
-        &mut |_| unreachable!(),
-    )
-    .unwrap();
-    assert!(!reply["host_call"].is_null());
     let pid = || {
         WARM.lock()
             .unwrap()
@@ -233,20 +222,22 @@ fn render_reuse_preserves_activation_state_across_suspensions() {
             .find(|runner| runner.key == "activation-state")
             .map(|runner| runner.child.id())
     };
-    let suspended = pid().expect("a suspended render keeps its runner");
-    request["receipts"] =
-        json!([{"call":reply["host_call"],"value":{"result":{"value":1},"trace":[]}}]);
-    let replay = evaluate_warm(
+    let warm = pid().expect("a render keeps its runner");
+    request["payload"]["input"]["replay"] = json!(true);
+    let continued = evaluate_warm(
         &node,
         "activation-state",
         &request,
         Duration::from_secs(2),
         &|| true,
-        &mut |_| unreachable!(),
+        &mut |frame| {
+            assert_eq!(frame["call"]["arguments"]["input"]["value"], 1);
+            Ok(json!({"call": frame["call"], "value": {"result": {"value": 1}, "trace": []}}))
+        },
     )
     .unwrap();
-    assert_eq!(replay["value"]["result"]["value"], 1);
-    assert_eq!(pid(), Some(suspended));
+    assert_eq!(continued["value"]["result"]["value"], 1);
+    assert_eq!(pid(), Some(warm));
 }
 
 #[test]

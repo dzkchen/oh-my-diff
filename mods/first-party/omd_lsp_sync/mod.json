@@ -7,6 +7,7 @@
   "description": "Language servers report the diagnostics each edit introduces and answer definition, reference and rename requests",
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
+  "assets": ["protocol.ts", "client.ts", "semantic.ts"],
   "capabilities": ["lifecycle", "exec", "store", "tools", "outputs", "fs.read", "fs.write", "services", "terminal", "events"],
   "exec_environment": ["RUSTUP_HOME"],
   "compatibility": { "required_features": ["exec_v1", "workspace_fs_v1", "framed_process_v1", "store_v1", "tool_feedback_v1", "service_dispatch_v1", "terminal_prompt_v1", "events_v1"] },

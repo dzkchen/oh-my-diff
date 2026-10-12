@@ -2,9 +2,6 @@ use super::*;
 use std::time::Duration;
 use std::time::Instant;
 
-/// Host calls that suspend execution; the callback replays from its receipts once they settle.
-pub(super) const SUSPENDING: &[&str] = &["continuation.next", "time.sleep"];
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModHostCall {
@@ -194,7 +191,7 @@ impl std::ops::Index<&str> for Request<'_> {
 
 /// The request fields fixed for a loaded package, and their digest: the package's runner identity.
 fn metadata(loaded: &Loaded) -> (Value, String) {
-    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join("index.ts"),
+    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join(&loaded.package.entrypoint),
         "api": MOD_API_VERSION,
         "assets": loaded.assets.as_ref(),
         "entrypoint": loaded.package.entrypoint,
@@ -224,6 +221,11 @@ fn metadata(loaded: &Loaded) -> (Value, String) {
     (request, identity)
 }
 
+/// A component instance keeps one runner, and with it its module state, for as long as it stays mounted.
+pub(super) fn component_key(node: &Path, id: &str, component: &str, identity: &str) -> String {
+    format!("{}:component:{id}:{component}:{identity}", node.display())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     node: &Path,
@@ -235,7 +237,7 @@ pub(super) fn run(
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(ModHostCall) -> Result<Value>,
     progress: &mut dyn FnMut(String),
-    virtual_time_ms: Option<u64>,
+    now_ms: Option<u64>,
     scope: &InvocationScope,
 ) -> Result<Reply> {
     let mut receipts = replay.to_vec();
@@ -251,18 +253,27 @@ pub(super) fn run(
         metadata,
         invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
     };
-    request.invocation["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
+    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_millis() as u64)
+    }));
     let render = event == "intercept" && request["payload"]["surface"] == "render";
-    let warm = (render || loaded.package.environment.is_empty()).then(|| {
-        request.invocation["serve"] = Value::Bool(render);
-        request.invocation["reuse"] = Value::Bool(!render);
+    let component = event == "component";
+    let warm = (render || component || loaded.package.environment.is_empty()).then(|| {
+        request.invocation["serve"] = Value::Bool(render || component);
+        request.invocation["reuse"] = Value::Bool(!render && !component);
+        if component {
+            let instance = request["payload"]["instance"].as_str().unwrap_or(name);
+            return component_key(node, &loaded.package.id, instance, identity);
+        }
         if !render {
             return format!("{}:{identity}", node.display());
         }
         let mut key = Sha256::new();
         key.update(identity);
         for (field, value) in request.invocation.as_object().into_iter().flatten() {
-            if !["name", "payload", "receipts"].contains(&field.as_str()) {
+            if !["name", "payload", "receipts", "virtual_time_ms"].contains(&field.as_str()) {
                 key.update(field);
                 key.update(value.to_string());
             }
@@ -271,81 +282,39 @@ pub(super) fn run(
     });
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
-    // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
-    let mut reply: Reply = loop {
-        request.invocation["receipts"] = Value::Array(receipts.clone());
-        let mut answer = |frame: Value| -> Result<Value> {
-            if event == "inspect" {
-                return Err(failure("invalid_host_call_sequence"));
-            }
-            let frame: Frame = serde_json::from_value(frame)?;
-            forward(event, &frame.updates, &mut forwarded, progress)?;
-            let call = frame.call;
-            if expected.len() >= 32 {
-                return Err(failure("host_call_limit"));
-            }
-            authorize(loaded, &call)?;
-            if !active() {
-                return Err(failure("callback_cancelled"));
-            }
-            let call_started = Instant::now();
-            let exempt = !crate::client_surface::SURFACE_OPERATIONS
-                .contains(&call.operation.as_str())
-                || crate::client_surface::awaits_user(&call.operation, &call.arguments)
-                // Clipboard delivery is external work bounded by the surface call lifetime.
-                || call.operation == "terminal.copy";
-            scope.charge_call()?;
-            let (receipt, receipt_bytes) = {
-                let _profile = super::Profile::new("host_call");
-                receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
-            };
-            expected.push(call);
-            receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
-            receipts.push(receipt.clone());
-            if receipts_bytes > HOST_RECEIPT_BYTES {
-                return Err(failure("host_receipt_limit"));
-            }
-            scope.charge_receipt(receipt_bytes)?;
-            if exempt {
-                waited += call_started.elapsed();
-            }
-            scope.check_execution(started.elapsed().saturating_sub(waited))?;
-            Ok(receipt)
-        };
-        let evaluated = match &warm {
-            Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
-            None => process::evaluate(node, &request, budget, active, &mut answer),
-        }?;
-        let reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
-            if let Some(key) = &warm {
-                process::invalidate_warm(key);
-            }
-        })?;
-        let Some(call) = reply
-            .host_call
-            .clone()
-            .filter(|call| SUSPENDING.contains(&call.operation.as_str()))
-            .filter(|call| reply.calls.split_last() == Some((call, &expected[..])))
-        else {
-            break reply;
-        };
-        if call.operation == "continuation.next" && event != "intercept" {
+    request.invocation["receipts"] = Value::Array(receipts.clone());
+    let mut answer = |frame: Value| -> Result<Value> {
+        if event == "inspect" {
+            return Err(failure("invalid_host_call_sequence"));
+        }
+        let frame: Frame = serde_json::from_value(frame)?;
+        forward(event, &frame.updates, &mut forwarded, progress)?;
+        let call = frame.call;
+        if expected.len() >= MAX_HOST_CALLS {
+            return Err(failure("host_call_limit"));
+        }
+        let continuation = call.operation == "continuation.next";
+        if continuation && event != "intercept" {
             return Err(failure("continuation_outside_interceptor"));
         }
-        if call.operation == "time.sleep" {
+        if !continuation {
             authorize(loaded, &call)?;
-        }
-        if expected.len() >= 32 {
-            return Err(failure("host_call_limit"));
         }
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        scope.charge_call()?;
         let call_started = Instant::now();
-        let (receipt, receipt_bytes) =
-            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?;
-        waited += call_started.elapsed();
+        let exempt = continuation
+            || call.operation == "time.sleep"
+            || !crate::client_surface::SURFACE_OPERATIONS.contains(&call.operation.as_str())
+            || crate::client_surface::awaits_user(&call.operation, &call.arguments)
+            // Clipboard delivery is external work bounded by the surface call lifetime.
+            || call.operation == "terminal.copy";
+        scope.charge_call()?;
+        let (receipt, receipt_bytes) = {
+            let _profile = super::Profile::new("host_call");
+            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
+        };
         expected.push(call);
         receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
         receipts.push(receipt.clone());
@@ -353,7 +322,21 @@ pub(super) fn run(
             return Err(failure("host_receipt_limit"));
         }
         scope.charge_receipt(receipt_bytes)?;
+        if exempt {
+            waited += call_started.elapsed();
+        }
+        scope.check_execution(started.elapsed().saturating_sub(waited))?;
+        Ok(receipt)
     };
+    let evaluated = match &warm {
+        Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
+        None => process::evaluate(node, &request, budget, active, &mut answer),
+    }?;
+    let mut reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
+        if let Some(key) = &warm {
+            process::invalidate_warm(key);
+        }
+    })?;
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
     if event != "inspect" && reply.registrations != loaded.registrations {

@@ -272,7 +272,9 @@ function compileJsx(directory) {
 function checkSyntax(directory) {
   compileJsx(directory);
   const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
-  stripTypeScriptTypes(readFileSync(join(directory, manifest.entrypoint ?? 'index.ts'), 'utf8'));
+  for (const path of [manifest.entrypoint ?? 'index.ts', ...(manifest.assets ?? []).filter(asset => asset.endsWith('.ts'))]) {
+    stripTypeScriptTypes(readFileSync(join(directory, path), 'utf8'));
+  }
 }
 
 function checkProject(directory) {
@@ -363,16 +365,21 @@ async function packageProject(directory) {
     mkdirSync(dirname(join(target, path)), { recursive: true });
     cpSync(join(directory, path), join(target, path));
   }
-  const transformed = stripTypeScriptTypes(readFileSync(join(directory, entrypoint), 'utf8'), { mode: 'transform', sourceMap: true, sourceUrl: entrypoint });
-  const marker = '\n//# sourceMappingURL=data:application/json;base64,';
-  const [javascript, encoded] = transformed.split(marker);
-  if (existsSync(join(target, 'index.js')) || existsSync(join(target, 'index.js.map')) || existsSync(join(target, 'package-report.json'))) fail('package_generated_file_conflict');
-  await writeFile(join(target, 'index.js'), `${javascript}\n//# sourceMappingURL=index.js.map\n`);
-  await writeFile(join(target, 'index.js.map'), Buffer.from(encoded.trim(), 'base64'));
+  if (existsSync(join(target, 'package-report.json'))) fail('package_generated_file_conflict');
+  const sourceMaps = [];
+  for (const path of [entrypoint, ...(inspected.manifest.assets ?? [])].filter(path => path.endsWith('.ts'))) {
+    const transformed = stripTypeScriptTypes(readFileSync(join(directory, path), 'utf8'), { mode: 'transform', sourceMap: true, sourceUrl: basename(path) });
+    const [javascript, encoded] = transformed.split('\n//# sourceMappingURL=data:application/json;base64,');
+    const output = path.slice(0, -3) + '.js';
+    if (existsSync(join(target, output)) || existsSync(join(target, output + '.map'))) fail('package_generated_file_conflict');
+    await writeFile(join(target, output), `${javascript}\n//# sourceMappingURL=${basename(output)}.map\n`);
+    await writeFile(join(target, output + '.map'), Buffer.from(encoded.trim(), 'base64'));
+    sourceMaps.push(output + '.map');
+  }
   const packaged = engineJson(['inspect', target]);
   if (packaged.sha256 !== inspected.sha256) fail('package_integrity_changed');
-  await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: packaged.sha256, source_map: 'index.js.map', manifest: packaged.manifest });
-  process.stdout.write(`${JSON.stringify({ package: target, sha256: packaged.sha256, source_map: join(target, 'index.js.map') }, null, 2)}\n`);
+  await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: packaged.sha256, source_maps: sourceMaps, manifest: packaged.manifest });
+  process.stdout.write(`${JSON.stringify({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) }, null, 2)}\n`);
 }
 
 function watchProject(directory, store, once) {
