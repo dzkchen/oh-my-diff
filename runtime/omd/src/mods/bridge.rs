@@ -375,7 +375,10 @@ fn receipt_for(
     scope: &InvocationScope,
 ) -> Result<(Value, usize)> {
     let receipt = match result {
-        Ok(value) => json!({"call": call, "value": value}),
+        Ok(value) => Value::Object(serde_json::Map::from_iter([
+            ("call".to_owned(), json!(call)),
+            ("value".to_owned(), value),
+        ])),
         Err(error) => {
             json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
         }

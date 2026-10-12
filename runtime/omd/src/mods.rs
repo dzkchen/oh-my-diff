@@ -5343,6 +5343,24 @@ impl ModHost {
             .map(|state| state.revision)
     }
 
+    /// The UI state key and revision, or those a first invocation would bind, so binding alone is no change.
+    fn ui_binding(&self, id: &str, thread: Option<&str>) -> Option<(String, Option<u64>)> {
+        let loaded = self.loaded.get(id)?;
+        if let Some((key, _)) = &loaded.ui {
+            return Some((key.clone(), self.ui_revision(id)));
+        }
+        let key = self.ui_key(loaded, thread);
+        let revision = UI_STATES
+            .lock()
+            .ok()?
+            .get(&key)
+            .and_then(std::sync::Weak::upgrade)
+            .map_or(Some(0), |state| {
+                state.lock().ok().map(|state| state.revision)
+            });
+        Some((key, revision))
+    }
+
     pub fn state(&self, id: &str) -> Option<&Value> {
         self.loaded.get(id).map(|loaded| &loaded.state)
     }

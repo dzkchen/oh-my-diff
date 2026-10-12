@@ -31727,7 +31727,7 @@ index 6ab14d1f6..e3de30f53 100644
          };
 
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index c919e31c9..8f24288fc 100644
+index c919e31c9..13aba325a 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -376,6 +376,7 @@ mod draft_state;
@@ -31771,7 +31771,18 @@ index c919e31c9..8f24288fc 100644
          self.set_remote_image_urls(remote_image_urls);
          self.set_text_content_with_mention_bindings(
              text,
-@@ -1858,7 +1870,9 @@ impl ChatComposer {
+@@ -1848,6 +1860,10 @@ impl ChatComposer {
+         self.draft.paste_burst.is_active()
+     }
+
++    pub(crate) fn paste_burst_flush_deadline(&self) -> Option<Instant> {
++        self.draft.paste_burst.flush_deadline()
++    }
++
+     /// Returns a delay that reliably exceeds the paste-burst timing threshold.
+     ///
+     /// Use this in tests to avoid boundary flakiness around the `PasteBurst` timeout.
+@@ -1858,7 +1874,9 @@ impl ChatComposer {
      /// Integrate results from an asynchronous file search.
      pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
          // Only apply if user is still editing a token starting with `query`.
@@ -31782,7 +31793,7 @@ index c919e31c9..8f24288fc 100644
              self.current_mentions_v2_token()
          } else {
              Self::current_at_token(&self.draft.textarea)
-@@ -1870,6 +1884,19 @@ impl ChatComposer {
+@@ -1870,6 +1888,19 @@ impl ChatComposer {
          if !current_token.starts_with(&query) {
              return;
          }
@@ -31802,7 +31813,7 @@ index c919e31c9..8f24288fc 100644
 
          match &mut self.popups.active {
              ActivePopup::File(popup) => {
-@@ -2152,7 +2179,11 @@ impl ChatComposer {
+@@ -2152,7 +2183,11 @@ impl ChatComposer {
                  };
 
                  let sel_path = sel.to_string_lossy().to_string();
@@ -31815,7 +31826,7 @@ index c919e31c9..8f24288fc 100644
                      self.current_editable_at_token_range_with_options(/*allow_empty*/ false)
                  {
                      self.insert_selected_file_path(token_range, &sel_path);
-@@ -2748,6 +2779,13 @@ impl ChatComposer {
+@@ -2748,6 +2783,13 @@ impl ChatComposer {
          } else {
              path.to_string()
          };
@@ -31829,7 +31840,7 @@ index c919e31c9..8f24288fc 100644
 
          // Replace just the active `@token` so unrelated text elements, such as
          // large-paste placeholders, remain atomic and can still expand on submit.
-@@ -3114,6 +3152,7 @@ impl ChatComposer {
+@@ -3114,6 +3156,7 @@ impl ChatComposer {
                  | InputResult::Queued { .. }
                  | InputResult::Command(_)
                  | InputResult::ServiceTierCommand(_)
@@ -31837,7 +31848,7 @@ index c919e31c9..8f24288fc 100644
                  | InputResult::CommandWithArgs(_, _, _)
          ) && self.config.reset_vim_on_submission
          {
-@@ -3135,6 +3174,20 @@ impl ChatComposer {
+@@ -3135,6 +3178,20 @@ impl ChatComposer {
          if let Some(result) = self.handle_parent_owned_submission() {
              return result;
          }
@@ -31858,7 +31869,7 @@ index c919e31c9..8f24288fc 100644
          if should_queue {
              if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
                  self.apply_paste(pasted);
-@@ -3300,6 +3353,7 @@ impl ChatComposer {
+@@ -3300,6 +3357,7 @@ impl ChatComposer {
          Some(match command {
              SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
              SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
@@ -31866,7 +31877,7 @@ index c919e31c9..8f24288fc 100644
          })
      }
 
-@@ -3324,6 +3378,11 @@ impl ChatComposer {
+@@ -3324,6 +3382,11 @@ impl ChatComposer {
          );
          let trimmed_rest = inline_command.rest.trim();
          args_elements = Self::trim_text_elements(inline_command.rest, trimmed_rest, args_elements);
@@ -31878,7 +31889,7 @@ index c919e31c9..8f24288fc 100644
          let SlashCommandItem::Builtin(cmd) = command else {
              return None;
          };
-@@ -3435,6 +3494,9 @@ impl ChatComposer {
+@@ -3435,6 +3498,9 @@ impl ChatComposer {
 
      /// Handle key event when no popup is visible.
      fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
@@ -31888,7 +31899,7 @@ index c919e31c9..8f24288fc 100644
          if let Some((result, redraw)) = self.handle_remote_image_selection_key(&key_event) {
              return (result, redraw);
          }
-@@ -3899,9 +3961,15 @@ impl ChatComposer {
+@@ -3899,9 +3965,15 @@ impl ChatComposer {
          self.popups.dismissed_mention_token = None;
 
          if let Some((range, token)) = file_token {
@@ -31904,7 +31915,7 @@ index c919e31c9..8f24288fc 100644
 
          if self.popups.current_file_query.is_some() {
              self.app_event_tx
-@@ -3981,6 +4049,51 @@ impl ChatComposer {
+@@ -3981,6 +4053,51 @@ impl ChatComposer {
          }
      }
 
@@ -31956,7 +31967,7 @@ index c919e31c9..8f24288fc 100644
      /// Synchronize the legacy file-search popup with the current `@` token.
      fn sync_file_search_popup(&mut self, range: Range<usize>, query: String) {
          if self
-@@ -4884,6 +4997,11 @@ impl ChatComposer {
+@@ -4884,6 +5001,11 @@ impl ChatComposer {
                          &highlights,
                      );
                  }
@@ -31968,7 +31979,7 @@ index c919e31c9..8f24288fc 100644
              }
          }
          if !self.draft.input_enabled || textarea_is_empty {
-@@ -4897,8 +5015,20 @@ impl ChatComposer {
+@@ -4897,8 +5019,20 @@ impl ChatComposer {
                      .to_string()
              };
              if !textarea_rect.is_empty() {
@@ -31991,7 +32002,7 @@ index c919e31c9..8f24288fc 100644
              }
          }
          // The reserved right margin indicates hidden rows without changing wrapping.
-@@ -4950,6 +5080,7 @@ impl ChatComposer {
+@@ -4950,6 +5084,7 @@ impl ChatComposer {
              self.cursor_pos_with_options(area, options),
              buf,
          );
@@ -31999,7 +32010,7 @@ index c919e31c9..8f24288fc 100644
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
-@@ -9343,6 +9474,7 @@ mod tests {
+@@ -9343,6 +9478,7 @@ mod tests {
                      Some(CommandItem::ServiceTier(command)) => {
                          panic!("expected {expected} command, got service tier {command:?}")
                      }
@@ -32007,7 +32018,7 @@ index c919e31c9..8f24288fc 100644
                      None => panic!("no selected command for '{input}'"),
                  },
                  _ => panic!("slash popup not active after typing '{input}'"),
-@@ -9442,6 +9574,7 @@ mod tests {
+@@ -9442,6 +9578,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -32015,7 +32026,7 @@ index c919e31c9..8f24288fc 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9459,6 +9592,25 @@ mod tests {
+@@ -9459,6 +9596,25 @@ mod tests {
          );
      }
 
@@ -32041,7 +32052,7 @@ index c919e31c9..8f24288fc 100644
      #[test]
      fn kill_buffer_persists_after_submit() {
          use crossterm::event::KeyCode;
-@@ -9952,6 +10104,7 @@ mod tests {
+@@ -9952,6 +10108,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -32049,7 +32060,7 @@ index c919e31c9..8f24288fc 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10152,6 +10305,7 @@ mod tests {
+@@ -10152,6 +10309,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -32526,7 +32537,7 @@ index 64f660f8a..fd6037eb4 100644
  }
 
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index c0e390289..e65e143f9 100644
+index c0e390289..2748d7794 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
 @@ -70,6 +70,8 @@ use std::time::Duration;
@@ -32607,6 +32618,72 @@ index c0e390289..e65e143f9 100644
      /// Return true when the pane is in the regular composer state without any
      /// overlays or popups and not running a task. This is the safe context to
      /// use Esc-Esc for backtracking from the main view.
+@@ -2112,6 +2138,10 @@ impl BottomPane {
+             || self.composer.is_in_paste_burst()
+     }
+
++    pub(crate) fn composer_paste_flush_deadline(&self) -> Option<std::time::Instant> {
++        self.composer.paste_burst_flush_deadline()
++    }
++
+     pub(crate) fn on_history_lookup_response(&mut self, response: HistoryLookupResponse) {
+         let mut updated = false;
+         for composer in std::iter::once(&mut self.composer)
+diff --git a/codex-rs/tui/src/bottom_pane/paste_burst.rs b/codex-rs/tui/src/bottom_pane/paste_burst.rs
+index 8084f6b9f..064899214 100644
+--- a/codex-rs/tui/src/bottom_pane/paste_burst.rs
++++ b/codex-rs/tui/src/bottom_pane/paste_burst.rs
+@@ -321,6 +321,20 @@ impl PasteBurst {
+         }
+     }
+
++    /// The first instant at which [`Self::flush_if_due`] flushes the pending input, if any.
++    pub fn flush_deadline(&self) -> Option<Instant> {
++        if !self.is_active() {
++            return None;
++        }
++        let timeout = if self.is_active_internal() {
++            PASTE_BURST_ACTIVE_IDLE_TIMEOUT
++        } else {
++            PASTE_BURST_CHAR_INTERVAL
++        };
++        self.last_plain_char_time
++            .map(|last| last + timeout + Duration::from_micros(100))
++    }
++
+     /// Accumulate a newline or tab into the burst instead of invoking a shortcut.
+     /// A held first character is promoted into the buffer before the control character.
+     ///
+@@ -587,4 +601,29 @@ mod tests {
+         let t3 = t1 + PASTE_ENTER_SUPPRESS_WINDOW + Duration::from_millis(1);
+         assert!(!burst.newline_should_insert_instead_of_submit(t3));
+     }
++
++    #[test]
++    fn flush_deadline_tracks_the_last_char_and_is_the_first_flushing_instant() {
++        let mut burst = PasteBurst::default();
++        assert_eq!(burst.flush_deadline(), None);
++        let t0 = Instant::now();
++        burst.on_plain_char('a', t0);
++        let held = burst.flush_deadline().unwrap();
++        assert!(held > t0 + PASTE_BURST_CHAR_INTERVAL);
++
++        let t1 = t0 + Duration::from_millis(1);
++        burst.on_plain_char('b', t1);
++        burst.append_char_to_buffer('b', t1);
++        let t2 = t1 + Duration::from_millis(5);
++        burst.on_plain_char('c', t2);
++        burst.append_char_to_buffer('c', t2);
++        let deadline = burst.flush_deadline().unwrap();
++        assert!(deadline > t2 + PASTE_BURST_ACTIVE_IDLE_TIMEOUT);
++        assert!(matches!(
++            burst.flush_if_due(t2 + PASTE_BURST_ACTIVE_IDLE_TIMEOUT),
++            FlushResult::None
++        ));
++        assert!(matches!(burst.flush_if_due(deadline), FlushResult::Paste(ref s) if s == "abc"));
++        assert_eq!(burst.flush_deadline(), None);
++    }
+ }
 diff --git a/codex-rs/tui/src/bottom_pane/request_user_input/render.rs b/codex-rs/tui/src/bottom_pane/request_user_input/render.rs
 index fb95a9701..e1a7846e0 100644
 --- a/codex-rs/tui/src/bottom_pane/request_user_input/render.rs
@@ -38265,7 +38342,7 @@ index b54764227..3d7c1614a 100644
 
  › 1. Update now (runs `npm install -g @openai/codex`)                           
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
-index e0a4d5286..1d17de313 100644
+index e0a4d5286..ec75a4488 100644
 --- a/codex-rs/tui/src/startup_draft.rs
 +++ b/codex-rs/tui/src/startup_draft.rs
 @@ -58,6 +58,7 @@ use input::handle_startup_draft_key;
@@ -38300,7 +38377,15 @@ index e0a4d5286..1d17de313 100644
      bottom_pane: BottomPane,
      events: Pin<Box<dyn Stream<Item = TuiEvent> + Send>>,
      app_event_rx: UnboundedReceiver<AppEvent>,
-@@ -139,6 +150,7 @@ impl StartupDraft {
+@@ -114,6 +125,7 @@ pub(crate) struct StartupDraftPump {
+     resolved_selection: Option<SessionSelection>,
+     configured_cwd: Option<PathBuf>,
+     pending_paste_newline: Option<(Instant, String)>,
++    paste_flush_at: Option<std::time::Instant>,
+     submission_pending: bool,
+     key_chord_matcher: crate::keymap::KeyChordMatcher,
+     key_chords: std::sync::Arc<crate::keymap::RuntimeChordKeymap>,
+@@ -139,6 +151,7 @@ impl StartupDraft {
          tui.set_alt_screen_enabled(screen.use_alt_screen);
          let mut pump = StartupDraftPump::new(&tui, initial_screen, session_action);
          pump.motion = screen.welcome_motion;
@@ -38308,15 +38393,18 @@ index e0a4d5286..1d17de313 100644
          pump.bottom_pane
              .set_status_line_enabled(screen.status_line_enabled);
          pump.bottom_pane.set_keymap_bindings(&screen.keymap);
-@@ -221,6 +233,7 @@ impl StartupDraftPump {
+@@ -219,8 +232,10 @@ impl StartupDraftPump {
+             initial_screen,
+             session_action,
              pending_paste_newline: None,
++            paste_flush_at: None,
              resolved_selection: None,
              configured_cwd: None,
 +            raw_output_mode: false,
              submission_pending: false,
              key_chord_matcher: Default::default(),
              key_chords: RuntimeKeymap::defaults().chords,
-@@ -258,6 +271,8 @@ impl StartupDraftPump {
+@@ -258,6 +273,8 @@ impl StartupDraftPump {
              self.cancel_submission();
          }
          self.configured_cwd = Some(cwd.to_path_buf());
@@ -38325,7 +38413,7 @@ index e0a4d5286..1d17de313 100644
          self.motion = crate::motion::MotionMode::from_animations_enabled(
              local_settings.tui.animations && local_settings.tui.effects.welcome,
          );
-@@ -323,6 +338,9 @@ impl StartupDraftPump {
+@@ -323,6 +340,9 @@ impl StartupDraftPump {
          }
          self.resolved_selection = Some(session_selection.clone());
          self.session_action = session_action;
@@ -38335,7 +38423,34 @@ index e0a4d5286..1d17de313 100644
          if matches!(session_selection, SessionSelection::StartFresh)
              && !self.blossom.borrow().is_eligible()
          {
-@@ -517,7 +535,12 @@ fn startup_draft_bottom_pane(
+@@ -344,8 +364,15 @@ impl StartupDraftPump {
+         }
+         tokio::pin!(future);
+         loop {
++            let paste_flush_at = self.paste_flush_at;
+             tokio::select! {
+                 output = &mut future => return Ok(output),
++                () = tokio::time::sleep_until(paste_flush_at.unwrap_or_else(std::time::Instant::now).into()), if paste_flush_at.is_some() => {
++                    self.paste_flush_at = None;
++                    if self.initial_screen == StartupDraftInitialScreen::Composer {
++                        self.draw(tui, tui.terminal.last_known_screen_size)?;
++                    }
++                }
+                 event = self.events.next() => {
+                     let Some(event) = event else {
+                         return Err(io::Error::new(
+@@ -432,7 +459,9 @@ impl StartupDraftPump {
+         if self.bottom_pane.flush_paste_burst_if_due() {
+             crate::startup_recovery::remember(self.bottom_pane.composer_recovery_snapshot());
+         }
+-        if self.bottom_pane.is_in_paste_burst() {
++        // The rate-limited frame scheduler keeps the earliest request, so the composer's flush runs off its own deadline.
++        self.paste_flush_at = self.bottom_pane.composer_paste_flush_deadline();
++        if self.paste_flush_at.is_none() && self.bottom_pane.is_in_paste_burst() {
+             tui.frame_requester()
+                 .schedule_frame_in(ChatComposer::recommended_paste_flush_delay());
+         }
+@@ -517,7 +546,12 @@ fn startup_draft_bottom_pane(
              frame_requester,
              has_input_focus: true,
              enhanced_keys_supported,
@@ -38495,18 +38610,20 @@ index c9e1dab58..200ca431e 100644
      use clap::Parser;
      use codex_config::LoaderOverrides;
 diff --git a/codex-rs/tui/src/startup_draft_tests.rs b/codex-rs/tui/src/startup_draft_tests.rs
-index 2cb7703f4..624905e1b 100644
+index 2cb7703f4..82eacc505 100644
 --- a/codex-rs/tui/src/startup_draft_tests.rs
 +++ b/codex-rs/tui/src/startup_draft_tests.rs
-@@ -46,6 +46,7 @@ where
+@@ -46,7 +46,9 @@ where
          session_action: StartupDraftSessionAction::New,
          resolved_selection: None,
          configured_cwd: None,
 +        raw_output_mode: false,
          pending_paste_newline: None,
++        paste_flush_at: None,
          submission_pending: false,
          key_chord_matcher: Default::default(),
-@@ -66,6 +67,7 @@ pub(crate) fn startup_test_pump_with_input(text: &str) -> StartupDraftPump {
+         key_chords: crate::keymap::RuntimeKeymap::defaults().chords,
+@@ -66,6 +68,7 @@ pub(crate) fn startup_test_pump_with_input(text: &str) -> StartupDraftPump {
  }
 
  #[test]
@@ -38514,7 +38631,7 @@ index 2cb7703f4..624905e1b 100644
  fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
      let mut snapshots = Vec::new();
 
-@@ -145,6 +147,7 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
+@@ -145,6 +148,7 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
  }
 
  #[test]
@@ -38522,7 +38639,7 @@ index 2cb7703f4..624905e1b 100644
  fn terminal_app_ssh_fallback_renders_inline_startup() {
      let pump = startup_test_pump(std::iter::empty());
      let owned_layout = super::layout::OwnedStartupLayout::new(&pump);
-@@ -202,6 +205,7 @@ fn terminal_app_ssh_fallback_renders_inline_startup() {
+@@ -202,6 +206,7 @@ fn terminal_app_ssh_fallback_renders_inline_startup() {
  }
 
  #[tokio::test]
@@ -38530,7 +38647,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_clears_loading_status_when_starting_fresh() {
      let mut snapshots = Vec::new();
      let render_frame = |pump: &StartupDraftPump| {
-@@ -291,6 +295,7 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
+@@ -291,6 +296,7 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
  }
 
  #[tokio::test]
@@ -38538,7 +38655,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
      let codex_home = tempfile::tempdir().expect("create temporary Codex home");
      let config = ConfigBuilder::default()
-@@ -325,6 +330,7 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
+@@ -325,6 +331,7 @@ async fn startup_draft_hydrates_its_header_without_moving_the_composer() {
  }
 
  #[test]
@@ -38546,7 +38663,7 @@ index 2cb7703f4..624905e1b 100644
  fn startup_draft_preserves_literal_text_without_popups_or_startup_actions() {
      let mut pump = startup_test_pump(std::iter::empty());
      for character in "/quit @src $skill /tmp/image.png".chars() {
-@@ -360,6 +366,7 @@ fn startup_draft_preserves_literal_text_without_popups_or_startup_actions() {
+@@ -360,6 +367,7 @@ fn startup_draft_preserves_literal_text_without_popups_or_startup_actions() {
  }
 
  #[test]
@@ -38554,7 +38671,7 @@ index 2cb7703f4..624905e1b 100644
  fn startup_draft_preserves_control_cancellation_and_forward_deletion() {
      let mut pump = startup_test_pump(std::iter::empty());
      for character in "abc".chars() {
-@@ -407,6 +414,7 @@ fn startup_draft_preserves_control_cancellation_and_forward_deletion() {
+@@ -407,6 +415,7 @@ fn startup_draft_preserves_control_cancellation_and_forward_deletion() {
  }
 
  #[test]
@@ -38562,15 +38679,37 @@ index 2cb7703f4..624905e1b 100644
  fn startup_draft_preserves_multiline_editing_without_submitting() {
      let mut pump = startup_test_pump(std::iter::empty());
      pump.bottom_pane.insert_str("first");
-@@ -432,6 +440,7 @@ fn startup_draft_preserves_multiline_editing_without_submitting() {
+@@ -431,7 +440,29 @@ fn startup_draft_preserves_multiline_editing_without_submitting() {
+     assert!(pump.app_event_rx.try_recv().is_err());
  }
 
++#[tokio::test]
++#[serial_test::serial]
++async fn startup_draft_flushes_a_key_burst_at_its_deadline_without_a_frame_request() {
++    let events = "probe".chars().map(|character| {
++        TuiEvent::Key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
++    });
++    let mut pump = startup_test_pump(events);
++    pump.events = Box::pin(pump.events.chain(futures::stream::pending()));
++    let mut tui = crate::tui::test_support::make_test_tui().expect("create test terminal");
++
++    pump.run_until(
++        &mut tui,
++        tokio::time::sleep(std::time::Duration::from_millis(/*millis*/ 100)),
++    )
++    .await
++    .expect("run the startup draft");
++
++    assert!(!pump.bottom_pane.is_in_paste_burst());
++    assert_eq!(pump.bottom_pane.composer_text(), "probe");
++}
++
  #[tokio::test(start_paused = true)]
 +#[serial_test::serial]
  async fn startup_draft_preserves_non_bracketed_multiline_pastes_without_submitting() {
      let events = "first line\n\nsecond line\nthird line"
          .chars()
-@@ -472,6 +481,7 @@ async fn startup_draft_preserves_non_bracketed_multiline_pastes_without_submitti
+@@ -472,6 +503,7 @@ async fn startup_draft_preserves_non_bracketed_multiline_pastes_without_submitti
  }
 
  #[tokio::test]
@@ -38578,7 +38717,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_preserves_deferred_paste_newlines_across_handoff() {
      let (event_tx, event_rx) = unbounded_channel();
      let mut pump = startup_test_pump(std::iter::empty());
-@@ -512,6 +522,7 @@ async fn startup_draft_preserves_deferred_paste_newlines_across_handoff() {
+@@ -512,6 +544,7 @@ async fn startup_draft_preserves_deferred_paste_newlines_across_handoff() {
  }
 
  #[tokio::test]
@@ -38586,7 +38725,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_does_not_turn_a_standalone_enter_into_a_newline_at_handoff() {
      let (_event_tx, event_rx) = unbounded_channel();
      let mut pump = startup_test_pump(std::iter::empty());
-@@ -542,6 +553,7 @@ async fn startup_draft_does_not_turn_a_standalone_enter_into_a_newline_at_handof
+@@ -542,6 +575,7 @@ async fn startup_draft_does_not_turn_a_standalone_enter_into_a_newline_at_handof
  }
 
  #[test]
@@ -38594,7 +38733,7 @@ index 2cb7703f4..624905e1b 100644
  fn startup_draft_allows_local_editor_shortcuts_without_startup_actions() {
      let mut pump = startup_test_pump(std::iter::empty());
      pump.bottom_pane.insert_str("first second");
-@@ -620,6 +632,7 @@ fn startup_draft_allows_local_editor_shortcuts_without_startup_actions() {
+@@ -620,6 +654,7 @@ fn startup_draft_allows_local_editor_shortcuts_without_startup_actions() {
 
  #[cfg(target_os = "windows")]
  #[test]
@@ -38602,7 +38741,7 @@ index 2cb7703f4..624905e1b 100644
  fn startup_draft_preserves_windows_altgr_text_input() {
      let mut pump = startup_test_pump(std::iter::empty());
      handle_startup_draft_key(
-@@ -635,6 +648,7 @@ fn startup_draft_preserves_windows_altgr_text_input() {
+@@ -635,6 +670,7 @@ fn startup_draft_preserves_windows_altgr_text_input() {
  }
 
  #[tokio::test]
@@ -38610,7 +38749,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_applies_paste_burst_preferences_without_losing_buffered_input() {
      let codex_home = tempfile::tempdir().expect("create temporary Codex home");
      let config = ConfigBuilder::default()
-@@ -684,6 +698,7 @@ async fn startup_draft_applies_paste_burst_preferences_without_losing_buffered_i
+@@ -684,6 +720,7 @@ async fn startup_draft_applies_paste_burst_preferences_without_losing_buffered_i
  }
 
  #[tokio::test]
@@ -38618,7 +38757,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_applies_editor_keymap_without_enabling_vim() {
      let codex_home = tempfile::tempdir().expect("create temporary Codex home");
      let config = ConfigBuilder::default()
-@@ -726,6 +741,7 @@ async fn startup_draft_applies_editor_keymap_without_enabling_vim() {
+@@ -726,6 +763,7 @@ async fn startup_draft_applies_editor_keymap_without_enabling_vim() {
  }
 
  #[tokio::test]
@@ -38626,7 +38765,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_waits_for_onboarding_before_accepting_input() {
      let mut composer_pump = startup_test_pump(std::iter::empty());
      let mut composer_tui =
-@@ -812,6 +828,7 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
+@@ -812,6 +850,7 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
  }
 
  #[tokio::test]
@@ -38634,7 +38773,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_allows_cancellation_before_onboarding_appears() {
      for character in ['c', 'd'] {
          let mut pump = startup_test_pump(std::iter::once(TuiEvent::Key(KeyEvent::new(
-@@ -830,6 +847,7 @@ async fn startup_draft_allows_cancellation_before_onboarding_appears() {
+@@ -830,6 +869,7 @@ async fn startup_draft_allows_cancellation_before_onboarding_appears() {
  }
 
  #[tokio::test]
@@ -38642,7 +38781,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_waits_for_session_picker_before_accepting_input() {
      let mut pump = startup_test_pump(
          [
-@@ -870,6 +888,7 @@ async fn startup_draft_waits_for_session_picker_before_accepting_input() {
+@@ -870,6 +910,7 @@ async fn startup_draft_waits_for_session_picker_before_accepting_input() {
  }
 
  #[tokio::test]
@@ -38650,7 +38789,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_allows_cancellation_before_session_picker_appears() {
      let mut pump = startup_test_pump(std::iter::once(TuiEvent::Key(KeyEvent::new(
          KeyCode::Char('c'),
-@@ -886,6 +905,7 @@ async fn startup_draft_allows_cancellation_before_session_picker_appears() {
+@@ -886,6 +927,7 @@ async fn startup_draft_allows_cancellation_before_session_picker_appears() {
  }
 
  #[tokio::test]
@@ -38658,7 +38797,7 @@ index 2cb7703f4..624905e1b 100644
  async fn startup_draft_flushes_large_event_backlogs_without_submitting_or_retaining_app_events() {
      let events = (0..=1024).map(|_| TuiEvent::Draw).chain([
          TuiEvent::Key(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE)),
-@@ -910,6 +930,7 @@ async fn startup_draft_flushes_large_event_backlogs_without_submitting_or_retain
+@@ -910,6 +952,7 @@ async fn startup_draft_flushes_large_event_backlogs_without_submitting_or_retain
  }
 
  #[tokio::test]
@@ -95382,10 +95521,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..b6d8934e2
+index 000000000..528375447
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5529 @@
+@@ -0,0 +1,5547 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -100731,6 +100870,24 @@ index 000000000..b6d8934e2
 +            .map(|state| state.revision)
 +    }
 +
++    /// The UI state key and revision, or those a first invocation would bind, so binding alone is no change.
++    fn ui_binding(&self, id: &str, thread: Option<&str>) -> Option<(String, Option<u64>)> {
++        let loaded = self.loaded.get(id)?;
++        if let Some((key, _)) = &loaded.ui {
++            return Some((key.clone(), self.ui_revision(id)));
++        }
++        let key = self.ui_key(loaded, thread);
++        let revision = UI_STATES
++            .lock()
++            .ok()?
++            .get(&key)
++            .and_then(std::sync::Weak::upgrade)
++            .map_or(Some(0), |state| {
++                state.lock().ok().map(|state| state.revision)
++            });
++        Some((key, revision))
++    }
++
 +    pub fn state(&self, id: &str) -> Option<&Value> {
 +        self.loaded.get(id).map(|loaded| &loaded.state)
 +    }
@@ -101776,10 +101933,10 @@ index 000000000..7c95fa4c9
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..4af6ee321
+index 000000000..acbdc6176
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,425 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -102157,7 +102314,10 @@ index 000000000..4af6ee321
 +    scope: &InvocationScope,
 +) -> Result<(Value, usize)> {
 +    let receipt = match result {
-+        Ok(value) => json!({"call": call, "value": value}),
++        Ok(value) => Value::Object(serde_json::Map::from_iter([
++            ("call".to_owned(), json!(call)),
++            ("value".to_owned(), value),
++        ])),
 +        Err(error) => {
 +            json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
 +        }
@@ -108573,10 +108733,10 @@ index 000000000..14fb8dcca
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..2bf912017
+index 000000000..ebd369158
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,198 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -108669,8 +108829,7 @@ index 000000000..2bf912017
 +                    loaded.selection.sha256,
 +                    loaded.selection.settings,
 +                    thread,
-+                    loaded.ui.as_ref().map(|(key, _)| key),
-+                    self.ui_revision(id),
++                    self.ui_binding(id, thread.as_deref()),
 +                    selected
 +                ])
 +            })
@@ -109123,10 +109282,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..825994119
+index 000000000..baeac8764
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,800 @@
+@@ -0,0 +1,807 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -109179,23 +109338,6 @@ index 000000000..825994119
 +  input = input.subarray(end + 1);
 +  return line;
 +}
-+async function evaluate(request) {
-+request.hook_budget_ms ??= 1000;
-+const globals = Object.create(null);
-+globals.__request = JSON.stringify(request);
-+if (request.environment?.includes('crypto')) globals.crypto = globalThis.crypto;
-+globals.__exchange = frame => {
-+  try {
-+    writeSync(1, frame + '\n');
-+    return readLine();
-+  } catch {
-+    process.exit(1);
-+  }
-+};
-+globals.__clock = () => performance.now();
-+const context = createContext(globals, {
-+  codeGeneration: { strings: false, wasm: false },
-+});
 +const bootstrap = `
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
@@ -109822,8 +109964,31 @@ index 000000000..825994119
 +    activatedState = structuredCloneFallback(state); activating = false;
 +  }, suspension, serve };
 +`;
++// Every callback takes a context that has never run mod code; the next one is built while the runner idles.
++function prepare() {
++  const globals = Object.create(null);
++  globals.__exchange = frame => {
++    try {
++      writeSync(1, frame + '\n');
++      return readLine();
++    } catch {
++      process.exit(1);
++    }
++  };
++  globals.__clock = () => performance.now();
++  const context = createContext(globals, {
++    codeGeneration: { strings: false, wasm: false },
++  });
++  return { context, setup: moduleFor(bootstrap, context, 'bootstrap', false) };
++}
++let spare = prepare();
++async function evaluate(request) {
++request.hook_budget_ms ??= 1000;
++const { context, setup } = spare;
++spare = null;
++context.__request = JSON.stringify(request);
++if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
 +try {
-+  const setup = moduleFor(bootstrap, context, 'bootstrap', false);
 +  await setup.link(() => { throw new Error('unsupported_import'); });
 +  await setup.evaluate({ timeout: request.hook_budget_ms });
 +  const mod = moduleFor(request.source, context, request.filename);
@@ -109926,13 +110091,14 @@ index 000000000..825994119
 +  const request = JSON.parse(line);
 +  await evaluate(request);
 +  if (!request.reuse || process.exitCode) break;
++  spare = prepare();
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..5701641fb
+index 000000000..bcf4884e7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1292 @@
+@@ -0,0 +1,1307 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -110124,22 +110290,13 @@ index 000000000..5701641fb
 +
 +/// Reuses the last verified manifest and digest while every hashed file keeps its identity.
 +pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
-+    if !path.is_absolute() || path.canonicalize()? != path {
-+        return Err(failure("canonical_package_path_required"));
++    match reused_package(path) {
++        Some(verified) => Ok(verified),
++        None => inspect_verified(path),
 +    }
-+    let verified = VERIFIED_PACKAGES
-+        .lock()
-+        .map_err(failure)?
-+        .get(path)
-+        .cloned();
-+    if let Some(verified) = verified
-+        && verified.0.iter().all(|(file, expected)| {
-+            std::fs::symlink_metadata(file)
-+                .is_ok_and(|metadata| metadata.is_file() && identity(&metadata) == *expected)
-+        })
-+    {
-+        return Ok((verified.1.clone(), verified.2.clone()));
-+    }
++}
++
++fn inspect_verified(path: &Path) -> Result<(ModPackage, String)> {
 +    let (package, _, hash, _, files) = inspect_package(path, false)?;
 +    let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
 +    if verified.len() >= 256 {
@@ -110150,6 +110307,21 @@ index 000000000..5701641fb
 +        Arc::new((files, package.clone(), hash.clone())),
 +    );
 +    Ok((package, hash))
++}
++
++fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
++    if !path.is_absolute() || path.canonicalize().ok()? != path {
++        return None;
++    }
++    let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
++    verified
++        .0
++        .iter()
++        .all(|(file, expected)| {
++            std::fs::symlink_metadata(file)
++                .is_ok_and(|metadata| metadata.is_file() && identity(&metadata) == *expected)
++        })
++        .then(|| (verified.1.clone(), verified.2.clone()))
 +}
 +
 +fn inspect_package(
@@ -110608,20 +110780,27 @@ index 000000000..5701641fb
 +        }
 +        let mut selections: Vec<Value> = Vec::new();
 +        let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-+        let inspect = |selection: &ModSelection| verified_package(&selection.path);
-+        let inspections = if entries.len() > 4 {
++        let mut inspections = entries
++            .iter()
++            .map(|selection| reused_package(&selection.path).map(Ok))
++            .collect::<Vec<_>>();
++        let misses = (0..entries.len())
++            .filter(|index| inspections[*index].is_none())
++            .collect::<Vec<_>>();
++        let inspect = |index: usize| (index, inspect_verified(&entries[index].path));
++        let inspected = if misses.len() > 4 {
 +            let next = std::sync::atomic::AtomicUsize::new(0);
-+            let mut inspected = std::thread::scope(|scope| {
-+                let workers = (0..entries.len().min(8))
++            std::thread::scope(|scope| {
++                let workers = (0..misses.len().min(8))
 +                    .map(|_| {
 +                        scope.spawn(|| {
 +                            let mut inspected = Vec::new();
 +                            loop {
-+                                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-+                                let Some(selection) = entries.get(index) else {
++                                let next = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                                let Some(index) = misses.get(next) else {
 +                                    break;
 +                                };
-+                                inspected.push((index, inspect(selection)));
++                                inspected.push(inspect(*index));
 +                            }
 +                            inspected
 +                        })
@@ -110635,16 +110814,18 @@ index 000000000..5701641fb
 +                            .unwrap_or_else(|error| std::panic::resume_unwind(error))
 +                    })
 +                    .collect::<Vec<_>>()
-+            });
-+            inspected.sort_unstable_by_key(|(index, _)| *index);
-+            inspected
-+                .into_iter()
-+                .map(|(_, result)| result)
-+                .collect::<Vec<_>>()
++            })
 +        } else {
-+            entries.iter().map(inspect).collect()
++            misses.into_iter().map(inspect).collect()
 +        };
-+        for (index, (selection, inspected)) in entries.iter().zip(inspections).enumerate() {
++        for (index, result) in inspected {
++            inspections[index] = Some(result);
++        }
++        for (index, (selection, inspected)) in entries
++            .iter()
++            .zip(inspections.into_iter().flatten())
++            .enumerate()
++        {
 +            let administered = index < administered;
 +            let mut settings_origin = BTreeMap::new();
 +            let (mut id, error, environment) = match inspected {
@@ -159095,10 +159276,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..3aeb243c5
+index 000000000..45daa4104
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,732 @@
+@@ -0,0 +1,750 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -159283,8 +159464,26 @@ index 000000000..3aeb243c5
 +}
 +
 +pub(crate) fn mod_status() -> Option<Value> {
-+    serde_json::from_slice(&bounded_read(&store_root()?.join("mod-status.json"), 262_144).ok()?)
++    type Cached = (PathBuf, FileStamp, Option<Value>);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let path = store_root()?.join("mod-status.json");
++    let Some(stamp) = file_stamp(&path) else {
++        return serde_json::from_slice(&bounded_read(&path, 262_144).ok()?).ok();
++    };
++    let mut cache = CACHE
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some((cached_path, cached, status)) = cache.as_ref()
++        && *cached_path == path
++        && *cached == stamp
++    {
++        return status.clone();
++    }
++    let status = bounded_read(&path, 262_144)
 +        .ok()
++        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
++    *cache = Some((path, stamp, status.clone()));
++    status
 +}
 +
 +pub(crate) fn builtins() -> codex_omd::BuiltinSnapshot {

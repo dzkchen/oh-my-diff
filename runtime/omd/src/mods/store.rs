@@ -189,22 +189,13 @@ pub(super) fn package_with_assets(
 
 /// Reuses the last verified manifest and digest while every hashed file keeps its identity.
 pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
-    if !path.is_absolute() || path.canonicalize()? != path {
-        return Err(failure("canonical_package_path_required"));
+    match reused_package(path) {
+        Some(verified) => Ok(verified),
+        None => inspect_verified(path),
     }
-    let verified = VERIFIED_PACKAGES
-        .lock()
-        .map_err(failure)?
-        .get(path)
-        .cloned();
-    if let Some(verified) = verified
-        && verified.0.iter().all(|(file, expected)| {
-            std::fs::symlink_metadata(file)
-                .is_ok_and(|metadata| metadata.is_file() && identity(&metadata) == *expected)
-        })
-    {
-        return Ok((verified.1.clone(), verified.2.clone()));
-    }
+}
+
+fn inspect_verified(path: &Path) -> Result<(ModPackage, String)> {
     let (package, _, hash, _, files) = inspect_package(path, false)?;
     let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
     if verified.len() >= 256 {
@@ -215,6 +206,21 @@ pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
         Arc::new((files, package.clone(), hash.clone())),
     );
     Ok((package, hash))
+}
+
+fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
+    if !path.is_absolute() || path.canonicalize().ok()? != path {
+        return None;
+    }
+    let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
+    verified
+        .0
+        .iter()
+        .all(|(file, expected)| {
+            std::fs::symlink_metadata(file)
+                .is_ok_and(|metadata| metadata.is_file() && identity(&metadata) == *expected)
+        })
+        .then(|| (verified.1.clone(), verified.2.clone()))
 }
 
 fn inspect_package(
@@ -673,20 +679,27 @@ impl ModStore {
         }
         let mut selections: Vec<Value> = Vec::new();
         let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-        let inspect = |selection: &ModSelection| verified_package(&selection.path);
-        let inspections = if entries.len() > 4 {
+        let mut inspections = entries
+            .iter()
+            .map(|selection| reused_package(&selection.path).map(Ok))
+            .collect::<Vec<_>>();
+        let misses = (0..entries.len())
+            .filter(|index| inspections[*index].is_none())
+            .collect::<Vec<_>>();
+        let inspect = |index: usize| (index, inspect_verified(&entries[index].path));
+        let inspected = if misses.len() > 4 {
             let next = std::sync::atomic::AtomicUsize::new(0);
-            let mut inspected = std::thread::scope(|scope| {
-                let workers = (0..entries.len().min(8))
+            std::thread::scope(|scope| {
+                let workers = (0..misses.len().min(8))
                     .map(|_| {
                         scope.spawn(|| {
                             let mut inspected = Vec::new();
                             loop {
-                                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                let Some(selection) = entries.get(index) else {
+                                let next = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let Some(index) = misses.get(next) else {
                                     break;
                                 };
-                                inspected.push((index, inspect(selection)));
+                                inspected.push(inspect(*index));
                             }
                             inspected
                         })
@@ -700,16 +713,18 @@ impl ModStore {
                             .unwrap_or_else(|error| std::panic::resume_unwind(error))
                     })
                     .collect::<Vec<_>>()
-            });
-            inspected.sort_unstable_by_key(|(index, _)| *index);
-            inspected
-                .into_iter()
-                .map(|(_, result)| result)
-                .collect::<Vec<_>>()
+            })
         } else {
-            entries.iter().map(inspect).collect()
+            misses.into_iter().map(inspect).collect()
         };
-        for (index, (selection, inspected)) in entries.iter().zip(inspections).enumerate() {
+        for (index, result) in inspected {
+            inspections[index] = Some(result);
+        }
+        for (index, (selection, inspected)) in entries
+            .iter()
+            .zip(inspections.into_iter().flatten())
+            .enumerate()
+        {
             let administered = index < administered;
             let mut settings_origin = BTreeMap::new();
             let (mut id, error, environment) = match inspected {

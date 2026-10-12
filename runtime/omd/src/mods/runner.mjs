@@ -50,23 +50,6 @@ function readLine() {
   input = input.subarray(end + 1);
   return line;
 }
-async function evaluate(request) {
-request.hook_budget_ms ??= 1000;
-const globals = Object.create(null);
-globals.__request = JSON.stringify(request);
-if (request.environment?.includes('crypto')) globals.crypto = globalThis.crypto;
-globals.__exchange = frame => {
-  try {
-    writeSync(1, frame + '\n');
-    return readLine();
-  } catch {
-    process.exit(1);
-  }
-};
-globals.__clock = () => performance.now();
-const context = createContext(globals, {
-  codeGeneration: { strings: false, wasm: false },
-});
 const bootstrap = `
 const request = JSON.parse(globalThis.__request);
 delete globalThis.__request;
@@ -693,8 +676,31 @@ globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynami
     activatedState = structuredCloneFallback(state); activating = false;
   }, suspension, serve };
 `;
+// Every callback takes a context that has never run mod code; the next one is built while the runner idles.
+function prepare() {
+  const globals = Object.create(null);
+  globals.__exchange = frame => {
+    try {
+      writeSync(1, frame + '\n');
+      return readLine();
+    } catch {
+      process.exit(1);
+    }
+  };
+  globals.__clock = () => performance.now();
+  const context = createContext(globals, {
+    codeGeneration: { strings: false, wasm: false },
+  });
+  return { context, setup: moduleFor(bootstrap, context, 'bootstrap', false) };
+}
+let spare = prepare();
+async function evaluate(request) {
+request.hook_budget_ms ??= 1000;
+const { context, setup } = spare;
+spare = null;
+context.__request = JSON.stringify(request);
+if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
 try {
-  const setup = moduleFor(bootstrap, context, 'bootstrap', false);
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
   const mod = moduleFor(request.source, context, request.filename);
@@ -797,4 +803,5 @@ for (;;) {
   const request = JSON.parse(line);
   await evaluate(request);
   if (!request.reuse || process.exitCode) break;
+  spare = prepare();
 }
