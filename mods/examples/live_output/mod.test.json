@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
+    "process.stop": [{"result": {"stopped": false}}],
+    "process.which": [{"result": {"found": [{"name": "sh", "path": "/bin/sh", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}]}}],
+    "process.start": [{"result": {"session": "live", "running": true}}],
+    "terminal.pane": [{"result": {"applied": true}}, {"result": {"applied": true}}],
+    "process.exchange": [
+      {"result": {"session": "live", "running": true, "messages": [
+        {"stream": "stdout", "data": "building\r\n\u001b[32mok\u001b[0m\n"},
+        {"stream": "stderr", "data": "warning: slow\n"}
+      ]}},
+      {"result": {"session": "live", "running": true, "messages": [{"stream": "stdout", "data_base64": "/w=="}]}},
+      {"error": "process stopped"}
+    ]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "live_output", "event": "command", "name": "run", "payload": "make", "expect": {"display": "Running make"}},
+    {"type": "event", "event": "channel", "payload": {"publisher": "live_output", "channel": "live_output/run", "data": "make", "correlation": null, "sequence": 1, "dropped": 0}},
+    {"type": "event", "event": "process_event", "payload": {"session": "live", "kind": "output", "bytes": 64}},
+    {"type": "event", "event": "process_event", "payload": {"session": "live", "kind": "exit"}},
+    {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "draw", "ledger": null},
+      "expect": {"sites": {"above_composer": {"components": [
+        {"type": "pane", "id": "live_output", "label": "make — exited", "children": [
+          {"type": "code", "id": "live_output_text", "label": "Output", "text": "building\nok\nwarning: slow\n[1 binary bytes]\n"}]}]}}}}
+  ]
+}

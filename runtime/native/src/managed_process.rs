@@ -228,6 +228,8 @@ struct ManagedProcess {
     unrestricted: bool,
     sender: mpsc::SyncSender<WriteRequest>,
     receiver: mpsc::Receiver<io::Result<Value>>,
+    /// Received past one exchange's limit or after its output; the next exchange returns it first.
+    pending: Option<io::Result<Value>>,
     scratch: PathBuf,
     last_used: Instant,
     /// Set under the lock that reaps the child, so nothing signals a pid the system may have reused.
@@ -276,6 +278,7 @@ impl Drop for ManagedProcess {
 enum Framing {
     ContentLength,
     Ndjson,
+    Raw,
 }
 
 fn program_sha256(path: &Path) -> io::Result<String> {
@@ -409,9 +412,52 @@ fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value>
     }
 }
 
+/// One chunk of `stream` as written, holding back a trailing partial UTF-8 character in `carry`.
+fn read_raw(reader: &mut impl Read, carry: &mut Vec<u8>, stream: &str) -> io::Result<Value> {
+    loop {
+        let mut chunk = std::mem::take(carry);
+        let start = chunk.len();
+        chunk.resize(start + 64 * 1024, 0);
+        let read = match reader.read(&mut chunk[start..]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                chunk.truncate(start);
+                *carry = chunk;
+                continue;
+            }
+            result => result?,
+        };
+        chunk.truncate(start + read);
+        if chunk.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "process stopped",
+            ));
+        }
+        let end = match std::str::from_utf8(&chunk) {
+            Err(error) if read > 0 && error.error_len().is_none() => error.valid_up_to(),
+            _ => chunk.len(),
+        };
+        *carry = chunk.split_off(end);
+        if !chunk.is_empty() {
+            let (field, data) = crate::mods::access::content("data", &chunk);
+            return Ok(json!({"stream": stream, field: data}));
+        }
+    }
+}
+
 fn send_framed(stdin: &mut impl Write, message: &Value, framing: Framing) -> Result<(), String> {
     if framing == Framing::ContentLength {
         return send_message(stdin, message);
+    }
+    if framing == Framing::Raw {
+        let text = message
+            .as_str()
+            .filter(|text| text.len() <= 4 * 1024 * 1024)
+            .ok_or("process_message_invalid_or_too_large")?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| error.to_string())?;
+        return stdin.flush().map_err(|error| error.to_string());
     }
     let mut bytes = serde_json::to_vec(message).map_err(|error| error.to_string())?;
     if bytes.len() > 4 * 1024 * 1024 || !message.is_object() {
@@ -725,7 +771,7 @@ impl ManagedProcesses {
                     })
                     || !matches!(
                         input.framing.as_deref(),
-                        None | Some("content-length") | Some("ndjson")
+                        None | Some("content-length") | Some("ndjson") | Some("raw")
                     )
                     || !matches!(
                         input.network.as_deref(),
@@ -795,10 +841,10 @@ impl ManagedProcesses {
                     },
                 )?;
                 let launched = (|| {
-                    let framing = if input.framing.as_deref() == Some("ndjson") {
-                        Framing::Ndjson
-                    } else {
-                        Framing::ContentLength
+                    let framing = match input.framing.as_deref() {
+                        Some("ndjson") => Framing::Ndjson,
+                        Some("raw") => Framing::Raw,
+                        _ => Framing::ContentLength,
                     };
                     let arguments = input.arguments.into_iter().map(|argument| {
                         argument.replace("{process.home}", &scratch.to_string_lossy())
@@ -862,10 +908,15 @@ impl ManagedProcesses {
                         .current_dir(repository)
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
-                        .stderr(Stdio::null())
+                        .stderr(if framing == Framing::Raw {
+                            Stdio::piped()
+                        } else {
+                            Stdio::null()
+                        })
                         .process_group(0)
                         .spawn()
                         .map_err(|error| error.to_string())?;
+                    let stderr = child.stderr.take();
                     let streams = child
                         .stdin
                         .take()
@@ -943,58 +994,89 @@ impl ManagedProcesses {
                     }
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
-                    let reader_reaped = Arc::clone(&reaped);
-                    std::thread::spawn(move || {
+                    let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> = if framing
+                        == Framing::Raw
+                    {
+                        let (mut stdout, mut out) = (stdout, Vec::new());
+                        let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
+                            vec![Box::new(move || read_raw(&mut stdout, &mut out, "stdout"))];
+                        if let Some(mut stderr) = stderr {
+                            let mut err = Vec::new();
+                            readers
+                                .push(Box::new(move || read_raw(&mut stderr, &mut err, "stderr")));
+                        }
+                        readers
+                    } else {
                         let mut reader = BufReader::new(stdout);
-                        loop {
-                            let result = read_framed(&mut reader, framing);
-                            if let (Some(frames), Ok(message)) = (&frames, &result)
-                                && let Some(image) = message.get("blit")
-                            {
-                                frames.offer(image.clone());
-                                continue;
-                            }
-                            let terminal = result.is_err();
-                            if let Err(error) = &result
-                                && error.kind() != io::ErrorKind::UnexpectedEof
-                            {
-                                kill_group_if_alive(group, &reader_reaped);
-                            }
-                            let bytes = match (&result, notify_output) {
-                                (Ok(message), true) => {
-                                    serde_json::to_vec(message).ok().map(|bytes| bytes.len())
+                        vec![Box::new(move || read_framed(&mut reader, framing))]
+                    };
+                    let open = Arc::new(std::sync::atomic::AtomicUsize::new(readers.len()));
+                    let mut frames = frames;
+                    for mut next in readers.drain(..) {
+                        let (sender, frames, alive, open) =
+                            (sender.clone(), frames.take(), alive.clone(), open.clone());
+                        let (notifier, owner, session) =
+                            (notifier.clone(), owner.clone(), session.clone());
+                        let reader_reaped = Arc::clone(&reaped);
+                        std::thread::spawn(move || {
+                            loop {
+                                let result = next();
+                                if let (Some(frames), Ok(message)) = (&frames, &result)
+                                    && let Some(image) = message.get("blit")
+                                {
+                                    frames.offer(image.clone());
+                                    continue;
                                 }
-                                _ => None,
-                            };
-                            if sender.send(result).is_err() || terminal {
-                                alive.store(false, std::sync::atomic::Ordering::Release);
-                                if let Some(notifier) = &notifier {
+                                let terminal = result.is_err();
+                                if let Err(error) = &result
+                                    && error.kind() != io::ErrorKind::UnexpectedEof
+                                {
+                                    kill_group_if_alive(group, &reader_reaped);
+                                }
+                                if terminal
+                                    && open.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) > 1
+                                {
+                                    break;
+                                }
+                                let bytes = match (&result, notify_output) {
+                                    (Ok(message), true) => {
+                                        serde_json::to_vec(message).ok().map(|bytes| bytes.len())
+                                    }
+                                    _ => None,
+                                };
+                                if sender.send(result).is_err() || terminal {
+                                    if !alive.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                                        break;
+                                    }
+                                    if let Some(notifier) = &notifier {
+                                        notifier(ProcessNotice {
+                                            owner: owner.clone(),
+                                            session: session.clone(),
+                                            output_bytes: None,
+                                            exited: true,
+                                            deliver: notify_exit,
+                                        });
+                                    }
+                                    break;
+                                }
+                                if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
                                     notifier(ProcessNotice {
                                         owner: owner.clone(),
                                         session: session.clone(),
-                                        output_bytes: None,
-                                        exited: true,
-                                        deliver: notify_exit,
+                                        output_bytes: Some(bytes),
+                                        exited: false,
+                                        deliver: true,
                                     });
                                 }
-                                break;
                             }
-                            if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
-                                notifier(ProcessNotice {
-                                    owner: owner.clone(),
-                                    session: session.clone(),
-                                    output_bytes: Some(bytes),
-                                    exited: false,
-                                    deliver: true,
-                                });
-                            }
-                        }
-                    });
+                        });
+                    }
                     Ok::<_, String>(ManagedProcess {
                         child,
                         unrestricted: unrestricted.is_some(),
                         sender: writer_sender,
                         receiver,
+                        pending: None,
                         scratch: scratch.clone(),
                         last_used: Instant::now(),
                         reaped,
@@ -1047,7 +1129,8 @@ impl ManagedProcesses {
                     self.remove(&key, &session);
                     return Err("grant_expired: os".into());
                 }
-                if process.exited().map_err(|error| error.to_string())? {
+                let exited = process.exited().map_err(|error| error.to_string())?;
+                if exited && (operation == "process.status" || !input.send.is_empty()) {
                     self.remove(&key, &session);
                     return Err("process_stopped".into());
                 }
@@ -1072,15 +1155,22 @@ impl ManagedProcesses {
                     return Err(error);
                 }
                 process.last_used = Instant::now();
-                let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
+                let wait_ms = if exited {
+                    input.wait_ms.max(1000)
+                } else {
+                    input.wait_ms
+                };
+                let deadline = Instant::now() + Duration::from_millis(wait_ms);
                 let mut messages = Vec::new();
                 let mut bytes = 0_usize;
-                loop {
+                while messages.len() < 64 {
                     if !active() {
                         self.remove(&key, &session);
                         return Err("process_cancelled".into());
                     }
-                    let next = if messages.is_empty() && input.wait_ms > 0 {
+                    let next = if let Some(next) = process.pending.take() {
+                        Ok(next)
+                    } else if messages.is_empty() && wait_ms > 0 {
                         process.receiver.recv_timeout(
                             deadline
                                 .saturating_duration_since(Instant::now())
@@ -1096,15 +1186,19 @@ impl ManagedProcesses {
                     };
                     match next {
                         Ok(Ok(message)) => {
-                            bytes = bytes.saturating_add(
-                                serde_json::to_vec(&message)
-                                    .map_err(|error| error.to_string())?
-                                    .len(),
-                            );
-                            if bytes > 4 * 1024 * 1024 || messages.len() >= 64 {
-                                return Err("process_exchange_output_limit".into());
+                            let size = serde_json::to_vec(&message)
+                                .map_err(|error| error.to_string())?
+                                .len();
+                            if !messages.is_empty() && bytes + size > 4 * 1024 * 1024 {
+                                process.pending = Some(Ok(message));
+                                break;
                             }
+                            bytes += size;
                             messages.push(message);
+                        }
+                        Ok(Err(error)) if !messages.is_empty() => {
+                            process.pending = Some(Err(error));
+                            break;
                         }
                         Ok(Err(error)) => {
                             self.remove(&key, &session);
@@ -1114,9 +1208,12 @@ impl ManagedProcesses {
                             self.remove(&key, &session);
                             return Err("process_stopped".into());
                         }
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                            if !messages.is_empty() || Instant::now() >= deadline =>
-                        {
+                        Err(mpsc::RecvTimeoutError::Timeout) if !messages.is_empty() => break,
+                        Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() >= deadline => {
+                            if exited {
+                                self.remove(&key, &session);
+                                return Err("process_stopped".into());
+                            }
                             break;
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -1359,6 +1456,74 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         assert_eq!(result["denied"], true, "{answer}");
         assert_eq!(result["file"], true, "{answer}");
         eprintln!("raw sandbox probe: {result}");
+    }
+
+    #[test]
+    fn raw_streams_deliver_both_streams_whole_characters_and_output_after_exit() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            thread: None,
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            environment: None,
+            os_access: None,
+            blit: None,
+        };
+        let found = processes
+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
+            .unwrap();
+        let sh = &found["found"][0];
+        let start = |session: &str, extra: Value| {
+            let mut arguments = json!({"session":session,"name":"sh","path":sh["path"],
+                "sha256":sh["sha256"],"framing":"raw","arguments":["-c",
+                "printf 'out\\n'; printf 'err\\n' >&2; read line; printf 'got:%s\\n' \"$line\"; printf '\\303'; sleep 0.2; printf '\\251'; sleep 0.2; printf '\\377'"]});
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            processes.call(owner, "process.start", arguments, || true)
+        };
+        assert_eq!(
+            start("raster", json!({"raster":"screen"})).unwrap_err(),
+            "process_raster_invalid"
+        );
+        start("raw", json!({})).unwrap();
+        let mut send = json!(["hi\n"]);
+        let mut chunks = Vec::new();
+        let stopped = loop {
+            match processes.call(
+                owner,
+                "process.exchange",
+                json!({"session":"raw","send":std::mem::replace(&mut send, json!([])),"wait_ms":1000}),
+                || true,
+            ) {
+                Ok(answer) => chunks.extend(answer["messages"].as_array().unwrap().clone()),
+                Err(error) => break error,
+            }
+        };
+        assert_eq!(stopped, "process stopped");
+        let text = |stream: &str| {
+            chunks
+                .iter()
+                .filter(|chunk| chunk["stream"] == stream)
+                .filter_map(|chunk| chunk["data"].as_str())
+                .collect::<String>()
+        };
+        assert_eq!(text("stdout"), "out\ngot:hi\né");
+        assert_eq!(text("stderr"), "err\n");
+        assert_eq!(
+            chunks
+                .iter()
+                .filter_map(|chunk| chunk.get("data_base64"))
+                .collect::<Vec<_>>(),
+            [&json!("/w==")]
+        );
     }
 
     #[test]
@@ -1878,6 +2043,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             unrestricted: false,
             sender: mpsc::sync_channel(1).0,
             receiver: mpsc::sync_channel(1).1,
+            pending: None,
             scratch: PathBuf::from("/nonexistent/omd-reaped"),
             last_used: Instant::now(),
             reaped: Arc::default(),

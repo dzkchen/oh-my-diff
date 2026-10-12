@@ -56564,10 +56564,10 @@ index 000000000..ce09c5741
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..1eeddb40c
+index 000000000..854a78008
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1942 @@
+@@ -0,0 +1,2108 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -56798,6 +56798,8 @@ index 000000000..1eeddb40c
 +    unrestricted: bool,
 +    sender: mpsc::SyncSender<WriteRequest>,
 +    receiver: mpsc::Receiver<io::Result<Value>>,
++    /// Received past one exchange's limit or after its output; the next exchange returns it first.
++    pending: Option<io::Result<Value>>,
 +    scratch: PathBuf,
 +    last_used: Instant,
 +    /// Set under the lock that reaps the child, so nothing signals a pid the system may have reused.
@@ -56846,6 +56848,7 @@ index 000000000..1eeddb40c
 +enum Framing {
 +    ContentLength,
 +    Ndjson,
++    Raw,
 +}
 +
 +fn program_sha256(path: &Path) -> io::Result<String> {
@@ -56979,9 +56982,52 @@ index 000000000..1eeddb40c
 +    }
 +}
 +
++/// One chunk of `stream` as written, holding back a trailing partial UTF-8 character in `carry`.
++fn read_raw(reader: &mut impl Read, carry: &mut Vec<u8>, stream: &str) -> io::Result<Value> {
++    loop {
++        let mut chunk = std::mem::take(carry);
++        let start = chunk.len();
++        chunk.resize(start + 64 * 1024, 0);
++        let read = match reader.read(&mut chunk[start..]) {
++            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
++                chunk.truncate(start);
++                *carry = chunk;
++                continue;
++            }
++            result => result?,
++        };
++        chunk.truncate(start + read);
++        if chunk.is_empty() {
++            return Err(io::Error::new(
++                io::ErrorKind::UnexpectedEof,
++                "process stopped",
++            ));
++        }
++        let end = match std::str::from_utf8(&chunk) {
++            Err(error) if read > 0 && error.error_len().is_none() => error.valid_up_to(),
++            _ => chunk.len(),
++        };
++        *carry = chunk.split_off(end);
++        if !chunk.is_empty() {
++            let (field, data) = crate::mods::access::content("data", &chunk);
++            return Ok(json!({"stream": stream, field: data}));
++        }
++    }
++}
++
 +fn send_framed(stdin: &mut impl Write, message: &Value, framing: Framing) -> Result<(), String> {
 +    if framing == Framing::ContentLength {
 +        return send_message(stdin, message);
++    }
++    if framing == Framing::Raw {
++        let text = message
++            .as_str()
++            .filter(|text| text.len() <= 4 * 1024 * 1024)
++            .ok_or("process_message_invalid_or_too_large")?;
++        stdin
++            .write_all(text.as_bytes())
++            .map_err(|error| error.to_string())?;
++        return stdin.flush().map_err(|error| error.to_string());
 +    }
 +    let mut bytes = serde_json::to_vec(message).map_err(|error| error.to_string())?;
 +    if bytes.len() > 4 * 1024 * 1024 || !message.is_object() {
@@ -57295,7 +57341,7 @@ index 000000000..1eeddb40c
 +                    })
 +                    || !matches!(
 +                        input.framing.as_deref(),
-+                        None | Some("content-length") | Some("ndjson")
++                        None | Some("content-length") | Some("ndjson") | Some("raw")
 +                    )
 +                    || !matches!(
 +                        input.network.as_deref(),
@@ -57365,10 +57411,10 @@ index 000000000..1eeddb40c
 +                    },
 +                )?;
 +                let launched = (|| {
-+                    let framing = if input.framing.as_deref() == Some("ndjson") {
-+                        Framing::Ndjson
-+                    } else {
-+                        Framing::ContentLength
++                    let framing = match input.framing.as_deref() {
++                        Some("ndjson") => Framing::Ndjson,
++                        Some("raw") => Framing::Raw,
++                        _ => Framing::ContentLength,
 +                    };
 +                    let arguments = input.arguments.into_iter().map(|argument| {
 +                        argument.replace("{process.home}", &scratch.to_string_lossy())
@@ -57432,10 +57478,15 @@ index 000000000..1eeddb40c
 +                        .current_dir(repository)
 +                        .stdin(Stdio::piped())
 +                        .stdout(Stdio::piped())
-+                        .stderr(Stdio::null())
++                        .stderr(if framing == Framing::Raw {
++                            Stdio::piped()
++                        } else {
++                            Stdio::null()
++                        })
 +                        .process_group(0)
 +                        .spawn()
 +                        .map_err(|error| error.to_string())?;
++                    let stderr = child.stderr.take();
 +                    let streams = child
 +                        .stdin
 +                        .take()
@@ -57513,58 +57564,89 @@ index 000000000..1eeddb40c
 +                    }
 +                    let notifier = self.notifier.get().cloned();
 +                    let (owner, session) = (id.to_owned(), input.session.clone());
-+                    let reader_reaped = Arc::clone(&reaped);
-+                    std::thread::spawn(move || {
++                    let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> = if framing
++                        == Framing::Raw
++                    {
++                        let (mut stdout, mut out) = (stdout, Vec::new());
++                        let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
++                            vec![Box::new(move || read_raw(&mut stdout, &mut out, "stdout"))];
++                        if let Some(mut stderr) = stderr {
++                            let mut err = Vec::new();
++                            readers
++                                .push(Box::new(move || read_raw(&mut stderr, &mut err, "stderr")));
++                        }
++                        readers
++                    } else {
 +                        let mut reader = BufReader::new(stdout);
-+                        loop {
-+                            let result = read_framed(&mut reader, framing);
-+                            if let (Some(frames), Ok(message)) = (&frames, &result)
-+                                && let Some(image) = message.get("blit")
-+                            {
-+                                frames.offer(image.clone());
-+                                continue;
-+                            }
-+                            let terminal = result.is_err();
-+                            if let Err(error) = &result
-+                                && error.kind() != io::ErrorKind::UnexpectedEof
-+                            {
-+                                kill_group_if_alive(group, &reader_reaped);
-+                            }
-+                            let bytes = match (&result, notify_output) {
-+                                (Ok(message), true) => {
-+                                    serde_json::to_vec(message).ok().map(|bytes| bytes.len())
++                        vec![Box::new(move || read_framed(&mut reader, framing))]
++                    };
++                    let open = Arc::new(std::sync::atomic::AtomicUsize::new(readers.len()));
++                    let mut frames = frames;
++                    for mut next in readers.drain(..) {
++                        let (sender, frames, alive, open) =
++                            (sender.clone(), frames.take(), alive.clone(), open.clone());
++                        let (notifier, owner, session) =
++                            (notifier.clone(), owner.clone(), session.clone());
++                        let reader_reaped = Arc::clone(&reaped);
++                        std::thread::spawn(move || {
++                            loop {
++                                let result = next();
++                                if let (Some(frames), Ok(message)) = (&frames, &result)
++                                    && let Some(image) = message.get("blit")
++                                {
++                                    frames.offer(image.clone());
++                                    continue;
 +                                }
-+                                _ => None,
-+                            };
-+                            if sender.send(result).is_err() || terminal {
-+                                alive.store(false, std::sync::atomic::Ordering::Release);
-+                                if let Some(notifier) = &notifier {
++                                let terminal = result.is_err();
++                                if let Err(error) = &result
++                                    && error.kind() != io::ErrorKind::UnexpectedEof
++                                {
++                                    kill_group_if_alive(group, &reader_reaped);
++                                }
++                                if terminal
++                                    && open.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) > 1
++                                {
++                                    break;
++                                }
++                                let bytes = match (&result, notify_output) {
++                                    (Ok(message), true) => {
++                                        serde_json::to_vec(message).ok().map(|bytes| bytes.len())
++                                    }
++                                    _ => None,
++                                };
++                                if sender.send(result).is_err() || terminal {
++                                    if !alive.swap(false, std::sync::atomic::Ordering::AcqRel) {
++                                        break;
++                                    }
++                                    if let Some(notifier) = &notifier {
++                                        notifier(ProcessNotice {
++                                            owner: owner.clone(),
++                                            session: session.clone(),
++                                            output_bytes: None,
++                                            exited: true,
++                                            deliver: notify_exit,
++                                        });
++                                    }
++                                    break;
++                                }
++                                if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
 +                                    notifier(ProcessNotice {
 +                                        owner: owner.clone(),
 +                                        session: session.clone(),
-+                                        output_bytes: None,
-+                                        exited: true,
-+                                        deliver: notify_exit,
++                                        output_bytes: Some(bytes),
++                                        exited: false,
++                                        deliver: true,
 +                                    });
 +                                }
-+                                break;
 +                            }
-+                            if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
-+                                notifier(ProcessNotice {
-+                                    owner: owner.clone(),
-+                                    session: session.clone(),
-+                                    output_bytes: Some(bytes),
-+                                    exited: false,
-+                                    deliver: true,
-+                                });
-+                            }
-+                        }
-+                    });
++                        });
++                    }
 +                    Ok::<_, String>(ManagedProcess {
 +                        child,
 +                        unrestricted: unrestricted.is_some(),
 +                        sender: writer_sender,
 +                        receiver,
++                        pending: None,
 +                        scratch: scratch.clone(),
 +                        last_used: Instant::now(),
 +                        reaped,
@@ -57617,7 +57699,8 @@ index 000000000..1eeddb40c
 +                    self.remove(&key, &session);
 +                    return Err("grant_expired: os".into());
 +                }
-+                if process.exited().map_err(|error| error.to_string())? {
++                let exited = process.exited().map_err(|error| error.to_string())?;
++                if exited && (operation == "process.status" || !input.send.is_empty()) {
 +                    self.remove(&key, &session);
 +                    return Err("process_stopped".into());
 +                }
@@ -57642,15 +57725,22 @@ index 000000000..1eeddb40c
 +                    return Err(error);
 +                }
 +                process.last_used = Instant::now();
-+                let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
++                let wait_ms = if exited {
++                    input.wait_ms.max(1000)
++                } else {
++                    input.wait_ms
++                };
++                let deadline = Instant::now() + Duration::from_millis(wait_ms);
 +                let mut messages = Vec::new();
 +                let mut bytes = 0_usize;
-+                loop {
++                while messages.len() < 64 {
 +                    if !active() {
 +                        self.remove(&key, &session);
 +                        return Err("process_cancelled".into());
 +                    }
-+                    let next = if messages.is_empty() && input.wait_ms > 0 {
++                    let next = if let Some(next) = process.pending.take() {
++                        Ok(next)
++                    } else if messages.is_empty() && wait_ms > 0 {
 +                        process.receiver.recv_timeout(
 +                            deadline
 +                                .saturating_duration_since(Instant::now())
@@ -57666,15 +57756,19 @@ index 000000000..1eeddb40c
 +                    };
 +                    match next {
 +                        Ok(Ok(message)) => {
-+                            bytes = bytes.saturating_add(
-+                                serde_json::to_vec(&message)
-+                                    .map_err(|error| error.to_string())?
-+                                    .len(),
-+                            );
-+                            if bytes > 4 * 1024 * 1024 || messages.len() >= 64 {
-+                                return Err("process_exchange_output_limit".into());
++                            let size = serde_json::to_vec(&message)
++                                .map_err(|error| error.to_string())?
++                                .len();
++                            if !messages.is_empty() && bytes + size > 4 * 1024 * 1024 {
++                                process.pending = Some(Ok(message));
++                                break;
 +                            }
++                            bytes += size;
 +                            messages.push(message);
++                        }
++                        Ok(Err(error)) if !messages.is_empty() => {
++                            process.pending = Some(Err(error));
++                            break;
 +                        }
 +                        Ok(Err(error)) => {
 +                            self.remove(&key, &session);
@@ -57684,9 +57778,12 @@ index 000000000..1eeddb40c
 +                            self.remove(&key, &session);
 +                            return Err("process_stopped".into());
 +                        }
-+                        Err(mpsc::RecvTimeoutError::Timeout)
-+                            if !messages.is_empty() || Instant::now() >= deadline =>
-+                        {
++                        Err(mpsc::RecvTimeoutError::Timeout) if !messages.is_empty() => break,
++                        Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() >= deadline => {
++                            if exited {
++                                self.remove(&key, &session);
++                                return Err("process_stopped".into());
++                            }
 +                            break;
 +                        }
 +                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -57929,6 +58026,74 @@ index 000000000..1eeddb40c
 +        assert_eq!(result["denied"], true, "{answer}");
 +        assert_eq!(result["file"], true, "{answer}");
 +        eprintln!("raw sandbox probe: {result}");
++    }
++
++    #[test]
++    fn raw_streams_deliver_both_streams_whole_characters_and_output_after_exit() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let owner = ProcessOwner {
++            thread: None,
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++            protected: &[],
++            environment: None,
++            os_access: None,
++            blit: None,
++        };
++        let found = processes
++            .call(owner, "process.which", json!({"names":["sh"]}), || true)
++            .unwrap();
++        let sh = &found["found"][0];
++        let start = |session: &str, extra: Value| {
++            let mut arguments = json!({"session":session,"name":"sh","path":sh["path"],
++                "sha256":sh["sha256"],"framing":"raw","arguments":["-c",
++                "printf 'out\\n'; printf 'err\\n' >&2; read line; printf 'got:%s\\n' \"$line\"; printf '\\303'; sleep 0.2; printf '\\251'; sleep 0.2; printf '\\377'"]});
++            arguments
++                .as_object_mut()
++                .unwrap()
++                .extend(extra.as_object().unwrap().clone());
++            processes.call(owner, "process.start", arguments, || true)
++        };
++        assert_eq!(
++            start("raster", json!({"raster":"screen"})).unwrap_err(),
++            "process_raster_invalid"
++        );
++        start("raw", json!({})).unwrap();
++        let mut send = json!(["hi\n"]);
++        let mut chunks = Vec::new();
++        let stopped = loop {
++            match processes.call(
++                owner,
++                "process.exchange",
++                json!({"session":"raw","send":std::mem::replace(&mut send, json!([])),"wait_ms":1000}),
++                || true,
++            ) {
++                Ok(answer) => chunks.extend(answer["messages"].as_array().unwrap().clone()),
++                Err(error) => break error,
++            }
++        };
++        assert_eq!(stopped, "process stopped");
++        let text = |stream: &str| {
++            chunks
++                .iter()
++                .filter(|chunk| chunk["stream"] == stream)
++                .filter_map(|chunk| chunk["data"].as_str())
++                .collect::<String>()
++        };
++        assert_eq!(text("stdout"), "out\ngot:hi\né");
++        assert_eq!(text("stderr"), "err\n");
++        assert_eq!(
++            chunks
++                .iter()
++                .filter_map(|chunk| chunk.get("data_base64"))
++                .collect::<Vec<_>>(),
++            [&json!("/w==")]
++        );
 +    }
 +
 +    #[test]
@@ -58448,6 +58613,7 @@ index 000000000..1eeddb40c
 +            unrestricted: false,
 +            sender: mpsc::sync_channel(1).0,
 +            receiver: mpsc::sync_channel(1).1,
++            pending: None,
 +            scratch: PathBuf::from("/nonexistent/omd-reaped"),
 +            last_used: Instant::now(),
 +            reaped: Arc::default(),
@@ -58512,11 +58678,11 @@ index 000000000..1eeddb40c
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..0c95487c5
+index 000000000..c9d20489e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2381 @@
-+mod access;
++pub(crate) mod access;
 +mod agents;
 +mod autonomy;
 +#[path = "clients.rs"]
@@ -60899,7 +61065,7 @@ index 000000000..0c95487c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
-index 000000000..bfbebeaa6
+index 000000000..f2255febe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/access.rs
 @@ -0,0 +1,763 @@
@@ -61258,7 +61424,7 @@ index 000000000..bfbebeaa6
 +}
 +
 +/// Text when the bytes are UTF-8, otherwise base64.
-+fn content(field: &str, bytes: &[u8]) -> (String, Value) {
++pub(crate) fn content(field: &str, bytes: &[u8]) -> (String, Value) {
 +    match std::str::from_utf8(bytes) {
 +        Ok(text) => (field.to_owned(), json!(text)),
 +        Err(_) => (format!("{field}_base64"), json!(STANDARD.encode(bytes))),
@@ -94330,10 +94496,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..317719dc1
+index 000000000..e38058866
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,240 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -94452,6 +94618,7 @@ index 000000000..317719dc1
 +pub use mods::MOD_HOST_OPERATIONS;
 +pub use mods::MOD_KEY_LIMIT;
 +pub use mods::MOD_MIDDLEWARE_EVENTS;
++pub use mods::MOD_TEXT_BYTES;
 +pub use mods::MOD_PACKAGE_SCHEMA_VERSION;
 +pub use mods::MOD_RENDER_COMPONENTS;
 +pub use mods::MOD_REPLACEMENT_POINTS;
@@ -96464,10 +96631,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..a1e64942a
+index 000000000..0073993b7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5651 @@
+@@ -0,0 +1,5653 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -96484,6 +96651,7 @@ index 000000000..a1e64942a
 +mod packages;
 +mod view;
 +pub use view::MOD_KEY_LIMIT;
++pub use view::MOD_TEXT_BYTES;
 +pub use view::ModActivity;
 +pub use view::ModAnchor;
 +pub use view::ModAsciiBackdrop;
@@ -96804,6 +96972,7 @@ index 000000000..a1e64942a
 +    "builtins_v1",
 +    "contracts_v2",
 +    "framed_process_v1",
++    "process_streams_v1",
 +    "process_raster_v1",
 +    "raster_pixels_v1",
 +    "kernels_v1",
@@ -102121,10 +102290,10 @@ index 000000000..a1e64942a
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..7c95fa4c9
+index 000000000..e253d33c6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,853 @@
+@@ -0,0 +1,873 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -102586,6 +102755,26 @@ index 000000000..7c95fa4c9
 +                Ok(json!({"clients": host.clients}))
 +            }
 +            "status" => Ok(self.status()),
++            "state" => {
++                let id = required_string(step, "mod")?;
++                let loaded = self.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
++                let location = self.state_location(
++                    &loaded.package,
++                    &loaded.selection.scope,
++                    step.get("thread_id").and_then(Value::as_str),
++                );
++                let version = loaded.package.state_version;
++                let current = self.store.scoped_state(&location, version)?;
++                let Some(value) = step.get("value") else {
++                    return Ok(current);
++                };
++                if !loaded.package.capabilities.iter().any(|c| c == "store") {
++                    return Err(failure("state_capability_denied"));
++                }
++                self.store
++                    .write_scoped_state(&location, version, &current, value)?;
++                Ok(value.clone())
++            }
 +            "reload" => {
 +                self.store.reload()?;
 +                self.turn_boundary();
@@ -112523,15 +112712,16 @@ index 000000000..d4b6cae0f
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..733c7a0dd
+index 000000000..8731e6cdf
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2250 @@
+@@ -0,0 +1,2251 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
 +pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
 +pub const MOD_COMPONENT_LIMIT: usize = 64;
++pub const MOD_TEXT_BYTES: usize = 49_152;
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 +#[serde(deny_unknown_fields)]
@@ -113990,7 +114180,7 @@ index 000000000..733c7a0dd
 +            | Self::Markdown { id, label, text }
 +            | Self::Code {
 +                id, label, text, ..
-+            } => identified(id, label, ids) && multiline(text, 4096),
++            } => identified(id, label, ids) && multiline(text, MOD_TEXT_BYTES),
 +            Self::Button {
 +                id,
 +                label,
@@ -114125,7 +114315,7 @@ index 000000000..733c7a0dd
 +                        .flatten()
 +                        .map(|span| span.text.chars().count())
 +                        .sum::<usize>()
-+                        <= 49_152
++                        <= MOD_TEXT_BYTES
 +                    && anchors.len() <= lines.len().max(2000)
 +                    && anchors.iter().all(|anchor| visible(anchor, 128))
 +                    && selected.is_none_or(|range| range.start <= range.end)
@@ -114144,7 +114334,7 @@ index 000000000..733c7a0dd
 +                action,
 +            } => {
 +                identified(id, label, ids)
-+                    && multiline(unified, 49_152)
++                    && multiline(unified, MOD_TEXT_BYTES)
 +                    && selected.is_none_or(|range| range.start <= range.end)
 +                    && height.is_none_or(|height| (1..=40).contains(&height))
 +                    && action.as_ref().is_none_or(ModCommandAction::valid)
@@ -114779,10 +114969,10 @@ index 000000000..733c7a0dd
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..ce4f02ab8
+index 000000000..d1ed42747
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,456 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -114990,6 +115180,18 @@ index 000000000..ce4f02ab8
 +            origin: "idle".into(),
 +        }]
 +    );
++}
++
++#[test]
++fn text_components_take_the_shared_text_bound() {
++    for kind in ["text", "markdown", "code"] {
++        let component = |text: String| {
++            view(json!({"sites":{"sidebar":{"components":[
++                {"type":kind,"id":"body","label":"Body","text":text}]}}}))
++        };
++        assert!(component("é".repeat(MOD_TEXT_BYTES / 2)).is_ok(), "{kind}");
++        assert!(component("x".repeat(MOD_TEXT_BYTES + 1)).is_err(), "{kind}");
++    }
 +}
 +
 +#[test]
@@ -148942,7 +149144,7 @@ index 000000000..8773d6788
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..bdee6023d
+index 000000000..4a1fc407f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
 @@ -0,0 +1,665 @@
@@ -149002,9 +149204,9 @@ index 000000000..bdee6023d
 +    format!("{kind}-{:016x}", hasher.finish())
 +}
 +
-+const PROP_BYTES: usize = 4096;
++const PROP_BYTES: usize = codex_omd::MOD_TEXT_BYTES;
 +
-+/// Props carry at most 4 KiB of text; hooks needing more read their own sources.
++/// Props carry at most `MOD_TEXT_BYTES` of text; hooks needing more read their own sources.
 +pub(crate) fn bounded(text: &str) -> String {
 +    let mut end = text.len().min(PROP_BYTES);
 +    while !text.is_char_boundary(end) {
@@ -154222,10 +154424,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..53ff92884
+index 000000000..7edef4044
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4512 @@
+@@ -0,0 +1,4551 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -155073,6 +155275,52 @@ index 000000000..53ff92884
 +});
 +static APPLIED_SYNTAX: Mutex<Option<String>> = Mutex::new(None);
 +static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
++type MarkdownKey = (
++    u64,
++    u16,
++    u64,
++    Option<(u8, u8, u8)>,
++    Option<(u8, u8, u8)>,
++    crate::terminal_palette::StdoutColorLevel,
++);
++static MARKDOWN: Mutex<Vec<(MarkdownKey, Vec<HyperlinkLine>)>> = Mutex::new(Vec::new());
++
++/// The most recently drawn markdown renders, so a draw re-parses only changed or resized text.
++fn markdown_lines(text: &str, width: u16) -> Vec<HyperlinkLine> {
++    use std::hash::Hash;
++    use std::hash::Hasher;
++    let mut hasher = std::collections::hash_map::DefaultHasher::new();
++    text.hash(&mut hasher);
++    let key = (
++        hasher.finish(),
++        width,
++        crate::render::highlight::syntax_theme_revision(),
++        crate::terminal_palette::default_fg(),
++        crate::terminal_palette::default_bg(),
++        crate::terminal_palette::stdout_color_level(),
++    );
++    let mut cache = MARKDOWN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some(index) = cache.iter().position(|(cached, _)| *cached == key) {
++        let entry = cache.remove(index);
++        let lines = entry.1.clone();
++        cache.push(entry);
++        return lines;
++    }
++    let lines = crate::markdown::render_markdown_agent_with_list_spacing(
++        text,
++        Some(usize::from(width)),
++        None,
++        None,
++        crate::markdown_render::ListSpacing::AfterMultiline,
++    );
++    if cache.len() == 8 {
++        cache.remove(0);
++    }
++    cache.push((key, lines.clone()));
++    lines
++}
 +static BLOCKED_SNAPSHOT: Mutex<Option<(u64, u64)>> = Mutex::new(None);
 +
 +static APPLIED_PLACEHOLDER: Mutex<Option<Option<String>>> = Mutex::new(None);
@@ -156272,14 +156520,7 @@ index 000000000..53ff92884
 +                }
 +            }
 +            ModComponent::Markdown { id, label, text } => {
-+                let rendered = crate::markdown::render_markdown_agent_with_list_spacing(
-+                    text,
-+                    Some(usize::from(width)),
-+                    None,
-+                    None,
-+                    crate::markdown_render::ListSpacing::AfterMultiline,
-+                );
-+                for (index, line) in rendered.into_iter().enumerate() {
++                for (index, line) in markdown_lines(text, width).into_iter().enumerate() {
 +                    rows.push(ComponentRow {
 +                        id: (index == 0).then(|| id.clone()),
 +                        label: (index == 0).then(|| label.clone()),
@@ -159000,10 +159241,10 @@ index 000000000..6b753fb28
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..7c884c62f
+index 000000000..8344eb905
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2439 @@
+@@ -0,0 +1,2471 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -160510,6 +160751,38 @@ index 000000000..7c884c62f
 +        "a restore is spent once the anchor is back"
 +    );
 +    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[ignore = "explicit bounded text render timing fixture"]
++#[serial_test::serial]
++#[allow(clippy::print_stdout)]
++fn text_render_cost_fixture() {
++    let block = "## Section\n\nA paragraph with `code`, **bold** text and a [link](https://example.com/) that wraps across the pane width.\n\n- first item\n- second item with more words\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n\n";
++    let area = Rect::new(0, 0, 160, 48);
++    let mut results = Vec::new();
++    for kind in ["text", "markdown", "code"] {
++        for bytes in [4096, 16_384, codex_omd::MOD_TEXT_BYTES] {
++            let text = block.repeat(bytes / block.len());
++            let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++                {"type":kind,"id":"body","label":"Body","text":text}]}},"sidebar_width":60}));
++            sync_interaction(&snapshot.view);
++            let mut samples = (0..30)
++                .map(|_| {
++                    let mut buffer = Buffer::empty(area);
++                    let started = std::time::Instant::now();
++                    render(area, area, &mut buffer, &snapshot);
++                    std::hint::black_box(buffer);
++                    started.elapsed().as_secs_f64() * 1000.0
++                })
++                .collect::<Vec<_>>();
++            samples.sort_by(f64::total_cmp);
++            results.push(serde_json::json!({"kind":kind,"bytes":text.len(),
++                "median_ms":samples[15],"p95_ms":samples[28],"max_ms":samples[29]}));
++        }
++    }
++    preview(ModViewSnapshot::default());
++    println!("{}", serde_json::Value::Array(results));
 +}
 +
 +#[test]

@@ -14,6 +14,7 @@ pub use render::render_shared;
 mod packages;
 mod view;
 pub use view::MOD_KEY_LIMIT;
+pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
 pub use view::ModAsciiBackdrop;
@@ -334,6 +335,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "builtins_v1",
     "contracts_v2",
     "framed_process_v1",
+    "process_streams_v1",
     "process_raster_v1",
     "raster_pixels_v1",
     "kernels_v1",

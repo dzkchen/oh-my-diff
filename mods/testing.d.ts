@@ -50,6 +50,8 @@ export function advance(ms: number, options?: StepOptions): Step;
 /** Re-checks `check` (any step) as virtual time advances by `everyMs` until its value equals `until`, failing after `maxMs`. */
 export function waitUntil(check: Step, until: Json, options: StepOptions & { everyMs?: number; maxMs: number }): Step;
 export function reload(options?: StepOptions): Step;
+/** Returns the mod's persisted `api.state`; with `value`, first writes it (the mod needs `store`). `threadId` selects a thread-scoped state. */
+export function state(mod: string, options?: StepOptions & { value?: Json; threadId?: string }): Step;
 export function mount(mod: string, options?: InteractOptions): Step;
 export function key(mod: string, name: KeyName | string, options?: InteractOptions): Step;
 export function activate(mod: string, component: string, options?: InteractOptions): Step;

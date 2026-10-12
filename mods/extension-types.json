@@ -303,6 +303,12 @@
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
     },
     {
+      "path": "mods/examples/live_output",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Streams a sandboxed command's raw stdout and stderr above the composer as they are written."
+    },
+    {
       "path": "mods/examples/approval_desk",
       "extension_type": "mod",
       "role": "conformance_fixture",

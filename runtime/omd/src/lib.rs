@@ -116,6 +116,7 @@ pub use mods::MOD_HOST_FEATURES;
 pub use mods::MOD_HOST_OPERATIONS;
 pub use mods::MOD_KEY_LIMIT;
 pub use mods::MOD_MIDDLEWARE_EVENTS;
+pub use mods::MOD_TEXT_BYTES;
 pub use mods::MOD_PACKAGE_SCHEMA_VERSION;
 pub use mods::MOD_RENDER_COMPONENTS;
 pub use mods::MOD_REPLACEMENT_POINTS;
