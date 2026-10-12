@@ -2407,8 +2407,11 @@ any it refuses.
   while the view repeats a value, an echo of one of the user's own recent
   values is ignored, and a new `value` from the mod resets the field.
 - Callback lifetime: general callbacks get a fresh VM context and activation.
-  Sandboxed runner processes and a bounded cache of stripped source and bytecode
-  may be reused. Persist state through `api.state`; module globals
+  A package's later callbacks may reuse its sandboxed runner process and a
+  bounded cache of stripped source and bytecode; runners are never shared
+  between packages. Work a callback leaves running settles before its result
+  is returned, and a host call from it after the callback returned fails that
+  callback. Persist state through `api.state`; module globals
   do not survive general callbacks. Render hooks retain activation under their
   existing matching-input rules.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires

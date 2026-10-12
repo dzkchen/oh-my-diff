@@ -106,33 +106,43 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+fn profiling() -> bool {
+    static PROFILING: OnceLock<bool> = OnceLock::new();
+    *PROFILING.get_or_init(|| std::env::var_os("OMD_PROFILE_STARTUP").is_some())
+}
+
+/// Records the time since `started` under `name` when `OMD_PROFILE_STARTUP` is set.
+pub fn profile(name: &str, started: Instant) {
+    if !profiling() {
+        return;
+    }
+    use std::io::Write;
+    let line = format!("OMD_PROFILE {name} {}\n", started.elapsed().as_micros());
+    if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = file.write_all(line.as_bytes());
+        }
+    } else {
+        eprint!("{line}");
+    }
+}
+
 struct Profile(&'static str, Option<Instant>);
 
 impl Profile {
     fn new(name: &'static str) -> Self {
-        Self(
-            name,
-            std::env::var_os("OMD_PROFILE_STARTUP").map(|_| Instant::now()),
-        )
+        Self(name, profiling().then(Instant::now))
     }
 }
 
 impl Drop for Profile {
     fn drop(&mut self) {
         if let Some(started) = self.1 {
-            use std::io::Write;
-            let line = format!("OMD_PROFILE {} {}\n", self.0, started.elapsed().as_micros());
-            if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                {
-                    let _ = file.write_all(line.as_bytes());
-                }
-            } else {
-                eprint!("{line}");
-            }
+            profile(self.0, started);
         }
     }
 }
@@ -2386,7 +2396,7 @@ struct Loaded {
     selection: ModSelection,
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
-    request_metadata: Arc<OnceLock<Value>>,
+    request_metadata: Arc<OnceLock<(Value, String)>>,
     adapter: Option<Value>,
     state: Value,
     ui: Option<(String, Arc<Mutex<UiState>>)>,
@@ -2410,6 +2420,29 @@ struct UiState {
 
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
+static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
+
+/// Clears a store's UI states once per explicit reload, whether this process made it or a host
+/// noticed another process's.
+fn reset_ui_states(root: &Path, revision: u64) {
+    if UI_RESETS
+        .lock()
+        .map_or(true, |mut resets| resets.insert(root.to_path_buf(), revision) == Some(revision))
+    {
+        return;
+    }
+    let prefix = format!("{}:", root.display());
+    if let Ok(states) = UI_STATES.lock() {
+        for (_, weak) in states.iter().filter(|(key, _)| key.starts_with(&prefix)) {
+            if let Some(state) = weak.upgrade()
+                && let Ok(mut state) = state.lock()
+            {
+                state.value = Value::Null;
+                state.revision = state.revision.wrapping_add(1);
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize)]
 struct ModTelemetry {
@@ -3047,7 +3080,7 @@ impl ModHost {
 
     fn reload_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
         let result = self.reload_active(active);
-        if !active() {
+        if result.is_err() && !active() {
             self.fail_closed("callback_cancelled".to_owned());
             return Err(failure("callback_cancelled"));
         }
@@ -3149,9 +3182,7 @@ impl ModHost {
                 *revision != config.revision && signature == &ui_signature
             })
         {
-            for loaded in self.loaded.values_mut() {
-                loaded.clear_ui();
-            }
+            reset_ui_states(&self.store.root, config.revision);
         }
         self.ui_configuration = Some((config.revision, ui_signature));
         let mut selections = Vec::new();
@@ -4264,7 +4295,6 @@ impl ModHost {
             .as_ref()
             .is_none_or(|(previous, _)| previous != &key)
         {
-            loaded.clear_ui();
             let mut states = UI_STATES
                 .lock()
                 .map_err(|_| failure("ui_state_unavailable"))?;

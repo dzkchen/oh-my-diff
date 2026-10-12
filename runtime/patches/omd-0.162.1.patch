@@ -93391,10 +93391,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..b702e7020
+index 000000000..ae3933ce0
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,236 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -93621,6 +93621,7 @@ index 000000000..b702e7020
 +pub use mods::mod_counts;
 +pub use mods::mod_key_name;
 +pub use mods::namespace_matches;
++pub use mods::profile;
 +pub use mods::render_shared;
 +pub use mods::valid_glyphs;
 +pub use mods::write_settings;
@@ -95521,10 +95522,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..528375447
+index 000000000..0020d5811
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5547 @@
+@@ -0,0 +1,5577 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -95633,33 +95634,43 @@ index 000000000..528375447
 +use std::time::Duration;
 +use std::time::Instant;
 +
++fn profiling() -> bool {
++    static PROFILING: OnceLock<bool> = OnceLock::new();
++    *PROFILING.get_or_init(|| std::env::var_os("OMD_PROFILE_STARTUP").is_some())
++}
++
++/// Records the time since `started` under `name` when `OMD_PROFILE_STARTUP` is set.
++pub fn profile(name: &str, started: Instant) {
++    if !profiling() {
++        return;
++    }
++    use std::io::Write;
++    let line = format!("OMD_PROFILE {name} {}\n", started.elapsed().as_micros());
++    if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
++        if let Ok(mut file) = std::fs::OpenOptions::new()
++            .create(true)
++            .append(true)
++            .open(path)
++        {
++            let _ = file.write_all(line.as_bytes());
++        }
++    } else {
++        eprint!("{line}");
++    }
++}
++
 +struct Profile(&'static str, Option<Instant>);
 +
 +impl Profile {
 +    fn new(name: &'static str) -> Self {
-+        Self(
-+            name,
-+            std::env::var_os("OMD_PROFILE_STARTUP").map(|_| Instant::now()),
-+        )
++        Self(name, profiling().then(Instant::now))
 +    }
 +}
 +
 +impl Drop for Profile {
 +    fn drop(&mut self) {
 +        if let Some(started) = self.1 {
-+            use std::io::Write;
-+            let line = format!("OMD_PROFILE {} {}\n", self.0, started.elapsed().as_micros());
-+            if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
-+                if let Ok(mut file) = std::fs::OpenOptions::new()
-+                    .create(true)
-+                    .append(true)
-+                    .open(path)
-+                {
-+                    let _ = file.write_all(line.as_bytes());
-+                }
-+            } else {
-+                eprint!("{line}");
-+            }
++            profile(self.0, started);
 +        }
 +    }
 +}
@@ -97913,7 +97924,7 @@ index 000000000..528375447
 +    selection: ModSelection,
 +    source: Arc<str>,
 +    assets: Arc<BTreeMap<String, Value>>,
-+    request_metadata: Arc<OnceLock<Value>>,
++    request_metadata: Arc<OnceLock<(Value, String)>>,
 +    adapter: Option<Value>,
 +    state: Value,
 +    ui: Option<(String, Arc<Mutex<UiState>>)>,
@@ -97937,6 +97948,29 @@ index 000000000..528375447
 +
 +static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
 +    Mutex::new(BTreeMap::new());
++static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
++
++/// Clears a store's UI states once per explicit reload, whether this process made it or a host
++/// noticed another process's.
++fn reset_ui_states(root: &Path, revision: u64) {
++    if UI_RESETS
++        .lock()
++        .map_or(true, |mut resets| resets.insert(root.to_path_buf(), revision) == Some(revision))
++    {
++        return;
++    }
++    let prefix = format!("{}:", root.display());
++    if let Ok(states) = UI_STATES.lock() {
++        for (_, weak) in states.iter().filter(|(key, _)| key.starts_with(&prefix)) {
++            if let Some(state) = weak.upgrade()
++                && let Ok(mut state) = state.lock()
++            {
++                state.value = Value::Null;
++                state.revision = state.revision.wrapping_add(1);
++            }
++        }
++    }
++}
 +
 +#[derive(Clone, Debug, Default, Serialize)]
 +struct ModTelemetry {
@@ -98574,7 +98608,7 @@ index 000000000..528375447
 +
 +    fn reload_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
 +        let result = self.reload_active(active);
-+        if !active() {
++        if result.is_err() && !active() {
 +            self.fail_closed("callback_cancelled".to_owned());
 +            return Err(failure("callback_cancelled"));
 +        }
@@ -98676,9 +98710,7 @@ index 000000000..528375447
 +                *revision != config.revision && signature == &ui_signature
 +            })
 +        {
-+            for loaded in self.loaded.values_mut() {
-+                loaded.clear_ui();
-+            }
++            reset_ui_states(&self.store.root, config.revision);
 +        }
 +        self.ui_configuration = Some((config.revision, ui_signature));
 +        let mut selections = Vec::new();
@@ -99791,7 +99823,6 @@ index 000000000..528375447
 +            .as_ref()
 +            .is_none_or(|(previous, _)| previous != &key)
 +        {
-+            loaded.clear_ui();
 +            let mut states = UI_STATES
 +                .lock()
 +                .map_err(|_| failure("ui_state_unavailable"))?;
@@ -101933,10 +101964,10 @@ index 000000000..7c95fa4c9
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..acbdc6176
+index 000000000..41f123b51
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,430 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -102131,7 +102162,8 @@ index 000000000..acbdc6176
 +    }
 +}
 +
-+fn metadata(loaded: &Loaded) -> Value {
++/// The request fields fixed for a loaded package, and their digest: the package's runner identity.
++fn metadata(loaded: &Loaded) -> (Value, String) {
 +    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join("index.ts"),
 +        "api": MOD_API_VERSION,
 +        "assets": loaded.assets.as_ref(),
@@ -102150,7 +102182,16 @@ index 000000000..acbdc6176
 +        "contracts": "contracts",
 +        "adapter": loaded.adapter,
 +    });
-+    request
++    // `entrypoint_sha256` stands for the source.
++    let mut identity = Sha256::new();
++    for (field, value) in request.as_object().into_iter().flatten() {
++        if field != "source" {
++            identity.update(field);
++            identity.update(value.to_string());
++        }
++    }
++    let identity = format!("{:x}", identity.finalize());
++    (request, identity)
 +}
 +
 +#[allow(clippy::too_many_arguments)]
@@ -102175,8 +102216,9 @@ index 000000000..acbdc6176
 +        .collect::<std::result::Result<Vec<_>, _>>()?;
 +    let mut forwarded = 0;
 +    let mut waited = Duration::ZERO;
++    let (metadata, identity) = loaded.request_metadata.get_or_init(|| metadata(loaded));
 +    let mut request = Request {
-+        metadata: loaded.request_metadata.get_or_init(|| metadata(loaded)),
++        metadata,
 +        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
 +    };
 +    request.invocation["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
@@ -102185,18 +102227,12 @@ index 000000000..acbdc6176
 +        request.invocation["serve"] = Value::Bool(render);
 +        request.invocation["reuse"] = Value::Bool(!render);
 +        if !render {
-+            return format!("{}:fresh", node.display());
++            return format!("{}:{identity}", node.display());
 +        }
-+        // `entrypoint_sha256` stands for the source.
 +        let mut key = Sha256::new();
-+        for (field, value) in request
-+            .metadata
-+            .as_object()
-+            .into_iter()
-+            .flatten()
-+            .chain(request.invocation.as_object().into_iter().flatten())
-+        {
-+            if !["source", "name", "payload", "receipts"].contains(&field.as_str()) {
++        key.update(identity);
++        for (field, value) in request.invocation.as_object().into_iter().flatten() {
++            if !["name", "payload", "receipts"].contains(&field.as_str()) {
 +                key.update(field);
 +                key.update(value.to_string());
 +            }
@@ -107854,10 +107890,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..22897d813
+index 000000000..62e9890e1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,434 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -108065,6 +108101,7 @@ index 000000000..22897d813
 +    reader: std::thread::JoinHandle<()>,
 +    errors: std::thread::JoinHandle<Vec<u8>>,
 +    used: Instant,
++    serve: bool,
 +    /// Bytes of the activation request outside its serve fields.
 +    base: usize,
 +}
@@ -108085,9 +108122,10 @@ index 000000000..22897d813
 +
 +static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
 +const WARM_RUNNERS: usize = 4;
++const REUSED_RUNNERS: usize = 2;
 +const WARM_IDLE: Duration = Duration::from_secs(60);
 +
-+fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
++fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
 +    let mut child = runner(node)?;
 +    let stderr = child
 +        .stderr
@@ -108119,12 +108157,14 @@ index 000000000..22897d813
 +        reader,
 +        errors,
 +        used: Instant::now(),
++        serve,
 +        base: 0,
 +    })
 +}
 +
 +/// Evaluates a render callback in a runner that stays activated for later renders with the same
-+/// `key`: the package, its settings and state, everything except the render's own input.
++/// `key`: the package, its settings and state, everything except the render's own input. Other
++/// callbacks reuse a runner only of the same package identity, each in a fresh context.
 +pub(super) fn evaluate_warm<R>(
 +    node: &Path,
 +    key: &str,
@@ -108169,7 +108209,7 @@ index 000000000..22897d813
 +        }
 +        None => {
 +            let bytes = request_line(request)?;
-+            let mut warm = warm_runner(node, key)?;
++            let mut warm = warm_runner(node, key, request["serve"] == true)?;
 +            warm.base = bytes.len().saturating_sub(serve.len());
 +            (warm, bytes)
 +        }
@@ -108199,17 +108239,21 @@ index 000000000..22897d813
 +        .unwrap_or_default()
 +}
 +
-+/// Returns a runner to the pool, stopping the least recently used ones beyond its size.
++/// Returns a runner to the pool, stopping the least recently used ones of its kind beyond that
++/// kind's size.
 +fn pool(mut runner: Warm) {
 +    runner.used = Instant::now();
++    let serve = runner.serve;
++    let size = if serve { WARM_RUNNERS } else { REUSED_RUNNERS };
 +    let evicted = match WARM.lock() {
 +        Ok(mut runners) => {
 +            runners.push(runner);
 +            let mut evicted = Vec::new();
-+            while runners.len() > WARM_RUNNERS {
++            while runners.iter().filter(|runner| runner.serve == serve).count() > size {
 +                let oldest = runners
 +                    .iter()
 +                    .enumerate()
++                    .filter(|(_, runner)| runner.serve == serve)
 +                    .min_by_key(|(_, runner)| runner.used)
 +                    .map_or(0, |(index, _)| index);
 +                evicted.push(runners.swap_remove(oldest));
@@ -108286,10 +108330,10 @@ index 000000000..22897d813
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..14fb8dcca
+index 000000000..bf0835c21
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,441 @@
+@@ -0,0 +1,474 @@
 +use super::WARM;
 +use super::command;
 +use super::evaluate_warm;
@@ -108439,7 +108483,7 @@ index 000000000..14fb8dcca
 +#[test]
 +fn warm_runner_retirement_joins_readers_and_retains_bounded_diagnostics() {
 +    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
-+    let mut runner = super::warm_runner(&node, "invalid-request").unwrap();
++    let mut runner = super::warm_runner(&node, "invalid-request", false).unwrap();
 +    let (output, _) = super::converse(
 +        &mut runner.stdin,
 +        &runner.lines,
@@ -108646,6 +108690,39 @@ index 000000000..14fb8dcca
 +            .iter()
 +            .any(|runner| runner.key == "cancelled-render")
 +    );
++}
++
++#[test]
++fn reused_callback_runners_never_evict_render_runners() {
++    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
++    let input = json!({"component":"tool_call"});
++    let render = json!({"source":"export default api => api.intercept('render', () => null);",
++        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
++        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
++        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
++        "receipts":[],"payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
++    let command = json!({"source":"export default api => api.command('run', () => 'ran');",
++        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
++        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
++        "state":null,"settings":{},"event":"command","name":"run","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
++    let pid = |key: &str| {
++        WARM.lock()
++            .unwrap()
++            .iter()
++            .find(|runner| runner.key == key)
++            .map(|runner| runner.child.id())
++    };
++    evaluate_warm(&node, "kind-render", &render, Duration::from_secs(2), &|| true, &mut |_| unreachable!()).unwrap();
++    let rendering = pid("kind-render").unwrap();
++    for index in 0..4 {
++        let key = format!("kind-command-{index}");
++        evaluate_warm(&node, &key, &command, Duration::from_secs(2), &|| true, &mut |_| unreachable!()).unwrap();
++    }
++    assert_eq!(pid("kind-render"), Some(rendering));
++    assert!(WARM.lock().unwrap().iter().filter(|runner| !runner.serve).count() <= 2);
++    for key in ["kind-render", "kind-command-2", "kind-command-3"] {
++        super::invalidate_warm(key);
++    }
 +}
 +
 +#[test]
@@ -109282,10 +109359,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..baeac8764
+index 000000000..45c3c390a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,807 @@
+@@ -0,0 +1,817 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -109308,12 +109385,12 @@ index 000000000..baeac8764
 +    const module = new SourceTextModule(code, { context, identifier });
 +    const data = module.createCachedData();
 +    const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
-+    while (compiled.size && compiledBytes + bytes > 1048576) {
-+      const oldest = compiled.keys().next().value;
-+      compiledBytes -= compiled.get(oldest).bytes;
-+      compiled.delete(oldest);
-+    }
 +    if (bytes <= 1048576) {
++      while (compiledBytes + bytes > 1048576) {
++        const oldest = compiled.keys().next().value;
++        compiledBytes -= compiled.get(oldest).bytes;
++        compiled.delete(oldest);
++      }
 +      compiled.set(key, { code, data, bytes });
 +      compiledBytes += bytes;
 +    }
@@ -109341,6 +109418,7 @@ index 000000000..baeac8764
 +const bootstrap = `
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
++request.hook_budget_ms ??= 1000;
 +if (Number.isSafeInteger(request.virtual_time_ms)) {
 +  const fixed = request.virtual_time_ms;
 +  globalThis.Date = class extends Date {
@@ -109965,9 +110043,11 @@ index 000000000..baeac8764
 +  }, suspension, serve };
 +`;
 +// Every callback takes a context that has never run mod code; the next one is built while the runner idles.
++let live = null;
 +function prepare() {
 +  const globals = Object.create(null);
 +  globals.__exchange = frame => {
++    if (live !== globals) process.exit(1);
 +    try {
 +      writeSync(1, frame + '\n');
 +      return readLine();
@@ -109982,11 +110062,12 @@ index 000000000..baeac8764
 +  return { context, setup: moduleFor(bootstrap, context, 'bootstrap', false) };
 +}
 +let spare = prepare();
-+async function evaluate(request) {
++async function evaluate(request, line) {
 +request.hook_budget_ms ??= 1000;
 +const { context, setup } = spare;
 +spare = null;
-+context.__request = JSON.stringify(request);
++live = context;
++context.__request = line;
 +if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
 +try {
 +  await setup.link(() => { throw new Error('unsupported_import'); });
@@ -110043,7 +110124,12 @@ index 000000000..baeac8764
 +  await dispatch.link(() => { throw new Error('unsupported_import'); });
 +  await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
 +  if (context.__result.length > 262144) throw new Error('output_limit');
-+  if (!request.serve) writeSync(1, context.__result + (request.reuse ? '\n' : ''));
++  if (!request.serve) {
++    live = null;
++    // Work the callback left running settles before the runner is reused; a late host call exits it.
++    if (request.reuse) await new Promise(setImmediate);
++    writeSync(1, context.__result + (request.reuse ? '\n' : ''));
++  }
 +  if (request.serve) {
 +    const step = new SourceTextModule(`
 +      const omd = globalThis.__omd;
@@ -110081,6 +110167,7 @@ index 000000000..baeac8764
 +  const frames = lines.filter(line => /^\s+at /.test(line));
 +  const described = [...lines.filter(line => !/^\s+at /.test(line)),
 +    ...frames.filter(line => directories.some(directory => line.includes(directory + '/'))).slice(0, 4)];
++  live = null;
 +  process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }) + (request.reuse ? '\n' : ''));
 +  process.exitCode = 1;
 +}
@@ -110089,16 +110176,16 @@ index 000000000..baeac8764
 +  const line = readLine();
 +  if (!line) break;
 +  const request = JSON.parse(line);
-+  await evaluate(request);
++  await evaluate(request, line);
 +  if (!request.reuse || process.exitCode) break;
 +  spare = prepare();
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..bcf4884e7
+index 000000000..54043ae05
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1307 @@
+@@ -0,0 +1,1298 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -111317,19 +111404,10 @@ index 000000000..bcf4884e7
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
++        let revision = config.revision;
 +        self.write("mods.json", &serde_json::to_value(config)?)?;
 +        drop(_lock);
-+        let prefix = format!("{}:", self.root.display());
-+        if let Ok(states) = super::UI_STATES.lock() {
-+            for (_, weak) in states.iter().filter(|(key, _)| key.starts_with(&prefix)) {
-+                if let Some(state) = weak.upgrade()
-+                    && let Ok(mut state) = state.lock()
-+                {
-+                    state.value = Value::Null;
-+                    state.revision = state.revision.wrapping_add(1);
-+                }
-+            }
-+        }
++        super::reset_ui_states(&self.root, revision);
 +        Ok(())
 +    }
 +
@@ -124463,10 +124541,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..3c3ae14dd
+index 000000000..046513e26
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5127 @@
+@@ -0,0 +1,5177 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -124976,6 +125054,54 @@ index 000000000..3c3ae14dd
 +            )
 +            .unwrap(),
 +        json!(1)
++    );
++}
++
++#[test]
++fn cancellation_after_an_unchanged_reload_keeps_the_host() {
++    let (temp, _store, _) = fixture(COUNTER, &["commands", "store"]);
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let calls = AtomicUsize::new(0);
++    runtime.turn_boundary_guarded(&|| calls.fetch_add(1, Ordering::Relaxed) == 0);
++    assert_eq!(runtime.generation(), generation);
++    assert_eq!(
++        runtime
++            .invoke("fixture", generation, "command", "count", Value::Null)
++            .unwrap(),
++        json!(1)
++    );
++}
++
++#[test]
++fn late_host_calls_fail_their_own_callback_and_never_reach_another_mod() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let leaving = package(
++        &root,
++        "leaving",
++        "export default api => api.command('leave', () => { (async () => { for (let i = 0; i < 1000; i++) await null; api.host.call('workspace.read', {path:'file'}); })(); return 'left'; });",
++        &["commands", "fs.read"],
++    );
++    trust(&store, &leaving, &["commands", "fs.read"]);
++    let other = package(
++        &root,
++        "other",
++        "export default api => api.command('run', () => 'ran');",
++        &["commands"],
++    );
++    trust(&store, &other, &["commands"]);
++    let mut host = ModHost::open(root.join("store")).unwrap();
++    let generation = host.generation();
++    assert!(
++        host.invoke("leaving", generation, "command", "leave", Value::Null)
++            .is_err()
++    );
++    assert_eq!(
++        host.invoke("other", generation, "command", "run", Value::Null)
++            .unwrap(),
++        "ran"
 +    );
 +}
 +
@@ -126206,11 +126332,13 @@ index 000000000..3c3ae14dd
 +    store.reload().unwrap();
 +    assert!(invoke(&mut second, "read", Value::Null).is_null());
 +    invoke(&mut first, "write", json!(5));
++    first.turn_boundary();
 +    {
 +        let _thread = codex_omd::StateThread::enter(Some("another".into()));
 +        assert!(invoke(&mut first, "read", Value::Null).is_null());
 +    }
-+    assert!(invoke(&mut second, "read", Value::Null).is_null());
++    assert_eq!(invoke(&mut second, "read", Value::Null), 5);
++    assert_eq!(invoke(&mut first, "read", Value::Null), 5);
 +    let error = first
 +        .invoke(
 +            "fixture",
@@ -147456,10 +147584,10 @@ index 000000000..9c07cf291
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..042742fb3
+index 000000000..6fa4c2189
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1550 @@
+@@ -0,0 +1,1534 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -147647,23 +147775,7 @@ index 000000000..042742fb3
 +static CATALOG: Mutex<Option<(Instant, Vec<ModSlashCommand>)>> = Mutex::new(None);
 +static HOST: Mutex<Option<Arc<Mutex<ModHost>>>> = Mutex::new(None);
 +
-+pub(crate) fn startup_profile(name: &str, started: Instant) {
-+    if std::env::var_os("OMD_PROFILE_STARTUP").is_some() {
-+        use std::io::Write;
-+        let line = format!("OMD_PROFILE {name} {}\n", started.elapsed().as_micros());
-+        if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
-+            if let Ok(mut file) = std::fs::OpenOptions::new()
-+                .create(true)
-+                .append(true)
-+                .open(path)
-+            {
-+                let _ = file.write_all(line.as_bytes());
-+            }
-+        } else {
-+            eprint!("{line}");
-+        }
-+    }
-+}
++pub(crate) use codex_omd::profile as startup_profile;
 +
 +/// Evaluate presentation before the provisional composer has a live thread.
 +/// The normal terminal observer path rejects native-task operations at the host boundary.

@@ -511,6 +511,54 @@ fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
 }
 
 #[test]
+fn cancellation_after_an_unchanged_reload_keeps_the_host() {
+    let (temp, _store, _) = fixture(COUNTER, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let calls = AtomicUsize::new(0);
+    runtime.turn_boundary_guarded(&|| calls.fetch_add(1, Ordering::Relaxed) == 0);
+    assert_eq!(runtime.generation(), generation);
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap(),
+        json!(1)
+    );
+}
+
+#[test]
+fn late_host_calls_fail_their_own_callback_and_never_reach_another_mod() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let leaving = package(
+        &root,
+        "leaving",
+        "export default api => api.command('leave', () => { (async () => { for (let i = 0; i < 1000; i++) await null; api.host.call('workspace.read', {path:'file'}); })(); return 'left'; });",
+        &["commands", "fs.read"],
+    );
+    trust(&store, &leaving, &["commands", "fs.read"]);
+    let other = package(
+        &root,
+        "other",
+        "export default api => api.command('run', () => 'ran');",
+        &["commands"],
+    );
+    trust(&store, &other, &["commands"]);
+    let mut host = ModHost::open(root.join("store")).unwrap();
+    let generation = host.generation();
+    assert!(
+        host.invoke("leaving", generation, "command", "leave", Value::Null)
+            .is_err()
+    );
+    assert_eq!(
+        host.invoke("other", generation, "command", "run", Value::Null)
+            .unwrap(),
+        "ran"
+    );
+}
+
+#[test]
 fn host_open_cancels_registration_and_admission_before_publication() {
     for admission in [false, true] {
         let temp = TempDir::new().unwrap();
@@ -1737,11 +1785,13 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     store.reload().unwrap();
     assert!(invoke(&mut second, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(5));
+    first.turn_boundary();
     {
         let _thread = codex_omd::StateThread::enter(Some("another".into()));
         assert!(invoke(&mut first, "read", Value::Null).is_null());
     }
-    assert!(invoke(&mut second, "read", Value::Null).is_null());
+    assert_eq!(invoke(&mut second, "read", Value::Null), 5);
+    assert_eq!(invoke(&mut first, "read", Value::Null), 5);
     let error = first
         .invoke(
             "fixture",

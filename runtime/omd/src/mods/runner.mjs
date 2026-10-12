@@ -20,12 +20,12 @@ function moduleFor(source, context, identifier, typescript = true) {
     const module = new SourceTextModule(code, { context, identifier });
     const data = module.createCachedData();
     const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
-    while (compiled.size && compiledBytes + bytes > 1048576) {
-      const oldest = compiled.keys().next().value;
-      compiledBytes -= compiled.get(oldest).bytes;
-      compiled.delete(oldest);
-    }
     if (bytes <= 1048576) {
+      while (compiledBytes + bytes > 1048576) {
+        const oldest = compiled.keys().next().value;
+        compiledBytes -= compiled.get(oldest).bytes;
+        compiled.delete(oldest);
+      }
       compiled.set(key, { code, data, bytes });
       compiledBytes += bytes;
     }
@@ -53,6 +53,7 @@ function readLine() {
 const bootstrap = `
 const request = JSON.parse(globalThis.__request);
 delete globalThis.__request;
+request.hook_budget_ms ??= 1000;
 if (Number.isSafeInteger(request.virtual_time_ms)) {
   const fixed = request.virtual_time_ms;
   globalThis.Date = class extends Date {
@@ -677,9 +678,11 @@ globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynami
   }, suspension, serve };
 `;
 // Every callback takes a context that has never run mod code; the next one is built while the runner idles.
+let live = null;
 function prepare() {
   const globals = Object.create(null);
   globals.__exchange = frame => {
+    if (live !== globals) process.exit(1);
     try {
       writeSync(1, frame + '\n');
       return readLine();
@@ -694,11 +697,12 @@ function prepare() {
   return { context, setup: moduleFor(bootstrap, context, 'bootstrap', false) };
 }
 let spare = prepare();
-async function evaluate(request) {
+async function evaluate(request, line) {
 request.hook_budget_ms ??= 1000;
 const { context, setup } = spare;
 spare = null;
-context.__request = JSON.stringify(request);
+live = context;
+context.__request = line;
 if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
 try {
   await setup.link(() => { throw new Error('unsupported_import'); });
@@ -755,7 +759,12 @@ try {
   await dispatch.link(() => { throw new Error('unsupported_import'); });
   await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
   if (context.__result.length > 262144) throw new Error('output_limit');
-  if (!request.serve) writeSync(1, context.__result + (request.reuse ? '\n' : ''));
+  if (!request.serve) {
+    live = null;
+    // Work the callback left running settles before the runner is reused; a late host call exits it.
+    if (request.reuse) await new Promise(setImmediate);
+    writeSync(1, context.__result + (request.reuse ? '\n' : ''));
+  }
   if (request.serve) {
     const step = new SourceTextModule(`
       const omd = globalThis.__omd;
@@ -793,6 +802,7 @@ try {
   const frames = lines.filter(line => /^\s+at /.test(line));
   const described = [...lines.filter(line => !/^\s+at /.test(line)),
     ...frames.filter(line => directories.some(directory => line.includes(directory + '/'))).slice(0, 4)];
+  live = null;
   process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }) + (request.reuse ? '\n' : ''));
   process.exitCode = 1;
 }
@@ -801,7 +811,7 @@ for (;;) {
   const line = readLine();
   if (!line) break;
   const request = JSON.parse(line);
-  await evaluate(request);
+  await evaluate(request, line);
   if (!request.reuse || process.exitCode) break;
   spare = prepare();
 }

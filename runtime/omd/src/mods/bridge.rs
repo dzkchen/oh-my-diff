@@ -192,7 +192,8 @@ impl std::ops::Index<&str> for Request<'_> {
     }
 }
 
-fn metadata(loaded: &Loaded) -> Value {
+/// The request fields fixed for a loaded package, and their digest: the package's runner identity.
+fn metadata(loaded: &Loaded) -> (Value, String) {
     let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join("index.ts"),
         "api": MOD_API_VERSION,
         "assets": loaded.assets.as_ref(),
@@ -211,7 +212,16 @@ fn metadata(loaded: &Loaded) -> Value {
         "contracts": "contracts",
         "adapter": loaded.adapter,
     });
-    request
+    // `entrypoint_sha256` stands for the source.
+    let mut identity = Sha256::new();
+    for (field, value) in request.as_object().into_iter().flatten() {
+        if field != "source" {
+            identity.update(field);
+            identity.update(value.to_string());
+        }
+    }
+    let identity = format!("{:x}", identity.finalize());
+    (request, identity)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -236,8 +246,9 @@ pub(super) fn run(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut forwarded = 0;
     let mut waited = Duration::ZERO;
+    let (metadata, identity) = loaded.request_metadata.get_or_init(|| metadata(loaded));
     let mut request = Request {
-        metadata: loaded.request_metadata.get_or_init(|| metadata(loaded)),
+        metadata,
         invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
     };
     request.invocation["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
@@ -246,18 +257,12 @@ pub(super) fn run(
         request.invocation["serve"] = Value::Bool(render);
         request.invocation["reuse"] = Value::Bool(!render);
         if !render {
-            return format!("{}:fresh", node.display());
+            return format!("{}:{identity}", node.display());
         }
-        // `entrypoint_sha256` stands for the source.
         let mut key = Sha256::new();
-        for (field, value) in request
-            .metadata
-            .as_object()
-            .into_iter()
-            .flatten()
-            .chain(request.invocation.as_object().into_iter().flatten())
-        {
-            if !["source", "name", "payload", "receipts"].contains(&field.as_str()) {
+        key.update(identity);
+        for (field, value) in request.invocation.as_object().into_iter().flatten() {
+            if !["name", "payload", "receipts"].contains(&field.as_str()) {
                 key.update(field);
                 key.update(value.to_string());
             }

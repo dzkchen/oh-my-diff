@@ -205,6 +205,7 @@ struct Warm {
     reader: std::thread::JoinHandle<()>,
     errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
+    serve: bool,
     /// Bytes of the activation request outside its serve fields.
     base: usize,
 }
@@ -225,9 +226,10 @@ pub(super) fn invalidate_warm(key: &str) {
 
 static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
 const WARM_RUNNERS: usize = 4;
+const REUSED_RUNNERS: usize = 2;
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
-fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
+fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
     let mut child = runner(node)?;
     let stderr = child
         .stderr
@@ -259,12 +261,14 @@ fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
         reader,
         errors,
         used: Instant::now(),
+        serve,
         base: 0,
     })
 }
 
 /// Evaluates a render callback in a runner that stays activated for later renders with the same
-/// `key`: the package, its settings and state, everything except the render's own input.
+/// `key`: the package, its settings and state, everything except the render's own input. Other
+/// callbacks reuse a runner only of the same package identity, each in a fresh context.
 pub(super) fn evaluate_warm<R>(
     node: &Path,
     key: &str,
@@ -309,7 +313,7 @@ where
         }
         None => {
             let bytes = request_line(request)?;
-            let mut warm = warm_runner(node, key)?;
+            let mut warm = warm_runner(node, key, request["serve"] == true)?;
             warm.base = bytes.len().saturating_sub(serve.len());
             (warm, bytes)
         }
@@ -339,17 +343,21 @@ fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
         .unwrap_or_default()
 }
 
-/// Returns a runner to the pool, stopping the least recently used ones beyond its size.
+/// Returns a runner to the pool, stopping the least recently used ones of its kind beyond that
+/// kind's size.
 fn pool(mut runner: Warm) {
     runner.used = Instant::now();
+    let serve = runner.serve;
+    let size = if serve { WARM_RUNNERS } else { REUSED_RUNNERS };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {
             runners.push(runner);
             let mut evicted = Vec::new();
-            while runners.len() > WARM_RUNNERS {
+            while runners.iter().filter(|runner| runner.serve == serve).count() > size {
                 let oldest = runners
                     .iter()
                     .enumerate()
+                    .filter(|(_, runner)| runner.serve == serve)
                     .min_by_key(|(_, runner)| runner.used)
                     .map_or(0, |(index, _)| index);
                 evicted.push(runners.swap_remove(oldest));

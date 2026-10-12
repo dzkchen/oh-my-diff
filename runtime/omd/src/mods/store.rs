@@ -1216,19 +1216,10 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
+        let revision = config.revision;
         self.write("mods.json", &serde_json::to_value(config)?)?;
         drop(_lock);
-        let prefix = format!("{}:", self.root.display());
-        if let Ok(states) = super::UI_STATES.lock() {
-            for (_, weak) in states.iter().filter(|(key, _)| key.starts_with(&prefix)) {
-                if let Some(state) = weak.upgrade()
-                    && let Ok(mut state) = state.lock()
-                {
-                    state.value = Value::Null;
-                    state.revision = state.revision.wrapping_add(1);
-                }
-            }
-        }
+        super::reset_ui_states(&self.root, revision);
         Ok(())
     }
 

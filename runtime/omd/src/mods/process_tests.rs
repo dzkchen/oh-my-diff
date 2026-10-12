@@ -147,7 +147,7 @@ fn reused_process_keeps_each_packages_authority_and_host_identity() {
 #[test]
 fn warm_runner_retirement_joins_readers_and_retains_bounded_diagnostics() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
-    let mut runner = super::warm_runner(&node, "invalid-request").unwrap();
+    let mut runner = super::warm_runner(&node, "invalid-request", false).unwrap();
     let (output, _) = super::converse(
         &mut runner.stdin,
         &runner.lines,
@@ -354,6 +354,39 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
             .iter()
             .any(|runner| runner.key == "cancelled-render")
     );
+}
+
+#[test]
+fn reused_callback_runners_never_evict_render_runners() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let input = json!({"component":"tool_call"});
+    let render = json!({"source":"export default api => api.intercept('render', () => null);",
+        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+        "receipts":[],"payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
+    let command = json!({"source":"export default api => api.command('run', () => 'ran');",
+        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"run","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+    let pid = |key: &str| {
+        WARM.lock()
+            .unwrap()
+            .iter()
+            .find(|runner| runner.key == key)
+            .map(|runner| runner.child.id())
+    };
+    evaluate_warm(&node, "kind-render", &render, Duration::from_secs(2), &|| true, &mut |_| unreachable!()).unwrap();
+    let rendering = pid("kind-render").unwrap();
+    for index in 0..4 {
+        let key = format!("kind-command-{index}");
+        evaluate_warm(&node, &key, &command, Duration::from_secs(2), &|| true, &mut |_| unreachable!()).unwrap();
+    }
+    assert_eq!(pid("kind-render"), Some(rendering));
+    assert!(WARM.lock().unwrap().iter().filter(|runner| !runner.serve).count() <= 2);
+    for key in ["kind-render", "kind-command-2", "kind-command-3"] {
+        super::invalidate_warm(key);
+    }
 }
 
 #[test]
