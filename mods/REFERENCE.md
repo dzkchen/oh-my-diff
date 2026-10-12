@@ -2173,11 +2173,13 @@ dialogs, chords and app key bindings and before popups and the editor keymap:
 Alt is `key` and `text` as typed (`'a'`, `'#'`, `' '`) and any other key is
 its mod key name (`Ctrl+w`, `Enter`, `Shift+Tab`) with `text: null`; `text` is
 also `null` in vim normal mode, where characters are commands. Handlers
-may set `key` to another character or mod key name, which the composer then
-applies as if typed, or answer `{deny}` to drop the key silently. Paste bursts,
-bracketed paste and non-ASCII characters (IME) bypass the chain. The whole chain
-gets 50 ms per keystroke and no host operations; a busy runtime, a slow chain
-or an invalid result applies the original key and shows a status notice. Use
+may set `key` to another character or to a key name valid in view
+`keybindings` or an unmodified named key (`Left`, `Backspace`), which the
+composer then applies as if typed, or answer `{deny}` to drop the key silently.
+Paste bursts, bracketed paste and non-ASCII characters (IME) bypass the chain.
+The whole chain, including any wait for a runtime busy with another callback,
+gets 50 ms per keystroke and no host operations; when that runs out, or the
+result is invalid, the original key applies and a status notice shows. Use
 `match` on `key` so other keystrokes never start a callback. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
 interceptors also receive the submitted draft's `revision`, `attachments`
 (`{kind, source}`) and placeholder `elements` (`{kind: 'paste' | 'mention' |
@@ -2192,16 +2194,19 @@ receives.
 When a turn starts, the host reads each `@path` or `@"path with spaces"` of the
 submitted text that names an existing workspace file (at most 16 per turn; a
 leading `./` and trailing punctuation are ignored; picking a file from the `@`
-list inserts it in this form) and gives the model its contents after the
-prompt as `<mentioned_file><path>…</path>…</mentioned_file>`. Reads use the
+list inserts it in this form, except in a slash command or shell command, which
+get the bare path) and gives the model its contents after the prompt as
+`<mentioned_file><path>…</path>…</mentioned_file>`. Reads use the
 `workspace.read` checks: repository-relative paths without `..`, `.git` or
 symlink components, and the thread's effective read permissions and deny rules.
-A file that fails them, exceeds 256 KiB or is not UTF-8 is left to the model's
-own tools. Before each read, `api.intercept('mention', …)` (capability `input`,
-experimental) receives `{thread_id, path}`; handlers may set `path` to another
-workspace file, which is read under the same checks, or answer `{deny}` to skip
-the read. They run beside the session like `input` interceptors and may call
-host operations; a failing chain skips the read.
+Each file is read once, in mention order, while the turn's mentioned files
+total at most 256 KiB; a file that fails the checks, does not fit or is not
+UTF-8 is left to the model's own tools. Before each read,
+`api.intercept('mention', …)` (capability `input`, experimental) receives
+`{thread_id, path}`; handlers may set `path` to another workspace file, which
+is read under the same checks, or answer `{deny}` to skip the read. They run
+beside the session like `input` interceptors and may call host operations; a
+failing chain skips the read, and interrupting the turn cancels the chain.
 
 ### One-shot model calls and forks (`model_complete_v2`)
 

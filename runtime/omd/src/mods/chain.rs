@@ -357,24 +357,10 @@ fn component_change(kind: &Value, to: &Value) -> bool {
 fn composer_key(key: &Value) -> bool {
     key.as_str().is_some_and(|key| {
         let mut chars = key.chars();
-        if let (Some(character), None) = (chars.next(), chars.next()) {
-            return !character.is_control();
+        match (chars.next(), chars.next()) {
+            (Some(character), None) => !character.is_control(),
+            _ => super::view::composer_key_name(key),
         }
-        let mut parts = key.split('+').collect::<Vec<_>>();
-        let base = parts.pop().unwrap_or_default();
-        let order = ["Ctrl", "Alt", "Shift"];
-        let ordered = parts
-            .iter()
-            .map(|modifier| order.iter().position(|known| known == modifier))
-            .collect::<Option<Vec<_>>>()
-            .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]));
-        let function = base
-            .strip_prefix('F')
-            .and_then(|number| number.parse::<u8>().ok())
-            .is_some_and(|number| (1..=12).contains(&number) && base == format!("F{number}"));
-        let character = !parts.is_empty()
-            && matches!(base.as_bytes(), [byte] if byte.is_ascii_lowercase() || byte.is_ascii_digit());
-        ordered && (function || character || super::view::MOD_NAMED_KEYS.contains(&base))
     })
 }
 

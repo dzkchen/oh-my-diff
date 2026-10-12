@@ -73,16 +73,13 @@ pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Ve
 
 impl Mods {
     /// The path `mention` interceptors settle on; `None` when one denied the read or the chain failed.
-    async fn mention(&self, lead: &Arc<Lead>, name: String) -> Option<String> {
-        let runtime = self.input_runtime.clone();
-        let required = tokio::task::spawn_blocking(move || {
-            runtime.lock().ok().map(|runtime| runtime.intercepts("mention"))
-        })
-        .await
-        .ok()??;
-        let Some(required) = required else {
-            return Some(name);
-        };
+    async fn mention(
+        &self,
+        lead: &Arc<Lead>,
+        required: bool,
+        name: String,
+        cancelled: &Arc<AtomicBool>,
+    ) -> Option<String> {
         let thread = lead.thread.to_string();
         let chain = intercept::chain(
             self.core.clone(),
@@ -92,7 +89,7 @@ impl Mods {
             required,
             json!({"thread_id": thread, "path": name}),
             json!({"caller": "user", "thread_id": thread}),
-            Arc::new(AtomicBool::new(false)),
+            cancelled.clone(),
             |input| Ok(json!({"path": input["path"]})),
         )
         .await
@@ -114,37 +111,70 @@ impl TurnInputContributor for Mods {
             let Some(lead) = thread_store.get::<Lead>() else {
                 return Vec::new();
             };
-            let names = mentioned(&input.user_input, &lead.host.repository);
-            if names.is_empty() {
+            let (user_input, repository, runtime) = (
+                input.user_input,
+                lead.host.repository.clone(),
+                self.input_runtime.clone(),
+            );
+            let Ok(Some((names, required))) = tokio::task::spawn_blocking(move || {
+                let names = mentioned(&user_input, &repository);
+                if names.is_empty() {
+                    return None;
+                }
+                let required = runtime.lock().ok()?.intercepts("mention");
+                Some((names, required))
+            })
+            .await
+            else {
                 return Vec::new();
-            }
+            };
             let Ok(authority) =
                 crate::workspace_operations::WorkspaceAuthority::for_lead(&lead).await
             else {
                 return Vec::new();
             };
-            let mut fragments: Vec<Box<dyn ContextualUserFragment + Send>> = Vec::new();
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let _cancellation = Cancellation(cancelled.clone());
+            let mut paths: Vec<String> = Vec::new();
             for name in names {
-                let Some(path) = self.mention(&lead, name).await else {
-                    continue;
+                let path = match required {
+                    Some(required) => self.mention(&lead, required, name, &cancelled).await,
+                    None => Some(name),
                 };
-                let small = codex_omd::workspace_path(&lead.host.repository, &path)
-                    .and_then(std::fs::metadata)
-                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MENTION_BYTES);
-                let read = small
-                    .then(|| authority.call("workspace.read", json!({"paths": [path]}), || true))
-                    .and_then(Result::ok);
-                if let Some(contents) = read
-                    .as_ref()
-                    .and_then(|read| read["files"][&path]["text"].as_str())
-                {
-                    fragments.push(Box::new(MentionedFile {
-                        contents: contents.to_owned(),
-                        path,
-                    }));
+                if let Some(path) = path.filter(|path| !paths.contains(path)) {
+                    paths.push(path);
                 }
             }
-            fragments
+            let repository = lead.host.repository.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut budget = MENTION_BYTES;
+                let mut fragments: Vec<Box<dyn ContextualUserFragment + Send>> = Vec::new();
+                for path in paths {
+                    let fits = codex_omd::workspace_path(&repository, &path)
+                        .and_then(std::fs::metadata)
+                        .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= budget);
+                    let read = fits
+                        .then(|| {
+                            authority.call("workspace.read", json!({"paths": [path]}), || {
+                                !cancelled.load(Ordering::Acquire)
+                            })
+                        })
+                        .and_then(Result::ok);
+                    if let Some(contents) = read
+                        .as_ref()
+                        .and_then(|read| read["files"][&path]["text"].as_str())
+                    {
+                        budget = budget.saturating_sub(contents.len() as u64);
+                        fragments.push(Box::new(MentionedFile {
+                            contents: contents.to_owned(),
+                            path,
+                        }));
+                    }
+                }
+                fragments
+            })
+            .await
+            .unwrap_or_default()
         })
     }
 }

@@ -3488,7 +3488,7 @@ fn oversized_continuation_results_are_limited_like_host_results() {
 #[test]
 fn composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline() {
     let (temp, _, _) = fixture(
-        "export default api => { api.intercept('composer_key', {match: {key: 'a'}}, (e, next) => next({...e, key: 'Left'})); api.intercept('composer_key', {match: {key: 'w'}}, () => ({key: 'Ctrl+w'})); api.intercept('composer_key', {match: {key: 'q'}}, () => ({deny: 'no'})); api.intercept('composer_key', {match: {key: 'z'}}, () => ({key: 'Ctrl+'})); api.intercept('composer_key', {match: {key: 's'}}, () => { for (let i = 0; i < 1e10; i++); return {key: 'x'}; }); }",
+        "export default api => { api.intercept('composer_key', {match: {key: 'a'}}, (e, next) => next({...e, key: 'Left'})); api.intercept('composer_key', {match: {key: 'w'}}, () => ({key: 'Ctrl+w'})); api.intercept('composer_key', {match: {key: 'q'}}, () => ({deny: 'no'})); api.intercept('composer_key', {match: {key: 'z'}}, () => ({key: 'Ctrl+'})); api.intercept('composer_key', {match: {key: 'c'}}, () => ({key: 'Ctrl+c'})); api.intercept('composer_key', {match: {key: 's'}}, () => { for (let i = 0; i < 1e10; i++); return {key: 'x'}; }); }",
         &["composer"],
     );
     let mut runtime = host(&temp);
@@ -3505,10 +3505,12 @@ fn composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline() {
     assert_eq!(run("w", &|| true).unwrap().unwrap()["key"], "Ctrl+w");
     assert_eq!(run("b", &|| true).unwrap().unwrap()["key"], "b");
     assert_eq!(run("q", &|| true).unwrap().unwrap()["deny"], "no");
-    assert!(
-        run("z", &|| true).map_or(true, |result| result.unwrap()["key"] != "Ctrl+"),
-        "an invalid key never reaches the composer"
-    );
+    for (key, invalid) in [("z", "Ctrl+"), ("c", "Ctrl+c")] {
+        assert!(
+            run(key, &|| true).map_or(true, |result| result.unwrap()["key"] != invalid),
+            "an invalid or reserved key never reaches the composer"
+        );
+    }
     let started = std::time::Instant::now();
     let deadline = started + std::time::Duration::from_millis(50);
     assert!(run("s", &|| std::time::Instant::now() < deadline).is_err());
@@ -3549,6 +3551,25 @@ fn completion_triggers_are_bounded_and_route_the_completion_event() {
         status["mods"][0]["error"]
             .to_string()
             .contains("invalid_completion_registration"),
+        "{status}"
+    );
+    let (temp, _, _) = fixture(
+        "export default api => api.completion({trigger: '_'}, () => null);",
+        &["composer"],
+    );
+    assert_eq!(
+        host(&temp).status()["mods"][0]["registrations"]["completions"],
+        json!([{"trigger": "_"}])
+    );
+    let (temp, _, _) = fixture(
+        "export default api => api.completion({trigger: 'a'}, () => null);",
+        &["composer"],
+    );
+    let status = host(&temp).status();
+    assert!(
+        status["mods"][0]["error"]
+            .to_string()
+            .contains("invalid_completion_trigger: a"),
         "{status}"
     );
 }

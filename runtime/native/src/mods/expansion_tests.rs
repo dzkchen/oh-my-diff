@@ -4745,6 +4745,8 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
         ("new.txt", "new".to_owned()),
         ("big.txt", "x".repeat(300_000)),
         ("spaced name.txt", "spaced".to_owned()),
+        ("first.txt", "1".repeat(200_000)),
+        ("second.txt", "2".repeat(200_000)),
     ] {
         std::fs::write(repository.join(name), text).unwrap();
     }
@@ -4753,7 +4755,7 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
     let input = TurnInputContext {
         turn_id: "turn".into(),
         user_input: vec![UserInput::Text {
-            text: "see @plain.txt, @secret.txt and @old.txt @big.txt @missing.txt me@plain.txt @\"spaced name.txt\""
+            text: "see @plain.txt, @secret.txt and @old.txt @new.txt @big.txt @missing.txt me@plain.txt @\"spaced name.txt\" @first.txt @second.txt"
                 .into(),
             text_elements: Vec::new(),
         }],
@@ -4772,11 +4774,61 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
         .map(|fragment| fragment.render())
         .collect::<Vec<_>>();
     assert_eq!(
-        fragments,
+        fragments[..3],
         [
             "<mentioned_file>\n<path>plain.txt</path>\nplain\n</mentioned_file>",
             "<mentioned_file>\n<path>new.txt</path>\nnew\n</mentioned_file>",
             "<mentioned_file>\n<path>spaced name.txt</path>\nspaced\n</mentioned_file>",
         ]
     );
+    assert_eq!(fragments.len(), 4);
+    assert!(fragments[3].starts_with("<mentioned_file>\n<path>first.txt</path>"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn interrupted_mention_reads_cancel_their_interceptors() {
+    use codex_extension_api::TurnInputContext;
+    use codex_extension_api::TurnInputContributor;
+    use codex_protocol::user_input::UserInput;
+    let Some(mut fixture) = fixture(&[Package {
+        id: "mentions",
+        capabilities: &["input"],
+        manifest: json!({}),
+        source: "export default api => api.intercept('mention', () => { for (;;); });",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    std::fs::write(fixture.lead.host.repository.join("slow.txt"), "slow").unwrap();
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    let (session_store, turn_store) = (ExtensionData::new("session"), ExtensionData::new("turn"));
+    let mods = mods(&fixture.core);
+    let interrupted = mods.contribute(
+        TurnInputContext {
+            turn_id: "turn".into(),
+            user_input: vec![UserInput::Text {
+                text: "read @slow.txt".into(),
+                text_elements: Vec::new(),
+            }],
+            environments: Vec::new(),
+        },
+        None,
+        &session_store,
+        &thread_store,
+        &turn_store,
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), interrupted)
+            .await
+            .is_err()
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let runtime = mods.input_runtime.clone();
+    let telemetry = tokio::task::spawn_blocking(move || {
+        runtime.lock().unwrap().status()["mods"][0]["telemetry"].clone()
+    })
+    .await
+    .unwrap();
+    assert_eq!(telemetry["faults"], 0, "{telemetry}");
 }

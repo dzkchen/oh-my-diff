@@ -1293,6 +1293,8 @@ impl TurnLifecycleContributor for Mods {
                 "message": input.last_agent_message.map(|message| message.chars().take(8192).collect::<String>()),
                 "continued": input.continued, "limit": autonomy::CONTINUATIONS,
                 "provenance": self.autonomy.running(&thread).map(|owner| json!({"kind": "mod", "package": owner}))});
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let _cancellation = Cancellation(cancelled.clone());
             let chain = intercept::chain(
                 self.core.clone(),
                 lead,
@@ -1301,7 +1303,7 @@ impl TurnLifecycleContributor for Mods {
                 required,
                 payload,
                 json!({"caller": "engine", "thread_id": thread}),
-                Arc::new(AtomicBool::new(false)),
+                cancelled,
                 |_| Ok(json!({"stop": true})),
             )
             .await;

@@ -542,7 +542,7 @@ const api = Object.freeze({
     requireCapability('composer');
     for (const key of Object.keys(options ?? {})) if (key !== 'trigger') throw new Error('unsupported_completion_option: ' + key);
     const trigger = options?.trigger;
-    if (typeof trigger !== 'string' || !/^[!-~]$/.test(trigger) || /[\\w@/$]/.test(trigger)) throw new Error('invalid_completion_trigger: ' + trigger);
+    if (typeof trigger !== 'string' || !/^[!-\/:-@[-\x60{-~]$/.test(trigger) || '@/$'.includes(trigger)) throw new Error('invalid_completion_trigger: ' + trigger);
     unique(completers, trigger, handler);
     registrations.completions.push({ trigger });
   },
