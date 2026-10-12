@@ -36,6 +36,9 @@ const HOST_FEATURES: &[&str] = &[
     "command_config_middleware_v1",
     "admission_api_policy_v1",
     "state_scopes_v1",
+    "composer_key_v1",
+    "completion_tokens_v1",
+    "mention_read_v1",
 ];
 
 #[test]
@@ -101,6 +104,7 @@ fn host_feature_examples_load_and_register_together() {
             "tools",
             "replacements",
             "interceptors",
+            "completions",
         ]
         .iter()
         .any(|kind| {

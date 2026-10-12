@@ -534,6 +534,8 @@ export interface InterceptSurfaces {
   peer_receive: { input: { id: string; from: PeerSender; to: PeerAddress; correlation: string | null; untrusted: true; data: Json }; result: { data: Json }; answer: { deny: string } };
   turn_stop: { input: { thread_id: string; turn_id: string; outcome: 'completed' | 'error'; error: string | null; message: string | null; continued: number; limit: number; provenance: { kind: 'mod'; package: string } | null }; result: { stop: true }; answer: { continue: string } };
   composer_edit: { input: { source: 'mod' | 'paste' | 'history' | 'completion'; caller: string; revision: number; edit: ComposerEdit }; result: { edit: ComposerEdit }; answer: { deny: string } };
+  composer_key: { input: { key: string; text: string | null; revision: number; cursor: number }; result: { key: string }; answer: { deny: string } };
+  mention: { input: { thread_id: string; path: string }; result: { path: string }; answer: { deny: string } };
   component_change: { input: { kind: 'focus'; id: string; from: string | null; to: string | null; origin: 'user' } | { kind: 'scroll'; id: string; from: number | null; to: number; origin: 'user' };
     result: { focus: string | null } | { scroll: number }; answer: { deny: string } };
   elicitation: { input: { thread_id: string; turn_id: string; server: string; request_id: string; mode: 'form' | 'openai/form' | 'openaiForm'; message: string; schema: Json };
@@ -586,6 +588,7 @@ export interface ModAPI {
   dynamicTools(handler: (call: { name: string; arguments: Json }) => Json | Promise<Json>): void;
   virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string; args_hint?: string; immediate?: boolean }): void;
+  completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
   /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */

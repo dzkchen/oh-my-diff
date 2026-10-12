@@ -71,6 +71,8 @@ const surface = request.surface;
 registrations.services = [];
 registrations.virtual_reads = [];
 registrations.agents = [];
+registrations.completions = [];
+const completers = new Map();
 const serviceHandlers = new Map();
 const virtualReaders = new Map();
 const updates = [];
@@ -535,6 +537,15 @@ const api = Object.freeze({
     unique(virtualReaders, definition.scheme, handler);
     registrations.virtual_reads.push(structuredCloneFallback(definition));
   },
+  completion(options, handler) {
+    if (!activating) throw new Error('completion_registration_outside_activation');
+    requireCapability('composer');
+    for (const key of Object.keys(options ?? {})) if (key !== 'trigger') throw new Error('unsupported_completion_option: ' + key);
+    const trigger = options?.trigger;
+    if (typeof trigger !== 'string' || !/^[!-~]$/.test(trigger) || /[\\w@/$]/.test(trigger)) throw new Error('invalid_completion_trigger: ' + trigger);
+    unique(completers, trigger, handler);
+    registrations.completions.push({ trigger });
+  },
   command(name, handler, options = {}) {
     if (!activating) throw new Error('command_registration_outside_activation');
     requireCapability('commands');
@@ -671,7 +682,7 @@ const api = Object.freeze({
     },
   }),
 });
-globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
+globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
   state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
@@ -731,7 +742,7 @@ try {
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
   const dispatch = moduleFor(`
-    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
+    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
     const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
     await globalThis.__activate(activation);
@@ -743,6 +754,7 @@ try {
         : request.event === 'command' ? commands.get(request.name)
         : request.event === 'virtual_read' ? virtualReaders.get(request.name)
         : request.event === 'service' ? serviceHandlers.get(request.name)
+        : request.event === 'completion' && request.payload?.kind === 'token' ? completers.get(request.payload.trigger)
         : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
       if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;

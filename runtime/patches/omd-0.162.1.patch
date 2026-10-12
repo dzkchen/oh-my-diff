@@ -28843,7 +28843,7 @@ index 1d328eae5..201f2e0f0 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 2979e0a9a..3af56e8a3 100644
+index 2979e0a9a..4aa9192b9 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -104,6 +104,7 @@ impl App {
@@ -28963,7 +28963,7 @@ index 2979e0a9a..3af56e8a3 100644
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1705,8 +1801,27 @@ impl App {
+@@ -1705,8 +1801,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -28976,22 +28976,13 @@ index 2979e0a9a..3af56e8a3 100644
 +            AppEvent::ModFileCompletion { query, matches } => {
                  self.chat_widget.apply_file_search_result(query, matches);
              }
-+            AppEvent::ModArgumentCompletion {
-+                command,
-+                query,
-+                line,
-+            } => {
-+                crate::mod_surface::complete_arguments(
-+                    command,
-+                    query,
-+                    line,
-+                    self.app_event_tx.clone(),
-+                );
++            AppEvent::ModArgumentCompletion { query, payload } => {
++                crate::mod_surface::complete_arguments(query, payload, self.app_event_tx.clone());
 +            }
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2964,6 +3079,14 @@ impl App {
+@@ -2964,6 +3070,14 @@ impl App {
                  self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                      .await?;
              }
@@ -31638,7 +31629,7 @@ index f55b75c1b..21c998a28 100644
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 4c6ede335..718afe464 100644
+index 4c6ede335..bb48c738a 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -406,6 +406,10 @@ pub(crate) enum AppEvent {
@@ -31699,7 +31690,7 @@ index 4c6ede335..718afe464 100644
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -699,6 +736,15 @@ pub(crate) enum AppEvent {
+@@ -699,6 +736,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -31708,9 +31699,8 @@ index 4c6ede335..718afe464 100644
 +        matches: Vec<FileMatch>,
 +    },
 +    ModArgumentCompletion {
-+        command: String,
 +        query: String,
-+        line: String,
++        payload: serde_json::Value,
 +    },
 
      /// Same-host task results for the active unified mention query.
@@ -31728,7 +31718,7 @@ index 6ab14d1f6..e3de30f53 100644
          };
 
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index c919e31c9..13aba325a 100644
+index c919e31c9..6c4b5f6f2 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -376,6 +376,7 @@ mod draft_state;
@@ -31789,7 +31779,7 @@ index c919e31c9..13aba325a 100644
          // Only apply if user is still editing a token starting with `query`.
 -        let current_opt = if self.mentions_v2_enabled {
 +        let current_opt = if self.popups.argument.is_some() {
-+            self.mod_argument_token().map(|(_, token, _, _)| token)
++            self.mod_argument_token().map(|(_, token, _)| token)
 +        } else if self.mentions_v2_enabled {
              self.current_mentions_v2_token()
          } else {
@@ -31814,7 +31804,17 @@ index c919e31c9..13aba325a 100644
 
          match &mut self.popups.active {
              ActivePopup::File(popup) => {
-@@ -2152,7 +2183,11 @@ impl ChatComposer {
+@@ -1915,6 +1946,9 @@ impl ChatComposer {
+         if matches!(key_event.kind, KeyEventKind::Release) {
+             return (InputResult::None, false);
+         }
++        let Some(key_event) = self.mod_composer_key(key_event) else {
++            return (InputResult::None, true);
++        };
+
+         if self.history_search.is_none()
+             && !self.popups.active()
+@@ -2152,7 +2186,11 @@ impl ChatComposer {
                  };
 
                  let sel_path = sel.to_string_lossy().to_string();
@@ -31827,21 +31827,26 @@ index c919e31c9..13aba325a 100644
                      self.current_editable_at_token_range_with_options(/*allow_empty*/ false)
                  {
                      self.insert_selected_file_path(token_range, &sel_path);
-@@ -2748,6 +2783,13 @@ impl ChatComposer {
+@@ -2744,9 +2782,16 @@ impl ChatComposer {
+         // quotes when the path already contains one to keep behavior simple.
+         let needs_quotes = path.chars().any(char::is_whitespace);
+         let inserted = if needs_quotes && !path.contains('"') {
+-            format!("\"{path}\"")
++            format!("@\"{path}\"")
          } else {
-             path.to_string()
-         };
+-            path.to_string()
++            format!("@{path}")
++        };
 +        let Some(inserted) = self.mod_native_fill(
 +            "completion",
 +            serde_json::json!({"kind": "splice", "start": token_range.start,
 +                "end": token_range.end, "text": inserted}),
 +        ) else {
 +            return;
-+        };
+         };
 
          // Replace just the active `@token` so unrelated text elements, such as
-         // large-paste placeholders, remain atomic and can still expand on submit.
-@@ -3114,6 +3156,7 @@ impl ChatComposer {
+@@ -3114,6 +3159,7 @@ impl ChatComposer {
                  | InputResult::Queued { .. }
                  | InputResult::Command(_)
                  | InputResult::ServiceTierCommand(_)
@@ -31849,7 +31854,7 @@ index c919e31c9..13aba325a 100644
                  | InputResult::CommandWithArgs(_, _, _)
          ) && self.config.reset_vim_on_submission
          {
-@@ -3135,6 +3178,20 @@ impl ChatComposer {
+@@ -3135,6 +3181,20 @@ impl ChatComposer {
          if let Some(result) = self.handle_parent_owned_submission() {
              return result;
          }
@@ -31870,7 +31875,7 @@ index c919e31c9..13aba325a 100644
          if should_queue {
              if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
                  self.apply_paste(pasted);
-@@ -3300,6 +3357,7 @@ impl ChatComposer {
+@@ -3300,6 +3360,7 @@ impl ChatComposer {
          Some(match command {
              SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
              SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
@@ -31878,7 +31883,7 @@ index c919e31c9..13aba325a 100644
          })
      }
 
-@@ -3324,6 +3382,11 @@ impl ChatComposer {
+@@ -3324,6 +3385,11 @@ impl ChatComposer {
          );
          let trimmed_rest = inline_command.rest.trim();
          args_elements = Self::trim_text_elements(inline_command.rest, trimmed_rest, args_elements);
@@ -31890,7 +31895,7 @@ index c919e31c9..13aba325a 100644
          let SlashCommandItem::Builtin(cmd) = command else {
              return None;
          };
-@@ -3435,6 +3498,9 @@ impl ChatComposer {
+@@ -3435,6 +3501,9 @@ impl ChatComposer {
 
      /// Handle key event when no popup is visible.
      fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
@@ -31900,7 +31905,7 @@ index c919e31c9..13aba325a 100644
          if let Some((result, redraw)) = self.handle_remote_image_selection_key(&key_event) {
              return (result, redraw);
          }
-@@ -3899,9 +3965,15 @@ impl ChatComposer {
+@@ -3899,9 +3968,15 @@ impl ChatComposer {
          self.popups.dismissed_mention_token = None;
 
          if let Some((range, token)) = file_token {
@@ -31908,54 +31913,66 @@ index c919e31c9..13aba325a 100644
              self.sync_file_search_popup(range, token);
              return;
          }
-+        if let Some((range, query, command, line)) = self.mod_argument_token() {
-+            self.sync_argument_popup(range, query, command, line);
++        if let Some((range, query, payload)) = self.mod_argument_token() {
++            self.sync_argument_popup(range, query, payload);
 +            return;
 +        }
 +        self.popups.argument = None;
 
          if self.popups.current_file_query.is_some() {
              self.app_event_tx
-@@ -3981,6 +4053,51 @@ impl ChatComposer {
+@@ -3981,6 +4056,63 @@ impl ChatComposer {
          }
      }
 
-+    fn mod_argument_token(&self) -> Option<(Range<usize>, String, String, String)> {
++    /// A mod command's argument or a token starting with a mod's completion trigger, with the mod's payload.
++    fn mod_argument_token(&self) -> Option<(Range<usize>, String, serde_json::Value)> {
 +        let text = self.draft.textarea.text();
 +        let cursor = self.draft.textarea.cursor();
-+        let line = &text[..text.find('\n').unwrap_or(text.len())];
-+        let name_end = line.strip_prefix('/')?.find(char::is_whitespace)? + 1;
-+        if cursor <= name_end || cursor > line.len() {
-+            return None;
-+        }
-+        let command = &line[1..name_end];
-+        let start = line[..cursor]
-+            .rfind(char::is_whitespace)
-+            .map_or(0, |index| index + 1);
-+        crate::mod_surface::completes_arguments(command).then(|| {
-+            (
++        let line_start = text[..cursor].rfind('\n').map_or(0, |index| index + 1);
++        let start = text[..cursor]
++            .char_indices()
++            .rfind(|(_, c)| c.is_whitespace())
++            .map_or(0, |(index, c)| index + c.len_utf8());
++        let token = &text[start..cursor];
++        let first_line = &text[..text.find('\n').unwrap_or(text.len())];
++        if let Some(name_end) = first_line
++            .strip_prefix('/')
++            .and_then(|line| line.find(char::is_whitespace))
++            .map(|end| end + 1)
++            && cursor > name_end
++            && cursor <= first_line.len()
++            && crate::mod_surface::completes_arguments(&first_line[1..name_end])
++        {
++            return Some((
 +                start..cursor,
-+                line[start..cursor].to_owned(),
-+                command.to_owned(),
-+                line[name_end..cursor].trim_start().to_owned(),
-+            )
-+        })
++                token.to_owned(),
++                serde_json::json!({"kind": "argument", "command": &first_line[1..name_end],
++                    "query": token, "line": first_line[name_end..cursor].trim_start()}),
++            ));
++        }
++        let trigger = token.chars().next().filter(char::is_ascii_punctuation)?;
++        crate::mod_surface::trigger_owner(trigger)?;
++        Some((
++            start..cursor,
++            token.to_owned(),
++            serde_json::json!({"kind": "token", "trigger": trigger.to_string(),
++                "query": &token[trigger.len_utf8()..], "line": &text[line_start..cursor]}),
++        ))
 +    }
 +
 +    fn sync_argument_popup(
 +        &mut self,
 +        range: Range<usize>,
 +        query: String,
-+        command: String,
-+        line: String,
++        payload: serde_json::Value,
 +    ) {
 +        if self.popups.argument.as_ref() != Some(&range)
 +            || self.popups.current_file_query.as_deref() != Some(query.as_str())
 +        {
 +            self.app_event_tx.send(AppEvent::ModArgumentCompletion {
-+                command,
 +                query: query.clone(),
-+                line,
++                payload,
 +            });
 +        }
 +        if let ActivePopup::File(popup) = &mut self.popups.active {
@@ -31968,7 +31985,7 @@ index c919e31c9..13aba325a 100644
      /// Synchronize the legacy file-search popup with the current `@` token.
      fn sync_file_search_popup(&mut self, range: Range<usize>, query: String) {
          if self
-@@ -4884,6 +5001,11 @@ impl ChatComposer {
+@@ -4884,6 +5016,11 @@ impl ChatComposer {
                          &highlights,
                      );
                  }
@@ -31980,7 +31997,7 @@ index c919e31c9..13aba325a 100644
              }
          }
          if !self.draft.input_enabled || textarea_is_empty {
-@@ -4897,8 +5019,20 @@ impl ChatComposer {
+@@ -4897,8 +5034,20 @@ impl ChatComposer {
                      .to_string()
              };
              if !textarea_rect.is_empty() {
@@ -32003,7 +32020,7 @@ index c919e31c9..13aba325a 100644
              }
          }
          // The reserved right margin indicates hidden rows without changing wrapping.
-@@ -4950,6 +5084,7 @@ impl ChatComposer {
+@@ -4950,6 +5099,7 @@ impl ChatComposer {
              self.cursor_pos_with_options(area, options),
              buf,
          );
@@ -32011,7 +32028,7 @@ index c919e31c9..13aba325a 100644
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
-@@ -9343,6 +9478,7 @@ mod tests {
+@@ -9343,6 +9493,7 @@ mod tests {
                      Some(CommandItem::ServiceTier(command)) => {
                          panic!("expected {expected} command, got service tier {command:?}")
                      }
@@ -32019,7 +32036,7 @@ index c919e31c9..13aba325a 100644
                      None => panic!("no selected command for '{input}'"),
                  },
                  _ => panic!("slash popup not active after typing '{input}'"),
-@@ -9442,6 +9578,7 @@ mod tests {
+@@ -9442,6 +9593,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -32027,7 +32044,7 @@ index c919e31c9..13aba325a 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9459,6 +9596,25 @@ mod tests {
+@@ -9459,6 +9611,25 @@ mod tests {
          );
      }
 
@@ -32053,7 +32070,7 @@ index c919e31c9..13aba325a 100644
      #[test]
      fn kill_buffer_persists_after_submit() {
          use crossterm::event::KeyCode;
-@@ -9952,6 +10108,7 @@ mod tests {
+@@ -9952,6 +10123,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -32061,7 +32078,7 @@ index c919e31c9..13aba325a 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10152,6 +10309,7 @@ mod tests {
+@@ -10152,6 +10324,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -32069,6 +32086,86 @@ index c919e31c9..13aba325a 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
+@@ -10245,7 +10418,7 @@ mod tests {
+             composer.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+         let text = composer.draft.textarea.text().to_string();
+-        assert_eq!(text, format!("{placeholder} src/main.rs "));
++        assert_eq!(text, format!("{placeholder} @src/main.rs "));
+         let elements = composer.draft.textarea.text_elements();
+         assert_eq!(elements.len(), 1);
+         assert_eq!(elements[0].placeholder(&text), Some(placeholder.as_str()));
+@@ -10258,7 +10431,7 @@ mod tests {
+                 text,
+                 text_elements,
+             } => {
+-                assert_eq!(text, format!("{large} src/main.rs"));
++                assert_eq!(text, format!("{large} @src/main.rs"));
+                 assert!(text_elements.is_empty());
+             }
+             _ => panic!("expected Submitted"),
+@@ -10305,7 +10478,7 @@ mod tests {
+             PathBuf::from("src/main.rs"),
+         );
+
+-        assert_eq!(composer.current_text(), "src/main.rs  $HOME");
++        assert_eq!(composer.current_text(), "@src/main.rs  $HOME");
+     }
+
+     #[test]
+@@ -10325,7 +10498,7 @@ mod tests {
+         configure_bound_plugin_left_of_unbound_plugin(&mut composer);
+         composer.insert_selected_file_path("@sample".len().."@sample@other".len(), "src/main.rs");
+
+-        assert_eq!(composer.current_text(), "@sample src/main.rs ");
++        assert_eq!(composer.current_text(), "@sample @src/main.rs ");
+     }
+
+     #[test]
+@@ -10364,7 +10537,7 @@ mod tests {
+         );
+         composer.insert_str("foo");
+
+-        assert_eq!(composer.current_text(), "src/main.rs foo next");
++        assert_eq!(composer.current_text(), "@src/main.rs foo next");
+     }
+
+     #[test]
+@@ -10375,7 +10548,7 @@ mod tests {
+             composer.insert_selected_path(0.."@ma".len(), "src/main.rs");
+             composer.insert_str("foo");
+
+-            assert_eq!(composer.current_text(), format!("src/main.rs foo {suffix}"));
++            assert_eq!(composer.current_text(), format!("@src/main.rs foo {suffix}"));
+         }
+     }
+
+@@ -10391,7 +10564,7 @@ mod tests {
+         );
+         composer.insert_str("foo");
+
+-        assert_eq!(composer.current_text(), "src/main.rs foo\nnext");
++        assert_eq!(composer.current_text(), "@src/main.rs foo\nnext");
+     }
+
+     #[test]
+@@ -10405,14 +10578,14 @@ mod tests {
+             PathBuf::from("@scope/main.rs"),
+         );
+
+-        assert_eq!(composer.current_text(), "@scope/main.rs \nnext");
++        assert_eq!(composer.current_text(), "@@scope/main.rs \nnext");
+         assert!(matches!(composer.popups.active, ActivePopup::None));
+
+         let (result, consumed) =
+             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+         assert!(consumed);
+         match result {
+-            InputResult::Submitted { text, .. } => assert_eq!(text, "@scope/main.rs \nnext"),
++            InputResult::Submitted { text, .. } => assert_eq!(text, "@@scope/main.rs \nnext"),
+             _ => panic!("expected completed path to submit"),
+         }
+     }
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs
 index b219097ee..192ca81a4 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs
@@ -32220,6 +32317,25 @@ index 03e761f4f..7cb797548 100644
  #[test]
  fn fullscreen_plan_indicator_keeps_the_cycle_hint_when_it_fits() {
      let mut composer = composer();
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs
+index 6ab2ea930..03538cd12 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs
+@@ -744,12 +744,12 @@ fn vim_replace_completion_preserves_suffix() {
+                 composer.sync_popups();
+                 assert_eq!(
+                     (composer.current_text(), composer.current_cursor()),
+-                    (format!("{path}  next"), path.len() + 1)
++                    (format!("@{path}  next"), path.len() + 2)
+                 );
+                 let _ = composer.handle_key_event(KeyEvent::from(KeyCode::Backspace));
+                 assert_eq!(
+                     (composer.current_text(), composer.current_cursor()),
+-                    (format!("{path} next"), path.len())
++                    (format!("@{path} next"), path.len() + 1)
+                 );
+             }
+         },
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
 index f75d17f57..c45392e23 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
@@ -32930,6 +33046,23 @@ index 4c455ed8c..900488803 100644
  }
 
  pub(crate) fn has_slash_command_prefix(
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__vim_replace_completion_suffix.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__vim_replace_completion_suffix.snap
+index f5b564d2e..5ec4e81d3 100644
+--- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__vim_replace_completion_suffix.snap
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__vim_replace_completion_suffix.snap
+@@ -3,10 +3,10 @@ source: tui/src/bottom_pane/chat_composer.rs
+ expression: terminal.backend()
+ ---
+ "                                                                                                    "
+-"› ma next                                                                                           "
+-"                                                                                                    "
++"  loading...                                                                                        "
+ "                                                                                                    "
+ "                                                                                                    "
++"› @ma next                                                                                          "
+ "                                                                                                    "
+ "                                                                                                    "
+ "                                                                                                    "
 diff --git a/codex-rs/tui/src/bottom_pane/textarea.rs b/codex-rs/tui/src/bottom_pane/textarea.rs
 index 6a21beba8..b0942a7cf 100644
 --- a/codex-rs/tui/src/bottom_pane/textarea.rs
@@ -58512,10 +58645,10 @@ index 000000000..1eeddb40c
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..0c95487c5
+index 000000000..dc1cbd2cc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2381 @@
+@@ -0,0 +1,2383 @@
 +mod access;
 +mod agents;
 +mod autonomy;
@@ -58527,6 +58660,7 @@ index 000000000..0c95487c5
 +mod expansion;
 +mod intercept;
 +mod inventory;
++mod mentions;
 +mod launch_snapshot;
 +mod operations;
 +mod peering;
@@ -58970,6 +59104,7 @@ index 000000000..0c95487c5
 +    registry.thread_lifecycle_contributor(extension.clone());
 +    registry.tool_lifecycle_contributor(extension.clone());
 +    registry.turn_lifecycle_contributor(extension.clone());
++    registry.turn_input_contributor(extension.clone());
 +    registry.tool_output_contributor(extension.clone());
 +    registry.approval_gate_contributor(extension.clone());
 +    registry.tool_spec_contributor(extension.clone());
@@ -68162,10 +68297,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..aabdd40fe
+index 000000000..759d9d628
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4724 @@
+@@ -0,0 +1,4782 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -72890,6 +73025,64 @@ index 000000000..aabdd40fe
 +    assert_eq!(command(core, "observer", "seen"), json!("replacement"));
 +    assert!(core.expansion.timers.lock().unwrap().is_empty());
 +}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_them() {
++    use codex_extension_api::TurnInputContext;
++    use codex_extension_api::TurnInputContributor;
++    use codex_protocol::user_input::UserInput;
++    let Some(mut fixture) = fixture(&[Package {
++        id: "mentions",
++        capabilities: &["input"],
++        manifest: json!({}),
++        source: "export default api => { api.intercept('mention', {match: {path: 'secret.txt'}}, () => ({deny: 'secret'})); api.intercept('mention', {match: {path: 'old.txt'}}, (e, next) => next({...e, path: 'new.txt'})); }",
++    }]) else {
++        return;
++    };
++    let _manager = attach_thread(&mut fixture).await;
++    let repository = fixture.lead.host.repository.clone();
++    for (name, text) in [
++        ("plain.txt", "plain".to_owned()),
++        ("secret.txt", "hidden".to_owned()),
++        ("old.txt", "old".to_owned()),
++        ("new.txt", "new".to_owned()),
++        ("big.txt", "x".repeat(300_000)),
++        ("spaced name.txt", "spaced".to_owned()),
++    ] {
++        std::fs::write(repository.join(name), text).unwrap();
++    }
++    let thread_store = ExtensionData::new("thread");
++    thread_store.insert(fixture.lead.clone());
++    let input = TurnInputContext {
++        turn_id: "turn".into(),
++        user_input: vec![UserInput::Text {
++            text: "see @plain.txt, @secret.txt and @old.txt @big.txt @missing.txt me@plain.txt @\"spaced name.txt\""
++                .into(),
++            text_elements: Vec::new(),
++        }],
++        environments: Vec::new(),
++    };
++    let fragments = mods(&fixture.core)
++        .contribute(
++            input,
++            None,
++            &ExtensionData::new("session"),
++            &thread_store,
++            &ExtensionData::new("turn"),
++        )
++        .await
++        .iter()
++        .map(|fragment| fragment.render())
++        .collect::<Vec<_>>();
++    assert_eq!(
++        fragments,
++        [
++            "<mentioned_file>\n<path>plain.txt</path>\nplain\n</mentioned_file>",
++            "<mentioned_file>\n<path>new.txt</path>\nnew\n</mentioned_file>",
++            "<mentioned_file>\n<path>spaced name.txt</path>\nspaced\n</mentioned_file>",
++        ]
++    );
++}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
 index 000000000..6bf58ecf9
@@ -73486,6 +73679,162 @@ index 000000000..1dbd7f502
 +        );
 +        std::os::unix::fs::symlink("../escape", code.join("escape")).unwrap();
 +        assert!(capture(&code).is_err());
++    }
++}
+diff --git a/codex-rs/ext/omd/src/mods/mentions.rs b/codex-rs/ext/omd/src/mods/mentions.rs
+new file mode 100644
+index 000000000..26457915e
+--- /dev/null
++++ b/codex-rs/ext/omd/src/mods/mentions.rs
+@@ -0,0 +1,150 @@
++use super::*;
++use codex_extension_api::ContentItemKind;
++use codex_extension_api::ContextualUserFragment;
++use codex_extension_api::ExtensionMetrics;
++use codex_extension_api::TurnInputContext;
++use codex_extension_api::TurnInputContributor;
++use codex_protocol::user_input::UserInput;
++
++const MENTIONS: usize = 16;
++const MENTION_BYTES: u64 = 256 * 1024;
++
++struct MentionedFile {
++    path: String,
++    contents: String,
++}
++
++impl ContextualUserFragment for MentionedFile {
++    fn role(&self) -> &'static str {
++        "user"
++    }
++
++    fn content_kind(&self) -> ContentItemKind {
++        ContentItemKind("mentions.file".to_string())
++    }
++
++    fn markers(&self) -> (&'static str, &'static str) {
++        Self::type_markers()
++    }
++
++    fn type_markers() -> (&'static str, &'static str) {
++        ("<mentioned_file>", "</mentioned_file>")
++    }
++
++    fn body(&self) -> String {
++        format!("\n<path>{}</path>\n{}\n", self.path, self.contents)
++    }
++}
++
++/// Workspace-relative `@path` and `@"quoted path"` mentions in the submitted text that name existing files, in order.
++pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Vec<String> {
++    let mut names = Vec::new();
++    for item in input {
++        let UserInput::Text { text, .. } = item else {
++            continue;
++        };
++        for (index, _) in text.match_indices('@') {
++            if !text[..index].chars().next_back().is_none_or(char::is_whitespace) {
++                continue;
++            }
++            let rest = &text[index + 1..];
++            let name = match rest.strip_prefix('"') {
++                Some(quoted) => match quoted.find('"') {
++                    Some(end) => &quoted[..end],
++                    None => continue,
++                },
++                None => rest
++                    .split(char::is_whitespace)
++                    .next()
++                    .unwrap_or_default()
++                    .trim_end_matches(|c: char| ",.;:!?)]}'\"`".contains(c)),
++            };
++            let name = name.trim_start_matches("./");
++            if names.len() < MENTIONS
++                && !names.iter().any(|known| known == name)
++                && codex_omd::workspace_path(repository, name).is_ok_and(|path| path.is_file())
++            {
++                names.push(name.to_owned());
++            }
++        }
++    }
++    names
++}
++
++impl Mods {
++    /// The path `mention` interceptors settle on; `None` when one denied the read or the chain failed.
++    async fn mention(&self, lead: &Arc<Lead>, name: String) -> Option<String> {
++        let runtime = self.input_runtime.clone();
++        let required = tokio::task::spawn_blocking(move || {
++            runtime.lock().ok().map(|runtime| runtime.intercepts("mention"))
++        })
++        .await
++        .ok()??;
++        let Some(required) = required else {
++            return Some(name);
++        };
++        let thread = lead.thread.to_string();
++        let chain = intercept::chain(
++            self.core.clone(),
++            lead.clone(),
++            self.input_runtime.clone(),
++            "mention",
++            required,
++            json!({"thread_id": thread, "path": name}),
++            json!({"caller": "user", "thread_id": thread}),
++            Arc::new(AtomicBool::new(false)),
++            |input| Ok(json!({"path": input["path"]})),
++        )
++        .await
++        .ok()?;
++        chain.result["path"].as_str().map(str::to_owned)
++    }
++}
++
++impl TurnInputContributor for Mods {
++    fn contribute<'a>(
++        &'a self,
++        input: TurnInputContext<'a>,
++        _metrics: Option<Arc<dyn ExtensionMetrics>>,
++        _session_store: &'a ExtensionData,
++        thread_store: &'a ExtensionData,
++        _turn_store: &'a ExtensionData,
++    ) -> ExtensionFuture<'a, Vec<Box<dyn ContextualUserFragment + Send>>> {
++        Box::pin(async move {
++            let Some(lead) = thread_store.get::<Lead>() else {
++                return Vec::new();
++            };
++            let names = mentioned(&input.user_input, &lead.host.repository);
++            if names.is_empty() {
++                return Vec::new();
++            }
++            let Ok(authority) =
++                crate::workspace_operations::WorkspaceAuthority::for_lead(&lead).await
++            else {
++                return Vec::new();
++            };
++            let mut fragments: Vec<Box<dyn ContextualUserFragment + Send>> = Vec::new();
++            for name in names {
++                let Some(path) = self.mention(&lead, name).await else {
++                    continue;
++                };
++                let small = codex_omd::workspace_path(&lead.host.repository, &path)
++                    .and_then(std::fs::metadata)
++                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MENTION_BYTES);
++                let read = small
++                    .then(|| authority.call("workspace.read", json!({"paths": [path]}), || true))
++                    .and_then(Result::ok);
++                if let Some(contents) = read
++                    .as_ref()
++                    .and_then(|read| read["files"][&path]["text"].as_str())
++                {
++                    fragments.push(Box::new(MentionedFile {
++                        contents: contents.to_owned(),
++                        path,
++                    }));
++                }
++            }
++            fragments
++        })
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
@@ -96464,10 +96813,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..a1e64942a
+index 000000000..c4d8142d3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5651 @@
+@@ -0,0 +1,5693 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -96865,6 +97214,9 @@ index 000000000..a1e64942a
 +    "user_submissions_v1",
 +    "terminal_raster_v1",
 +    "svg_assets_v1",
++    "composer_key_v1",
++    "completion_tokens_v1",
++    "mention_read_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -97169,7 +97521,9 @@ index 000000000..a1e64942a
 +    ("compaction", "compaction"),
 +    ("elicitation", "approvals"),
 +    ("composer_edit", "composer"),
++    ("composer_key", "composer"),
 +    ("component_change", "terminal"),
++    ("mention", "input"),
 +];
 +pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
 +    "prompt",
@@ -97584,6 +97938,9 @@ index 000000000..a1e64942a
 +    }
 +    if !registrations.virtual_reads.is_empty() {
 +        capabilities.insert("virtual_reads".to_owned());
++    }
++    if !registrations.completions.is_empty() {
++        capabilities.insert("composer".to_owned());
 +    }
 +    for interceptor in &registrations.interceptors {
 +        capabilities.extend(
@@ -98832,6 +99189,19 @@ index 000000000..a1e64942a
 +    interceptors: Vec<ModInterceptor>,
 +    #[serde(default)]
 +    agents: Vec<ModAgent>,
++    #[serde(default)]
++    completions: Vec<ModCompletion>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++struct ModCompletion {
++    trigger: String,
++}
++
++/// One ASCII punctuation character that the native `@`, `/` and `$` completions don't own.
++fn completion_trigger(trigger: &str) -> bool {
++    matches!(trigger.as_bytes(), [byte] if byte.is_ascii_punctuation() && !b"@/$".contains(byte))
 +}
 +
 +#[derive(Deserialize)]
@@ -99155,6 +99525,7 @@ index 000000000..a1e64942a
 +                    .keys()
 +                    .any(|method| format!("{}.{}", contract.name, method) == name)
 +            }) => {}
++        "completion" if !loaded.registrations.completions.is_empty() => {}
 +        e if loaded
 +            .registrations
 +            .events
@@ -99181,6 +99552,7 @@ index 000000000..a1e64942a
 +                        | "agent_offers"
 +                        | "admission"
 +                        | "composer_edit"
++                        | "composer_key"
 +                        | "component_change"
 +                )
 +            )
@@ -100530,6 +100902,19 @@ index 000000000..a1e64942a
 +            ));
 +        }
 +        resources::validate_registrations(package, &registrations.virtual_reads)?;
++        let triggers = registrations
++            .completions
++            .iter()
++            .map(|completion| completion.trigger.as_str())
++            .collect::<BTreeSet<_>>();
++        if !registrations.completions.is_empty()
++            && (!has("composer")
++                || registrations.completions.len() > 4
++                || triggers.len() != registrations.completions.len()
++                || !triggers.iter().all(|trigger| completion_trigger(trigger)))
++        {
++            return Err(failure("invalid_completion_registration"));
++        }
 +        let mut contract_ids = BTreeSet::new();
 +        for contract in &registrations.contracts {
 +            let id = crate::ContractDocument::parse(contract)
@@ -101882,7 +102267,11 @@ index 000000000..a1e64942a
 +    pub fn registered(&self, id: &str, event: &str) -> bool {
 +        self.loaded
 +            .get(id)
-+            .is_some_and(|m| m.error.is_none() && m.registrations.events.iter().any(|e| e == event))
++            .is_some_and(|m| {
++                m.error.is_none()
++                    && (m.registrations.events.iter().any(|e| e == event)
++                        || event == "completion" && !m.registrations.completions.is_empty())
++            })
 +    }
 +
 +    /// Read-only launch identity for `Events.terminal.input.identity`.
@@ -102001,6 +102390,8 @@ index 000000000..a1e64942a
 +            "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
 +            "intercept.input": {"thread_id":"observe_only","text":"replaceable","revision":"observe_only","attachments":"observe_only","elements":"observe_only"},
 +            "intercept.composer_edit": {"source":"observe_only","caller":"observe_only","revision":"observe_only","edit":"replaceable"},
++            "intercept.composer_key": {"key":"replaceable","text":"observe_only","revision":"observe_only","cursor":"observe_only"},
++            "intercept.mention": {"thread_id":"observe_only","path":"replaceable"},
 +            "intercept.component_change": {"kind":"observe_only","id":"observe_only","from":"observe_only","to":"replaceable","origin":"observe_only"},
 +            "intercept.model_request": {"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable","model":"observe_only","provider":"observe_only","effort":"replaceable","sections":"replaceable","tools":"observe_only"},
 +            "intercept.response_stream": {"request_id":"observe_only","scope":"observe_only","synthetic":"observe_only","kind":"observe_only","index":"observe_only","item_id":"observe_only","protected":"observe_only","call_id":"observe_only","format":"observe_only","text":"replaceable","tool":"replaceable","arguments":"replaceable","status":"observe_only","usage":"observe_only"},            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
@@ -103416,10 +103807,10 @@ index 000000000..41f123b51
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..fb8a76c46
+index 000000000..994c793e6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1836 @@
+@@ -0,0 +1,1909 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -103689,6 +104080,8 @@ index 000000000..fb8a76c46
 +        "peer_send" | "peer_receive" => &["data"],
 +        "compaction" => &["summary_prompt"],
 +        "composer_edit" => &["edit"],
++        "composer_key" => &["key"],
++        "mention" => &["path"],
 +        "component_change" => &["to"],
 +        _ => &[],
 +    };
@@ -103744,6 +104137,8 @@ index 000000000..fb8a76c46
 +        "agent_spawn" => spawn_request(input, before),
 +        "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
 +        "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
++        "composer_key" => input["key"] == before["key"] || composer_key(&input["key"]),
++        "mention" => mention_path(&input["path"]),
 +        "component_change" => component_change(&input["kind"], &input["to"]),
 +        "compaction" => {
 +            input["summary_prompt"] == before["summary_prompt"]
@@ -103769,6 +104164,37 @@ index 000000000..fb8a76c46
 +            .is_some_and(|offset| offset <= u64::from(u16::MAX)),
 +        _ => false,
 +    }
++}
++
++/// One printable character typed as is, or a key name such as `Left`, `F5` or `Ctrl+w`.
++fn composer_key(key: &Value) -> bool {
++    key.as_str().is_some_and(|key| {
++        let mut chars = key.chars();
++        if let (Some(character), None) = (chars.next(), chars.next()) {
++            return !character.is_control();
++        }
++        let mut parts = key.split('+').collect::<Vec<_>>();
++        let base = parts.pop().unwrap_or_default();
++        let order = ["Ctrl", "Alt", "Shift"];
++        let ordered = parts
++            .iter()
++            .map(|modifier| order.iter().position(|known| known == modifier))
++            .collect::<Option<Vec<_>>>()
++            .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]));
++        let function = base
++            .strip_prefix('F')
++            .and_then(|number| number.parse::<u8>().ok())
++            .is_some_and(|number| (1..=12).contains(&number) && base == format!("F{number}"));
++        let character = !parts.is_empty()
++            && matches!(base.as_bytes(), [byte] if byte.is_ascii_lowercase() || byte.is_ascii_digit());
++        ordered && (function || character || super::view::MOD_NAMED_KEYS.contains(&base))
++    })
++}
++
++/// Workspace containment and read permission are enforced when the host reads the path.
++fn mention_path(path: &Value) -> bool {
++    path.as_str()
++        .is_some_and(|path| !path.is_empty() && path.len() <= 4096 && !path.contains('\0'))
 +}
 +
 +/// A draft edit may change only its text.
@@ -104043,6 +104469,13 @@ index 000000000..fb8a76c46
 +        "composer_edit" => {
 +            deny || object.is_some_and(|object| object.len() == 1)
 +                && composer_edit(&result["edit"], &input["edit"])
++        }
++        "composer_key" => {
++            deny || object.is_some_and(|object| object.len() == 1)
++                && (result["key"] == input["key"] || composer_key(&result["key"]))
++        }
++        "mention" => {
++            deny || object.is_some_and(|object| object.len() == 1) && mention_path(&result["path"])
 +        }
 +        "component_change" => {
 +            let key = if input["kind"] == "focus" {
@@ -105071,6 +105504,37 @@ index 000000000..fb8a76c46
 +                    .map(|interceptor| interceptor.required)
 +            })
 +            .max()
++    }
++
++    /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.
++    pub fn intercept_held(
++        &mut self,
++        surface: &str,
++        input: Value,
++        origin: Value,
++        active: &dyn Fn() -> bool,
++        core: &mut dyn FnMut(Value) -> Result<Value>,
++    ) -> Result<Option<Value>> {
++        let Some(required) = self.intercepts(surface) else {
++            return Ok(None);
++        };
++        let chain = intercept(
++            &mut Access::Held(self),
++            &mut |_, call| {
++                Err(failure(format!(
++                    "host_operation_unavailable: {surface} interceptors run without host operations ({})",
++                    call.operation
++                )))
++            },
++            &mut Core::Call(core),
++            surface,
++            required,
++            input,
++            origin,
++            active,
++            &InvocationScope::default(),
++        )?;
++        Ok(Some(chain.result))
 +    }
 +
 +    pub(super) fn may_intercept(&self, surface: &str, input: &Value) -> bool {
@@ -110403,10 +110867,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..45c3c390a
+index 000000000..51968d54c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,829 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -110480,6 +110944,8 @@ index 000000000..45c3c390a
 +registrations.services = [];
 +registrations.virtual_reads = [];
 +registrations.agents = [];
++registrations.completions = [];
++const completers = new Map();
 +const serviceHandlers = new Map();
 +const virtualReaders = new Map();
 +const updates = [];
@@ -110944,6 +111410,15 @@ index 000000000..45c3c390a
 +    unique(virtualReaders, definition.scheme, handler);
 +    registrations.virtual_reads.push(structuredCloneFallback(definition));
 +  },
++  completion(options, handler) {
++    if (!activating) throw new Error('completion_registration_outside_activation');
++    requireCapability('composer');
++    for (const key of Object.keys(options ?? {})) if (key !== 'trigger') throw new Error('unsupported_completion_option: ' + key);
++    const trigger = options?.trigger;
++    if (typeof trigger !== 'string' || !/^[!-~]$/.test(trigger) || /[\\w@/$]/.test(trigger)) throw new Error('invalid_completion_trigger: ' + trigger);
++    unique(completers, trigger, handler);
++    registrations.completions.push({ trigger });
++  },
 +  command(name, handler, options = {}) {
 +    if (!activating) throw new Error('command_registration_outside_activation');
 +    requireCapability('commands');
@@ -111080,7 +111555,7 @@ index 000000000..45c3c390a
 +    },
 +  }),
 +});
-+globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
++globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
 +  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
 +  pending: () => pending, ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
@@ -111140,7 +111615,7 @@ index 000000000..45c3c390a
 +  await mod.evaluate({ timeout: request.hook_budget_ms });
 +  context.__activate = mod.namespace.default;
 +  const dispatch = moduleFor(`
-+    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
++    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, registrations, request } = globalThis.__omd;
 +    if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
 +    const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 +    await globalThis.__activate(activation);
@@ -111152,6 +111627,7 @@ index 000000000..45c3c390a
 +        : request.event === 'command' ? commands.get(request.name)
 +        : request.event === 'virtual_read' ? virtualReaders.get(request.name)
 +        : request.event === 'service' ? serviceHandlers.get(request.name)
++        : request.event === 'completion' && request.payload?.kind === 'token' ? completers.get(request.payload.trigger)
 +        : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
 +      if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
 +      if (handler) value = await handler(request.payload) ?? null;
@@ -122182,10 +122658,10 @@ index 000000000..63054c349
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 000000000..6cf3616c8
+index 000000000..ff3b4d399
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,122 @@
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
@@ -122224,6 +122700,9 @@ index 000000000..6cf3616c8
 +    "command_config_middleware_v1",
 +    "admission_api_policy_v1",
 +    "state_scopes_v1",
++    "composer_key_v1",
++    "completion_tokens_v1",
++    "mention_read_v1",
 +];
 +
 +#[test]
@@ -122289,6 +122768,7 @@ index 000000000..6cf3616c8
 +            "tools",
 +            "replacements",
 +            "interceptors",
++            "completions",
 +        ]
 +        .iter()
 +        .any(|kind| {
@@ -126297,10 +126777,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..046513e26
+index 000000000..7c2d11fa3
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5177 @@
+@@ -0,0 +1,5245 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -129786,6 +130266,74 @@ index 000000000..046513e26
 +    .unwrap();
 +    let chains = runtime.lock().unwrap().status()["chains"].to_string();
 +    assert!(chains.contains("host_result_limit"), "{chains}");
++}
++
++#[test]
++fn composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline() {
++    let (temp, _, _) = fixture(
++        "export default api => { api.intercept('composer_key', {match: {key: 'a'}}, (e, next) => next({...e, key: 'Left'})); api.intercept('composer_key', {match: {key: 'w'}}, () => ({key: 'Ctrl+w'})); api.intercept('composer_key', {match: {key: 'q'}}, () => ({deny: 'no'})); api.intercept('composer_key', {match: {key: 'z'}}, () => ({key: 'Ctrl+'})); api.intercept('composer_key', {match: {key: 's'}}, () => { for (let i = 0; i < 1e10; i++); return {key: 'x'}; }); }",
++        &["composer"],
++    );
++    let mut runtime = host(&temp);
++    let mut run = |key: &str, active: &dyn Fn() -> bool| {
++        runtime.intercept_held(
++            "composer_key",
++            json!({"key": key, "text": key, "revision": 1, "cursor": 0}),
++            json!({"caller": "user"}),
++            active,
++            &mut |effective| Ok(json!({"key": effective["key"]})),
++        )
++    };
++    assert_eq!(run("a", &|| true).unwrap().unwrap()["key"], "Left");
++    assert_eq!(run("w", &|| true).unwrap().unwrap()["key"], "Ctrl+w");
++    assert_eq!(run("b", &|| true).unwrap().unwrap()["key"], "b");
++    assert_eq!(run("q", &|| true).unwrap().unwrap()["deny"], "no");
++    assert!(
++        run("z", &|| true).map_or(true, |result| result.unwrap()["key"] != "Ctrl+"),
++        "an invalid key never reaches the composer"
++    );
++    let started = std::time::Instant::now();
++    let deadline = started + std::time::Duration::from_millis(50);
++    assert!(run("s", &|| std::time::Instant::now() < deadline).is_err());
++    assert!(started.elapsed() < std::time::Duration::from_millis(500));
++}
++
++#[test]
++fn completion_triggers_are_bounded_and_route_the_completion_event() {
++    let (temp, _, _) = fixture(
++        "export default api => { api.completion({trigger: ':'}, e => ({items: [{insert: e.query}]})); }",
++        &["composer"],
++    );
++    let mut runtime = host(&temp);
++    assert!(runtime.registered("fixture", "completion"));
++    let generation = runtime.generation();
++    assert_eq!(
++        runtime
++            .invoke(
++                "fixture",
++                generation,
++                "completion",
++                "",
++                json!({"kind": "token", "trigger": ":", "query": "ro", "line": ":ro"}),
++            )
++            .unwrap(),
++        json!({"items": [{"insert": "ro"}]})
++    );
++    assert_eq!(
++        runtime.status()["mods"][0]["registrations"]["completions"],
++        json!([{"trigger": ":"}])
++    );
++    let (temp, _, _) = fixture(
++        "export default api => { for (const trigger of [':', '#', '!', '%', '^']) api.completion({trigger}, () => null); }",
++        &["composer"],
++    );
++    let status = host(&temp).status();
++    assert!(
++        status["mods"][0]["error"]
++            .to_string()
++            .contains("invalid_completion_registration"),
++        "{status}"
++    );
 +}
 +
 +#[test]
@@ -140874,10 +141422,10 @@ index 000000000..66ed2ea5a
 +  Oh My Diff · mod status unavailable · GPT-5.6-Sol default · /tmp/project
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 000000000..ae0864a33
+index 000000000..56ba8e6ca
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,422 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -141014,6 +141562,39 @@ index 000000000..ae0864a33
 +            text,
 +        });
 +        Ok(())
++    }
++
++    /// Passes a typed key through `composer_key` interceptors; `None` when one dropped it. Paste bursts and IME text pass untouched.
++    pub(super) fn mod_composer_key(&mut self, key: KeyEvent) -> Option<KeyEvent> {
++        if self.is_in_paste_burst() || matches!(key.code, KeyCode::Char(c) if !c.is_ascii()) {
++            return Some(key);
++        }
++        let Some((name, text)) = crate::mod_ui::composer_key_name(key) else {
++            return Some(key);
++        };
++        let effective = crate::mod_runtime::composer_key(&name, || {
++            let text = text.filter(|_| !self.draft.textarea.is_vim_normal_mode());
++            json!({"key": name, "text": text, "revision": self.mod_draft_sync(), "cursor": self.draft.textarea.cursor()})
++        });
++        match effective {
++            Ok(Some(effective)) if effective == name => Some(key),
++            Ok(Some(effective)) => Some(
++                crate::mod_ui::composer_key_event(&effective)
++                    .map_or(key, |rewritten| KeyEvent { kind: key.kind, ..rewritten }),
++            ),
++            Ok(None) => None,
++            Err(error) => {
++                crate::mod_ui::notice(
++                    "omd",
++                    Some("composer_key"),
++                    "warning",
++                    crate::mod_ui::NoticePlacement::Status,
++                    &format!("Key interception skipped: {error}"),
++                    std::time::Duration::from_secs(5),
++                );
++                Some(key)
++            }
++        }
 +    }
 +
 +    /// Passes a native fill through `composer_edit` interceptors; `None` when one refused it.
@@ -149782,10 +150363,10 @@ index 000000000..9c07cf291
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..6fa4c2189
+index 000000000..4c42101df
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1534 @@
+@@ -0,0 +1,1565 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -150883,6 +151464,37 @@ index 000000000..6fa4c2189
 +    match result["deny"].as_str() {
 +        Some(reason) => Err(format!("composer_edit_denied: {reason}")),
 +        None => Ok(result["edit"].clone()),
++    }
++}
++
++const KEY_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
++
++/// Runs `composer_key` interceptors within the keystroke budget: `Ok(None)` drops the key, a busy or slow chain keeps it.
++pub(crate) fn composer_key(key: &str, input: impl FnOnce() -> Value) -> Result<Option<String>, String> {
++    let original = Some(key.to_owned());
++    let Some(runtime) = lock_within(&HOST, std::time::Duration::ZERO).and_then(|host| host.clone())
++    else {
++        return Ok(original);
++    };
++    let Some(mut host) = lock_within(&runtime, std::time::Duration::ZERO)
++        .filter(|host| host.intercepts("composer_key").is_some())
++    else {
++        return Ok(original);
++    };
++    let input = input();
++    let deadline = std::time::Instant::now() + KEY_BUDGET;
++    let thread = crate::mod_surface::current_thread();
++    match host.intercept_held(
++        "composer_key",
++        input,
++        serde_json::json!({"caller": "user", "thread_id": thread}),
++        &|| std::time::Instant::now() < deadline,
++        &mut |effective| Ok(serde_json::json!({"key": effective["key"]})),
++    ) {
++        Ok(None) => Ok(original),
++        Ok(Some(result)) if result["deny"].is_string() => Ok(None),
++        Ok(Some(result)) => Ok(result["key"].as_str().map(str::to_owned)),
++        Err(error) => Err(error.to_string()),
 +    }
 +}
 +
@@ -152400,10 +153012,10 @@ index 000000000..89bc25480
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..788f4383e
+index 000000000..26718477f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,980 @@
+@@ -0,0 +1,1024 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -152470,6 +153082,7 @@ index 000000000..788f4383e
 +    events: BTreeSet<String>,
 +    completers: BTreeSet<String>,
 +    completion_owner: bool,
++    triggers: BTreeMap<String, String>,
 +    view: Option<(usize, Option<&'static str>, bool)>,
 +    queues: BTreeMap<String, NotificationQueue>,
 +    requests: BTreeMap<String, NotificationQueue>,
@@ -152592,6 +153205,34 @@ index 000000000..788f4383e
 +        .filter_map(|item| item["id"].as_str().map(str::to_owned))
 +        .collect();
 +    state.completion_owner = mods.iter().any(|item| registers(item, "replacements"));
++    let mut triggers = BTreeMap::new();
++    for item in &mods {
++        let id = item["id"].as_str().unwrap_or_default();
++        for completion in item["registrations"]["completions"]
++            .as_array()
++            .into_iter()
++            .flatten()
++        {
++            let trigger = completion["trigger"].as_str().unwrap_or_default();
++            match triggers.get(trigger) {
++                None => {
++                    triggers.insert(trigger.to_owned(), id.to_owned());
++                }
++                Some(owner) if state.triggers.get(trigger) != Some(owner) => {
++                    crate::mod_ui::notice(
++                        id,
++                        Some("completion_trigger"),
++                        "warning",
++                        crate::mod_ui::NoticePlacement::Status,
++                        &format!("{id}: completion trigger {trigger} is already completed by {owner}"),
++                        Duration::from_secs(10),
++                    );
++                }
++                Some(_) => {}
++            }
++        }
++    }
++    state.triggers = triggers;
 +    state.subscribers = mods
 +        .into_iter()
 +        .filter_map(|item| {
@@ -152797,10 +153438,18 @@ index 000000000..788f4383e
 +    });
 +}
 +
++/// The mod that completes tokens starting with `trigger`.
++pub(crate) fn trigger_owner(trigger: char) -> Option<String> {
++    with(|state| {
++        refresh_subscribers(state);
++        state.triggers.get(trigger.encode_utf8(&mut [0; 4])).cloned()
++    })
++}
++
++/// Asks for an argument's or a trigger token's rows; `query` is the token the popup filters on.
 +pub(crate) fn complete_arguments(
-+    command: String,
 +    query: String,
-+    line: String,
++    payload: Value,
 +    tx: crate::app_event_sender::AppEventSender,
 +) {
 +    use std::sync::atomic::Ordering;
@@ -152811,9 +153460,16 @@ index 000000000..788f4383e
 +        if COMPLETION.load(Ordering::Acquire) != generation {
 +            return;
 +        }
-+        let payload = json!({"kind": "argument", "command": command, "query": query, "line": line});
-+        let reply = match own_completer(&command) {
++        let owner = match payload["kind"].as_str() {
++            Some("token") => payload["trigger"]
++                .as_str()
++                .and_then(|trigger| trigger.chars().next())
++                .and_then(trigger_owner),
++            _ => payload["command"].as_str().and_then(own_completer),
++        };
++        let reply = match owner {
 +            Some(id) => crate::mod_runtime::invoke_event(&id, "completion", payload),
++            None if payload["kind"] == "token" => None,
 +            None => crate::mod_runtime::invoke_replacement("completion", payload),
 +        };
 +        let matches = reply
@@ -154222,10 +154878,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..53ff92884
+index 000000000..fd70cdf22
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4512 @@
+@@ -0,0 +1,4576 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -157676,6 +158332,70 @@ index 000000000..53ff92884
 +    }
 +    name.push_str(&base);
 +    Some(name)
++}
++
++/// Names a key for `composer_key`: a printable character as typed (also its text), any other key by its mod key name.
++pub(crate) fn composer_key_name(key: KeyEvent) -> Option<(String, Option<String>)> {
++    match key.code {
++        KeyCode::Char(character)
++            if !key
++                .modifiers
++                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
++        {
++            Some((character.to_string(), Some(character.to_string())))
++        }
++        _ => key_name(KeyEvent {
++            kind: KeyEventKind::Press,
++            ..key
++        })
++        .map(|name| (name, None)),
++    }
++}
++
++/// The key a `composer_key` result names: one character typed as is, or a mod key name.
++pub(crate) fn composer_key_event(name: &str) -> Option<KeyEvent> {
++    let mut characters = name.chars();
++    if let (Some(character), None) = (characters.next(), characters.next()) {
++        return Some(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
++    }
++    let mut parts = name.split('+').collect::<Vec<_>>();
++    let base = parts.pop()?;
++    let mut modifiers = KeyModifiers::NONE;
++    for part in parts {
++        modifiers |= match part {
++            "Ctrl" => KeyModifiers::CONTROL,
++            "Alt" => KeyModifiers::ALT,
++            "Shift" => KeyModifiers::SHIFT,
++            _ => return None,
++        };
++    }
++    let code = match base {
++        "Space" => KeyCode::Char(' '),
++        "Up" => KeyCode::Up,
++        "Down" => KeyCode::Down,
++        "Left" => KeyCode::Left,
++        "Right" => KeyCode::Right,
++        "Home" => KeyCode::Home,
++        "End" => KeyCode::End,
++        "PageUp" => KeyCode::PageUp,
++        "PageDown" => KeyCode::PageDown,
++        "Delete" => KeyCode::Delete,
++        "Insert" => KeyCode::Insert,
++        "Tab" if modifiers.contains(KeyModifiers::SHIFT) => KeyCode::BackTab,
++        "Tab" => KeyCode::Tab,
++        "Enter" => KeyCode::Enter,
++        "Esc" => KeyCode::Esc,
++        "Backspace" => KeyCode::Backspace,
++        function if function.starts_with('F') => KeyCode::F(function[1..].parse().ok()?),
++        character => {
++            let mut characters = character.chars();
++            match (characters.next(), characters.next()) {
++                (Some(character), None) => KeyCode::Char(character),
++                _ => return None,
++            }
++        }
++    };
++    Some(KeyEvent::new(code, modifiers))
 +}
 +
 +pub(crate) fn action_for(view: &ModView, key: KeyEvent) -> Option<(String, ModKeyAction)> {

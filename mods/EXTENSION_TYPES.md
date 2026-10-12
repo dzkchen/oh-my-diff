@@ -69,6 +69,10 @@ contains only the packages labeled `bundled` below.
 | `approval_guard@1.0.0` | `mod` | `mods/examples/approval_guard` | Tightens live native approval decisions before hooks and automatic review, which hooks cannot force. |
 | `ghost_history@1.0.0` | `mod` | `mods/examples/ghost_history` | Suggests the rest of a recent prompt as revision-bound ghost text from draft change events, which skills and hooks cannot draw. |
 | `paste_tidy@1.0.0` | `mod` | `mods/examples/paste_tidy` | Rewrites or refuses pasted draft text through the composer_edit interceptor chain before it reaches the draft. |
+| `key_remap@1.0.0` | `mod` | `mods/examples/key_remap` | Rewrites matched keystrokes through the composer_key interceptor chain before the prompt box applies them. |
+| `input_guard@1.0.0` | `mod` | `mods/examples/input_guard` | Drops matched keystrokes through the composer_key interceptor chain before the prompt box applies them. |
+| `shortcodes@1.0.0` | `mod` | `mods/examples/shortcodes` | Supplies composer completion rows for its own token triggers, which skills and hooks cannot add to the prompt box. |
+| `mention_guard@1.0.0` | `mod` | `mods/examples/mention_guard` | Redirects or refuses the host's read of @-mentioned files through the mention interceptor chain. |
 | `approval_delegate@1.0.0` | `mod` | `mods/examples/approval_delegate` | Approves routine check commands inside a user-delegated native approval grant, which hooks and skills cannot hold. |
 | `admission_guard@1.0.0` | `mod` | `mods/examples/admission_guard` | Refuses or restricts other mods at load and guards host requests under a user-granted policy, which hooks and skills cannot do. |
 | `command_curator@1.0.0` | `mod` | `mods/examples/command_curator` | Rewrites slash-command and settings metadata, arguments and writes through host continuations that hooks and skills cannot reach. |

@@ -129,7 +129,10 @@
         "lifecycle_events_v1",
         "user_submissions_v1",
         "terminal_raster_v1",
-        "svg_assets_v1"
+        "svg_assets_v1",
+        "composer_key_v1",
+        "completion_tokens_v1",
+        "mention_read_v1"
       ],
       "status": "supported",
       "fixtures": [

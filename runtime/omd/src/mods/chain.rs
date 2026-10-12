@@ -267,6 +267,8 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "peer_send" | "peer_receive" => &["data"],
         "compaction" => &["summary_prompt"],
         "composer_edit" => &["edit"],
+        "composer_key" => &["key"],
+        "mention" => &["path"],
         "component_change" => &["to"],
         _ => &[],
     };
@@ -322,6 +324,8 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_spawn" => spawn_request(input, before),
         "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
         "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
+        "composer_key" => input["key"] == before["key"] || composer_key(&input["key"]),
+        "mention" => mention_path(&input["path"]),
         "component_change" => component_change(&input["kind"], &input["to"]),
         "compaction" => {
             input["summary_prompt"] == before["summary_prompt"]
@@ -347,6 +351,37 @@ fn component_change(kind: &Value, to: &Value) -> bool {
             .is_some_and(|offset| offset <= u64::from(u16::MAX)),
         _ => false,
     }
+}
+
+/// One printable character typed as is, or a key name such as `Left`, `F5` or `Ctrl+w`.
+fn composer_key(key: &Value) -> bool {
+    key.as_str().is_some_and(|key| {
+        let mut chars = key.chars();
+        if let (Some(character), None) = (chars.next(), chars.next()) {
+            return !character.is_control();
+        }
+        let mut parts = key.split('+').collect::<Vec<_>>();
+        let base = parts.pop().unwrap_or_default();
+        let order = ["Ctrl", "Alt", "Shift"];
+        let ordered = parts
+            .iter()
+            .map(|modifier| order.iter().position(|known| known == modifier))
+            .collect::<Option<Vec<_>>>()
+            .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]));
+        let function = base
+            .strip_prefix('F')
+            .and_then(|number| number.parse::<u8>().ok())
+            .is_some_and(|number| (1..=12).contains(&number) && base == format!("F{number}"));
+        let character = !parts.is_empty()
+            && matches!(base.as_bytes(), [byte] if byte.is_ascii_lowercase() || byte.is_ascii_digit());
+        ordered && (function || character || super::view::MOD_NAMED_KEYS.contains(&base))
+    })
+}
+
+/// Workspace containment and read permission are enforced when the host reads the path.
+fn mention_path(path: &Value) -> bool {
+    path.as_str()
+        .is_some_and(|path| !path.is_empty() && path.len() <= 4096 && !path.contains('\0'))
 }
 
 /// A draft edit may change only its text.
@@ -621,6 +656,13 @@ fn validate_result(
         "composer_edit" => {
             deny || object.is_some_and(|object| object.len() == 1)
                 && composer_edit(&result["edit"], &input["edit"])
+        }
+        "composer_key" => {
+            deny || object.is_some_and(|object| object.len() == 1)
+                && (result["key"] == input["key"] || composer_key(&result["key"]))
+        }
+        "mention" => {
+            deny || object.is_some_and(|object| object.len() == 1) && mention_path(&result["path"])
         }
         "component_change" => {
             let key = if input["kind"] == "focus" {
@@ -1649,6 +1691,37 @@ impl ModHost {
                     .map(|interceptor| interceptor.required)
             })
             .max()
+    }
+
+    /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.
+    pub fn intercept_held(
+        &mut self,
+        surface: &str,
+        input: Value,
+        origin: Value,
+        active: &dyn Fn() -> bool,
+        core: &mut dyn FnMut(Value) -> Result<Value>,
+    ) -> Result<Option<Value>> {
+        let Some(required) = self.intercepts(surface) else {
+            return Ok(None);
+        };
+        let chain = intercept(
+            &mut Access::Held(self),
+            &mut |_, call| {
+                Err(failure(format!(
+                    "host_operation_unavailable: {surface} interceptors run without host operations ({})",
+                    call.operation
+                )))
+            },
+            &mut Core::Call(core),
+            surface,
+            required,
+            input,
+            origin,
+            active,
+            &InvocationScope::default(),
+        )?;
+        Ok(Some(chain.result))
     }
 
     pub(super) fn may_intercept(&self, surface: &str, input: &Value) -> bool {

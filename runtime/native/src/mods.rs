@@ -9,6 +9,7 @@ mod evidence;
 mod expansion;
 mod intercept;
 mod inventory;
+mod mentions;
 mod launch_snapshot;
 mod operations;
 mod peering;
@@ -452,6 +453,7 @@ pub(super) fn install(
     registry.thread_lifecycle_contributor(extension.clone());
     registry.tool_lifecycle_contributor(extension.clone());
     registry.turn_lifecycle_contributor(extension.clone());
+    registry.turn_input_contributor(extension.clone());
     registry.tool_output_contributor(extension.clone());
     registry.approval_gate_contributor(extension.clone());
     registry.tool_spec_contributor(extension.clone());

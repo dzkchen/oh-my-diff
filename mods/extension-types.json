@@ -189,6 +189,30 @@
       "why_mod": "Rewrites or refuses pasted draft text through the composer_edit interceptor chain before it reaches the draft."
     },
     {
+      "path": "mods/examples/key_remap",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Rewrites matched keystrokes through the composer_key interceptor chain before the prompt box applies them."
+    },
+    {
+      "path": "mods/examples/input_guard",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Drops matched keystrokes through the composer_key interceptor chain before the prompt box applies them."
+    },
+    {
+      "path": "mods/examples/shortcodes",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Supplies composer completion rows for its own token triggers, which skills and hooks cannot add to the prompt box."
+    },
+    {
+      "path": "mods/examples/mention_guard",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Redirects or refuses the host's read of @-mentioned files through the mention interceptor chain."
+    },
+    {
       "path": "mods/examples/approval_delegate",
       "extension_type": "mod",
       "role": "conformance_fixture",

@@ -113,11 +113,13 @@
     "intercepts:compaction": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:component_change": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:composer_edit": {"status":"frozen","consumer":{"path":"mods/examples/paste_tidy/index.ts","snippet":"api.intercept('composer_edit'"},"decision":"terminal.composer_drafts"},
+    "intercepts:composer_key": {"status":"experimental","reason":"Wave 1 surface shipped experimental in 1.0.0."},
     "intercepts:config_list": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_list'"},"decision":"terminal.commands_config"},
     "intercepts:config_set": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_set'"},"decision":"terminal.commands_config"},
     "intercepts:elicitation": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:host_operation": {"status":"frozen","consumer":{"path":"mods/examples/admission_guard/index.ts","snippet":"api.intercept('host_operation'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/index.ts","snippet":"api.intercept('input'"},"decision":"context.input"},
+    "intercepts:mention": {"status":"experimental","reason":"Wave 1 surface shipped experimental in 1.0.0."},
     "intercepts:model_request": {"status":"frozen","consumer":{"path":"mods/examples/kernel/index.ts","snippet":"api.intercept('model_request'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:model_send": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/index.ts","snippet":"api.intercept('model_send'"},"decision":"kernel.final_request_policy"},
     "intercepts:peer_receive": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
@@ -643,9 +645,9 @@
     {
       "id": "context.input",
       "group": "context_recovery",
-      "decision": "Submitted prompt: transform or deny",
-      "observe": "`intercept('input')` with the thread, text and attachment count",
-      "alter": "pass rewritten text to `next`, or return `{deny}`; interceptors compose in continuation order",
+      "decision": "Submitted prompt: transform or deny; redirect or skip `@` file reads",
+      "observe": "`intercept('input')` with the thread, text and attachment count; `intercept('mention')` with each `@` path the host is about to read",
+      "alter": "pass rewritten text or another workspace path to `next`, or return `{deny}`; interceptors compose in continuation order",
       "replace": null,
       "timing": "before native prompt hooks, skill/mention resolution and history, in TUI and exec",
       "ownership": "host: submission path, attachments, history and the visible notice",
@@ -658,13 +660,15 @@
         "events": [],
         "replacements": [],
         "intercepts": [
-          "input"
+          "input",
+          "mention"
         ],
         "operations": []
       },
       "evidence": [
         "rust:input_and_model_request_continuations_pass_downstream_results_or_deny",
-        "node:lifecycle events and interceptors require their capabilities"
+        "node:lifecycle events and interceptors require their capabilities",
+        "patch:mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_them"
       ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
@@ -1891,9 +1895,9 @@
     {
       "id": "terminal.completion",
       "group": "terminal",
-      "decision": "Composer mention completion",
-      "observe": "`completion` with the query and upstream candidates",
-      "alter": "reorder, filter or add workspace-relative paths; suggest a mod command's arguments from the mod that registered the command, else the owner",
+      "decision": "Composer mention, argument and token completion",
+      "observe": "`completion` with the query and upstream candidates, a mod command's arguments, or a token starting with a trigger registered by `api.completion`",
+      "alter": "reorder, filter or add workspace-relative paths; suggest a mod command's arguments from the mod that registered the command, else the owner; supply rows for the mod's own token triggers",
       "replace": "completion (exclusive)",
       "timing": "each `@` query result",
       "ownership": "mod: ranking; host: the popup, insertion and stale-result filtering",
@@ -1910,7 +1914,8 @@
         "operations": []
       },
       "evidence": [
-        "patch:completion_items_keep_mod_order_and_refuse_escaping_paths"
+        "patch:completion_items_keep_mod_order_and_refuse_escaping_paths",
+        "rust:completion_triggers_are_bounded_and_route_the_completion_event"
       ],
       "replace_note": null
     },
@@ -2336,7 +2341,7 @@
       "group": "terminal",
       "decision": "Revision-bound drafts, ghost suggestions and edit interception",
       "observe": "draft revisions, cursor, selection and attachment resources (`composer.read`), changes and suggestion outcomes (`composer`), submitted draft context (`input`) and prompt expansion by identity (`prompt_expanded`)",
-      "alter": "the draft at a known revision (`composer.write`), one ghost suggestion (`composer.suggest`) and every mod write or native fill (`composer_edit`)",
+      "alter": "the draft at a known revision (`composer.write`), one ghost suggestion (`composer.suggest`), every mod write or native fill (`composer_edit`) and each typed key before the composer applies it (`composer_key`, 50 ms per keystroke, fails open)",
       "replace": null,
       "timing": "writes apply only at the revision they name; suggestions clear on any edit, turn start, dialog or owner reload; change events are debounced to 250 ms",
       "ownership": "user: acceptance (move-right at the draft end or a click), dismissal and submission; host: revisions, owner-bound attachment resources and revocation; mods: suggestion and formatting policy",
@@ -2353,10 +2358,12 @@
           "composer.suggest"
         ],
         "intercepts": [
-          "composer_edit"
+          "composer_edit",
+          "composer_key"
         ]
       },
       "evidence": [
+        "rust:composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline",
         "patch:edits_compare_revisions_and_keep_cursor_and_selection",
         "patch:one_suggestion_shows_at_the_end_and_resolves_explicitly",
         "patch:mod_attachments_leave_with_their_owner"
