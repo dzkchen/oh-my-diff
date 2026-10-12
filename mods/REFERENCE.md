@@ -1048,8 +1048,12 @@ and publishes `{"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba",
 `terminal.blit {key, pixels: {...}}`. Sequence numbers start at 1 and increase
 for each publication. The child must not modify the buffer until stdin
 acknowledges `{"pixels": {"source": HANDLE, "sequence": N, "ready": true,
-"error": null}}`; an owned invalid descriptor or failed copy returns
-`ready: false` with an error. A failed copy does not consume the sequence, so
+"error": null}}`. The host sends a successful acknowledgement when the next
+frame should start, not right after the copy: it aims the next publication just
+before the following 16 ms tick, using the time the producer took from its
+previous acknowledgement to publish. A producer that renders on each
+acknowledgement shows fresh frames with one copy per shown frame. An owned
+invalid descriptor or failed copy returns `ready: false` with an error at once. A failed copy does not consume the sequence, so
 direct callers may retry the same publication. A managed producer's pending raw
 publication is retried while the process is active only for surface, layout and
 callback admission errors (`terminal_blit_unknown`, `terminal_blit_not_owned`,

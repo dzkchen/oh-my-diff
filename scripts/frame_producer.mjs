@@ -57,6 +57,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (message.pixels?.source === source && message.pixels?.sequence === sequence) {
     if (message.pixels.error) throw new Error(message.pixels.error);
     ready = message.pixels.ready;
+    render();
   }
 }).on('close', () => { mouse?.stdin.end('release\n'); setTimeout(() => process.exit(0), 100); });
 const start = performance.now();
@@ -64,6 +65,9 @@ let deadline = 0;
 function tick() {
   deadline += 1000 / 120;
   setTimeout(tick, Math.max(0, start + deadline - performance.now()));
+  render();
+}
+function render() {
   if (!boxed || !ready || (transport === 'raw' && fd === undefined)) return;
   sequence++;
   const created = Date.now() * 1e6, cpu = process.cpuUsage(), began = performance.now();

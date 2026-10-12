@@ -244,6 +244,7 @@ impl SurfaceCall {
     pub fn snapshot_pixels(
         &self,
         source: &crate::process_raster::PixelSource,
+        next: std::time::Instant,
     ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
         if !(self.validity.0)() {
             return Err("callback_cancelled_or_expired".into());
@@ -258,6 +259,7 @@ impl SurfaceCall {
                 &self.caller,
                 component,
                 source.clone(),
+                next,
             )
         };
         let pixels = if let Some(admission) = &self.lifetime.admission {

@@ -42981,7 +42981,7 @@ index 000000000..fd24245d9
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 000000000..a1d67abd8
+index 000000000..0b9e04e38
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
 @@ -0,0 +1,359 @@
@@ -43228,8 +43228,8 @@ index 000000000..a1d67abd8
 +            .and_then(|snapshot| snapshot.view.raster_size(key));
 +        let blit = client_surface::blit_request(caller, owner, size, arguments)?;
 +        let key = blit.key.clone();
-+        self.admit(&key, now, || {
-+            blit.checked(|source| call.snapshot_pixels(source))
++        self.admit(&key, now, |next| {
++            blit.checked(|source| call.snapshot_pixels(source, next))
 +                .map(|_| ())
 +        })
 +    }
@@ -43238,7 +43238,7 @@ index 000000000..a1d67abd8
 +        &self,
 +        key: &str,
 +        now: Instant,
-+        snapshot: impl FnOnce() -> Result<(), String>,
++        snapshot: impl FnOnce(Instant) -> Result<(), String>,
 +    ) -> Result<Value, String> {
 +        let state = self
 +            .0
@@ -43251,13 +43251,13 @@ index 000000000..a1d67abd8
 +        if let Some(reply) = Self::backpressure(&state, now) {
 +            return Ok(reply);
 +        }
-+        snapshot()?;
++        snapshot(state.1.max(now) + client_surface::BLIT_FRAME)?;
 +        Ok(Self::accept(&mut state, now))
 +    }
 +
 +    #[cfg(test)]
 +    fn pace(&self, key: String, now: Instant) -> Value {
-+        self.admit(&key, now, || Ok(())).unwrap()
++        self.admit(&key, now, |_| Ok(())).unwrap()
 +    }
 +
 +    fn backpressure((_, drained): &(u64, Instant), now: Instant) -> Option<Value> {
@@ -43346,7 +43346,7 @@ index 000000000..a1d67abd8
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_surface_tests.rs b/codex-rs/app-server/src/omd_surface_tests.rs
 new file mode 100644
-index 000000000..c1e1641dc
+index 000000000..148627587
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface_tests.rs
 @@ -0,0 +1,215 @@
@@ -43366,7 +43366,7 @@ index 000000000..c1e1641dc
 +    let (release, released) = std::sync::mpsc::channel();
 +    let copy = std::thread::spawn(move || {
 +        copying
-+            .admit("copying", now, || {
++            .admit("copying", now, |_| {
 +                started.send(()).unwrap();
 +                released.recv().unwrap();
 +                Ok(())
@@ -86863,10 +86863,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..d830b71bb
+index 000000000..383f5d5dc
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1369 @@
+@@ -0,0 +1,1371 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -87113,6 +87113,7 @@ index 000000000..d830b71bb
 +    pub fn snapshot_pixels(
 +        &self,
 +        source: &crate::process_raster::PixelSource,
++        next: std::time::Instant,
 +    ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
 +        if !(self.validity.0)() {
 +            return Err("callback_cancelled_or_expired".into());
@@ -87127,6 +87128,7 @@ index 000000000..d830b71bb
 +                &self.caller,
 +                component,
 +                source.clone(),
++                next,
 +            )
 +        };
 +        let pixels = if let Some(admission) = &self.lifetime.admission {
@@ -88238,7 +88240,7 @@ index 000000000..d830b71bb
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..002075643
+index 000000000..2b65a3b02
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
 @@ -0,0 +1,769 @@
@@ -88288,14 +88290,14 @@ index 000000000..002075643
 +        lifetime,
 +    };
 +    let source = serde_json::from_value(call.arguments["pixels"].clone()).unwrap();
-+    assert!(call.snapshot_pixels(&source).is_err());
++    assert!(call.snapshot_pixels(&source, std::time::Instant::now()).is_err());
 +    assert!(seen.lock().unwrap().is_empty());
 +    assert!(retained.get().is_none());
 +    cancelled.store(false, Ordering::Release);
-+    let accepted = call.snapshot_pixels(&source).unwrap();
++    let accepted = call.snapshot_pixels(&source, std::time::Instant::now()).unwrap();
 +    assert!(Arc::ptr_eq(retained.get().unwrap(), &accepted));
 +    assert_eq!(seen.lock().unwrap().len(), 1);
-+    assert!(call.snapshot_pixels(&source).is_err());
++    assert!(call.snapshot_pixels(&source, std::time::Instant::now()).is_err());
 +    assert_eq!(seen.lock().unwrap().len(), 1);
 +}
 +
@@ -115738,10 +115740,10 @@ index 000000000..f8b869378
 +}
 diff --git a/codex-rs/omd/src/process_raster.rs b/codex-rs/omd/src/process_raster.rs
 new file mode 100644
-index 000000000..d9a7f998b
+index 000000000..fca190f3a
 --- /dev/null
 +++ b/codex-rs/omd/src/process_raster.rs
-@@ -0,0 +1,773 @@
+@@ -0,0 +1,861 @@
 +use serde_json::Value;
 +use std::collections::BTreeMap;
 +use std::fs::File;
@@ -115754,6 +115756,8 @@ index 000000000..d9a7f998b
 +use std::sync::PoisonError;
 +use std::sync::atomic::AtomicU64;
 +use std::sync::atomic::Ordering;
++use std::time::Duration;
++use std::time::Instant;
 +
 +/// Accepts bounded input without blocking the UI thread.
 +pub type Sink = Arc<dyn Fn(Value) -> bool + Send + Sync>;
@@ -115777,6 +115781,9 @@ index 000000000..d9a7f998b
 +    file: File,
 +    sequence: u64,
 +    generation: Option<u64>,
++    /// When the last ready acknowledgement goes out, and how long the producer then takes to publish.
++    released: Option<Instant>,
++    lead: Duration,
 +}
 +
 +#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -115876,7 +115883,9 @@ index 000000000..d9a7f998b
 +    owner: &str,
 +    component: &str,
 +    source: PixelSource,
++    next: Instant,
 +) -> Result<Arc<PixelFrame>, String> {
++    let arrived = Instant::now();
 +    let _stage = crate::frame_metrics::stage("raw_snapshot");
 +    let key = key(thread, owner, component);
 +    let (sink, serial, buffer) = {
@@ -115939,13 +115948,32 @@ index 000000000..d9a7f998b
 +            return Err("terminal_blit_source_unavailable".into());
 +        }
 +        buffer.sequence = source.sequence;
++        if let Some(released) = buffer.released {
++            let lead = arrived
++                .saturating_duration_since(released)
++                .min(crate::client_surface::BLIT_FRAME);
++            buffer.lead = lead.max(buffer.lead - buffer.lead.saturating_sub(lead) / 8);
++        }
 +        Ok(Arc::new(PixelFrame::new(source.clone(), image)))
 +    })();
++    let release = next
++        .checked_sub(buffer.lead)
++        .filter(|release| result.is_ok() && *release > Instant::now());
++    buffer.released = Some(release.unwrap_or_else(Instant::now));
 +    drop(buffer);
-+    sink(
-+        serde_json::json!({"pixels": {"source": source.source, "sequence": source.sequence,
-+        "ready": result.is_ok(), "error": result.as_ref().err()}}),
-+    );
++    let ack = serde_json::json!({"pixels": {"source": source.source, "sequence": source.sequence,
++        "ready": result.is_ok(), "error": result.as_ref().err()}});
++    match release {
++        Some(release) => {
++            std::thread::spawn(move || {
++                std::thread::sleep(release.saturating_duration_since(Instant::now()));
++                sink(ack);
++            });
++        }
++        None => {
++            sink(ack);
++        }
++    }
 +    result
 +}
 +
@@ -116026,6 +116054,8 @@ index 000000000..d9a7f998b
 +                    file,
 +                    sequence: 0,
 +                    generation,
++                    released: None,
++                    lead: Duration::ZERO,
 +                })),
 +            );
 +        self.pixels = Some(source.clone());
@@ -116216,7 +116246,7 @@ index 000000000..d9a7f998b
 +        let (sender, receiver) = std::sync::mpsc::channel();
 +        let worker = std::thread::spawn(move || {
 +            sender.send(()).unwrap();
-+            snapshot(Some("copy-thread"), "copy-owner", "copy-frame", source)
++            snapshot(Some("copy-thread"), "copy-owner", "copy-frame", source, Instant::now())
 +        });
 +        receiver.recv().unwrap();
 +        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -116256,6 +116286,7 @@ index 000000000..d9a7f998b
 +                height: 1,
 +                sequence: 1,
 +            },
++            Instant::now(),
 +        )
 +        .unwrap();
 +        assert_eq!(other_frame.image.as_bytes(), &[4, 5, 6]);
@@ -116294,7 +116325,8 @@ index 000000000..d9a7f998b
 +                Some("foreign-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            )
 +            .is_err()
 +        );
@@ -116303,7 +116335,8 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "foreign-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            )
 +            .is_err()
 +        );
@@ -116313,7 +116346,8 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            ))
 +            .is_err()
 +        );
@@ -116323,6 +116357,7 @@ index 000000000..d9a7f998b
 +            "pixels-owner",
 +            "pixels-frame",
 +            source.clone(),
++            Instant::now(),
 +        )
 +        .unwrap();
 +        assert_eq!(frame.image.as_bytes(), &[1, 2, 3]);
@@ -116334,7 +116369,8 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            )
 +            .is_err()
 +        );
@@ -116350,7 +116386,8 @@ index 000000000..d9a7f998b
 +                PixelSource {
 +                    height: 0,
 +                    ..source.clone()
-+                }
++                },
++                Instant::now()
 +            )
 +            .is_err()
 +        );
@@ -116367,7 +116404,8 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            )
 +            .unwrap()
 +            .image
@@ -116381,7 +116419,8 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            )
 +            .is_err()
 +        );
@@ -116395,7 +116434,8 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source.clone()
++                source.clone(),
++                Instant::now()
 +            )
 +            .unwrap()
 +            .image
@@ -116425,10 +116465,60 @@ index 000000000..d9a7f998b
 +                Some("pixels-thread"),
 +                "pixels-owner",
 +                "pixels-frame",
-+                source
++                source,
++                Instant::now()
 +            )
 +            .is_err()
 +        );
++    }
++
++    #[test]
++    fn raw_acknowledgements_wait_until_the_producer_must_start_the_next_frame() {
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join("pixels");
++        let (sender, acks) = std::sync::mpsc::channel();
++        let mut binding = bind(
++            Some("paced-thread"),
++            "paced-owner",
++            vec![("paced-frame".into(), Role::Raster)],
++            Arc::new(move |value| sender.send((Instant::now(), value)).is_ok()),
++        );
++        let initialized = binding.pixels(&path, None).unwrap();
++        let handle = initialized["pixels"]["source"].as_str().unwrap().to_owned();
++        let mut source = PixelSource {
++            source: handle.clone(),
++            format: "rgb".into(),
++            width: 1,
++            height: 1,
++            sequence: 1,
++        };
++        std::fs::write(&path, [1, 2, 3]).unwrap();
++        let released = || PIXELS.lock().unwrap()[&handle].lock().unwrap().released;
++        let frame = crate::client_surface::BLIT_FRAME;
++        let snap = |source: &PixelSource, next| {
++            snapshot(
++                Some("paced-thread"),
++                "paced-owner",
++                "paced-frame",
++                source.clone(),
++                next,
++            )
++        };
++        let next = Instant::now() + frame * 3;
++        snap(&source, next).unwrap();
++        assert_eq!(released(), Some(next));
++        let (at, ack) = acks.recv().unwrap();
++        assert!(at >= next);
++        assert_eq!(ack["pixels"]["ready"], true);
++        std::thread::sleep(frame * 2);
++        source.sequence = 2;
++        let next = Instant::now() + frame * 3;
++        snap(&source, next).unwrap();
++        assert_eq!(released(), Some(next - frame));
++        assert!(acks.recv().unwrap().0 >= next - frame);
++        source.sequence = 3;
++        assert!(snap(&source, Instant::now()).is_ok());
++        assert_eq!(acks.try_recv().unwrap().1["pixels"]["sequence"], 3);
 +    }
 +
 +    #[test]
@@ -136700,7 +136790,7 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..2df17e7b1
+index 000000000..13e7881b2
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
 @@ -0,0 +1,2124 @@
@@ -137999,7 +138089,7 @@ index 000000000..2df17e7b1
 +                        crate::mod_ui::raster_size(key),
 +                        &call.arguments,
 +                        std::time::Instant::now(),
-+                        |source| call.snapshot_pixels(source),
++                        |source, next| call.snapshot_pixels(source, next),
 +                    )?;
 +                    if let Some(delay) =
 +                        crate::mod_raster::pending_delay(key, std::time::Instant::now())
@@ -142477,7 +142567,7 @@ index 000000000..786539c8e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..0ec62ab5c
+index 000000000..500ee1f77
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
 @@ -0,0 +1,688 @@
@@ -142758,7 +142848,7 @@ index 000000000..0ec62ab5c
 +            Some((4, 2)),
 +            &frame(color),
 +            at,
-+            |_| unreachable!(),
++            |_, _| unreachable!(),
 +        )
 +        .expect("queued")
 +    };
@@ -142798,7 +142888,7 @@ index 000000000..0ec62ab5c
 +        Some((4, 2)),
 +        &json!({"key": "raster-kitty", "rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
 +        later + crate::mod_raster::FRAME,
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    draw(later + crate::mod_raster::FRAME);
@@ -142820,7 +142910,7 @@ index 000000000..0ec62ab5c
 +        Some((6, 2)),
 +        &frame([0, 255, 0]),
 +        resized,
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    assert_eq!(
@@ -142872,7 +142962,7 @@ index 000000000..0ec62ab5c
 +        Some((4, 2)),
 +        &frame,
 +        start,
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    assert_eq!(
@@ -142933,7 +143023,7 @@ index 000000000..0ec62ab5c
 +            Some(size),
 +            &frame,
 +            start,
-+            |_| unreachable!(),
++            |_, _| unreachable!(),
 +        )
 +        .expect("queued");
 +        crate::mod_raster::rows(
@@ -143126,7 +143216,7 @@ index 000000000..0ec62ab5c
 +        Some((20, 5)),
 +        &json!({"key": "box-raster", "rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
 +        std::time::Instant::now(),
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("blit");
 +    crate::mod_raster::retain(&BTreeSet::new());
@@ -144567,10 +144657,10 @@ index 000000000..b6e0959f6
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..2400497ed
+index 000000000..475e6a9e9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,315 @@
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -144765,6 +144855,11 @@ index 000000000..2400497ed
 +    })
 +}
 +
++/// Forgets the drawn handles and tab bars while no layout is drawn; ratios and active tabs stay.
++pub(crate) fn hide() {
++    with(|state| state.last = Placement::default());
++}
++
 +pub(crate) fn tab_line(bar: &TabBar) -> Vec<(String, bool)> {
 +    bar.titles
 +        .iter()
@@ -144883,10 +144978,10 @@ index 000000000..2400497ed
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 000000000..0d6e33f22
+index 000000000..d6972010f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,119 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -144994,6 +145089,10 @@ index 000000000..0d6e33f22
 +    assert!(pointer(at(MouseEventKind::Up(MouseButton::Left), 30)));
 +    let placement = place(&layout, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("site:files/tree"), Some(Rect::new(0, 0, 30, 10)));
++    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
++    hide();
++    assert!(!pointer(at(MouseEventKind::Down(MouseButton::Left), 31)));
++    let placement = place(&layout, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +}
 +
@@ -145645,10 +145744,10 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..480766d95
+index 000000000..e53a5bb03
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,434 @@
+@@ -0,0 +1,441 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -145822,6 +145921,7 @@ index 000000000..480766d95
 +    now: Instant,
 +    snapshot: impl FnOnce(
 +        &codex_omd::process_raster::PixelSource,
++        Instant,
 +    ) -> Result<std::sync::Arc<codex_omd::process_raster::PixelFrame>, String>,
 +) -> Result<Value, String> {
 +    let mut update =
@@ -145855,6 +145955,7 @@ index 000000000..480766d95
 +            && raster.owner == caller
 +            && raster.binding == binding
 +    };
++    let mut next = now + FRAME;
 +    if matches!(update.content, BlitContent::Source(_)) {
 +        let mut rasters = rasters();
 +        if limited(&rasters) {
@@ -145865,9 +145966,14 @@ index 000000000..480766d95
 +            if !raster.queue.is_empty() {
 +                return Ok(backpressure(raster, now));
 +            }
++            next = raster
++                .applied
++                .filter(|applied| now.saturating_duration_since(*applied) < FRAME * 2)
++                .map_or(now, |applied| applied + FRAME)
++                + FRAME;
 +        }
 +    }
-+    let update = update.checked(snapshot)?;
++    let update = update.checked(|source| snapshot(source, next))?;
 +    let mut rasters = rasters();
 +    if limited(&rasters) {
 +        return Err("terminal_blit_limit".into());
@@ -146085,10 +146191,10 @@ index 000000000..480766d95
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..1dbf1dea3
+index 000000000..103f5c7e5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,802 @@
+@@ -0,0 +1,809 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -146113,7 +146219,7 @@ index 000000000..1dbf1dea3
 +        Some((4, 2)),
 +        &json!({"key": key, "rect": value["rect"], "cells": value["cells"]}),
 +        now,
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +}
 +
@@ -146240,7 +146346,7 @@ index 000000000..1dbf1dea3
 +            None,
 +            &json!({"key": "drawn-later", "rect": cell["rect"], "cells": cell["cells"]}),
 +            now,
-+            |_| unreachable!(),
++            |_, _| unreachable!(),
 +        ),
 +        Err("terminal_blit_unknown".into())
 +    );
@@ -146528,7 +146634,7 @@ index 000000000..1dbf1dea3
 +        Some((4, 2)),
 +        &json!({"key": key, "rect": {"x": 1, "y": 0, "width": 1, "height": 1}, "cells": ["c"]}),
 +        now + FRAME,
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("new owner queued");
 +    let (lines, next) = super::rows(
@@ -146561,7 +146667,7 @@ index 000000000..1dbf1dea3
 +        Some((4, 2)),
 +        &json!({"key": key, "image": image}),
 +        now,
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +}
 +
@@ -146634,7 +146740,7 @@ index 000000000..1dbf1dea3
 +                size,
 +                &json!({"key":"hidden", "pixels":source}),
 +                now,
-+                |_| panic!("snapshot before layout admission")
++                |_, _| panic!("snapshot before layout admission")
 +            )
 +            .is_err()
 +        );
@@ -146649,7 +146755,7 @@ index 000000000..1dbf1dea3
 +            Some((4, 2)),
 +            &json!({"key":"overflow", "pixels":source}),
 +            now,
-+            |_| panic!("snapshot before capacity admission")
++            |_, _| panic!("snapshot before capacity admission")
 +        ),
 +        Err("terminal_blit_limit".into())
 +    );
@@ -146661,7 +146767,7 @@ index 000000000..1dbf1dea3
 +        Some((4, 2)),
 +        &json!({"key":"admitted", "pixels":source}),
 +        now,
-+        |_| {
++        |_, _| {
 +            snapshots += 1;
 +            assert!(
 +                RASTERS.try_lock().is_ok(),
@@ -146680,7 +146786,7 @@ index 000000000..1dbf1dea3
 +    retain(&BTreeSet::new());
 +}
 +
-+fn raw_at(key: &str, sequence: u64, now: Instant, snapshot: bool) -> Result<Value, String> {
++fn raw_at(key: &str, sequence: u64, now: Instant, next: Option<Instant>) -> Result<Value, String> {
 +    let source =
 +        json!({"source":"owned", "format":"rgb", "width":1, "height":1, "sequence":sequence});
 +    blit(
@@ -146689,8 +146795,12 @@ index 000000000..1dbf1dea3
 +        Some((4, 2)),
 +        &json!({"key":key, "pixels":source}),
 +        now,
-+        |source| {
-+            assert!(snapshot, "a frame waiting for its tick is not copied");
++        |source, due| {
++            assert_eq!(
++                Some(due),
++                next,
++                "a frame waiting for its tick is not copied, and the next one is due a tick after this one shows"
++            );
 +            Ok(std::sync::Arc::new(
 +                codex_omd::process_raster::PixelFrame::new(
 +                    source.clone(),
@@ -146706,20 +146816,23 @@ index 000000000..1dbf1dea3
 +fn raw_frames_wait_for_the_pending_frame_and_frames_applied_by_a_blit_are_drawn() {
 +    let key = "raw-pending";
 +    let start = Instant::now();
-+    raw_at(key, 1, start, true).unwrap();
-+    raw_at(key, 2, start, true).unwrap();
++    raw_at(key, 1, start, Some(start + FRAME)).unwrap();
++    raw_at(key, 2, start, Some(start + FRAME * 2)).unwrap();
 +    assert_eq!(
 +        pending_delay(key, start),
 +        Some(Duration::ZERO),
 +        "the first frame, applied by the second blit, is drawn at once"
 +    );
 +    assert_eq!(
-+        raw_at(key, 3, start, false).unwrap(),
++        raw_at(key, 3, start, None).unwrap(),
 +        json!({"status": "backpressure", "retry_after_ms": 16})
 +    );
 +    super::rows(key, Some("owner"), "raw", 4, (4, 2), false, "", start);
 +    assert_eq!(pending_delay(key, start), Some(FRAME));
-+    assert_eq!(raw_at(key, 3, start + FRAME, true).unwrap()["queued"], 1);
++    assert_eq!(
++        raw_at(key, 3, start + FRAME, Some(start + FRAME * 3)).unwrap()["queued"],
++        1
++    );
 +    retain(&BTreeSet::new());
 +}
 +
@@ -146742,7 +146855,7 @@ index 000000000..1dbf1dea3
 +                Some((4, 2)),
 +                &json!({"key":key, "pixels":source}),
 +                start,
-+                |_| Ok(pixels)
++                |_, _| Ok(pixels)
 +            )
 +            .unwrap()["queued"],
 +            1
@@ -146787,7 +146900,7 @@ index 000000000..1dbf1dea3
 +                Some((4, 2)),
 +                &arguments,
 +                now,
-+                |_| unreachable!()
++                |_, _| unreachable!()
 +            ),
 +            Err("terminal_blit_invalid".into())
 +        );
@@ -151926,10 +152039,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..63bb624d0
+index 000000000..8437cfa99
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4506 @@
+@@ -0,0 +1,4510 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -154913,11 +155026,15 @@ index 000000000..63bb624d0
 +}
 +
 +fn placement(screen: Rect, snapshot: &ModViewSnapshot) -> Option<crate::mod_layout::Placement> {
-+    let layout = snapshot
++    let Some(layout) = snapshot
 +        .view
 +        .layout
 +        .as_ref()
-+        .filter(|_| layout_fits(screen))?;
++        .filter(|_| layout_fits(screen))
++    else {
++        crate::mod_layout::hide();
++        return None;
++    };
 +    let placement = crate::mod_layout::place(layout, screen);
 +    placement
 +        .chat()
@@ -156438,10 +156555,10 @@ index 000000000..63bb624d0
 +}
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 000000000..d4290e259
+index 000000000..6b753fb28
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,254 @@
 +use super::*;
 +use std::sync::Arc;
 +
@@ -156679,6 +156796,7 @@ index 000000000..d4290e259
 +            ));
 +        }
 +        preview(ModViewSnapshot::default());
++        assert!(placement(screen, &ModViewSnapshot::default()).is_none());
 +    }
 +
 +    #[test]
@@ -156697,7 +156815,7 @@ index 000000000..d4290e259
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..ead6fee89
+index 000000000..7c884c62f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,2439 @@
@@ -158256,7 +158374,7 @@ index 000000000..ead6fee89
 +        Some((3, 1)),
 +        &serde_json::json!({"key":"band_chart","rect":{"x":0,"y":0,"width":3,"height":1},"cells":["x","y","z"]}),
 +        std::time::Instant::now(),
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    INTERACTION
@@ -158364,7 +158482,7 @@ index 000000000..ead6fee89
 +        &serde_json::json!({"key":"nested_chart","rect":{"x":0,"y":0,"width":6,"height":2},
 +            "cells":["a","b","c","d","e","f","g","h","i","j","k","l"]}),
 +        std::time::Instant::now(),
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    let area = Rect::new(0, 0, 80, 24);
@@ -158670,7 +158788,7 @@ index 000000000..ead6fee89
 +        Some((6, 3)),
 +        &serde_json::json!({"key":"bound_chart","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]}),
 +        std::time::Instant::now(),
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    let area = Rect::new(0, 0, 80, 24);
@@ -158773,7 +158891,7 @@ index 000000000..ead6fee89
 +        &serde_json::json!({"key":"chart","rect":{"x":0,"y":0,"width":6,"height":3},
 +            "cells":["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r"]}),
 +        std::time::Instant::now(),
-+        |_| unreachable!(),
++        |_, _| unreachable!(),
 +    )
 +    .expect("queued");
 +    let area = Rect::new(0, 0, 80, 24);

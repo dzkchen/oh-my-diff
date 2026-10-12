@@ -3,9 +3,11 @@
 A conformance fixture (not packed in the author SDK) of a full-pane raster fed
 by a managed Node process. The producer supports encoded PNG and file-backed
 RGB publication (`raster_pixels_v1`). The same raw transport works for video
-decoders, image viewers and simulations. The synthetic producer offers up to
-120 frames/sec; the host's 16 ms raster cadence folds pending images to the
-newest frame.
+decoders, image viewers and simulations. The synthetic PNG producer offers up
+to 120 frames/sec, and the host's 16 ms raster cadence folds pending images to
+the newest frame. The raw producer renders each frame when the host
+acknowledges the previous one; the host times that acknowledgement so the new
+frame lands just before its tick.
 
 From a repository checkout, set `producer` to the absolute path of
 `scripts/frame_producer.mjs` and `transport` to `raw` or `png`, then trust and
@@ -16,8 +18,9 @@ records inside its private process directory; the mod exposes their path as
 Raw mode starts the process with `pixels: true`, opens the host-provided
 `pixels.path`, writes one packed RGB frame,
 and publishes its source handle, dimensions and increasing sequence number.
-It waits for the matching acknowledgement before overwriting that file. The
-host copies an immutable frame before acknowledging it. Handles are scoped to
+It waits for the matching acknowledgement before overwriting that file and
+renders the next frame as soon as it arrives. The host copies an immutable
+frame before acknowledging it. Handles are scoped to
 the process binding and package generation and disappear on process cleanup.
 Raw errors other than temporary surface, layout and callback admission stop
 the producer; backpressure, including a newer frame arriving before the

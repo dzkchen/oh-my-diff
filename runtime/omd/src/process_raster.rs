@@ -10,6 +10,8 @@ use std::sync::OnceLock;
 use std::sync::PoisonError;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
 
 /// Accepts bounded input without blocking the UI thread.
 pub type Sink = Arc<dyn Fn(Value) -> bool + Send + Sync>;
@@ -33,6 +35,9 @@ struct PixelBuffer {
     file: File,
     sequence: u64,
     generation: Option<u64>,
+    /// When the last ready acknowledgement goes out, and how long the producer then takes to publish.
+    released: Option<Instant>,
+    lead: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -132,7 +137,9 @@ pub fn snapshot(
     owner: &str,
     component: &str,
     source: PixelSource,
+    next: Instant,
 ) -> Result<Arc<PixelFrame>, String> {
+    let arrived = Instant::now();
     let _stage = crate::frame_metrics::stage("raw_snapshot");
     let key = key(thread, owner, component);
     let (sink, serial, buffer) = {
@@ -195,13 +202,32 @@ pub fn snapshot(
             return Err("terminal_blit_source_unavailable".into());
         }
         buffer.sequence = source.sequence;
+        if let Some(released) = buffer.released {
+            let lead = arrived
+                .saturating_duration_since(released)
+                .min(crate::client_surface::BLIT_FRAME);
+            buffer.lead = lead.max(buffer.lead - buffer.lead.saturating_sub(lead) / 8);
+        }
         Ok(Arc::new(PixelFrame::new(source.clone(), image)))
     })();
+    let release = next
+        .checked_sub(buffer.lead)
+        .filter(|release| result.is_ok() && *release > Instant::now());
+    buffer.released = Some(release.unwrap_or_else(Instant::now));
     drop(buffer);
-    sink(
-        serde_json::json!({"pixels": {"source": source.source, "sequence": source.sequence,
-        "ready": result.is_ok(), "error": result.as_ref().err()}}),
-    );
+    let ack = serde_json::json!({"pixels": {"source": source.source, "sequence": source.sequence,
+        "ready": result.is_ok(), "error": result.as_ref().err()}});
+    match release {
+        Some(release) => {
+            std::thread::spawn(move || {
+                std::thread::sleep(release.saturating_duration_since(Instant::now()));
+                sink(ack);
+            });
+        }
+        None => {
+            sink(ack);
+        }
+    }
     result
 }
 
@@ -282,6 +308,8 @@ impl Binding {
                     file,
                     sequence: 0,
                     generation,
+                    released: None,
+                    lead: Duration::ZERO,
                 })),
             );
         self.pixels = Some(source.clone());
@@ -472,7 +500,7 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
             sender.send(()).unwrap();
-            snapshot(Some("copy-thread"), "copy-owner", "copy-frame", source)
+            snapshot(Some("copy-thread"), "copy-owner", "copy-frame", source, Instant::now())
         });
         receiver.recv().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -512,6 +540,7 @@ mod tests {
                 height: 1,
                 sequence: 1,
             },
+            Instant::now(),
         )
         .unwrap();
         assert_eq!(other_frame.image.as_bytes(), &[4, 5, 6]);
@@ -550,7 +579,8 @@ mod tests {
                 Some("foreign-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             )
             .is_err()
         );
@@ -559,7 +589,8 @@ mod tests {
                 Some("pixels-thread"),
                 "foreign-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             )
             .is_err()
         );
@@ -569,7 +600,8 @@ mod tests {
                 Some("pixels-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             ))
             .is_err()
         );
@@ -579,6 +611,7 @@ mod tests {
             "pixels-owner",
             "pixels-frame",
             source.clone(),
+            Instant::now(),
         )
         .unwrap();
         assert_eq!(frame.image.as_bytes(), &[1, 2, 3]);
@@ -590,7 +623,8 @@ mod tests {
                 Some("pixels-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             )
             .is_err()
         );
@@ -606,7 +640,8 @@ mod tests {
                 PixelSource {
                     height: 0,
                     ..source.clone()
-                }
+                },
+                Instant::now()
             )
             .is_err()
         );
@@ -623,7 +658,8 @@ mod tests {
                 Some("pixels-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             )
             .unwrap()
             .image
@@ -637,7 +673,8 @@ mod tests {
                 Some("pixels-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             )
             .is_err()
         );
@@ -651,7 +688,8 @@ mod tests {
                 Some("pixels-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source.clone()
+                source.clone(),
+                Instant::now()
             )
             .unwrap()
             .image
@@ -681,10 +719,60 @@ mod tests {
                 Some("pixels-thread"),
                 "pixels-owner",
                 "pixels-frame",
-                source
+                source,
+                Instant::now()
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn raw_acknowledgements_wait_until_the_producer_must_start_the_next_frame() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pixels");
+        let (sender, acks) = std::sync::mpsc::channel();
+        let mut binding = bind(
+            Some("paced-thread"),
+            "paced-owner",
+            vec![("paced-frame".into(), Role::Raster)],
+            Arc::new(move |value| sender.send((Instant::now(), value)).is_ok()),
+        );
+        let initialized = binding.pixels(&path, None).unwrap();
+        let handle = initialized["pixels"]["source"].as_str().unwrap().to_owned();
+        let mut source = PixelSource {
+            source: handle.clone(),
+            format: "rgb".into(),
+            width: 1,
+            height: 1,
+            sequence: 1,
+        };
+        std::fs::write(&path, [1, 2, 3]).unwrap();
+        let released = || PIXELS.lock().unwrap()[&handle].lock().unwrap().released;
+        let frame = crate::client_surface::BLIT_FRAME;
+        let snap = |source: &PixelSource, next| {
+            snapshot(
+                Some("paced-thread"),
+                "paced-owner",
+                "paced-frame",
+                source.clone(),
+                next,
+            )
+        };
+        let next = Instant::now() + frame * 3;
+        snap(&source, next).unwrap();
+        assert_eq!(released(), Some(next));
+        let (at, ack) = acks.recv().unwrap();
+        assert!(at >= next);
+        assert_eq!(ack["pixels"]["ready"], true);
+        std::thread::sleep(frame * 2);
+        source.sequence = 2;
+        let next = Instant::now() + frame * 3;
+        snap(&source, next).unwrap();
+        assert_eq!(released(), Some(next - frame));
+        assert!(acks.recv().unwrap().0 >= next - frame);
+        source.sequence = 3;
+        assert!(snap(&source, Instant::now()).is_ok());
+        assert_eq!(acks.try_recv().unwrap().1["pixels"]["sequence"], 3);
     }
 
     #[test]
