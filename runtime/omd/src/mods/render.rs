@@ -89,6 +89,9 @@ impl ModHost {
                     id,
                     loaded.selection.sha256,
                     loaded.selection.settings,
+                    thread,
+                    loaded.ui.as_ref().map(|(key, _)| key),
+                    self.ui_revision(id),
                     selected
                 ])
             })

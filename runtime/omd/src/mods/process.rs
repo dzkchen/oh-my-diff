@@ -81,9 +81,12 @@ fn reap() {
 }
 
 fn spawn(node: &Path) -> Result<Child> {
+    let _profile = super::Profile::new("runner_spawn");
     command(node)?
         .args([
             "--max-old-space-size=64",
+            "--no-compilation-cache",
+            "--no-lazy",
             "--enable-source-maps",
             "--no-warnings",
             "--experimental-vm-modules",
@@ -98,6 +101,7 @@ fn spawn(node: &Path) -> Result<Child> {
 }
 
 fn runner(node: &Path) -> Result<Child> {
+    let _profile = super::Profile::new("spare_acquisition");
     let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
     let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
     spares.1 = Some(Instant::now());
@@ -155,7 +159,7 @@ fn converse(
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
-) -> (Result<Vec<u8>>, Instant) {
+) -> (Result<Option<Value>>, Instant) {
     let mut deadline = Instant::now() + budget + Duration::from_millis(250);
     if let Err(error) = stdin.write_all(bytes) {
         return (Err(error), deadline);
@@ -168,14 +172,15 @@ fn converse(
             Ok(line) => line,
             Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
             Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
-            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(Vec::new()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
         };
         if line.len() > 262_144 {
             break Err(failure("output_limit"));
         }
         let frame = match serde_json::from_slice::<Value>(&line) {
             Ok(frame) if frame.get("call").is_some() => frame,
-            _ => break Ok(line),
+            Ok(frame) => break Ok(Some(frame)),
+            Err(_) => break Ok(None),
         };
         let started = Instant::now();
         let receipt = match host(frame) {
@@ -260,20 +265,32 @@ fn warm_runner(node: &Path, key: &str) -> Result<Warm> {
 
 /// Evaluates a render callback in a runner that stays activated for later renders with the same
 /// `key`: the package, its settings and state, everything except the render's own input.
-pub(super) fn evaluate_warm(
+pub(super) fn evaluate_warm<R>(
     node: &Path,
     key: &str,
-    request: &Value,
+    request: &R,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
-) -> Result<Value> {
-    let serve = request_line(
-        &["name", "payload", "receipts", "state"]
-            .map(|field| (field, &request[field]))
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    )?;
+) -> Result<Value>
+where
+    R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
+{
+    let _profile = super::Profile::new(if request["serve"] == true {
+        "render_callback"
+    } else {
+        "fresh_callback"
+    });
+    let serve = if request["reuse"] == true {
+        request_line(request)?
+    } else {
+        request_line(
+            &["name", "payload", "receipts", "state"]
+                .map(|field| (field, &request[field]))
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        )?
+    };
     let mut reused = WARM.lock().ok().and_then(|mut runners| {
         let index = runners.iter().position(|runner| runner.key == key)?;
         Some(runners.swap_remove(index))
@@ -305,7 +322,7 @@ pub(super) fn evaluate_warm(
             return Err(error);
         }
     };
-    let Ok(value) = serde_json::from_slice::<Value>(&output) else {
+    let Some(value) = output else {
         return Err(process_failure(&warm.stop()));
     };
     if let Some(error) = value.get("error") {
@@ -360,7 +377,7 @@ fn process_failure(errors: &[u8]) -> std::io::Error {
 
 pub(super) fn evaluate(
     node: &Path,
-    request: &Value,
+    request: &impl serde::Serialize,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
@@ -395,7 +412,7 @@ pub(super) fn evaluate(
     let errors = errors.join().unwrap_or_default();
     let output = output?;
     let status = status?;
-    let value: Value = serde_json::from_slice(&output).map_err(|_| process_failure(&errors))?;
+    let value = output.ok_or_else(|| process_failure(&errors))?;
     if !status.success() || value.get("error").is_some() {
         return Err(failure(
             value["error"].as_str().unwrap_or("mod_process_failed"),

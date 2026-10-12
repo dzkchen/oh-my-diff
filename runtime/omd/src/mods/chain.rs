@@ -1389,7 +1389,7 @@ pub(super) fn intercept(
 
 impl ModHost {
     /// Refuses or restricts packages through `admission` interceptors; policy mods and their dependencies are not judged.
-    pub(super) fn admit(&mut self) {
+    pub(super) fn admit(&mut self, active: &dyn Fn() -> bool) {
         for loaded in self.loaded.values_mut() {
             loaded.withheld.clear();
         }
@@ -1453,6 +1453,9 @@ impl ModHost {
             .collect::<Vec<_>>();
         let mut refused = BTreeMap::new();
         for id in candidates {
+            if !active() {
+                return;
+            }
             let Some(loaded) = self.loaded.get(&id) else {
                 continue;
             };
@@ -1479,7 +1482,7 @@ impl ModHost {
                         required,
                         input,
                         json!({"caller": "engine"}),
-                        &|| true,
+                        active,
                         &InvocationScope::default(),
                     );
                     match chain {

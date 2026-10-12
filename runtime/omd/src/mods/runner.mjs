@@ -10,6 +10,29 @@ if (nodeMajor !== 24 || nodeMinor < 18) {
 
 // A spare runner loads the TypeScript stripper before the host sends it a request.
 stripTypeScriptTypes('let ready: boolean;');
+const compiled = new Map();
+let compiledBytes = 0;
+function moduleFor(source, context, identifier, typescript = true) {
+  const key = `${typescript}:${source}`;
+  let cached = compiled.get(key);
+  if (!cached) {
+    const code = typescript ? stripTypeScriptTypes(source) : source;
+    const module = new SourceTextModule(code, { context, identifier });
+    const data = module.createCachedData();
+    const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
+    while (compiled.size && compiledBytes + bytes > 1048576) {
+      const oldest = compiled.keys().next().value;
+      compiledBytes -= compiled.get(oldest).bytes;
+      compiled.delete(oldest);
+    }
+    if (bytes <= 1048576) {
+      compiled.set(key, { code, data, bytes });
+      compiledBytes += bytes;
+    }
+    return module;
+  }
+  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data });
+}
 let input = Buffer.alloc(0);
 function readLine() {
   const chunk = Buffer.alloc(65536);
@@ -27,9 +50,10 @@ function readLine() {
   input = input.subarray(end + 1);
   return line;
 }
-const request = JSON.parse(readLine());
+async function evaluate(request) {
 request.hook_budget_ms ??= 1000;
 const globals = Object.create(null);
+globals.__request = JSON.stringify(request);
 if (request.environment?.includes('crypto')) globals.crypto = globalThis.crypto;
 globals.__exchange = frame => {
   try {
@@ -44,7 +68,8 @@ const context = createContext(globals, {
   codeGeneration: { strings: false, wasm: false },
 });
 const bootstrap = `
-const request = JSON.parse(${JSON.stringify(JSON.stringify(request))});
+const request = JSON.parse(globalThis.__request);
+delete globalThis.__request;
 if (Number.isSafeInteger(request.virtual_time_ms)) {
   const fixed = request.virtual_time_ms;
   globalThis.Date = class extends Date {
@@ -66,6 +91,8 @@ const serviceHandlers = new Map();
 const virtualReaders = new Map();
 const updates = [];
 let state = structuredCloneFallback(request.state);
+let uiState = structuredCloneFallback(request.ui_state ?? null);
+let uiRead = false;
 const initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
@@ -543,6 +570,16 @@ const api = Object.freeze({
     get() { requireCapability(surface.state); track('*'); return structuredCloneFallback(state); },
     set: writeState,
   }),
+  uiState: Object.freeze({
+    get() { requireCapability('terminal'); uiRead = true; return structuredCloneFallback(uiState); },
+    set(value) {
+      requireCapability('terminal');
+      if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
+      const encoded = JSON.stringify(value);
+      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
+      uiState = JSON.parse(encoded); uiRead = true;
+    },
+  }),
   atom(key, fallback = null) { return cell(key, fallback); },
   member(key, id, fallback = null) {
     if (typeof id !== 'string' || !id || id.length > 128) throw new Error('invalid_atom_member: ' + id);
@@ -651,28 +688,27 @@ const api = Object.freeze({
   }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
-  state: () => rendering ? request.state : state, request, calls,
-  pending: () => pending, ready: () => { activatedState = structuredCloneFallback(state); activating = false; }, suspension, serve };
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
+  pending: () => pending, ready: () => {
+    activatedState = structuredCloneFallback(state); activating = false;
+  }, suspension, serve };
 `;
 try {
-  const setup = new SourceTextModule(bootstrap, { context });
+  const setup = moduleFor(bootstrap, context, 'bootstrap', false);
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
-  const source = stripTypeScriptTypes(request.source);
-  const mod = new SourceTextModule(source, { context, identifier: request.filename });
+  const mod = moduleFor(request.source, context, request.filename);
   const adapter = request.surface?.adapter;
   let adapt = null;
   const aliases = new Map();
   if (adapter) {
-    const adapterSource = stripTypeScriptTypes(adapter.source);
-    const adapterModule = new SourceTextModule(adapterSource, { context, identifier: adapter.filename });
+    const adapterModule = moduleFor(adapter.source, context, adapter.filename);
     await adapterModule.link(() => { throw new Error('unsupported_import: adapter modules are self-contained'); });
     await adapterModule.evaluate({ timeout: request.hook_budget_ms });
     adapt = adapterModule.namespace.default;
     if (typeof adapt !== 'function') throw new Error('adapter_default_export_required');
     for (const [specifier, module] of Object.entries(adapter.aliases ?? {})) {
-      const aliasSource = module.filename.endsWith('.ts') ? stripTypeScriptTypes(module.source) : module.source;
-      const aliased = new SourceTextModule(aliasSource, { context, identifier: module.filename });
+      const aliased = moduleFor(module.source, context, module.filename, module.filename.endsWith('.ts'));
       await aliased.link(() => { throw new Error('unsupported_import: adapter aliases are self-contained'); });
       aliases.set(specifier, aliased);
     }
@@ -684,7 +720,7 @@ try {
   });
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
-  const dispatch = new SourceTextModule(`
+  const dispatch = moduleFor(`
     const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
     const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
@@ -707,13 +743,13 @@ try {
       if (error !== globalThis.__omd.suspension) throw error;
     }
     if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-    globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), value,
+    globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
       calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
-  `, { context });
+  `, context, 'dispatch', false);
   await dispatch.link(() => { throw new Error('unsupported_import'); });
   await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
   if (context.__result.length > 262144) throw new Error('output_limit');
-  if (!request.serve) process.stdout.write(context.__result);
+  if (!request.serve) writeSync(1, context.__result + (request.reuse ? '\n' : ''));
   if (request.serve) {
     const step = new SourceTextModule(`
       const omd = globalThis.__omd;
@@ -727,7 +763,7 @@ try {
           if (error !== omd.suspension) throw error;
         }
         if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
-        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
+        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), ...omd.ui(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
       };
     `, { context });
     await step.link(() => { throw new Error('unsupported_import'); });
@@ -751,6 +787,14 @@ try {
   const frames = lines.filter(line => /^\s+at /.test(line));
   const described = [...lines.filter(line => !/^\s+at /.test(line)),
     ...frames.filter(line => directories.some(directory => line.includes(directory + '/'))).slice(0, 4)];
-  process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }));
+  process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }) + (request.reuse ? '\n' : ''));
   process.exitCode = 1;
+}
+}
+for (;;) {
+  const line = readLine();
+  if (!line) break;
+  const request = JSON.parse(line);
+  await evaluate(request);
+  if (!request.reuse || process.exitCode) break;
 }

@@ -41,10 +41,13 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
     if (call.operation === 'settings.write') return { settings: call.arguments.values };
     return { status: 'applied', generation: 8 };
   };
-  const command = (payload, state) => run({ event: 'command', name: 'mods', payload, state }, host).state;
-  const view = state => run({ event: 'terminal', state, payload: { event: 'idle', ledger: null } }).value.sites.dialog.components[1];
-  let state = command('', null);
+  const command = (payload, ui_state) => run({ event: 'command', name: 'mods', payload, ui_state }, host).ui_state;
+  const view = ui_state => run({ event: 'terminal', ui_state, payload: { event: 'idle', ledger: null } }).value.sites.dialog.components[1];
+  const opened = run({ event: 'command', name: 'mods', payload: '' }, host);
+  assert.equal(opened.state, null, 'opening does not change durable state');
+  let state = opened.ui_state;
   const dialog = view(state);
+  assert.deepEqual(opened.value.terminal.sites.dialog.components[1], dialog);
   assert.equal(dialog.title, 'Mods');
   assert.deepEqual(dialog.children[0].spans.map(span => span.text), ['Mods', '  1 of 4 on']);
   const list = dialog.children.find(child => child.type === 'list');
@@ -78,14 +81,14 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   assert.deepEqual(state.review.grants, ['exec']);
   state = command('apply', state);
   assert.deepEqual(calls.filter(call => call.operation === 'packages.apply').at(-1).arguments, { action: 'update', id: 'omd_lsp_sync', scope: 'user', expected_generation: 7 });
-  const escaped = run({ event: 'component_event', state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_list', kind: 'input', events: [{ key: 'Esc', text: null }] } });
-  assert.deepEqual([escaped.state.open, escaped.state.directory, escaped.state.query], [false, false, ''], 'closing forgets the directory search');
+  const escaped = run({ event: 'component_event', ui_state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_list', kind: 'input', events: [{ key: 'Esc', text: null }] } });
+  assert.deepEqual([escaped.ui_state.open, escaped.ui_state.directory, escaped.ui_state.query], [false, false, ''], 'closing forgets the directory search');
   assert.ok(view({ ...state, review: { request: { action: 'install' }, label: 'Install Git', changes: {}, grants: Array(12).fill('fs.write') } }).children
     .find(child => child.id === 'omd_mods_review').text.split('\n').every(text => text.length <= 52), 'review text wraps for narrow terminals');
-  const reopened = run({ event: 'terminal', state, payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'resumed' } } });
-  assert.deepEqual([reopened.value, reopened.state.open], [null, false]);
-  const typed = run({ event: 'command', name: 'mods', payload: 'update omd_lsp_sync', state: command('close', state) }, host);
-  assert.equal(typed.state.open, false);
+  const reopened = run({ event: 'terminal', payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'resumed' } } });
+  assert.deepEqual([reopened.value, reopened.ui_state], [null, null]);
+  const typed = run({ event: 'command', name: 'mods', payload: 'update omd_lsp_sync', ui_state: command('close', state) }, host);
+  assert.equal(typed.ui_state.open, false);
   assert.equal(typed.value.display, 'update Lsp Sync: omd_lsp_sync 1.0.0 → 1.1.0 · new permissions: exec\nRun /mods apply or /mods cancel');
 });
 
@@ -104,8 +107,8 @@ test('the directory searches the catalog, installs a picked version or a typed s
     if (call.operation === 'packages.preview') return { action: 'install', id: 'omd_preview', changes: { packages: [{ id: 'omd_preview', version: { from: null, to: '1.1.0' } }] }, grants_added: ['commands'] };
     return { status: 'applied', generation: 4 };
   };
-  const command = (payload, state) => run({ event: 'command', name: 'mods', payload, state }, host).state;
-  const view = state => run({ event: 'terminal', state, payload: { event: 'idle', ledger: null } }).value.sites.dialog.components[1];
+  const command = (payload, ui_state) => run({ event: 'command', name: 'mods', payload, ui_state }, host).ui_state;
+  const view = ui_state => run({ event: 'terminal', ui_state, payload: { event: 'idle', ledger: null } }).value.sites.dialog.components[1];
   let state = command('', null);
   assert.equal(view(state).children.find(child => child.type === 'list').rows[1].spans[2].text, ' quarantined');
   assert.ok(view(state).children.some(child => child.id === 'omd_mods_directory'));

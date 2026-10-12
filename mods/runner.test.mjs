@@ -19,6 +19,19 @@ function run(source, extra = {}) {
   return JSON.parse(result.stdout);
 }
 
+test('UI state requires terminal authority and refuses activation and render writes', () => {
+  const read = 'export default api => api.command("read", () => api.uiState.get())';
+  assert.match(run(read, { capabilities: ['commands'], event: 'command', name: 'read' }).error, /capability/);
+  const source = 'export default api => { api.uiState.set(1); }';
+  assert.match(run(source, { capabilities: ['terminal'] }).error, /ui_state_write_unavailable/);
+  const write = 'export default api => api.on("terminal", () => api.uiState.set(1))';
+  assert.match(run(write, { capabilities: ['terminal'], event: 'terminal' }).error, /ui_state_write_unavailable/);
+  const reply = run(read, { capabilities: ['commands', 'terminal'], event: 'command', name: 'read', ui_state: { open: true } });
+  assert.deepEqual(reply.value, { open: true });
+  assert.equal(reply.ui_read, true);
+  assert.equal(reply.state, null);
+});
+
 test('render callbacks cannot mutate activation registrations', () => {
   const input = { component: 'tool_call' };
   for (const mutation of ["api.on('terminal', () => {})", "api.middleware('approval', () => {})", "api.replace('completion', () => {})", "api.tool({name:'late'}, () => {})", "api.command('late', () => {})"]) {

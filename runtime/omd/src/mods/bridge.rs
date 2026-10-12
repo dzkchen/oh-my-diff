@@ -2,7 +2,7 @@ use super::*;
 use std::time::Duration;
 use std::time::Instant;
 
-/// Host calls that end the callback's process; it replays from its receipts once they settle.
+/// Host calls that suspend execution; the callback replays from its receipts once they settle.
 pub(super) const SUSPENDING: &[&str] = &["continuation.next", "time.sleep"];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -176,6 +176,44 @@ fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
     Ok(())
 }
 
+#[derive(Serialize)]
+struct Request<'a> {
+    #[serde(flatten)]
+    metadata: &'a Value,
+    #[serde(flatten)]
+    invocation: Value,
+}
+
+impl std::ops::Index<&str> for Request<'_> {
+    type Output = Value;
+
+    fn index(&self, field: &str) -> &Value {
+        self.invocation.get(field).unwrap_or(&self.metadata[field])
+    }
+}
+
+fn metadata(loaded: &Loaded) -> Value {
+    let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join("index.ts"),
+        "api": MOD_API_VERSION,
+        "assets": loaded.assets.as_ref(),
+        "entrypoint": loaded.package.entrypoint,
+        "entrypoint_sha256": digest(loaded.source.as_bytes()),
+        "package": {"id": loaded.package.id, "version": loaded.package.version},
+        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
+        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
+    request["field_policies"] = ModHost::field_policies();
+    request["surface"] = json!({
+        "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
+        "replacements": MOD_REPLACEMENT_POINTS,
+        "middleware": MOD_MIDDLEWARE_EVENTS,
+        "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
+        "state": "store",
+        "contracts": "contracts",
+        "adapter": loaded.adapter,
+    });
+    request
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     node: &Path,
@@ -191,39 +229,34 @@ pub(super) fn run(
     scope: &InvocationScope,
 ) -> Result<Reply> {
     let mut receipts = replay.to_vec();
+    let mut receipts_bytes = serde_json::to_vec(&receipts)?.len();
     let mut expected = replay
         .iter()
         .map(|receipt| serde_json::from_value::<ModHostCall>(receipt["call"].clone()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut forwarded = 0;
     let mut waited = Duration::ZERO;
-    let mut request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
-        "api": MOD_API_VERSION,
-        "assets": loaded.assets,
-        "entrypoint": loaded.package.entrypoint,
-        "entrypoint_sha256": digest(loaded.source.as_bytes()),
-        "package": {"id": loaded.package.id, "version": loaded.package.version},
-        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
-        "state": loaded.state, "event": event, "name": name, "payload": payload, "interactive": true,
-        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
-    request["field_policies"] = ModHost::field_policies();
-    request["surface"] = json!({
-        "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
-        "replacements": MOD_REPLACEMENT_POINTS,
-        "middleware": MOD_MIDDLEWARE_EVENTS,
-        "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
-        "state": "store",
-        "contracts": "contracts",
-        "adapter": loaded.adapter,
-    });
-    request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
-    // Renders cannot call the host or write state, so one activated runner serves every render of
-    // this package revision, settings and state.
-    let warm = (event == "intercept" && request["payload"]["surface"] == "render").then(|| {
-        request["serve"] = Value::Bool(true);
+    let mut request = Request {
+        metadata: loaded.request_metadata.get_or_init(|| metadata(loaded)),
+        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
+    };
+    request.invocation["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
+    let render = event == "intercept" && request["payload"]["surface"] == "render";
+    let warm = (render || loaded.package.environment.is_empty()).then(|| {
+        request.invocation["serve"] = Value::Bool(render);
+        request.invocation["reuse"] = Value::Bool(!render);
+        if !render {
+            return format!("{}:fresh", node.display());
+        }
         // `entrypoint_sha256` stands for the source.
         let mut key = Sha256::new();
-        for (field, value) in request.as_object().into_iter().flatten() {
+        for (field, value) in request
+            .metadata
+            .as_object()
+            .into_iter()
+            .flatten()
+            .chain(request.invocation.as_object().into_iter().flatten())
+        {
             if !["source", "name", "payload", "receipts"].contains(&field.as_str()) {
                 key.update(field);
                 key.update(value.to_string());
@@ -235,7 +268,7 @@ pub(super) fn run(
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
     let mut reply: Reply = loop {
-        request["receipts"] = Value::Array(receipts.clone());
+        request.invocation["receipts"] = Value::Array(receipts.clone());
         let mut answer = |frame: Value| -> Result<Value> {
             if event == "inspect" {
                 return Err(failure("invalid_host_call_sequence"));
@@ -257,13 +290,17 @@ pub(super) fn run(
                 // Clipboard delivery is external work bounded by the surface call lifetime.
                 || call.operation == "terminal.copy";
             scope.charge_call()?;
-            let receipt = receipt_for(&call, host(call.clone()), &receipts, scope)?;
+            let (receipt, receipt_bytes) = {
+                let _profile = super::Profile::new("host_call");
+                receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
+            };
             expected.push(call);
+            receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
             receipts.push(receipt.clone());
-            if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
+            if receipts_bytes > HOST_RECEIPT_BYTES {
                 return Err(failure("host_receipt_limit"));
             }
-            scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
+            scope.charge_receipt(receipt_bytes)?;
             if exempt {
                 waited += call_started.elapsed();
             }
@@ -273,8 +310,8 @@ pub(super) fn run(
         let evaluated = match &warm {
             Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
             None => process::evaluate(node, &request, budget, active, &mut answer),
-        };
-        let reply: Reply = serde_json::from_value(evaluated?).inspect_err(|_| {
+        }?;
+        let reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
             if let Some(key) = &warm {
                 process::invalidate_warm(key);
             }
@@ -301,14 +338,16 @@ pub(super) fn run(
         }
         scope.charge_call()?;
         let call_started = Instant::now();
-        let receipt = receipt_for(&call, host(call.clone()), &receipts, scope)?;
+        let (receipt, receipt_bytes) =
+            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?;
         waited += call_started.elapsed();
         expected.push(call);
+        receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
         receipts.push(receipt.clone());
-        if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
+        if receipts_bytes > HOST_RECEIPT_BYTES {
             return Err(failure("host_receipt_limit"));
         }
-        scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
+        scope.charge_receipt(receipt_bytes)?;
     };
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
@@ -332,9 +371,9 @@ pub(super) fn run(
 fn receipt_for(
     call: &ModHostCall,
     result: Result<Value>,
-    receipts: &[Value],
+    receipts_bytes: usize,
     scope: &InvocationScope,
-) -> Result<Value> {
+) -> Result<(Value, usize)> {
     let receipt = match result {
         Ok(value) => json!({"call": call, "value": value}),
         Err(error) => {
@@ -344,12 +383,14 @@ fn receipt_for(
     let bytes = serde_json::to_vec(&receipt)?.len();
     let room = scope
         .receipt_room()
-        .min(HOST_RECEIPT_BYTES.saturating_sub(serde_json::to_vec(receipts)?.len()));
+        .min(HOST_RECEIPT_BYTES.saturating_sub(receipts_bytes));
     if bytes > room {
-        return Ok(json!({"call": call, "error": format!(
-        "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")}));
+        let receipt = json!({"call": call, "error": format!(
+        "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
+        let bytes = serde_json::to_vec(&receipt)?.len();
+        return Ok((receipt, bytes));
     }
-    Ok(receipt)
+    Ok((receipt, bytes))
 }
 
 #[derive(Deserialize)]

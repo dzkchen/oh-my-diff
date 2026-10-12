@@ -7,6 +7,144 @@ use std::process::Stdio;
 use std::time::Duration;
 
 #[test]
+fn reused_process_resets_callback_globals_and_reloads_source() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
+        "filename":"/fixture/fresh/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands", "store"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"count","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+    for state in 0..1000 {
+        request["state"] = json!({"current":state});
+        let reply = super::evaluate_warm(
+            &node,
+            "fresh-context",
+            &request,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(
+            reply["value"],
+            json!({"count":1,"marker":1,"intrinsic":1,"state":{"current":state}})
+        );
+    }
+    request["source"] =
+        json!("export default api => api.command('count', () => { while (true) {} });");
+    let started = std::time::Instant::now();
+    let error = super::evaluate_warm(
+        &node,
+        "fresh-context",
+        &request,
+        Duration::from_secs(2),
+        &|| started.elapsed() < Duration::from_millis(100),
+        &mut |_| unreachable!(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("callback_cancelled"), "{error}");
+    assert!(
+        !WARM
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|runner| runner.key == "fresh-context")
+    );
+    request["source"] =
+        json!("export default api => api.command('count', () => ({ changed: true }));");
+    let reply = super::evaluate_warm(
+        &node,
+        "fresh-context",
+        &request,
+        Duration::from_secs(2),
+        &|| true,
+        &mut |_| unreachable!(),
+    )
+    .unwrap();
+    assert_eq!(reply["value"], json!({"changed":true}));
+    request["reuse"] = json!(false);
+    let once = super::evaluate(
+        &node,
+        &request,
+        Duration::from_secs(2),
+        &|| true,
+        &mut |_| unreachable!(),
+    )
+    .unwrap();
+    assert_eq!(reply, once);
+    super::invalidate_warm("fresh-context");
+}
+
+#[test]
+fn reused_process_flushes_large_responses() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let request = json!({"source":"export default api => api.command('large', () => 'x'.repeat(200000));",
+        "filename":"/fixture/large/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"large","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+    for _ in 0..2 {
+        let reply = evaluate_warm(
+            &node,
+            "large-response",
+            &request,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(reply["value"].as_str().unwrap().len(), 200000);
+    }
+    super::invalidate_warm("large-response");
+}
+
+#[test]
+fn reused_process_keeps_each_packages_authority_and_host_identity() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let mut request = json!({"source":"export default api => { if (globalThis.activated) throw new Error('activation_leaked'); globalThis.activated = true; api.command('identity', () => { let writable = true; try { api.state.set(1); } catch { writable = false; } return {settings:api.settings, package:api.package.id, writable, caller:api.host.call('identity')}; }); };",
+        "filename":"/fixture/a/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands","store"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"identity","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+    for (package, writable) in [("a", true), ("b", false), ("a", true)] {
+        request["filename"] = json!(format!("/fixture/{package}/index.ts"));
+        request["package"] = json!({"id":package,"version":"1.0.0"});
+        request["settings"] = json!({"owner":package});
+        request["capabilities"] = if writable {
+            json!(["commands", "store"])
+        } else {
+            json!(["commands"])
+        };
+        for event in ["inspect", "command", "inspect"] {
+            request["event"] = json!(event);
+            let reply = evaluate_warm(
+                &node,
+                "cross-package",
+                &request,
+                Duration::from_secs(2),
+                &|| true,
+                &mut |frame| {
+                    assert_eq!(event, "command");
+                    assert_eq!(frame["call"]["operation"], "identity");
+                    Ok(json!({"value":package}))
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                reply["registrations"]["commands"],
+                json!([{"name":"identity"}])
+            );
+            if event == "command" {
+                assert_eq!(
+                    reply["value"],
+                    json!({"settings":{"owner":package},"package":package,"writable":writable,"caller":package})
+                );
+            } else {
+                assert!(reply["value"].is_null());
+            }
+        }
+    }
+    super::invalidate_warm("cross-package");
+}
+
+#[test]
 fn warm_runner_retirement_joins_readers_and_retains_bounded_diagnostics() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut runner = super::warm_runner(&node, "invalid-request").unwrap();
@@ -18,7 +156,7 @@ fn warm_runner_retirement_joins_readers_and_retains_bounded_diagnostics() {
         &|| true,
         &mut |_| unreachable!(),
     );
-    assert!(output.unwrap().is_empty());
+    assert!(output.unwrap().is_none());
     let errors = runner.stop();
     assert!(errors.len() <= 769);
     assert!(String::from_utf8_lossy(&errors).contains("SyntaxError"));

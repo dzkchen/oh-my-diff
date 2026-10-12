@@ -110,12 +110,21 @@ def environment(base, binaries, repo, store, url, name="main", profile="full"):
 
 
 class Session:
-    def __init__(self, binary, repo, env, columns=150, rows=46, cwd=None, args=()):
+    def __init__(self, binary, repo, env, columns=150, rows=46, cwd=None, args=(), before_spawn=None):
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-        self.process = subprocess.Popen([str(binary), *map(str, args), "-C", str(repo)], cwd=cwd or repo, env=env, stdin=slave,
-                                        stdout=slave, stderr=slave, start_new_session=True)
-        os.close(slave)
+        try:
+            if before_spawn is not None:
+                before_spawn(self.master)
+            self.started_unix_ns = time.time_ns()
+            self.started = time.perf_counter()
+            self.process = subprocess.Popen([str(binary), *map(str, args), "-C", str(repo)], cwd=cwd or repo, env=env, stdin=slave,
+                                            stdout=slave, stderr=slave, start_new_session=True)
+        except BaseException:
+            os.close(self.master)
+            raise
+        finally:
+            os.close(slave)
         self.raw = bytearray()
 
     def pump(self, seconds=0.2):

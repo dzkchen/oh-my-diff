@@ -115,6 +115,29 @@ fn installed_package_keeps_hash_bound_text_assets() {
 }
 
 #[test]
+fn package_integrity_covers_ordered_lifecycle_and_binary_assets() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "hash_fixture", "1.0.0", &["commands"], json!([]));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
+    manifest["lifecycle"] = json!({"update":"update.ts", "install":"install.ts"});
+    manifest["assets"] = json!(["z.json", "a.mjs"]);
+    let mut bytes = serde_json::to_vec(&manifest).unwrap();
+    std::fs::write(package.join("mod.json"), &bytes).unwrap();
+    std::fs::write(package.join("install.ts"), b"export default () => 1\n").unwrap();
+    std::fs::write(package.join("update.ts"), b"export default () => 2\n").unwrap();
+    std::fs::write(package.join("z.json"), [0xff, 0, 0x80]).unwrap();
+    std::fs::write(package.join("a.mjs"), b"export default 3\n").unwrap();
+    bytes.extend_from_slice(b"\0main.ts\0export default () => {}\n\0install\0install.ts\0export default () => 1\n\0update\0update.ts\0export default () => 2\n\0z.json\0\xff\0\x80\0a.mjs\0export default 3\n");
+    let expected = format!("{:x}", sha2::Sha256::digest(&bytes));
+    assert_eq!(
+        ModStore::inspect_package(&package).unwrap()["sha256"],
+        expected
+    );
+}
+
+#[test]
 fn installed_collection_can_exceed_sixteen_without_activating_packages() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -153,17 +176,22 @@ fn selection_status_explains_precedence_and_changed_source() {
             .unwrap();
         store.enable(path, true).unwrap();
     }
+    // Exercise ordered parallel inspection alongside the conflicting selections.
+    for index in 0..4 {
+        let path = mod_package(&user, &format!("extra{index}"), "1.2.0", &[], json!([]));
+        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store.trust(path, &digest, Vec::new(), "user").unwrap();
+    }
     let status = store.selection_status().unwrap();
     assert_eq!(
         status["selections"][0]["reason"],
         "shadowed_by_project_scope"
     );
     assert_eq!(status["selections"][1]["effective"], true);
-    std::fs::write(
-        project_mod.join("main.ts"),
-        "export default () => { throw Error('broken') }\n",
-    )
-    .unwrap();
+    std::fs::write(project_mod.join("main.ts"), "export default () => 0;\n").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);
     assert!(
@@ -172,6 +200,28 @@ fn selection_status_explains_precedence_and_changed_source() {
             .unwrap()
             .contains("source_changed")
     );
+    let listed = codex_omd::package_controls::list(&store, None).unwrap();
+    for index in 0..4 {
+        let item = &listed["packages"][index + 2];
+        assert_eq!(item["id"], format!("extra{index}"));
+        assert_eq!(item["version"], "1.2.0");
+        assert_eq!(item["api"], CURRENT_API);
+    }
+    let changed = listed["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["scope"] == "project")
+        .unwrap();
+    assert_eq!(changed["version"], "1.1.0");
+    assert_eq!(changed["api"], CURRENT_API);
+    assert!(
+        changed["failed"]
+            .as_str()
+            .unwrap()
+            .contains("source_changed")
+    );
+    assert_eq!(changed["effective"], false);
     store.enable(&project_mod, false).unwrap();
     assert_eq!(
         store.selection_status().unwrap()["selections"][1]["reason"],
@@ -1631,8 +1681,14 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["capabilities"] = json!(["commands"]);
         value["entrypoint"] = json!("big.ts");
     });
+    std::fs::write(package.join("big.ts"), vec![b'/'; 65_536]).unwrap();
+    assert!(ModStore::inspect_package(&package).is_ok());
     std::fs::write(package.join("big.ts"), vec![b'/'; 65_537]).unwrap();
     assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit"));
+    std::fs::remove_file(package.join("big.ts")).unwrap();
+    std::fs::create_dir(package.join("big.ts")).unwrap();
+    assert!(refusal(&store, request(&package, &["commands"])).contains("regular_file_required"));
+    std::fs::remove_dir(package.join("big.ts")).unwrap();
     manifest(&|value| {
         value["entrypoint"] = json!("main.ts");
         value["lifecycle"] = json!({"install":"install.ts"});

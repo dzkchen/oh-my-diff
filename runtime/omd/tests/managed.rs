@@ -553,6 +553,23 @@ fn managed_targets_that_are_not_running_fail_their_surfaces_closed() {
     );
     assert_eq!(admin.host("alice").intercepts("command"), Some(true));
 
+    let listed = codex_omd::package_controls::list(&store, None).unwrap();
+    let pending = listed["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "guard")
+        .unwrap();
+    assert_eq!(pending["version"], "1.0.0");
+    assert_eq!(pending["api"], MOD_API_VERSION);
+    assert_eq!(pending["effective"], false);
+    assert!(
+        pending["failed"]
+            .as_str()
+            .unwrap()
+            .contains("managed_pending_sync")
+    );
+
     store.package_sync(false).unwrap();
     let runtime = Mutex::new(admin.host("alice"));
     assert!(tool(&runtime, "exec", &mut Vec::new()).is_ok());

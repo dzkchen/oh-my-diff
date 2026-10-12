@@ -2161,7 +2161,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   thread, also from terminal commands in the same process. `turns_started`
   counts turns this process started in the thread.
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the
-  callback's process ends and it replays from its receipts afterwards, so the
+  callback execution is suspended and restarts from recorded receipts, so the
   wait holds no runtime lock and does not count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
@@ -2406,6 +2406,30 @@ any it refuses.
   appears and nothing has focus, reported as a `focus` event with origin `mod`. An `input`, `select` or `multiselect` is controlled: the user's edits stay
   while the view repeats a value, an echo of one of the user's own recent
   values is ignored, and a new `value` from the mod resets the field.
+- Callback lifetime: general callbacks get a fresh VM context and activation.
+  Sandboxed runner processes and a bounded cache of stripped source and bytecode
+  may be reused. Persist state through `api.state`; module globals
+  do not survive general callbacks. Render hooks retain activation under their
+  existing matching-input rules.
+- Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
+  `terminal`. Values are bounded to 64 KiB and shared by host instances in the
+  same process, store, repository, thread and package identity. Commands and
+  component events may write; other callbacks may read. Writes commit only after
+  successful validation and cancellation checks, with revision conflicts using
+  the existing receipt-replay rules. State is cleared on reload, revocation,
+  package changes and session teardown, and is never written to disk. Durable
+  `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
+  state for preferences that must survive a restart.
+- Experimental command views: return `{terminal: patch}` with a `TerminalPatch`
+  to replace your complete terminal contribution, or `{terminal: null}` to clear
+  it. The host validates capability, ownership and generation, composes it with
+  other owners' last valid contributions and displays it before asynchronously
+  refreshing expired callbacks. Keep a `terminal` handler that reconstructs the
+  same contribution from UI state for subsequent view updates. This opt-in path
+  changes when other owners refresh; commands without `terminal` retain their
+  synchronous preview behavior. Migration from durable dialog state consists of
+  moving only transient presentation fields to `api.uiState` and returning the
+  view from the command; persisted settings, replay and module lifetimes are unchanged.
 - Callback contexts: `terminal` renders and `render` hooks get no host
   operations; draw from `api.state`. Slash commands, buttons and keybindings run in the terminal
   as user actions and reach only `exec.*`, `workspace.read/list/stat/check_access/
@@ -2421,8 +2445,9 @@ any it refuses.
   which runs with the session.
 - Settings: callbacks receive explicit settings over each `settings_schema`
   property's `default`; give every property a default.
-- Memory: each mod runs with a 64 MB V8 heap; exceeding it fails the callback
-  with `mod_out_of_memory`.
+- Memory: each runner process has a 64 MiB V8 old-space limit; exceeding it
+  fails the callback with `mod_out_of_memory`. This is not a total process RSS
+  limit; compiled data and other runtime allocations also use memory.
 
 ### Streaming providers
 

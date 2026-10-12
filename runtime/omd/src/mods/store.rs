@@ -7,16 +7,23 @@ use super::failure;
 use super::identifier;
 use serde_json::Value;
 use serde_json::json;
+use sha2::Digest;
+use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 
 pub struct Trust {
     pub path: PathBuf,
@@ -108,23 +115,54 @@ pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<Strin
     )))
 }
 
+type FileIdentity = (u64, u64, u64, i64, i64, i64, i64);
+type VerifiedPackage = (Vec<(PathBuf, FileIdentity)>, ModPackage, String);
+
+static VERIFIED_PACKAGES: LazyLock<Mutex<HashMap<PathBuf, Arc<VerifiedPackage>>>> =
+    LazyLock::new(Default::default);
+
+fn identity(metadata: &std::fs::Metadata) -> FileIdentity {
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.size(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
+
 pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    read_identified(path, limit).map(|(bytes, _)| bytes)
+}
+
+fn read_identified(path: &Path, limit: u64) -> Result<(Vec<u8>, FileIdentity)> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
         .open(path)?;
-    if !file.metadata()?.is_file() {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
         return Err(failure("regular_file_required"));
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Vec::with_capacity(metadata.len().saturating_add(1).min(limit + 1) as usize);
     file.take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
         return Err(failure("file_limit"));
     }
-    Ok(bytes)
+    Ok((bytes, identity(&metadata)))
 }
 
 pub(super) fn package_read(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>> {
+    package_read_identified(root, relative, limit).map(|(bytes, _)| bytes)
+}
+
+fn package_read_identified(
+    root: &Path,
+    relative: &str,
+    limit: u64,
+) -> Result<(Vec<u8>, FileIdentity)> {
     let path = root.join(relative);
     if !path
         .parent()
@@ -134,53 +172,107 @@ pub(super) fn package_read(root: &Path, relative: &str, limit: u64) -> Result<Ve
     {
         return Err(failure(format!("package_path_escape: {relative}")));
     }
-    read(&path, limit)
+    read_identified(&path, limit)
 }
 
 pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
-    let (package, source, hash, _) = package_with_assets(path)?;
+    let (package, source, hash, _, _) = inspect_package(path, false)?;
     Ok((package, source, hash))
 }
 
 pub(super) fn package_with_assets(
     path: &Path,
 ) -> Result<(ModPackage, String, String, BTreeMap<String, String>)> {
+    let (package, source, hash, assets, _) = inspect_package(path, true)?;
+    Ok((package, source, hash, assets))
+}
+
+/// Reuses the last verified manifest and digest while every hashed file keeps its identity.
+pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
     }
-    let manifest = read(&path.join("mod.json"), 8192)?;
+    let verified = VERIFIED_PACKAGES
+        .lock()
+        .map_err(failure)?
+        .get(path)
+        .cloned();
+    if let Some(verified) = verified
+        && verified.0.iter().all(|(file, expected)| {
+            std::fs::symlink_metadata(file)
+                .is_ok_and(|metadata| metadata.is_file() && identity(&metadata) == *expected)
+        })
+    {
+        return Ok((verified.1.clone(), verified.2.clone()));
+    }
+    let (package, _, hash, _, files) = inspect_package(path, false)?;
+    let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
+    if verified.len() >= 256 {
+        verified.clear();
+    }
+    verified.insert(
+        path.to_owned(),
+        Arc::new((files, package.clone(), hash.clone())),
+    );
+    Ok((package, hash))
+}
+
+fn inspect_package(
+    path: &Path,
+    collect_assets: bool,
+) -> Result<(
+    ModPackage,
+    String,
+    String,
+    BTreeMap<String, String>,
+    Vec<(PathBuf, FileIdentity)>,
+)> {
+    let _profile = super::Profile::new("package_read_hash");
+    if !path.is_absolute() || path.canonicalize()? != path {
+        return Err(failure("canonical_package_path_required"));
+    }
+    let manifest_path = path.join("mod.json");
+    let (manifest, manifest_identity) = read_identified(&manifest_path, 8192)?;
+    let mut files = vec![(manifest_path, manifest_identity)];
+    let mut read_file = |relative: &str| {
+        let (bytes, identity) = package_read_identified(path, relative, 65_536)?;
+        files.push((path.join(relative), identity));
+        Ok::<_, std::io::Error>(bytes)
+    };
     let package: ModPackage = serde_json::from_slice(&manifest)?;
     package.validate()?;
-    let source = package_read(path, &package.entrypoint, 65_536)?;
-    let mut bytes = manifest;
-    bytes.push(0);
-    bytes.extend_from_slice(package.entrypoint.as_bytes());
-    bytes.push(0);
-    bytes.extend_from_slice(&source);
+    let source = read_file(&package.entrypoint)?;
+    let mut hash = Sha256::new();
+    hash.update(&manifest);
+    hash.update([0]);
+    hash.update(package.entrypoint.as_bytes());
+    hash.update([0]);
+    hash.update(&source);
     for (event, script) in &package.lifecycle {
-        bytes.push(0);
-        bytes.extend_from_slice(event.as_bytes());
-        bytes.push(0);
-        bytes.extend_from_slice(script.as_bytes());
-        bytes.push(0);
-        bytes.extend_from_slice(&package_read(path, script, 65_536)?);
+        hash.update([0]);
+        hash.update(event.as_bytes());
+        hash.update([0]);
+        hash.update(script.as_bytes());
+        hash.update([0]);
+        hash.update(read_file(script)?);
     }
     let mut assets = BTreeMap::new();
     for asset in &package.assets {
-        let content = package_read(path, asset, 65_536)?;
-        bytes.push(0);
-        bytes.extend_from_slice(asset.as_bytes());
-        bytes.push(0);
-        bytes.extend_from_slice(&content);
-        if let Ok(text) = String::from_utf8(content) {
+        let content = read_file(asset)?;
+        hash.update([0]);
+        hash.update(asset.as_bytes());
+        hash.update([0]);
+        hash.update(&content);
+        if collect_assets && let Ok(text) = String::from_utf8(content) {
             assets.insert(asset.clone(), text);
         }
     }
     Ok((
         package,
         String::from_utf8(source).map_err(failure)?,
-        digest(&bytes),
+        format!("{:x}", hash.finalize()),
         assets,
+        files,
     ))
 }
 
@@ -202,6 +294,7 @@ pub(super) enum StateLocation {
 }
 
 fn lock(path: &Path) -> Result<File> {
+    let _profile = super::Profile::new("store_lock");
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -458,9 +551,13 @@ impl ModStore {
             .open(&temporary)?;
         let result = (|| {
             file.write_all(bytes)?;
-            file.sync_all()?;
+            {
+                let _profile = super::Profile::new("durable_file_sync");
+                file.sync_all()?;
+            }
             commit()?;
             std::fs::rename(&temporary, &path)?;
+            let _profile = super::Profile::new("durable_directory_sync");
             File::open(&self.root)?.sync_all()
         })();
         if result.is_err() {
@@ -533,10 +630,28 @@ impl ModStore {
         self.selection_status_in(None)
     }
 
+    pub fn verify_selections(&self) -> Result<()> {
+        for selection in self.configuration()?.mods {
+            let _ = verified_package(&selection.path);
+        }
+        Ok(())
+    }
+
     /// Selections after administrator policy; `project` scopes project-targeted managed packages.
     pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
+        self.selection_status_inspected_in(project, &configuration, &lock, None)
+    }
+
+    pub(crate) fn selection_status_inspected_in(
+        &self,
+        project: Option<&Path>,
+        configuration: &ModConfiguration,
+        lock: &crate::ModPackageLock,
+        mut manifests: Option<&mut Vec<Value>>,
+    ) -> Result<Value> {
+        let _profile = super::Profile::new("selection_status");
         let brokered = brokered_grants(&self.root)?;
         let (managed, mut managed_error) = match self.managed() {
             Ok(managed) => (managed, None),
@@ -558,24 +673,70 @@ impl ModStore {
         }
         let mut selections: Vec<Value> = Vec::new();
         let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
-        for (index, selection) in entries.iter().enumerate() {
+        let inspect = |selection: &ModSelection| verified_package(&selection.path);
+        let inspections = if entries.len() > 4 {
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let mut inspected = std::thread::scope(|scope| {
+                let workers = (0..entries.len().min(8))
+                    .map(|_| {
+                        scope.spawn(|| {
+                            let mut inspected = Vec::new();
+                            loop {
+                                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let Some(selection) = entries.get(index) else {
+                                    break;
+                                };
+                                inspected.push((index, inspect(selection)));
+                            }
+                            inspected
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                workers
+                    .into_iter()
+                    .flat_map(|worker| {
+                        worker
+                            .join()
+                            .unwrap_or_else(|error| std::panic::resume_unwind(error))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            inspected.sort_unstable_by_key(|(index, _)| *index);
+            inspected
+                .into_iter()
+                .map(|(_, result)| result)
+                .collect::<Vec<_>>()
+        } else {
+            entries.iter().map(inspect).collect()
+        };
+        for (index, (selection, inspected)) in entries.iter().zip(inspections).enumerate() {
             let administered = index < administered;
-            let inspected = package(&selection.path);
             let mut settings_origin = BTreeMap::new();
             let (mut id, error, environment) = match inspected {
-                Ok((manifest, _, integrity)) => {
-                    for key in super::effective_settings(
-                        manifest.settings_schema.as_ref(),
-                        &selection.settings,
-                    )
-                    .into_keys()
-                    {
-                        let origin = match selection.settings.contains_key(&key) {
+                Ok((manifest, integrity)) => {
+                    if let Some(manifests) = manifests.as_mut() {
+                        manifests.push(json!({
+                            "api": manifest.api,
+                            "version": manifest.version,
+                            "description": manifest.description,
+                            "settings_schema": manifest.settings_schema,
+                        }));
+                    }
+                    let defaults = manifest
+                        .settings_schema
+                        .as_ref()
+                        .and_then(|schema| schema["properties"].as_object())
+                        .into_iter()
+                        .flatten()
+                        .filter(|(_, property)| property.get("default").is_some())
+                        .map(|(key, _)| key);
+                    for key in selection.settings.keys().chain(defaults) {
+                        let origin = match selection.settings.contains_key(key) {
                             false => "default",
                             true if administered => "managed",
                             true => "user",
                         };
-                        settings_origin.insert(key, origin);
+                        settings_origin.insert(key.clone(), origin);
                     }
                     let source = authenticated_source(
                         selection,
@@ -621,7 +782,12 @@ impl ModStore {
                     };
                     (Some(manifest.id), error, manifest.exec_environment)
                 }
-                Err(error) => (None, Some(error.to_string()), Vec::new()),
+                Err(error) => {
+                    if let Some(manifests) = manifests.as_mut() {
+                        manifests.push(Value::Null);
+                    }
+                    (None, Some(error.to_string()), Vec::new())
+                }
             };
             if id.is_none() {
                 id = lock
@@ -663,6 +829,9 @@ impl ModStore {
             }));
         }
         for rejection in pending {
+            if let Some(manifests) = manifests.as_mut() {
+                manifests.push(Value::Null);
+            }
             selections.push(
                 json!({"id": rejection.id, "path": rejection.path, "scope": rejection.scope,
                 "selected": true, "packaged": false, "error": rejection.reason, "effective": false,
@@ -1032,7 +1201,20 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.write("mods.json", &serde_json::to_value(config)?)
+        self.write("mods.json", &serde_json::to_value(config)?)?;
+        drop(_lock);
+        let prefix = format!("{}:", self.root.display());
+        if let Ok(states) = super::UI_STATES.lock() {
+            for (_, weak) in states.iter().filter(|(key, _)| key.starts_with(&prefix)) {
+                if let Some(state) = weak.upgrade()
+                    && let Ok(mut state) = state.lock()
+                {
+                    state.value = Value::Null;
+                    state.revision = state.revision.wrapping_add(1);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn state_name(id: &str, scope: &str) -> String {
@@ -1096,6 +1278,7 @@ impl ModStore {
         previous: &Value,
         value: &Value,
     ) -> Result<()> {
+        let _profile = super::Profile::new("state_commit");
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         if &self.state(id, scope, version)? != previous {
