@@ -665,10 +665,28 @@ pub(in crate::mods) fn blit_sink(
     let owner = id.clone();
     let admitted_source = source.clone();
     let capabilities = grants.capabilities.clone();
+    let verified = Mutex::new(None::<std::time::Instant>);
     let current: Arc<dyn Fn() -> Result<(), String> + Send + Sync> = Arc::new(move || {
-        let mut runtime = runtime
+        let mut verified = verified
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let age = verified.map(|at| at.elapsed());
+        if age.is_some_and(|age| age < std::time::Duration::from_millis(250)) {
+            return Ok(());
+        }
+        let mut runtime = match runtime.try_lock() {
+            Ok(runtime) => runtime,
+            Err(std::sync::TryLockError::WouldBlock)
+                if age.is_some_and(|age| age < std::time::Duration::from_secs(2)) =>
+            {
+                return Ok(());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => runtime
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        *verified = None;
         runtime
             .reload()
             .map_err(|_| "callback_cancelled".to_owned())?;
@@ -677,7 +695,9 @@ pub(in crate::mods) fn blit_sink(
                 grants.source_sha256 == admitted_source && grants.capabilities == capabilities
             }))
         .then_some(())
-        .ok_or_else(|| "process_raster_revoked".to_owned())
+        .ok_or_else(|| "process_raster_revoked".to_owned())?;
+        *verified = Some(std::time::Instant::now());
+        Ok(())
     });
     Some(Arc::new(move |arguments, active| {
         current()?;

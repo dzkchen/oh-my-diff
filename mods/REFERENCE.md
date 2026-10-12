@@ -1038,8 +1038,10 @@ take `raster: KEY` (one of the caller's raster ids) and optionally `keys: ID`
 are drawn into that raster by the host as `terminal.blit {key, image}` from the
 mod, with the same validation, but without a callback per frame: the newest
 frame wins and a frame the terminal cannot take yet is retried for up to 5 s.
-The host also creates a private raw buffer and sends
-`{"pixels": {"source": HANDLE, "path": PATH}}` on stdin before bound input. The child opens that
+With `pixels: true` the host also creates a private raw buffer and sends
+`{"pixels": {"source": HANDLE, "path": PATH}}` on stdin before bound input;
+without it the process gets no buffer and its raw publications stop it with
+`terminal_blit_source_not_owned`. The child opens that
 file, writes exactly `width * height * channels` packed bytes at offset zero,
 and publishes `{"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba",
 "width": W, "height": H, "sequence": N}}}`. The equivalent mod call is
@@ -1047,8 +1049,9 @@ and publishes `{"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba",
 for each publication. The child must not modify the buffer until stdin
 acknowledges `{"pixels": {"source": HANDLE, "sequence": N, "ready": true,
 "error": null}}`; an owned invalid descriptor or failed copy returns
-`ready: false` with an error. Fatal raw publications stop the managed producer
-instead of retrying a consumed sequence. Temporary surface, layout and callback
+`ready: false` with an error. A failed copy does not consume the sequence, so
+direct callers may retry the same publication; managed producers stop on fatal
+raw errors. Temporary surface, layout and callback
 admission errors retain the pending raw publication for retry while the process
 is active; confirmed owner revocation stops it. Backpressure neither copies nor
 acknowledges the buffer, so the same publication can be retried safely.
@@ -1064,8 +1067,8 @@ snapshots, and cells-only clients receive half-blocks. Host paths and handles
 never reach external renderers.
 
 Experimental pacing changed from 33 to 16 ms in Batch 4gh. Use `frame_ms` and
-`retry_after_ms` instead of hardcoded timing. Existing encoded messages keep
-their shape; producers should ignore stdin messages they do not use.
+`retry_after_ms` instead of hardcoded timing. Encoded producers keep their
+stdin and stdout shapes.
 For local profiling, `OMD_FRAME_TRACE=/absolute/new/file.jsonl` enables
 per-stage wall and thread-CPU timings; the file must not already exist.
 

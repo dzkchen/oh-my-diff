@@ -136,7 +136,6 @@ pub fn snapshot(
         if source.sequence <= buffer.sequence {
             return Err("terminal_blit_sequence_stale".into());
         }
-        buffer.sequence = source.sequence;
         if buffer
             .file
             .metadata()
@@ -170,6 +169,7 @@ pub fn snapshot(
         {
             return Err("terminal_blit_source_unavailable".into());
         }
+        buffer.sequence = source.sequence;
         Ok(Arc::new(PixelFrame::new(source.clone(), image)))
     })();
     drop(buffer);
@@ -239,7 +239,7 @@ impl Binding {
             .create_new(true)
             .mode(0o600)
             .open(path)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| "terminal_blit_pixels_io".to_owned())?;
         let source = format!("pixels-{}-{serial}", std::process::id());
         PIXELS
             .lock()
@@ -613,7 +613,6 @@ mod tests {
             replies.lock().unwrap().last().unwrap()["pixels"]["ready"],
             false
         );
-        source.sequence = 4;
         std::fs::write(&renamed, [7, 8, 9, 10]).unwrap();
         assert_eq!(
             snapshot(

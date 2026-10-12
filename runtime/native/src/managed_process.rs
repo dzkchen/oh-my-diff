@@ -381,6 +381,7 @@ fn blit_worker(
                                 | "terminal_blit_pixels_io"
                                 | "terminal_blit_sequence_stale"
                                 | "terminal_blit_source_not_owned"
+                                | "terminal_blit_source_unavailable"
                                 | "terminal_blit_invalid"
                                 | "terminal_blit_too_large"
                         ) =>
@@ -673,6 +674,8 @@ impl ManagedProcesses {
                     raster: Option<String>,
                     #[serde(default)]
                     keys: Option<String>,
+                    #[serde(default)]
+                    pixels: bool,
                 }
                 let mut input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -685,7 +688,7 @@ impl ManagedProcesses {
                         })
                 };
                 let raster = match (&input.raster, &input.keys) {
-                    (None, None) => None,
+                    (None, None) if !input.pixels => None,
                     (Some(raster), keys)
                         if input.framing.as_deref() == Some("ndjson")
                             && component(raster)
@@ -947,18 +950,20 @@ impl ManagedProcesses {
                                 )
                             });
                     if let Some(binding) = &mut binding {
-                        let initialized = binding
-                            .pixels(&scratch.join("pixels.raw"), Some(generation))
-                            .and_then(|message| {
-                                raster_input.as_ref().unwrap()(message)
-                                    .then_some(())
-                                    .ok_or("process_pixels_init_failed".to_owned())
-                            });
-                        if let Err(error) = initialized {
-                            let _ = kill_process_group(child.id());
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            return Err(error);
+                        if input.pixels {
+                            let initialized = binding
+                                .pixels(&scratch.join("pixels.raw"), Some(generation))
+                                .and_then(|message| {
+                                    raster_input.as_ref().unwrap()(message)
+                                        .then_some(())
+                                        .ok_or("process_pixels_init_failed".to_owned())
+                                });
+                            if let Err(error) = initialized {
+                                let _ = kill_process_group(child.id());
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return Err(error);
+                            }
                         }
                         binding.publish();
                     }
@@ -1456,7 +1461,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
         let sha256 = program_sha256(&sh).unwrap();
-        let script = r#"IFS= read -r init; printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
+        let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
         let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
             processes.call(
                 owner,
@@ -1526,6 +1531,35 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             "pr-frame",
             json!({"pointer": {}})
         ));
+        let echo = |session: &str, raster: Option<&str>| {
+            processes.call(
+                owner,
+                "process.start",
+                json!({"session": session, "name": "sh", "path": sh, "sha256": sha256, "sandbox": "none",
+                    "framing": "ndjson", "raster": raster, "pixels": true, "arguments": ["-c", "exec cat"]}),
+                || true,
+            )
+        };
+        assert_eq!(
+            echo("unbound", None).unwrap_err(),
+            "process_raster_invalid"
+        );
+        echo("raw", Some("pr-frame")).unwrap();
+        let initialized = processes
+            .call(
+                owner,
+                "process.exchange",
+                json!({"session":"raw","wait_ms":2000}),
+                || true,
+            )
+            .unwrap();
+        assert!(
+            initialized["messages"][0]["pixels"]["path"].is_string(),
+            "{initialized}"
+        );
+        processes
+            .call(owner, "process.stop", json!({"session":"raw"}), || true)
+            .unwrap();
     }
 
     #[test]

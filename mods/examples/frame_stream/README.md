@@ -12,7 +12,8 @@ mod author workflow. No model request is required. The producer writes timing
 records inside its private process directory; the mod exposes their path as
 `state.metrics`.
 
-Raw mode opens the host-provided `pixels.path`, writes one packed RGB frame,
+Raw mode starts the process with `pixels: true`, opens the host-provided
+`pixels.path`, writes one packed RGB frame,
 and publishes its source handle, dimensions and increasing sequence number.
 It waits for the matching acknowledgement before overwriting that file. The
 host copies an immutable frame before acknowledging it. Handles are scoped to

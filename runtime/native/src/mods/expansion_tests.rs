@@ -2793,7 +2793,24 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
         .join("packages/control")
         .canonicalize()
         .unwrap();
+    let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
+    assert_ne!(first, "process_raster_revoked");
+    let held = fixture.core.runtime.lock().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let busy = sink.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(busy(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
+    });
+    assert_eq!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err(),
+        first
+    );
+    drop(held);
     store.enable(&package, false).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(
         sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
         "process_raster_revoked"

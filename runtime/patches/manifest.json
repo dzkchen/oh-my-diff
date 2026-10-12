@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "2771437f349029b95ada85b1fae9ce39086086d22d188a6097f28a34aa633577"
+    "sha256": "ed6a6ad71248686b3c0cad676f7e952c179b8c4af06cf8d6c6af9ba7851d4657"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -829,7 +829,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "2df92cd2737542c3b99bd8eeeb1e4a052109f9c2e6dde9d5a641ae4880b76624"
+      "after": "a1d509d8d15416701372d2273e5babf829402a3cdf1c147ad0a8106cf49e4a6a"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
@@ -861,7 +861,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion.rs": {
       "before": null,
-      "after": "fd17c00e881a84956678a6c62420fb0537dfa8f40316b8d2a9039f3c1493ac1b"
+      "after": "6a3ea43a4289d0cf4ea48af7b3b3a482496c42f4ebc02f1b91c6ef08aa67203c"
     },
     "codex-rs/ext/omd/src/mods/expansion/activity.rs": {
       "before": null,
@@ -889,7 +889,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "35fefe3bab8ab362b3ed9656620f81b4b7aeac9ee7ba91beefc4330784c3c147"
+      "after": "e5e20396c5590a9c480d149518ceeddeb5d0eb20d8b2d0760ef3456e56da015a"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1229,7 +1229,7 @@
     },
     "codex-rs/omd/src/process_raster.rs": {
       "before": null,
-      "after": "d015c0edc38fb639fe048fb9cb079da9352e39cd1621a7d16c15a8ff587a71dc"
+      "after": "30255568bacbc3b09702724e43ee4f813ab74ad3c1b88d0ce0e1846af58495b5"
     },
     "codex-rs/omd/src/resource_data.rs": {
       "before": null,

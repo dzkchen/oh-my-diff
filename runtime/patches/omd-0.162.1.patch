@@ -56254,10 +56254,10 @@ index 000000000..ce09c5741
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..5bdef1443
+index 000000000..83b745893
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,1937 @@
+@@ -0,0 +1,1971 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -56641,6 +56641,7 @@ index 000000000..5bdef1443
 +                                | "terminal_blit_pixels_io"
 +                                | "terminal_blit_sequence_stale"
 +                                | "terminal_blit_source_not_owned"
++                                | "terminal_blit_source_unavailable"
 +                                | "terminal_blit_invalid"
 +                                | "terminal_blit_too_large"
 +                        ) =>
@@ -56933,6 +56934,8 @@ index 000000000..5bdef1443
 +                    raster: Option<String>,
 +                    #[serde(default)]
 +                    keys: Option<String>,
++                    #[serde(default)]
++                    pixels: bool,
 +                }
 +                let mut input: Input =
 +                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -56945,7 +56948,7 @@ index 000000000..5bdef1443
 +                        })
 +                };
 +                let raster = match (&input.raster, &input.keys) {
-+                    (None, None) => None,
++                    (None, None) if !input.pixels => None,
 +                    (Some(raster), keys)
 +                        if input.framing.as_deref() == Some("ndjson")
 +                            && component(raster)
@@ -57207,18 +57210,20 @@ index 000000000..5bdef1443
 +                                )
 +                            });
 +                    if let Some(binding) = &mut binding {
-+                        let initialized = binding
-+                            .pixels(&scratch.join("pixels.raw"), Some(generation))
-+                            .and_then(|message| {
-+                                raster_input.as_ref().unwrap()(message)
-+                                    .then_some(())
-+                                    .ok_or("process_pixels_init_failed".to_owned())
-+                            });
-+                        if let Err(error) = initialized {
-+                            let _ = kill_process_group(child.id());
-+                            let _ = child.kill();
-+                            let _ = child.wait();
-+                            return Err(error);
++                        if input.pixels {
++                            let initialized = binding
++                                .pixels(&scratch.join("pixels.raw"), Some(generation))
++                                .and_then(|message| {
++                                    raster_input.as_ref().unwrap()(message)
++                                        .then_some(())
++                                        .ok_or("process_pixels_init_failed".to_owned())
++                                });
++                            if let Err(error) = initialized {
++                                let _ = kill_process_group(child.id());
++                                let _ = child.kill();
++                                let _ = child.wait();
++                                return Err(error);
++                            }
 +                        }
 +                        binding.publish();
 +                    }
@@ -57716,7 +57721,7 @@ index 000000000..5bdef1443
 +        };
 +        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
 +        let sha256 = program_sha256(&sh).unwrap();
-+        let script = r#"IFS= read -r init; printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
++        let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
 +        let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
 +            processes.call(
 +                owner,
@@ -57786,6 +57791,35 @@ index 000000000..5bdef1443
 +            "pr-frame",
 +            json!({"pointer": {}})
 +        ));
++        let echo = |session: &str, raster: Option<&str>| {
++            processes.call(
++                owner,
++                "process.start",
++                json!({"session": session, "name": "sh", "path": sh, "sha256": sha256, "sandbox": "none",
++                    "framing": "ndjson", "raster": raster, "pixels": true, "arguments": ["-c", "exec cat"]}),
++                || true,
++            )
++        };
++        assert_eq!(
++            echo("unbound", None).unwrap_err(),
++            "process_raster_invalid"
++        );
++        echo("raw", Some("pr-frame")).unwrap();
++        let initialized = processes
++            .call(
++                owner,
++                "process.exchange",
++                json!({"session":"raw","wait_ms":2000}),
++                || true,
++            )
++            .unwrap();
++        assert!(
++            initialized["messages"][0]["pixels"]["path"].is_string(),
++            "{initialized}"
++        );
++        processes
++            .call(owner, "process.stop", json!({"session":"raw"}), || true)
++            .unwrap();
 +    }
 +
 +    #[test]
@@ -64974,10 +65008,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..6f4f3426a
+index 000000000..ec8743e91
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,801 @@
+@@ -0,0 +1,821 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -65645,10 +65679,28 @@ index 000000000..6f4f3426a
 +    let owner = id.clone();
 +    let admitted_source = source.clone();
 +    let capabilities = grants.capabilities.clone();
++    let verified = Mutex::new(None::<std::time::Instant>);
 +    let current: Arc<dyn Fn() -> Result<(), String> + Send + Sync> = Arc::new(move || {
-+        let mut runtime = runtime
++        let mut verified = verified
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let age = verified.map(|at| at.elapsed());
++        if age.is_some_and(|age| age < std::time::Duration::from_millis(250)) {
++            return Ok(());
++        }
++        let mut runtime = match runtime.try_lock() {
++            Ok(runtime) => runtime,
++            Err(std::sync::TryLockError::WouldBlock)
++                if age.is_some_and(|age| age < std::time::Duration::from_secs(2)) =>
++            {
++                return Ok(());
++            }
++            Err(std::sync::TryLockError::WouldBlock) => runtime
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner),
++            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
++        };
++        *verified = None;
 +        runtime
 +            .reload()
 +            .map_err(|_| "callback_cancelled".to_owned())?;
@@ -65657,7 +65709,9 @@ index 000000000..6f4f3426a
 +                grants.source_sha256 == admitted_source && grants.capabilities == capabilities
 +            }))
 +        .then_some(())
-+        .ok_or_else(|| "process_raster_revoked".to_owned())
++        .ok_or_else(|| "process_raster_revoked".to_owned())?;
++        *verified = Some(std::time::Instant::now());
++        Ok(())
 +    });
 +    Some(Arc::new(move |arguments, active| {
 +        current()?;
@@ -67816,10 +67870,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..90dabc091
+index 000000000..a6fa4b32c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4681 @@
+@@ -0,0 +1,4698 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -70615,7 +70669,24 @@ index 000000000..90dabc091
 +        .join("packages/control")
 +        .canonicalize()
 +        .unwrap();
++    let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
++    assert_ne!(first, "process_raster_revoked");
++    let held = fixture.core.runtime.lock().unwrap();
++    let (sender, receiver) = std::sync::mpsc::channel();
++    let busy = sink.clone();
++    std::thread::spawn(move || {
++        let _ = sender.send(busy(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
++    });
++    assert_eq!(
++        receiver
++            .recv_timeout(std::time::Duration::from_secs(1))
++            .unwrap()
++            .unwrap_err(),
++        first
++    );
++    drop(held);
 +    store.enable(&package, false).unwrap();
++    std::thread::sleep(std::time::Duration::from_millis(300));
 +    assert_eq!(
 +        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
 +        "process_raster_revoked"
@@ -115611,10 +115682,10 @@ index 000000000..f8b869378
 +}
 diff --git a/codex-rs/omd/src/process_raster.rs b/codex-rs/omd/src/process_raster.rs
 new file mode 100644
-index 000000000..a081b050e
+index 000000000..d6ae292c3
 --- /dev/null
 +++ b/codex-rs/omd/src/process_raster.rs
-@@ -0,0 +1,731 @@
+@@ -0,0 +1,730 @@
 +use serde_json::Value;
 +use std::collections::BTreeMap;
 +use std::fs::File;
@@ -115753,7 +115824,6 @@ index 000000000..a081b050e
 +        if source.sequence <= buffer.sequence {
 +            return Err("terminal_blit_sequence_stale".into());
 +        }
-+        buffer.sequence = source.sequence;
 +        if buffer
 +            .file
 +            .metadata()
@@ -115787,6 +115857,7 @@ index 000000000..a081b050e
 +        {
 +            return Err("terminal_blit_source_unavailable".into());
 +        }
++        buffer.sequence = source.sequence;
 +        Ok(Arc::new(PixelFrame::new(source.clone(), image)))
 +    })();
 +    drop(buffer);
@@ -115856,7 +115927,7 @@ index 000000000..a081b050e
 +            .create_new(true)
 +            .mode(0o600)
 +            .open(path)
-+            .map_err(|error| error.to_string())?;
++            .map_err(|_| "terminal_blit_pixels_io".to_owned())?;
 +        let source = format!("pixels-{}-{serial}", std::process::id());
 +        PIXELS
 +            .lock()
@@ -116230,7 +116301,6 @@ index 000000000..a081b050e
 +            replies.lock().unwrap().last().unwrap()["pixels"]["ready"],
 +            false
 +        );
-+        source.sequence = 4;
 +        std::fs::write(&renamed, [7, 8, 9, 10]).unwrap();
 +        assert_eq!(
 +            snapshot(
