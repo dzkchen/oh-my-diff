@@ -16,11 +16,10 @@ metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 These are local Apple Silicon candidate profiles for the active Codex `0.162.1`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
-executables from `upstream.lock.json` and `runtime/patches/manifest.json` after
-`mise run batch setup BATCH`, with
-`python3 scripts/batch_tree.py artifacts BATCH --release`. It copies and signs
-`target/release` binaries and packs the typed author SDK as `mod-api.tgz` in
-`/private/tmp/omd-bBATCH/artifacts`; tests keep the debug target. Use Node 24.18 or a
+executables from `upstream.lock.json` and `runtime/patches/manifest.json`: check
+out the pinned Codex tag, run `scripts/normalize_upstream_lock.py` and
+`scripts/apply_runtime_patch.py` on it, `cargo build --release` the six binaries,
+and sign and pack them with `scripts/lean_release_lock.py`. Use Node 24.18 or a
 later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`

@@ -2766,6 +2766,84 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn raw_frame_sink_detects_external_revocation_without_an_event() {
+    let fixture = fixture(&[Package {
+        id: "control",
+        capabilities: &["terminal"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }])
+    .unwrap();
+    let grants = fixture.core.runtime.lock().unwrap().grants("control");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    let caller = Caller {
+        id: "control",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    let package = fixture
+        ._dir
+        .path()
+        .join("packages/control")
+        .canonicalize()
+        .unwrap();
+    struct LateValidity;
+    impl codex_omd::client_surface::ClientSurface for LateValidity {
+        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            std::thread::sleep(std::time::Duration::from_millis(2_100));
+            let valid = (call.validity.0)();
+            call.reply
+                .send(Ok(json!({"valid": valid})))
+                .map_err(|error| error.to_string())
+        }
+    }
+    let surface = codex_omd::client_surface::register(Arc::new(LateValidity));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let late = sink.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(late(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
+    });
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let held = fixture.core.runtime.lock().unwrap();
+    let late = receiver
+        .recv_timeout(std::time::Duration::from_secs(4))
+        .expect("a late validity check does not wait for the mod runtime");
+    assert!(
+        !late.is_ok_and(|reply| reply["valid"] == true),
+        "a verification older than two seconds is not trusted"
+    );
+    drop((held, surface));
+    let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
+    assert_ne!(first, "process_raster_revoked");
+    let held = fixture.core.runtime.lock().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let busy = sink.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(busy(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
+    });
+    assert_eq!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err(),
+        first
+    );
+    drop(held);
+    store.enable(&package, false).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
+        "process_raster_revoked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn event_context_refuses_user_only_app_methods_before_the_client() {
     let Some(fixture) = fixture(&[Package {
         id: "steerer",

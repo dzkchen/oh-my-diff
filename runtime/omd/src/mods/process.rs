@@ -353,7 +353,12 @@ fn pool(mut runner: Warm) {
         Ok(mut runners) => {
             runners.push(runner);
             let mut evicted = Vec::new();
-            while runners.iter().filter(|runner| runner.serve == serve).count() > size {
+            while runners
+                .iter()
+                .filter(|runner| runner.serve == serve)
+                .count()
+                > size
+            {
                 let oldest = runners
                     .iter()
                     .enumerate()

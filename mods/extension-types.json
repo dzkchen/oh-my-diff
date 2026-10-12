@@ -279,6 +279,12 @@
       "why_mod": "Replaces the live terminal layout with splits, tabs, documents and diffs."
     },
     {
+      "path": "mods/examples/frame_stream",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look."
+    },
+    {
       "path": "mods/examples/raster_canvas",
       "extension_type": "mod",
       "role": "conformance_fixture",

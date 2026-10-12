@@ -1,9 +1,11 @@
+use super::FileStamp;
 use super::ModConfiguration;
 use super::ModPackage;
 use super::ModSelection;
 use super::Result;
 use super::digest;
 use super::failure;
+use super::file_stamp;
 use super::identifier;
 use serde_json::Value;
 use serde_json::json;
@@ -17,7 +19,6 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -115,29 +116,21 @@ pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<Strin
     )))
 }
 
-type FileIdentity = (u64, u64, u64, i64, i64, i64, i64);
-type VerifiedPackage = (Vec<(PathBuf, FileIdentity)>, ModPackage, String);
+#[cfg(test)]
+thread_local! { pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+type VerifiedPackage = (Vec<(PathBuf, FileStamp)>, ModPackage, String);
 
 static VERIFIED_PACKAGES: LazyLock<Mutex<HashMap<PathBuf, Arc<VerifiedPackage>>>> =
     LazyLock::new(Default::default);
-
-fn identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    (
-        metadata.dev(),
-        metadata.ino(),
-        metadata.size(),
-        metadata.mtime(),
-        metadata.mtime_nsec(),
-        metadata.ctime(),
-        metadata.ctime_nsec(),
-    )
-}
 
 pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
     read_identified(path, limit).map(|(bytes, _)| bytes)
 }
 
-fn read_identified(path: &Path, limit: u64) -> Result<(Vec<u8>, FileIdentity)> {
+fn read_identified(path: &Path, limit: u64) -> Result<(Vec<u8>, FileStamp)> {
+    #[cfg(test)]
+    READS.set(READS.get() + 1);
     let file = OpenOptions::new()
         .read(true)
         .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
@@ -151,7 +144,7 @@ fn read_identified(path: &Path, limit: u64) -> Result<(Vec<u8>, FileIdentity)> {
     if bytes.len() as u64 > limit {
         return Err(failure("file_limit"));
     }
-    Ok((bytes, identity(&metadata)))
+    Ok((bytes, file_stamp(&metadata)))
 }
 
 pub(super) fn package_read(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>> {
@@ -162,7 +155,7 @@ fn package_read_identified(
     root: &Path,
     relative: &str,
     limit: u64,
-) -> Result<(Vec<u8>, FileIdentity)> {
+) -> Result<(Vec<u8>, FileStamp)> {
     let path = root.join(relative);
     if !path
         .parent()
@@ -218,7 +211,7 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
         .iter()
         .all(|(file, expected)| {
             std::fs::symlink_metadata(file)
-                .is_ok_and(|metadata| metadata.is_file() && identity(&metadata) == *expected)
+                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
         })
         .then(|| (verified.1.clone(), verified.2.clone()))
 }
@@ -231,7 +224,7 @@ fn inspect_package(
     String,
     String,
     BTreeMap<String, String>,
-    Vec<(PathBuf, FileIdentity)>,
+    Vec<(PathBuf, FileStamp)>,
 )> {
     let _profile = super::Profile::new("package_read_hash");
     if !path.is_absolute() || path.canonicalize()? != path {

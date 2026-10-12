@@ -335,6 +335,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "contracts_v2",
     "framed_process_v1",
     "process_raster_v1",
+    "raster_pixels_v1",
     "kernels_v1",
     "terminal_lists_v1",
     "adapters_v1",
@@ -2425,10 +2426,9 @@ static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 /// Clears a store's UI states once per explicit reload, whether this process made it or a host
 /// noticed another process's.
 fn reset_ui_states(root: &Path, revision: u64) {
-    if UI_RESETS
-        .lock()
-        .map_or(true, |mut resets| resets.insert(root.to_path_buf(), revision) == Some(revision))
-    {
+    if UI_RESETS.lock().map_or(true, |mut resets| {
+        resets.insert(root.to_path_buf(), revision) == Some(revision)
+    }) {
         return;
     }
     let prefix = format!("{}:", root.display());
@@ -2457,7 +2457,65 @@ struct ModTelemetry {
 const MOD_FAULT_LIMIT: u32 = 5;
 const BROKER_REFRESH: Duration = Duration::from_secs(2);
 
+pub type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
+
+pub fn file_stamp(metadata: &std::fs::Metadata) -> FileStamp {
+    use std::os::unix::fs::MetadataExt;
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
+
+fn configuration_stamp(path: &Path) -> Option<FileStamp> {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| file_stamp(&metadata))
+}
+
 type Brokered = Option<(u64, BTreeSet<String>)>;
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+
+    #[test]
+    fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("store");
+        ModStore::create(
+            root.clone(),
+            std::env::var_os("OMD_TEST_NODE").unwrap().into(),
+        )
+        .unwrap();
+        let mut host = ModHost::open(root.clone()).unwrap();
+        let reads = store::READS.get();
+        for _ in 0..100 {
+            assert!(!host.reload().unwrap());
+        }
+        assert_eq!(store::READS.get(), reads);
+        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
+        assert!(!host.reload().unwrap());
+        assert!(store::READS.get() > reads);
+        let path = root.join("mods.json");
+        let original = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"invalid").unwrap();
+        assert!(host.reload().is_err());
+        assert!(host.reload().is_err());
+        std::fs::write(&path, original).unwrap();
+        assert!(!host.reload().unwrap());
+        let moved = root.join("moved.json");
+        std::fs::rename(&path, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &path).unwrap();
+        assert!(host.reload().is_err());
+    }
+}
 type Authority = (
     Brokered,
     Option<Managed>,
@@ -2520,6 +2578,7 @@ pub struct ModHost {
     node: PathBuf,
     generation: u64,
     configuration_sha256: String,
+    configuration_stamp: Option<FileStamp>,
     ui_configuration: Option<(u64, String)>,
     selections: (usize, usize),
     loaded: BTreeMap<String, Loaded>,
@@ -2982,6 +3041,7 @@ impl ModHost {
             node: PathBuf::new(),
             generation: 0,
             configuration_sha256: String::new(),
+            configuration_stamp: None,
             ui_configuration: None,
             selections: (0, 0),
             loaded: BTreeMap::new(),
@@ -3016,6 +3076,7 @@ impl ModHost {
 
     /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else nowhere.
     pub fn set_checkout(&mut self, repository: &Path) {
+        self.configuration_stamp = None;
         if self.project.as_deref() != repository.canonicalize().ok().as_deref() {
             for loaded in self.loaded.values_mut() {
                 loaded.clear_ui();
@@ -3117,6 +3178,17 @@ impl ModHost {
         let _profile = Profile::new("reload");
         let config_profile = Profile::new("configuration_read_hash");
         let path = self.store.root.join("mods.json");
+        let stamp = configuration_stamp(&path);
+        if stamp.is_some()
+            && stamp == self.configuration_stamp
+            && self
+                .brokered
+                .as_ref()
+                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
+        {
+            return Ok(false);
+        }
+        self.configuration_stamp = None;
         let bytes = store::read(&path, 65_536);
         let sha256 = digest(bytes.as_deref().unwrap_or_default());
         drop(config_profile);
@@ -3141,6 +3213,7 @@ impl ModHost {
             self.project.as_deref().unwrap_or(Path::new("")).display()
         );
         if hash == self.configuration_sha256 {
+            self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
             return Ok(false);
         }
         let configured = bytes
@@ -3452,6 +3525,7 @@ impl ModHost {
         self.retain_environment();
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
+        self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;

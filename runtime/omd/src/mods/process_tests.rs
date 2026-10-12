@@ -376,14 +376,37 @@ fn reused_callback_runners_never_evict_render_runners() {
             .find(|runner| runner.key == key)
             .map(|runner| runner.child.id())
     };
-    evaluate_warm(&node, "kind-render", &render, Duration::from_secs(2), &|| true, &mut |_| unreachable!()).unwrap();
+    evaluate_warm(
+        &node,
+        "kind-render",
+        &render,
+        Duration::from_secs(2),
+        &|| true,
+        &mut |_| unreachable!(),
+    )
+    .unwrap();
     let rendering = pid("kind-render").unwrap();
     for index in 0..4 {
         let key = format!("kind-command-{index}");
-        evaluate_warm(&node, &key, &command, Duration::from_secs(2), &|| true, &mut |_| unreachable!()).unwrap();
+        evaluate_warm(
+            &node,
+            &key,
+            &command,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
     }
     assert_eq!(pid("kind-render"), Some(rendering));
-    assert!(WARM.lock().unwrap().iter().filter(|runner| !runner.serve).count() <= 2);
+    assert!(
+        WARM.lock()
+            .unwrap()
+            .iter()
+            .filter(|runner| !runner.serve)
+            .count()
+            <= 2
+    );
     for key in ["kind-render", "kind-command-2", "kind-command-3"] {
         super::invalidate_warm(key);
     }
