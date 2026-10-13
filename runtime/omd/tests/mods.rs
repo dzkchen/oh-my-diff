@@ -926,24 +926,6 @@ fn migration_and_rollback_read_state_up_to_the_store_limit() {
 }
 
 #[test]
-fn retired_api_packages_are_rejected_before_trust_or_activation() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let path = package(&root, "retired", "export default () => {}", &[]);
-    for version in 4..=9 {
-        let retired = format!("0.1.0-experimental.{version}");
-        let manifest_path = path.join("mod.json");
-        let mut manifest: Value =
-            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-        manifest["api"] = json!(retired);
-        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let error = ModStore::inspect_package(&path).unwrap_err().to_string();
-        assert!(error.contains(&retired), "{error}");
-        assert!(error.contains(MOD_API_VERSION), "{error}");
-    }
-}
-
-#[test]
 fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -969,6 +951,10 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
         std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let error = ModStore::inspect_package(&path).unwrap_err().to_string();
         assert!(error.contains(expected), "{field}: {error}");
+        if field == "api" {
+            assert!(error.contains("9.0.0"), "{error}");
+            assert!(error.contains(MOD_API_VERSION), "{error}");
+        }
         assert!(
             error.contains("package") || error.contains("host"),
             "{error}"
@@ -4012,13 +3998,13 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
 }
 
 #[test]
-fn retired_git_host_operations_are_rejected() {
+fn unsupported_host_operations_are_rejected_before_activation() {
     let source =
-        "export default api => api.command('probe', () => api.host.call('git.status', null))";
+        "export default api => api.command('probe', () => api.host.call('future.unsupported', null))";
     let (temp, _, _) = fixture(source, &["commands"]);
     let error = activation_error(&temp, "fixture");
     assert!(
-        error.contains("unsupported_host_operation: git.status"),
+        error.contains("unsupported_host_operation: future.unsupported"),
         "{error}"
     );
 }

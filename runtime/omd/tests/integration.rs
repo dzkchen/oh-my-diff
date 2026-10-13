@@ -504,22 +504,3 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
     assert!(!state("beta").exists());
     assert!(!state("gamma").exists());
 }
-
-#[test]
-fn retired_pi_host_operations_are_rejected_before_activation() {
-    let temp = TempDir::new().unwrap();
-    let (root, store) = workspace(&temp);
-    let reader = written(
-        &root,
-        "reader",
-        "export default api => api.command('resources', () => api.host.call('pi.discover', null))",
-        &["commands"],
-        json!({}),
-    );
-    trust(&store, &reader, &["commands"]);
-    let error = error_of(&host(&temp), "reader");
-    assert!(
-        error.contains("unsupported_host_operation: pi.discover"),
-        "{error}"
-    );
-}

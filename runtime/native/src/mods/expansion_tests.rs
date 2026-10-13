@@ -2920,6 +2920,116 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn surface_authority_polling_preserves_ui_and_in_flight_callbacks() {
+    let fixture = fixture(&[Package {
+        id: "control",
+        capabilities: &["commands", "terminal", "composer"],
+        manifest: Value::Null,
+        source: "export default api => { api.on('terminal', () => ({title:'Control'})); api.command('open', () => { api.uiState.set(7); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('read', () => api.uiState.get()); api.command('poll', () => { const before = api.uiState.get(); api.host.call('composer.read', null); api.uiState.set(before + 1); return before + 1; }); };",
+    }])
+    .unwrap();
+    let opened = command(&fixture.core, "control", "open");
+    let (grants, generation) = {
+        let mut runtime = fixture.core.runtime.lock().unwrap();
+        let generation = runtime.generation();
+        let view = runtime
+            .command_view("control", generation, opened["terminal"].clone(), &json!({}))
+            .unwrap();
+        assert!(view.component_owners.contains_key("own"));
+        (runtime.grants("control"), generation)
+    };
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let caller = Caller {
+        id: "control",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::UserCommand,
+        record_changes: false,
+    };
+    struct Queued(std::sync::mpsc::Sender<codex_omd::client_surface::SurfaceCall>);
+    impl codex_omd::client_surface::ClientSurface for Queued {
+        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            self.0.send(call).map_err(|error| error.to_string())
+        }
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let registration = codex_omd::client_surface::register(Arc::new(Queued(sender)));
+    let handle = tokio::runtime::Handle::current();
+    std::thread::scope(|scope| {
+        let pending = scope.spawn(|| {
+            codex_omd::invoke_shared(
+                &fixture.core.runtime,
+                "control",
+                generation,
+                "command",
+                "poll",
+                Value::Null,
+                || true,
+                |_, request| {
+                    handle
+                        .block_on(surface(
+                            &fixture.core,
+                            &fixture.lead,
+                            &caller,
+                            request,
+                            &Arc::new(AtomicBool::new(false)),
+                        ))
+                        .map_err(std::io::Error::other)
+                },
+                |_| {},
+            )
+        });
+        let call = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(call.operation, "composer.read");
+        // Exercise client-side validity checks and allow the queued wait loop to poll too.
+        for _ in 0..3 {
+            assert!((call.validity.0)());
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            assert_eq!(command(&fixture.core, "control", "read"), json!(7));
+            let mut runtime = fixture.core.runtime.lock().unwrap();
+            runtime
+                .command_view("control", generation, opened["terminal"].clone(), &json!({}))
+                .unwrap();
+            let view = runtime.terminal_view(json!({}), || true);
+            assert_eq!(
+                view.component_owners.get("own").map(String::as_str),
+                Some("control")
+            );
+        }
+        call.reply
+            .send(Ok(json!({"text":"", "cursor":0, "selection":null, "revision":0,
+                "attachments":[], "suggestion":null})))
+            .unwrap();
+        assert_eq!(pending.join().unwrap().unwrap(), json!(8));
+    });
+    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
+    drop(registration);
+    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
+    assert!(
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true))
+            .unwrap_err()
+            .message
+            .starts_with("client_surface_unavailable")
+    );
+    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
+    fixture.core.runtime.lock().unwrap().reload().unwrap();
+    assert!(command(&fixture.core, "control", "read").is_null());
+    assert!(
+        !fixture
+            .core
+            .runtime
+            .lock()
+            .unwrap()
+            .terminal_view(json!({}), || true)
+            .component_owners
+            .contains_key("own")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn component_post_hooks_make_the_host_calls_component_events_make() {
     let Some(fixture) = fixture(&[Package {
         id: "poster",
