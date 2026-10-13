@@ -170,6 +170,8 @@ export type TerminalComponent =
   /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
   | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
+  /** Experimental: a region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
+  | { type: 'module'; id: string; label: string; module: string; props?: Json; height?: number; keys?: boolean; pointer?: boolean }
   | { type: 'slot' }
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
   | { type: 'native'; style?: TerminalStyle };
@@ -258,6 +260,20 @@ export type RenderEvent<C extends RenderComponent = RenderComponent> = C extends
   lifecycle: 'live' | 'final'; owner: null; props: RenderProps[C];
 } : never;
 export type RenderTree = { tree: TerminalComponent[] };
+export type ComponentKey = { kind: 'key'; key: string | null; text: string | null };
+export type ComponentPointer = { kind: 'pointer'; column: number; row: number; half?: 0 | 1 | null;
+  action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
+/** The region a component module draws: its size in cells, the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
+export type ComponentContext<P extends Json = Json> = { readonly columns: number; readonly rows: number; readonly props: P; post(data: Json): void };
+/** Experimental: handlers run on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
+export type ComponentModule<S = unknown, P extends Json = Json> = {
+  init?(props: P, ui: ComponentContext<P>): S;
+  view(state: S, ui: ComponentContext<P>): TerminalComponent | TerminalComponent[];
+  key?(state: S, event: ComponentKey, ui: ComponentContext<P>): S | void;
+  pointer?(state: S, event: ComponentPointer, ui: ComponentContext<P>): S | void;
+  /** `ms` may depend on the state; `null` pauses ticks until input or new props step the module again. */
+  every?: { ms: number | ((state: S) => number | null); tick(state: S, ui: ComponentContext<P>): S | void };
+};
 export type Widen<T extends Json> = T extends string ? string : T extends number ? number : T extends boolean ? boolean : T;
 export type Atom<T extends Json = Json> = { readonly key: string; get(): T; set(value: T): void; update(change: (value: T) => T): void };
 export type Derived<T extends Json = Json> = { readonly key: null; get(): T };
@@ -390,7 +406,7 @@ export interface HostOperations {
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
-  /** Require timers_100ms_v1 for delays below 1000 ms. */
+  /** Require timers_16ms_v1 for delays below 1000 ms. */
   'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
@@ -494,6 +510,8 @@ export interface Events {
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
+  /** Experimental: the latest value a component module posted this frame. */
+  component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
   config_change: { input: { key: string; original: Json; effective: Json; source: string; scope: 'codex' | 'mod'; caller: string }; output: void };
@@ -584,6 +602,8 @@ export interface ModAPI {
   hook(name: ClassicHook, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
   hook(name: ClassicHook, options: { match?: InterceptMatcher; required?: boolean }, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
   readonly match: { glob(pattern: string): InterceptMatcher; not(matcher: InterceptMatcher): InterceptMatcher };
+  /** Experimental, terminal capability: registers a component module that `module` view nodes mount; at most 16 per mod. */
+  component<S, P extends Json = Json>(id: string, module: ComponentModule<S, P>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;

@@ -1,5 +1,5 @@
 import { stripTypeScriptTypes } from 'node:module';
-import { createContext, SourceTextModule } from 'node:vm';
+import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { readSync, writeSync } from 'node:fs';
 
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -44,7 +44,7 @@ function readLine() {
       break;
     }
     input = Buffer.concat([input, chunk.subarray(0, read)]);
-    if (input.length > 524288) throw new Error('input_limit');
+    if (input.length > 1048576) throw new Error('input_limit');
   }
   const line = input.subarray(0, end).toString();
   input = input.subarray(end + 1);
@@ -54,18 +54,18 @@ const bootstrap = `
 const request = JSON.parse(globalThis.__request);
 delete globalThis.__request;
 request.hook_budget_ms ??= 1000;
-if (Number.isSafeInteger(request.virtual_time_ms)) {
-  const fixed = request.virtual_time_ms;
+let now = request.virtual_time_ms;
+if (Number.isSafeInteger(now)) {
   globalThis.Date = class extends Date {
-    constructor(...args) { super(...(args.length ? args : [fixed])); }
-    static now() { return fixed; }
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
   };
 }
 const handlers = new Map();
 const tools = new Map();
 let dynamicTools = null;
 const commands = new Map();
-const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [] };
+const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [], components: [] };
 const interceptors = [];
 const surface = request.surface;
 registrations.services = [];
@@ -85,7 +85,9 @@ function track(key) {
   reads.add(key);
   tracking?.add(key);
 }
-const rendering = request.event === 'intercept' && request.payload?.surface === 'render';
+const rendering = request.event === 'component' || (request.event === 'intercept' && request.payload?.surface === 'render');
+const base = request.filename.endsWith('/' + request.entrypoint) ? request.filename.slice(0, -request.entrypoint.length)
+  : request.filename.slice(0, request.filename.lastIndexOf('/') + 1);
 let activating = true;
 let activatedState;
 let pending = null;
@@ -96,6 +98,7 @@ function serve(line) {
   const next = JSON.parse(line);
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
+  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
   state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
@@ -113,6 +116,11 @@ function canonical(value) {
   return value;
 }
 function hostTryCall(operation, arguments_ = null) {
+  const result = hostReply(operation, arguments_);
+  if (result.ok && operation === 'time.sleep' && Number.isSafeInteger(now) && Number.isSafeInteger(result.value?.slept_ms)) now += result.value.slept_ms;
+  return result;
+}
+function hostReply(operation, arguments_) {
   if (activating) throw new Error('host_call_during_registration');
   if (pending) throw new Error('concurrent_host_call');
   const call = structuredCloneFallback({ operation, arguments: arguments_ });
@@ -124,7 +132,7 @@ function hostTryCall(operation, arguments_ = null) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  if (request.interactive && operation !== 'continuation.next' && operation !== 'time.sleep') {
+  if (request.interactive) {
     const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
     return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
   }
@@ -221,7 +229,7 @@ function intercept(event) {
     origin: { value: deepFreeze(origin) },
     signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
     trace: { get: () => trace },
-    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 32 - calls.length); } }) },
+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 128 - calls.length); } }) },
     is: { value: pattern => surfaces(pattern).includes(name) },
   });
   if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
@@ -408,7 +416,7 @@ function timer(key, ms, handler, repeat) {
   requireCapability('events');
   if (!activating) throw new Error('timer_registration_outside_activation');
   if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,58}$/.test(key)) throw new Error('invalid_timer_key: ' + key);
-  if (!Number.isSafeInteger(ms) || ms < 100 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
+  if (!Number.isSafeInteger(ms) || ms < 16 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
   if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
   const scheduled = 'time:' + key;
   if (timers.has(scheduled)) throw new Error('conflict: ' + scheduled);
@@ -422,6 +430,73 @@ function timer(key, ms, handler, repeat) {
     start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
     cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
   });
+}
+const components = new Map();
+const instances = new Map();
+const interval = ms => Number.isSafeInteger(ms) && ms >= 16 && ms <= 86400000;
+function component(id, definition) {
+  requireCapability('terminal');
+  if (!activating) throw new Error('component_registration_outside_activation');
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(id)) throw new Error('invalid_component_id: ' + id);
+  if (components.has(id)) throw new Error('conflict: ' + id);
+  for (const key of Object.keys(definition ?? {})) if (!['init', 'view', 'key', 'pointer', 'every'].includes(key)) throw new Error('unsupported_component_option: ' + key);
+  if (typeof definition?.view !== 'function' || ['init', 'key', 'pointer'].some(key => definition[key] !== undefined && typeof definition[key] !== 'function')) throw new Error('handler_required: ' + id);
+  const every = definition.every;
+  if (every !== undefined && ((typeof every?.ms !== 'function' && !interval(every?.ms)) || typeof every.tick !== 'function')) throw new Error('invalid_component_every: ' + id);
+  components.set(id, definition);
+  registrations.components.push(id);
+}
+function step(frame) {
+  const definition = components.get(request.name);
+  if (!definition) throw new Error('unknown_component: ' + request.name);
+  const started = clock();
+  let posted = null;
+  const address = String(frame.instance ?? request.name);
+  let instance = instances.get(address);
+  const context = () => Object.freeze({ columns: frame.columns, rows: frame.rows, props: instance.props, post(data) {
+    const encoded = JSON.stringify(data ?? null);
+    if (encoded.length > 65536) throw new Error('component_post_limit');
+    posted = { data: JSON.parse(encoded) };
+  } });
+  const mounting = !instance || frame.mount;
+  if (mounting) {
+    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined, overruns: 0 };
+    instances.set(address, instance);
+    if (definition.init) instance.state = definition.init(instance.props, context());
+  } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
+    instance.props = deepFreeze(structuredCloneFallback(frame.props));
+  }
+  const apply = (handler, ...input) => {
+    const next = handler(instance.state, ...input, context());
+    if (next !== undefined) instance.state = next;
+  };
+  const period = () => {
+    const ms = typeof definition.every.ms === 'function' ? definition.every.ms(instance.state) : definition.every.ms;
+    if (ms !== null && !interval(ms)) throw new Error('invalid_component_every: ' + request.name);
+    return ms;
+  };
+  if (definition.every && period() === null) instance.last = frame.now;
+  for (const event of frame.events ?? []) {
+    const handler = event?.kind === 'key' ? definition.key : event?.kind === 'pointer' ? definition.pointer : undefined;
+    if (handler) apply(handler, deepFreeze(structuredCloneFallback(event)));
+  }
+  let next = null;
+  if (definition.every) {
+    const { tick } = definition.every;
+    let ms = period();
+    if (ms === null) instance.last = frame.now;
+    for (let ticks = 0; ms !== null && frame.now - instance.last >= ms && ticks < 8; ticks += 1) {
+      apply(tick);
+      instance.last += ms;
+      ms = period();
+    }
+    if (ms !== null && frame.now - instance.last >= ms) instance.last = frame.now;
+    next = ms === null ? null : instance.last + ms - frame.now;
+  }
+  const tree = definition.view(instance.state, context());
+  instance.overruns = !mounting && clock() - started > 8 ? instance.overruns + 1 : 0;
+  if (instance.overruns >= 3) throw new Error('component_overrun: ' + request.name);
+  return { tree: Array.isArray(tree) ? tree : [tree], post: posted, next_ms: next };
 }
 function workspacePath(path) {
   if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\0')) throw new Error('invalid_workspace_path: ' + path);
@@ -464,9 +539,11 @@ const api = Object.freeze({
     if (typeof handler !== 'function') throw new Error('handler_required: ' + pattern);
     const known = ['match', 'required', 'before', 'after'];
     for (const key of Object.keys(options ?? {})) if (!known.includes(key)) throw new Error('unsupported_interceptor_option: ' + key);
-    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => line.includes(request.filename)) ?? '';
-    const at = frame.slice(frame.lastIndexOf(request.filename) + request.filename.length).split(')')[0];
-    const entry = { handler, catch: null, matcher: options?.match ?? null, location: request.filename.slice(request.filename.lastIndexOf('/') + 1) + at };
+    const files = [request.filename, ...Object.keys(request.assets ?? {}).map(name => base + name)];
+    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => files.some(file => line.includes(file + ':'))) ?? '';
+    const file = files.find(file => frame.includes(file + ':')) ?? '';
+    const at = frame.slice(frame.lastIndexOf(file) + base.length).split(')')[0];
+    const entry = { handler, catch: null, matcher: options?.match ?? null, location: at };
     const registration = { pattern, match: entry.matcher === null ? null : serializeMatcher(entry.matcher), required: options?.required === true,
       before: [...(options?.before ?? [])], after: [...(options?.after ?? [])], catch: false, location: entry.location };
     interceptors.push(entry);
@@ -479,6 +556,7 @@ const api = Object.freeze({
     } });
   },
   hook,
+  component,
   match: Object.freeze({ glob: pattern => {
     if (typeof pattern !== 'string' || !pattern || pattern.length > 256) throw new Error('invalid_glob_matcher');
     return tagged('glob', pattern);
@@ -675,7 +753,7 @@ globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynami
   state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
-  }, suspension, serve };
+  }, suspension, serve, base, component: step };
 `;
 // Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 let live = null;
@@ -724,10 +802,31 @@ try {
     }
   }
   context.__adapt = adapt;
-  await mod.link(async specifier => {
+  const { base } = context.__omd;
+  const entry = request.filename.slice(base.length);
+  const linked = new Map([[entry, mod]]);
+  await mod.link(async (specifier, importer) => {
     if (aliases.has(specifier)) return aliases.get(specifier);
-    throw new Error(`unsupported_import: ${specifier}; use type-only SDK imports and a self-contained module`);
+    if (/^\.\.?\//.test(specifier) && importer.identifier.startsWith(base)) {
+      const parts = importer.identifier.slice(base.length).split('/').slice(0, -1);
+      for (const part of specifier.split('/')) {
+        if (part === '..') { if (!parts.length) break; parts.pop(); } else if (part !== '.') parts.push(part);
+      }
+      const name = parts.join('/');
+      if (linked.has(name)) return linked.get(name);
+      const asset = Object.hasOwn(request.assets ?? {}, name) ? request.assets[name] : null;
+      if (asset) {
+        const identifier = base + name;
+        const module = name.endsWith('.json')
+          ? new SyntheticModule(['default'], function () { this.setExport('default', JSON.parse(asset.text)); }, { context, identifier })
+          : moduleFor(asset.text, context, identifier, name.endsWith('.ts'));
+        linked.set(name, module);
+        return module;
+      }
+    }
+    throw new Error(`unsupported_import: ${specifier}; import package assets by relative path, and the SDK by type only`);
   });
+  context.__omd.registrations.modules = [...linked.keys()].filter(name => name !== entry);
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
   const dispatch = moduleFor(`
@@ -743,7 +842,8 @@ try {
         : request.event === 'command' ? commands.get(request.name)
         : request.event === 'virtual_read' ? virtualReaders.get(request.name)
         : request.event === 'service' ? serviceHandlers.get(request.name)
-        : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
+        : request.event === 'intercept' ? globalThis.__omd.intercept
+        : request.event === 'component' ? globalThis.__omd.component : handlers.get(request.event);
       if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;
       await globalThis.__omd.flushSubscriptions();
@@ -772,7 +872,7 @@ try {
         omd.serve(line);
         let value = null;
         try {
-          value = await omd.intercept(omd.request.payload) ?? null;
+          value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
           if (omd.pending()) throw new Error('swallowed_host_suspension');
         } catch (error) {
           if (error !== omd.suspension) throw error;

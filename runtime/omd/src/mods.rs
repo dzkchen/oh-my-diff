@@ -10,6 +10,10 @@ pub use chain::compose_rows;
 pub use chain::continue_operation;
 pub use chain::intercept_shared;
 pub use render::MOD_RENDER_COMPONENTS;
+pub use render::component_detach;
+pub use render::component_events;
+pub use render::component_shared;
+pub use render::component_unmount;
 pub use render::render_shared;
 mod packages;
 mod view;
@@ -106,6 +110,8 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 fn profiling() -> bool {
     static PROFILING: OnceLock<bool> = OnceLock::new();
@@ -258,7 +264,7 @@ impl InvocationScope {
 
     fn charge_call(&self) -> Result<()> {
         let calls = self.calls.get();
-        if calls >= 32 {
+        if calls >= MAX_HOST_CALLS {
             return Err(failure("host_call_limit"));
         }
         self.calls.set(calls + 1);
@@ -280,6 +286,7 @@ impl InvocationScope {
 }
 
 pub const HOST_RECEIPT_BYTES: usize = 131_072;
+pub const MAX_HOST_CALLS: usize = 128;
 
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -289,7 +296,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_selection_v1",
     "terminal_copy_v1",
     "environment_overrides_v1",
-    "timers_100ms_v1",
+    "timers_16ms_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -318,6 +325,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "exec_output_artifacts_v1",
     "guarded_exec_v1",
     "package_text_assets_v1",
+    "package_imports_v1",
     "workspace_access_v1",
     "workspace_fs_v1",
     "workspace_snapshots_v1",
@@ -380,6 +388,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
     "render_hooks_v1",
+    "component_modules_v1",
     "ui_composition_v1",
     "ui_controls_v1",
     "reactive_state_v1",
@@ -657,6 +666,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("channel", "events"),
     ("timer", "events"),
     ("component_event", "terminal"),
+    ("component_post", "terminal"),
     ("view", "terminal"),
     ("focus", "terminal"),
     ("completion", "composer"),
@@ -1857,7 +1867,7 @@ impl ModPackage {
             return Err(failure("invalid_lifecycle_scripts"));
         }
         let assets: BTreeSet<_> = self.assets.iter().collect();
-        if self.assets.len() > 8
+        if self.assets.len() > 16
             || assets.len() != self.assets.len()
             || self
                 .assets
@@ -2367,6 +2377,10 @@ struct Registrations {
     interceptors: Vec<ModInterceptor>,
     #[serde(default)]
     agents: Vec<ModAgent>,
+    #[serde(default)]
+    modules: Vec<String>,
+    #[serde(default)]
+    components: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -2674,6 +2688,7 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
         "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
         "tool" if dynamic.iter().any(|tool| tool == name) => (),
         "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
+        "component" if loaded.registrations.components.iter().any(|c| c == name) => (),
         "intercept"
             if name
                 .parse::<usize>()
@@ -2705,7 +2720,7 @@ const SLEEP_LIMIT_MS: u64 = 60_000;
 
 /// Callbacks documented to run without host operations.
 fn hostless(event: &str, payload: &Value) -> bool {
-    event == "terminal"
+    matches!(event, "terminal" | "component")
         || event == "intercept"
             && matches!(
                 payload["surface"].as_str(),
@@ -2785,6 +2800,9 @@ fn invoke(
     let thread = state_thread(&payload);
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64);
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();
@@ -2878,7 +2896,7 @@ fn invoke(
                 result
             },
             progress,
-            invocation.virtual_time_ms,
+            Some(invocation.virtual_time_ms.unwrap_or(now_ms)),
             scope,
         )
     });
@@ -3362,11 +3380,8 @@ impl ModHost {
                         package.id
                     )));
                 }
-                if files.values().map(String::len).sum::<usize>() > 128 * 1024 {
-                    return Err(failure(format!(
-                        "package_text_asset_input_limit: {}",
-                        package.id
-                    )));
+                if source.len() + files.values().map(String::len).sum::<usize>() > 256 * 1024 {
+                    return Err(failure(format!("package_text_input_limit: {}", package.id)));
                 }
                 Ok(files
                     .into_iter()
@@ -3440,8 +3455,23 @@ impl ModHost {
                 for tool in &registrations.tools {
                     (self.tool_validator)(&tool.parameters)?;
                 }
+                let mut code = loaded.source.to_string();
+                for name in registrations
+                    .modules
+                    .iter()
+                    .filter(|name| !name.ends_with(".json"))
+                {
+                    if let Some(text) = loaded
+                        .assets
+                        .get(name)
+                        .and_then(|asset| asset["text"].as_str())
+                    {
+                        code.push('\n');
+                        code.push_str(text);
+                    }
+                }
                 let (source_use, unused_grants, unused_environment) =
-                    source_use(&loaded.source, &loaded.package, &registrations)?;
+                    source_use(&code, &loaded.package, &registrations)?;
                 Ok((registrations, source_use, unused_grants, unused_environment))
             })();
             if !active() {
@@ -4072,6 +4102,7 @@ impl ModHost {
             || registrations.contracts.len() > 4
             || registrations.builtins.len() > 1
             || registrations.services.len() > 8
+            || registrations.components.len() > 16
         {
             return Err(failure("registration_limit_or_capability_denied"));
         }

@@ -65,9 +65,9 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(manifest["api"], version)
                 self.assertLessEqual(set(manifest["capabilities"]), sets["capabilities"])
                 self.assertIn(manifest["api"], {row["version"] for row in mod_compatibility.host_contract()["apis"]})
-                self.assertEqual(
-                    re.findall(r"from '([^']+)'", source), ["../../api.d.ts"] * source.count("from '")
-                )
+                allowed = {"../../api.d.ts", *(f"./{name}" for name in manifest.get("assets", []))}
+                self.assertLessEqual(set(re.findall(r"from '([^']+)'", source)), allowed)
+                self.assertEqual(len(re.findall(r"from '([^']+)'", source)), source.count("from '"))
                 self.assertNotRegex(source, r"\b__omd\w*")
                 self.assertNotIn("globalThis", source)
                 body = "\n".join(line for line in source.splitlines() if not line.startswith("import "))

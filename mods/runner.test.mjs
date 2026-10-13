@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { callback, runnerSync } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
@@ -12,6 +13,17 @@ const currentSurface = {
   middleware: [...table('MOD_MIDDLEWARE_EVENTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
   intercept: Object.fromEntries([...table('MOD_INTERCEPT_SURFACES').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
   state: 'store', contracts: 'contracts',
+};
+const lspDirectory = new URL('./first-party/omd_lsp_sync/', import.meta.url);
+const lspManifest = JSON.parse(readFileSync(new URL('mod.json', lspDirectory), 'utf8'));
+const lsp = {
+  source: readFileSync(new URL('index.ts', lspDirectory), 'utf8'),
+  capabilities: lspManifest.capabilities,
+  package: {
+    filename: fileURLToPath(new URL('index.ts', lspDirectory)),
+    entrypoint: 'index.ts',
+    assets: Object.fromEntries(lspManifest.assets.map(name => [name, { text: readFileSync(new URL(name, lspDirectory), 'utf8'), sha256: '0'.repeat(64) }])),
+  },
 };
 function run(source, extra = {}) {
   const result = runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', surface: currentSurface, ...extra });
@@ -74,6 +86,12 @@ test('typed module context callback', () => {
   const reply = run('export default (api: any) => api.on("context", () => ({text:"hello"}))', { capabilities: ['context'], event: 'context' });
   assert.deepEqual(reply.value, { text: 'hello' });
 });
+test('a callback clock stands still except across its own sleeps', () => {
+  const source = 'export default api => api.command("wait", async () => { const start = Date.now(); api.host.call("session.info", null); const mid = Date.now(); await api.time.sleep(40); return [mid - start, Date.now() - start, new Date().getTime() - start]; })';
+  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, surface: currentSurface, event: 'command', name: 'wait', virtual_time_ms: 1000 };
+  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {}, []);
+  assert.deepEqual(reply.value, [0, 40, 40]);
+});
 test('the test harness kills an interactive callback that never returns', () => {
   const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', surface: currentSurface, hook_budget_ms: 50 };
   assert.throws(() => callback(request, () => null, []), /runner_timed_out/);
@@ -88,6 +106,51 @@ test('package text assets are read only and limited to the selected package', ()
     { capabilities: ['commands'], entrypoint: 'index.ts', entrypoint_sha256: 'b'.repeat(64), event: 'command', name: 'own' });
   assert.equal(own.value.sha256, 'b'.repeat(64));
   assert.match(own.value.text, /api\.assets\.read/);
+});
+test('component module steps deliver input, ticks and one post without host authority', () => {
+  const source = `export default api => api.component('dots', {
+    init: props => ({ n: props.start, keys: '' }),
+    key: (state, event, ui) => { if (event.key === 'Enter') ui.post({ n: state.n }); return { ...state, keys: state.keys + (event.text ?? '') }; },
+    pointer: (state, event) => ({ ...state, n: state.n + (event.action === 'down' ? 10 : 0) }),
+    every: { ms: 50, tick: state => ({ ...state, n: state.n + 1 }) },
+    view: (state, ui) => ({ type: 'text', id: 't', label: 'dots', text: state.n + ':' + state.keys + ':' + ui.columns }),
+  })`;
+  const step = frame => run(source, { capabilities: ['terminal'], event: 'component', name: 'dots', payload: { instance: 'a', props: { start: 1 }, columns: 20, rows: 2, ...frame } });
+  const first = step({ now: 1000, events: [{ kind: 'key', key: null, text: 'x' }, { kind: 'pointer', action: 'down', column: 0, row: 0 }, { kind: 'key', key: 'Enter', text: null }] });
+  assert.deepEqual(first.value, { tree: [{ type: 'text', id: 't', label: 'dots', text: '11:x:20' }], post: { data: { n: 11 } }, next_ms: 50 });
+  assert.deepEqual(first.registrations.components, ['dots']);
+  assert.match(run(source, { capabilities: ['commands'] }).error, /capability_denied: terminal/);
+  const writer = 'export default api => api.component("w", { view: () => { api.state.set(1); return []; } })';
+  assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
+  const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
+    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface: currentSurface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
+  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+    input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
+  }).stdout.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
+  assert.match(run('export default api => api.component("x", { view: 1 })', { capabilities: ['terminal'] }).error, /handler_required: x/);
+  const paused = start => `export default api => api.component("p", { init: () => ${start}, every: { ms: n => n ? null : 20, tick: n => n + 1 }, view: n => [{ type: "text", id: "n", label: "N", text: String(n) }] })`;
+  const pausedStep = start => run(paused(start), { capabilities: ['terminal'], event: 'component', name: 'p', payload: { now: 100, events: [] } }).value.next_ms;
+  assert.deepEqual([pausedStep(0), pausedStep(1)], [20, null]);
+});
+test('entrypoints import declared assets by relative path and report them', () => {
+  const asset = text => ({ text, sha256: 'a'.repeat(64) });
+  const assets = {
+    'lib/draw.ts': asset('import { shared } from "../shared.mjs"; import table from "./table.json"; export const draw = (n: number): string => shared.mark + table.name + n;'),
+    'shared.mjs': asset('export const shared = { mark: "#" };'),
+    'lib/table.json': asset('{"name": "t"}'),
+    'worker.mjs': asset('process.exit(0)'),
+  };
+  const source = 'import { draw } from "./lib/draw.ts"; import { shared } from "./shared.mjs"; export default api => api.command("draw", () => { shared.mark = "!"; return draw(1); })';
+  const extra = { filename: '/pkg/index.ts', entrypoint: 'index.ts', capabilities: ['commands'], assets };
+  const reply = run(source, { ...extra, event: 'command', name: 'draw' });
+  assert.equal(reply.value, '!t1');
+  assert.deepEqual(reply.registrations.modules.sort(), ['lib/draw.ts', 'lib/table.json', 'shared.mjs']);
+  assert.match(run('import "./missing.ts"; export default () => {}', extra).error, /unsupported_import: \.\/missing\.ts/);
+  assert.match(run('import "../outside.ts"; export default () => {}', extra).error, /unsupported_import/);
+  const thrown = run('import { fail } from "./lib/fail.ts"; export default api => api.command("fail", fail)',
+    { ...extra, assets: { 'lib/fail.ts': asset('export const fail = (): never => {\n  throw new Error("boom");\n};') }, event: 'command', name: 'fail' });
+  assert.match(thrown.error, /boom[\s\S]*pkg\/lib\/fail\.ts:2:9/);
 });
 test('capability and imports fail visibly', () => {
   assert.match(run('export default api => api.on("context", () => null)').error, /capability_denied/);
@@ -221,7 +284,7 @@ test('repeating timers stop when cancelled inside their handler and keep running
   const failing = tick({ boom: true });
   assert.equal(failing.host_call.operation, 'events.schedule');
   assert.equal(failing.host_call.arguments.delay_ms, 100);
-  assert.match(run(source.replace("'poll', 100,", "'poll', 99,"), { capabilities: ['events', 'store'] }).error, /invalid_timer_interval/);
+  assert.match(run(source.replace("'poll', 100,", "'poll', 15,"), { capabilities: ['events', 'store'] }).error, /invalid_timer_interval/);
   assert.match(tick({ boom: true }, [{ call: failing.host_call, value: null }]).error, /boom/);
 });
 
@@ -270,8 +333,7 @@ test('independent workspace mod uses public read and transaction calls', () => {
   assert.match(run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
 });
 test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
-  const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
+  const { source, capabilities } = lsp;
   const repository = '/tmp/project';
   const files = {
     'pkg/old.py': { text: 'value = 1\n', sha256: 'old-hash' },
@@ -314,7 +376,7 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
   const replay = (event, payload, state = null) => {
     const receipts = [];
     for (let index = 0; index < 24; index++) {
-      const output = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
+      const output = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
       assert.equal(output.error, undefined, output.error);
       if (!output.host_call) return output;
       receipts.push({ call: output.host_call, value: server(output.host_call) });
@@ -343,21 +405,20 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
   assert.equal(running, false);
 });
 test('LSP mod reports an absent server and leaves the write event recoverable', () => {
-  const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
+  const { source, capabilities } = lsp;
   const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
-  const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload });
+  const first = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload });
   assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
   const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  const marker = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  const discovery = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
   receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  const published = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.equal(published.host_call.operation, 'events.publish');
-  const absent = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
+  const absent = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
   assert.equal(absent.error, undefined);
   assert.equal(absent.state.servers.python.status, 'fallback');
   assert.equal(absent.state.servers.python.reason, 'python_server_absent');
@@ -365,29 +426,27 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
   assert.match(broken.error, /broken/);
 });
 test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
-  const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
+  const { source, capabilities } = lsp;
   const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
   const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
-  const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
+  const first = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
   assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
   const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
+  const marker = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
+  const discovery = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
   receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  const absent = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
+  const published = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
+  const absent = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
     receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
   assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
   assert.equal(absent.state.servers.python.server, 'pylsp');
   assert.equal(absent.state.servers.typescript.reason, 'typescript_server_absent');
 });
 test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writes', () => {
-  const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
+  const { source, capabilities } = lsp;
   const repository = '/tmp/project';
   const files = {
     'src/app.ts': { text: 'export const value = 1;\n', sha256: 'ts-sha' },
@@ -425,7 +484,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   const receipts = [];
   let result;
   for (let index = 0; index < 32; index++) {
-    result = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
+    result = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
     assert.equal(result.error, undefined, result.error);
     if (!result.host_call) break;
     receipts.push({ call: result.host_call, value: server(result.host_call) });
@@ -438,7 +497,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   assert.equal(result.state.servers.typescript.documents['src/helper.js'].version, 1);
   assert.equal(result.state.servers.rust.documents['src/main.rs'].version, 1);
   assert.equal(result.state.servers.java.documents['src/Main.java'].version, 1);
-  const cross = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
+  const cross = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
     payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });

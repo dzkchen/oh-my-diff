@@ -2,6 +2,7 @@ use super::*;
 use crate::managed_process::ProcessNotice;
 
 const DELIVERIES_PER_ROUND: usize = 64;
+const TIMER_FLOOR_MS: u64 = 16;
 
 pub(in crate::mods) enum Pending {
     Process {
@@ -191,7 +192,7 @@ fn ensure_delivery(core: &Arc<Core>) {
                 return;
             };
             if deliver(&core).await {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(TIMER_FLOOR_MS)).await;
                 core.expansion.wake.notify_one();
             }
         }
@@ -262,9 +263,11 @@ pub(super) fn next_pending(state: &State, now: std::time::Instant) -> Option<Pen
     let mut rates = state.timer_deliveries.lock().ok()?;
     let mut queue = state.pending.lock().ok()?;
     let index = queue.iter().position(|item| match item {
-        Pending::Timer { thread, owner, .. } => rates
-            .get(&(*thread, owner.clone()))
-            .is_none_or(|last| now.duration_since(*last) >= std::time::Duration::from_millis(100)),
+        Pending::Timer { thread, owner, .. } => {
+            rates.get(&(*thread, owner.clone())).is_none_or(|last| {
+                now.duration_since(*last) >= std::time::Duration::from_millis(TIMER_FLOOR_MS)
+            })
+        }
         _ => true,
     })?;
     let next = queue.remove(index)?;
@@ -548,7 +551,9 @@ pub(in crate::mods) fn schedule(
         delay_ms: u64,
     }
     let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-    if input.key.is_empty() || input.key.len() > 64 || !(100..=86_400_000).contains(&input.delay_ms)
+    if input.key.is_empty()
+        || input.key.len() > 64
+        || !(TIMER_FLOOR_MS..=86_400_000).contains(&input.delay_ms)
     {
         return Err("timer_invalid".into());
     }

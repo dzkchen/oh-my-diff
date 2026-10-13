@@ -122,7 +122,7 @@ const COUNTER: &str = "export default api => api.command('count', () => { api.st
 
 #[test]
 fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() {
-    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return value; }); }";
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return value; }); }";
     let (temp, _, _) = fixture(source, &["commands", "store"]);
     let mut first = host(&temp);
     let mut second = host(&temp);
@@ -148,7 +148,7 @@ fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() 
 
 #[test]
 fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
-    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return read.ok; }); }";
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
     let (temp, _, _) = fixture(source, &["commands", "store"]);
     let mut first = host(&temp);
     let mut second = host(&temp);
@@ -943,7 +943,7 @@ fn host_control_features_are_available_for_admission() {
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["compatibility"] = json!({"required_features": [
-        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_100ms_v1"
+        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_16ms_v1"
     ]});
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     ModStore::inspect_package(&path).unwrap();
@@ -1475,8 +1475,8 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
 fn a_render_racing_a_state_write_is_drawn_again() {
     let (temp, _, _) = fixture(
         "export default api => { api.command('set', value => { api.state.set(value); return null; }); \
-         api.intercept('render', () => { const seen = String(api.state.get()); const end = Date.now() + 400; \
-           while (Date.now() < end) {} return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
+         api.intercept('render', () => { const seen = String(api.state.get()); \
+           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
         &["commands", "store", "terminal"],
     );
     let runtime = std::sync::Mutex::new(host(&temp));
@@ -3314,7 +3314,7 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
         "export default api => { \
          const pulse = api.time.every('pulse', 100, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
          api.command('start', () => { pulse.start(); return api.package; }); \
-         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:99})); \
+         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:15})); \
          api.command('nap', () => api.time.sleep(1500)); \
          api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
          api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
@@ -5221,4 +5221,203 @@ fn clipboard_delivery_wait_is_not_callback_execution() {
         .unwrap();
     assert_eq!(copies, 2);
     assert_eq!(result, json!({"status": "confirmed"}));
+}
+
+#[test]
+fn component_modules_keep_state_in_their_runner_until_unmounted() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: (n, event) => { if (event.text === 'h') api.host.call('session.info', null); return n + 1; }, \
+         view: (n, ui) => ui.props === 'native' ? [{type: 'native'}] : [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal", "inventory"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |instance: &str, text: &str, props: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "props": props, "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": text}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    assert_eq!(step("a", "x", ""), Ok(json!("1")));
+    assert_eq!(step("a", "x", ""), Ok(json!("2")));
+    assert_eq!(step("b", "x", ""), Ok(json!("1")));
+    assert!(
+        step("a", "h", "")
+            .unwrap_err()
+            .contains("host_operation_unavailable")
+    );
+    assert_eq!(step("a", "x", ""), Ok(json!("1")));
+    codex_omd::component_unmount("fixture", "b");
+    assert_eq!(step("b", "x", ""), Ok(json!("1")));
+    assert!(
+        step("b", "x", "native")
+            .unwrap_err()
+            .starts_with("invalid_component_tree")
+    );
+    assert_eq!(step("b", "x", ""), Ok(json!("1")));
+}
+
+#[test]
+fn component_runners_belong_to_their_owner_and_cannot_sleep() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: (n, event) => { if (event.text === 's') api.time.sleep(5000); \
+         if (event.text === 'w') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return n + 1; }, \
+         view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal", "events"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |client: Option<&str>, instance: &str, text: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "client": client, "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": text}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    let started = std::time::Instant::now();
+    assert!(
+        step(None, "sleeper", "s")
+            .unwrap_err()
+            .contains("time.sleep is not available during component")
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    for client in ["owner1", "owner2"] {
+        for instance in ["a", "b", "c", "d"] {
+            assert_eq!(
+                step(Some(client), &format!("{client}.{instance}"), "x"),
+                Ok(json!("1"))
+            );
+        }
+    }
+    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
+    codex_omd::component_detach("owner1");
+    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("1")));
+    assert_eq!(step(Some("owner2"), "owner2.a", "x"), Ok(json!("2")));
+    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+    std::thread::scope(|scope| {
+        let busy = scope.spawn(|| step(None, "busy", "w"));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        codex_omd::component_unmount("fixture", "busy");
+        assert_eq!(busy.join().unwrap(), Ok(json!("2")));
+    });
+    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+}
+
+#[test]
+fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = root.join("fixture");
+    std::fs::create_dir_all(path.join("lib")).unwrap();
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(
+            &json!({"schema":1,"id":"fixture","version":"1.0.0","api":CURRENT_API,
+            "state_version":1,"capabilities":["commands"],"assets":["lib/draw.ts","worker.mjs"]}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("index.ts"),
+        "import { draw } from './lib/draw.ts'; export default api => api.command('draw', () => draw(2));",
+    )
+    .unwrap();
+    std::fs::write(path.join("worker.mjs"), "fetch('https://example.org');").unwrap();
+    let draw = |body: &str| {
+        std::fs::write(path.join("lib/draw.ts"), body).unwrap();
+        trust(&store, &path, &["commands"]);
+    };
+    draw("export const draw = (n: number) => { fetch('https://example.org'); return n; };");
+    assert!(activation_error(&temp, "fixture").contains("undeclared_environment_use: network"));
+    draw("export const draw = (n: number): string => '#'.repeat(n);");
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "draw", Value::Null)
+            .unwrap(),
+        json!("##")
+    );
+}
+
+#[test]
+fn continuations_run_code_before_next_once_with_a_fixed_clock() {
+    let source = "export default api => api.intercept('model_request', async (e, next) => { \
+         const before = Date.now(); const effort = ['low', 'medium', 'high'][Math.floor(Math.random() * 3)]; \
+         const result = await next({...e, effort}); \
+         if (Date.now() !== before || result.effort !== effort) throw new Error('replayed'); return result; })";
+    let (temp, _, _) = fixture(source, &["middleware"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    for _ in 0..6 {
+        let chain = codex_omd::intercept_shared(
+            &runtime,
+            "model_request",
+            false,
+            json!({"request_id":"r1","route":"sol","routes":[{"name":"sol"}],"effort":"high","sections":[]}),
+            json!({"caller":"engine"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |input| {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                Ok(json!({"route": input["route"], "effort": input["effort"]}))
+            },
+        )
+        .unwrap();
+        assert!(
+            chain.trace.iter().all(|entry| entry["reason"].is_null()),
+            "{:?}",
+            chain.trace
+        );
+    }
+}
+
+#[test]
+fn a_resumed_component_ticks_from_now_instead_of_replaying_its_pause() {
+    let source = "export default api => api.component('clock', { init: () => ({ paused: true, n: 0 }), \
+         key: s => ({ ...s, paused: false }), \
+         every: { ms: s => s.paused ? null : 50, tick: s => ({ ...s, n: s.n + 1 }) }, \
+         view: s => [{type: 'text', id: 't', label: 'T', text: String(s.n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |now: u64, events: Value| {
+        let step = codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "clock",
+            json!({"instance": "c", "now": now, "columns": 20, "rows": 1, "events": events}),
+            || true,
+        )
+        .unwrap();
+        (step["tree"][0]["text"].clone(), step["next_ms"].clone())
+    };
+    assert_eq!(step(0, json!([])), (json!("0"), Value::Null));
+    let key = json!([{"kind": "key", "key": "Space", "text": " "}]);
+    assert_eq!(step(10_000, key), (json!("0"), json!(50)));
+    assert_eq!(step(10_120, json!([])), (json!("2"), json!(30)));
+}
+
+#[test]
+fn component_input_maps_keys_pastes_and_pointer_events() {
+    let input = json!({"kind": "input", "events": [{"key": "d", "text": "d"}, {"paste": " go"}]});
+    assert_eq!(
+        codex_omd::component_events(&input),
+        vec![
+            json!({"kind": "key", "key": "d", "text": "d"}),
+            json!({"kind": "key", "key": null, "text": " go"}),
+        ]
+    );
+    let pointer = json!({"kind": "pointer", "pointer": {"column": 2, "row": 1, "action": "down", "button": "left", "fraction": [0.5, 0.5]}});
+    assert_eq!(
+        codex_omd::component_events(&pointer),
+        vec![json!({"kind": "pointer", "column": 2, "row": 1, "action": "down", "button": "left"})]
+    );
 }

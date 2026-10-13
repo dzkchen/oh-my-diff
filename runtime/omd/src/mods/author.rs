@@ -107,7 +107,7 @@ impl OfflineHost {
             "events.schedule" => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
-                    .filter(|delay| (100..=86_400_000).contains(delay))
+                    .filter(|delay| (16..=86_400_000).contains(delay))
                     .ok_or_else(|| failure("timer_delay_invalid"))?;
                 self.timers
                     .insert((caller.to_owned(), key.clone()), self.now_ms + delay);
@@ -615,6 +615,7 @@ impl ModHost {
                             | ModComponent::Pane { pointer: true, .. }
                             | ModComponent::Image { pointer: true, .. }
                             | ModComponent::Raster { pointer: true, .. }
+                            | ModComponent::Module { pointer: true, .. }
                     ) {
                         return Err(failure("offline_terminal_component_not_pointer"));
                     }
@@ -718,7 +719,8 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Diff { id, .. }
             | ModComponent::Terminal { id, .. }
             | ModComponent::Image { id, .. }
-            | ModComponent::Raster { id, .. } => (Some(id.as_str()), &[][..]),
+            | ModComponent::Raster { id, .. }
+            | ModComponent::Module { id, .. } => (Some(id.as_str()), &[][..]),
             ModComponent::Slot | ModComponent::Native { .. } => (None, &[][..]),
         };
         if component_id == Some(id) {

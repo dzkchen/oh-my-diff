@@ -27,7 +27,7 @@ COMPONENT_FIELDS = ("id", "area", "name", "owner", "version", "status", "fixture
 
 def sources():
     host = (ROOT / "runtime/omd/src/mods.rs").read_text()
-    lsp = (ROOT / "mods/first-party/omd_lsp_sync/index.ts").read_text()
+    lsp = (ROOT / "mods/first-party/omd_lsp_sync/protocol.ts").read_text()
     coverage = (ROOT / "mods/COVERAGE.md").read_text()
 
     def constant(name):

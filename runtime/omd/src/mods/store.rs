@@ -234,7 +234,7 @@ fn inspect_package(
     let (manifest, manifest_identity) = read_identified(&manifest_path, 8192)?;
     let mut files = vec![(manifest_path, manifest_identity)];
     let mut read_file = |relative: &str| {
-        let (bytes, identity) = package_read_identified(path, relative, 65_536)?;
+        let (bytes, identity) = package_read_identified(path, relative, PACKAGE_FILE_LIMIT)?;
         files.push((path.join(relative), identity));
         Ok::<_, std::io::Error>(bytes)
     };
@@ -281,7 +281,8 @@ pub struct ModStore {
     user: Option<String>,
 }
 
-pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
+pub(super) const STATE_LIMIT: usize = 196_608;
+pub(super) const PACKAGE_FILE_LIMIT: u64 = 131_072;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 
@@ -324,7 +325,7 @@ fn state_value(bytes: &[u8], version: u32) -> Result<Value> {
 }
 
 fn directory_state(directory: &Path, name: &str, version: u32) -> Result<Value> {
-    match read(&directory.join(name), SCOPED_STATE_LIMIT as u64) {
+    match read(&directory.join(name), STATE_LIMIT as u64) {
         Ok(bytes) => state_value(&bytes, version),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
         Err(error) => Err(error),
@@ -352,7 +353,7 @@ fn write_directory_state(
     let bytes = serde_json::to_vec(
         &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
     )?;
-    if bytes.len() > SCOPED_STATE_LIMIT {
+    if bytes.len() > STATE_LIMIT {
         return Err(failure("state_limit"));
     }
     let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
@@ -534,6 +535,7 @@ impl ModStore {
         let limit = match name {
             "packages.lock.json" => 524_288,
             "package-transaction.json" => 1_048_576,
+            name if name.starts_with("state-") => STATE_LIMIT,
             _ => 65_536,
         };
         if bytes.len() > limit {
@@ -1227,7 +1229,10 @@ impl ModStore {
         if !identifier(id) {
             return Err(failure("invalid_mod_id"));
         }
-        let bytes = match read(&self.root.join(Self::state_name(id, scope)), 65_536) {
+        let bytes = match read(
+            &self.root.join(Self::state_name(id, scope)),
+            STATE_LIMIT as u64,
+        ) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
             Err(e) => return Err(e),

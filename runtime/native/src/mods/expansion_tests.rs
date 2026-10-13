@@ -2763,9 +2763,9 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
     assert!(
         matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, .. }) if owner == "b")
     );
-    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(99)).is_none());
+    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(15)).is_none());
     assert!(
-        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(100)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
+        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(16)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
     );
 }
 
