@@ -281,6 +281,18 @@ pub struct Accounts(
 );
 
 impl Accounts {
+    #[cfg(test)]
+    pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
+        let runtime = self.1.lock().unwrap();
+        let dispatcher = self.4.lock().unwrap();
+        let notifier = self.5.lock().unwrap();
+        (
+            runtime.as_ref().map_or(0, |(runtime, _)| Arc::as_ptr(runtime) as usize),
+            dispatcher.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
+            notifier.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
+        )
+    }
+
     /// Applies a provider's late settlement to a provider-billed request whose route `owns` accepts.
     pub(crate) fn settle_provider(
         &self,

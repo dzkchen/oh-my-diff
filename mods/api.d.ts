@@ -588,6 +588,7 @@ export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readon
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
 export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+/** Callback completion rejects cancelled or stale authority before committing state; see REFERENCE.md. */
 export interface ModAPI {
   readonly version: '0.2.0-experimental.5';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;

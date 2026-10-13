@@ -6,6 +6,46 @@ from scripts.check_native_ownership import first_party, inspect, literals, produ
 
 
 class NativeOwnershipTests(unittest.TestCase):
+    def test_forbidden_dependency_edges_include_renamed_and_target_dependencies(self):
+        from scripts.check_native_ownership import dependencies
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for directory, allowed, forbidden in (
+                ("omd", "serde", "codex-core"),
+                ("native", "codex-core", "codex-tui"),
+            ):
+                path = root / "runtime" / directory / "Cargo.toml"
+                path.parent.mkdir(parents=True)
+                path.write_text(f'[dependencies]\n{allowed} = "1"\n')
+                self.assertEqual(dependencies(root), [])
+                for section in ("dependencies", "build-dependencies", "dev-dependencies",
+                                "target.'cfg(unix)'.dependencies"):
+                    path.write_text(f'[{section}]\nbridge = {{ package = "{forbidden}", version = "1" }}\n')
+                    findings = dependencies(root)
+                    self.assertEqual(len(findings), 1)
+                    self.assertEqual(findings[0]["name"], forbidden)
+                path.write_text(f'[dependencies]\n{allowed} = "1"\n')
+
+    def test_inherited_renamed_dependency_edges(self):
+        from scripts.check_native_ownership import dependencies
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "runtime/omd/Cargo.toml"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('[dependencies]\nbridge = { workspace = true }\n')
+            workspace = root / "Cargo.toml"
+            workspace.write_text('[workspace.dependencies]\nbridge = { package = "codex-core", version = "1" }\n')
+            self.assertEqual(dependencies(root)[0]["name"], "codex-core")
+            workspace.unlink()
+            patch = root / "runtime/patches/dependencies.patch"
+            patch.parent.mkdir()
+            patch.write_text('+++ b/codex-rs/Cargo.toml\n@@ -1,1 +1,2 @@\n [workspace.dependencies]\n+bridge = { package = "codex-tui", path = "tui" }\n')
+            self.assertEqual(dependencies(root)[0]["name"], "codex-tui")
+            patch.write_text('+++ b/codex-rs/Cargo.toml\n@@ -1,1 +1,3 @@\n+[workspace.dependencies.bridge]\n+package = "codex-core"\n+path = "core"\n')
+            self.assertEqual(dependencies(root)[0]["name"], "codex-core")
+
     def test_production_resumes_after_test_items(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "sample.rs"

@@ -102,20 +102,19 @@ fn fixture_with_registry(
     } else {
         let runtime = ModHost::open(root.clone()).unwrap();
         let environment = runtime.environment();
-        let intercepted = runtime.intercepted_surfaces();
-        let required = runtime.required_surfaces();
         let runtime = Arc::new(Mutex::new(runtime));
         let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
         let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let persist_required = persist_runtime.lock().unwrap().required_surfaces();
         let views = Arc::new(view::Views::new());
         Arc::new_cyclic(|core| Core {
+            session_runtime: tokio::runtime::Handle::try_current().ok(),
             agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
             host: host.clone(),
             runtime,
             input_runtime,
             persist_runtime,
-            intercepted,
-            required,
+            persist_required,
             environment,
             services: services::Services::default(),
             views,
@@ -190,6 +189,7 @@ fn production_initialization_binds_checkout_validates_schemas_and_registers_cont
 
 fn mods(core: &Arc<Core>) -> Mods {
     Mods {
+        registration: Mutex::new(None),
         core: core.clone(),
         turns: Mutex::new(BTreeMap::new()),
         sessions: Mutex::new(BTreeMap::new()),
@@ -589,7 +589,9 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     )
     .await;
     fixture.core.expansion.thread_started(&fixture.lead);
-    super::intercept::install_dispatcher(&fixture.core);
+    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    let registration = clients::install(&fixture.core, dispatcher).unwrap();
+    assert!(codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).is_err());
     let source = fixture
         .core
         .runtime
@@ -701,6 +703,20 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
             .join("scoped-policy-proof")
             .exists()
     );
+    drop(registration);
+    assert!(call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).is_err());
+    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    let _reinstalled = clients::install(&fixture.core, dispatcher).unwrap();
+    call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).unwrap();
+    drop(_reinstalled);
+    let mut first = ExtensionRegistryBuilder::new();
+    super::install(&mut first, fixture.core.host.clone()).unwrap();
+    let installed = fixture.core.host.accounts.mod_installation();
+    let mut second = ExtensionRegistryBuilder::new();
+    assert_eq!(super::install(&mut second, fixture.core.host.clone()).unwrap_err(), "host_already_installed");
+    assert_eq!(fixture.core.host.accounts.mod_installation(), installed);
+    drop(first);
+    super::install(&mut second, fixture.core.host.clone()).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2880,7 +2896,7 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
     );
     drop((held, surface));
     let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
-    assert_ne!(first, "process_raster_revoked");
+    assert_ne!(first.kind, codex_omd::client_surface::BlitErrorKind::Revoked);
     let held = fixture.core.runtime.lock().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
     let busy = sink.clone();
@@ -2898,7 +2914,7 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
     store.enable(&package, false).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(
-        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err().to_string(),
         "process_raster_revoked"
     );
 }
@@ -3025,7 +3041,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         return;
     };
     let extension = mods(&fixture.core);
-    assert!(!extension.rewrites_persisted_text());
+    assert!(extension.rewrites_persisted_text());
     let entries = [codex_extension_api::PersistedText {
         kind: "message",
         role: Some("user".to_owned()),
@@ -3036,6 +3052,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         thread_id: "thread",
         entries: &entries,
     };
+    fixture.core.runtime.lock().unwrap().required_surfaces().lock().unwrap().push("history_persist");
     let runtime = fixture.core.persist_runtime.clone();
     let _ = std::thread::spawn(move || {
         let _held = runtime.lock().unwrap();
@@ -3045,13 +3062,135 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
     assert_eq!(extension.rewrite_persisted_text(input()).await, None);
     fixture
         .core
-        .required
+        .persist_required
         .lock()
         .unwrap()
         .push("history_persist");
     let withheld = extension.rewrite_persisted_text(input()).await.unwrap();
     assert_eq!(withheld.texts, [codex_omd::PERSIST_WITHHELD]);
     assert_eq!(withheld.by, "host");
+}
+
+#[test]
+fn lanes_reject_changed_authority_before_committing_callback_state() {
+    for lane in ["main", "input", "persist"] {
+        for change in ["disable", "revoke", "replace", "broken", "cancel"] {
+            let fixture = fixture(&[Package {
+                id: "writer", capabilities: &["commands", "agents", "store"], manifest: Value::Null,
+                source: "export default api => api.command('run', () => { api.host.call('task.status', null); api.state.set('unsafe'); return 'unsafe'; })",
+            }]).unwrap();
+            let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+            let path = fixture._dir.path().join("packages/writer").canonicalize().unwrap();
+            std::fs::write(fixture.core.host.root.join("managed.json"), "{").unwrap();
+            let runtime = match lane {
+                "input" => &fixture.core.input_runtime,
+                "persist" => &fixture.core.persist_runtime,
+                _ => &fixture.core.runtime,
+            };
+            let mut runtime = runtime.lock().unwrap();
+            let generation = runtime.generation();
+            let state = fixture.core.host.root.join("state-writer.json");
+            let before = std::fs::read(&state).ok();
+            let active = std::cell::Cell::new(true);
+            let result = runtime.invoke_with("writer", generation, "command", "run", Value::Null,
+                || active.get(), |_| {
+                    match change {
+                        "disable" => store.enable(&path, false)?,
+                        "revoke" => {
+                            let config = fixture.core.host.root.join("mods.json");
+                            let mut value: Value = serde_json::from_slice(&std::fs::read(&config)?)?;
+                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
+                            std::fs::write(config, serde_json::to_vec(&value)?)?;
+                        }
+                        "replace" => std::fs::write(path.join("index.ts"), "export default () => {}")?,
+                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
+                        "cancel" => active.set(false),
+                        _ => unreachable!(),
+                    }
+                    Ok(Value::Null)
+                });
+            assert!(result.is_err(), "{lane} {change}");
+            assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
+            if change == "broken" {
+                assert!(runtime.refresh_guarded(&|| true).is_err());
+            }
+            let next = runtime.invoke_with("writer", generation, "command", "run", Value::Null, || true, |_| Ok(Value::Null));
+            assert_eq!(next.is_ok(), change == "cancel", "next admission {lane} {change}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn persistence_admits_new_requirements_without_main_lane_refresh() {
+    let fixture = fixture(&[]).unwrap();
+    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+    install(&store, &fixture._dir.path().join("packages"), &Package {
+        id: "redact", capabilities: &["history_persist"], manifest: Value::Null,
+        source: "export default api => api.intercept('history_persist', {required:true}, e => ({entries:e.entries.map(v=>({...v,text:'masked'}))}))",
+    });
+    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
+    let extension = mods(&fixture.core);
+    assert!(extension.rewrites_persisted_text());
+    let entries = [codex_extension_api::PersistedText {
+        kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
+    }];
+    let input = || codex_extension_api::PersistedTextInput { thread_id: "t", entries: &entries };
+    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, ["masked"]);
+    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
+    std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
+    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, [codex_omd::PERSIST_WITHHELD]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secondary_lane_calls_preserve_ui_with_distinct_generations() {
+    let fixture = fixture(&[Package {
+        id: "input", capabilities: &["input", "commands", "terminal", "exec"], manifest: json!({"exec_environment":["FIXTURE_VALUE"]}),
+        source: "export default api => { api.command('write', () => api.uiState.set(42)); api.command('read', () => api.uiState.get()); api.intercept('input', (e,next) => { api.host.call('environment.read',{names:['FIXTURE_VALUE']}); return next(e); }); }",
+    }]).unwrap();
+    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+    let path = fixture._dir.path().join("packages/input").canonicalize().unwrap();
+    store.enable(&path, false).unwrap();
+    fixture.core.runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
+    store.enable(&path, true).unwrap();
+    fixture.core.runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
+    fixture.core.input_runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
+    assert_ne!(fixture.core.runtime.lock().unwrap().generation(), fixture.core.input_runtime.lock().unwrap().generation());
+    command(&fixture.core, "input", "write");
+    let result = super::intercept::chain(
+        fixture.core.clone(), Arc::new(fixture.lead.clone()), fixture.core.input_runtime.clone(),
+        "input", true, json!({"text":"hello"}), json!({"caller":"user"}),
+        Arc::new(AtomicBool::new(false)), |input| Ok(json!({"text":input["text"]})),
+    ).await.unwrap();
+    assert_eq!(result.result["text"], "hello");
+    assert_eq!(command(&fixture.core, "input", "read"), 42);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_persistence_cancels_callback_state_commit() {
+    let fixture = fixture(&[Package {
+        id: "persist", capabilities: &["history_persist", "store"], manifest: Value::Null,
+        source: "export default api => api.intercept('history_persist', e => { let n = 0; for (let i = 0; i < 1000000; i++) n += i; api.state.set(n); return {entries: e.entries}; })",
+    }]).unwrap();
+    let runtime = fixture.core.persist_runtime.clone();
+    let required = fixture.core.persist_required.clone();
+    let worker_runtime = runtime.clone();
+    let state = fixture.core.host.root.join("state-persist.json");
+    let before = std::fs::read(&state).ok();
+    let task = tokio::spawn(async move {
+        let entries = [codex_extension_api::PersistedText {
+            kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
+        }];
+        persisted::rewrite(worker_runtime, required, codex_extension_api::PersistedTextInput {
+            thread_id: "t", entries: &entries,
+        }).await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while runtime.try_lock().is_ok() { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::task::spawn_blocking(move || { drop(runtime.lock().unwrap()); }).await.unwrap();
+    assert_eq!(std::fs::read(state).ok(), before);
 }
 
 #[test]

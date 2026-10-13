@@ -140,7 +140,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
     if let Some(parent) = forked
         && let Err(error) =
             codex_omd::data_store::fork_thread_data(&lead.host.root, &parent.to_string(), &thread)
-        && !error.to_string().starts_with("store_thread_exists")
+        && error.kind() != std::io::ErrorKind::AlreadyExists
     {
         core.views.diagnostic(
             &core.host,

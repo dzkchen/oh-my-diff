@@ -153,12 +153,12 @@ struct TurnRecord {
 }
 
 pub(super) struct Core {
+    session_runtime: Option<tokio::runtime::Handle>,
     host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
     persist_runtime: Arc<Mutex<ModHost>>,
-    intercepted: Arc<Mutex<Vec<&'static str>>>,
-    required: Arc<Mutex<Vec<&'static str>>>,
+    persist_required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
     agents: agents::Agents,
     services: services::Services,
@@ -171,6 +171,7 @@ pub(super) struct Core {
 }
 
 struct Mods {
+    registration: Mutex<Option<clients::Registration>>,
     core: Arc<Core>,
     turns: Mutex<BTreeMap<String, TurnRecord>>,
     sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
@@ -416,6 +417,7 @@ fn initialize(
     registry: &mut ExtensionRegistryBuilder<Config>,
     host: Arc<Host>,
 ) -> Result<Arc<Mods>, String> {
+    let registration = codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
     let validator = |schema: &Value| {
         codex_extension_api::parse_tool_input_schema(schema)
             .map(|_| ())
@@ -427,25 +429,24 @@ fn initialize(
         .map_err(|e| e.to_string())?;
     let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
         .map_err(|e| e.to_string())?;
+    let persist_required = persist_runtime.required_surfaces();
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
-    let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
-    host.accounts
-        .install_mod_runtime(runtime.clone(), required.clone());
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let persist_runtime = Arc::new(Mutex::new(persist_runtime));
     let extension = Arc::new(Mods {
+        registration: Mutex::new(None),
         core: Arc::new_cyclic(|core| Core {
+            session_runtime: tokio::runtime::Handle::try_current().ok(),
             agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
             host,
             runtime,
             input_runtime,
             persist_runtime,
-            intercepted,
-            required,
+            persist_required,
             environment,
             services: services::Services::default(),
             views,
@@ -465,8 +466,13 @@ fn initialize(
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
     });
-    intercept::install_dispatcher(&extension.core);
-    clients::install(&extension.core);
+    let dispatcher = intercept::dispatcher(&extension.core);
+    registration.install(dispatcher.clone()).map_err(|error| error.to_string())?;
+    *extension.registration.lock().map_err(|_| "host_installation_poisoned")? =
+        Some(clients::install(&extension.core, registration)?);
+    extension.core.host.accounts.install_mod_runtime(extension.core.runtime.clone(), required);
+    extension.core.host.accounts.install_mod_dispatcher(dispatcher);
+    intercept::install_notifier(&extension.core);
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.thread_lifecycle_contributor(extension.clone());
@@ -1409,10 +1415,7 @@ impl TurnLifecycleContributor for Mods {
     }
 
     fn rewrites_persisted_text(&self) -> bool {
-        self.core
-            .intercepted
-            .lock()
-            .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
+        true
     }
 
     fn rewrite_persisted_text<'a>(
@@ -1421,7 +1424,7 @@ impl TurnLifecycleContributor for Mods {
     ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
         Box::pin(persisted::rewrite(
             self.core.persist_runtime.clone(),
-            self.core.required.clone(),
+            self.core.persist_required.clone(),
             input,
         ))
     }
@@ -1464,10 +1467,11 @@ impl TurnLifecycleContributor for Mods {
                 })
             };
             let boundary = runtime.clone();
+            let boundary_cancelled = cancelled.clone();
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
-                runtime.turn_boundary();
+                runtime.refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire)).map_err(|error| error.to_string())?;
                 Ok::<_, String>(runtime.intercepts("input"))
             })
             .await
