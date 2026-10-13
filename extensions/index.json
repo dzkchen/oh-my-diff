@@ -339,6 +339,63 @@
       ],
       "support_status": "reviewed_candidate",
       "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "burn_meter",
+      "version": "0.1.0",
+      "extension_type": "mod",
+      "capability": "Port of the Claude Code burn-meter mod: session spend as a burning fuse above the prompt, plan windows, comparisons, per-turn chart, lifetime total and threshold toasts",
+      "source": "mods/ports/burn_meter",
+      "published": {"repository": "https://github.com/dzkchen/oh-my-diff", "revision": "e718fa2d8173e5ef419feaa42d3fc495c3abbb84", "sha256": "fc8b5ebdad8790bc35a8baf1db659d3d47449337cdfc1a76dc1abfe7705a9cdd"},
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "token_weather",
+      "version": "0.1.0",
+      "extension_type": "mod",
+      "capability": "Port of the Claude Code token-weather mod: a context-window forecast line above the prompt with a chart of recent turns",
+      "source": "mods/ports/token_weather",
+      "published": {"repository": "https://github.com/dzkchen/oh-my-diff", "revision": "e718fa2d8173e5ef419feaa42d3fc495c3abbb84", "sha256": "138d1edce801a53d075ec7dc4a3ecc319f7fce3787525d7b9beed427d42d5595"},
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "blast_radius",
+      "version": "0.1.0",
+      "extension_type": "mod",
+      "capability": "Port of the Claude Code blast-radius mod: measures what a risky shell command would delete, discard or drop and holds it for a Proceed or Cancel answer",
+      "source": "mods/ports/blast_radius",
+      "published": {"repository": "https://github.com/dzkchen/oh-my-diff", "revision": "34de8a94eca519b6d1a324184e769b627c1f1a1c", "sha256": "02dfe40eecbaa3e0005a266ee0f78b2684682dd8dcb494d59acad84780f2feaa"},
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; tool_continuation_v2, terminal_prompt_v1, exec_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
     }
   ]
 }

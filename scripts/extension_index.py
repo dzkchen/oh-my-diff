@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
+import io
 import json
+import re
+import subprocess
+import tarfile
+import tempfile
 from pathlib import Path
+
+try:
+    from scripts.preview_lock import package_digest
+except ModuleNotFoundError:
+    from preview_lock import package_digest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +28,26 @@ def checked_path(value, directory=True):
     if not resolved.is_relative_to(ROOT) or (directory and not resolved.is_dir()) or (not directory and not resolved.is_file()):
         raise ValueError(f"missing or escaping path: {value}")
     return resolved
+
+
+def check_published(identifier, source, published, root=ROOT):
+    if not (published["repository"].startswith("https://") and re.fullmatch(r"[0-9a-f]{40}", published["revision"])
+            and re.fullmatch(r"[0-9a-f]{64}", published["sha256"])):
+        raise ValueError(f"{identifier}: invalid published source")
+    if package_digest(root / source) != published["sha256"]:
+        raise ValueError(f"{identifier}: source digest differs from the published sha256")
+    archive = subprocess.run(["git", "archive", published["revision"], source], cwd=root, capture_output=True)
+    if archive.returncode:
+        raise ValueError(f"{identifier}: published revision is unavailable: {archive.stderr.decode().strip()}")
+    with tempfile.TemporaryDirectory() as directory:
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(directory, filter="data")
+        try:
+            published_digest = package_digest(Path(directory) / source)
+        except FileNotFoundError as error:
+            raise ValueError(f"{identifier}: published revision lacks {Path(error.filename).name}") from None
+    if published_digest != published["sha256"]:
+        raise ValueError(f"{identifier}: source differs from its published revision")
 
 
 def check():
@@ -71,6 +101,8 @@ def check():
                 raise ValueError(f"{entry['id']}: mod manifest differs")
             if manifest["api"] not in entry["compatibility"]:
                 raise ValueError(f"{entry['id']}: mod API differs")
+            if published := entry.get("published"):
+                check_published(entry["id"], entry["source"], published)
         elif entry["extension_type"] == "plugin":
             manifest = json.loads((source / ".codex-plugin/plugin.json").read_text())
             if (entry["id"], entry["version"], entry["license"]) != (

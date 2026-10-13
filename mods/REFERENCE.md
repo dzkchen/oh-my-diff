@@ -2273,7 +2273,7 @@ change, whoever changed them. Each attachment has a stable `id`, its placeholder
 `label`, its `owner` (`user` or the mod that attached it) and an immutable image
 `resource` bound to the reading mod, its source hash and repository, with package
 lifetime across configuration revisions and thread forks (PNG and JPEG up to 8 MiB; otherwise
-`null`). `composer.write {revision, edit?, cursor?, selection?, attach?,
+`null`), with the image's `width` and `height` in pixels when its header decodes. `composer.write {revision, edit?, cursor?, selection?, attach?,
 detach?}` applies only to that revision and fails with `stale_revision`
 otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:
 'splice', start, end, text}` (byte offsets on character boundaries), `cursor`
@@ -2733,7 +2733,10 @@ any it refuses.
   successful validation and cancellation checks, with revision conflicts using
   the existing receipt-replay rules. Authority polling with unchanged configuration
   preserves UI state and command views. State is cleared on explicit reload, revocation,
-  package changes and session teardown, and is never written to disk. Durable
+  package changes and session teardown, and is never written to disk; a reload
+  during a command or component event (such as one its own `packages.apply`
+  caused) does not cancel it, and its `set` lands on the cleared state, even
+  with the value it read; a change of repository during it cancels it. Durable
   `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
   state for preferences that must survive a restart.
 - Experimental command views: return `{terminal: patch}` with a `TerminalPatch`

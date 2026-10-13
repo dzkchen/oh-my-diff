@@ -136,6 +136,7 @@ impl ModStore {
             ui: None,
             ui_state: Value::Null,
             ui_revision: 0,
+            ui_clears: 0,
             command_view: None,
             registrations: Registrations::default(),
             source_use: ModSourceUse::default(),

@@ -1870,6 +1870,50 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
 }
 
 #[test]
+fn ui_state_write_survives_a_reload_during_its_command() {
+    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('keep', () => { const value = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set(value); return 'kept'; }); api.command('read', () => api.uiState.get()); };";
+    let (temp, store, _) = fixture(source, &["commands", "terminal", "fs.read"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let during = |name: &str, change: &dyn Fn()| {
+        let generation = runtime.lock().unwrap().generation();
+        codex_omd::invoke_shared(
+            &runtime,
+            "fixture",
+            generation,
+            "command",
+            name,
+            Value::Null,
+            || true,
+            |_, _| {
+                change();
+                Ok(json!("contents"))
+            },
+            |_| {},
+        )
+    };
+    let read = || {
+        let mut host = runtime.lock().unwrap();
+        let generation = host.generation();
+        host.invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap()
+    };
+    let reload = || {
+        store.reload().unwrap();
+        runtime.lock().unwrap().reload().unwrap();
+    };
+    assert_eq!(during("apply", &reload).unwrap(), "applied");
+    assert_eq!(read(), json!({"open": true, "before": null}));
+    assert_eq!(during("keep", &reload).unwrap(), "kept");
+    assert_eq!(read(), json!({"open": true, "before": null}));
+    let error = during("apply", &|| {
+        runtime.lock().unwrap().set_checkout(temp.path());
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("callback_cancelled"), "{error}");
+    assert_eq!(read(), Value::Null);
+}
+
+#[test]
 fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() {
     let source = "export default api => { api.command('view', () => { api.uiState.set('open'); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('close', () => ({terminal:null})); api.command('change', () => api.uiState.set('changed')); api.command('durable', () => api.state.set('changed')); api.command('bad', () => { api.uiState.set('bad'); return {terminal:{title:'x'.repeat(10000)}}; }); api.on('terminal', () => ({title:'First'})); };";
     let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
@@ -4779,11 +4823,10 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
         Ok(json!({"output":"ran","success":true}))
     })
     .unwrap();
-    assert_eq!(drained.result["output"], "ran");
+    assert_eq!(drained.result["output"], "ran x");
     assert!(drained.trace.iter().any(|entry| entry["mod"] == "y"
         && entry["reason"] == "callback_authority_changed"));
-    assert!(drained.trace.iter().any(|entry| entry["mod"] == "x"
-        && entry["reason"].as_str().is_some_and(|reason| reason.starts_with("stale_mod_generation"))));
+    assert!(!drained.trace.iter().any(|entry| entry["mod"] == "x" && entry["reason"].is_string()));
     runtime.lock().unwrap().reload().unwrap();
     assert_eq!(
         dispatch(&|| true, &mut { ran }).unwrap().result["output"],

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "token_weather",
+  "version": "0.1.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "A weather forecast of the context window above the prompt: icon, percent, tokens used and a chart of recent turns",
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/ports/token_weather" },
+  "capabilities": ["terminal", "threads", "lifecycle", "store"],
+  "subscriptions": { "app": ["thread/tokenUsage/updated"] },
+  "compatibility": {
+    "required_features": ["store_v1", "state_scopes_v1", "lifecycle_events_v1", "app_v1", "terminal_components_v1", "terminal_rich_line_v1"]
+  }
+}
