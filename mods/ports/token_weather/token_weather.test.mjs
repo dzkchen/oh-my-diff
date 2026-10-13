@@ -6,10 +6,11 @@ import { emit, runScenario, state, text } from '@oh-my-diff/mod-api/testing';
 const skip = !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN';
 const directory = fileURLToPath(new URL('.', import.meta.url));
 const thread = 'lead';
-const response = (id, input, scope = { thread_id: thread, agent_id: null, kind: 'main' }) => ({
-  request_id: id, attempt: 1, scope, usage: { input_tokens: input, output_tokens: 0 }, cost: { microusd: null, basis: 'included_subscription' }, context_window: 200_000, synthetic: null,
+const usage = (tokens, window = 200_000) => emit('app_notification', {
+  method: 'thread/tokenUsage/updated', thread_id: thread, coalesced: 0, dropped: 0,
+  params: { threadId: thread, turnId: 't', tokenUsage: { total: { totalTokens: tokens }, last: { totalTokens: tokens }, modelContextWindow: window } },
 });
-const turn = (id, input) => [emit('model_response', response(id, input)), emit('turn_end', { thread_id: thread })];
+const turn = (id, input) => [usage(input), emit('turn_end', { thread_id: thread })];
 const draw = (columns = 100) => emit('terminal', { event: 'idle', ledger: { thread_id: thread }, client: { columns } });
 const run = (...steps) => runScenario(directory, { steps }).steps.map(step => step.value);
 const line = value => {
@@ -18,7 +19,7 @@ const line = value => {
 };
 
 test('no band before the first finished turn, then one forecast line per turn', { skip }, () => {
-  const values = run(draw(), emit('model_response', response('r1', 36_000)), draw(), emit('turn_end', { thread_id: thread }), draw());
+  const values = run(draw(), usage(36_000), draw(), emit('turn_end', { thread_id: thread }), draw());
   assert.equal(line(values[0]), null);
   assert.equal(line(values[2]), null);
   assert.match(line(values[4]), /☀ {2}Clear {2}18% of context {2}36k \/ 200k {3}last turns █$/);
@@ -38,10 +39,10 @@ test('forecast bands, the 12-turn chart and the last-turn delta follow the readi
   assert.equal(chart.at(-1), '█');
 });
 
-test('subagent responses are ignored, the history is capped and narrow terminals drop the chart', { skip }, () => {
+test('readings without a window are ignored, the history is capped and narrow terminals drop the chart', { skip }, () => {
   const steps = [];
   for (let index = 0; index < 15; index++) steps.push(...turn(`r${index}`, 40_000 + index * 1000));
-  steps.push(emit('model_response', response('w1', 190_000, { thread_id: thread, agent_id: 'a1', kind: 'subagent' })), emit('turn_end', { thread_id: thread }));
+  steps.push(usage(190_000, null), emit('turn_end', { thread_id: thread }));
   steps.push(draw(50), state('token_weather', { threadId: thread }));
   const values = run(...steps);
   assert.equal(line(values.at(-2)), '☁  Cloudy  27% of context  54k / 200k');

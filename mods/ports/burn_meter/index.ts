@@ -268,8 +268,7 @@ export default function activate(api: ModAPI) {
       return { display: 'Burn demo: $0 to $30 in 20 seconds.' };
     }
     if (arg !== '' && arg !== 'panel' && arg !== 'show') return { display: 'usage: /burn [panel|show|hide|demo|lifetime]' };
-    refresh();
-    save({ ...saved(), hidden: false });
+    save({ ...state, hidden: false });
     if (arg !== 'show') api.uiState.set({ open: true });
     return { display: summary(saved()) };
   }, { description: 'Burn meter: /burn opens the panel; [panel|show|hide|demo|lifetime]', args_hint: '[panel|show|hide|demo|lifetime]' });

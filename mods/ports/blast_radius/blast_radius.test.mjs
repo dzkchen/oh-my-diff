@@ -36,7 +36,7 @@ test('rm -rf is measured and holds until the user accepts', { skip }, () => {
   assert.equal(execs[1].cwd, undefined);
   assert.deepEqual(execs[1].argv.slice(-2), ['blast-radius', 'build']);
   assert.equal(prompt.kind, 'confirm');
-  assert.match(prompt.message, /Would {4}delete 3 files \(about 24 KB\)\n.*\n {2}build\/a\.o/);
+  assert.match(prompt.message, /^Command: rm -rf build · Would delete 3 files \(about 24 KB\) · Paths: build · build\/a\.o, build\/b\.o, build\/c\.o$/);
   assert.deepEqual(trace.unused_mock_replies, []);
 });
 
@@ -55,7 +55,7 @@ test('a prompt that cannot be asked denies', { skip }, () => {
 test('a failed measurement still asks and says so', { skip }, () => {
   const { chain, prompt } = guard('git reset --hard', { 'exec.run': [root, exec('', 128, 'fatal: not a git repository')], 'terminal.prompt': [accepted] });
   assertWrapped(chain, 'blast_radius');
-  assert.match(prompt.message, /git reset --hard \(could not measure it\)\nCould not measure: fatal: not a git repository/);
+  assert.match(prompt.message, /git reset --hard \(could not measure it\) · Could not measure: fatal: not a git repository/);
 });
 
 test('cd and git -C move where the measurement runs', { skip }, () => {
@@ -66,7 +66,7 @@ test('cd and git -C move where the measurement runs', { skip }, () => {
   assertWrapped(chain, 'blast_radius');
   assert.deepEqual(execs.slice(1).map(call => [call.program, call.cwd]), [['git', 'app/pkg'], ['git', 'app/pkg']]);
   assert.match(prompt.message, /discard uncommitted changes in 2 files/);
-  assert.match(prompt.message, /M {2}src\/a\.ts\n {2} M src\/b\.ts/);
+  assert.match(prompt.message, /M {2}src\/a\.ts, M src\/b\.ts/);
   assert.doesNotMatch(prompt.message, /new\.txt/);
 });
 
@@ -92,7 +92,7 @@ test('a force-push lists the commits it would drop', { skip }, () => {
   });
   assertWrapped(chain, 'blast_radius');
   assert.deepEqual(execs[2].argv.slice(-4), ['log', '--oneline', '--no-decorate', 'feature..origin/feature']);
-  assert.match(prompt.message, /force-push to origin\/feature: drops 2 commits\n.*\n {2}abc123 first\n {2}def456 second/);
+  assert.match(prompt.message, /force-push to origin\/feature: drops 2 commits · .* · abc123 first, def456 second/);
 });
 
 test('git clean is dry-run with the user flags but never -f', { skip }, () => {
@@ -101,7 +101,7 @@ test('git clean is dry-run with the user flags but never -f', { skip }, () => {
     'terminal.prompt': [declined],
   });
   assert.deepEqual(execs[1].argv.slice(-6), ['clean', '-n', '-dx', '-e', 'keep', '--']);
-  assert.match(prompt.message, /remove 2 untracked paths\n.*\n {2}tmp\/\n {2}out\.log/);
+  assert.match(prompt.message, /remove 2 untracked paths · .* · tmp\/, out\.log/);
 });
 
 test('pending migrations are listed from the tool status', { skip }, () => {
@@ -110,5 +110,5 @@ test('pending migrations are listed from the tool status', { skip }, () => {
     'terminal.prompt': [declined],
   });
   assert.deepEqual(execs[1].argv, ['manage.py', 'showmigrations', '--plan']);
-  assert.match(prompt.message, /apply 2 pending migrations\n.*\n {2}app\.0002\n {2}app\.0003/);
+  assert.match(prompt.message, /apply 2 pending migrations · .* · app\.0002, app\.0003/);
 });

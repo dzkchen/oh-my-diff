@@ -248,12 +248,11 @@ export default function activate(api: ModAPI) {
     if (!risk) return next(e);
     const report = measure(risk, args.workdir);
     const message = [
-      `Command  ${command.replace(/\s+/g, ' ').slice(0, 200)}`,
-      `Would    ${report.summary}`,
+      `Command: ${command.replace(/\s+/g, ' ').slice(0, 200)}`,
+      `Would ${report.summary}`,
       report.note,
-      ...report.lines.map(line => `  ${line.slice(0, 100)}`),
-      ...(report.more ? [`  + ${report.more} more`] : []),
-    ].join('\n').replace(/[^\x20-\x7e\n]/g, '?').slice(0, 1900);
+      ...(report.lines.length ? [[...report.lines.map(line => line.trim().slice(0, 100)), ...(report.more ? [`+ ${report.more} more`] : [])].join(', ')] : []),
+    ].filter(Boolean).map(part => part.replace(/[^\x20-\x7e]/g, '?')).join(' · ').slice(0, 1890);
     const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: `Blast Radius: proceed with ${risk.label}?`.slice(0, 100), message });
     if (answer.ok && answer.value.status === 'accepted') return next(e);
     const why = answer.ok ? 'the user declined' : 'the question could not be asked';

@@ -21,9 +21,11 @@ export default function activate(api: ModAPI) {
   const saved = (): State => ({ readings: [], pending: null, ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
 
-  api.on('model_response', response => {
-    const context = response.scope.kind === 'main' && !response.scope.agent_id ? api.usage.summarize(response).context : null;
-    if (context && context.window > 0) save({ ...saved(), pending: { tokens: context.used, window: context.window } });
+  api.on('app_notification', ({ method, params }) => {
+    if (method !== 'thread/tokenUsage/updated') return;
+    const usage = (params as { tokenUsage?: { last?: { totalTokens?: unknown }; modelContextWindow?: unknown } } | null)?.tokenUsage;
+    const tokens = Number(usage?.last?.totalTokens), window = Number(usage?.modelContextWindow);
+    if (tokens >= 0 && window > 0) save({ ...saved(), pending: { tokens, window } });
   });
 
   api.on('turn_end', () => {
