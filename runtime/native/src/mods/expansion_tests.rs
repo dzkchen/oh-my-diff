@@ -4858,7 +4858,21 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
     }]) else {
         return;
     };
-    let _manager = attach_thread(&mut fixture).await;
+    let manager = attach_thread(&mut fixture).await;
+    let file_system = manager
+        .environment_manager()
+        .try_local_environment()
+        .unwrap()
+        .get_filesystem();
+    let cwd =
+        codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository).unwrap();
+    let access = codex_file_system::FileSystemEnvironmentAccessor::new(
+        &file_system,
+        codex_file_system::FileSystemSandboxContext::from_permission_profile(
+            fixture.lead.permission_profile.lock().unwrap().clone(),
+            cwd.clone(),
+        ),
+    );
     let repository = fixture.lead.host.repository.clone();
     for (name, text) in [
         ("plain.txt", "plain".to_owned()),
@@ -4881,7 +4895,12 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
                 .into(),
             text_elements: Vec::new(),
         }],
-        environments: Vec::new(),
+        environments: vec![codex_extension_api::TurnInputEnvironment {
+            environment_id: "local".into(),
+            cwd,
+            is_primary: true,
+            fs: &access,
+        }],
     };
     let fragments = mods(&fixture.core)
         .contribute(
@@ -4920,7 +4939,21 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
     }]) else {
         return;
     };
-    let _manager = attach_thread(&mut fixture).await;
+    let manager = attach_thread(&mut fixture).await;
+    let file_system = manager
+        .environment_manager()
+        .try_local_environment()
+        .unwrap()
+        .get_filesystem();
+    let cwd =
+        codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository).unwrap();
+    let access = codex_file_system::FileSystemEnvironmentAccessor::new(
+        &file_system,
+        codex_file_system::FileSystemSandboxContext::from_permission_profile(
+            fixture.lead.permission_profile.lock().unwrap().clone(),
+            cwd.clone(),
+        ),
+    );
     std::fs::write(fixture.lead.host.repository.join("slow.txt"), "slow").unwrap();
     let thread_store = ExtensionData::new("thread");
     thread_store.insert(fixture.lead.clone());
@@ -4933,7 +4966,12 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
                 text: "read @slow.txt".into(),
                 text_elements: Vec::new(),
             }],
-            environments: Vec::new(),
+            environments: vec![codex_extension_api::TurnInputEnvironment {
+                environment_id: "local".into(),
+                cwd,
+                is_primary: true,
+                fs: &access,
+            }],
         },
         None,
         &session_store,
@@ -4953,4 +4991,121 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
     .await
     .unwrap();
     assert_eq!(telemetry["faults"], 0, "{telemetry}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mentioned_files_use_selected_turn_environment_authority() {
+    use codex_extension_api::TurnInputContext;
+    use codex_extension_api::TurnInputContributor;
+    use codex_extension_api::TurnInputEnvironment;
+    use codex_file_system::FileSystemEnvironmentAccessor;
+    use codex_file_system::FileSystemSandboxContext;
+    use codex_protocol::permissions::FileSystemAccessMode;
+    use codex_protocol::permissions::FileSystemPath;
+    use codex_protocol::permissions::FileSystemSandboxEntry;
+    use codex_protocol::permissions::FileSystemSandboxPolicy;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use codex_protocol::user_input::UserInput;
+    use codex_utils_path_uri::PathUri;
+
+    let Some(mut fixture) = fixture(&[]) else {
+        return;
+    };
+    let manager = attach_thread(&mut fixture).await;
+    let repository = &fixture.lead.host.repository;
+    std::fs::write(repository.join("plain.txt"), "plain").unwrap();
+    let cwd = PathUri::from_host_native_path(repository).unwrap();
+    let file_system = manager
+        .environment_manager()
+        .try_local_environment()
+        .unwrap()
+        .get_filesystem();
+    let profile = fixture.lead.permission_profile.lock().unwrap().clone();
+    let access = FileSystemEnvironmentAccessor::new(
+        &file_system,
+        FileSystemSandboxContext::from_permission_profile(profile, cwd.clone()),
+    );
+    let denied_profile = PermissionProfile::from_runtime_permissions(
+        &FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Path { path: cwd.clone() },
+                FileSystemAccessMode::Read,
+            ),
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Path {
+                    path: PathUri::from_host_native_path(repository.join("plain.txt")).unwrap(),
+                },
+                FileSystemAccessMode::Deny,
+            ),
+        ]),
+        NetworkSandboxPolicy::Restricted,
+    );
+    let denied_access = FileSystemEnvironmentAccessor::new(
+        &file_system,
+        FileSystemSandboxContext::from_permission_profile(denied_profile, cwd.clone()),
+    );
+    let unavailable_access = FileSystemEnvironmentAccessor::unrestricted(&file_system);
+    let local = TurnInputEnvironment {
+        environment_id: "local".into(),
+        cwd: cwd.clone(),
+        is_primary: true,
+        fs: &access,
+    };
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    for (label, environments, expected) in [
+        ("selected local", vec![local.clone()], 1),
+        ("missing", vec![], 0),
+        (
+            "remote",
+            vec![TurnInputEnvironment {
+                environment_id: "remote".into(),
+                ..local.clone()
+            }],
+            0,
+        ),
+        (
+            "other cwd",
+            vec![TurnInputEnvironment {
+                cwd: PathUri::from_host_native_path(fixture._dir.path()).unwrap(),
+                ..local.clone()
+            }],
+            0,
+        ),
+        ("multiple", vec![local.clone(), local.clone()], 0),
+        (
+            "narrowed turn read",
+            vec![TurnInputEnvironment {
+                fs: &denied_access,
+                ..local.clone()
+            }],
+            0,
+        ),
+        (
+            "missing sandbox context",
+            vec![TurnInputEnvironment {
+                fs: &unavailable_access,
+                ..local
+            }],
+            0,
+        ),
+    ] {
+        let fragments = mods(&fixture.core)
+            .contribute(
+                TurnInputContext {
+                    turn_id: "turn".into(),
+                    user_input: vec![UserInput::Text {
+                        text: "@plain.txt".into(),
+                        text_elements: Vec::new(),
+                    }],
+                    environments,
+                },
+                None,
+                &ExtensionData::new("session"),
+                &thread_store,
+                &ExtensionData::new("turn"),
+            )
+            .await;
+        assert_eq!(fragments.len(), expected, "{label}");
+    }
 }
