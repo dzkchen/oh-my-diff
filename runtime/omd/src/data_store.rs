@@ -188,7 +188,18 @@ pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
             if target.try_exists()? {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
             }
-            copy_regular_tree(&source, &target).map(|()| true)
+            let threads = target.parent().ok_or_else(|| failure("store_thread_invalid"))?;
+            let stage = tempfile::Builder::new().prefix(".fork-").tempdir_in(threads)?;
+            copy_regular_tree(&source, stage.path())?;
+            // A writer may create the target directory meanwhile; an exclusive rename never replaces even an empty one.
+            crate::workspace::rename_exclusive(
+                rustix::fs::CWD,
+                stage.path(),
+                rustix::fs::CWD,
+                target.as_path(),
+            )?;
+            let _ = stage.keep();
+            Ok(true)
         }
         Ok(_) => Err(failure("store_directory_invalid")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),

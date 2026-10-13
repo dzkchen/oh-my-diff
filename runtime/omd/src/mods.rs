@@ -19,6 +19,7 @@ pub use persisted::persist_chunks;
 pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
+pub use render::client_component_unmount;
 pub use render::component_detach;
 pub use render::component_events;
 pub use render::component_shared;
@@ -3444,13 +3445,7 @@ impl ModHost {
                         package.id
                     )));
                 }
-                Ok(files
-                    .into_iter()
-                    .map(|(name, text)| {
-                        let sha256 = digest(text.as_bytes());
-                        (name, json!({"text": text, "sha256": sha256}))
-                    })
-                    .collect())
+                Ok(store::asset_map(files))
             })();
             let assets = match assets {
                 Ok(assets) => assets,

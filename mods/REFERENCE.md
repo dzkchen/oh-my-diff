@@ -443,6 +443,7 @@ thread holds at most 8 snapshots and 64 MiB, the host at most 32 and 256 MiB;
 a full host evicts the oldest snapshot of the largest holder. Identical captures
 are deduplicated, and the registry clears on owner cleanup or session stop.
 Snapshots do not authorize reading denied paths.
+Reconstructed worktrees retain captured files even when snapshot ignore rules match them.
 
 `workspace.fingerprint {agent?, expected?}` takes the same arguments and
 permissions and returns only `{candidate_sha256}`, the digest `workspace.snapshot`
@@ -505,7 +506,7 @@ the host stays off with a notice in `/omd`. `omd-mod command
 STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A callback result,
 including its state, stays within 256 KiB. Package update, migration and rollback commands act on
-`"store"` state only.
+`"store"` state only. Migration handlers can import declared package assets by relative path.
 
 ### Reactive state (`reactive_state_v1`)
 
@@ -2455,7 +2456,9 @@ returns `timers`), and `time.sleep` returns at once.
 
 `replace('history')` receives a bounded view of each model request's items
 (`index`, `type`, `role`, `call_id`, `editable`, a 2 KiB text preview and byte
-size and `images` count) and may return `{drop?, replace?, insert?}`. Messages,
+size and `images` count) and may return `{drop?, replace?, insert?}`. The view
+holds the newest items, at most 2048, that fit the callback's 1 MiB runner
+request, in order and keyed by their original `index`. Messages,
 tool outputs and tool call arguments can be replaced; replacing a message with
 images keeps only the new text. A reasoning item can be dropped only together
 with the item it precedes and an insert cannot separate them; call and output

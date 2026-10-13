@@ -20,6 +20,10 @@ mod snapshots;
 mod tools;
 mod view;
 
+/// Serializes tests that install or observe the process-global host dispatcher and client surface.
+#[cfg(test)]
+static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 use super::*;
 use codex_extension_api::CompactionLifecycleInput;
 use codex_extension_api::ThreadReadyInput;
@@ -1060,8 +1064,16 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
             Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
         };
-        if let (Some(thread), Some(parent)) = (thread, forked_from) {
-            let _ = codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread);
+        if let (Some(thread), Some(parent)) = (thread, forked_from)
+            && let Err(error) =
+                codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread)
+            && error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            self.views.diagnostic(
+                &self.host,
+                "thread_store",
+                Some(format!("fork copy failed: {error}")),
+            );
         }
         let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
         self.compaction_decision(&mut runtime, config)?;

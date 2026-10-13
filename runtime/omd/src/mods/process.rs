@@ -126,7 +126,7 @@ fn runner(node: &Path) -> Result<Child> {
     warm.map_or_else(|| spawn(node), Ok)
 }
 
-const INPUT_LIMIT: usize = 1_048_576;
+pub(super) const INPUT_LIMIT: usize = 1_048_576;
 
 fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
@@ -246,11 +246,24 @@ fn retire_pinned(owner: &str, part: String) {
         unmounted.retain(|(.., at)| at.elapsed() < WARM_IDLE);
         unmounted.push((owner.to_owned(), part.clone(), Instant::now()));
     }
-    for runner in
-        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part))
-    {
-        runner.stop();
+    let mut retired =
+        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part));
+    if retired.is_empty() {
+        return;
     }
+    if let Ok(mut mounted) = MOUNTED.lock() {
+        for runner in &mut retired {
+            if let Some(by) = runner.pinned.take() {
+                mounted.remove(&(by, runner.key.clone()));
+            }
+        }
+    }
+    // Callers hold view and instance locks; the runners are already out of the pool and the mount count.
+    std::thread::spawn(move || {
+        for runner in retired {
+            runner.stop();
+        }
+    });
 }
 
 pub(super) fn unmount(owner: &str, id: &str, component: &str) {

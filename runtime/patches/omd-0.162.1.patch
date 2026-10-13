@@ -54377,10 +54377,10 @@ index 000000000..0a11dc0ae
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..37c906a72
+index 000000000..c36da9265
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,891 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -54612,8 +54612,47 @@ index 000000000..37c906a72
 +        .collect())
 +}
 +
-+/// Each client's module instances and the size it last rendered them at.
-+static MODULE_SIZES: Mutex<BTreeMap<(String, String), (u64, u64)>> = Mutex::new(BTreeMap::new());
++/// A client's module instance: the owner and module the view gave it, the size it last rendered it
++/// at, and whether a newer view revoked it.
++struct Module {
++    owner: String,
++    module: String,
++    size: (u64, u64),
++    revoked: Arc<AtomicBool>,
++}
++
++/// Each client's module instances by client and view component.
++static MODULES: Mutex<BTreeMap<(String, String), Module>> = Mutex::new(BTreeMap::new());
++
++fn instance(client: &str, component: &str) -> String {
++    format!("client.{client}.{component}")
++}
++
++fn revoke(client: &str, component: &str, module: &Module) {
++    module.revoked.store(true, Ordering::Release);
++    codex_omd::client_component_unmount(client, &module.owner, &instance(client, component));
++}
++
++/// Unmounts the client module instances the published view no longer gives the same owner and module.
++pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
++    if !core().is_ok_and(|core| std::ptr::eq(&*core.views, views)) {
++        return;
++    }
++    let Ok(mut modules) = MODULES.lock() else {
++        return;
++    };
++    modules.retain(|(client, component), module| {
++        let current = snapshot.component_owners.get(component) == Some(&module.owner)
++            && snapshot
++                .view
++                .module(component)
++                .is_some_and(|(name, _)| name == module.module);
++        if !current {
++            revoke(client, component, module);
++        }
++        current
++    });
++}
 +/// Undelivered `component_post` payloads by owner, the latest per client instance.
 +static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 +static POSTING: Coalesce = Coalesce::new();
@@ -54628,30 +54667,48 @@ index 000000000..37c906a72
 +) -> Result<Value, String> {
 +    static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 +    let core = core()?;
-+    let snapshot = snapshot(&core)?;
-+    let owner = owner(&snapshot, component)?.to_owned();
-+    let (module, props) = snapshot
-+        .view
-+        .module(component)
-+        .ok_or_else(|| format!("view_stale: {component}"))?;
-+    let (columns, rows) = {
-+        let mut sizes = MODULE_SIZES.lock().map_err(|_| "mod_runtime_poisoned")?;
-+        let size = size.unwrap_or_else(|| {
-+            sizes
-+                .get(&(client.to_owned(), component.to_owned()))
-+                .copied()
-+                .unwrap_or((80, 0))
++    // Read under the instance table so a publication that lands after this read reconciles this entry.
++    let (owner, module, props, (columns, rows), revoked) = {
++        let mut modules = MODULES.lock().map_err(|_| "mod_runtime_poisoned")?;
++        let snapshot = snapshot(&core)?;
++        let owner = owner(&snapshot, component)?.to_owned();
++        let (module, props) = snapshot
++            .view
++            .module(component)
++            .ok_or_else(|| format!("view_stale: {component}"))?;
++        let key = (client.to_owned(), component.to_owned());
++        let previous = modules.remove(&key);
++        let size = size
++            .or(previous.as_ref().map(|previous| previous.size))
++            .unwrap_or((80, 0));
++        let revoked = match previous {
++            Some(previous) if previous.owner == owner && previous.module == module => previous.revoked,
++            Some(previous) => {
++                revoke(client, component, &previous);
++                Arc::default()
++            }
++            None => Arc::default(),
++        };
++        modules.insert(key, Module {
++            owner: owner.clone(),
++            module: module.to_owned(),
++            size,
++            revoked: revoked.clone(),
 +        });
-+        sizes.insert((client.to_owned(), component.to_owned()), size);
-+        size
++        (owner, module.to_owned(), props.clone(), size, revoked)
 +    };
 +    let _thread =
 +        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
-+    let frame = json!({"instance": format!("client.{client}.{component}"), "client": client,
++    let frame = json!({"instance": instance(client, component), "client": client,
 +        "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
 +        "columns": columns, "rows": rows, "events": events});
-+    let step = codex_omd::component_shared(&core.runtime, &owner, module, frame, || true)
-+        .map_err(|error| error.to_string())?;
++    let step = codex_omd::component_shared(&core.runtime, &owner, &module, frame, || {
++        !revoked.load(Ordering::Acquire)
++    });
++    if revoked.load(Ordering::Acquire) {
++        return Err(format!("view_stale: {component}"));
++    }
++    let step = step.map_err(|error| error.to_string())?;
 +    if let Some(post) = step["post"].as_object() {
 +        let payload = json!({"component": component, "module": module, "client": client,
 +            "data": post["data"]});
@@ -54700,8 +54757,13 @@ index 000000000..37c906a72
 +
 +/// Unmounts a detached client's module instances.
 +pub fn detached(client: &str) {
-+    if let Ok(mut sizes) = MODULE_SIZES.lock() {
-+        sizes.retain(|(owner, _), _| owner != client);
++    if let Ok(mut modules) = MODULES.lock() {
++        modules.retain(|(owner, _), module| {
++            if owner == client {
++                module.revoked.store(true, Ordering::Release);
++            }
++            owner != client
++        });
 +    }
 +    codex_omd::component_detach(client);
 +}
@@ -55212,10 +55274,10 @@ index 000000000..37c906a72
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/clients_tests.rs b/codex-rs/ext/omd/src/clients_tests.rs
 new file mode 100644
-index 000000000..992545000
+index 000000000..f60681eda
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients_tests.rs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,229 @@
 +use super::*;
 +
 +fn snapshot() -> ModViewSnapshot {
@@ -55393,6 +55455,7 @@ index 000000000..992545000
 +
 +#[test]
 +fn clients_see_a_null_view_while_mods_are_inactive() {
++    let _guard = crate::mods::DISPATCHER_TEST.blocking_lock();
 +    assert!(published().is_none());
 +}
 +
@@ -61675,10 +61738,10 @@ index 000000000..310f9cf88
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..970004e0b
+index 000000000..b98295a4a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2426 @@
+@@ -0,0 +1,2438 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -61700,6 +61763,10 @@ index 000000000..970004e0b
 +mod snapshots;
 +mod tools;
 +mod view;
++
++/// Serializes tests that install or observe the process-global host dispatcher and client surface.
++#[cfg(test)]
++static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 +
 +use super::*;
 +use codex_extension_api::CompactionLifecycleInput;
@@ -62741,8 +62808,16 @@ index 000000000..970004e0b
 +            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
 +            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
 +        };
-+        if let (Some(thread), Some(parent)) = (thread, forked_from) {
-+            let _ = codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread);
++        if let (Some(thread), Some(parent)) = (thread, forked_from)
++            && let Err(error) =
++                codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread)
++            && error.kind() != std::io::ErrorKind::AlreadyExists
++        {
++            self.views.diagnostic(
++                &self.host,
++                "thread_store",
++                Some(format!("fork copy failed: {error}")),
++            );
 +        }
 +        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
 +        self.compaction_decision(&mut runtime, config)?;
@@ -71450,18 +71525,17 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..a87b8661c
+index 000000000..685cca8c1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5568 @@
+@@ -0,0 +1,5604 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
 +use std::path::Path;
 +use std::path::PathBuf;
-+
-+static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++use crate::mods::DISPATCHER_TEST;
 +
 +struct Fixture {
 +    _dir: tempfile::TempDir,
@@ -72026,6 +72100,43 @@ index 000000000..a87b8661c
 +    .await
 +    .unwrap();
 +    assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "y".repeat(4096));
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn client_module_instances_follow_the_published_view() {
++    let _guard = DISPATCHER_TEST.lock().await;
++    let Some(fixture) = fixture(&[Package {
++        id: "modules",
++        capabilities: &["terminal"],
++        manifest: json!({}),
++        source: "export default api => { for (const name of ['a', 'b']) api.component(name, {init: () => 0, key: n => n + 1, view: (n, ui) => [{type: 'text', id: 't', label: 'T', text: `${name}:${n}:${ui.props}`}]}); }",
++    }]) else {
++        return;
++    };
++    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
++    let _registration = clients::install(&fixture.core, dispatcher).unwrap();
++    let publish = |component: &str, module: &str, props: &str| {
++        let terminal = serde_json::from_value(json!({"view": {"sites": {"sidebar": {"components": [
++            {"type": "module", "id": component, "label": "M", "module": module, "props": props}]}}},
++            "component_owners": {component: "modules"}}))
++        .unwrap();
++        fixture.core.views.base(&fixture.core.host, terminal, Value::Null, 0);
++    };
++    let step = |component: &str| {
++        clients::component_event("client", component, json!({"kind": "key", "key": "x", "text": "x"}))?;
++        clients::render("client", "module", json!({"component": component, "columns": 20, "rows": 1}))
++            .map(|step| step["tree"][0]["text"].clone())
++    };
++    for node in 0..5 {
++        let component = format!("node{node}");
++        publish(&component, "a", "p");
++        assert_eq!(step(&component), Ok(json!("a:1:p")), "{component}");
++    }
++    publish("node4", "a", "q");
++    assert_eq!(step("node4"), Ok(json!("a:2:q")));
++    publish("node4", "b", "q");
++    assert_eq!(step("node4"), Ok(json!("b:1:q")));
++    clients::detached("client");
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -81301,10 +81412,10 @@ index 000000000..88b18991e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..738976d38
+index 000000000..0ca825258
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,259 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -81405,6 +81516,7 @@ index 000000000..738976d38
 +        if let Ok(mut published) = self.published.lock() {
 +            *published = Some(Arc::new(state.snapshot.clone()));
 +        }
++        super::clients::reconcile(self, &state.snapshot);
 +        codex_omd::client_surface::redraw();
 +    }
 +
@@ -95204,10 +95316,10 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..374689a88
+index 000000000..0bcadd832
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,578 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
@@ -95249,6 +95361,15 @@ index 000000000..374689a88
 +    schema: u32,
 +    next: u64,
 +    profiles: Vec<CredentialProfile>,
++}
++
++impl Index {
++    fn profile(&self, id: &str) -> io::Result<&CredentialProfile> {
++        self.profiles
++            .iter()
++            .find(|p| p.id == id)
++            .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))
++    }
 +}
 +
 +pub struct CredentialProfiles {
@@ -95465,11 +95586,11 @@ index 000000000..374689a88
 +    }
 +
 +    fn home(&self, id: &str) -> io::Result<PathBuf> {
-+        let known =
-+            self.with_index(false, |index| Ok(index.profiles.iter().any(|p| p.id == id)))?;
-+        if !known {
-+            return Err(failure(format!("credential_profile_unknown: {id}")));
-+        }
++        self.with_index(false, |index| self.indexed_home(index, id))
++    }
++
++    fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
++        index.profile(id)?;
 +        let home = self.root.join(id);
 +        match fs::DirBuilder::new().mode(0o700).create(&home) {
 +            Ok(()) => (),
@@ -95614,19 +95735,36 @@ index 000000000..374689a88
 +        ) {
 +            return result.map(drop);
 +        }
-+        if self.profile(id)?.kind != "secret" || value.is_empty() || value.len() > SECRET_BYTES {
++        if value.is_empty() || value.len() > SECRET_BYTES {
 +            return Err(failure("credential_secret_invalid"));
 +        }
-+        let path = self.home(id)?.join("secret");
-+        let mut file = fs::OpenOptions::new()
-+            .write(true)
-+            .create(true)
-+            .truncate(true)
-+            .mode(0o600)
-+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-+            .open(path)?;
-+        file.write_all(value.as_bytes())?;
-+        file.sync_all()
++        self.replace(id, "secret", value, |kind| kind == "secret", "credential_secret_invalid")
++    }
++
++    /// Publishes a profile's credential file whole, with private permissions, under the profile lock.
++    fn replace(
++        &self,
++        id: &str,
++        name: &str,
++        value: &str,
++        kind: impl FnOnce(&str) -> bool,
++        refusal: &str,
++    ) -> io::Result<()> {
++        self.with_index(false, |index| {
++            if !kind(&index.profile(id)?.kind) {
++                return Err(failure(refusal));
++            }
++            let home = self.indexed_home(index, id)?;
++            let path = home.join(name);
++            if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file()) {
++                return Err(failure("credential_store_invalid"));
++            }
++            let mut staged = tempfile::NamedTempFile::new_in(&home)?;
++            staged.write_all(value.as_bytes())?;
++            staged.as_file().sync_all()?;
++            staged.persist(&path).map_err(|error| error.error)?;
++            fs::File::open(&home)?.sync_all()
++        })
 +    }
 +
 +    pub fn store_auth(&self, id: &str, auth: &str) -> io::Result<()> {
@@ -95637,21 +95775,10 @@ index 000000000..374689a88
 +        ) {
 +            return result.map(drop);
 +        }
-+        if self.profile(id)?.kind == "secret"
-+            || auth.len() > 65_536
-+            || serde_json::from_str::<serde_json::Value>(auth).is_err()
-+        {
++        if auth.len() > 65_536 || serde_json::from_str::<serde_json::Value>(auth).is_err() {
 +            return Err(failure("credential_auth_invalid"));
 +        }
-+        let mut file = fs::OpenOptions::new()
-+            .write(true)
-+            .create(true)
-+            .truncate(true)
-+            .mode(0o600)
-+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-+            .open(self.home(id)?.join("auth.json"))?;
-+        file.write_all(auth.as_bytes())?;
-+        file.sync_all()
++        self.replace(id, "auth.json", auth, |kind| kind != "secret", "credential_auth_invalid")
 +    }
 +
 +    pub fn owned_secret(&self, id: &str, owner: &str) -> io::Result<serde_json::Value> {
@@ -95759,9 +95886,7 @@ index 000000000..374689a88
 +            return result.map(drop);
 +        }
 +        self.with_index(true, |index| {
-+            if !index.profiles.iter().any(|p| p.id == id) {
-+                return Err(failure(format!("credential_profile_unknown: {id}")));
-+            }
++            index.profile(id)?;
 +            for profile in &mut index.profiles {
 +                profile.default = profile.id == id;
 +            }
@@ -95775,10 +95900,10 @@ index 000000000..374689a88
 +mod tests;
 diff --git a/codex-rs/omd/src/credentials_tests.rs b/codex-rs/omd/src/credentials_tests.rs
 new file mode 100644
-index 000000000..01150ec4e
+index 000000000..441c77d85
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials_tests.rs
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,274 @@
 +use super::*;
 +
 +fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
@@ -95994,12 +96119,71 @@ index 000000000..01150ec4e
 +            .is_err()
 +    );
 +}
++
++#[test]
++fn credential_files_are_replaced_privately_and_atomically() {
++    use std::os::unix::fs::PermissionsExt;
++    let (_temp, profiles) = profiles();
++    let secret = profiles
++        .create_secret("site", "https://example.com", "vault")
++        .unwrap();
++    let key = profiles
++        .create("key", "provider", Some("p"), Some("https://api.example.com"))
++        .unwrap();
++    let tokens = ["a".repeat(64), "b".repeat(4000)];
++    for (id, origin, owner, file) in [
++        (&secret.id, "https://example.com", Some("vault"), "secret"),
++        (&key.id, "https://api.example.com", None, "auth.json"),
++    ] {
++        let store = |token: &str| {
++            if file == "secret" {
++                profiles.store_secret(id, token)
++            } else {
++                profiles.store_auth(id, &serde_json::json!({"OPENAI_API_KEY": token}).to_string())
++            }
++        };
++        let read = || profiles.secret(id, origin, owner).unwrap().token;
++        let home = profiles.root.join(id);
++        store(&tokens[0]).unwrap();
++        fs::set_permissions(&home, fs::Permissions::from_mode(0o500)).unwrap();
++        let staged = store(&tokens[1]);
++        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
++        assert!(staged.is_err());
++        assert_eq!(read(), tokens[0]);
++        assert_eq!(fs::read_dir(&home).unwrap().count(), 1);
++        let done = std::sync::atomic::AtomicBool::new(false);
++        std::thread::scope(|scope| {
++            let reader = scope.spawn(|| {
++                let mut reads = 0;
++                while !done.load(std::sync::atomic::Ordering::Acquire) {
++                    assert!(tokens.contains(&read()));
++                    reads += 1;
++                }
++                reads
++            });
++            for round in 0..200 {
++                store(&tokens[round % 2]).unwrap();
++            }
++            done.store(true, std::sync::atomic::Ordering::Release);
++            assert!(reader.join().unwrap() > 0);
++        });
++        let path = home.join(file);
++        assert_eq!(
++            fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777,
++            0o600
++        );
++        fs::remove_file(&path).unwrap();
++        std::os::unix::fs::symlink(home.join("elsewhere"), &path).unwrap();
++        assert!(store(&tokens[0]).is_err());
++        assert!(fs::symlink_metadata(home.join("elsewhere")).is_err());
++    }
++}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 000000000..624e7fe63
+index 000000000..80a063bed
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,441 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -96190,7 +96374,18 @@ index 000000000..624e7fe63
 +            if target.try_exists()? {
 +                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
 +            }
-+            copy_regular_tree(&source, &target).map(|()| true)
++            let threads = target.parent().ok_or_else(|| failure("store_thread_invalid"))?;
++            let stage = tempfile::Builder::new().prefix(".fork-").tempdir_in(threads)?;
++            copy_regular_tree(&source, stage.path())?;
++            // A writer may create the target directory meanwhile; an exclusive rename never replaces even an empty one.
++            crate::workspace::rename_exclusive(
++                rustix::fs::CWD,
++                stage.path(),
++                rustix::fs::CWD,
++                target.as_path(),
++            )?;
++            let _ = stage.keep();
++            Ok(true)
 +        }
 +        Ok(_) => Err(failure("store_directory_invalid")),
 +        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -99255,10 +99450,10 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..a8349e94a
+index 000000000..c22013d56
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,252 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -99474,6 +99669,7 @@ index 000000000..a8349e94a
 +pub use mods::access_receipt;
 +pub use mods::activation_failures;
 +pub use mods::authority_exposure;
++pub use mods::client_component_unmount;
 +pub use mods::component_detach;
 +pub use mods::component_events;
 +pub use mods::component_ids_of;
@@ -101401,10 +101597,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..c19eea386
+index 000000000..7b255f57a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5901 @@
+@@ -0,0 +1,5896 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -101426,6 +101622,7 @@ index 000000000..c19eea386
 +pub use persisted::persist_cut;
 +pub use persisted::persist_texts;
 +pub use render::MOD_RENDER_COMPONENTS;
++pub use render::client_component_unmount;
 +pub use render::component_detach;
 +pub use render::component_events;
 +pub use render::component_shared;
@@ -104851,13 +105048,7 @@ index 000000000..c19eea386
 +                        package.id
 +                    )));
 +                }
-+                Ok(files
-+                    .into_iter()
-+                    .map(|(name, text)| {
-+                        let sha256 = digest(text.as_bytes());
-+                        (name, json!({"text": text, "sha256": sha256}))
-+                    })
-+                    .collect())
++                Ok(store::asset_map(files))
 +            })();
 +            let assets = match assets {
 +                Ok(assets) => assets,
@@ -108360,10 +108551,10 @@ index 000000000..27684b82d
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..e6d1ab24c
+index 000000000..2df092f2f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,439 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -108640,6 +108831,9 @@ index 000000000..e6d1ab24c
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
 +    request.invocation["receipts"] = Value::Array(receipts.clone());
++    if event == "history" {
++        fit_history(&mut request)?;
++    }
 +    let mut answer = |frame: Value| -> Result<Value> {
 +        if event == "inspect" {
 +            return Err(failure("invalid_host_call_sequence"));
@@ -108711,6 +108905,38 @@ index 000000000..e6d1ab24c
 +    forward(event, &reply.updates, &mut forwarded, progress)?;
 +    reply.receipts = receipts;
 +    Ok(reply)
++}
++
++/// Keeps the newest history items the runner request has room for, in order and with their indices.
++fn fit_history(request: &mut Request) -> Result<()> {
++    if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
++        return Ok(());
++    }
++    let Some(items) = request
++        .invocation
++        .get_mut("payload")
++        .and_then(|payload| payload.get_mut("items"))
++        .and_then(Value::as_array_mut)
++        .map(std::mem::take)
++    else {
++        return Ok(());
++    };
++    let Some(mut room) = process::INPUT_LIMIT.checked_sub(serde_json::to_vec(&*request)?.len())
++    else {
++        request.invocation["payload"]["items"] = Value::Array(items);
++        return Ok(());
++    };
++    let mut kept = 0;
++    for item in items.iter().rev() {
++        let bytes = serde_json::to_vec(item)?.len() + usize::from(kept > 0);
++        if bytes > room {
++            break;
++        }
++        room -= bytes;
++        kept += 1;
++    }
++    request.invocation["payload"]["items"] = Value::Array(items[items.len() - kept..].to_vec());
++    Ok(())
 +}
 +
 +fn receipt_for(
@@ -111185,10 +111411,10 @@ index 000000000..383bf405b
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..48b2680a1
+index 000000000..982558057
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2798 @@
+@@ -0,0 +1,2842 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -111249,16 +111475,7 @@ index 000000000..48b2680a1
 +            .and_then(|path| std::fs::read_to_string(path).ok())
 +            .unwrap_or_default();
 +        let expand = |value: &str| {
-+            let mut expanded = value.trim().trim_matches('"').to_owned();
-+            while let Some(start) = expanded.find("${") {
-+                let Some(length) = expanded[start..].find('}') else {
-+                    break;
-+                };
-+                let name = expanded[start + 2..start + length].to_owned();
-+                let replacement = std::env::var(&name).unwrap_or_default();
-+                expanded.replace_range(start..=start + length, &replacement);
-+            }
-+            expanded
++            interpolate(value.trim().trim_matches('"'), |name| std::env::var(name).ok())
 +        };
 +        let mut config = Self::default();
 +        for line in text.lines().map(str::trim) {
@@ -111307,6 +111524,19 @@ index 000000000..48b2680a1
 +            .map(|(_, token)| token.as_str())
 +            .filter(|token| !token.is_empty())
 +    }
++}
++
++fn interpolate(value: &str, resolve: impl Fn(&str) -> Option<String>) -> String {
++    let (mut expanded, mut rest) = (String::new(), value);
++    while let Some(start) = rest.find("${") {
++        let Some(length) = rest[start..].find('}') else {
++            break;
++        };
++        expanded.push_str(&rest[..start]);
++        expanded.push_str(&resolve(&rest[start + 2..start + length]).unwrap_or_default());
++        rest = &rest[start + length + 1..];
++    }
++    expanded + rest
 +}
 +
 +impl ModPackageSource {
@@ -112930,9 +113160,10 @@ index 000000000..48b2680a1
 +                    } else {
 +                        format!("{subdirectory}/")
 +                    };
-+                    let manifest = git_bytes(
++                    let manifest = git_blob(
 +                        &repository_path,
-+                        &["show", &format!("{revision}:{prefix}mod.json")],
++                        &format!("{revision}:{prefix}mod.json"),
++                        8192,
 +                    )?;
 +                    std::fs::write(staging.join("mod.json"), &manifest)?;
 +                    let package: ModPackage = serde_json::from_slice(&manifest)?;
@@ -112941,9 +113172,10 @@ index 000000000..48b2680a1
 +                        .chain(package.lifecycle.values())
 +                        .chain(package.assets.iter())
 +                    {
-+                        let bytes = git_bytes(
++                        let bytes = git_blob(
 +                            &repository_path,
-+                            &["show", &format!("{revision}:{prefix}{path}")],
++                            &format!("{revision}:{prefix}{path}"),
++                            store::PACKAGE_FILE_LIMIT as usize,
 +                        )?;
 +                        let target = staging.join(path);
 +                        if let Some(parent) = target.parent() {
@@ -113387,17 +113619,30 @@ index 000000000..48b2680a1
 +    String::from_utf8(git_bytes(repository, arguments)?).map_err(failure)
 +}
 +
-+fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
-+    let output = Command::new("git")
++fn git_command(repository: &Path) -> Command {
++    let mut command = Command::new("git");
++    command
 +        .arg("--no-replace-objects")
 +        .arg("-C")
 +        .arg(repository)
-+        .args(arguments)
 +        .env_clear()
 +        .env("PATH", "/usr/bin:/bin")
 +        .env("GIT_CONFIG_NOSYSTEM", "1")
-+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-+        .output()?;
++        .env("GIT_CONFIG_GLOBAL", "/dev/null");
++    command
++}
++
++fn git_blob(repository: &Path, object: &str, limit: usize) -> Result<Vec<u8>> {
++    bounded_output(
++        git_command(repository).args(["show", object]),
++        None,
++        limit,
++        "repository_read_failed",
++    )
++}
++
++fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
++    let output = git_command(repository).args(arguments).output()?;
 +    if !output.status.success() {
 +        return Err(failure(format!(
 +            "repository_read_failed: {}",
@@ -113590,19 +113835,22 @@ index 000000000..48b2680a1
 +        .stdout(std::process::Stdio::piped())
 +        .stderr(std::process::Stdio::piped())
 +        .spawn()?;
-+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-+        std::io::Write::write_all(&mut stdin, input.as_bytes())?;
-+    }
 +    let mut bytes = Vec::new();
-+    child
-+        .stdout
-+        .take()
-+        .ok_or_else(|| failure(code))?
-+        .take(limit as u64 + 1)
-+        .read_to_end(&mut bytes)?;
-+    if bytes.len() > limit {
++    let read = (|| {
++        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
++            std::io::Write::write_all(&mut stdin, input.as_bytes())?;
++        }
++        child
++            .stdout
++            .take()
++            .ok_or_else(|| failure(code))?
++            .take(limit as u64 + 1)
++            .read_to_end(&mut bytes)
++    })();
++    if read.is_err() || bytes.len() > limit {
 +        let _ = child.kill();
 +        let _ = child.wait();
++        read?;
 +        return Err(failure(format!("{code}: larger than {limit} bytes")));
 +    }
 +    let output = child.wait_with_output()?;
@@ -113899,6 +114147,28 @@ index 000000000..48b2680a1
 +    use super::*;
 +
 +    #[test]
++    fn npmrc_interpolation_expands_only_original_references_once() {
++        let environment = BTreeMap::from([
++            ("LITERAL", "${TOKEN}"),
++            ("TOKEN", "secret"),
++            ("SELF", "${SELF}"),
++            ("A", "${B}"),
++            ("B", "${A}"),
++        ]);
++        let resolve = |name: &str| environment.get(name).map(|value| value.to_string());
++        for (value, expected) in [
++            ("${LITERAL}", "${TOKEN}"),
++            ("${TOKEN}-${LITERAL}", "secret-${TOKEN}"),
++            ("${MISSING}x${TOKEN}", "xsecret"),
++            ("${SELF}", "${SELF}"),
++            ("${A}:${B}", "${B}:${A}"),
++            ("a${TOKEN}${unclosed", "asecret${unclosed"),
++        ] {
++            assert_eq!(interpolate(value, resolve), expected, "{value}");
++        }
++    }
++
++    #[test]
 +    fn online_repository_content_does_not_trust_cached_objects_or_origins() {
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap();
@@ -113989,7 +114259,7 @@ index 000000000..48b2680a1
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 000000000..432d46883
+index 000000000..43dfcce76
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
 @@ -0,0 +1,255 @@
@@ -114099,7 +114369,7 @@ index 000000000..432d46883
 +            .iter()
 +            .find(|m| m.path == path)
 +            .ok_or_else(|| failure("package_not_trusted"))?;
-+        let (package, source, hash) = store::package(path)?;
++        let (package, source, hash, assets) = store::package_with_assets(path)?;
 +        if hash != selection.sha256
 +            || selection.capabilities != package.capabilities
 +            || !package.capabilities.iter().any(|c| c == "store")
@@ -114123,7 +114393,7 @@ index 000000000..432d46883
 +        let mut loaded = Loaded {
 +            package,
 +            source: source.into(),
-+            assets: Arc::new(BTreeMap::new()),
++            assets: Arc::new(store::asset_map(assets)),
 +            request_metadata: Arc::new(OnceLock::new()),
 +            selection: selection.clone(),
 +            adapter: None,
@@ -114966,10 +115236,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..3a2066d4e
+index 000000000..1ce82949a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,591 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -115098,7 +115368,7 @@ index 000000000..3a2066d4e
 +    warm.map_or_else(|| spawn(node), Ok)
 +}
 +
-+const INPUT_LIMIT: usize = 1_048_576;
++pub(super) const INPUT_LIMIT: usize = 1_048_576;
 +
 +fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 +    let mut bytes = serde_json::to_vec(request)?;
@@ -115218,11 +115488,24 @@ index 000000000..3a2066d4e
 +        unmounted.retain(|(.., at)| at.elapsed() < WARM_IDLE);
 +        unmounted.push((owner.to_owned(), part.clone(), Instant::now()));
 +    }
-+    for runner in
-+        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part))
-+    {
-+        runner.stop();
++    let mut retired =
++        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part));
++    if retired.is_empty() {
++        return;
 +    }
++    if let Ok(mut mounted) = MOUNTED.lock() {
++        for runner in &mut retired {
++            if let Some(by) = runner.pinned.take() {
++                mounted.remove(&(by, runner.key.clone()));
++            }
++        }
++    }
++    // Callers hold view and instance locks; the runners are already out of the pool and the mount count.
++    std::thread::spawn(move || {
++        for runner in retired {
++            runner.stop();
++        }
++    });
 +}
 +
 +pub(super) fn unmount(owner: &str, id: &str, component: &str) {
@@ -116044,10 +116327,10 @@ index 000000000..1fc4e43b8
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..206e90f9b
+index 000000000..020b96212
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,293 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -116171,7 +116454,7 @@ index 000000000..206e90f9b
 +        "component",
 +        component,
 +        frame,
-+        active,
++        &active,
 +        |_, call| {
 +            Err(failure(format!(
 +                "host_operation_unavailable: {} is not available to component modules",
@@ -116181,7 +116464,9 @@ index 000000000..206e90f9b
 +        |_| {},
 +    )?;
 +    if let Err(error) = checked_tree(&value) {
-+        process::unmount(&owner, id, &instance);
++        if active() {
++            process::unmount(&owner, id, &instance);
++        }
 +        return Err(error);
 +    }
 +    Ok(value)
@@ -116205,6 +116490,11 @@ index 000000000..206e90f9b
 +
 +pub fn component_unmount(id: &str, component: &str) {
 +    process::unmount("", id, component);
++}
++
++/// Unmounts one client's instance of a mod's component module.
++pub fn client_component_unmount(client: &str, id: &str, instance: &str) {
++    process::unmount(client, id, instance);
 +}
 +
 +/// Unmounts every component module instance a detached client had mounted.
@@ -117635,10 +117925,10 @@ index 000000000..91e09e8a3
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..49f254bdf
+index 000000000..5db2f9aa0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1301 @@
+@@ -0,0 +1,1312 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -117819,6 +118109,17 @@ index 000000000..49f254bdf
 +) -> Result<(ModPackage, String, String, BTreeMap<String, String>)> {
 +    let (package, source, hash, assets, _) = inspect_package(path, true)?;
 +    Ok((package, source, hash, assets))
++}
++
++/// A package's assets as the runner receives them.
++pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Value> {
++    assets
++        .into_iter()
++        .map(|(name, text)| {
++            let sha256 = digest(text.as_bytes());
++            (name, serde_json::json!({"text": text, "sha256": sha256}))
++        })
++        .collect()
 +}
 +
 +/// Reuses the last verified manifest and digest while every hashed file keeps its identity.
@@ -126830,10 +127131,10 @@ index 000000000..a128af3ed
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..3c79277f7
+index 000000000..ba8978e8c
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1312 @@
+@@ -0,0 +1,1322 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -127199,13 +127500,7 @@ index 000000000..3c79277f7
 +                {
 +                    return Err(invalid("workspace changed before rename"));
 +                }
-+                renameat_with(
-+                    &old_parent,
-+                    &old_name,
-+                    &new_parent,
-+                    &new_name,
-+                    RenameFlags::NOREPLACE,
-+                )?;
++                rename_exclusive(&old_parent, &old_name, &new_parent, &new_name)?;
 +                applied.insert(rename.old.clone(), None);
 +                applied.insert(rename.new.clone(), expected_old);
 +            }
@@ -127473,6 +127768,22 @@ index 000000000..3c79277f7
 +        }
 +    }
 +    Ok(directory)
++}
++
++/// Renames onto an absent target; where the filesystem has no exclusive rename, the caller's absence
++/// check stands in for it.
++pub(crate) fn rename_exclusive<D: std::os::fd::AsFd + Copy, P: rustix::path::Arg + Copy>(
++    old_dir: D,
++    old: P,
++    new_dir: D,
++    new: P,
++) -> io::Result<()> {
++    match renameat_with(old_dir, old, new_dir, new, RenameFlags::NOREPLACE) {
++        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOTSUP | rustix::io::Errno::NOSYS) => {
++            Ok(rustix::fs::renameat(old_dir, old, new_dir, new)?)
++        }
++        result => Ok(result?),
++    }
 +}
 +
 +fn open_parent(root: &Path, name: &str) -> io::Result<(fs::File, std::ffi::OsString)> {
@@ -127792,7 +128103,7 @@ index 000000000..3c79277f7
 +    let worker = directory.join("worker");
 +    for arguments in [
 +        vec!["init", "--quiet"],
-+        vec!["add", "--all"],
++        vec!["add", "--all", "--force"],
 +        vec![
 +            "-c",
 +            "user.name=Oh My Diff",
@@ -133134,10 +133445,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..c475409d7
+index 000000000..17faf7e74
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5788 @@
+@@ -0,0 +1,5819 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -133989,8 +134300,10 @@ index 000000000..c475409d7
 +    let mut manifest: Value =
 +        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
 +    manifest["state_version"] = json!(2);
++    manifest["assets"] = json!(["helper.ts"]);
 +    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-+    std::fs::write(path.join("index.ts"), "export default api => api.on('migrate', ({from,to}) => { api.state.set({count:api.state.get(),from,to}); })").unwrap();
++    std::fs::write(path.join("helper.ts"), "export const migrate = (count, from, to) => ({count,from,to});").unwrap();
++    std::fs::write(path.join("index.ts"), "import {migrate} from './helper.ts'; export default api => api.on('migrate', ({from,to}) => { api.state.set(migrate(api.state.get(),from,to)); })").unwrap();
 +    let sha = ModStore::inspect_package(&path).unwrap()["sha256"]
 +        .as_str()
 +        .unwrap()
@@ -134008,6 +134321,8 @@ index 000000000..c475409d7
 +        serde_json::from_slice(&std::fs::read(receipt["backup"].as_str().unwrap()).unwrap())
 +            .unwrap();
 +    assert_eq!(backup, json!({"schema":1,"version":1,"value":1}));
++    let migrated: Value = serde_json::from_slice(&std::fs::read(temp.path().join("store/state-fixture.json")).unwrap()).unwrap();
++    assert_eq!(migrated["value"], json!({"count":1,"from":1,"to":2}));
 +    assert!(
 +        runtime
 +            .invoke(
@@ -134388,6 +134703,33 @@ index 000000000..c475409d7
 +    let results = runtime.event("routing", Value::Null);
 +    assert_eq!(results.len(), 1);
 +    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"route":"sol"}));
++}
++
++#[test]
++fn history_replacement_receives_the_newest_items_that_fit_the_runner_request() {
++    let source = format!(
++        "const padding = '{}';\nexport default api => api.replace('history', event => {{ const indices = event.items.map(item => item.index); return {{first: indices[0], last: indices.at(-1), count: indices.length, ordered: indices.every((index, position) => position === 0 || index === indices[position - 1] + 1), padding: padding.length}}; }})",
++        "p".repeat(120_000)
++    );
++    let (temp, _, _) = fixture(&source, &["history"]);
++    let mut runtime = host(&temp);
++    for text in ["a".repeat(4000), "\u{1}".repeat(4000)] {
++        let items = (0..2100)
++            .map(|_| json!({"type":"message","role":"user","content":[{"type":"input_text","text":text}]}))
++            .collect::<Vec<_>>();
++        let view = codex_omd::history::view(&items);
++        let (_, reply) = runtime
++            .history(json!({"thread_id":"t","items":view}), || true)
++            .unwrap()
++            .unwrap();
++        let count = reply["count"].as_u64().unwrap();
++        assert_eq!(
++            (reply["last"].as_u64(), reply["ordered"].as_bool(), reply["padding"].as_u64()),
++            (Some(2099), Some(true), Some(120_000))
++        );
++        assert_eq!(reply["first"].as_u64(), Some(2100 - count));
++        assert!(count > 40 && count < 2048, "{count}");
++    }
 +}
 +
 +#[test]
@@ -138928,10 +139270,10 @@ index 000000000..c475409d7
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..ea1d90a41
+index 000000000..b440969ee
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,2183 @@
+@@ -0,0 +1,2226 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -139901,6 +140243,49 @@ index 000000000..ea1d90a41
 +        (true, true),
 +        "pinned content ignores replacement refs and verified fetches ignore cached URL rewrites"
 +    );
++}
++
++#[test]
++fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let repository = root.join("repository");
++    std::fs::create_dir(&repository).unwrap();
++    let package = mod_package(&repository, "large", "1.0.0", &[], json!([]));
++    edit_manifest(&package, |manifest| {
++        manifest["provenance"]["source"] = json!(repository.display().to_string())
++    });
++    git(&repository, &["init"]);
++    git(
++        &repository,
++        &["config", "user.email", "fixture@example.com"],
++    );
++    git(&repository, &["config", "user.name", "Fixture"]);
++    let store = store(&temp);
++    let mut refusals = Vec::new();
++    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
++        let path = package.join(file);
++        let mut bytes = std::fs::read(&path).unwrap();
++        bytes.resize(4 << 20, b'\n');
++        std::fs::write(&path, bytes).unwrap();
++        git(&repository, &["add", "."]);
++        git(&repository, &["commit", "-m", file]);
++        let install = ModInstallRequest {
++            source: ModPackageSource::Repository {
++                repository: repository.display().to_string(),
++                revision: git_output(&repository, &["rev-parse", "HEAD"]),
++                subdirectory: "large".into(),
++            },
++            ..request(&package, &[])
++        };
++        refusals.push((refusal(&store, install), limit));
++    }
++    for (refusal, limit) in refusals {
++        assert!(
++            refusal.contains(&format!("repository_read_failed: larger than {limit} bytes")),
++            "{refusal}"
++        );
++    }
 +}
 +
 +#[test]
@@ -142398,10 +142783,10 @@ index 000000000..ec1840ecb
 +}
 diff --git a/codex-rs/omd/tests/thread_store.rs b/codex-rs/omd/tests/thread_store.rs
 new file mode 100644
-index 000000000..589224744
+index 000000000..1f6ee571d
 --- /dev/null
 +++ b/codex-rs/omd/tests/thread_store.rs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,163 @@
 +use codex_omd::data_store::Origin;
 +use codex_omd::data_store::fork_thread_data;
 +use codex_omd::data_store::remove_thread_data;
@@ -142525,6 +142910,45 @@ index 000000000..589224744
 +        .unwrap()["value"]["text"],
 +        "ship"
 +    );
++}
++
++#[test]
++fn a_failed_fork_publishes_nothing_and_never_merges_into_an_existing_thread() {
++    use std::os::unix::fs::PermissionsExt;
++    let temp = tempfile::tempdir().unwrap();
++    let data = temp.path().canonicalize().unwrap();
++    let threads = data.join("data/threads");
++    for owner in ["a", "b"] {
++        std::fs::create_dir_all(threads.join("parent").join(owner)).unwrap();
++        std::fs::write(threads.join("parent").join(owner).join("store.json"), owner).unwrap();
++    }
++    let unreadable = threads.join("parent/b/store.json");
++    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
++    let failed = fork_thread_data(&data, "parent", "child");
++    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
++    assert_eq!(failed.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
++    let entries = || {
++        let mut names = std::fs::read_dir(&threads)
++            .unwrap()
++            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
++            .collect::<Vec<_>>();
++        names.sort();
++        names
++    };
++    assert_eq!(entries(), ["parent"]);
++    assert!(fork_thread_data(&data, "parent", "child").unwrap());
++    assert_eq!(std::fs::read(threads.join("child/b/store.json")).unwrap(), b"b");
++    std::fs::create_dir_all(threads.join("empty")).unwrap();
++    std::fs::create_dir_all(threads.join("full/a")).unwrap();
++    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
++    let repeated = ["child", "empty", "full"].map(|existing| fork_thread_data(&data, "parent", existing));
++    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
++    for result in repeated {
++        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
++    }
++    assert_eq!(entries(), ["child", "empty", "full", "parent"]);
++    assert_eq!(std::fs::read_dir(threads.join("empty")).unwrap().count(), 0);
++    assert_eq!(std::fs::read_dir(threads.join("full/a")).unwrap().count(), 0);
 +}
 diff --git a/codex-rs/omd/tests/turn_evidence.rs b/codex-rs/omd/tests/turn_evidence.rs
 new file mode 100644
@@ -142833,10 +143257,10 @@ index 000000000..2e0872325
 +}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
-index 000000000..03463c997
+index 000000000..18090f29d
 --- /dev/null
 +++ b/codex-rs/omd/tests/workspace.rs
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,252 @@
 +use codex_omd::File;
 +use codex_omd::Snapshot;
 +use codex_omd::capture_tracked;
@@ -142862,7 +143286,10 @@ index 000000000..03463c997
 +#[test]
 +fn worktree_contains_snapshot_without_touching_original_inputs() {
 +    let temp = tempfile::tempdir().unwrap();
-+    let input = snapshot();
++    let mut input = snapshot();
++    input.files.insert(".gitignore".into(), File {
++        bytes: b"source.txt\n".to_vec(), executable: false,
++    });
 +    let workspace = create_worktree(&input, &temp.path().join("isolated"), 4096).unwrap();
 +    assert!(workspace.join(".git").is_file());
 +    let paths = tracked_paths(&workspace, &BTreeSet::new()).unwrap();
@@ -145934,15 +146361,6 @@ index 000000000..28bd7921b
 +    assert!(length >= 2000, "{length}");
 +    assert_eq!(builds, 1);
 +}
-diff --git a/codex-rs/tui/src/app/.tests.rs.pending-snap b/codex-rs/tui/src/app/.tests.rs.pending-snap
-new file mode 100644
-index 000000000..48227f231
---- /dev/null
-+++ b/codex-rs/tui/src/app/.tests.rs.pending-snap
-@@ -0,0 +1,3 @@
-+{"run_id":"1791870317-73272000","line":3063,"new":{"module_name":"codex_tui__app__tests","snapshot_name":"open_agent_picker_prompts_when_subagents_disabled","metadata":{"source":"tui/src/app/tests.rs","assertion_line":3063,"expression":"render_bottom_popup(&app.chat_widget, 80)"},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  Oh                                                                        roj…\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"},"old":{"module_name":"codex_tui__app__tests","metadata":{},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  gp\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"}}
-+{"run_id":"1791870369-287352000","line":3063,"new":{"module_name":"codex_tui__app__tests","snapshot_name":"open_agent_picker_prompts_when_subagents_disabled","metadata":{"source":"tui/src/app/tests.rs","assertion_line":3063,"expression":"render_bottom_popup(&app.chat_widget, 80)"},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  Oh                                                                        roj…\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"},"old":{"module_name":"codex_tui__app__tests","metadata":{},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  gp\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"}}
-+{"run_id":"1791898619-429635000","line":2289,"new":null,"old":null}
 diff --git a/codex-rs/tui/src/app/mod_credentials.rs b/codex-rs/tui/src/app/mod_credentials.rs
 new file mode 100644
 index 000000000..09b7a26fc

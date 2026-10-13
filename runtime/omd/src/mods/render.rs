@@ -121,7 +121,7 @@ pub fn component_shared(
         "component",
         component,
         frame,
-        active,
+        &active,
         |_, call| {
             Err(failure(format!(
                 "host_operation_unavailable: {} is not available to component modules",
@@ -131,7 +131,9 @@ pub fn component_shared(
         |_| {},
     )?;
     if let Err(error) = checked_tree(&value) {
-        process::unmount(&owner, id, &instance);
+        if active() {
+            process::unmount(&owner, id, &instance);
+        }
         return Err(error);
     }
     Ok(value)
@@ -155,6 +157,11 @@ pub(super) fn checked_tree(step: &Value) -> Result<()> {
 
 pub fn component_unmount(id: &str, component: &str) {
     process::unmount("", id, component);
+}
+
+/// Unmounts one client's instance of a mod's component module.
+pub fn client_component_unmount(client: &str, id: &str, instance: &str) {
+    process::unmount(client, id, instance);
 }
 
 /// Unmounts every component module instance a detached client had mounted.
