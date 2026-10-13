@@ -250,12 +250,11 @@ test('a missing CLI fails the request instead of crashing the process', async ()
 });
 
 test('a CLI that exits during history replay fails the request instead of crashing the process', async () => {
-  const root = await fakeCli('#!/bin/sh\nexit 0\n');
+  const root = await fakeCli('#!/bin/sh\nexec 0<&-\nsleep 0.3\n');
   try {
     const frames = Array.from({ length: 4 }, () => ({ type: 'user', message: { role: 'user', content: 'x'.repeat(4 * 1024 * 1024) } }));
     const outcome = await run(join(root, 'claude'), undefined, { manifest: [], extra: {}, system: '', frames, reverse: new Map() });
-    assert.ok(outcome instanceof Error);
-    assert.doesNotMatch(outcome.message, /cancelled/);
+    assert.equal(outcome?.message, 'claude_history_replay_exited');
     await new Promise(resolve => setTimeout(resolve, 200));
   } finally { await rm(root, { recursive: true, force: true }); }
 });

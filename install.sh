@@ -240,9 +240,7 @@ def fetch_json(url, limit):
         fail("release metadata is not JSON")
 
 
-def extract(archive_path, expected, destination):
-    if digest(archive_path) != expected:
-        fail("release asset SHA-256 mismatch; no profile was activated")
+def extract(archive_path, destination):
     with tarfile.open(archive_path, "r:xz") as archive:
         members = archive.getmembers()
         if not members or len(members) > 1000:
@@ -250,7 +248,7 @@ def extract(archive_path, expected, destination):
         if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
             fail("release archive exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in Path(item.name).parts) for item in members):
+               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
             fail("release archive contains an unsafe member")
         if any(item.size > MAX_MEMBER_BYTES for item in members):
             fail("release archive member exceeds byte limit")
@@ -351,7 +349,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
     if current:
         status(current, Path(upstream["path"]), args.bin_dir)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
-        payload = extract(archive, expected, Path(temporary) / "unpacked")
+        payload = extract(archive, Path(temporary) / "unpacked")
         generation = root / "releases" / uuid.uuid4().hex
         store = root / "stores" / profile
         journaled(root, generation, args.session, None if store.exists() else profile)
@@ -455,7 +453,7 @@ def recover(args, root, current):
 
 def removing(generation):
     prefix = generation / "prefix"
-    return (prefix / UNINSTALL_JOURNAL).is_file() or not (prefix / "install.json").is_file()
+    return (prefix / UNINSTALL_JOURNAL).is_file() or not prefix.is_dir() or not any(prefix.iterdir())
 
 
 # Once the package uninstall journals, the prefix holds only validated files and removal only rolls forward.

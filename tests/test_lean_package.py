@@ -57,6 +57,15 @@ class SourceBuildTests(unittest.TestCase):
                     lean_package.install_archive(args)
             self.assertEqual(len(calls), 2)
 
+    def test_noncanonical_member_names_are_unsafe(self):
+        for name in ('payload/./x', 'payload//x', 'payload/x/'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                archive = Path(directory) / 'package.tar.xz'
+                with lean_package.tarfile.open(archive, 'w:xz') as tar:
+                    tar.addfile(lean_package.tarfile.TarInfo(name))
+                with self.assertRaisesRegex(ValueError, 'unsafe package member'):
+                    lean_package.checked_extract(archive, lean_package.support.digest(archive), Path(directory) / 'out')
+
     def test_fresh_source_build_selects_every_copied_binary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

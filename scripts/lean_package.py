@@ -99,7 +99,7 @@ def checked_extract(archive_path, expected, destination):
         if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
             raise ValueError("prebuilt package exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in Path(item.name).parts) for item in members):
+               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
             raise ValueError("unsafe package member")
         if any(item.size > MAX_MEMBER_BYTES for item in members):
             raise ValueError("prebuilt package member exceeds byte limit")

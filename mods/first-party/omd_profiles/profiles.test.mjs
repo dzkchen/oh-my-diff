@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
+import { profileEntry, catalogEntry } from './setup.mjs';
 
 const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
@@ -158,7 +159,7 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.equal(seen['/anthropic'].headers.authorization, undefined);
     assert.equal(seen['/anthropic'].body.system, 'sys\n\nrules');
     assert.deepEqual(seen['/anthropic'].body.messages.map(message => message.content.map(block => block.type)), [['text'], ['tool_use'], ['tool_result']]);
-    assert.deepEqual(seen['/anthropic'].body.thinking, { type: 'enabled', budget_tokens: 3072 });
+    assert.equal(seen['/anthropic'].body.thinking, undefined);
     const calls = anthropic.events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
     assert.deepEqual(calls.at(-1), { type: 'custom_tool_call', id: 't1', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' });
     assert.equal(anthropic.events.at(-1).response.usage.input_tokens, 15);
@@ -170,6 +171,7 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.match(thought.encrypted_content, /^omd-thinking:[0-9a-f]{16}:/);
     await ask('d/up', `Bearer ${token}`, [input[1], thought, { type: 'custom_tool_call', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' }, { type: 'custom_tool_call_output', call_id: 't1', output: 'ok' }]);
     assert.deepEqual(seen['/anthropic'].body.messages[1].content.slice(0, 2), [{ type: 'thinking', thinking: 'plan', signature: 'sig' }, { type: 'tool_use', id: 't1', name: 'apply_patch', input: { input: '*** Begin Patch' } }]);
+    assert.deepEqual(seen['/anthropic'].body.thinking, { type: 'enabled', budget_tokens: 3072 });
   } finally {
     child.kill();
     gateway.close();
@@ -183,6 +185,22 @@ test('chat and anthropic requests carry the smaller of the caller and profile ou
   assert.deepEqual(limits({ max_output_tokens: 9000 }, 4096), [4096, 4096]);
   assert.deepEqual(limits({}, 4096), [4096, 4096]);
   assert.equal('max_tokens' in chatRequest({}, {}), false);
+  for (const url of ['https://api.openai.com/v1/chat/completions', 'https://team.openai.azure.com/openai/deployments/o4/chat/completions']) {
+    const request = chatRequest({}, { url, max_output: 4096 });
+    assert.equal(request.max_completion_tokens, 4096);
+    assert.equal('max_tokens' in request, false);
+  }
+});
+
+test('a tool loop whose last call carries no thinking of this account is continued without thinking', () => {
+  const profile = { name: 'd', credential: 'p1', url: 'https://up.example/anthropic', reasoning: true, max_output: 32000 };
+  const call = { type: 'function_call', call_id: 't1', name: 'exec_command', arguments: '{}' };
+  const result = { type: 'function_call_output', call_id: 't1', output: 'ok' };
+  const user = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'go' }] };
+  const body = input => ({ input, reasoning: { effort: 'high' } });
+  assert.equal(anthropicRequest(body([user, call, result]), profile).thinking, undefined);
+  assert.equal(anthropicRequest(body([user, call, result, user]), profile).thinking.type, 'enabled');
+  assert.equal(anthropicRequest(body([user]), profile).thinking.type, 'enabled');
 });
 
 test('chat tool-result images follow the tool messages as image messages while user images stay in place', () => {
@@ -291,6 +309,15 @@ test('reasoning from a credential replaced under the same profile name is not se
     gateway.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('a text-only profile declares text input so Codex strips images before they reach the provider', () => {
+  const credentials = [{ id: 'p1', label: 'router', origin: 'https://up.example', kind: 'api_key' }];
+  const bundled = [{ slug: 'native', context_window: 1000, input_modalities: ['text', 'image'] }];
+  const entry = text_only => catalogEntry('router/up', profileEntry({ name: 'router', credential: 'router', protocol: 'chat',
+    url: 'https://up.example/v1/chat/completions', model: 'up', window: 1000, paid: '1:1', text_only }, credentials), bundled, 0);
+  assert.deepEqual(entry(true).input_modalities, ['text']);
+  assert.deepEqual(entry(false).input_modalities, ['text', 'image']);
 });
 
 test('setup removing the last profile drops its route and service grant', () => {

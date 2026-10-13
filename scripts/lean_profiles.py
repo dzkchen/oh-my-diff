@@ -369,7 +369,7 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
-        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
+        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
         result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra,
                                  *([args.billing] if name == "claude" and args.billing else [])], stdout=subprocess.PIPE, text=True)
@@ -748,8 +748,9 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     if not found:
         raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
     support.binary_identity(found)
+    record = {**record, "upstream": str(support.resolved(found))}
     support.atomic_text(journal, json.dumps(record))
-    return {**removed(prefix, bin_dir, record), "upstream": str(support.resolved(found))}
+    return removed(prefix, bin_dir, record)
 
 
 def removed(prefix, bin_dir, record):
@@ -765,7 +766,8 @@ def removed(prefix, bin_dir, record):
             path.unlink()
     journal.unlink()
     prefix.rmdir()
-    return {"uninstalled": True, "preserved_mod_store": record["store"], "shared_state": record["shared_state"]}
+    return {"uninstalled": True, "preserved_mod_store": record["store"], "shared_state": record["shared_state"],
+            "upstream": record["upstream"]}
 
 
 def main():
@@ -807,6 +809,7 @@ def main():
                 route_parser.add_argument(f"--{flag}")
             route_parser.add_argument("--reasoning", action="store_true")
             route_parser.add_argument("--cache-control", action="store_true")
+            route_parser.add_argument("--text-only", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))

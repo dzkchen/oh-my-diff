@@ -138,7 +138,8 @@ export function chatRequest(body, profile, cache = null) {
   const effort = body.reasoning?.effort;
   const chatEffort = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' }[effort];
   const limit = outputLimit(body, profile.max_output ?? Infinity);
-  return { model: profile.model, messages, stream: true, stream_options: { include_usage: true }, ...Number.isFinite(limit) ? { max_tokens: limit } : {},
+  const limitKey = /^https:\/\/(api\.openai\.com|[^/]+\.openai\.azure\.com)\//.test(profile.url ?? '') ? 'max_completion_tokens' : 'max_tokens';
+  return { model: profile.model, messages, stream: true, stream_options: { include_usage: true }, ...Number.isFinite(limit) ? { [limitKey]: limit } : {},
     ...table.tools.length ? { tools: table.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.schema } })), parallel_tool_calls: body.parallel_tool_calls !== false } : {},
     ...profile.reasoning && chatEffort ? { reasoning_effort: chatEffort } : {} };
 }
@@ -161,9 +162,12 @@ export function anthropicRequest(body, profile, cache = null) {
   const effort = body.reasoning?.effort;
   const budget = { minimal: 1024, low: 2048, medium: 8192, high: 16384, xhigh: 24576, max: 32000 }[effort];
   const max = outputLimit(body, profile.max_output ?? 32000);
+  const [final, results] = messages.slice(-2);
+  const unthought = final?.role === 'assistant' && results?.role === 'user' && results.content.every(block => block.type === 'tool_result')
+    && !['thinking', 'redacted_thinking'].includes(final.content[0]?.type);
   return { model: profile.model, max_tokens: max, stream: true, messages, ...system ? { system } : {},
     ...table.tools.length ? { tools: table.tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.schema })) } : {},
-    ...profile.reasoning && budget && max > 2048 ? { thinking: { type: 'enabled', budget_tokens: Math.min(budget, max - 1024) } } : {} };
+    ...profile.reasoning && budget && max > 2048 && !unthought ? { thinking: { type: 'enabled', budget_tokens: Math.min(budget, max - 1024) } } : {} };
 }
 
 const CUT = new Map([['length', 'max_output_tokens'], ['max_tokens', 'max_output_tokens'], ['content_filter', 'content_filter'], ['refusal', 'content_filter']]);

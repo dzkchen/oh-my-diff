@@ -396,7 +396,8 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     delete env.OMD_READY_TOKEN;
     if (translated.extra.max_tokens) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(translated.extra.max_tokens);
     child = spawn(claude, argv, { cwd: root, env, detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
-    for (const emitter of [child, child.stdin]) emitter.on('error', error => { fault ??= error; });
+    child.on('error', error => { fault ??= error; });
+    child.stdin.on('error', () => {});
     const exited = new Promise(resolve => child.once('close', resolve));
     const next = eventQueue(child);
     for (const [index, source] of translated.frames.entries()) {

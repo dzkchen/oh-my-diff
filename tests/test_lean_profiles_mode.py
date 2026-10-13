@@ -98,7 +98,9 @@ class LeanProfileModeTests(unittest.TestCase):
                 with patch.object(lean_profiles, "load", side_effect=ValueError("receipt gone")), \
                         patch.object(lean_profiles, "check", side_effect=ValueError("launcher gone")), \
                         patch.object(lean_profiles.authority_broker, "deployed", return_value=False):
-                    self.assertTrue(lean_profiles.uninstall(prefix, bin_dir)["uninstalled"])
+                    resumed = lean_profiles.uninstall(prefix, bin_dir)
+                self.assertTrue(resumed["uninstalled"])
+                self.assertEqual(resumed["upstream"], str(lean_profiles.support.resolved("/usr/bin/true")))
                 self.assertFalse(prefix.exists())
                 self.assertEqual([path.name for path in bin_dir.iterdir()], ["codex"])
                 self.assertEqual((bin_dir / "codex").read_text(), "restored upstream")

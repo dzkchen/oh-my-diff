@@ -452,6 +452,23 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
                 self.assertEqual(os.readlink(bin_dir / "omd-mod"), str(root / "upstream-omd-mod"))
 
+    def test_uninstall_journal_for_an_unjournaled_nonempty_prefix_relinks_instead_of_retrying(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "codex").write_text("upstream codex")
+        (self.current / "bin").mkdir(parents=True, exist_ok=True)
+        (self.current / "prefix/install.json").unlink()
+        (self.current / "prefix/stray.txt").write_text("stray")
+        for name in self.module.LINKS:
+            (self.current / "bin" / name).write_text(name)
+        self.module.write_json(self.module.update_dir(self.root) / "journal.json",
+                               {"uninstall": self.current.name, "bin_dir": str(bin_dir)})
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        self.assertIsNone(self.module.resume_uninstall(args, self.root))
+        self.assertFalse((self.root / "update/journal.json").exists())
+        self.assertTrue(self.module.managed(self.root, bin_dir / "codex", "codex"))
+        self.assertEqual((self.current / "prefix/stray.txt").read_text(), "stray")
+
     def test_node_falls_back_to_mise_when_the_recorded_node_is_too_old(self):
         module = installer()
         tools = self.root / "tools"
