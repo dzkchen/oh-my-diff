@@ -96,31 +96,45 @@ fn source_kind(source: &ModPackageSource) -> &'static str {
 
 /// Lists every store selection; `runtime` is the serving session's mod status.
 pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
-    let generation = generation(store)?;
     let lock = store.package_lock()?;
-    let status = store.selection_status()?;
-    let selections = status["selections"].as_array().cloned().unwrap_or_default();
-    let configured = store.configuration()?.mods;
+    let configuration = store.configuration()?;
+    let generation = configuration.revision;
+    let mut manifests = Vec::new();
+    let status =
+        store.selection_status_inspected_in(None, &configuration, &lock, Some(&mut manifests))?;
+    let selections = status["selections"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let configured = &configuration.mods;
     let runtime_list = |key: &str| {
         runtime
             .and_then(|runtime| runtime[key].as_array())
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default()
     };
     let (loaded, rejected) = (runtime_list("mods"), runtime_list("rejected"));
+    let empty_settings = Default::default();
     let mut packages: Vec<Value> = selections
         .iter()
-        .map(|selection| {
+        .enumerate()
+        .map(|(index, selection)| {
             let id = selection["id"].as_str().unwrap_or("unreadable_mod");
             let locked = lock
                 .packages
                 .get(id)
                 .filter(|_| selection["packaged"] == true);
-            let manifest = selection["path"]
-                .as_str()
-                .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
-                .map(|inspected| inspected["manifest"].clone())
-                .unwrap_or(Value::Null);
+            let pending_manifest;
+            let manifest = if selection["reason"] == "managed_pending_sync" {
+                pending_manifest = selection["path"]
+                    .as_str()
+                    .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
+                    .map(|inspected| inspected["manifest"].clone())
+                    .unwrap_or(Value::Null);
+                &pending_manifest
+            } else {
+                &manifests[index]
+            };
             let api = manifest["api"]
                 .as_str()
                 .or(locked.map(|package| package.api.as_str()))
@@ -164,11 +178,11 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
                 "settings_schema": manifest["settings_schema"],
                 "settings": crate::effective_settings(
                     manifest.get("settings_schema"),
-                    &configured
+                    configured
                         .iter()
                         .find(|item| selection["path"].as_str() == item.path.to_str())
-                        .map(|item| item.settings.clone())
-                        .unwrap_or_default(),
+                        .map(|item| &item.settings)
+                        .unwrap_or(&empty_settings),
                 ),
                 "conflicts": selection["reason"]
                     .as_str()

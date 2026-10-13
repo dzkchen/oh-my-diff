@@ -52,10 +52,10 @@ jobs:
           rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
       - name: Full hosted validation
-        run: mise run nightly -- --hosted
+        run: python3 .github/scripts/nightly.py
       - name: Build and validate nightly package
         if: runner.os == 'macOS'
-        run: python3 scripts/nightly_ci.py package
+        run: python3 .github/scripts/nightly_ci.py package
       - name: Upload validated nightly package
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -94,7 +94,7 @@ jobs:
       - name: Publish passing prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/nightly_ci.py publish --directory release
+        run: python3 .github/scripts/nightly_ci.py publish --directory release
 
   report:
     needs: [validate, publish]
@@ -118,4 +118,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NIGHTLY_VALIDATION_RESULT: ${{ needs.validate.result }}
           NIGHTLY_PUBLICATION_RESULT: ${{ needs.publish.result }}
-        run: python3 scripts/nightly_ci.py report
+        run: python3 .github/scripts/nightly_ci.py report

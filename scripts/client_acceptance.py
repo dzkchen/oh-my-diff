@@ -113,7 +113,7 @@ def main():
     git(repo, "commit", "-qm", "fixture")
     server, url = provider(reply)
     mods = base / "mods"
-    for name in ["external_client", "approval_desk"]:
+    for name in ["external_client", "approval_desk", "client_tag"]:
         shutil.copytree(ROOT / "mods/examples" / name, mods / name)
     (mods / "broken_fixture").mkdir()
     (mods / "broken_fixture/mod.json").write_text(json.dumps(BROKEN_MANIFEST))
@@ -121,7 +121,7 @@ def main():
     results = {"run": str(base)}
 
     store = base / "store"
-    store_with(manager, store, [mods / "external_client", mods / "approval_desk", mods / "broken_fixture"])
+    store_with(manager, store, [mods / "external_client", mods / "approval_desk", mods / "client_tag", mods / "broken_fixture"])
     call([manager, "settings", store, mods / "external_client", json.dumps({
         "listen_url": f"unix://{base / 'tui.sock'}", "token_file": "", "client_path": str(ROOT / "mods/examples/external_client/client.mjs")})], ROOT)
     env = environment(base, args.binaries, repo, store, url)

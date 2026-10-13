@@ -39,7 +39,7 @@ export function profileEntry(options, credentials) {
     return number;
   };
   return { name, protocol, url, model, credential: found.id, kind: found.kind, window: count(options.window, 'window', null),
-    reasoning: options.reasoning === true, max_output: count(options.max_output, 'max_output', 32000), paid };
+    reasoning: options.reasoning === true, cache_control: options.cache_control === true, max_output: count(options.max_output, 'max_output', 32000), paid };
 }
 
 export function routeFor(slug, profile, template, url) {

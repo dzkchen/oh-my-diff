@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "live_output",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "description": "Runs a shell command in the sandbox and streams its stdout and stderr above the composer as they are written.",
+  "capabilities": ["terminal", "commands", "events", "store", "exec"],
+  "subscriptions": {"channels": ["live_output/run"]},
+  "compatibility": {"required_features": ["terminal_surface_v1", "ui_composition_v1", "events_v1", "process_streams_v1", "timers_16ms_v1"]}
+}

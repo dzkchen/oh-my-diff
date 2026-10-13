@@ -50,6 +50,39 @@ demonstrations remain repository-only conformance fixtures.
 [EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and
 rationale for every package.
 
+## Testing a mod
+
+`pnpm test` runs the mod in the real host offline: the `omd-mod` engine loads
+and admits the package, runs each callback in the sandboxed runner, validates
+the views it returns and serves virtual time, while every other host call
+answers from your mocks. A test file beside `mod.test.json`:
+
+```ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { calls, find, hostOperations, invoke, mount, runScenario, state } from '@oh-my-diff/mod-api/testing';
+
+test('count persists and draws', () => {
+  const trace = runScenario('.', hostOperations({ 'exec.run': [{ code: 0, stdout: 'ok', stderr: '' }] }), { steps: [
+    state('my_mod', { value: 41 }),
+    invoke('my_mod', 'tool', 'count', {}, { expect: { count: 42 } }),
+    state('my_mod', { expect: 42 }),
+    mount('my_mod'),
+  ] });
+  assert.ok(find(trace.steps[3].value, 'counter'));
+  assert.equal(calls(trace, 'exec.run').length, 1);
+  assert.deepEqual(trace.unused_mock_replies, []);
+});
+```
+
+`state` seeds and then reads the mod's `api.state`; `invoke` runs a tool,
+command or any other event; `mount` returns the terminal view after the host
+has validated it; `calls` lists the host calls the mod made; `component` steps
+a component module with key and pointer events at the scenario's virtual time
+and returns its `{tree, post, next_ms}`. Steps also cover
+interceptor chains, key, pointer and component interaction, clients, reloads
+and virtual time; see [Offline scenarios](REFERENCE.md#offline-scenarios).
+
 The terminal fixture copies the bounded selection and reports backend delivery;
 the OS tools fixture's `/locale` with no argument restores the inherited locale.
 Examples using the new controls declare their required host feature labels;

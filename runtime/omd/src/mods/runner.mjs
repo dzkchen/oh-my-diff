@@ -1,5 +1,5 @@
 import { stripTypeScriptTypes } from 'node:module';
-import { createContext, SourceTextModule } from 'node:vm';
+import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { readSync, writeSync } from 'node:fs';
 
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -10,6 +10,29 @@ if (nodeMajor !== 24 || nodeMinor < 18) {
 
 // A spare runner loads the TypeScript stripper before the host sends it a request.
 stripTypeScriptTypes('let ready: boolean;');
+const compiled = new Map();
+let compiledBytes = 0;
+function moduleFor(source, context, identifier, typescript = true) {
+  const key = `${typescript}:${source}`;
+  let cached = compiled.get(key);
+  if (!cached) {
+    const code = typescript ? stripTypeScriptTypes(source) : source;
+    const module = new SourceTextModule(code, { context, identifier });
+    const data = module.createCachedData();
+    const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
+    if (bytes <= 1048576) {
+      while (compiledBytes + bytes > 1048576) {
+        const oldest = compiled.keys().next().value;
+        compiledBytes -= compiled.get(oldest).bytes;
+        compiled.delete(oldest);
+      }
+      compiled.set(key, { code, data, bytes });
+      compiledBytes += bytes;
+    }
+    return module;
+  }
+  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data });
+}
 let input = Buffer.alloc(0);
 function readLine() {
   const chunk = Buffer.alloc(65536);
@@ -21,51 +44,41 @@ function readLine() {
       break;
     }
     input = Buffer.concat([input, chunk.subarray(0, read)]);
-    if (input.length > 524288) throw new Error('input_limit');
+    if (input.length > 1048576) throw new Error('input_limit');
   }
   const line = input.subarray(0, end).toString();
   input = input.subarray(end + 1);
   return line;
 }
-const request = JSON.parse(readLine());
-request.hook_budget_ms ??= 1000;
-const globals = Object.create(null);
-if (request.environment?.includes('crypto')) globals.crypto = globalThis.crypto;
-globals.__exchange = frame => {
-  try {
-    writeSync(1, frame + '\n');
-    return readLine();
-  } catch {
-    process.exit(1);
-  }
-};
-globals.__clock = () => performance.now();
-const context = createContext(globals, {
-  codeGeneration: { strings: false, wasm: false },
-});
 const bootstrap = `
-const request = JSON.parse(${JSON.stringify(JSON.stringify(request))});
-if (Number.isSafeInteger(request.virtual_time_ms)) {
-  const fixed = request.virtual_time_ms;
+const request = JSON.parse(globalThis.__request);
+delete globalThis.__request;
+request.hook_budget_ms ??= 1000;
+let now = request.virtual_time_ms;
+if (Number.isSafeInteger(now)) {
   globalThis.Date = class extends Date {
-    constructor(...args) { super(...(args.length ? args : [fixed])); }
-    static now() { return fixed; }
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
   };
 }
 const handlers = new Map();
 const tools = new Map();
 let dynamicTools = null;
 const commands = new Map();
-const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [] };
+const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [], components: [] };
 const interceptors = [];
 const surface = request.surface;
 registrations.services = [];
 registrations.virtual_reads = [];
 registrations.agents = [];
+registrations.completions = [];
+const completers = new Map();
 const serviceHandlers = new Map();
 const virtualReaders = new Map();
 const updates = [];
 let state = structuredCloneFallback(request.state);
+let uiState = structuredCloneFallback(request.ui_state ?? null);
+let uiRead = false;
 const initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
@@ -74,7 +87,9 @@ function track(key) {
   reads.add(key);
   tracking?.add(key);
 }
-const rendering = request.event === 'intercept' && request.payload?.surface === 'render';
+const rendering = request.event === 'component' || (request.event === 'intercept' && request.payload?.surface === 'render');
+const base = request.filename.endsWith('/' + request.entrypoint) ? request.filename.slice(0, -request.entrypoint.length)
+  : request.filename.slice(0, request.filename.lastIndexOf('/') + 1);
 let activating = true;
 let activatedState;
 let pending = null;
@@ -85,7 +100,12 @@ function serve(line) {
   const next = JSON.parse(line);
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
-  state = structuredCloneFallback(activatedState);
+  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
+  if (request.event === 'component') {
+    state = structuredCloneFallback(next.state);
+    uiState = structuredCloneFallback(next.ui_state ?? null);
+    uiRead = false;
+  } else state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
   updates.length = 0;
@@ -102,6 +122,11 @@ function canonical(value) {
   return value;
 }
 function hostTryCall(operation, arguments_ = null) {
+  const result = hostReply(operation, arguments_);
+  if (result.ok && operation === 'time.sleep' && Number.isSafeInteger(now) && Number.isSafeInteger(result.value?.slept_ms)) now += result.value.slept_ms;
+  return result;
+}
+function hostReply(operation, arguments_) {
   if (activating) throw new Error('host_call_during_registration');
   if (pending) throw new Error('concurrent_host_call');
   const call = structuredCloneFallback({ operation, arguments: arguments_ });
@@ -113,7 +138,7 @@ function hostTryCall(operation, arguments_ = null) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  if (request.interactive && operation !== 'continuation.next' && operation !== 'time.sleep') {
+  if (request.interactive) {
     const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
     return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
   }
@@ -210,7 +235,7 @@ function intercept(event) {
     origin: { value: deepFreeze(origin) },
     signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
     trace: { get: () => trace },
-    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 32 - calls.length); } }) },
+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 128 - calls.length); } }) },
     is: { value: pattern => surfaces(pattern).includes(name) },
   });
   if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
@@ -397,7 +422,7 @@ function timer(key, ms, handler, repeat) {
   requireCapability('events');
   if (!activating) throw new Error('timer_registration_outside_activation');
   if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{1,58}$/.test(key)) throw new Error('invalid_timer_key: ' + key);
-  if (!Number.isSafeInteger(ms) || ms < 100 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
+  if (!Number.isSafeInteger(ms) || ms < 16 || ms > 86400000) throw new Error('invalid_timer_interval: ' + key);
   if (typeof handler !== 'function') throw new Error('handler_required: ' + key);
   const scheduled = 'time:' + key;
   if (timers.has(scheduled)) throw new Error('conflict: ' + scheduled);
@@ -411,6 +436,77 @@ function timer(key, ms, handler, repeat) {
     start() { return hostCall('events.schedule', { key: scheduled, delay_ms: ms }); },
     cancel() { entry.cancelled = true; return hostCall('events.cancel', { key: scheduled }); },
   });
+}
+const components = new Map();
+const instances = new Map();
+const interval = ms => Number.isSafeInteger(ms) && ms >= 16 && ms <= 86400000;
+function component(id, definition) {
+  requireCapability('terminal');
+  if (!activating) throw new Error('component_registration_outside_activation');
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(id)) throw new Error('invalid_component_id: ' + id);
+  if (components.has(id)) throw new Error('conflict: ' + id);
+  for (const key of Object.keys(definition ?? {})) if (!['init', 'view', 'key', 'pointer', 'every'].includes(key)) throw new Error('unsupported_component_option: ' + key);
+  if (typeof definition?.view !== 'function' || ['init', 'key', 'pointer'].some(key => definition[key] !== undefined && typeof definition[key] !== 'function')) throw new Error('handler_required: ' + id);
+  const every = definition.every;
+  if (every !== undefined && ((typeof every?.ms !== 'function' && !interval(every?.ms)) || typeof every.tick !== 'function')) throw new Error('invalid_component_every: ' + id);
+  components.set(id, definition);
+  registrations.components.push(id);
+}
+function synchronous(value) {
+  if (typeof value?.then === 'function') throw new Error('component_handlers_must_be_synchronous');
+  return value;
+}
+function step(frame) {
+  const definition = components.get(request.name);
+  if (!definition) throw new Error('unknown_component: ' + request.name);
+  const started = clock();
+  let posted = null;
+  const address = String(frame.instance ?? request.name);
+  let instance = instances.get(address);
+  const context = () => Object.freeze({ columns: frame.columns, rows: frame.rows, props: instance.props, post(data) {
+    const encoded = JSON.stringify(data ?? null);
+    if (encoded.length > 65536) throw new Error('component_post_limit');
+    posted = { data: JSON.parse(encoded) };
+  } });
+  const mounting = !instance || frame.mount;
+  if (mounting) {
+    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined, overruns: 0 };
+    instances.set(address, instance);
+    if (definition.init) instance.state = synchronous(definition.init(instance.props, context()));
+  } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
+    instance.props = deepFreeze(structuredCloneFallback(frame.props));
+  }
+  const apply = (handler, ...input) => {
+    const next = handler(instance.state, ...input, context());
+    if (next !== undefined) instance.state = synchronous(next);
+  };
+  const period = () => {
+    const ms = typeof definition.every.ms === 'function' ? definition.every.ms(instance.state) : definition.every.ms;
+    if (ms !== null && !interval(ms)) throw new Error('invalid_component_every: ' + request.name);
+    return ms;
+  };
+  if (definition.every && period() === null) instance.last = frame.now;
+  for (const event of frame.events ?? []) {
+    const handler = event?.kind === 'key' ? definition.key : event?.kind === 'pointer' ? definition.pointer : undefined;
+    if (handler) apply(handler, deepFreeze(structuredCloneFallback(event)));
+  }
+  let next = null;
+  if (definition.every) {
+    const { tick } = definition.every;
+    let ms = period();
+    if (ms === null) instance.last = frame.now;
+    for (let ticks = 0; ms !== null && frame.now - instance.last >= ms && ticks < 8; ticks += 1) {
+      apply(tick);
+      instance.last += ms;
+      ms = period();
+    }
+    if (ms !== null && frame.now - instance.last >= ms) instance.last = frame.now;
+    next = ms === null ? null : instance.last + ms - frame.now;
+  }
+  const tree = definition.view(instance.state, context());
+  instance.overruns = !mounting && clock() - started > 8 ? instance.overruns + 1 : 0;
+  if (instance.overruns >= 3) throw new Error('component_overrun: ' + request.name);
+  return { tree: Array.isArray(tree) ? tree : [tree], post: posted, next_ms: next };
 }
 function workspacePath(path) {
   if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\0')) throw new Error('invalid_workspace_path: ' + path);
@@ -453,9 +549,11 @@ const api = Object.freeze({
     if (typeof handler !== 'function') throw new Error('handler_required: ' + pattern);
     const known = ['match', 'required', 'before', 'after'];
     for (const key of Object.keys(options ?? {})) if (!known.includes(key)) throw new Error('unsupported_interceptor_option: ' + key);
-    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => line.includes(request.filename)) ?? '';
-    const at = frame.slice(frame.lastIndexOf(request.filename) + request.filename.length).split(')')[0];
-    const entry = { handler, catch: null, matcher: options?.match ?? null, location: request.filename.slice(request.filename.lastIndexOf('/') + 1) + at };
+    const files = [request.filename, ...Object.keys(request.assets ?? {}).map(name => base + name)];
+    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => files.some(file => line.includes(file + ':'))) ?? '';
+    const file = files.find(file => frame.includes(file + ':')) ?? '';
+    const at = frame.slice(frame.lastIndexOf(file) + base.length).split(')')[0];
+    const entry = { handler, catch: null, matcher: options?.match ?? null, location: at };
     const registration = { pattern, match: entry.matcher === null ? null : serializeMatcher(entry.matcher), required: options?.required === true,
       before: [...(options?.before ?? [])], after: [...(options?.after ?? [])], catch: false, location: entry.location };
     interceptors.push(entry);
@@ -468,6 +566,7 @@ const api = Object.freeze({
     } });
   },
   hook,
+  component,
   match: Object.freeze({ glob: pattern => {
     if (typeof pattern !== 'string' || !pattern || pattern.length > 256) throw new Error('invalid_glob_matcher');
     return tagged('glob', pattern);
@@ -524,6 +623,15 @@ const api = Object.freeze({
     unique(virtualReaders, definition.scheme, handler);
     registrations.virtual_reads.push(structuredCloneFallback(definition));
   },
+  completion(options, handler) {
+    if (!activating) throw new Error('completion_registration_outside_activation');
+    requireCapability('composer');
+    for (const key of Object.keys(options ?? {})) if (key !== 'trigger') throw new Error('unsupported_completion_option: ' + key);
+    const trigger = options?.trigger;
+    if (typeof trigger !== 'string' || !/^[!-\/:-@[-\x60{-~]$/.test(trigger) || '@/$'.includes(trigger)) throw new Error('invalid_completion_trigger: ' + trigger);
+    unique(completers, trigger, handler);
+    registrations.completions.push({ trigger });
+  },
   command(name, handler, options = {}) {
     if (!activating) throw new Error('command_registration_outside_activation');
     requireCapability('commands');
@@ -542,6 +650,16 @@ const api = Object.freeze({
   state: Object.freeze({
     get() { requireCapability(surface.state); track('*'); return structuredCloneFallback(state); },
     set: writeState,
+  }),
+  uiState: Object.freeze({
+    get() { requireCapability('terminal'); uiRead = true; return structuredCloneFallback(uiState); },
+    set(value) {
+      requireCapability('terminal');
+      if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
+      const encoded = JSON.stringify(value);
+      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
+      uiState = JSON.parse(encoded); uiRead = true;
+    },
   }),
   atom(key, fallback = null) { return cell(key, fallback); },
   member(key, id, fallback = null) {
@@ -616,7 +734,7 @@ const api = Object.freeze({
       + (options.instructions ? ' ' + options.instructions : '') + ' Reply with JSON {"label": <label>}.';
     const call = { route: options.route, prompt: text, system: instructions,
       output: { schema: { type: 'object', properties: { label: { type: 'string', enum: labels } }, required: ['label'], additionalProperties: false } } };
-    for (const key of ['effort', 'timeout_ms', 'max_output_tokens']) if (options[key] !== undefined) call[key] = options[key];
+    for (const key of ['effort', 'timeout_ms', 'max_output_tokens', 'cache']) if (options[key] !== undefined) call[key] = options[key];
     const result = hostCall('model.complete', call);
     let label = null;
     try {
@@ -650,42 +768,88 @@ const api = Object.freeze({
     },
   }),
 });
-globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
-  state: () => rendering ? request.state : state, request, calls,
-  pending: () => pending, ready: () => { activatedState = structuredCloneFallback(state); activating = false; }, suspension, serve };
+globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
+  pending: () => pending, ready: () => {
+    activatedState = structuredCloneFallback(state); activating = false;
+  }, suspension, serve, base, component: step };
 `;
+// Every callback takes a context that has never run mod code; the next one is built while the runner idles.
+let live = null;
+function prepare() {
+  const globals = Object.create(null);
+  globals.__exchange = frame => {
+    if (live !== globals) process.exit(1);
+    try {
+      writeSync(1, frame + '\n');
+      return readLine();
+    } catch {
+      process.exit(1);
+    }
+  };
+  globals.__clock = () => performance.now();
+  const context = createContext(globals, {
+    codeGeneration: { strings: false, wasm: false },
+  });
+  return { context, setup: moduleFor(bootstrap, context, 'bootstrap', false) };
+}
+let spare = prepare();
+async function evaluate(request, line) {
+request.hook_budget_ms ??= 1000;
+const { context, setup } = spare;
+spare = null;
+live = context;
+context.__request = line;
+if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
 try {
-  const setup = new SourceTextModule(bootstrap, { context });
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
-  const source = stripTypeScriptTypes(request.source);
-  const mod = new SourceTextModule(source, { context, identifier: request.filename });
+  const mod = moduleFor(request.source, context, request.filename);
   const adapter = request.surface?.adapter;
   let adapt = null;
   const aliases = new Map();
   if (adapter) {
-    const adapterSource = stripTypeScriptTypes(adapter.source);
-    const adapterModule = new SourceTextModule(adapterSource, { context, identifier: adapter.filename });
+    const adapterModule = moduleFor(adapter.source, context, adapter.filename);
     await adapterModule.link(() => { throw new Error('unsupported_import: adapter modules are self-contained'); });
     await adapterModule.evaluate({ timeout: request.hook_budget_ms });
     adapt = adapterModule.namespace.default;
     if (typeof adapt !== 'function') throw new Error('adapter_default_export_required');
     for (const [specifier, module] of Object.entries(adapter.aliases ?? {})) {
-      const aliasSource = module.filename.endsWith('.ts') ? stripTypeScriptTypes(module.source) : module.source;
-      const aliased = new SourceTextModule(aliasSource, { context, identifier: module.filename });
+      const aliased = moduleFor(module.source, context, module.filename, module.filename.endsWith('.ts'));
       await aliased.link(() => { throw new Error('unsupported_import: adapter aliases are self-contained'); });
       aliases.set(specifier, aliased);
     }
   }
   context.__adapt = adapt;
-  await mod.link(async specifier => {
+  const { base } = context.__omd;
+  const entry = request.filename.slice(base.length);
+  const linked = new Map([[entry, mod]]);
+  await mod.link(async (specifier, importer) => {
     if (aliases.has(specifier)) return aliases.get(specifier);
-    throw new Error(`unsupported_import: ${specifier}; use type-only SDK imports and a self-contained module`);
+    if (/^\.\.?\//.test(specifier) && importer.identifier.startsWith(base)) {
+      const parts = importer.identifier.slice(base.length).split('/').slice(0, -1);
+      for (const part of specifier.split('/')) {
+        if (part === '..') { if (!parts.length) break; parts.pop(); } else if (part !== '.') parts.push(part);
+      }
+      const name = parts.join('/');
+      if (linked.has(name)) return linked.get(name);
+      const asset = Object.hasOwn(request.assets ?? {}, name) ? request.assets[name] : null;
+      if (asset) {
+        const identifier = base + name;
+        const module = name.endsWith('.json')
+          ? new SyntheticModule(['default'], function () { this.setExport('default', JSON.parse(asset.text)); }, { context, identifier })
+          : moduleFor(asset.text, context, identifier, name.endsWith('.ts'));
+        linked.set(name, module);
+        return module;
+      }
+    }
+    throw new Error(`unsupported_import: ${specifier}; import package assets by relative path, and the SDK by type only`);
   });
+  context.__omd.registrations.modules = [...linked.keys()].filter(name => name !== entry);
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
-  const dispatch = new SourceTextModule(`
-    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
+  const dispatch = moduleFor(`
+    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, completers, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
     const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
     await globalThis.__activate(activation);
@@ -697,7 +861,9 @@ try {
         : request.event === 'command' ? commands.get(request.name)
         : request.event === 'virtual_read' ? virtualReaders.get(request.name)
         : request.event === 'service' ? serviceHandlers.get(request.name)
-        : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
+        : request.event === 'completion' && request.payload?.kind === 'token' ? completers.get(request.payload.trigger)
+        : request.event === 'intercept' ? globalThis.__omd.intercept
+        : request.event === 'component' ? globalThis.__omd.component : handlers.get(request.event);
       if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;
       await globalThis.__omd.flushSubscriptions();
@@ -707,13 +873,18 @@ try {
       if (error !== globalThis.__omd.suspension) throw error;
     }
     if (globalThis.__omd.calls.length < (request.receipts ?? []).length) throw new Error('host_call_replay_diverged');
-    globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), value,
+    globalThis.__result = JSON.stringify({ registrations, state: globalThis.__omd.state(), ...globalThis.__omd.ui(), value,
       calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
-  `, { context });
+  `, context, 'dispatch', false);
   await dispatch.link(() => { throw new Error('unsupported_import'); });
   await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
   if (context.__result.length > 262144) throw new Error('output_limit');
-  if (!request.serve) process.stdout.write(context.__result);
+  if (!request.serve) {
+    live = null;
+    // Work the callback left running settles before the runner is reused; a late host call exits it.
+    if (request.reuse) await new Promise(setImmediate);
+    writeSync(1, context.__result + (request.reuse ? '\n' : ''));
+  }
   if (request.serve) {
     const step = new SourceTextModule(`
       const omd = globalThis.__omd;
@@ -721,13 +892,13 @@ try {
         omd.serve(line);
         let value = null;
         try {
-          value = await omd.intercept(omd.request.payload) ?? null;
+          value = await (omd.request.event === 'component' ? omd.component : omd.intercept)(omd.request.payload) ?? null;
           if (omd.pending()) throw new Error('swallowed_host_suspension');
         } catch (error) {
           if (error !== omd.suspension) throw error;
         }
         if (omd.calls.length < omd.request.receipts.length) throw new Error('host_call_replay_diverged');
-        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
+        return JSON.stringify({ registrations: omd.registrations, state: omd.state(), ...omd.ui(), value, calls: omd.calls, host_call: omd.pending(), updates: omd.updates });
       };
     `, { context });
     await step.link(() => { throw new Error('unsupported_import'); });
@@ -751,6 +922,16 @@ try {
   const frames = lines.filter(line => /^\s+at /.test(line));
   const described = [...lines.filter(line => !/^\s+at /.test(line)),
     ...frames.filter(line => directories.some(directory => line.includes(directory + '/'))).slice(0, 4)];
-  process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }));
+  live = null;
+  process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }) + (request.reuse ? '\n' : ''));
   process.exitCode = 1;
+}
+}
+for (;;) {
+  const line = readLine();
+  if (!line) break;
+  const request = JSON.parse(line);
+  await evaluate(request, line);
+  if (!request.reuse || process.exitCode) break;
+  spare = prepare();
 }

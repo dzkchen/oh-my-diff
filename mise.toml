@@ -2,7 +2,7 @@
 node = "24.18.0"
 
 [tasks."mods:check"]
-run = "pnpm --dir mods check"
+run = ["pnpm --dir mods check", "python3 scripts/mod_host_check.py --static"]
 
 [tasks."native:ownership"]
 run = "python3 scripts/check_native_ownership.py"
@@ -24,15 +24,3 @@ run = "python3 scripts/mod_author_acceptance.py"
 
 [tasks."integration:matrix"]
 run = "python3 scripts/integration_matrix.py"
-
-[tasks."upstream:candidate"]
-run = "python3 scripts/upstream_candidate.py run"
-
-[tasks."batch"]
-run = "python3 scripts/batch_tree.py"
-
-[tasks."batch:brief"]
-run = "python3 scripts/batch_brief.py"
-
-[tasks."nightly"]
-run = "python3 scripts/nightly.py"

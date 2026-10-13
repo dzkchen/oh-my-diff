@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toolTable, chatRequest, anthropicRequest, Emitter } from './router.mjs';
+import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter } from './router.mjs';
 
 const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
@@ -41,6 +41,25 @@ test('provider tool aliases preserve colliding names and round-trip their origin
     specs.map(spec => [spec.namespace ?? '', spec.name, spec.type === 'custom' ? 'custom_tool_call' : 'function_call']));
 });
 
+test('host cache breakpoints become cache_control on the marked system or context block', () => {
+  const body = { instructions: 'base', input: [
+    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'mod system' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'context one' }, { type: 'input_text', text: 'context two' }, { type: 'input_text', text: 'prompt' }] },
+  ] };
+  const ephemeral = { type: 'ephemeral' };
+  assert.deepEqual(breakpoint('1:1'), [1, 1]);
+  assert.equal(breakpoint('x'), null);
+  const anthropic = anthropicRequest(body, {}, breakpoint('1:1'));
+  assert.equal(anthropic.system, 'base\n\nmod system');
+  assert.deepEqual(anthropic.messages[0].content.map(part => part.cache_control ?? null), [null, ephemeral, null]);
+  assert.deepEqual(anthropicRequest(body, {}, [0, 0]).system, [{ type: 'text', text: 'base\n\nmod system', cache_control: ephemeral }]);
+  const chat = chatRequest(body, { cache_control: true }, [1, 0]);
+  assert.deepEqual(chat.messages[1].content[0], { type: 'text', text: 'context one', cache_control: ephemeral });
+  assert.deepEqual(chatRequest(body, {}, [1, 0]).messages.map(message => typeof message.content), ['string', 'string']);
+  const forked = { instructions: 'base', input: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'earlier answer' }] }, body.input[1]] };
+  assert.deepEqual(chatRequest(forked, { cache_control: true }, [0, 0]).messages[1].content, [{ type: 'text', text: 'earlier answer', cache_control: ephemeral }]);
+});
+
 test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {
   const seen = {};
   const gateway = createServer(async (request, response) => {
@@ -66,7 +85,8 @@ test('router adapts Responses requests to each protocol through the credential g
       { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 't1', name: 'apply_patch', input: {} } },
       { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"input":"*** Begin Patch"}' } },
       { type: 'message_delta', usage: { output_tokens: 5 } }, { type: 'message_stop' }]));
-    else response.end(sse([{ type: 'response.completed', response: { id: 'r', usage: {} } }]));
+    else response.end(sse(['{',{ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs-${credential}`, summary: [], encrypted_content: `enc-${credential}` } },
+      { type: 'response.completed', response: { id: 'r', usage: {} } }]));
   });
   const port = await listen(gateway);
   const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
@@ -91,11 +111,11 @@ test('router adapts Responses requests to each protocol through the credential g
       { type: 'function_call_output', call_id: 'old', output: '/repo' },
     ];
     const tools = [{ type: 'function', name: 'exec_command', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }, { type: 'custom', name: 'apply_patch', description: 'patch' }];
-    const ask = async (model, authorization = `Bearer ${token}`, history = input) => {
-      const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json' },
+    const ask = async (model, authorization = `Bearer ${token}`, history = input, headers = {}) => {
+      const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json', ...headers },
         body: JSON.stringify({ model, instructions: 'sys', input: history, tools, reasoning: { effort: 'high' }, stream: true, prompt_cache_key: 'conversation' }) });
       const text = await reply.text();
-      return { status: reply.status, events: text.split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
+      return { status: reply.status, events: text.split('\n\n').filter(frame => frame && frame !== 'data: {').map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
     };
     assert.equal((await ask('a/up', 'Bearer sk-test')).status, 401);
     const unauthorized = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization: 'Bearer sk-test' }, body: 'not json' });
@@ -109,6 +129,13 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
     await ask('b/up');
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
+    await ask('a/up', `Bearer ${token}`, input, { 'x-omd-cache-breakpoint': '1:0' });
+    assert.deepEqual(seen['/responses'].body.input, input);
+    const message = text => ({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] });
+    const reasoning = id => ({ type: 'reasoning', id, summary: [], encrypted_content: `enc-${id.slice(3)}` });
+    await ask('b/up', `Bearer ${token}`, [input[0], reasoning('rs-a'), message('earlier'), reasoning('rs-b'), input[1]], { 'x-omd-cache-breakpoint': '4:0' });
+    assert.deepEqual(seen['/responses'].body.input.map(item => item.id ?? item.role), ['developer', 'assistant', 'rs-b', 'user']);
+    assert.equal(seen['/responses'].headers['x-omd-cache-breakpoint'], '3:0');
 
     const chat = await ask('c/up');
     assert.deepEqual(seen['/chat'].body.messages, [

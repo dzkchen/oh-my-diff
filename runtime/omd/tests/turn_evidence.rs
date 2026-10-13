@@ -6,6 +6,29 @@ fn redaction_preserves_task_identifiers_but_removes_credential_tokens() {
         "task-example is complete\nvalue=sk-private-token\nvalue=ghp_private_token",
     );
     assert_eq!(value, "task-example is complete\n[redacted]\n[redacted]");
+    for secret in [
+        "export TOKEN=abc",
+        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI",
+        "DB_URL=postgres://user:pw@host/db",
+        "id AKIAIOSFODNN7EXAMPLE",
+        r#"{"secret": "x"}"#,
+        r#"{"accessToken":"x"}"#,
+        "private_key: abc",
+    ] {
+        assert_eq!(
+            codex_omd::resource_data::redact(secret),
+            "[redacted]",
+            "{secret}"
+        );
+    }
+    for plain in [
+        "max_tokens: 64",
+        "https://example.com:8080/path",
+        "primary_key: id",
+        "token:",
+    ] {
+        assert_eq!(codex_omd::resource_data::redact(plain), plain);
+    }
 }
 use serde_json::json;
 

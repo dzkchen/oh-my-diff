@@ -29,3 +29,7 @@ closes it. Package artifacts have seven-day Actions retention; published prerele
 Enable GitHub Actions and issue creation with `GITHUB_TOKEN`, merge the workflow and sources into `main`, then
 dispatch a main run. The first successful hosted run is still needed to qualify runner disk use and published
 installer metadata. Local fixture tests and workflow lint do not establish that evidence.
+
+Hosted orchestration lives in `.github/scripts/`; its tests run with
+`python3 -m unittest discover -s .github/tests -p 'test_*.py'`. The workflow uses only tracked build inputs.
+Local maintainer tools remain outside the public source tree.

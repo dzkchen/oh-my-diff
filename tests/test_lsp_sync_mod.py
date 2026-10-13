@@ -14,8 +14,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = (ROOT / "runtime/omd/src/mods/runner.mjs").read_text()
-SOURCE = (ROOT / "mods/first-party/omd_lsp_sync/index.ts").read_text()
-MANIFEST = json.loads((ROOT / "mods/first-party/omd_lsp_sync/mod.json").read_text())
+PACKAGE = ROOT / "mods/first-party/omd_lsp_sync"
+SOURCE = (PACKAGE / "index.ts").read_text()
+MANIFEST = json.loads((PACKAGE / "mod.json").read_text())
+ASSETS = {name: {"text": (PACKAGE / name).read_text(), "sha256": "0" * 64} for name in MANIFEST["assets"]}
 CAPABILITIES = MANIFEST["capabilities"]
 HOST = (ROOT / "runtime/omd/src/mods.rs").read_text()
 
@@ -202,7 +204,7 @@ class Host:
 def run(node, event, payload, state, host, name=None):
     receipts = []
     for _ in range(36):
-        request = {"source": SOURCE, "filename": "omd_lsp_sync/index.ts", "api": MANIFEST["api"], "capabilities": CAPABILITIES,
+        request = {"source": SOURCE, "filename": str(PACKAGE / "index.ts"), "entrypoint": "index.ts", "assets": ASSETS, "api": MANIFEST["api"], "capabilities": CAPABILITIES,
                    "state": state, "settings": {}, "event": event, "name": name, "payload": payload, "receipts": receipts,
                    "hook_budget_ms": 1000, "surface": CURRENT_SURFACE}
         result = subprocess.run([node, "--no-warnings", "--experimental-vm-modules", "--input-type=module",

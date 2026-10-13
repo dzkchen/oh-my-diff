@@ -24,6 +24,7 @@
     "capabilities:fs.read": {"status":"frozen","consumer":{"path":"mods/examples/coordination/mod.json","snippet":"\"fs.read\""},"decision":"tool.workspace"},
     "capabilities:fs.write": {"status":"frozen","consumer":{"path":"mods/examples/snapshot_review/mod.json","snippet":"\"fs.write\""},"decision":"tool.workspace"},
     "capabilities:history": {"status":"frozen","consumer":{"path":"mods/examples/context_fold/mod.json","snippet":"\"history\""},"decision":"context.history"},
+    "capabilities:history_persist": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`."},
     "capabilities:history_write": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "capabilities:http": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "capabilities:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/mod.json","snippet":"\"input\""},"decision":"context.input"},
@@ -43,6 +44,7 @@
     "capabilities:request_policy": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/mod.json","snippet":"\"request_policy\""},"decision":"kernel.final_request_policy"},
     "capabilities:services": {"status":"frozen","consumer":{"path":"mods/examples/service-consumer/mod.json","snippet":"\"services\""},"decision":"kernel.inter_mod_services"},
     "capabilities:sessions": {"status":"frozen","consumer":{"path":"mods/examples/port_list/mod.json","snippet":"\"sessions\""},"decision":"shared.session_index"},
+    "capabilities:sessions_tools": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`."},
     "capabilities:store": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/mod.json","snippet":"\"store\""},"decision":"context.store"},
     "capabilities:terminal": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/mod.json","snippet":"\"terminal\""},"decision":"terminal.view"},
     "capabilities:threads": {"status":"frozen","consumer":{"path":"mods/examples/notification_bridge/mod.json","snippet":"\"threads\""},"decision":"coordination.app_bridge"},
@@ -61,6 +63,7 @@
     "events:compaction_start": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.on('compaction_start'"},"decision":"context.compaction"},
     "events:completion": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/index.ts","snippet":"api.replace('completion'"},"decision":"terminal.completion"},
     "events:component_event": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"api.on('component_event'"},"decision":"terminal.surface"},
+    "events:component_post": {"status":"experimental","reason":"Component modules ship marked experimental in 1.0.0."},
     "events:composer": {"status":"frozen","consumer":{"path":"mods/examples/ghost_history/index.ts","snippet":"api.on('composer'"},"decision":"terminal.composer_drafts"},
     "events:config_change": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "events:context": {"status":"frozen","consumer":{"path":"mods/examples/context/index.ts","snippet":"api.on('context'"},"decision":"context.assembly"},
@@ -113,11 +116,14 @@
     "intercepts:compaction": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:component_change": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:composer_edit": {"status":"frozen","consumer":{"path":"mods/examples/paste_tidy/index.ts","snippet":"api.intercept('composer_edit'"},"decision":"terminal.composer_drafts"},
+    "intercepts:composer_key": {"status":"experimental","reason":"Wave 1 surface shipped experimental in 1.0.0."},
     "intercepts:config_list": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_list'"},"decision":"terminal.commands_config"},
     "intercepts:config_set": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_set'"},"decision":"terminal.commands_config"},
     "intercepts:elicitation": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "intercepts:history_persist": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`."},
     "intercepts:host_operation": {"status":"frozen","consumer":{"path":"mods/examples/admission_guard/index.ts","snippet":"api.intercept('host_operation'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/index.ts","snippet":"api.intercept('input'"},"decision":"context.input"},
+    "intercepts:mention": {"status":"experimental","reason":"Wave 1 surface shipped experimental in 1.0.0."},
     "intercepts:model_request": {"status":"frozen","consumer":{"path":"mods/examples/kernel/index.ts","snippet":"api.intercept('model_request'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:model_send": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/index.ts","snippet":"api.intercept('model_send'"},"decision":"kernel.final_request_policy"},
     "intercepts:peer_receive": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
@@ -176,10 +182,10 @@
     "operations:packages.reload": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('packages.reload'"},"decision":"coordination.packages"},
     "operations:peers.list": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:peers.send": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
-    "operations:process.exchange": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/index.ts","snippet":"api.host.tryCall('process.exchange'"},"decision":"tool.managed_process"},
+    "operations:process.exchange": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.exchange'"},"decision":"tool.managed_process"},
     "operations:process.start": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"api.host.tryCall('process.start'"},"decision":"tool.managed_process"},
-    "operations:process.status": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/index.ts","snippet":"api.host.tryCall('process.status'"},"decision":"tool.managed_process"},
-    "operations:process.stop": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/index.ts","snippet":"api.host.tryCall('process.stop'"},"decision":"tool.managed_process"},
+    "operations:process.status": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.status'"},"decision":"tool.managed_process"},
+    "operations:process.stop": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.stop'"},"decision":"tool.managed_process"},
     "operations:process.which": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"api.host.call('process.which'"},"decision":"tool.managed_process"},
     "operations:prompts.consent": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:prompts.revoke": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
@@ -193,7 +199,7 @@
     "operations:session.info": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
     "operations:sessions.list": {"status":"frozen","consumer":{"path":"mods/examples/scoped_data/index.ts","snippet":"api.host.tryCall('sessions.list'"},"decision":"shared.session_index"},
     "operations:sessions.ports": {"status":"frozen","consumer":{"path":"mods/examples/port_list/index.ts","snippet":"api.host.call('sessions.ports'"},"decision":"terminal.surface"},
-    "operations:sessions.read": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "operations:sessions.read": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`."},
     "operations:sessions.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/snapshot_review/index.ts","snippet":"api.host.call('sessions.snapshot'"},"decision":"shared.session_index"},
     "operations:settings.write": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('settings.write'"},"decision":"coordination.packages"},
     "operations:sidecars.invoke": {"status":"frozen","consumer":{"path":"mods/examples/service_request/index.ts","snippet":"api.host.tryCall('sidecars.invoke'"},"decision":"tool.sidecars"},
@@ -232,14 +238,14 @@
     "operations:turns.dequeue": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:turns.queue": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:turns.queued": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
-    "operations:workspace.backup": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/index.ts","snippet":"api.host.tryCall('workspace.backup'"},"decision":"tool.workspace"},
+    "operations:workspace.backup": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/semantic.ts","snippet":"api.host.tryCall('workspace.backup'"},"decision":"tool.workspace"},
     "operations:workspace.check_access": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:workspace.fingerprint": {"status":"frozen","consumer":{"path":"mods/first-party/omd_advisor/index.ts","snippet":"api.host.tryCall('workspace.fingerprint'"},"decision":"tool.workspace"},
     "operations:workspace.integrate": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('workspace.integrate'"},"decision":"coordination.agents"},
     "operations:workspace.list": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('workspace.list'"},"decision":"tool.workspace"},
     "operations:workspace.read": {"status":"frozen","consumer":{"path":"mods/examples/read_batcher/index.ts","snippet":"api.host.call('workspace.read'"},"decision":"tool.workspace"},
     "operations:workspace.request_rename": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.request_rename'"},"decision":"tool.workspace"},
-    "operations:workspace.restore": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/index.ts","snippet":"api.host.tryCall('workspace.restore'"},"decision":"tool.workspace"},
+    "operations:workspace.restore": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/semantic.ts","snippet":"api.host.tryCall('workspace.restore'"},"decision":"tool.workspace"},
     "operations:workspace.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('workspace.snapshot'"},"decision":"tool.workspace"},
     "operations:workspace.stat": {"status":"frozen","consumer":{"path":"mods/first-party/omd_advisor/index.ts","snippet":"api.host.tryCall('workspace.stat'"},"decision":"tool.workspace"},
     "operations:workspace.transaction": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.transaction'"},"decision":"tool.workspace"},
@@ -259,6 +265,7 @@
     "components:multiselect": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'multiselect'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
     "components:native": {"status":"frozen","consumer":{"path":"mods/first-party/omd_preview/index.ts","snippet":"type: 'native'"},"decision":"terminal.rendering","evidence":["rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change","rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views","patch:trees_wrap_restyle_replace_or_hide_the_native_drawing","patch:widget_hooks_place_the_native_widget_and_report_its_offset","patch:hidden_inline_sites_leave_dialogs_and_diagnostics_in_the_inline_viewport","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
     "components:pane": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'pane'"},"decision":"terminal.box_model","evidence":["patch:box_styles_are_bounded_and_render_hook_trees_refuse_them","patch:box_model_draws_cards_flat_panels_and_rows_at_every_width","patch:hover_and_focus_accents_restyle_without_events_or_moving_rows","patch:dialogs_centre_in_the_chat_column_fit_their_content_and_size_buttons_naturally","patch:split_gaps_leave_cells_between_children_and_their_handle","patch:first_screen_centres_in_the_chat_rect","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
+    "components:module": {"status":"experimental","reason":"Component modules ship marked experimental in 1.0.0."},
     "components:raster": {"status":"experimental","reason":"Frame streaming is deferred beyond launch."},
     "components:select": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'select'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
     "components:slot": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'slot'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
@@ -643,9 +650,9 @@
     {
       "id": "context.input",
       "group": "context_recovery",
-      "decision": "Submitted prompt: transform or deny",
-      "observe": "`intercept('input')` with the thread, text and attachment count",
-      "alter": "pass rewritten text to `next`, or return `{deny}`; interceptors compose in continuation order",
+      "decision": "Submitted prompt: transform or deny; redirect or skip `@` file reads",
+      "observe": "`intercept('input')` with the thread, text and attachment count; `intercept('mention')` with each `@` path the host is about to read",
+      "alter": "pass rewritten text or another workspace path to `next`, or return `{deny}`; interceptors compose in continuation order",
       "replace": null,
       "timing": "before native prompt hooks, skill/mention resolution and history, in TUI and exec",
       "ownership": "host: submission path, attachments, history and the visible notice",
@@ -658,13 +665,15 @@
         "events": [],
         "replacements": [],
         "intercepts": [
-          "input"
+          "input",
+          "mention"
         ],
         "operations": []
       },
       "evidence": [
         "rust:input_and_model_request_continuations_pass_downstream_results_or_deny",
-        "node:lifecycle events and interceptors require their capabilities"
+        "node:lifecycle events and interceptors require their capabilities",
+        "patch:mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_them"
       ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
@@ -735,11 +744,11 @@
       "group": "context_recovery",
       "decision": "Durable per-mod data and evidence",
       "observe": "`store.get`, `store.list` and `evidence.read` read the caller's namespace",
-      "alter": "`store.put`/`store.delete` with the current revision; `store.reset` with the current generation; `evidence.write` stores content-addressed evidence; `api.state` per mod store, session thread or Git checkout through the manifest `state_scope`",
+      "alter": "`store.put`/`store.delete` with the current revision; `store.reset` with the current generation; `evidence.write` stores content-addressed evidence; `api.state` per mod store, session thread or Git checkout through the manifest `state_scope`; experimental `api.uiState` is terminal-capability session/package-scoped ephemeral data, with revision checks, a 64 KiB bound, command/component-event writes and cleanup on reload, revoke and exit",
       "replace": null,
       "timing": "any callback; `migrate` on a state-version change",
       "ownership": "mod: keys and values; host: namespaces, revisions, provenance, bounds and export",
-      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 64 KiB per mod store or 192 KiB per thread or checkout, compare-and-swap writes retried at most twice by replaying recorded host results",
+      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 192 KiB in every scope, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
       "native": "native hooks hold no state between invocations",
       "covers": {
         "capabilities": [
@@ -763,6 +772,9 @@
       "evidence": [
         "rust:store_is_namespaced_compare_and_set_with_host_attested_provenance",
         "rust:mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates",
+        "rust:ui_state_is_shared_per_session_isolated_and_cleared_on_reload",
+        "rust:ui_state_invalidates_render_hooks_without_durable_reads",
+        "rust:ui_state_command_views_validate_ownership_and_preserve_other_contributions",
         "rust:conflict_retries_replay_host_results_and_refuse_divergent_callbacks",
         "rust:scoped_state_follows_the_session_thread_or_the_git_checkout",
         "patch:config_contributors_receive_the_thread_id_the_new_thread_uses",
@@ -773,16 +785,17 @@
       "id": "shared.session_index",
       "group": "context_recovery",
       "decision": "Session history and turn evidence",
-      "observe": "`sessions.list` and `sessions.read` page visible messages; `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
+      "observe": "`sessions.list` and `sessions.read` page visible messages, tool calls and tool results (arguments and outputs with `sessions_tools`, else their size and digest); `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
       "alter": "none",
       "replace": null,
       "timing": "any callback; turn evidence at turn end",
       "ownership": "host: repository scope, opt-outs, redaction and bounds",
-      "limits": "Snapshots require sessions and store, omit private reasoning and opaque metadata, and refuse missing call/output pairs or oversized history; all evidence remains owner, source and thread bound",
+      "limits": "Snapshots and parent history require sessions and sessions_tools (snapshots also store), omit private reasoning and opaque metadata, and refuse missing call/output pairs or oversized history; all evidence remains owner, source and thread bound",
       "native": "native hooks see only the current payload",
       "covers": {
         "capabilities": [
-          "sessions"
+          "sessions",
+          "sessions_tools"
         ],
         "events": [],
         "replacements": [],
@@ -1045,7 +1058,7 @@
       "replace": null,
       "timing": "tools and lifecycle events",
       "ownership": "mod: program and protocol; host: program identity, sandbox, framing, bounds and cleanup",
-      "limits": "content-length or NDJSON framing; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
+      "limits": "content-length or NDJSON framing, or raw stdout and stderr chunks; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
       "native": "native MCP servers are fixed at startup and not owned by a mod",
       "covers": {
         "capabilities": [
@@ -1479,9 +1492,9 @@
       "observe": "the `terminal` event carries `client` graphics, pointer, reduced-motion and cell-pixel facts; pointer components report `enter`, `leave`, `move`, `down`, `up` and `drag` with half-cell rows",
       "alter": "`terminal.blit` queues partial cell updates into the mod's own `raster`; named sites may be overlays anchored to the screen or a component with z-order and clipping",
       "replace": null,
-      "timing": "one queued blit applied per 33 ms frame; latest-wins pointer motion; a press captures until release",
+      "timing": "one queued blit applied per 16 ms frame; newest image or raw-pixel frame replaces pending frames; latest-wins pointer motion; a press captures until release",
       "ownership": "mod: its own rasters, overlays and images; host: frame pacing, hit-testing layers, image ids and teardown",
-      "limits": "rasters 200x40 cells, 16 per mod, 32 queued updates or 256 KiB; overlay z 0–9; images 8 MiB and 4,096 px",
+      "limits": "rasters 200x40 cells, 16 per mod, 32 queued cell updates or 256 KiB; overlay z 0–9; encoded images 8 MiB and 4,096 px; raw RGB/RGBA 4,096 px per side (64 MiB maximum), one immutable newest frame per raster, process and generation scoped handles",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -1718,7 +1731,7 @@
       "replace": null,
       "timing": "background delivery at safe points",
       "ownership": "mod: subscriptions and payloads; host: namespaces, queues, watch roots and debounce",
-      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 100 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; at most ten timer deliveries per second per owner/thread, coalescing repeated pending keys",
+      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 16 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; timer deliveries spaced at least 16 ms apart per owner/thread (up to 60 per second), coalescing repeated pending keys",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1851,6 +1864,30 @@
       "replace_note": null
     },
     {
+      "id": "terminal.component_modules",
+      "group": "terminal",
+      "decision": "Component modules",
+      "observe": "`component_post`: the latest value a mounted component module posted in a frame",
+      "alter": "`api.component` handlers return the next state of their own instance",
+      "replace": null,
+      "timing": "frame steps, at most one per 16 ms, while a `module` node is drawn and has pending input, props or ticks",
+      "ownership": "mod: module state and tree; host: mounting, focus, frame pacing and unmounting",
+      "limits": "16 modules per mod; four mounted at once for the terminal and for each client, a fifth is refused; 8 ms per step; render-tree bounds; one 64 KiB post per frame",
+      "native": "modules get no host operations or state writes; a throw, overrun or invalid tree unmounts until the next view revision and never counts toward the mod fault limit",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "component_post"
+        ],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:component_modules_keep_state_in_their_runner_until_unmounted"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "coordination.packages",
       "group": "coordination",
       "decision": "Package controls",
@@ -1888,9 +1925,9 @@
     {
       "id": "terminal.completion",
       "group": "terminal",
-      "decision": "Composer mention completion",
-      "observe": "`completion` with the query and upstream candidates",
-      "alter": "reorder, filter or add workspace-relative paths; suggest a mod command's arguments from the mod that registered the command, else the owner",
+      "decision": "Composer mention, argument and token completion",
+      "observe": "`completion` with the query and upstream candidates, a mod command's arguments, or a token starting with a trigger registered by `api.completion`",
+      "alter": "reorder, filter or add workspace-relative paths; suggest a mod command's arguments from the mod that registered the command, else the owner; supply rows for the mod's own token triggers",
       "replace": "completion (exclusive)",
       "timing": "each `@` query result",
       "ownership": "mod: ranking; host: the popup, insertion and stale-result filtering",
@@ -1907,7 +1944,8 @@
         "operations": []
       },
       "evidence": [
-        "patch:completion_items_keep_mod_order_and_refuse_escaping_paths"
+        "patch:completion_items_keep_mod_order_and_refuse_escaping_paths",
+        "rust:completion_triggers_are_bounded_and_route_the_completion_event"
       ],
       "replace_note": null
     },
@@ -1968,7 +2006,7 @@
       "group": "coordination",
       "decision": "One-shot model completions and conversation forks",
       "observe": "no",
-      "alter": "`model.complete` runs one tool-less worker turn with system, context, output schema, effort and output-cap options; `model.fork` runs it on a snapshot of the conversation, returning requested tool calls unexecuted",
+      "alter": "`model.complete` runs one tool-less worker turn with system, context, output schema, effort, output-cap and cache-mark options; `model.fork` runs it on a snapshot of the conversation, returning requested tool calls unexecuted; a cache mark sets a prefix-derived `prompt_cache_key` and an `x-omd-cache-breakpoint` for provider transports, and `cache` sums reads and writes",
       "replace": null,
       "timing": "event, tool, timer and channel callbacks and terminal commands in the session's process",
       "ownership": "mod: prompt, options and route; host: route grants, admission, settlement, interception and cancellation",
@@ -1985,7 +2023,8 @@
       },
       "evidence": [
         "patch:model_completions_use_only_configured_worker_routes",
-        "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses"
+        "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses",
+        "patch:completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports"
       ],
       "replace_note": null
     },
@@ -1998,7 +2037,7 @@
       "replace": null,
       "timing": "inside the calling callback",
       "ownership": "mod: when to call; host: the underlying operations and their grants",
-      "limits": "sleep ≤ 60 s; timers 100 ms to 24 h under the host timer limits; classification needs an explicit route",
+      "limits": "sleep ≤ 60 s; timers 16 ms to 24 h under the host timer limits; classification needs an explicit route",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -2069,6 +2108,34 @@
         "patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items",
         "patch:unsafe_edits_are_refused",
         "patch:call_arguments_and_image_messages_can_be_rewritten"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "context.history_persist",
+      "group": "context_recovery",
+      "decision": "Store-time rewriting of persisted history text",
+      "observe": "`history_persist` sees each batch's message, reasoning, tool call, tool output, event-copy (commands, MCP calls, file changes, web search, review, plan) and compaction texts before the rollout is written, and each prompt-recall entry before `history.jsonl` is",
+      "alter": "change entry text only, for redaction; ids, call ids, roles, order and count are fixed",
+      "replace": null,
+      "timing": "synchronously before each rollout write; the live conversation keeps the original until the thread is reloaded",
+      "ownership": "user: the hash-bound, revocable `history_persist` grant; mod: entry text; host: entry selection, chunking, provenance and the rollout",
+      "limits": "no host operations; 48 KiB of JSON-encoded entries per callback, longer texts split across entries with the same index; identifiers, names, paths and status fields, images and binary payloads, encrypted content, extension-owned items, sub-agent activity and realtime transcripts are not offered; a failing required interceptor or persist runtime stores a placeholder and drops the prompt-recall entry",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "history_persist"
+        ],
+        "events": [],
+        "replacements": [],
+        "intercepts": [
+          "history_persist"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "rust:history_persist_interceptors_rewrite_only_entry_text",
+        "patch:persisted_text_is_rewritten_at_rest_while_live_history_keeps_the_original"
       ],
       "replace_note": null
     },
@@ -2333,7 +2400,7 @@
       "group": "terminal",
       "decision": "Revision-bound drafts, ghost suggestions and edit interception",
       "observe": "draft revisions, cursor, selection and attachment resources (`composer.read`), changes and suggestion outcomes (`composer`), submitted draft context (`input`) and prompt expansion by identity (`prompt_expanded`)",
-      "alter": "the draft at a known revision (`composer.write`), one ghost suggestion (`composer.suggest`) and every mod write or native fill (`composer_edit`)",
+      "alter": "the draft at a known revision (`composer.write`), one ghost suggestion (`composer.suggest`), every mod write or native fill (`composer_edit`) and each typed key before the composer applies it (`composer_key`, 50 ms per keystroke, fails open)",
       "replace": null,
       "timing": "writes apply only at the revision they name; suggestions clear on any edit, turn start, dialog or owner reload; change events are debounced to 250 ms",
       "ownership": "user: acceptance (move-right at the draft end or a click), dismissal and submission; host: revisions, owner-bound attachment resources and revocation; mods: suggestion and formatting policy",
@@ -2350,10 +2417,12 @@
           "composer.suggest"
         ],
         "intercepts": [
-          "composer_edit"
+          "composer_edit",
+          "composer_key"
         ]
       },
       "evidence": [
+        "rust:composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline",
         "patch:edits_compare_revisions_and_keep_cursor_and_selection",
         "patch:one_suggestion_shows_at_the_end_and_resolves_explicitly",
         "patch:mod_attachments_leave_with_their_owner"
@@ -2512,7 +2581,7 @@
     },
     {
       "id": "limits",
-      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including host-call replays, and 64 KiB state.",
+      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 128 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 192 KiB state in every scope.",
       "evidence": [
         "rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget",
         "rust:mod_context_is_bounded_and_callback_failure_is_isolated",

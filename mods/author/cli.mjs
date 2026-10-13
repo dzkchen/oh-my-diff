@@ -67,6 +67,7 @@ function tsconfig() {
       noEmit: true,
       jsx: 'react-jsx',
       jsxImportSource: '@oh-my-diff/mod-api',
+      allowImportingTsExtensions: true,
       types: [],
     },
     include: ['index.ts', 'index.tsx', '.omd/*.d.ts'],
@@ -239,9 +240,17 @@ async function copyExamples(directory) {
   await writeFile(join(directory, 'pnpm-workspace.yaml'), "packages:\n  - '*'\n");
 }
 
+function jsxSources(directory, folder = '') {
+  return readdirSync(join(directory, folder), { withFileTypes: true }).flatMap(entry => {
+    const path = folder ? `${folder}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) return entry.name.startsWith('.') || ['node_modules', 'dist'].includes(entry.name) ? [] : jsxSources(directory, path);
+    return entry.name.endsWith('.tsx') ? [path] : [];
+  });
+}
+
 function compileJsx(directory) {
-  const sourcePath = join(directory, 'index.tsx');
-  if (!existsSync(sourcePath)) return;
+  const sources = jsxSources(directory);
+  if (!sources.length) return;
   let ts;
   try {
     ts = createRequire(join(directory, 'package.json'))('typescript');
@@ -249,30 +258,37 @@ function compileJsx(directory) {
     if (error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
     throw error;
   }
-  const { outputText, diagnostics } = ts.transpileModule(readFileSync(sourcePath, 'utf8'), {
+  for (const source of sources) compileJsxFile(ts, directory, source);
+}
+
+function compileJsxFile(ts, directory, source) {
+  const { outputText, diagnostics } = ts.transpileModule(readFileSync(join(directory, source), 'utf8'), {
     compilerOptions: { jsx: ts.JsxEmit.ReactJSX, jsxImportSource: '@oh-my-diff/mod-api', module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-    fileName: 'index.tsx',
+    fileName: source,
     reportDiagnostics: true,
   });
   const errors = diagnostics.filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
-  if (errors.length) fail(errors.map(diagnostic => `index.tsx: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`).join('\n'));
+  if (errors.length) fail(errors.map(diagnostic => `${source}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`).join('\n'));
   const factory = readFileSync(join(sdkRoot, 'author/jsx-runtime.mjs'), 'utf8').replace(/^export /gm, '');
   const importLine = /^import \{([^}]*)\} from ["']@oh-my-diff\/mod-api\/jsx-runtime["'];?$/m;
   if (/\bFragment\b/.test(importLine.exec(outputText)?.[1] ?? '')) fail('jsx_unsupported_element: fragment');
-  const inlined = outputText.replace(importLine, (_match, names) => `const {${names.replaceAll(' as ', ': ')}} = (() => {\n${factory}return { jsx, jsxs };\n})();`);
-  if (inlined.includes('@oh-my-diff/mod-api/jsx-runtime')) fail('jsx_import_unsupported: index.tsx may only use the JSX factory import the compiler emits');
-  const header = '// @ts-nocheck\n// Generated from index.tsx; edit that file instead.\n';
+  const inlined = outputText.replace(importLine, (_match, names) => `const {${names.replaceAll(' as ', ': ')}} = (() => {\n${factory}return { jsx, jsxs };\n})();`)
+    .replace(/(\bfrom\s*["']\.\.?\/[^"']*)\.tsx(["'])/g, '$1.ts$2');
+  if (inlined.includes('@oh-my-diff/mod-api/jsx-runtime')) fail(`jsx_import_unsupported: ${source} may only use the JSX factory import the compiler emits`);
+  const header = `// @ts-nocheck\n// Generated from ${source}; edit that file instead.\n`;
   const generated = `${header}${inlined}`;
-  const target = join(directory, 'index.ts');
+  const target = join(directory, source.slice(0, -1));
   const existing = existsSync(target) ? readFileSync(target, 'utf8') : null;
-  if (existing !== null && !existing.startsWith(header)) fail('jsx_entrypoint_conflict: index.ts was not generated from index.tsx; remove one of them');
+  if (existing !== null && !existing.startsWith(header)) fail(`jsx_entrypoint_conflict: ${source.slice(0, -1)} was not generated from ${source}; remove one of them`);
   if (existing !== generated) writeFileSync(target, generated);
 }
 
 function checkSyntax(directory) {
   compileJsx(directory);
   const manifest = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
-  stripTypeScriptTypes(readFileSync(join(directory, manifest.entrypoint ?? 'index.ts'), 'utf8'));
+  for (const path of [manifest.entrypoint ?? 'index.ts', ...(manifest.assets ?? []).filter(asset => asset.endsWith('.ts'))]) {
+    stripTypeScriptTypes(readFileSync(join(directory, path), 'utf8'));
+  }
 }
 
 function checkProject(directory) {
@@ -281,10 +297,11 @@ function checkProject(directory) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;
   }
-  if (!existsSync(join(directory, 'index.tsx'))) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
-  // TypeScript drops index.tsx from a program that also lists index.ts, so check the source rather than its generated output.
+  const sources = jsxSources(directory);
+  if (!sources.length) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
+  // TypeScript drops a .tsx from a program that also lists its generated .ts, so check the sources rather than their output.
   const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files: ['index.tsx'] }));
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files: sources }));
   try {
     command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
   } finally {
@@ -363,16 +380,21 @@ async function packageProject(directory) {
     mkdirSync(dirname(join(target, path)), { recursive: true });
     cpSync(join(directory, path), join(target, path));
   }
-  const transformed = stripTypeScriptTypes(readFileSync(join(directory, entrypoint), 'utf8'), { mode: 'transform', sourceMap: true, sourceUrl: entrypoint });
-  const marker = '\n//# sourceMappingURL=data:application/json;base64,';
-  const [javascript, encoded] = transformed.split(marker);
-  if (existsSync(join(target, 'index.js')) || existsSync(join(target, 'index.js.map')) || existsSync(join(target, 'package-report.json'))) fail('package_generated_file_conflict');
-  await writeFile(join(target, 'index.js'), `${javascript}\n//# sourceMappingURL=index.js.map\n`);
-  await writeFile(join(target, 'index.js.map'), Buffer.from(encoded.trim(), 'base64'));
+  if (existsSync(join(target, 'package-report.json'))) fail('package_generated_file_conflict');
+  const sourceMaps = [];
+  for (const path of [entrypoint, ...(inspected.manifest.assets ?? [])].filter(path => path.endsWith('.ts'))) {
+    const transformed = stripTypeScriptTypes(readFileSync(join(directory, path), 'utf8'), { mode: 'transform', sourceMap: true, sourceUrl: basename(path) });
+    const [javascript, encoded] = transformed.split('\n//# sourceMappingURL=data:application/json;base64,');
+    const output = path.slice(0, -3) + '.js';
+    if (existsSync(join(target, output)) || existsSync(join(target, output + '.map'))) fail('package_generated_file_conflict');
+    await writeFile(join(target, output), `${javascript}\n//# sourceMappingURL=${basename(output)}.map\n`);
+    await writeFile(join(target, output + '.map'), Buffer.from(encoded.trim(), 'base64'));
+    sourceMaps.push(output + '.map');
+  }
   const packaged = engineJson(['inspect', target]);
   if (packaged.sha256 !== inspected.sha256) fail('package_integrity_changed');
-  await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: packaged.sha256, source_map: 'index.js.map', manifest: packaged.manifest });
-  process.stdout.write(`${JSON.stringify({ package: target, sha256: packaged.sha256, source_map: join(target, 'index.js.map') }, null, 2)}\n`);
+  await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: packaged.sha256, source_maps: sourceMaps, manifest: packaged.manifest });
+  process.stdout.write(`${JSON.stringify({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) }, null, 2)}\n`);
 }
 
 function watchProject(directory, store, once) {
@@ -395,7 +417,7 @@ function watchProject(directory, store, once) {
       trustPackage(store, directory);
     }
     files = new Set(['mod.json', inspected.manifest.entrypoint ?? 'index.ts', ...(inspected.manifest.assets ?? []), ...Object.values(inspected.manifest.lifecycle ?? {})]);
-    if (existsSync(join(directory, 'index.tsx'))) files.add('index.tsx');
+    for (const source of jsxSources(directory)) files.add(source);
     const result = engineJson(['reload', store]);
     copyDeclarations(store, directory);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);

@@ -12,7 +12,8 @@ const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const HINT = '↑↓ move · space toggle · tab more · esc close';
 
 export default function activate(api: ModAPI) {
-  const saved = (): Saved => ({ ...EMPTY, ...(api.state.get() as Partial<Saved> | null ?? {}) });
+  const compare = new Intl.Collator().compare;
+  const saved = (): Saved => ({ ...EMPTY, ...(api.uiState.get() as Partial<Saved> | null ?? {}), onboarded: (api.state.get() as { onboarded?: boolean } | null)?.onboarded ?? false });
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
   const key = (item: PackageState) => `${item.scope}:${item.id}`;
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(' ') || id;
@@ -20,7 +21,7 @@ export default function activate(api: ModAPI) {
   const refresh = (state: Saved, notice: string | null): Saved => {
     const listed = api.host.tryCall('packages.list', null);
     if (!listed.ok) return { ...state, packages: [], notice: `The mod list is unavailable (${listed.error})` };
-    const packages = [...listed.value.packages].sort((a, b) => friendly(a.id).localeCompare(friendly(b.id)) || a.scope.localeCompare(b.scope));
+    const packages = [...listed.value.packages].sort((a, b) => compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
     return { ...state, packages, generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
   };
   const apply = (state: Saved, request: PackageRequest, label: string): Saved => {
@@ -104,17 +105,17 @@ export default function activate(api: ModAPI) {
   api.command('mods', input => {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/);
     const current = saved();
-    if (verb === 'close') { api.state.set({ ...current, ...CLOSED }); return null; }
+    if (verb === 'close') { api.uiState.set({ ...current, ...CLOSED }); return { terminal: null }; }
     const state = ['details', 'back', 'filter', 'cancel', 'apply', 'pick', 'version', 'scope', 'installed'].includes(verb) && current.packages.length ? current : refresh(current, null);
     const next = act(state, verb === 'open' ? '' : verb, rest.join(' '));
     const open = current.open || !verb || verb === 'open';
-    api.state.set({ ...next, open });
-    if (open) return null;
+    api.uiState.set({ ...next, open });
+    if (open) return { terminal: { sites: { dialog: { mode: 'wrap', components: [{ type: 'slot' }, dialog(next)] } } } };
     return { display: next.review ? `${reviewText(next.review)}\nRun /mods apply or /mods cancel` : next.notice ?? 'No change' };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
   api.on('component_event', event => {
     if (!event.component.startsWith('omd_mods_') || !event.events?.some(input => 'key' in input && input.key === 'Esc')) return;
-    api.state.set({ ...saved(), ...CLOSED });
+    api.uiState.set({ ...saved(), ...CLOSED });
   });
 
   // Dialog height counts text lines, so long text is wrapped here instead of by the renderer.
@@ -241,10 +242,9 @@ export default function activate(api: ModAPI) {
     return lines.map((text, index) => line(`welcome_${index}`, 'Getting started', text, index ? 'muted' : 'normal', 2, 56));
   };
   api.on('terminal', (input): TerminalPatch | null => {
-    let state = saved();
+    const state = saved();
     const phase = input.presentation?.phase;
-    if (input.event === 'startup' && state.open) api.state.set(state = { ...state, ...CLOSED });
-    if (!state.onboarded && phase && phase !== 'fresh') api.state.set({ ...state, onboarded: true });
+    if (!state.onboarded && phase && phase !== 'fresh') api.state.set({ onboarded: true });
     const intro = !state.onboarded && phase === 'fresh';
     if (!intro && !state.open) return null;
     return { sites: {

@@ -16,6 +16,7 @@ pub struct SessionIndex<'a> {
     pub database: Option<&'a Path>,
     pub repository: &'a Path,
     pub enabled: bool,
+    pub tools: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -318,28 +319,77 @@ impl SessionIndex<'_> {
                     .to_owned();
                 continue;
             }
-            if !in_scope
-                || value["type"] != "response_item"
-                || payload["type"] != "message"
-                || !matches!(payload["role"].as_str(), Some("user" | "assistant"))
-                || payload["channel"] == "analysis"
-            {
+            if !in_scope || value["type"] != "response_item" {
                 continue;
             }
-            let text = payload["content"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|item| matches!(item["type"].as_str(), Some("input_text" | "output_text")))
-                .filter_map(|item| item["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            if text.is_empty() {
-                continue;
+            let parts = |content: &Value| {
+                content
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| {
+                        matches!(item["type"].as_str(), Some("input_text" | "output_text"))
+                    })
+                    .filter_map(|item| item["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let mut record = json!({"session_id":id,"turn_id":turn,"item":index+1,"timestamp":value["timestamp"],"untrusted":true});
+            let (field, text) = match payload["type"].as_str() {
+                Some("message")
+                    if matches!(payload["role"].as_str(), Some("user" | "assistant"))
+                        && payload["channel"] != "analysis" =>
+                {
+                    let text = parts(&payload["content"]);
+                    if text.is_empty() {
+                        continue;
+                    }
+                    record["kind"] = json!("message");
+                    record["role"] = payload["role"].clone();
+                    ("text", text)
+                }
+                Some(kind @ ("function_call" | "custom_tool_call" | "local_shell_call")) => {
+                    let name = if kind == "local_shell_call" {
+                        "local_shell"
+                    } else {
+                        payload["name"].as_str().unwrap_or_default()
+                    };
+                    let arguments = match kind {
+                        "function_call" => {
+                            payload["arguments"].as_str().unwrap_or_default().to_owned()
+                        }
+                        "custom_tool_call" => {
+                            payload["input"].as_str().unwrap_or_default().to_owned()
+                        }
+                        _ => payload["action"].to_string(),
+                    };
+                    record["kind"] = json!("tool_call");
+                    record["name"] = json!(name.chars().take(128).collect::<String>());
+                    record["call_id"] = payload["call_id"].clone();
+                    ("arguments", arguments)
+                }
+                Some("function_call_output" | "custom_tool_call_output") => {
+                    record["kind"] = json!("tool_result");
+                    record["call_id"] = payload["call_id"].clone();
+                    let output = match &payload["output"] {
+                        Value::String(text) => text.clone(),
+                        content => parts(content),
+                    };
+                    ("output", output)
+                }
+                _ => continue,
+            };
+            if field == "text" || self.tools {
+                let redacted = redact(&text);
+                let limited: String = redacted.chars().take(2048).collect();
+                record["truncated"] = json!(limited.len() < redacted.len());
+                record["redacted"] = json!(redacted != text);
+                record[field] = json!(limited);
+            } else {
+                record["bytes"] = json!(text.len());
+                record["sha256"] = json!(hash(text.as_bytes()));
             }
-            let redacted = redact(&text);
-            let limited: String = redacted.chars().take(2048).collect();
-            records.push(json!({"session_id":id,"turn_id":turn,"item":index+1,"role":payload["role"],"text":limited,"truncated":limited.len()<redacted.len(),"redacted":redacted!=text,"timestamp":value["timestamp"],"untrusted":true}));
+            records.push(record);
             if records.len() >= 4096 {
                 return Ok((records, true));
             }
@@ -451,7 +501,7 @@ impl SessionIndex<'_> {
                 }
                 let end = start.saturating_add(limit).min(rows.len());
                 Ok(
-                    json!({"sessions":rows[start..end],"cursor":(end<rows.len()).then(||format!("{revision}:{end}")),"revision":revision,"scan_truncated":truncated,"unavailable":unavailable,"projection":"local_visible_message_records"}),
+                    json!({"sessions":rows[start..end],"cursor":(end<rows.len()).then(||format!("{revision}:{end}")),"revision":revision,"scan_truncated":truncated,"unavailable":unavailable,"projection":"local_visible_records"}),
                 )
             }
             "sessions.read" => {
@@ -504,7 +554,7 @@ impl SessionIndex<'_> {
                     return Err(io::Error::other("session_record_exceeds_page"));
                 }
                 Ok(
-                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_message_records","projection_truncated":projection_truncated}),
+                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_records","projection_truncated":projection_truncated}),
                 )
             }
             _ => Err(io::Error::other("session_operation_unavailable")),

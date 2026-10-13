@@ -65,7 +65,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "contract.status"
                         | "workspace.fingerprint"
                 ))
-        || matches!(event, "component_event" | "command")
+        || matches!(event, "component_event" | "component_post" | "command")
             && (codex_omd::host::served(operation)
                 || codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation)
                 || matches!(
@@ -416,6 +416,14 @@ async fn run(
         .map_err(|e| e.to_string())?;
     }
     if operation == "sessions.snapshot" {
+        if !caller.grants.as_ref().is_some_and(|grants| {
+            grants
+                .capabilities
+                .iter()
+                .any(|cap| cap == "sessions_tools")
+        }) {
+            return Err("capability_denied: sessions_tools".into());
+        }
         let authority = authority(lead, call).await?;
         let scoped = Lead {
             permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
@@ -489,7 +497,7 @@ async fn run(
         let blit = started
             .as_ref()
             .filter(|arguments| arguments.get("raster").is_some())
-            .and_then(|_| super::expansion::blit_sink(lead, &caller));
+            .and_then(|_| super::expansion::blit_sink(core, lead, &caller));
         let thread = lead.thread.to_string();
         let result = tokio::task::spawn_blocking(move || {
             processes.call(
