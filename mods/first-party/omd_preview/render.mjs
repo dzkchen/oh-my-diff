@@ -232,7 +232,7 @@ for (const part of dirname(output).split('/')) {
   if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is a link or file, not a directory; remove it to preview here`);
 }
 // An exclusive temporary file renamed over the page replaces a planted link instead of writing through it.
-const temporary = `${output}.${process.pid}.tmp`;
+const temporary = join(dirname(output), `.${process.pid}.tmp`);
 writeFileSync(temporary, html, { flag: 'wx' });
 try { renameSync(temporary, output); } catch (error) { rmSync(temporary, { force: true }); throw error; }
 process.stdout.write(resolve(output));

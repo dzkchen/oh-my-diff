@@ -20,12 +20,14 @@ host gives that hook no host operations. When the turn starts, queued paths
 that Git tracks or would track count as a use. Ignored and missing files are
 not learned. Recency counts submitted uses, not wall
 time. Up to 512 strongest entries are kept in repository-scoped mod storage,
-trimmed to a serialized UTF-8 value below 48,000 bytes (including JSON escaping),
-so reading and rewriting it fits one callback's receipt budget. Every history
-entry a ranking would show is checked first, in at most four 64-path batches;
-a renamed or deleted file is skipped, the next entry takes its place, and the
-gone entries are dropped from storage in one write. Entries beyond the checked
-batches wait for a later ranking rather than appear unchecked.
+trimmed to a serialized UTF-8 value below 32,000 bytes (including JSON escaping).
+Every history entry a ranking would show is checked first, in at most four
+64-path batches that fit the callback's receipt budget beside the history read
+and rewrite and at most 16,000 bytes of `git status`; a renamed or deleted file
+is skipped, the next entry takes its place, and the gone entries are dropped
+from storage in one write. Entries beyond the checked batches wait for a later
+ranking rather than appear unchecked; a failed check shows its entries
+unverified and forgets none.
 
 **Owner.** The mod owns the exclusive `completion` replacement for `@`
 mentions. The host sends each mod command's argument completion to that

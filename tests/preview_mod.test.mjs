@@ -20,6 +20,7 @@ let draft = { text: '', cursor: 0, selection: null, revision: 1, attachments: []
 
 const stores = new Map();
 const watching = repository => stores.get(`${repository}\0watch`)?.value;
+let racing = null;
 
 function invoke(repository, state, event, payload, name, settings = {}, modSource = source) {
   const calls = [];
@@ -30,6 +31,8 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     if (operation === 'store.get') return stores.get(key) ?? null;
     if (operation === 'store.put') {
       assert.notEqual(args.value, null, 'store_value_required');
+      racing?.(key);
+      racing = null;
       const revision = (stores.get(key)?.revision ?? null);
       if (revision !== args.expected_revision) throw new Error('store_revision_conflict');
       stores.set(key, { value: args.value, revision: (revision ?? 0) + 1, provenance: { thread_id: 'thread-1' } });
@@ -109,20 +112,20 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.equal(watching(repository).hashes['docs/a.md'], createHash('sha256').update(readFileSync(join(repository, 'docs/a.md'))).digest('hex'));
     const early = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
     assert.deepEqual(early.calls.at(-1).arguments, { key: 'poll', delay_ms: 2000 });
-    const page = readFileSync(join(repository, '.omd/preview/files/docs%2Fa.md.html'), 'utf8');
+    const page = readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8');
     assert.match(page, /data-watch="1"/);
-    assert.match(page, /src="\.\.\/\.\.\/\.\.\/docs\/pic\.png"/);
+    assert.match(page, /src="\.\.\/\.\.\/\.\.\/\.\.\/docs\/pic\.png"/);
     assert.match(page, /<span class="math">\\\(x\^2\\\)<\/span>/);
     assert.match(page, /mermaid@12\.0\.0\/dist\/mermaid\.min\.js" integrity="sha384-/);
 
     writeFileSync(join(repository, 'docs/a.md'), '# First change before polling\n');
     const synced = invoke(repository, watched.state, 'timer', { key: 'poll' });
-    assert.match(readFileSync(join(repository, '.omd/preview/files/docs%2Fa.md.html'), 'utf8'), /First change before polling/);
+    assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /First change before polling/);
     assert.deepEqual(synced.calls.at(-1).arguments, { key: 'poll', delay_ms: 2000 });
     writeFileSync(join(repository, 'docs/a.md'), '# Changed [[Other note|see]]\n');
     const polled = invoke(repository, synced.state, 'timer', { key: 'poll' });
     assert.equal(polled.calls.filter(call => call.operation === 'exec.run').length, 1);
-    assert.match(readFileSync(join(repository, '.omd/preview/files/docs%2Fa.md.html'), 'utf8'), /<h1 id="[^"]*">Changed <a href="\.\.\/\.\.\/\.\.\/docs\/Other%20note\.md">see<\/a><\/h1>/);
+    assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /<h1 id="[^"]*">Changed <a href="\.\.\/\.\.\/\.\.\/\.\.\/docs\/Other%20note\.md">see<\/a><\/h1>/);
     command('unwatch');
     assert.deepEqual(watching(repository).watch, []);
     assert.deepEqual(invoke(repository, null, 'timer', { key: 'poll' }).calls.map(call => call.operation), ['store.get']);
@@ -164,7 +167,7 @@ test('preview replaces a planted page link and refuses a linked output directory
   }
 });
 
-test('watched previews keep one page per source and repository and retry a failed render', () => {
+test('watched previews keep one page per source and repository and retry a failed render after the next change', () => {
   const [first, second] = [0, 1].map(() => realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-watch-'))));
   const page = name => readFileSync(join(first, '.omd/preview/files', name), 'utf8');
   const poll = repository => invoke(repository, null, 'timer', { key: 'poll' }).calls;
@@ -177,7 +180,7 @@ test('watched previews keep one page per source and repository and retry a faile
       writeFileSync(join(repository, 'response'), 'plain');
     }
     for (const text of ['docs/a.md --watch', 'docs__a.md --watch', 'response']) invoke(first, null, 'command', text, 'preview');
-    assert.match(page('docs%2Fa.md.html'), /Nested/);
+    assert.match(page('docs/a.md.html'), /Nested/);
     assert.match(page('docs__a.md.html'), /Flat/);
     assert.match(page('response.html'), /plain/);
     assert.equal(statSync(join(first, '.omd/preview/response.html'), { throwIfNoEntry: false }), undefined);
@@ -189,10 +192,18 @@ test('watched previews keep one page per source and repository and retry a faile
     symlinkSync('../../elsewhere', join(first, '.omd/preview/files'));
     writeFileSync(join(first, 'docs/a.md'), '# Nested again\n');
     assert.equal(renders(poll(first)), 1);
-    rmSync(join(first, '.omd/preview/files'));
-    assert.equal(renders(poll(first)), 1);
-    assert.match(page('docs%2Fa.md.html'), /Nested again/);
     assert.equal(renders(poll(first)), 0);
+    rmSync(join(first, '.omd/preview/files'));
+    writeFileSync(join(first, 'docs/a.md'), '# Nested once more\n');
+    assert.equal(renders(poll(first)), 1);
+    assert.match(page('docs/a.md.html'), /Nested once more/);
+    assert.equal(renders(poll(first)), 0);
+
+    const deep = `${'d'.repeat(100)}/${'雪'.repeat(80)}/${'f'.repeat(240)}.md`;
+    mkdirSync(join(first, deep, '..'), { recursive: true });
+    writeFileSync(join(first, deep), '# Deep\n');
+    assert.equal(invoke(first, null, 'command', deep, 'preview').value.display, `Opened ${deep} in the browser`);
+    assert.match(page(`${deep}.html`), /Deep/);
   } finally {
     for (const repository of [first, second]) rmSync(repository, { recursive: true, force: true });
   }
@@ -212,7 +223,32 @@ test('inline file previews read a bounded prefix and refuse content whose JSON e
     const control = command('control.diff --inline');
     assert.equal(control.value.display, 'Cannot show control.diff inline (host_result_limit); /preview control.diff opens it in the browser');
     assert.equal(control.state, null);
+    writeFileSync(join(repository, 'crlf.md'), 'line\r\n'.repeat(1_000));
+    const crlf = command('crlf.md --inline');
+    assert.equal(crlf.value.display, 'Showing the first 4 KB inline; /preview without --inline opens all of it in the browser');
+    assert.equal(crlf.state.inline.text, `${'line\n'.repeat(667)}li`);
+    writeFileSync(join(repository, 'snow.md'), '雪'.repeat(2_000));
+    assert.equal(command('snow.md --inline').state.inline.text, '雪'.repeat(1_333));
+    writeFileSync(join(repository, 'image.md'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00, 0x41]));
+    const binary = command('image.md --inline');
+    assert.equal(binary.value.display, 'Cannot show image.md inline (not UTF-8 text); /preview image.md opens it in the browser');
+    assert.equal(binary.state, null);
   } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('a watch that loses its save race says it is not watched', () => {
+  const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-race-')));
+  try {
+    writeFileSync(join(repository, 'a.md'), '# A\n');
+    racing = key => stores.set(key, { value: { watch: ['b.md'], hashes: {} }, revision: 9, provenance: { thread_id: 'thread-1' } });
+    const { value, calls } = invoke(repository, null, 'command', 'a.md --watch', 'preview');
+    assert.equal(value.display, 'Opened a.md in the browser; not watched: store_revision_conflict');
+    assert.deepEqual(watching(repository).watch, ['b.md']);
+    assert.ok(!calls.some(call => call.operation === 'events.publish'));
+  } finally {
+    racing = null;
     rmSync(repository, { recursive: true, force: true });
   }
 });
