@@ -19,9 +19,13 @@ shows the draft's pasted images above the composer.
 ```
 
 The bundled renderer (`render.mjs`, a package asset) runs in `node` from `PATH`
-through `exec.run` and writes `.omd/preview/NAME.html` in the repository, so
-file size is not limited by the mod callback budget (files up to 5 MB;
-responses up to about 48 KB). Markdown is converted in the package: headings,
+through `exec.run` and writes `.omd/preview/response.html` for a response and
+`.omd/preview/files/PATH.html` for a file, mirroring the repository-relative
+path so different files never share a page. File size is not limited by
+the mod callback budget (files up to 5 MB; responses up to about 48 KB). The
+renderer refuses a link or file in place of an output directory and publishes
+each page by renaming a freshly created file over it, so a planted link is
+replaced rather than written through. Markdown is converted in the package: headings,
 emphasis, links, images, lists and task lists, block quotes, tables, fenced and
 indented code, `$…$` and `$$…$$` math and `mermaid` fences. Raw HTML in the
 source is escaped, links and images keep only http(s), mailto, anchor and
@@ -33,14 +37,20 @@ or Mermaid 12.0.0 from jsDelivr with SRI hashes only when it uses them; offline,
 code stays plain and math and diagrams stay as source. The page follows the
 browser's light or dark theme.
 
-`--watch` records the file and checks its hash every two seconds on a host
+`--watch` records the file in repository-scoped mod storage, so each
+repository keeps its own watches, and checks its hash every two seconds on a host
 timer, so edits by the agent, commands or other programs re-render it, also in
-gitignored directories such as `.omd/notes`; the open page reloads every two
-seconds, keeping its scroll position. `[[Note]]`, `[[Note|label]]` and
+gitignored directories such as `.omd/notes`; a failed render is retried after
+the file's next change, and the open page reloads every two seconds, keeping its scroll position.
+A watch that cannot be saved (for example after a concurrent change) is reported
+as not watched. `[[Note]]`, `[[Note|label]]` and
 `[[Note#heading]]` wiki links render as links to `Note.md` beside the file. `--inline` shows Markdown, code and diffs
 with the terminal's own components in a scrollable dialog (the first 4 KB of
-Markdown or code and 48 KB of a diff, with CRLF, tabs and terminal escapes
-normalized); images and math render only in the browser. A declined
+Markdown or code and 48 KB of a diff, read with `head -c` so only that prefix
+enters the callback, with CRLF, tabs and terminal escapes normalized, and a
+note whenever the file continues past what is shown); a prefix that is not
+UTF-8 text or whose JSON escaping would exceed the callback's receipt budget is
+refused with the browser preview as the fallback. Images and math render only in the browser. A declined
 or unavailable browser leaves the written path in the message.
 
 ## Mermaid diagrams in responses
