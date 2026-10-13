@@ -1669,7 +1669,9 @@ detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
 reduced motion, other protocols and inline viewports use ASCII fallback.
 Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
 Components add `document` (up to 100,000 lines with anchors, selection and
-find), `diff`, `image`, `raster` and `terminal` (a PTY session). An `image`
+find), `diff`, `image`, `raster` and `terminal` (a PTY session). Updating only a
+document's anchors updates activation targets without resetting its cursor,
+selection or scroll, including when source-backed text is unchanged. An `image`
 places a Kitty graphics image in its cells, aspect-fit to the measured cell
 size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
 and hides under dialogs and overlays like text); elsewhere it draws truecolor
@@ -1741,6 +1743,8 @@ something is pending: a mount, new props or size, queued input, or a due
 `every: {ms, tick}` tick (16 ms to 24 h, at most 8 missed ticks caught up;
 `ms` may be a function of the state, and `null` pauses ticks, so a paused
 module costs nothing until input or new props arrive).
+In the terminal, removing a node or changing its owner or module starts a new
+mount. Results, retries and undelivered posts from the previous mount are discarded.
 `key(state, {kind: 'key', key, text})` receives keys while the node, given
 `keys: true`, has focus from a click or Tab (Esc and Ctrl+] return focus;
 pasted text arrives as one event with `key: null`);
@@ -2682,7 +2686,8 @@ any it refuses.
   same process, store, repository, thread and package identity. Commands and
   component events may write; other callbacks may read. Writes commit only after
   successful validation and cancellation checks, with revision conflicts using
-  the existing receipt-replay rules. State is cleared on reload, revocation,
+  the existing receipt-replay rules. Authority polling with unchanged configuration
+  preserves UI state and command views. State is cleared on explicit reload, revocation,
   package changes and session teardown, and is never written to disk. Durable
   `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
   state for preferences that must survive a restart.

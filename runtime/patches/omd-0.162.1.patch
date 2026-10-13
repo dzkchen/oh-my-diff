@@ -68456,7 +68456,7 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..5341311d9
+index 000000000..bdc1e6b7b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,832 @@
@@ -69150,7 +69150,7 @@ index 000000000..5341311d9
 +            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
 +        };
 +        let result = runtime
-+            .reload()
++            .refresh_authority()
 +            .map_err(|_| "callback_cancelled".to_owned())
 +            .and_then(|_| {
 +                (runtime.generation() == generation
@@ -69246,7 +69246,7 @@ index 000000000..5341311d9
 +            let mut runtime = runtime
 +                .lock()
 +                .unwrap_or_else(std::sync::PoisonError::into_inner);
-+            if runtime.reload().is_err() {
++            if runtime.refresh_authority().is_err() {
 +                return false;
 +            }
 +            runtime.generation() == generation
@@ -71322,10 +71322,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..7167a21ed
+index 000000000..d6317ccb3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5114 @@
+@@ -0,0 +1,5223 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -74177,6 +74177,115 @@ index 000000000..7167a21ed
 +    assert_eq!(
 +        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
 +        "process_raster_revoked"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn surface_authority_polling_preserves_ui_and_in_flight_callbacks() {
++    let fixture = fixture(&[Package {
++        id: "control",
++        capabilities: &["commands", "terminal", "composer"],
++        manifest: Value::Null,
++        source: "export default api => { api.on('terminal', () => ({title:'Control'})); api.command('open', () => { api.uiState.set(7); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('read', () => api.uiState.get()); api.command('poll', () => { const before = api.uiState.get(); api.host.call('composer.read', null); api.uiState.set(before + 1); return before + 1; }); };",
++    }])
++    .unwrap();
++    let opened = command(&fixture.core, "control", "open");
++    let (grants, generation) = {
++        let mut runtime = fixture.core.runtime.lock().unwrap();
++        let generation = runtime.generation();
++        let view = runtime
++            .command_view("control", generation, opened["terminal"].clone(), &json!({}))
++            .unwrap();
++        assert!(view.component_owners.contains_key("own"));
++        (runtime.grants("control"), generation)
++    };
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let caller = Caller {
++        id: "control",
++        source: &source,
++        grants,
++        generation,
++        origin: Origin::UserCommand,
++        record_changes: false,
++    };
++    struct Queued(std::sync::mpsc::Sender<codex_omd::client_surface::SurfaceCall>);
++    impl codex_omd::client_surface::ClientSurface for Queued {
++        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
++            self.0.send(call).map_err(|error| error.to_string())
++        }
++    }
++    let (sender, receiver) = std::sync::mpsc::channel();
++    let registration = codex_omd::client_surface::register(Arc::new(Queued(sender)));
++    let handle = tokio::runtime::Handle::current();
++    std::thread::scope(|scope| {
++        let pending = scope.spawn(|| {
++            codex_omd::invoke_shared(
++                &fixture.core.runtime,
++                "control",
++                generation,
++                "command",
++                "poll",
++                Value::Null,
++                || true,
++                |_, request| {
++                    handle
++                        .block_on(surface(
++                            &fixture.core,
++                            &fixture.lead,
++                            &caller,
++                            request,
++                            &Arc::new(AtomicBool::new(false)),
++                        ))
++                        .map_err(std::io::Error::other)
++                },
++                |_| {},
++            )
++        });
++        let call = receiver
++            .recv_timeout(std::time::Duration::from_secs(5))
++            .unwrap();
++        assert_eq!(call.operation, "composer.read");
++        // Exercise client-side validity checks and allow the queued wait loop to poll too.
++        for _ in 0..3 {
++            assert!((call.validity.0)());
++            std::thread::sleep(std::time::Duration::from_millis(25));
++            assert_eq!(command(&fixture.core, "control", "read"), json!(7));
++            let mut runtime = fixture.core.runtime.lock().unwrap();
++            runtime
++                .command_view("control", generation, opened["terminal"].clone(), &json!({}))
++                .unwrap();
++            let view = runtime.terminal_view(json!({}), || true);
++            assert_eq!(
++                view.component_owners.get("own").map(String::as_str),
++                Some("control")
++            );
++        }
++        call.reply
++            .send(Ok(json!({"text":"", "cursor":0, "selection":null, "revision":0,
++                "attachments":[], "suggestion":null})))
++            .unwrap();
++        assert_eq!(pending.join().unwrap().unwrap(), json!(8));
++    });
++    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
++    drop(registration);
++    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
++    assert!(
++        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true))
++            .unwrap_err()
++            .starts_with("client_surface_unavailable")
++    );
++    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
++    fixture.core.runtime.lock().unwrap().reload().unwrap();
++    assert!(command(&fixture.core, "control", "read").is_null());
++    assert!(
++        !fixture
++            .core
++            .runtime
++            .lock()
++            .unwrap()
++            .terminal_view(json!({}), || true)
++            .component_owners
++            .contains_key("own")
 +    );
 +}
 +
@@ -100574,10 +100683,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..2ae2c0d4d
+index 000000000..19b359f04
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5765 @@
+@@ -0,0 +1,5768 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -103139,23 +103248,23 @@ index 000000000..2ae2c0d4d
 +        let mut host = ModHost::open(root.clone()).unwrap();
 +        let reads = store::READS.get();
 +        for _ in 0..100 {
-+            assert!(!host.reload().unwrap());
++            assert!(!host.refresh_authority().unwrap());
 +        }
 +        assert_eq!(store::READS.get(), reads);
 +        host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-+        assert!(!host.reload().unwrap());
++        assert!(!host.refresh_authority().unwrap());
 +        assert!(store::READS.get() > reads);
 +        let path = root.join("mods.json");
 +        let original = std::fs::read(&path).unwrap();
 +        std::fs::write(&path, b"invalid").unwrap();
-+        assert!(host.reload().is_err());
-+        assert!(host.reload().is_err());
++        assert!(host.refresh_authority().is_err());
++        assert!(host.refresh_authority().is_err());
 +        std::fs::write(&path, original).unwrap();
-+        assert!(!host.reload().unwrap());
++        assert!(!host.refresh_authority().unwrap());
 +        let moved = root.join("moved.json");
 +        std::fs::rename(&path, &moved).unwrap();
 +        std::os::unix::fs::symlink(&moved, &path).unwrap();
-+        assert!(host.reload().is_err());
++        assert!(host.refresh_authority().is_err());
 +    }
 +}
 +type Authority = (
@@ -103300,7 +103409,6 @@ index 000000000..2ae2c0d4d
 +    location: store::StateLocation,
 +    loaded: Loaded,
 +    dynamic: Vec<String>,
-+    previous_state: Value,
 +    node: PathBuf,
 +    virtual_time_ms: Option<u64>,
 +    started: Instant,
@@ -103790,6 +103898,11 @@ index 000000000..2ae2c0d4d
 +        for loaded in self.loaded.values_mut() {
 +            loaded.clear_ui();
 +        }
++        self.refresh_authority()
++    }
++
++    /// Refresh package authority without resetting UI state when configuration is unchanged.
++    pub fn refresh_authority(&mut self) -> Result<bool> {
 +        self.reload_guarded(&|| true)
 +    }
 +
@@ -105085,7 +105198,6 @@ index 000000000..2ae2c0d4d
 +                .flatten()
 +                .map(|tool| tool.name.clone())
 +                .collect(),
-+            previous_state: loaded.state.clone(),
 +            loaded,
 +            node: self.node.clone(),
 +            virtual_time_ms: self.virtual_time_ms,
@@ -105260,7 +105372,7 @@ index 000000000..2ae2c0d4d
 +        if generation != self.generation {
 +            return result.map(|(value, _)| value);
 +        }
-+        let (started, previous_state) = (invocation.started, invocation.previous_state);
++        let (started, previous_state) = (invocation.started, invocation.loaded.state);
 +        let current = self
 +            .loaded
 +            .get_mut(id)
@@ -130165,10 +130277,10 @@ index 000000000..9f64a20d4
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 000000000..519c5c3d7
+index 000000000..9ee95b313
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,525 @@
+@@ -0,0 +1,506 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::ModHost;
@@ -130674,25 +130786,6 @@ index 000000000..519c5c3d7
 +    assert_eq!(stored, json!({"schema":1,"version":1,"value":1}));
 +    assert!(!state("beta").exists());
 +    assert!(!state("gamma").exists());
-+}
-+
-+#[test]
-+fn retired_pi_host_operations_are_rejected_before_activation() {
-+    let temp = TempDir::new().unwrap();
-+    let (root, store) = workspace(&temp);
-+    let reader = written(
-+        &root,
-+        "reader",
-+        "export default api => api.command('resources', () => api.host.call('pi.discover', null))",
-+        &["commands"],
-+        json!({}),
-+    );
-+    trust(&store, &reader, &["commands"]);
-+    let error = error_of(&host(&temp), "reader");
-+    assert!(
-+        error.contains("unsupported_host_operation: pi.discover"),
-+        "{error}"
-+    );
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
@@ -131943,10 +132036,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..086463c0f
+index 000000000..0d38a556a
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5727 @@
+@@ -0,0 +1,5713 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -132867,24 +132960,6 @@ index 000000000..086463c0f
 +}
 +
 +#[test]
-+fn retired_api_packages_are_rejected_before_trust_or_activation() {
-+    let temp = TempDir::new().unwrap();
-+    let root = temp.path().canonicalize().unwrap();
-+    let path = package(&root, "retired", "export default () => {}", &[]);
-+    for version in 4..=9 {
-+        let retired = format!("0.1.0-experimental.{version}");
-+        let manifest_path = path.join("mod.json");
-+        let mut manifest: Value =
-+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-+        manifest["api"] = json!(retired);
-+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-+        let error = ModStore::inspect_package(&path).unwrap_err().to_string();
-+        assert!(error.contains(&retired), "{error}");
-+        assert!(error.contains(MOD_API_VERSION), "{error}");
-+    }
-+}
-+
-+#[test]
 +fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
@@ -132910,6 +132985,10 @@ index 000000000..086463c0f
 +        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 +        let error = ModStore::inspect_package(&path).unwrap_err().to_string();
 +        assert!(error.contains(expected), "{field}: {error}");
++        if field == "api" {
++            assert!(error.contains("9.0.0"), "{error}");
++            assert!(error.contains(MOD_API_VERSION), "{error}");
++        }
 +        assert!(
 +            error.contains("package") || error.contains("host"),
 +            "{error}"
@@ -135934,13 +136013,13 @@ index 000000000..086463c0f
 +}
 +
 +#[test]
-+fn retired_git_host_operations_are_rejected() {
++fn unsupported_host_operations_are_rejected_before_activation() {
 +    let source =
-+        "export default api => api.command('probe', () => api.host.call('git.status', null))";
++        "export default api => api.command('probe', () => api.host.call('future.unsupported', null))";
 +    let (temp, _, _) = fixture(source, &["commands"]);
 +    let error = activation_error(&temp, "fixture");
 +    assert!(
-+        error.contains("unsupported_host_operation: git.status"),
++        error.contains("unsupported_host_operation: future.unsupported"),
 +        "{error}"
 +    );
 +}
@@ -151547,10 +151626,10 @@ index 000000000..500ee1f77
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..1ec84e2a2
+index 000000000..83c908196
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,644 @@
+@@ -0,0 +1,656 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -151959,6 +152038,7 @@ index 000000000..1ec84e2a2
 +        Content::Source(reference) => resolve(reference, owners),
 +        _ => Ok(Vec::new()),
 +    };
++    let supplied_anchors = !matches!(&content, Content::Diff(_)) && resolved.is_ok();
 +    let key = match &content {
 +        Content::Spans(lines) => {
 +            format!("spans:{}", serde_json::to_string(lines).unwrap_or_default())
@@ -152040,6 +152120,17 @@ index 000000000..1ec84e2a2
 +                ..Document::default()
 +            };
 +        }
++    }
++    if supplied_anchors
++        && !document.anchors.iter().map(Option::as_ref).eq(
++            (0..document.lines.len()).map(|index| anchors.get(index)),
++        )
++    {
++        document.anchors = Arc::new(
++            (0..document.lines.len())
++                .map(|index| anchors.get(index).cloned())
++                .collect(),
++        );
 +    }
 +    if selected != document.applied_selection {
 +        document.applied_selection = selected;
@@ -152197,10 +152288,10 @@ index 000000000..1ec84e2a2
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..4b697c0fb
+index 000000000..02e1968da
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,371 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -152356,11 +152447,11 @@ index 000000000..4b697c0fb
 +        "c".to_owned(),
 +        "d".to_owned(),
 +    ];
-+    let render = |focused| {
++    let render = |focused, anchors: &[String]| {
 +        text(&rows(
 +            "doc-a",
 +            Content::Spans(&lines),
-+            &anchors,
++            anchors,
 +            None,
 +            None,
 +            Some(2),
@@ -152370,10 +152461,10 @@ index 000000000..4b697c0fb
 +            "",
 +        ))
 +    };
-+    assert_eq!(render(false), vec!["  alpha", "  beta"]);
++    assert_eq!(render(false, &anchors), vec!["  alpha", "  beta"]);
 +    handle("doc-a", DocumentKey::Down);
 +    handle("doc-a", DocumentKey::Down);
-+    let focused = render(true);
++    let focused = render(true, &anchors);
 +    assert_eq!(focused.len(), 2);
 +    assert!(focused[1].ends_with("gamma"));
 +    assert_eq!(
@@ -152385,6 +152476,20 @@ index 000000000..4b697c0fb
 +        Some(("doc-a".to_owned(), None))
 +    );
 +    assert_eq!(height("doc-a", 0, Some(2)), 2);
++    let view = documents()["doc-a"].view.clone();
++    let updated = anchors.iter().map(|anchor| format!("new-{anchor}")).collect::<Vec<_>>();
++    render(true, &updated);
++    assert_eq!(documents()["doc-a"].view, view);
++    handle("doc-a", DocumentKey::Escape);
++    assert_eq!(
++        handle("doc-a", DocumentKey::Activate),
++        Some(("doc-a".to_owned(), Some("new-b".to_owned())))
++    );
++    render(true, &[]);
++    assert_eq!(
++        handle("doc-a", DocumentKey::Activate),
++        Some(("doc-a".to_owned(), Some("2".to_owned())))
++    );
 +}
 +
 +#[test]
@@ -153392,13 +153497,16 @@ index 000000000..8e4a9d37f
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
-index 000000000..5da3e5105
+index 000000000..52ab64dec
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module.rs
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,467 @@
 +use std::collections::HashMap;
++use std::sync::Arc;
 +use std::sync::Mutex;
 +use std::sync::OnceLock;
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::Ordering;
 +use std::time::Duration;
 +use std::time::Instant;
 +
@@ -153416,6 +153524,7 @@ index 000000000..5da3e5105
 +
 +/// One mounted `module` component: its latest tree and the input waiting for its next frame step.
 +struct Instance {
++    generation: u64,
 +    owner: String,
 +    module: String,
 +    props: Value,
@@ -153434,7 +153543,26 @@ index 000000000..5da3e5105
 +
 +static INSTANCES: Mutex<Option<HashMap<String, Instance>>> = Mutex::new(None);
 +static WORKER: OnceLock<std::thread::Thread> = OnceLock::new();
-+static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
++static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
++
++struct Post {
++    id: String,
++    generation: u64,
++    owner: String,
++    payload: Value,
++}
++
++impl Post {
++    fn current(&self, instances: &HashMap<String, Instance>) -> bool {
++        current_generation(instances, &self.id, self.generation)
++    }
++}
++
++fn current_generation(instances: &HashMap<String, Instance>, id: &str, generation: u64) -> bool {
++    instances
++        .get(id)
++        .is_some_and(|instance| instance.generation == generation)
++}
 +
 +fn instances<T>(run: impl FnOnce(&mut HashMap<String, Instance>) -> T) -> T {
 +    let mut instances = INSTANCES
@@ -153486,7 +153614,7 @@ index 000000000..5da3e5105
 +        }
 +        let lines = match &instance.failed {
 +            Some(error) => vec![failure_line(owner, module, error)],
-+            None => composed(instance, width),
++            None => composed(instance, width).to_vec(),
 +        };
 +        let step = instance.failed.is_none()
 +            && (instance.changed
@@ -153530,19 +153658,19 @@ index 000000000..5da3e5105
 +}
 +
 +/// The tree's lines at `width`, composed once per tree and width.
-+fn composed(instance: &mut Instance, width: u16) -> Vec<Line<'static>> {
-+    if let Some((cached, lines)) = &instance.composed
-+        && *cached == width
++fn composed(instance: &mut Instance, width: u16) -> &[Line<'static>] {
++    if !instance
++        .composed
++        .as_ref()
++        .is_some_and(|(cached, _)| *cached == width)
 +    {
-+        return lines.clone();
-+    }
-+    let lines: Vec<Line<'static>> =
-+        crate::mod_render::compose_lines(&instance.tree, width, None, Vec::new())
++        let lines = crate::mod_render::compose_lines(&instance.tree, width, None, Vec::new())
 +            .into_iter()
 +            .map(|line| line.line)
 +            .collect();
-+    instance.composed = Some((width, lines.clone()));
-+    lines
++        instance.composed = Some((width, lines));
++    }
++    &instance.composed.as_ref().expect("composed above").1
 +}
 +
 +fn failure_line(owner: &str, module: &str, error: &str) -> Line<'static> {
@@ -153550,8 +153678,14 @@ index 000000000..5da3e5105
 +    Line::from(format!("{owner}: {module}: {error}")).dim()
 +}
 +
++fn next_generation() -> u64 {
++    static GENERATION: AtomicU64 = AtomicU64::new(1);
++    GENERATION.fetch_add(1, Ordering::Relaxed)
++}
++
 +fn fresh(owner: &str, module: &str) -> Instance {
 +    Instance {
++        generation: next_generation(),
 +        owner: owner.to_owned(),
 +        module: module.to_owned(),
 +        props: Value::Null,
@@ -153628,6 +153762,7 @@ index 000000000..5da3e5105
 +            .values_mut()
 +            .filter(|instance| instance.failed.is_some())
 +        {
++            instance.generation = next_generation();
 +            instance.failed = None;
 +            instance.mounted = false;
 +            instance.changed = true;
@@ -153642,6 +153777,7 @@ index 000000000..5da3e5105
 +
 +struct Job {
 +    id: String,
++    generation: u64,
 +    owner: String,
 +    module: String,
 +    frame: Value,
@@ -153690,6 +153826,7 @@ index 000000000..5da3e5105
 +        instance.stepped = Some(now);
 +        Ok(Job {
 +            id,
++            generation: instance.generation,
 +            owner: instance.owner.clone(),
 +            module: instance.module.clone(),
 +            frame,
@@ -153700,7 +153837,7 @@ index 000000000..5da3e5105
 +
 +fn work() {
 +    loop {
-+        let job = match next_job() {
++        let mut job = match next_job() {
 +            Ok(job) => job,
 +            Err(wait) => {
 +                match wait {
@@ -153710,66 +153847,85 @@ index 000000000..5da3e5105
 +                continue;
 +            }
 +        };
-+        let Some(result) = crate::mod_runtime::component(&job.owner, &job.module, job.frame) else {
-+            instances(|instances| {
-+                if let Some(instance) = instances.get_mut(&job.id) {
-+                    let mut events = job.events;
-+                    events.append(&mut instance.events);
-+                    instance.events = events;
-+                    instance.changed = true;
-+                    instance.stepped = Some(Instant::now() + RETRY);
-+                }
-+            });
-+            continue;
-+        };
-+        let post = instances(|instances| {
-+            let instance = instances.get_mut(&job.id)?;
-+            Some(match result {
-+                Ok(step) => {
-+                    instance.mounted = true;
-+                    instance.due = step["next_ms"]
-+                        .as_u64()
-+                        .map(|ms| Instant::now() + Duration::from_millis(ms));
-+                    if let Ok(tree) =
-+                        serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
-+                        && tree != instance.tree
-+                    {
-+                        instance.tree = tree;
-+                        instance.composed = None;
-+                        crate::mod_render::schedule_frame(Duration::ZERO);
-+                    }
-+                    step["post"]
-+                        .as_object()
-+                        .map(|post| (job.owner.clone(), json!({"component": job.id, "module": job.module, "data": post["data"]})))
-+                }
-+                Err(error) => {
-+                    instance.failed = Some(error);
-+                    instance.mounted = false;
-+                    instance.tree.clear();
-+                    instance.composed = None;
-+                    crate::mod_render::schedule_frame(Duration::ZERO);
-+                    None
-+                }
-+            })
-+        });
++        let result = crate::mod_runtime::component(
++            &job.owner,
++            &job.module,
++            std::mem::take(&mut job.frame),
++        );
++        let post = instances(|instances| finish_job(instances, &mut job, result));
 +        match post {
 +            Some(Some(post)) => deliver(post),
 +            Some(None) => {}
-+            None => codex_omd::component_unmount(&job.owner, &job.id),
++            None => instances(|instances| {
++                // Replacement/removal already unmounted the old runner. A late step may
++                // recreate it, but must never tear down a same-owner replacement runner.
++                if instances
++                    .get(&job.id)
++                    .is_none_or(|instance| instance.owner != job.owner)
++                {
++                    codex_omd::component_unmount(&job.owner, &job.id);
++                }
++            }),
 +        }
 +    }
 +}
 +
++fn finish_job(
++    instances: &mut HashMap<String, Instance>,
++    job: &mut Job,
++    result: Option<Result<Value, String>>,
++) -> Option<Option<Post>> {
++    let instance = instances.get_mut(&job.id)?;
++    if instance.generation != job.generation {
++        return None;
++    }
++    let Some(result) = result else {
++        let mut events = std::mem::take(&mut job.events);
++        events.append(&mut instance.events);
++        instance.events = events;
++        instance.changed = true;
++        instance.stepped = Some(Instant::now() + RETRY);
++        return Some(None);
++    };
++    Some(match result {
++        Ok(step) => {
++            instance.mounted = true;
++            instance.due = step["next_ms"]
++                .as_u64()
++                .map(|ms| Instant::now() + Duration::from_millis(ms));
++            if let Ok(tree) = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
++                && tree != instance.tree
++            {
++                instance.tree = tree;
++                instance.composed = None;
++                crate::mod_render::schedule_frame(Duration::ZERO);
++            }
++            step["post"].as_object().map(|post| Post {
++                id: job.id.clone(),
++                generation: job.generation,
++                owner: job.owner.clone(),
++                payload: json!({"component": job.id, "module": job.module, "data": post["data"]}),
++            })
++        }
++        Err(error) => {
++            instance.failed = Some(error);
++            instance.mounted = false;
++            instance.tree.clear();
++            instance.composed = None;
++            crate::mod_render::schedule_frame(Duration::ZERO);
++            None
++        }
++    })
++}
++
 +/// A post reaches the owner's `component_post` hooks off the frame worker; a newer post from the same instance replaces an undelivered one.
-+fn deliver(post: (String, Value)) {
++fn deliver(post: Post) {
 +    static SENDER: OnceLock<std::thread::Thread> = OnceLock::new();
 +    {
 +        let mut posts = POSTS
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        posts.retain(|(owner, queued)| {
-+            *owner != post.0 || queued["component"] != post.1["component"]
-+        });
++        posts.retain(|queued| queued.owner != post.owner || queued.id != post.id);
 +        posts.push(post);
 +    }
 +    SENDER
@@ -153783,8 +153939,21 @@ index 000000000..5da3e5105
 +                        (!posts.is_empty()).then(|| posts.remove(0))
 +                    };
 +                    match next {
-+                        Some((owner, payload)) => {
-+                            crate::mod_runtime::invoke_event(&owner, "component_post", payload);
++                        Some(post) => {
++                            if instances(|instances| post.current(instances)) {
++                                let id = post.id;
++                                let generation = post.generation;
++                                crate::mod_runtime::invoke_event_guarded(
++                                    &post.owner,
++                                    "component_post",
++                                    post.payload,
++                                    Arc::new(move || {
++                                        instances(|instances| {
++                                            current_generation(instances, &id, generation)
++                                        })
++                                    }),
++                                );
++                            }
 +                        }
 +                        None => std::thread::park(),
 +                    }
@@ -153794,6 +153963,153 @@ index 000000000..5da3e5105
 +            .clone()
 +        })
 +        .unpark();
++}
++
++#[cfg(test)]
++#[path = "mod_module_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/mod_module_tests.rs b/codex-rs/tui/src/mod_module_tests.rs
+new file mode 100644
+index 000000000..9aceab1eb
+--- /dev/null
++++ b/codex-rs/tui/src/mod_module_tests.rs
+@@ -0,0 +1,137 @@
++use super::*;
++use std::sync::Arc;
++use std::sync::mpsc;
++
++fn tree(text: &str) -> Vec<ModComponent> {
++    serde_json::from_value(json!([
++        {"type": "text", "id": "body", "label": "body", "text": text}
++    ]))
++    .expect("valid component tree")
++}
++
++fn take_job(instance: &mut Instance) -> Job {
++    instance.changed = false;
++    Job {
++        id: "module".to_owned(),
++        generation: instance.generation,
++        owner: instance.owner.clone(),
++        module: instance.module.clone(),
++        frame: Value::Null,
++        events: std::mem::take(&mut instance.events),
++    }
++}
++
++#[test]
++fn replacement_during_step_rejects_old_success_error_and_retry() {
++    for (owner, module, remount) in [
++        ("new-owner", "old-module", false),
++        ("owner", "new-module", false),
++        ("owner", "old-module", true),
++    ] {
++        for result in [
++            Some(Ok(json!({
++                "tree": tree("obsolete"), "next_ms": 1,
++                "post": {"data": {"obsolete": true}}
++            }))),
++            Some(Err("obsolete failure".to_owned())),
++            None,
++        ] {
++            let mut original = fresh("owner", "old-module");
++            original.events = vec![json!({"old": true})];
++            let mut job = take_job(&mut original);
++            let mounted = Arc::new(Mutex::new(HashMap::from([(
++                job.id.clone(), original,
++            )])));
++            let (started, stepping) = mpsc::channel();
++            let (release, response) = mpsc::channel();
++            let worker_instances = Arc::clone(&mounted);
++            let worker = std::thread::spawn(move || {
++                // Hold the old step open until the test replaces or remounts its ID.
++                started.send(()).unwrap();
++                let result = response.recv().unwrap();
++                finish_job(&mut worker_instances.lock().unwrap(), &mut job, result).is_none()
++            });
++            stepping.recv().unwrap();
++            let due = Instant::now() + Duration::from_secs(10);
++            let stepped = Instant::now();
++            {
++                let mut mounted = mounted.lock().unwrap();
++                if remount {
++                    mounted.remove("module");
++                }
++                let mut replacement = fresh(owner, module);
++                replacement.tree = tree("replacement");
++                replacement.composed = Some((20, vec![Line::raw("cached replacement")]));
++                replacement.events = vec![json!({"new": true})];
++                replacement.changed = false;
++                replacement.mounted = true;
++                replacement.due = Some(due);
++                replacement.stepped = Some(stepped);
++                mounted.insert("module".to_owned(), replacement);
++            }
++            release.send(result).unwrap();
++            assert!(worker.join().unwrap(), "obsolete completion produced a post/result");
++            let mounted = mounted.lock().unwrap();
++            let replacement = &mounted["module"];
++            assert_eq!(replacement.tree, tree("replacement"));
++            assert_eq!(replacement.failed, None);
++            assert!(replacement.mounted);
++            assert!(!replacement.changed);
++            assert_eq!(replacement.due, Some(due));
++            assert_eq!(replacement.stepped, Some(stepped));
++            assert_eq!(replacement.events, vec![json!({"new": true})]);
++            assert_eq!(
++                replacement.composed.as_ref().unwrap().1,
++                vec![Line::raw("cached replacement")]
++            );
++        }
++    }
++}
++
++#[test]
++fn current_completion_retries_and_posts_but_queued_posts_expire_on_remount() {
++    let mut original = fresh("owner", "module");
++    original.events = vec![json!({"first": true})];
++    let mut job = take_job(&mut original);
++    original.events = vec![json!({"second": true})];
++    let mut mounted = HashMap::from([(job.id.clone(), original)]);
++    assert!(matches!(finish_job(&mut mounted, &mut job, None), Some(None)));
++    assert_eq!(
++        mounted["module"].events,
++        vec![json!({"first": true}), json!({"second": true})]
++    );
++    assert!(mounted["module"].changed);
++    assert!(mounted["module"].stepped.is_some());
++
++    let mut job = take_job(mounted.get_mut("module").unwrap());
++    let post = finish_job(
++        &mut mounted,
++        &mut job,
++        Some(Ok(json!({
++            "tree": tree("current"), "next_ms": 5,
++            "post": {"data": {"current": true}}
++        }))),
++    )
++    .flatten()
++    .expect("current step posts");
++    assert!(post.current(&mounted));
++    assert_eq!(post.owner, "owner");
++    assert_eq!(post.payload, json!({
++        "component": "module", "module": "module", "data": {"current": true}
++    }));
++    assert_eq!(mounted["module"].tree, tree("current"));
++    assert!(mounted["module"].mounted);
++    assert!(mounted["module"].due.is_some());
++    mounted.remove("module");
++    assert!(!post.current(&mounted));
++    mounted.insert("module".to_owned(), fresh("owner", "module"));
++    assert!(!post.current(&mounted));
++
++    let mut job = take_job(mounted.get_mut("module").unwrap());
++    assert!(matches!(
++        finish_job(&mut mounted, &mut job, Some(Err("current failure".to_owned()))),
++        Some(None)
++    ));
++    assert_eq!(mounted["module"].failed.as_deref(), Some("current failure"));
++    assert!(!mounted["module"].mounted);
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
@@ -155730,10 +156046,10 @@ index 000000000..8773d6788
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..d336ec1e3
+index 000000000..7c395bc09
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,700 @@
+@@ -0,0 +1,710 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -155873,6 +156189,28 @@ index 000000000..d336ec1e3
 +    running: bool,
 +    revision: Option<(u64, u64)>,
 +    cleared: u64,
++}
++
++impl Engine {
++    fn remember(
++        &mut self,
++        key: u64,
++        instance: (String, String),
++        rendered: Option<Rendered>,
++        cleared: u64,
++    ) -> bool {
++        if self.done.len() >= DONE_LIMIT {
++            self.done.clear();
++        }
++        if self.latest.len() >= DONE_LIMIT {
++            self.latest.clear();
++        }
++        // A render started before the cache was cleared may reflect older state.
++        if self.cleared == cleared {
++            self.done.insert(key, rendered.clone());
++        }
++        self.latest.insert(instance, rendered.clone()).flatten() != rendered
++    }
 +}
 +
 +static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
@@ -156127,19 +156465,7 @@ index 000000000..d336ec1e3
 +            schedule_frame(RETRY);
 +            continue;
 +        };
-+        let changed = engine(|engine| {
-+            if engine.done.len() >= DONE_LIMIT {
-+                engine.done.clear();
-+            }
-+            if engine.latest.len() >= DONE_LIMIT {
-+                engine.latest.clear();
-+            }
-+            // A render started before the cache was cleared may reflect older state.
-+            if engine.cleared == cleared {
-+                engine.done.insert(key, rendered.clone());
-+            }
-+            engine.latest.insert(instance, rendered.clone()).flatten() != rendered
-+        });
++        let changed = engine(|engine| engine.remember(key, instance, rendered, cleared));
 +        if changed {
 +            if retained {
 +                EPOCH.fetch_add(1, Ordering::Relaxed);
@@ -156173,12 +156499,12 @@ index 000000000..d336ec1e3
 +    let input = input(target, width);
 +    let instance = (target.component.to_owned(), target.id.clone());
 +    if WAITING.with(Cell::get) {
++        let cleared = engine(|engine| engine.cleared);
 +        let Some(rendered) = run(input) else {
 +            return engine(|engine| engine.latest.get(&instance).cloned().flatten());
 +        };
 +        engine(|engine| {
-+            engine.done.insert(key, rendered.clone());
-+            engine.latest.insert(instance, rendered.clone());
++            engine.remember(key, instance, rendered.clone(), cleared);
 +        });
 +        return rendered;
 +    }
@@ -156436,10 +156762,10 @@ index 000000000..d336ec1e3
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 000000000..4eecc0fba
+index 000000000..7ca758b14
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,204 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -156450,6 +156776,47 @@ index 000000000..4eecc0fba
 +
 +fn tree(value: Value) -> Vec<ModComponent> {
 +    serde_json::from_value(value).unwrap()
++}
++
++#[test]
++#[serial_test::serial]
++fn inline_renders_bound_both_caches_across_state_invalidations() {
++    struct Restore(bool, Option<Engine>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            HOOKED.store(self.0, Ordering::Relaxed);
++            *ENGINE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = self.1.take();
++        }
++    }
++    let _restore = Restore(
++        HOOKED.swap(true, Ordering::Relaxed),
++        ENGINE.lock().unwrap().take(),
++    );
++    let _wait = Wait::enter();
++    for invalidated in [false, true] {
++        for index in 0..=DONE_LIMIT {
++            let target = RenderTarget::new(
++                "assistant_message",
++                format!("inline-{invalidated}-{index}"),
++                false,
++                json!({"text": "cached response"}),
++            );
++            resolve(&target, 80);
++            let (done, latest, newest) = engine(|engine| {
++                (
++                    engine.done.len(),
++                    engine.latest.len(),
++                    engine.latest.contains_key(&(target.component.to_owned(), target.id.clone())),
++                )
++            });
++            assert!(done > 0 && done <= DONE_LIMIT);
++            assert!(latest <= DONE_LIMIT);
++            assert!(newest);
++            if invalidated {
++                forget();
++            }
++        }
++    }
 +}
 +
 +#[test]
@@ -156605,10 +156972,10 @@ index 000000000..4eecc0fba
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..977c38e24
+index 000000000..c16a88b13
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1618 @@
+@@ -0,0 +1,1633 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -157525,12 +157892,27 @@ index 000000000..977c38e24
 +}
 +
 +pub(crate) fn invoke_event(id: &str, event: &str, payload: Value) -> Option<Result<Value, String>> {
++    invoke_event_guarded(id, event, payload, Arc::new(|| true))
++}
++
++pub(crate) fn invoke_event_guarded(
++    id: &str,
++    event: &str,
++    payload: Value,
++    current: Arc<dyn Fn() -> bool + Send + Sync>,
++) -> Option<Result<Value, String>> {
++    if !current() {
++        return None;
++    }
 +    let paths = crate::omd::mod_paths()?;
 +    let runtime = shared_host(paths.store.clone()?).ok()?;
 +    let (generation, grants, before) = {
 +        let mut runtime = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if !current() {
++            return None;
++        }
 +        reload(&mut runtime);
 +        if !runtime.registered(id, event) {
 +            return None;
@@ -157553,7 +157935,7 @@ index 000000000..977c38e24
 +        epoch,
 +        context: codex_omd::app_routes::InvocationContext::Event,
 +        thread: thread.as_deref(),
-+        active: Arc::new(active),
++        active: Arc::new(move || active() && current()),
 +    };
 +    let result = codex_omd::invoke_shared(
 +        &runtime,

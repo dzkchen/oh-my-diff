@@ -2559,23 +2559,23 @@ mod reload_tests {
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
-            assert!(!host.reload().unwrap());
+            assert!(!host.refresh_authority().unwrap());
         }
         assert_eq!(store::READS.get(), reads);
         host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         assert!(store::READS.get() > reads);
         let path = root.join("mods.json");
         let original = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"invalid").unwrap();
-        assert!(host.reload().is_err());
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
+        assert!(host.refresh_authority().is_err());
         std::fs::write(&path, original).unwrap();
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         let moved = root.join("moved.json");
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
     }
 }
 type Authority = (
@@ -2720,7 +2720,6 @@ struct Invocation {
     location: store::StateLocation,
     loaded: Loaded,
     dynamic: Vec<String>,
-    previous_state: Value,
     node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
@@ -3210,6 +3209,11 @@ impl ModHost {
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
+        self.refresh_authority()
+    }
+
+    /// Refresh package authority without resetting UI state when configuration is unchanged.
+    pub fn refresh_authority(&mut self) -> Result<bool> {
         self.reload_guarded(&|| true)
     }
 
@@ -4505,7 +4509,6 @@ impl ModHost {
                 .flatten()
                 .map(|tool| tool.name.clone())
                 .collect(),
-            previous_state: loaded.state.clone(),
             loaded,
             node: self.node.clone(),
             virtual_time_ms: self.virtual_time_ms,
@@ -4680,7 +4683,7 @@ impl ModHost {
         if generation != self.generation {
             return result.map(|(value, _)| value);
         }
-        let (started, previous_state) = (invocation.started, invocation.previous_state);
+        let (started, previous_state) = (invocation.started, invocation.loaded.state);
         let current = self
             .loaded
             .get_mut(id)

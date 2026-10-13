@@ -623,7 +623,7 @@ export interface ModAPI {
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
-  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */
+  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. Unchanged authority polling preserves it; explicit reload resets it. */
   readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;
