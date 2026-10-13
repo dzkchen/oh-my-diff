@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "757b547d330217916b0c51e3905cb631b94b1f1ef0be202e998c6d2d6e431966"
+    "sha256": "101ce8d4540c637067dde4b0b05d12c9361a83afdf6559374074c353aa4c98aa"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -893,7 +893,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "962326d226e7145716322cf55f150c6fad592d1652033aacac3c22e67425c80b"
+      "after": "ca15f29dc8e7e13679e22b18cf46af03013a3c81783bc48d08489cfabe4f83a1"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
@@ -901,11 +901,11 @@
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
-      "after": "66e980950c1c2746757330cf531901ae178957d22b7e35d3073eef7c421ed050"
+      "after": "bdd04ebb8dc73fd8a7a5435b6b47818ed8fbdebda86b52f8228cdb837f8ba204"
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
-      "after": "e862d1d417c4dd44f79e22baf6c5560c1d005fa35906582bfe1b7ea4cea39a49"
+      "after": "2263a8190968c4e1384a955ecf5fa7e8bb3a92ce18096137285540c02f6486a1"
     },
     "codex-rs/ext/omd/src/mods/autonomy.rs": {
       "before": null,
@@ -953,7 +953,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "152dc9b00020e2c096c8ed5a5d054924a6ff827faa3b28fe4c50643fb4883473"
+      "after": "77757b86b2967dd0eab20674fa964983d92d29904e50ed9f8df1e079e0bcd00e"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1173,11 +1173,11 @@
     },
     "codex-rs/omd/src/event_bus.rs": {
       "before": null,
-      "after": "81a828fac108f0ef329dc0bab1885ebae76a377c92e67d917b70e5c03a5357c6"
+      "after": "8d0715f2a8da1d54cad9adebb7fcbc91867fb6aebc4c36256c8f088ad5218387"
     },
     "codex-rs/omd/src/event_bus_tests.rs": {
       "before": null,
-      "after": "553c3d68264f117e492c467613ad49595e81558c519a962e5505b24ccac10889"
+      "after": "f3fa72a8d69a643cccd3adea44d225efe0fa24d8c7302fb034fa8f7a77fe730d"
     },
     "codex-rs/omd/src/frame_metrics.rs": {
       "before": null,
@@ -1221,7 +1221,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "1ca3fcd93794a941edaeb44d86997b172108b749caa6c0e9d40ff6df86cacc98"
+      "after": "e23d9a9dc96884832d460d4be1303839c63930ea2d82fc81bac95f5af9cb811c"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1229,7 +1229,7 @@
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
-      "after": "036e5b9b493c537044158c33b22ac251cff652bae26bf6f13afb75b91caa2a27"
+      "after": "515cb55bbaced3902559d016e5e516a3f778a117f7565f95e8aed2cd89bff1eb"
     },
     "codex-rs/omd/src/mods/chain.rs": {
       "before": null,
@@ -1389,7 +1389,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "edacf944f8790d768643b6ad54a757ec5fd77eecb251f493d8629c0ac08d7c90"
+      "after": "78b875c1bd9d53d533106826f49415ebf6bc30cbf92088e1fb6f07a5bcfdae13"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,

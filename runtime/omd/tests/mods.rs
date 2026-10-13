@@ -13,6 +13,14 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::TempDir;
 
+#[test]
+fn model_fork_requires_tool_history_authority() {
+    let call = codex_omd::ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"p"}) };
+    assert_eq!(call.capabilities().unwrap(), vec!["agents", "sessions", "sessions_tools"]);
+    let complete = codex_omd::ModHostCall { operation: "model.complete".into(), arguments: json!({"route":"w","prompt":"p"}) };
+    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
+}
+
 fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
     packaged(root, id, id, source, capabilities, &[])
 }
@@ -2448,6 +2456,14 @@ fn task_scoped_tool_decisions_cannot_select_another_mod_or_hide_unscoped_tools()
 
 #[test]
 fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
+    for capabilities in [vec!["commands", "agents"], vec!["commands", "agents", "sessions"]] {
+        let (temp, _, _) = fixture(
+            "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
+            &capabilities,
+        );
+        let error = activation_error(&temp, "fixture");
+        assert!(error.contains("undeclared_operation_use: model.fork"), "{error}");
+    }
     let (temp, _, _) = fixture(
         "export default api => api.command('status',()=>api.host.call('task.status',null))",
         &["commands"],
@@ -2484,6 +2500,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
+        &["commands", "agents", "sessions", "sessions_tools"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
         &["commands", "agents", "sessions", "sessions_tools"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));

@@ -1731,7 +1731,7 @@
       "replace": null,
       "timing": "background delivery at safe points",
       "ownership": "mod: subscriptions and payloads; host: namespaces, queues, watch roots and debounce",
-      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 16 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; timer deliveries spaced at least 16 ms apart per owner/thread (up to 60 per second), coalescing repeated pending keys",
+      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; independent channel counters capped at 256 per publisher and 4096 globally, new channels refused with channel_sequence_limit; reclaim publisher counters on publication after 15 minutes without successful publication and with no queued events, then restart at 1; 16 watches and 16 timers per mod (configurable); timers from 16 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; timer deliveries spaced at least 16 ms apart per owner/thread (up to 60 per second), coalescing repeated pending keys",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1753,6 +1753,8 @@
       },
       "evidence": [
         "patch:publishers_are_namespaced_and_subscribers_filter_by_pattern",
+        "patch:channel_sequence_admission_is_bounded_per_publisher_and_globally",
+        "patch:channel_sequences_expire_only_after_publisher_idle_and_queue_drain",
         "patch:slow_subscribers_drop_oldest_and_see_the_count",
         "patch:external_changes_are_reported_relative_to_the_root",
         "patch:channel_events_reach_subscribers_in_order",
@@ -2010,7 +2012,7 @@
       "replace": null,
       "timing": "event, tool, timer and channel callbacks and terminal commands in the session's process",
       "ownership": "mod: prompt, options and route; host: route grants, admission, settlement, interception and cancellation",
-      "limits": "prompt ≤ 8 KiB, system ≤ 8 KiB, context ≤ 32 KiB; ≤ 300 s; `agents` (and `sessions` for forks); `lead` only for a lead route listing the mod; a response cut at `max_output_tokens` returns `incomplete` with its streamed text",
+      "limits": "prompt ≤ 8 KiB, system ≤ 8 KiB, context ≤ 32 KiB; ≤ 300 s; `agents` (and `sessions` plus `sessions_tools` for forks); `lead` only for a lead route listing the mod; a response cut at `max_output_tokens` returns `incomplete` with its streamed text",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -2023,6 +2025,7 @@
       },
       "evidence": [
         "patch:model_completions_use_only_configured_worker_routes",
+        "patch:model_fork_checks_history_authority_before_access",
         "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses",
         "patch:completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports"
       ],

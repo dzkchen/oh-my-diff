@@ -1843,6 +1843,13 @@ impl Agents {
             return Err("model_tools_require_fork".into());
         }
         let history = if fork {
+            for capability in ["sessions", "sessions_tools"] {
+                if !caller.grants.as_ref().is_some_and(|grants| {
+                    grants.capabilities.iter().any(|granted| granted == capability)
+                }) {
+                    return Err(format!("capability_denied: {capability}"));
+                }
+            }
             let manager = lead
                 .host
                 .manager

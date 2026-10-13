@@ -47,6 +47,29 @@ struct Body {
     done: bool,
 }
 
+struct StreamRead<'a> {
+    streams: &'a Mutex<BTreeMap<u64, Stream>>,
+    handle: u64,
+    owner: &'a str,
+    generation: u64,
+    active: bool,
+}
+
+impl Drop for StreamRead<'_> {
+    fn drop(&mut self) {
+        if self.active
+            && let Ok(mut streams) = self.streams.lock()
+            && streams.get(&self.handle).is_some_and(|stream| {
+                stream.owner == self.owner
+                    && stream.generation == self.generation
+                    && stream.body.is_none()
+            })
+        {
+            streams.remove(&self.handle);
+        }
+    }
+}
+
 /// HTTP streams and MCP servers a session's mods hold; both end with the mod generation that opened them.
 pub(crate) struct AccessState {
     streams: Mutex<BTreeMap<u64, Stream>>,
@@ -456,24 +479,36 @@ async fn http(
             let status = response.status().as_u16();
             let headers = response_headers(&response);
             let handle = lead.session.access.next.fetch_add(1, Ordering::Relaxed) + 1;
-            lead.session
+            let mut streams = lead
+                .session
                 .access
                 .streams
                 .lock()
-                .map_err(|_| "http_streams_poisoned")?
-                .insert(
-                    handle,
-                    Stream {
-                        owner: caller.id.to_owned(),
-                        generation,
-                        used: Instant::now(),
-                        body: Some(Body {
-                            response,
-                            pending: Vec::new(),
-                            done: false,
-                        }),
-                    },
-                );
+                .map_err(|_| "http_streams_poisoned")?;
+            let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+            if runtime.generation() != generation
+                || !runtime
+                    .grants(caller.id)
+                    .is_some_and(|grants| grants.http_access.is_some())
+            {
+                return Err("host_caller_inactive".into());
+            }
+            if streams.values().filter(|stream| stream.owner == caller.id).count() >= STREAMS_PER_MOD {
+                return Err("http_stream_limit: at most 4 open streams".into());
+            }
+            streams.insert(
+                handle,
+                Stream {
+                    owner: caller.id.to_owned(),
+                    generation,
+                    used: Instant::now(),
+                    body: Some(Body {
+                        response,
+                        pending: Vec::new(),
+                        done: false,
+                    }),
+                },
+            );
             Ok(
                 json!({"handle": handle, "status": status, "url": url, "headers": headers, "redirects": hops}),
             )
@@ -499,16 +534,24 @@ async fn http(
                     .map_err(|_| "http_streams_poisoned")?;
                 let Some(stream) = streams
                     .get_mut(&input.handle)
-                    .filter(|stream| stream.owner == caller.id)
+                    .filter(|stream| stream.owner == caller.id && stream.generation == caller.generation)
                 else {
                     return Err("http_stream_unavailable".into());
                 };
-                stream.used = Instant::now();
                 if request.operation == "http.close" {
                     streams.remove(&input.handle);
                     return Ok(json!({"closed": true}));
                 }
-                stream.body.take().ok_or("http_stream_busy")?
+                let body = stream.body.take().ok_or("http_stream_busy")?;
+                stream.used = Instant::now();
+                body
+            };
+            let mut reservation = StreamRead {
+                streams: &lead.session.access.streams,
+                handle: input.handle,
+                owner: caller.id,
+                generation: caller.generation,
+                active: true,
             };
             let limit = input.max_bytes.unwrap_or(16 * 1024).clamp(1, READ_BYTES);
             let wait = Duration::from_millis(input.wait_ms.unwrap_or(0).min(MAX_WAIT_MS));
@@ -548,12 +591,17 @@ async fn http(
                     .streams
                     .lock()
                     .map_err(|_| "http_streams_poisoned")?;
-                if read.as_ref().is_ok_and(|(_, done)| *done) {
-                    streams.remove(&input.handle);
-                } else if let Some(stream) = streams.get_mut(&input.handle) {
-                    stream.body = Some(body);
+                if let Some(stream) = streams.get_mut(&input.handle).filter(|stream| {
+                    stream.owner == caller.id && stream.generation == caller.generation && stream.body.is_none()
+                }) {
+                    if read.as_ref().is_ok_and(|(_, done)| *done) {
+                        streams.remove(&input.handle);
+                    } else {
+                        stream.body = Some(body);
+                    }
                 }
             }
+            reservation.active = false;
             let (bytes, done) = read?;
             let (field, data) = content("data", &bytes);
             let mut result = json!({"done": done, "bytes": bytes.len()});
