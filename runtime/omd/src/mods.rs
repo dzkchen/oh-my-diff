@@ -1,6 +1,7 @@
 mod author;
 mod bridge;
 mod chain;
+mod persisted;
 mod render;
 pub use chain::ModChain;
 pub use chain::ModInterceptor;
@@ -9,11 +10,23 @@ pub use chain::access_receipt;
 pub use chain::compose_rows;
 pub use chain::continue_operation;
 pub use chain::intercept_shared;
+pub use persisted::PERSIST_CHUNK_BYTES;
+pub use persisted::PERSIST_WITHHELD;
+pub use persisted::PersistedRewrite;
+pub use persisted::persist_changed_by;
+pub use persisted::persist_chunks;
+pub use persisted::persist_cut;
+pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
+pub use render::component_detach;
+pub use render::component_events;
+pub use render::component_shared;
+pub use render::component_unmount;
 pub use render::render_shared;
 mod packages;
 mod view;
 pub use view::MOD_KEY_LIMIT;
+pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
 pub use view::ModAsciiBackdrop;
@@ -105,6 +118,8 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 fn profiling() -> bool {
     static PROFILING: OnceLock<bool> = OnceLock::new();
@@ -257,7 +272,7 @@ impl InvocationScope {
 
     fn charge_call(&self) -> Result<()> {
         let calls = self.calls.get();
-        if calls >= 32 {
+        if calls >= MAX_HOST_CALLS {
             return Err(failure("host_call_limit"));
         }
         self.calls.set(calls + 1);
@@ -279,6 +294,7 @@ impl InvocationScope {
 }
 
 pub const HOST_RECEIPT_BYTES: usize = 131_072;
+pub const MAX_HOST_CALLS: usize = 128;
 
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -288,7 +304,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_selection_v1",
     "terminal_copy_v1",
     "environment_overrides_v1",
-    "timers_100ms_v1",
+    "timers_16ms_v1",
     "author_diagnostics_v1",
     "author_offline_runner_v1",
     "author_tooling_v1",
@@ -317,6 +333,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "exec_output_artifacts_v1",
     "guarded_exec_v1",
     "package_text_assets_v1",
+    "package_imports_v1",
     "workspace_access_v1",
     "workspace_fs_v1",
     "workspace_snapshots_v1",
@@ -334,6 +351,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "builtins_v1",
     "contracts_v2",
     "framed_process_v1",
+    "process_streams_v1",
     "process_raster_v1",
     "raster_pixels_v1",
     "kernels_v1",
@@ -378,6 +396,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
     "render_hooks_v1",
+    "component_modules_v1",
     "ui_composition_v1",
     "ui_controls_v1",
     "reactive_state_v1",
@@ -395,6 +414,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "user_submissions_v1",
     "terminal_raster_v1",
     "svg_assets_v1",
+    "history_persist_v1",
+    "model_cache_v1",
     "composer_key_v1",
     "completion_tokens_v1",
     "mention_read_v1",
@@ -541,6 +562,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "agents",
     "store",
     "sessions",
+    "sessions_tools",
     "contracts",
     "builtins",
     "threads",
@@ -567,6 +589,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "peers",
     "autonomous",
     "history_write",
+    "history_persist",
 ];
 pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "os",
@@ -579,6 +602,7 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "peers",
     "autonomous",
     "history_write",
+    "history_persist",
 ];
 
 /// What a user accepts by granting the authority capabilities, shown before trust and in status.
@@ -618,6 +642,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
     }
+    if granted("history_persist") {
+        exposure.push("history_persist: this mod sees every text OMD stores for your sessions (prompts, instructions, replies, reasoning, tool arguments and results, command output, file changes and prompt recall) and may replace any of it before it is written, which changes what resume, fork, search and export show and what the model sees next; the live session keeps the original, and rewritten rows are marked.");
+    }
     exposure
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
@@ -656,6 +683,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("channel", "events"),
     ("timer", "events"),
     ("component_event", "terminal"),
+    ("component_post", "terminal"),
     ("view", "terminal"),
     ("focus", "terminal"),
     ("completion", "composer"),
@@ -700,6 +728,7 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("peer_receive", "peers"),
     ("turn_stop", "autonomous"),
     ("compaction", "compaction"),
+    ("history_persist", "history_persist"),
     ("elicitation", "approvals"),
     ("composer_edit", "composer"),
     ("composer_key", "composer"),
@@ -1066,6 +1095,12 @@ fn source_use(
             {
                 used.push("fs.write".to_owned());
             }
+            if !used.is_empty()
+                && matches!(operation.as_str(), "sessions.read" | "sessions.snapshot")
+                && declared("sessions_tools")
+            {
+                used.push("sessions_tools".to_owned());
+            }
             used
         };
         if used.is_empty() {
@@ -1153,6 +1188,7 @@ fn source_use(
         (".classify<", "agents"),
         (".rateLimits(", "account"),
         ("parent_history", "sessions"),
+        ("parent_history", "sessions_tools"),
     ] {
         if source.contains(call) {
             capabilities.insert(capability.to_owned());
@@ -1860,7 +1896,7 @@ impl ModPackage {
             return Err(failure("invalid_lifecycle_scripts"));
         }
         let assets: BTreeSet<_> = self.assets.iter().collect();
-        if self.assets.len() > 8
+        if self.assets.len() > 16
             || assets.len() != self.assets.len()
             || self
                 .assets
@@ -2371,6 +2407,10 @@ struct Registrations {
     #[serde(default)]
     agents: Vec<ModAgent>,
     #[serde(default)]
+    modules: Vec<String>,
+    #[serde(default)]
+    components: Vec<String>,
+    #[serde(default)]
     completions: Vec<ModCompletion>,
 }
 
@@ -2619,6 +2659,7 @@ pub struct ModHost {
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
@@ -2689,6 +2730,7 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
         "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
         "tool" if dynamic.iter().any(|tool| tool == name) => (),
         "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
+        "component" if loaded.registrations.components.iter().any(|c| c == name) => (),
         "intercept"
             if name
                 .parse::<usize>()
@@ -2721,7 +2763,7 @@ const SLEEP_LIMIT_MS: u64 = 60_000;
 
 /// Callbacks documented to run without host operations.
 fn hostless(event: &str, payload: &Value) -> bool {
-    event == "terminal"
+    matches!(event, "terminal" | "component")
         || event == "intercept"
             && matches!(
                 payload["surface"].as_str(),
@@ -2735,6 +2777,7 @@ fn hostless(event: &str, payload: &Value) -> bool {
                         | "composer_edit"
                         | "composer_key"
                         | "component_change"
+                        | "history_persist"
                 )
             )
 }
@@ -2801,6 +2844,9 @@ fn invoke(
     let thread = state_thread(&payload);
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64);
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();
@@ -2835,6 +2881,9 @@ fn invoke(
                         )));
                     }
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
+                }
+                if matches!(event, "terminal" | "component") {
+                    return host(id, call);
                 }
                 let mut call = call;
                 if call.operation == "turns.queue"
@@ -2894,7 +2943,7 @@ fn invoke(
                 result
             },
             progress,
-            invocation.virtual_time_ms,
+            Some(invocation.virtual_time_ms.unwrap_or(now_ms)),
             scope,
         )
     });
@@ -3084,6 +3133,7 @@ impl ModHost {
             admissions: BTreeMap::new(),
             brokered: None,
             required_surfaces: Arc::default(),
+            intercepted_surfaces: Arc::default(),
             environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
@@ -3190,7 +3240,7 @@ impl ModHost {
                 .collect(),
             reason,
         )];
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         self.configuration_sha256.clear();
     }
 
@@ -3305,7 +3355,7 @@ impl ModHost {
             .filter(|m| m.enabled && m.capabilities.iter().any(|c| c == "request_policy"))
             .map(|m| m.path.clone())
             .collect();
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
@@ -3335,7 +3385,7 @@ impl ModHost {
             self.dynamic_tools.clear();
         }
         self.unserved = self.unserved_targets(&user);
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         let selection_profile = Profile::new("selection_verification");
         let selected = Self::select(
             &selections,
@@ -3374,12 +3424,6 @@ impl ModHost {
                 if hash != selection.sha256 {
                     return Err(failure(format!(
                         "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-                        package.id
-                    )));
-                }
-                if files.values().map(String::len).sum::<usize>() > 128 * 1024 {
-                    return Err(failure(format!(
-                        "package_text_asset_input_limit: {}",
                         package.id
                     )));
                 }
@@ -3455,8 +3499,23 @@ impl ModHost {
                 for tool in &registrations.tools {
                     (self.tool_validator)(&tool.parameters)?;
                 }
+                let mut code = loaded.source.to_string();
+                for name in registrations
+                    .modules
+                    .iter()
+                    .filter(|name| !name.ends_with(".json"))
+                {
+                    if let Some(text) = loaded
+                        .assets
+                        .get(name)
+                        .and_then(|asset| asset["text"].as_str())
+                    {
+                        code.push('\n');
+                        code.push_str(text);
+                    }
+                }
                 let (source_use, unused_grants, unused_environment) =
-                    source_use(&loaded.source, &loaded.package, &registrations)?;
+                    source_use(&code, &loaded.package, &registrations)?;
                 Ok((registrations, source_use, unused_grants, unused_environment))
             })();
             if !active() {
@@ -3552,7 +3611,7 @@ impl ModHost {
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;
-        self.publish_required_surfaces();
+        self.publish_surfaces();
         if let Err(error) = self.write_installed_service_types() {
             self.reload_error = Some(format!("derived_types_unavailable: {error}"));
         }
@@ -3562,6 +3621,11 @@ impl ModHost {
     /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
     pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
         self.required_surfaces.clone()
+    }
+
+    /// Intercept surfaces with any interceptor, readable while another caller holds the runtime.
+    pub fn intercepted_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
+        self.intercepted_surfaces.clone()
     }
 
     pub fn environment(&self) -> Arc<crate::host::Environment> {
@@ -3578,7 +3642,7 @@ impl ModHost {
         );
     }
 
-    fn publish_required_surfaces(&self) {
+    fn publish_surfaces(&self) {
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
@@ -3589,6 +3653,14 @@ impl ModHost {
             .collect();
         if let Ok(mut published) = self.required_surfaces.lock() {
             *published = surfaces;
+        }
+        let intercepted = MOD_INTERCEPT_SURFACES
+            .iter()
+            .map(|(surface, _)| *surface)
+            .filter(|surface| self.intercepts(surface).is_some())
+            .collect();
+        if let Ok(mut published) = self.intercepted_surfaces.lock() {
+            *published = intercepted;
         }
     }
 
@@ -4074,6 +4146,7 @@ impl ModHost {
             || registrations.contracts.len() > 4
             || registrations.builtins.len() > 1
             || registrations.services.len() > 8
+            || registrations.components.len() > 16
         {
             return Err(failure("registration_limit_or_capability_denied"));
         }
@@ -4640,7 +4713,7 @@ impl ModHost {
                 ]
                 .iter()
                 .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
-                    && event != "service"
+                    && !matches!(event, "service" | "component")
                 {
                     current.fault(message);
                 }
@@ -5446,13 +5519,11 @@ impl ModHost {
     }
 
     pub fn registered(&self, id: &str, event: &str) -> bool {
-        self.loaded
-            .get(id)
-            .is_some_and(|m| {
-                m.error.is_none()
-                    && (m.registrations.events.iter().any(|e| e == event)
-                        || event == "completion" && !m.registrations.completions.is_empty())
-            })
+        self.loaded.get(id).is_some_and(|m| {
+            m.error.is_none()
+                && (m.registrations.events.iter().any(|e| e == event)
+                    || event == "completion" && !m.registrations.completions.is_empty())
+        })
     }
 
     /// Read-only launch identity for `Events.terminal.input.identity`.

@@ -3,6 +3,7 @@ use super::*;
 pub const MOD_KEY_LIMIT: usize = 12;
 pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
 pub const MOD_COMPONENT_LIMIT: usize = 64;
+pub const MOD_TEXT_BYTES: usize = 49_152;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -774,6 +775,19 @@ pub enum ModComponent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<ModCommandAction>,
     },
+    Module {
+        id: String,
+        label: String,
+        module: String,
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        props: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u16>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keys: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pointer: bool,
+    },
     Slot,
     Native {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -863,6 +877,7 @@ impl ModComponent {
             | Self::Terminal { id, .. }
             | Self::Image { id, .. }
             | Self::Raster { id, .. }
+            | Self::Module { id, .. }
             | Self::Diff { id, .. } => Some(id),
             Self::Slot | Self::Native { .. } => None,
         }
@@ -1266,6 +1281,25 @@ impl ModView {
             .values()
             .find_map(|site| find(&site.components, id))
     }
+
+    /// The registered module and props a `module` component `id` mounts.
+    pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
+        let mut found = Vec::new();
+        for site in self.sites.values() {
+            for component in &site.components {
+                component.descendants(&mut found);
+            }
+        }
+        found.into_iter().find_map(|component| match component {
+            ModComponent::Module {
+                id: instance,
+                module,
+                props,
+                ..
+            } if instance == id => Some((module.as_str(), props)),
+            _ => None,
+        })
+    }
 }
 
 pub fn mod_component_id(value: &str) -> bool {
@@ -1472,7 +1506,7 @@ impl ModComponent {
             | Self::Markdown { id, label, text }
             | Self::Code {
                 id, label, text, ..
-            } => identified(id, label, ids) && multiline(text, 4096),
+            } => identified(id, label, ids) && multiline(text, MOD_TEXT_BYTES),
             Self::Button {
                 id,
                 label,
@@ -1607,7 +1641,7 @@ impl ModComponent {
                         .flatten()
                         .map(|span| span.text.chars().count())
                         .sum::<usize>()
-                        <= 49_152
+                        <= MOD_TEXT_BYTES
                     && anchors.len() <= lines.len().max(2000)
                     && anchors.iter().all(|anchor| visible(anchor, 128))
                     && selected.is_none_or(|range| range.start <= range.end)
@@ -1626,7 +1660,7 @@ impl ModComponent {
                 action,
             } => {
                 identified(id, label, ids)
-                    && multiline(unified, 49_152)
+                    && multiline(unified, MOD_TEXT_BYTES)
                     && selected.is_none_or(|range| range.start <= range.end)
                     && height.is_none_or(|height| (1..=40).contains(&height))
                     && action.as_ref().is_none_or(ModCommandAction::valid)
@@ -1665,6 +1699,23 @@ impl ModComponent {
                     && width.is_none_or(|width| (1..=200).contains(&width))
                     && height.is_none_or(|height| (1..=40).contains(&height))
             }
+            Self::Module {
+                id,
+                label,
+                module,
+                props,
+                height,
+                ..
+            } => {
+                identified(id, label, ids)
+                    && module.len() <= 64
+                    && !module.is_empty()
+                    && module.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
+                    })
+                    && props.to_string().len() <= 4096
+                    && height.is_none_or(|height| (1..=40).contains(&height))
+            }
             Self::Slot | Self::Native { .. } => {
                 *slots += 1;
                 *slots <= 1
@@ -1672,7 +1723,7 @@ impl ModComponent {
         }
     }
 
-    fn contains(&self, found: &dyn Fn(&Self) -> bool) -> bool {
+    pub(super) fn contains(&self, found: &dyn Fn(&Self) -> bool) -> bool {
         found(self)
             || match self {
                 Self::Box { children, .. }

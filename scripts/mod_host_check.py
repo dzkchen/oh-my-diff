@@ -46,6 +46,7 @@ INTERCEPTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 REGISTRATIONS = {"tool": "tools", "command": "commands", "middleware": "middleware", "provide": "services", "contract": "contracts"}
 NATIVE_KEY = re.compile(r"""['"`](alt\+[bdfrvx]|ctrl\+shift\+f|f8)['"`]""", re.IGNORECASE)
+RELATIVE_IMPORT = re.compile(r"""^\s*(?:import|export)(?!\s+type\b)\b[^;]*?\bfrom\s*['"]\.\.?/""", re.MULTILINE)
 
 
 def manifest(path):
@@ -175,18 +176,26 @@ def problems_from_status(status, label, paths):
 
 def static_problems(path):
     found = []
-    schema = manifest(path).get("settings_schema", {}).get("properties", {})
+    package = manifest(path)
+    schema = package.get("settings_schema", {}).get("properties", {})
     found += [f"setting {key} has no default" for key, value in schema.items() if "default" not in value]
+    needed = {"package_text_assets_v1"} if package.get("assets") else set()
     commands, tools = [], 0
     for source in path.rglob("*.ts"):
         if "node_modules" in source.parts or source.name.endswith(".d.ts"):
             continue
         text = source.read_text()
         found += [f"{source.name}: key {key} belongs to the native keymap" for key in sorted(set(NATIVE_KEY.findall(text)))]
-        if (size := len(text.encode())) > 65_536:
-            found.append(f"{source.name}: {size} bytes exceeds the 65536-byte package file limit")
+        if (size := len(text.encode())) > 131_072:
+            found.append(f"{source.name}: {size} bytes exceeds the 131072-byte package file limit")
         commands += re.findall(r"api\.command\(\s*'([^']+)'", text)
         tools += len(re.findall(r"api\.tool\(", text))
+        if RELATIVE_IMPORT.search(text):
+            needed.add("package_imports_v1")
+        if re.search(r"api\.component\s*[<(]", text):
+            needed.add("component_modules_v1")
+    required = set(package.get("compatibility", {}).get("required_features", []))
+    found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]
     found += [f"{count} {kind} exceed the limit of 16" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 16]
@@ -223,7 +232,8 @@ def check(host, paths, providers, commands, scenarios):
         status = host.status(location)
         found += problems_from_status(status, "default", ids)
         item = next((item for item in status.get("mods", []) if item["id"] == mod), None)
-        names = [command["name"] for command in (item or {}).get("registrations", {}).get("commands", [])]
+        names = [command["name"] for command in (item or {}).get("registrations", {}).get("commands", [])
+                 if not command.get("cli")]
         for name in names if commands else []:
             refused_operations = host.offline_command(location, mod, name) - TUI_OPERATIONS
             found += [f"/{mod}:{name} calls {operation}, which slash commands cannot use"

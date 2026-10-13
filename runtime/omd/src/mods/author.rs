@@ -10,6 +10,8 @@ struct OfflineHost {
     environment: Option<BTreeMap<String, String>>,
     clients: Vec<Value>,
     attached: u64,
+    /// The owner of the component module runners this scenario mounts.
+    owner: String,
 }
 
 const POINTER_ACTIONS: [&str; 8] = [
@@ -25,8 +27,11 @@ const POINTER_ACTIONS: [&str; 8] = [
 
 impl OfflineHost {
     fn from_scenario(scenario: &Value, now_ms: u64) -> Result<Self> {
+        static SCENARIOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let scenario_number = SCENARIOS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut host = Self {
             now_ms,
+            owner: format!("offline-{scenario_number}"),
             ..Self::default()
         };
         if let Some(environment) = scenario.get("environment") {
@@ -107,7 +112,7 @@ impl OfflineHost {
             "events.schedule" => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
-                    .filter(|delay| (100..=86_400_000).contains(delay))
+                    .filter(|delay| (16..=86_400_000).contains(delay))
                     .ok_or_else(|| failure("timer_delay_invalid"))?;
                 self.timers
                     .insert((caller.to_owned(), key.clone()), self.now_ms + delay);
@@ -253,6 +258,7 @@ impl ModHost {
             tiers.insert(id.clone(), (tier, loaded.selection.clone()));
         }
         let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
+        process::detach(&host.owner);
         for (id, (_, selection)) in tiers {
             if let Some(loaded) = self
                 .loaded
@@ -459,6 +465,26 @@ impl ModHost {
                 Ok(json!({"clients": host.clients}))
             }
             "status" => Ok(self.status()),
+            "state" => {
+                let id = required_string(step, "mod")?;
+                let loaded = self.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
+                let location = self.state_location(
+                    &loaded.package,
+                    &loaded.selection.scope,
+                    step.get("thread_id").and_then(Value::as_str),
+                );
+                let version = loaded.package.state_version;
+                let current = self.store.scoped_state(&location, version)?;
+                let Some(value) = step.get("value") else {
+                    return Ok(current);
+                };
+                if !loaded.package.capabilities.iter().any(|c| c == "store") {
+                    return Err(failure("state_capability_denied"));
+                }
+                self.store
+                    .write_scoped_state(&location, version, &current, value)?;
+                Ok(value.clone())
+            }
             "reload" => {
                 self.store.reload()?;
                 self.turn_boundary();
@@ -561,6 +587,37 @@ impl ModHost {
                     |caller, call| host.call(caller, call),
                 )
             }
+            "component" => {
+                let id = required_string(step, "mod")?;
+                let module = required_string(step, "module")?;
+                let instance = step
+                    .get("instance")
+                    .and_then(Value::as_str)
+                    .unwrap_or(module);
+                let size = |name: &str, default: u64| {
+                    step.get(name).and_then(Value::as_u64).unwrap_or(default)
+                };
+                let frame = json!({"instance": format!("{}.{instance}", host.owner),
+                    "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
+                    "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
+                    "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
+                let result = self.invoke_scoped_with(
+                    id,
+                    self.generation,
+                    "component",
+                    module,
+                    frame,
+                    || active,
+                    |_, call| {
+                        Err(failure(format!(
+                            "host_operation_unavailable: {} is not available to component modules",
+                            call.operation
+                        )))
+                    },
+                )?;
+                render::checked_tree(&result)?;
+                Ok(result)
+            }
             "terminal_mount" | "terminal_interact" => {
                 let id = required_string(step, "mod")?;
                 let mut payload = payload;
@@ -595,6 +652,7 @@ impl ModHost {
                             | ModComponent::Pane { pointer: true, .. }
                             | ModComponent::Image { pointer: true, .. }
                             | ModComponent::Raster { pointer: true, .. }
+                            | ModComponent::Module { pointer: true, .. }
                     ) {
                         return Err(failure("offline_terminal_component_not_pointer"));
                     }
@@ -698,7 +756,8 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Diff { id, .. }
             | ModComponent::Terminal { id, .. }
             | ModComponent::Image { id, .. }
-            | ModComponent::Raster { id, .. } => (Some(id.as_str()), &[][..]),
+            | ModComponent::Raster { id, .. }
+            | ModComponent::Module { id, .. } => (Some(id.as_str()), &[][..]),
             ModComponent::Slot | ModComponent::Native { .. } => (None, &[][..]),
         };
         if component_id == Some(id) {

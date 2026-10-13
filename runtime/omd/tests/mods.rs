@@ -122,7 +122,7 @@ const COUNTER: &str = "export default api => api.command('count', () => { api.st
 
 #[test]
 fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() {
-    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return value; }); }";
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return value; }); }";
     let (temp, _, _) = fixture(source, &["commands", "store"]);
     let mut first = host(&temp);
     let mut second = host(&temp);
@@ -148,7 +148,7 @@ fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() 
 
 #[test]
 fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
-    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return read.ok; }); }";
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
     let (temp, _, _) = fixture(source, &["commands", "store"]);
     let mut first = host(&temp);
     let mut second = host(&temp);
@@ -884,6 +884,40 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
 }
 
 #[test]
+fn migration_and_rollback_read_state_up_to_the_store_limit() {
+    let (temp, store, path) = fixture(
+        "export default api => api.command('big', () => { api.state.set({ pad: 'x'.repeat(100000) }); })",
+        &["commands", "store"],
+    );
+    let mut runtime = host(&temp);
+    runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "big",
+            Value::Null,
+        )
+        .unwrap();
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_version"] = json!(2);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(
+        path.join("index.ts"),
+        "export default api => api.on('migrate', ({ to }) => { api.state.set({ to }); })",
+    )
+    .unwrap();
+    trust(&store, &path, &["commands", "store"]);
+    let receipt = store.migrate(&path).unwrap();
+    let backup = receipt["backup"].as_str().unwrap();
+    assert!(std::fs::metadata(backup).unwrap().len() > 65_536);
+    store.enable(&path, false).unwrap();
+    store.rollback(&path, std::path::Path::new(backup)).unwrap();
+}
+
+#[test]
 fn retired_api_packages_are_rejected_before_trust_or_activation() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -943,7 +977,7 @@ fn host_control_features_are_available_for_admission() {
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["compatibility"] = json!({"required_features": [
-        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_100ms_v1"
+        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_16ms_v1"
     ]});
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     ModStore::inspect_package(&path).unwrap();
@@ -1475,8 +1509,8 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
 fn a_render_racing_a_state_write_is_drawn_again() {
     let (temp, _, _) = fixture(
         "export default api => { api.command('set', value => { api.state.set(value); return null; }); \
-         api.intercept('render', () => { const seen = String(api.state.get()); const end = Date.now() + 400; \
-           while (Date.now() < end) {} return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
+         api.intercept('render', () => { const seen = String(api.state.get()); \
+           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
         &["commands", "store", "terminal"],
     );
     let runtime = std::sync::Mutex::new(host(&temp));
@@ -2450,7 +2484,7 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
-        &["commands", "agents", "sessions"],
+        &["commands", "agents", "sessions", "sessions_tools"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
@@ -3314,7 +3348,7 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
         "export default api => { \
          const pulse = api.time.every('pulse', 100, () => { api.state.set((api.state.get() ?? 0) + 1); return api.state.get() < 3; }); \
          api.command('start', () => { pulse.start(); return api.package; }); \
-         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:99})); \
+         api.command('invalid_timer', () => api.host.call('events.schedule', {key:'invalid',delay_ms:15})); \
          api.command('nap', () => api.time.sleep(1500)); \
          api.command('look', () => ({ exists: api.fs.exists('./src//a.ts'), canonical: api.fs.canonical('src/./a.ts'), ancestors: api.fs.ancestors('package.json', 'src/deep') })); \
          api.command('label', () => api.classify('ship it', ['yes', 'no'], { route: 'worker' }).label); \
@@ -5058,6 +5092,133 @@ fn credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin() {
 }
 
 #[test]
+fn history_persist_interceptors_rewrite_only_entry_text() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let plain = package(
+        &root,
+        "plain",
+        "export default api => api.intercept('history_persist', (e, next) => next(e))",
+        &["history"],
+    );
+    trust(&store, &plain, &["history"]);
+    assert!(!activation_error(&temp, "plain").is_empty());
+    let path = package(
+        &root,
+        "redact",
+        "export default api => api.intercept('history_persist', (e, next) => {
+            if (e.entries.some(entry => entry.text === 'swap')) return {entries: [...e.entries].reverse()};
+            if (e.entries.some(entry => entry.text === 'rename')) return {entries: e.entries.map(entry => ({...entry, call_id: 'other'}))};
+            return next({...e, entries: e.entries.map(entry => ({...entry, text: entry.text.replaceAll('sk-live', '[redacted]')}))});
+        })",
+        &["history_persist"],
+    );
+    trust(&store, &path, &["history_persist"]);
+    for id in ["arelay", "zrelay"] {
+        let relay = package(
+            &root,
+            id,
+            "export default api => api.intercept('history_persist', (e, next) => next(e))",
+            &["history_persist"],
+        );
+        trust(&store, &relay, &["history_persist"]);
+    }
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let persist = |texts: &[&str]| {
+        let entries = texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| json!({"index": index, "kind": "function_call_output", "role": null, "call_id": "c", "text": text}))
+            .collect::<Vec<_>>();
+        codex_omd::continue_operation(
+            &runtime,
+            "history_persist",
+            json!({"thread_id": "t", "entries": entries}),
+            json!({"caller": "host", "thread_id": "t"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |input| Ok(json!({"entries": input["entries"]})),
+        )
+        .unwrap()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["text"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        persist(&["key sk-live-1", "plain"]),
+        ["key [redacted]-1", "plain"]
+    );
+    assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
+    assert_eq!(persist(&["rename"]), ["rename"]);
+    let entry = json!({"kind": "message", "role": "user", "call_id": null, "text": "sk-live"});
+    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry])
+        .unwrap()
+        .unwrap();
+    assert_eq!(rewrite.texts, ["[redacted]"]);
+    assert_eq!(rewrite.by, "mod:redact");
+}
+
+#[test]
+fn history_persist_chunks_fit_their_json_budget_and_credit_only_changing_links() {
+    let token = format!("{} sk-{}", "a".repeat(49_000), "b".repeat(400));
+    assert_eq!(codex_omd::persist_cut(&token, 49_152), 49_001);
+    assert_eq!(codex_omd::persist_cut(&"a".repeat(50_000), 49_152), 49_152);
+    assert_eq!(codex_omd::persist_cut(&"\"".repeat(30_000), 49_152), 24_576);
+    assert_eq!(codex_omd::persist_cut("\u{1}a", 0), 1);
+    let long_id =
+        json!({"kind": "tool", "role": null, "call_id": "c".repeat(50_000), "text": "ab"});
+    let pieces = codex_omd::persist_chunks(&[long_id]);
+    assert_eq!(
+        pieces
+            .iter()
+            .flatten()
+            .map(|(_, value)| value["text"].as_str().unwrap())
+            .collect::<String>(),
+        "ab"
+    );
+    let entry =
+        |text: String| json!({"kind": "message", "role": "user", "call_id": null, "text": text});
+    let many = (0..3_000)
+        .map(|_| entry("x".repeat(10)))
+        .collect::<Vec<_>>();
+    let quoted = [entry("\"\n".repeat(40_000))];
+    for entries in [&many[..], &quoted[..]] {
+        let chunks = codex_omd::persist_chunks(entries);
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|chunk| {
+            let values = chunk.iter().map(|(_, value)| value).collect::<Vec<_>>();
+            serde_json::to_vec(&values).unwrap().len()
+                <= codex_omd::PERSIST_CHUNK_BYTES + chunk.len() + 1
+        }));
+        let mut texts = vec![String::new(); entries.len()];
+        for (index, value) in chunks.iter().flatten() {
+            texts[*index].push_str(value["text"].as_str().unwrap());
+        }
+        assert!(
+            texts
+                .iter()
+                .zip(entries)
+                .all(|(text, entry)| *text == entry["text"])
+        );
+    }
+    let link = |index: u64, id: &str, received: &str, returned: &str| json!({"index": index, "mod": id, "received": received, "returned": returned});
+    let passed = [
+        link(2, "engine", "redacted", "redacted"),
+        link(1, "plain", "redacted", "redacted"),
+        link(0, "redactor", "original", "redacted"),
+    ];
+    assert_eq!(codex_omd::persist_changed_by(&passed), ["mod:redactor"]);
+    let answered = [
+        link(1, "answering", "original", "rewritten"),
+        link(0, "plain", "original", "rewritten"),
+    ];
+    assert_eq!(codex_omd::persist_changed_by(&answered), ["mod:answering"]);
+}
+
+#[test]
 fn component_change_interceptors_answer_only_for_the_components_owner() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -5263,4 +5424,285 @@ fn clipboard_delivery_wait_is_not_callback_execution() {
         .unwrap();
     assert_eq!(copies, 2);
     assert_eq!(result, json!({"status": "confirmed"}));
+}
+
+#[test]
+fn component_modules_keep_state_in_their_runner_until_unmounted() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: (n, event) => { if (event.text === 'h') api.host.call('session.info', null); return n + 1; }, \
+         view: (n, ui) => ui.props === 'native' ? [{type: 'native'}] : [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal", "inventory"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |instance: &str, text: &str, props: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "props": props, "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": text}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    assert_eq!(step("a", "x", ""), Ok(json!("1")));
+    assert_eq!(step("a", "x", ""), Ok(json!("2")));
+    assert_eq!(step("b", "x", ""), Ok(json!("1")));
+    assert!(
+        step("a", "h", "")
+            .unwrap_err()
+            .contains("host_operation_unavailable")
+    );
+    for _ in 0..6 {
+        assert!(step("a", "h", "").is_err());
+    }
+    assert_eq!(
+        runtime.lock().unwrap().status()["mods"][0]["error"],
+        Value::Null
+    );
+    assert_eq!(step("a", "x", ""), Ok(json!("1")));
+    codex_omd::component_unmount("fixture", "b");
+    assert_eq!(step("b", "x", ""), Ok(json!("1")));
+    assert!(
+        step("b", "x", "native")
+            .unwrap_err()
+            .starts_with("invalid_component_tree")
+    );
+    assert_eq!(step("b", "x", ""), Ok(json!("1")));
+}
+
+#[test]
+fn component_runners_belong_to_their_owner_and_cannot_sleep() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: (n, event) => { if (event.text === 's') api.time.sleep(5000); \
+         if (event.text === 'w') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return n + 1; }, \
+         view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal", "events"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |client: Option<&str>, instance: &str, text: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "client": client, "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": text}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    let started = std::time::Instant::now();
+    assert!(
+        step(None, "sleeper", "s")
+            .unwrap_err()
+            .contains("time.sleep is not available during component")
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    for client in ["owner1", "owner2"] {
+        for instance in ["a", "b", "c", "d"] {
+            assert_eq!(
+                step(Some(client), &format!("{client}.{instance}"), "x"),
+                Ok(json!("1"))
+            );
+        }
+    }
+    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
+    assert!(
+        step(Some("owner1"), "owner1.e", "x")
+            .unwrap_err()
+            .contains("component_limit")
+    );
+    codex_omd::component_detach("owner1");
+    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("1")));
+    assert_eq!(step(Some("owner2"), "owner2.a", "x"), Ok(json!("2")));
+    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+    std::thread::scope(|scope| {
+        let busy = scope.spawn(|| step(None, "busy", "w"));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        codex_omd::component_unmount("fixture", "busy");
+        assert_eq!(busy.join().unwrap(), Ok(json!("2")));
+    });
+    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+    assert_eq!(step(Some("twice"), "twice", "x"), Ok(json!("1")));
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| step(Some("twice"), "twice", "w"));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(step(Some("twice"), "twice", "x"), Ok(json!("3")));
+        assert_eq!(first.join().unwrap(), Ok(json!("2")));
+    });
+}
+
+#[test]
+fn reloading_a_changed_package_retires_its_old_component_runners() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: n => n + 1, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, store, path) = fixture(source, &["terminal"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |instance: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "client": "reload", "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": "x"}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    for instance in ["a", "b", "c", "d"] {
+        assert_eq!(step(instance), Ok(json!("1")));
+    }
+    assert_eq!(step("a"), Ok(json!("2")));
+    std::fs::write(path.join("index.ts"), format!("{source}\n")).unwrap();
+    trust(&store, &path, &["terminal"]);
+    runtime.lock().unwrap().reload().unwrap();
+    for instance in ["a", "b", "c", "d"] {
+        assert_eq!(step(instance), Ok(json!("1")));
+    }
+}
+
+#[test]
+fn refused_component_host_calls_never_reach_host_operation_interceptors() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let guard = package(
+        &root,
+        "guard",
+        "export default api => api.intercept('host_operation', {match: {operation: ['session.info']}}, () => ({value: {answered: true}}))",
+        &["middleware"],
+    );
+    trust(&store, &guard, &["middleware"]);
+    let component = package(
+        &root,
+        "tally",
+        "export default api => api.component('tally', { init: () => 0, key: n => { api.host.call('session.info', null); return n + 1; }, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })",
+        &["terminal", "inventory"],
+    );
+    trust(&store, &component, &["terminal", "inventory"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let error = codex_omd::component_shared(
+        &runtime,
+        "tally",
+        "tally",
+        json!({"instance": "a", "now": 0, "columns": 20, "rows": 1,
+            "events": [{"kind": "key", "key": null, "text": "x"}]}),
+        || true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("host_operation_unavailable"), "{error}");
+}
+
+#[test]
+fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = root.join("fixture");
+    std::fs::create_dir_all(path.join("lib")).unwrap();
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(
+            &json!({"schema":1,"id":"fixture","version":"1.0.0","api":CURRENT_API,
+            "state_version":1,"capabilities":["commands"],"assets":["lib/draw.ts","worker.mjs"]}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        path.join("index.ts"),
+        "import { draw } from './lib/draw.ts'; export default api => api.command('draw', () => draw(2));",
+    )
+    .unwrap();
+    std::fs::write(path.join("worker.mjs"), "fetch('https://example.org');").unwrap();
+    let draw = |body: &str| {
+        std::fs::write(path.join("lib/draw.ts"), body).unwrap();
+        trust(&store, &path, &["commands"]);
+    };
+    draw("export const draw = (n: number) => { fetch('https://example.org'); return n; };");
+    assert!(activation_error(&temp, "fixture").contains("undeclared_environment_use: network"));
+    draw("export const draw = (n: number): string => '#'.repeat(n);");
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    assert_eq!(
+        runtime
+            .invoke("fixture", generation, "command", "draw", Value::Null)
+            .unwrap(),
+        json!("##")
+    );
+}
+
+#[test]
+fn continuations_run_code_before_next_once_with_a_fixed_clock() {
+    let source = "export default api => api.intercept('model_request', async (e, next) => { \
+         const before = Date.now(); const effort = ['low', 'medium', 'high'][Math.floor(Math.random() * 3)]; \
+         const result = await next({...e, effort}); \
+         if (Date.now() !== before || result.effort !== effort) throw new Error('replayed'); return result; })";
+    let (temp, _, _) = fixture(source, &["middleware"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    for _ in 0..6 {
+        let chain = codex_omd::intercept_shared(
+            &runtime,
+            "model_request",
+            false,
+            json!({"request_id":"r1","route":"sol","routes":[{"name":"sol"}],"effort":"high","sections":[]}),
+            json!({"caller":"engine"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |input| {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                Ok(json!({"route": input["route"], "effort": input["effort"]}))
+            },
+        )
+        .unwrap();
+        assert!(
+            chain.trace.iter().all(|entry| entry["reason"].is_null()),
+            "{:?}",
+            chain.trace
+        );
+    }
+}
+
+#[test]
+fn a_resumed_component_ticks_from_now_instead_of_replaying_its_pause() {
+    let source = "export default api => api.component('clock', { init: () => ({ paused: true, n: 0 }), \
+         key: s => ({ ...s, paused: false }), \
+         every: { ms: s => s.paused ? null : 50, tick: s => ({ ...s, n: s.n + 1 }) }, \
+         view: s => [{type: 'text', id: 't', label: 'T', text: String(s.n)}] })";
+    let (temp, _, _) = fixture(source, &["terminal"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |now: u64, events: Value| {
+        let step = codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "clock",
+            json!({"instance": "c", "client": "clock", "now": now, "columns": 20, "rows": 1, "events": events}),
+            || true,
+        )
+        .unwrap();
+        (step["tree"][0]["text"].clone(), step["next_ms"].clone())
+    };
+    assert_eq!(step(0, json!([])), (json!("0"), Value::Null));
+    let key = json!([{"kind": "key", "key": "Space", "text": " "}]);
+    assert_eq!(step(10_000, key), (json!("0"), json!(50)));
+    assert_eq!(step(10_120, json!([])), (json!("2"), json!(30)));
+}
+
+#[test]
+fn component_input_maps_keys_pastes_and_pointer_events() {
+    let input = json!({"kind": "input", "events": [{"key": "d", "text": "d"}, {"paste": " go"}]});
+    assert_eq!(
+        codex_omd::component_events(&input),
+        vec![
+            json!({"kind": "key", "key": "d", "text": "d"}),
+            json!({"kind": "key", "key": null, "text": " go"}),
+        ]
+    );
+    let pointer = json!({"kind": "pointer", "pointer": {"column": 2, "row": 1, "action": "down", "button": "left", "fraction": [0.5, 0.5]}});
+    assert_eq!(
+        codex_omd::component_events(&pointer),
+        vec![json!({"kind": "pointer", "column": 2, "row": 1, "action": "down", "button": "left"})]
+    );
 }

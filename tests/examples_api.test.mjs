@@ -17,7 +17,7 @@ const surface = {
   replacements: ['context', 'routing', 'compaction'],
   intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
     command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
-    composer_edit: 'composer', composer_key: 'composer', mention: 'input' },
+    composer_edit: 'composer', composer_key: 'composer', mention: 'input', history_persist: 'history_persist' },
   middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
 };
 
@@ -339,4 +339,34 @@ test('mention example denies secrets and redirects build output to its source', 
   const redirected = run('mention_guard', 'intercept', mention('dist/app.js'), { name: '1',
     receipts: [{ call: stat.host_call, value: { files: { 'src/app.ts': { kind: 'file', size: 1, mtime_ms: 0 } } } }] });
   assert.deepEqual(redirected.host_call, { operation: 'continuation.next', arguments: { input: { thread_id: 't', path: 'src/app.ts' } } });
+});
+
+test('history redaction example rewrites only entry text before it is persisted', () => {
+  const entry = (index, text) => ({ index, kind: 'function_call_output', role: null, call_id: 'c1', text });
+  const batch = { thread_id: 't', entries: [entry(0, 'Authorization: Bearer abcdefghijklmnop'), entry(1, 'key sk-proj-ABCDEFGHIJKLMNOPQRST and AKIAABCDEFGHIJKLMNOP'), entry(2, 'plain')] };
+  const result = run('history_redact', 'intercept', { surface: 'history_persist', input: batch, origin: { caller: 'host' } }, { name: '0' });
+  assert.deepEqual(result.host_call, { operation: 'continuation.next', arguments: { input: { thread_id: 't',
+    entries: [entry(0, 'Authorization: Bearer [redacted]'), entry(1, 'key [redacted] and [redacted]'), entry(2, 'plain')] } } });
+});
+
+test('readme answers example marks the README context block as a cached prefix', () => {
+  const read = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme' });
+  assert.deepEqual(read.host_call, { operation: 'workspace.read', arguments: { paths: ['README.md'] } });
+  const file = { call: read.host_call, value: { files: { 'README.md': { text: 'Run install.sh.' } } } };
+  const asked = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme', receipts: [file] });
+  assert.equal(asked.host_call.operation, 'model.complete');
+  assert.deepEqual(asked.host_call.arguments.context, ['Run install.sh.']);
+  assert.deepEqual(asked.host_call.arguments.cache, { through: 0 });
+  const cache = { read_tokens: 1024, write_tokens: 0 };
+  const answered = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme',
+    receipts: [file, { call: asked.host_call, value: { text: 'Run install.sh.', cache } }] });
+  assert.deepEqual(answered.value, { answer: 'Run install.sh.', cache });
+});
+
+test('readme answers example keeps the README context within the host byte cap', () => {
+  const read = run('readme_answers', 'tool', { question: 'q' }, { name: 'ask_readme' });
+  const file = { call: read.host_call, value: { files: { 'README.md': { text: '日本語😀'.repeat(20_000) } } } };
+  const [context] = run('readme_answers', 'tool', { question: 'q' }, { name: 'ask_readme', receipts: [file] }).host_call.arguments.context;
+  const size = Buffer.byteLength(context);
+  assert.ok(size <= 30_000 && size > 29_990 && !context.includes('\ufffd'), String(size));
 });

@@ -19,6 +19,7 @@
     "tools",
     "agents",
     "sessions",
+    "sessions_tools",
     "config",
     "store"
   ],
@@ -27,6 +28,11 @@
     "setup.mjs",
     "transport.mjs"
   ],
+  "compatibility": {
+    "required_features": [
+      "package_text_assets_v1"
+    ]
+  },
   "settings_schema": {
     "type": "object",
     "properties": {

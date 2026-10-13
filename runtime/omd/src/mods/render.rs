@@ -99,6 +99,94 @@ impl ModHost {
     }
 }
 
+/// Runs one frame step of a mod's component module without host authority: its events, due ticks and
+/// view, answering `{tree, post, next_ms}`. An error stops the instance's runner, unmounting it.
+pub fn component_shared(
+    runtime: &Mutex<ModHost>,
+    id: &str,
+    component: &str,
+    frame: Value,
+    active: impl Fn() -> bool,
+) -> Result<Value> {
+    let generation = runtime
+        .lock()
+        .map_err(|_| failure("mod_runtime_poisoned"))?
+        .generation;
+    let instance = frame["instance"].as_str().unwrap_or(component).to_owned();
+    let owner = frame["client"].as_str().unwrap_or_default().to_owned();
+    let value = invoke_shared(
+        runtime,
+        id,
+        generation,
+        "component",
+        component,
+        frame,
+        active,
+        |_, call| {
+            Err(failure(format!(
+                "host_operation_unavailable: {} is not available to component modules",
+                call.operation
+            )))
+        },
+        |_| {},
+    )?;
+    if let Err(error) = checked_tree(&value) {
+        process::unmount(&owner, id, &instance);
+        return Err(error);
+    }
+    Ok(value)
+}
+
+/// A component module step's tree must parse, pass the render checks, stay under 64 KiB and not draw the native component.
+pub(super) fn checked_tree(step: &Value) -> Result<()> {
+    let tree = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
+        .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
+    if let Some(reason) = view::invalid_render_tree(&tree).or_else(|| {
+        (tree
+            .iter()
+            .any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
+            || serde_json::to_vec(&step["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
+        .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
+    }) {
+        return Err(failure(format!("invalid_component_tree: {reason}")));
+    }
+    Ok(())
+}
+
+pub fn component_unmount(id: &str, component: &str) {
+    process::unmount("", id, component);
+}
+
+/// Unmounts every component module instance a detached client had mounted.
+pub fn component_detach(client: &str) {
+    process::detach(client);
+}
+
+/// A component's input event as the key and pointer events a component module receives.
+pub fn component_events(payload: &Value) -> Vec<Value> {
+    match payload["kind"].as_str() {
+        Some("input") => payload["events"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|event| match event.get("paste") {
+                Some(paste) => json!({"kind": "key", "key": null, "text": paste}),
+                None => json!({"kind": "key", "key": event["key"], "text": event["text"]}),
+            })
+            .collect(),
+        Some("key") => vec![json!({"kind": "key", "key": payload["key"], "text": payload["text"]})],
+        Some("pointer") => {
+            let mut pointer = payload["pointer"].clone();
+            if let Some(object) = pointer.as_object_mut() {
+                object.remove("fraction");
+                object.insert("kind".into(), "pointer".into());
+            }
+            vec![pointer]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Runs the `render` chain for one component instance; a cached tree stands while the state keys its hooks read hold.
 pub fn render_shared(
     runtime: &Mutex<ModHost>,

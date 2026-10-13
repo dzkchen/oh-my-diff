@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "sessions.list": [
+      {"result": {"sessions": [{"session_id": "s", "revision": "r", "handle": "h"}]}},
+      {"result": {"sessions": [{"session_id": "s", "revision": "r", "handle": "h"}]}}
+    ],
+    "sessions.read": [
+      {"result": {"records": [{"kind": "message", "role": "user", "text": "Run it."}, {"kind": "tool_call", "name": "exec_command", "call_id": "c1", "arguments": "{}"}], "cursor": 2, "projection_truncated": false}},
+      {"result": {"records": [{"kind": "tool_result", "call_id": "c1", "output": "ok\nmore"}, {"kind": "tool_call", "name": "apply_patch", "call_id": "c2", "bytes": 9, "sha256": "00"}], "cursor": null, "projection_truncated": false}},
+      {"result": {"records": [{"kind": "tool_call", "name": "a", "call_id": "p1", "arguments": "{}"}], "cursor": 1, "projection_truncated": false}},
+      {"result": {"records": [{"kind": "tool_result", "call_id": "p1", "bytes": 5, "sha256": "00"}], "cursor": 2, "projection_truncated": false}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": false}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": false}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": false}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": true}}
+    ]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "tool_history", "event": "command", "name": "recent_tools", "payload": null,
+      "expect": {"display": "exec_command: ok\napply_patch: no result"}},
+    {"type": "invoke", "mod": "tool_history", "event": "command", "name": "recent_tools", "payload": null,
+      "expect": {"display": "a: 5 bytes\n(read the first 2 records of a longer session)"}}
+  ]
+}

@@ -19,7 +19,7 @@ function project(source, { typescript = true, typecheck = false } = {}) {
     symlinkSync(join(mods, 'node_modules/.bin/tsc'), join(directory, 'node_modules/.bin/tsc'));
     symlinkSync(mods, join(directory, 'node_modules/@oh-my-diff/mod-api'));
     writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
-      compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true, jsx: 'react-jsx', jsxImportSource: '@oh-my-diff/mod-api', types: [] },
+      compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true, allowImportingTsExtensions: true, jsx: 'react-jsx', jsxImportSource: '@oh-my-diff/mod-api', types: [] },
       include: ['index.ts', 'index.tsx'],
     }));
   }
@@ -72,6 +72,23 @@ export const tree = (
       { type: 'button', id: 'b', label: 'b', action: { command: 'go' }, text: 'Go' },
     ],
   });
+}));
+
+test('a .tsx asset compiles beside its source and index.tsx imports the compiled file', () => withProject(`
+import { Row } from './parts/row.tsx';
+export const tree = <box id="root" label="Root"><Row name="a" /></box>;
+`, { typecheck: true }, async directory => {
+  mkdirSync(join(directory, 'parts'));
+  writeFileSync(join(directory, 'parts/row.tsx'), 'export const Row = ({ name }: { name: string }) => <line id={name} label={name}>{name}</line>;\n');
+  const result = check(directory);
+  assert.equal(result.status, 0, result.output);
+  assert.match(readFileSync(join(directory, 'index.ts'), 'utf8'), /from '\.\/parts\/row\.ts'/);
+  assert.match(readFileSync(join(directory, 'parts/row.ts'), 'utf8'), /^\/\/ @ts-nocheck\n\/\/ Generated from parts\/row\.tsx; edit that file instead\.\n/);
+  assert.doesNotMatch(readFileSync(join(directory, 'parts/row.ts'), 'utf8'), /^import /m);
+  const { tree } = await evaluate(directory);
+  assert.deepEqual(tree, { type: 'box', id: 'root', label: 'Root', children: [{ type: 'line', id: 'a', label: 'a', spans: [{ text: 'a' }] }] });
+  writeFileSync(join(directory, 'parts/row.ts'), 'export const Row = () => null;\n');
+  assert.match(check(directory).output, /jsx_entrypoint_conflict: parts\/row\.ts was not generated from parts\/row\.tsx/);
 }));
 
 test('scenario runs compile the index.tsx of every package they install', async () => {

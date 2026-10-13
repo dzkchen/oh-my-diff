@@ -115,6 +115,29 @@ fn installed_package_keeps_hash_bound_text_assets() {
 }
 
 #[test]
+fn inspection_refuses_text_over_the_per_callback_input_limit() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "text_fixture", "1.0.0", &["commands"], json!([]));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
+    manifest["assets"] = json!(["a.mjs", "b.mjs", "c.mjs"]);
+    std::fs::write(
+        package.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    for name in ["a.mjs", "b.mjs"] {
+        std::fs::write(package.join(name), vec![b'/'; 100_000]).unwrap();
+    }
+    std::fs::write(package.join("c.mjs"), vec![0xff; 100_000]).unwrap();
+    assert!(ModStore::inspect_package(&package).is_ok());
+    std::fs::write(package.join("c.mjs"), vec![b'/'; 100_000]).unwrap();
+    let error = ModStore::inspect_package(&package).unwrap_err().to_string();
+    assert!(error.contains("package_text_input_limit"), "{error}");
+}
+
+#[test]
 fn package_integrity_covers_ordered_lifecycle_and_binary_assets() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -1681,9 +1704,9 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["capabilities"] = json!(["commands"]);
         value["entrypoint"] = json!("big.ts");
     });
-    std::fs::write(package.join("big.ts"), vec![b'/'; 65_536]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
-    std::fs::write(package.join("big.ts"), vec![b'/'; 65_537]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
     assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit"));
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();

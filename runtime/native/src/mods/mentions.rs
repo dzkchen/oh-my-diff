@@ -44,7 +44,11 @@ pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Ve
             continue;
         };
         for (index, _) in text.match_indices('@') {
-            if !text[..index].chars().next_back().is_none_or(char::is_whitespace) {
+            if !text[..index]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace)
+            {
                 continue;
             }
             let rest = &text[index + 1..];

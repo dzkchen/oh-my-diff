@@ -124,6 +124,10 @@ impl ScopedDataHost {
                 database: self.session_database.as_deref(),
                 repository: &self.repository,
                 enabled: true,
+                tools: selection
+                    .capabilities
+                    .iter()
+                    .any(|cap| cap == "sessions_tools"),
             }
             .call(name, arguments, active)?;
             if serde_json::to_vec(&result)?.len() > 1_048_576 {

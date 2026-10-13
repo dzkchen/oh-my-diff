@@ -152,9 +152,12 @@ class Provider:
     def __init__(self, root):
         self.root = root
         self.requests = []
+        self.headers = []
         self.upgrades = []
         self.errors = []
         self.script = None
+        self.usage = lambda payload: {'input_tokens': 100, 'output_tokens': 10, 'total_tokens': 110,
+                                      'input_tokens_details': {'cached_tokens': 0}, 'output_tokens_details': {'reasoning_tokens': 0}}
         provider = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -169,13 +172,13 @@ class Provider:
                 try:
                     payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                     provider.requests.append(payload)
+                    provider.headers.append({key.lower(): value for key, value in self.headers.items()})
                     (provider.root / f'request-{len(provider.requests):02d}.json').write_text(json.dumps(payload, indent=2))
                     output = provider.script(payload)
                     events = [{'type': 'response.created', 'response': {'id': f'fixture-{len(provider.requests)}'}},
                               {'type': 'response.output_item.done', 'output_index': 0, 'item': output},
                               {'type': 'response.completed', 'response': {'id': f'fixture-{len(provider.requests)}', 'output': [output],
-                                  'usage': {'input_tokens': 100, 'output_tokens': 10, 'total_tokens': 110,
-                                            'input_tokens_details': {'cached_tokens': 0}, 'output_tokens_details': {'reasoning_tokens': 0}}}}]
+                                  'usage': provider.usage(payload)}}]
                     encoded = ''.join(f'data: {json.dumps(event)}\n\n' for event in events).encode()
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/event-stream')

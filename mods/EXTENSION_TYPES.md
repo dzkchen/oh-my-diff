@@ -85,13 +85,18 @@ contains only the packages labeled `bundled` below.
 | `command_help@1.0.0` | `mod` | `mods/examples/command_help` | Lists the session's built-in and mod slash commands from the live terminal inventory. |
 | `port_list@1.0.0` | `mod` | `mods/examples/port_list` | Lists the TCP listeners of the current session's background terminals from the live host. |
 | `checkout_board@1.0.0` | `mod` | `mods/examples/checkout_board` | Keeps one state per Git checkout that every OMD session working there shares. |
+| `readme_answers@1.0.0` | `mod` | `mods/examples/readme_answers` | Answers questions from the README through one-shot completions whose README prefix is marked for the provider's prompt cache. |
 | `quiet_inline@1.0.0` | `mod` | `mods/examples/quiet_inline` | Keeps inline scrollback free of every mod sidebar and header for screen readers and plain terminals. |
 | `image_preview@1.0.0` | `mod` | `mods/examples/image_preview` | Renders an imported image inside a live terminal render site and opens links after native confirmation. |
+| `history_redact@1.0.0` | `mod` | `mods/examples/history_redact` | Redacts credentials from history text in the host's persistence path before the rollout is written. |
 | `layout_explorer@1.0.0` | `mod` | `mods/examples/layout_explorer` | Replaces the live terminal layout with splits, tabs, documents and diffs. |
 | `frame_stream@1.0.0` | `mod` | `mods/examples/frame_stream` | Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look. |
 | `raster_canvas@1.0.0` | `mod` | `mods/examples/raster_canvas` | Draws an animated raster with pointer hover, drag and an anchored overlay. |
+| `game_input@1.0.0` | `mod` | `mods/examples/game_input` | Runs a keyboard and pointer game in a component module on the frame clock and posts scores to its hooks. |
+| `client_tag@1.0.0` | `mod` | `mods/examples/client_tag` | Ports Claude Code's Tag Client example to a component module that posts pointer clicks to its hooks. |
 | `box_model@1.0.0` | `mod` | `mods/examples/box_model` | Draws bordered cards, flat filled panels, flex rows, hover and focus accents and a gapped split layout with the box model. |
 | `external_client@1.0.0` | `mod` | `mods/examples/external_client` | Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol. |
+| `live_output@1.0.0` | `mod` | `mods/examples/live_output` | Streams a sandboxed command's raw stdout and stderr above the composer as they are written. |
 | `approval_desk@1.0.0` | `mod` | `mods/examples/approval_desk` | Keeps a filterable approval desk beside other sidebars, with a client adapter that answers approvals over the client protocol. |
 | `notification_bridge@1.0.0` | `mod` | `mods/examples/notification_bridge` | Turns live app-server notifications into terminal notifications with focus state. |
 | `output_budget@1.0.0` | `mod` | `mods/examples/output_budget` | Replaces model-visible tool output at the live tool boundary while the host keeps the original. |
@@ -104,6 +109,7 @@ contains only the packages labeled `bundled` below.
 | `site_vault@1.0.0` | `mod` | `mods/examples/site_vault` | Enrolls origin-bound secrets through native prompts and hands them only to its sidecars. |
 | `summarize_tool@1.0.0` | `mod` | `mods/examples/summarize_tool` | Runs one-shot completions on configured worker routes under live admission and the ledger. |
 | `tool_guide@1.0.0` | `mod` | `mods/examples/tool_guide` | Defers and re-describes model-visible tool specs per route through the composable tool_specs chain. |
+| `tool_history@1.0.0` | `mod` | `mods/examples/tool_history` | Pages the latest repository session's tool calls and results through the host's scoped session reader. |
 | `tool_workflows@1.0.0` | `mod` | `mods/examples/tool_workflows` | Caches, confirms and retries live tool calls through the continuation chain and the turn's tool executor. |
 | `turn_recap@1.0.0` | `mod` | `mods/examples/turn_recap` | Reads the host turn-activity ledger for the live thread. |
 | `watch_notify@1.0.0` | `mod` | `mods/examples/watch_notify` | Watches workspace paths and reports external changes through live terminal notifications. |

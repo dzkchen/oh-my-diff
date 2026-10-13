@@ -353,7 +353,7 @@ fn text_end(bytes: &[u8]) -> usize {
 }
 
 /// Text when the bytes are UTF-8, otherwise base64.
-fn content(field: &str, bytes: &[u8]) -> (String, Value) {
+pub(crate) fn content(field: &str, bytes: &[u8]) -> (String, Value) {
     match std::str::from_utf8(bytes) {
         Ok(text) => (field.to_owned(), json!(text)),
         Err(_) => (format!("{field}_base64"), json!(STANDARD.encode(bytes))),

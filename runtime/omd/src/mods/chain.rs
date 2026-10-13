@@ -266,6 +266,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_spawn" => &["definition", "prompt", "model", "effort", "cwd", "tools"],
         "peer_send" | "peer_receive" => &["data"],
         "compaction" => &["summary_prompt"],
+        "history_persist" => &["entries"],
         "composer_edit" => &["edit"],
         "composer_key" => &["key"],
         "mention" => &["path"],
@@ -326,6 +327,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
         "composer_key" => input["key"] == before["key"] || composer_key(&input["key"]),
         "mention" => mention_path(&input["path"]),
+        "history_persist" => persisted_entries(&input["entries"], &before["entries"]),
         "component_change" => component_change(&input["kind"], &input["to"]),
         "compaction" => {
             input["summary_prompt"] == before["summary_prompt"]
@@ -383,6 +385,30 @@ fn composer_edit(edit: &Value, given: &Value) -> bool {
         && edit["text"]
             .as_str()
             .is_some_and(|text| text.len() <= 65_536)
+}
+
+/// Persisted entries keep their count, order and fields; only each entry's text may change.
+fn persisted_entries(entries: &Value, given: &Value) -> bool {
+    entries
+        .as_array()
+        .zip(given.as_array())
+        .is_some_and(|(entries, given)| {
+            entries.len() == given.len()
+                && entries.iter().zip(given).all(|(entry, given)| {
+                    entry
+                        .as_object()
+                        .zip(given.as_object())
+                        .is_some_and(|(entry, given)| {
+                            entry.len() == given.len()
+                                && entry.iter().all(|(key, value)| {
+                                    key == "text" || given.get(key) == Some(value)
+                                })
+                        })
+                        && entry["text"].as_str().is_some_and(|text| {
+                            text.len() <= given["text"].as_str().map_or(0, str::len).max(65_536)
+                        })
+                })
+        })
 }
 
 /// Tool specs may drop, defer or re-describe tools they were given, never add or rename one.
@@ -650,6 +676,10 @@ fn validate_result(
         "mention" => {
             deny || object.is_some_and(|object| object.len() == 1) && mention_path(&result["path"])
         }
+        "history_persist" => {
+            object.is_some_and(|object| object.len() == 1)
+                && persisted_entries(&result["entries"], &input["entries"])
+        }
         "component_change" => {
             let key = if input["kind"] == "focus" {
                 "focus"
@@ -706,10 +736,21 @@ fn validate_result(
 
 use crate::model_request::bounded;
 
-/// Final-request pages carry provider-bound text, so their records keep only digests.
+/// Final-request pages and persisted history carry private text, so their records keep only
+/// digests (of the entry texts alone for history, so a link's input and result compare).
 fn recorded(surface: &str, value: &Value) -> Value {
     if surface == "model_send" {
         let bytes = serde_json::to_vec(value).unwrap_or_default();
+        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
+    }
+    if surface == "history_persist" {
+        let texts = value["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|entry| &entry["text"])
+            .collect::<Vec<_>>();
+        let bytes = serde_json::to_vec(&texts).unwrap_or_default();
         return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
     }
     bounded(value)
