@@ -531,6 +531,7 @@ impl Host {
             credential: route.and_then(|route| route.credential.clone()),
             context_window: config.and_then(|config| config.model_context_window),
             max_output_tokens: None,
+            cache_through: None,
             capture_tools: false,
         };
         let mut accounts = self

@@ -1468,6 +1468,16 @@ inode changed. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
+`sessions.list {since?, until?, cursor?, limit?}` pages this repository's
+recorded sessions that allow memory, and `sessions.read {session_id, revision,
+handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
+`message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
+`arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
+each with credential lines replaced by `[redacted]` (`redacted`; line endings kept) and cut to 2,048 characters with `truncated`.
+Reasoning and other item types are left out. Pages hold at most 16 KiB, a
+session at most 4,096 records (`projection_truncated`), and a changed rollout
+fails the read against its `revision`.
+
 ### Render hooks (`render_hooks_v1`)
 
 `api.intercept('render', {match: {component: 'tool_call'}}, async (e, next) => …)`
@@ -2197,8 +2207,9 @@ with `executed: false` and never run.
 
 Both return `{status, text, content, tool_calls, stop_reason, error, route,
 model, request_ids, usage, cache, cost, timing}` from the
-worker's `model_response` records: `usage` and `cache` are the last request's
-raw values, `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
+worker's `model_response` records: `usage` is the last request's raw value,
+`cache` sums `read_tokens` and `write_tokens` over the call's requests that reported them (`null`
+when none did), `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
 the provider cut at its token limit returns `status: 'incomplete'` with the
 text that streamed and `stop_reason` (`max_output_tokens`). A provider
 failure returns `status: 'failed'` with `error`; a timeout (at most 300 s) or
@@ -2210,6 +2221,22 @@ commands, which reach the session in the same process (`no session in this
 process` otherwise). Prompt cache reuse is reported by `cache.read_tokens`,
 not promised: a fork is a separate internal session whose cache key and
 instructions differ from the lead's.
+
+`cache: {through: 'system' | N}` (`model_cache_v1`) marks the request prefix
+through the mod's `system` text (everything before the turn's user message) or
+through context block `N` as cacheable. On each of the call's requests the host
+sets `prompt_cache_key` and the `session-id` header (the ChatGPT backend's cache
+routing) to `omd-cache-` plus a hash of the model, instructions, tools and that
+prefix's model-visible fields, so calls sharing a prefix share the provider's
+cache routing (OpenAI Responses caches prefixes automatically), and sends
+`x-omd-cache-breakpoint: ITEM:PART`, the last cacheable
+`input[ITEM].content[PART]` of the final body, for provider transports with
+explicit breakpoints: `omd_profiles` turns it into Anthropic `cache_control`
+on that block (or on the system prompt when it falls in the leading developer
+messages) and, for profiles set up with `--cache-control`, passes it on in Chat
+Completions content for providers such as OpenRouter. Cache reads and writes come back in `cache` and in each request's
+`model_response` record, priced with the route's cached and cache-write rates;
+a provider that ignores the mark reports no reads.
 
 ### SDK helpers (`sdk_helpers_v1`)
 
@@ -2226,7 +2253,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   wait holds no runtime lock and does not count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
-  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit` and `component_change` callbacks run
+  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit`, `component_change` and `history_persist` callbacks run
   without host operations and get `host_operation_unavailable`; `model_request`,
   `model_send` and `response_stream` interceptors run on the request path and get
   `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
@@ -2244,7 +2271,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   `workspace.stat` (`fs.read`); symlinked components and paths outside the
   workspace are refused there.
 - `api.classify(text, labels, {route, instructions?, effort?, timeout_ms?,
-  max_output_tokens?})` makes one `model.complete` on the named route with a
+  max_output_tokens?, cache?})` makes one `model.complete` on the named route with a
   JSON schema enumerating `labels` and returns `{label, result}` (`label` is
   `null` when the answer is not one of them).
 - `api.usage.summarize(response)` turns a `model_response` into
@@ -2271,6 +2298,31 @@ items are dropped as pairs; the last item (the current input) is kept; inserts
 are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
+
+### Store-time history rewriting (`history_persist_v1`)
+
+`api.intercept('history_persist', …)` (capability `history`) rewrites history
+text before it is written to the thread's rollout, for redaction. Each batch
+arrives as `{thread_id, entries}`; an entry is `{index, kind, role, call_id,
+text}` where `kind` is a response item type (`message`, `agent_message`,
+`function_call`, `custom_tool_call`, `function_call_output`,
+`custom_tool_call_output`), a text kept beside an item (`delivered_message`,
+`sender_user_messages`), an event copy (`event:user_message`,
+`event:agent_message`), `inter_agent_communication` or `compacted` (a compaction
+summary and its replacement history). Return `{entries}` with only `text`
+changed, or pass a changed input to `next`; a reordered, added, dropped or
+relabelled entry is rejected. A text longer than 96 KiB arrives as consecutive
+entries with the same index, and a batch is split across callbacks of at most
+96 KiB of text; a long text splits after its last whitespace within 96 KiB, so
+only a run of more than 96 KiB without whitespace is cut inside a token. Item ids, call
+ids, roles, order and count never change; a rewritten response item carries
+`rewritten {revision, op: "redact", by: "mod:<id>"}` and reads as not original,
+and a rewritten user message drops its text elements. The interceptor gets no
+host operations. The live conversation keeps the original text until the thread
+is resumed, forked or rolled back from the rollout; reasoning, images, encrypted
+content, tool call names and realtime transcripts are not offered. A failing
+optional interceptor keeps the original text; a failing required interceptor
+persists `[withheld: a required history_persist interceptor failed]` instead.
 
 ### Durable transcript rewriting (`history_rewrite_v1`)
 

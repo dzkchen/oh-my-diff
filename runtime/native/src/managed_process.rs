@@ -1019,21 +1019,20 @@ impl ManagedProcesses {
                     }
                     let notifier = self.notifier.get().cloned();
                     let (owner, session) = (id.to_owned(), input.session.clone());
-                    let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> = if framing
-                        == Framing::Raw
-                    {
-                        let mut stdout = RawReader::new(stdout, "stdout");
-                        let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
-                            vec![Box::new(move || stdout.next())];
-                        if let Some(stderr) = stderr {
-                            let mut stderr = RawReader::new(stderr, "stderr");
-                            readers.push(Box::new(move || stderr.next()));
-                        }
-                        readers
-                    } else {
-                        let mut reader = BufReader::new(stdout);
-                        vec![Box::new(move || read_framed(&mut reader, framing))]
-                    };
+                    let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
+                        if framing == Framing::Raw {
+                            let mut stdout = RawReader::new(stdout, "stdout");
+                            let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
+                                vec![Box::new(move || stdout.next())];
+                            if let Some(stderr) = stderr {
+                                let mut stderr = RawReader::new(stderr, "stderr");
+                                readers.push(Box::new(move || stderr.next()));
+                            }
+                            readers
+                        } else {
+                            let mut reader = BufReader::new(stdout);
+                            vec![Box::new(move || read_framed(&mut reader, framing))]
+                        };
                     let open = Arc::new(std::sync::atomic::AtomicUsize::new(readers.len()));
                     let mut frames = frames;
                     for mut next in readers.drain(..) {
@@ -1164,10 +1163,11 @@ impl ManagedProcesses {
                     .map(|exited_at| exited_at + Duration::from_secs(1));
                 if operation == "process.status" {
                     let queued = !exited
-                        || match process.pending.take().map_or_else(
-                            || process.receiver.try_recv(),
-                            Ok,
-                        ) {
+                        || match process
+                            .pending
+                            .take()
+                            .map_or_else(|| process.receiver.try_recv(), Ok)
+                        {
                             Ok(next) => {
                                 let output = next.is_ok();
                                 process.pending = Some(next);
@@ -1702,7 +1702,10 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 Err(error) => break error,
             }
         };
-        assert_eq!((text.as_str(), stopped.as_str()), ("done", "process_stopped"));
+        assert_eq!(
+            (text.as_str(), stopped.as_str()),
+            ("done", "process_stopped")
+        );
     }
 
     #[test]
