@@ -7,6 +7,12 @@
   "license": "MIT",
   "capabilities": [
     "sessions",
+    "sessions_tools",
     "commands"
-  ]
+  ],
+  "compatibility": {
+    "required_features": [
+      "plugin_dispatch_v1"
+    ]
+  }
 }

@@ -1,4 +1,6 @@
-import type { ModAPI, SessionRecord } from '@oh-my-diff/mod-api';
+import type { HostOperations, ModAPI } from '@oh-my-diff/mod-api';
+
+const PAGES = 6;
 
 export default function activate(api: ModAPI) {
   api.command('recent_tools', () => {
@@ -7,15 +9,21 @@ export default function activate(api: ModAPI) {
     const outputs = new Map<string, string>();
     const calls: { name: string; call_id: string }[] = [];
     let cursor: number | null = null;
-    for (let page = 0; page === 0 || cursor !== null && page < 100; page++) {
-      const read: { records: SessionRecord[]; cursor: number | null } = api.host.call('sessions.read', { session_id: session.session_id, revision: session.revision, handle: session.handle, ...cursor === null ? {} : { cursor } });
-      for (const record of read.records) {
-        if (record.kind === 'tool_result') outputs.set(record.call_id, record.output);
+    let read = 0;
+    let truncated = false;
+    for (let page = 0; page < PAGES && (page === 0 || cursor !== null); page++) {
+      const result: HostOperations['sessions.read']['result'] = api.host.call('sessions.read', { session_id: session.session_id, revision: session.revision, handle: session.handle, ...cursor === null ? {} : { cursor } });
+      for (const record of result.records) {
+        if (record.kind === 'tool_result') outputs.set(record.call_id, 'output' in record ? record.output.split('\n')[0] : `${record.bytes} bytes`);
         if (record.kind === 'tool_call') calls.push(record);
       }
-      cursor = read.cursor;
+      read += result.records.length;
+      cursor = result.cursor;
+      truncated ||= result.projection_truncated;
     }
-    const lines = calls.slice(-20).map(call => `${call.name}: ${outputs.get(call.call_id)?.split('\n')[0] ?? 'no result'}`);
-    return { display: lines.length ? lines.join('\n') : 'No tool calls in the latest session.' };
-  }, { description: 'List the latest session\'s last 20 tool calls with the first line of each result' });
+    const lines = calls.slice(-20).map(call => `${call.name}: ${outputs.get(call.call_id) ?? 'no result'}`);
+    if (!lines.length) lines.push('No tool calls in the latest session.');
+    if (cursor !== null || truncated) lines.push(`(read the first ${read} records of a longer session)`);
+    return { display: lines.join('\n') };
+  }, { description: 'List the latest session\'s last 20 tool calls with the first line of each result', cli: 'tool-history' });
 }

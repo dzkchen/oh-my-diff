@@ -157,6 +157,7 @@ pub(super) struct Core {
     input_runtime: Arc<Mutex<ModHost>>,
     persist_runtime: Arc<Mutex<ModHost>>,
     intercepted: Arc<Mutex<Vec<&'static str>>>,
+    required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
     agents: agents::Agents,
     services: services::Services,
@@ -423,7 +424,7 @@ pub(super) fn install(
     let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
-    host.accounts.install_mod_runtime(runtime.clone(), required);
+    host.accounts.install_mod_runtime(runtime.clone(), required.clone());
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let persist_runtime = Arc::new(Mutex::new(persist_runtime));
@@ -435,6 +436,7 @@ pub(super) fn install(
             input_runtime,
             persist_runtime,
             intercepted,
+            required,
             environment,
             services: services::Services::default(),
             views,
@@ -1394,13 +1396,20 @@ impl TurnLifecycleContributor for Mods {
         }
     }
 
+    fn rewrites_persisted_text(&self) -> bool {
+        self.core
+            .intercepted
+            .lock()
+            .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
+    }
+
     fn rewrite_persisted_text<'a>(
         &'a self,
         input: codex_extension_api::PersistedTextInput<'a>,
     ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
         Box::pin(persisted::rewrite(
             self.core.persist_runtime.clone(),
-            &self.core.intercepted,
+            self.core.required.clone(),
             input,
         ))
     }

@@ -77,7 +77,9 @@ test('count persists and draws', () => {
 
 `state` seeds and then reads the mod's `api.state`; `invoke` runs a tool,
 command or any other event; `mount` returns the terminal view after the host
-has validated it; `calls` lists the host calls the mod made. Steps also cover
+has validated it; `calls` lists the host calls the mod made; `component` steps
+a component module with key and pointer events at the scenario's virtual time
+and returns its `{tree, post, next_ms}`. Steps also cover
 interceptor chains, key, pointer and component interaction, clients, reloads
 and virtual time; see [Offline scenarios](REFERENCE.md#offline-scenarios).
 

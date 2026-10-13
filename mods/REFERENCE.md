@@ -67,6 +67,7 @@ native work.
 | `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
+| `sessions_tools` | tool arguments and outputs in `sessions.read` records (with `sessions`) |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
@@ -92,6 +93,7 @@ native work.
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
+| `history_persist` | `history_persist` interceptors, which see and may replace every stored history text (`history_persist_v1`) |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -101,7 +103,7 @@ the mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous` and `history_write` are authority grants. The manifest
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous`, `history_write` and `history_persist` are authority grants. The manifest
 declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
@@ -353,7 +355,8 @@ execution nor socket access.
 declared text asset with its SHA-256. It reads only the caller's hash-bound
 package. Installed package caches include declared assets. A package declares
 at most 16 assets; each package file is at most 128 KiB, and the entrypoint and
-declared text together at most 256 KiB per callback. A mod can supply its own
+declared text together at most 256 KiB per callback (`package_text_input_limit`,
+refused by inspection, install and `omd-mod-author check`). A mod can supply its own
 source to a sandboxed `exec.run` process without relying on a workspace copy.
 For a live-workspace write, `guards` may contain up to four read-only command
 preconditions: `{program, sha256?, argv?, cwd?, env?, stdout_sha256}`. The host
@@ -1022,8 +1025,9 @@ during activation, including when their native event is already registered.
 
 `process.start` takes `framing: "content-length"` (default), `"ndjson"` or
 `"raw"` and `network: "none"` or `"loopback"`; the protocol-named transports are removed.
-`process.exchange` returns at most 64 messages or 4 MiB per call and leaves
-the rest queued. Once the process exits, its readers get one second to deliver
+`process.exchange` returns messages until the next one would push the encoded
+`messages` past 48 KiB (at most 64, and always at least one), so a result fits
+a callback's receipt budget; the rest stays queued for the next call. Once the process exits, its readers get one second to deliver
 what it wrote; output queued by then is returned before the exchange that fails
 with `process_stopped`, `process.status` reports `running: true` until it has
 been exchanged, and an exchange's `send` is dropped. `stdin: "null"` starts the
@@ -1032,9 +1036,10 @@ wait on an open pipe; its exchanges cannot `send` (`process_stdin_null`) and it
 cannot take `raster`.
 
 Experimental (`process_streams_v1`): under `raw` the host reads stdout and stderr as written and
-queues each read (at most 64 KiB) as `{stream: "stdout" | "stderr", data}`,
-or `data_base64` when the bytes are not UTF-8; a character split across
-writes arrives whole in the later chunk. The two streams are separate pipes, so
+queues each read (at most 16 KiB) as `{stream: "stdout" | "stderr", data}`;
+bytes that are not UTF-8 arrive as their own `{stream, data_base64}` chunk
+between the text chunks around them, so one read can queue several chunks; a
+character split across writes arrives whole in the later chunk. The two streams are separate pipes, so
 chunks keep their order within a stream but not across streams. `send` takes strings, written
 verbatim. The queue keeps its bound of 128 messages: a process that writes
 faster than the mod exchanges blocks on its pipe, and nothing is dropped.
@@ -1378,7 +1383,9 @@ it without timings.
 namespace; subscribers declare channel patterns and receive `channel` events
 (256 events / 1 MiB per subscriber) in the publishing thread. Events whose
 originating thread is gone are dropped. `process.start {notify: ['output','exit']}`
-delivers coalesced `process_event`s. `workspace.watch {paths, recursive?,
+delivers coalesced `process_event`s; `exit` fires once, when the leader exits,
+even while a background child keeps the output streams open and more output may
+follow. `workspace.watch {paths, recursive?,
 debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
 with source `external` (16 watches per mod; protected paths are always
 excluded, Git-ignored paths unless `include_ignored` is true). Watches
@@ -1474,10 +1481,19 @@ recorded sessions that allow memory, and `sessions.read {session_id, revision,
 handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
 `message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
 `arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
-each with credential lines replaced by `[redacted]` (`redacted`; line endings kept) and cut to 2,048 characters with `truncated`.
-Reasoning and other item types are left out. Pages hold at most 16 KiB, a
-session at most 4,096 records (`projection_truncated`), and a changed rollout
-fails the read against its `revision`.
+each with credential lines replaced by `[redacted]` (`redacted`; line endings
+kept) and cut to 2,048 characters with `truncated`. Credential lines are those
+naming a credential (`Authorization:`, `api_key`, `password=`, …), assigning a
+secret-like name (`TOKEN=…`, `"secret": …`, `AWS_SECRET_ACCESS_KEY=…`), holding a
+known token prefix (`sk-`, `ghp_`, `AKIA…`) or URL credentials
+(`scheme://user:password@`), and private-key blocks. Without the
+`sessions_tools` capability, tool records carry `bytes` and `sha256` of their
+arguments or output instead of the text. Reasoning and other item types are
+left out. Pages hold at most 16 KiB, a session at most 4,096 records
+(`projection_truncated`, the oldest are kept), and a changed rollout fails the
+read against its `revision`. `sessions.list` and `sessions.read` serve mod CLI
+commands (`api.command(name, …, {cli})`) and `context` callbacks, not TUI slash
+commands.
 
 ### Render hooks (`render_hooks_v1`)
 
@@ -1703,15 +1719,19 @@ select's new `value` or a multiselect's checked `values` on every edit, `scroll`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
 and dialogs (`ui_composition_v1`).
 
-Component modules (experimental): `api.component(module, {init?, view,
+Component modules (experimental, required feature `component_modules_v1`,
+which `mod_host_check.py --static` requires of any package that calls
+`api.component`): `api.component(module, {init?, view,
 key?, pointer?, every?})`, registered during activation under the `terminal`
 capability (at most 16 per mod), draws `{type: 'module', id, label, module,
 props?, height?, keys?, pointer?}` nodes. Each mounted node runs in its own
 runner that stays alive while the node is in the view (at most four at once
-for the terminal and four for each external client; older ones remount), so
+for the terminal and four for each external client; a fifth node draws a
+`component_limit` error line and no mounted runner is evicted for it), so
 `init(props, ui)` runs once
 and the state handlers return carries over between frames (returning
-`undefined` keeps it). A step runs at most once per 16 ms frame and only when
+`undefined` keeps it; handlers are synchronous, a returned promise fails with
+`component_handlers_must_be_synchronous`). A step runs at most once per 16 ms frame and only when
 something is pending: a mount, new props or size, queued input, or a due
 `every: {ms, tick}` tick (16 ms to 24 h, at most 8 missed ticks caught up;
 `ms` may be a function of the state, and `null` pauses ticks, so a paused
@@ -1723,20 +1743,25 @@ pasted text arrives as one event with `key: null`);
 pointer events over the region with `pointer: true`, consecutive moves
 coalesced. `view(state, ui)` returns a render tree (`box` without style, `line`,
 `text`, `markdown`, `code`, `diff`, `list`; at most 64 components, depth 6, 64
-KiB). `ui` is `{columns, rows, props, post(data)}`: `post` hands the mod's
+KiB). `ui` is `{columns, rows, props, post(data)}`, where `rows` is the node's
+`height` and 0 when it has none (auto height); `post` hands the mod's
 `component_post` hooks `{component, module, data}` at most once per frame (a
 later post in the same frame replaces it; 64 KiB). Handlers have no host
-authority (`host_operation_unavailable`, `time.sleep` included) and cannot
-write state; a throw, three consecutive steps over 8 ms after the mounting one
+authority (`host_operation_unavailable`, `time.sleep` included, and no
+`host_operation` hook or interceptor sees the attempt) and cannot write state,
+but `api.state.get()` and `api.uiState.get()` read the current values at every
+step; a throw, three consecutive steps over 8 ms after the mounting one
 (`component_overrun`) or an invalid tree unmounts the node,
-which then draws one dim error line until the next view revision mounts it
-again. Without `height` the region is as tall as its latest tree. External
+which then draws one dim error line (the error's first line) until the next
+view revision mounts it again. A failed step never counts toward the mod's
+fault limit. Without `height` the region is as tall as its latest tree. External
 clients read a node's tree with `omd/render {slot: 'module', props:
 {component, columns?, rows?}}` (their own instance, sized as given or as last
-rendered, 80×24 by default; `effective.next_ms` says when the next tick is due)
+rendered, 80 columns and rows 0 by default; `effective.next_ms` says when the next tick is due)
 and send it key and pointer events through `omd/client/event`; their posts reach
-`component_post` as `{component, module, client, data}`, and detaching
-unmounts their instances.
+`component_post` as `{component, module, client, data}` (hooks there make the
+same host operations `component_event` hooks make, on either surface), and
+detaching unmounts their instances.
 
 Raster, pointer and overlays (`terminal_raster_v1`):
 
@@ -2259,8 +2284,10 @@ not promised: a fork is a separate internal session whose cache key and
 instructions differ from the lead's.
 
 `cache: {through: 'system' | N}` (`model_cache_v1`) marks the request prefix
-through the mod's `system` text (everything before the turn's user message) or
-through context block `N` as cacheable. On each of the call's requests the host
+through the worker's instructions (the last developer message before the
+turn's user message, which holds the host's role text, a fork's frozen parent
+conversation and the mod's `system`; environment context after it is not
+included) or through context block `N` as cacheable. On each of the call's requests the host
 sets `prompt_cache_key` and the `session-id` header (the ChatGPT backend's cache
 routing) to `omd-cache-` plus a hash of the model, instructions, tools and that
 prefix's model-visible fields, so calls sharing a prefix share the provider's
@@ -2337,28 +2364,50 @@ invalid edit or failing mod keeps the original request.
 
 ### Store-time history rewriting (`history_persist_v1`)
 
-`api.intercept('history_persist', …)` (capability `history`) rewrites history
-text before it is written to the thread's rollout, for redaction. Each batch
-arrives as `{thread_id, entries}`; an entry is `{index, kind, role, call_id,
-text}` where `kind` is a response item type (`message`, `agent_message`,
-`function_call`, `custom_tool_call`, `function_call_output`,
-`custom_tool_call_output`), a text kept beside an item (`delivered_message`,
-`sender_user_messages`), an event copy (`event:user_message`,
-`event:agent_message`), `inter_agent_communication` or `compacted` (a compaction
-summary and its replacement history). Return `{entries}` with only `text`
-changed, or pass a changed input to `next`; a reordered, added, dropped or
-relabelled entry is rejected. A text longer than 96 KiB arrives as consecutive
-entries with the same index, and a batch is split across callbacks of at most
-96 KiB of text; a long text splits after its last whitespace within 96 KiB, so
-only a run of more than 96 KiB without whitespace is cut inside a token. Item ids, call
-ids, roles, order and count never change; a rewritten response item carries
-`rewritten {revision, op: "redact", by: "mod:<id>"}` and reads as not original,
-and a rewritten user message drops its text elements. The interceptor gets no
-host operations. The live conversation keeps the original text until the thread
-is resumed, forked or rolled back from the rollout; reasoning, images, encrypted
-content, tool call names and realtime transcripts are not offered. A failing
-optional interceptor keeps the original text; a failing required interceptor
-persists `[withheld: a required history_persist interceptor failed]` instead.
+`api.intercept('history_persist', …)` (authority capability `history_persist`)
+rewrites history text before it is stored, for redaction: every text written to
+the thread's rollout and the prompt-recall file (`~/.codex/history.jsonl`). Each
+batch arrives as `{thread_id, entries}`; an entry is `{index, kind, role,
+call_id, text}` where `kind` is one of:
+
+- a response item type: `message`, `agent_message`, `reasoning` (summary and
+  raw text), `function_call`, `custom_tool_call`, `local_shell_call` (each
+  command word and environment value), `tool_search_call` (each string in its
+  arguments), `function_call_output`, `custom_tool_call_output`,
+  `tool_search_output` (tool descriptions), `web_search_call` (queries, URLs,
+  patterns) or `image_generation_call` (the revised prompt);
+- a text kept beside an item: `delivered_message`, `sender_user_messages`;
+- an event copy: `event:user_message`, `event:agent_message` (also a turn's
+  last agent message), `event:reasoning`, `event:plan`, `event:goal` (a thread
+  goal's objective), `event:command_execution` (command words, input and output),
+  `event:function_call_output`, `event:mcp_tool_call` (each argument string,
+  result text, structured content string and error), `event:dynamic_tool_call`,
+  `event:file_change` (added and deleted file contents, diffs, stdout and
+  stderr), `event:web_search` (query, action and result strings),
+  `event:review` (custom instructions, hint, findings and explanation),
+  `event:image_generation`, `event:hook_prompt` or
+  `event:collab_agent_tool_call` (the prompt);
+- `inter_agent_communication`, `compacted` (a compaction summary and its
+  replacement history) or `prompt_history` (a prompt-recall entry).
+
+Return `{entries}` with only `text` changed, or pass a changed input to `next`;
+a reordered, added, dropped or relabelled entry is rejected. A batch is split
+across callbacks of at most 48 KiB of JSON-encoded entries (escaping counts); a
+longer text arrives as consecutive entries with the same index, split after its
+last whitespace within the budget, so only a long run without whitespace is cut
+inside a token. Item ids, call ids, roles, order and count never change; a
+rewritten response item carries `rewritten {revision, op: "redact", by}` and
+reads as not original, where `by` names the mods whose link changed the text
+(`mod:<id>`) and `host` when entries were withheld; a rewritten user message
+drops its text elements. The interceptor gets no host operations. The live
+conversation keeps the original text until the thread is resumed, forked or
+rolled back from the rollout. Not offered: identifiers, names, paths and status
+fields, images and other binary payloads, encrypted content, extension-owned
+items (standalone web search, image generation and sleep), sub-agent activity
+and realtime transcripts. A failing optional interceptor keeps the original
+text; a failing required interceptor, or a persist runtime that fails while one
+is installed, stores `[withheld: a required history_persist interceptor
+failed]` instead (a withheld prompt-recall entry is not written).
 
 ### Durable transcript rewriting (`history_rewrite_v1`)
 
@@ -2538,7 +2587,10 @@ any it refuses.
   `markdown`, `diff` and `document` at most 49,152 bytes (the terminal keeps
   recent markdown renders, so a large `markdown` costs its parse, about 1 ms per
   KiB, only when its text or width changes; stream into `code` or `text`). A
-  view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
+  view or patch is at most 64 KiB of JSON and the composed view 256 KiB; those
+  JSON limits still apply to text-heavy views, and escaping can double a text
+  (`\n`, `"` and `\` take two bytes), so clip long text on its
+  `JSON.stringify` size rather than its 48 KiB length. A
   `wrap` site contains exactly one `slot`. Text fields refuse control characters
   except newlines where a field is multi-line. The status row holds at most 4
   segments of 40 characters across all mods. An invalid view is dropped with the
@@ -2752,7 +2804,17 @@ one module with no value imports. The project needs `typescript` installed
 `jsx_requires_typescript`. Edit `index.tsx` and treat `index.ts` as generated
 output; a hand-written `index.ts` beside `index.tsx` is never overwritten and
 fails with `jsx_entrypoint_conflict`. The scaffolded `tsconfig.json` sets `jsx: "react-jsx"` and
-`jsxImportSource: "@oh-my-diff/mod-api"`; `check` type-checks `index.tsx` itself.
+`jsxImportSource: "@oh-my-diff/mod-api"` and `allowImportingTsExtensions`;
+`check` type-checks `index.tsx` itself.
+
+A `.tsx` file in any subdirectory is an asset source too (skipping `node_modules`,
+`dist` and dot directories): each compiles to the `.ts` file beside it with the
+same rules and its own inlined factory, and a relative import of `./row.tsx`
+becomes `./row.ts` in the output. List the compiled name in `mod.json` `assets`
+(`"row.ts"`; the host accepts only `.ts`, `.mjs` and `.json` assets, and
+`package` ships only the compiled files, never the `.tsx`). The 128 KiB package
+file limit applies to each compiled file. A hand-written `.ts` beside a `.tsx`
+fails with `jsx_entrypoint_conflict`.
 
 Each `TerminalComponent` kind is an intrinsic element (`<box>`, `<line>`,
 `<text>`, ...) with the component's fields as props. Children of `box`, `pane`
@@ -2989,6 +3051,14 @@ fails the scenario with `offline_environment_secret_name`.
 mod's persisted `api.state` from the scenario's store, so `expect` can check it
 after any step; with `value` it first writes that state (the mod needs `store`,
 and the usual state limits apply), seeding a test without a setup command.
+`{"type": "component", "mod": ID, "module": NAME, "instance"?: NAME, "props"?:
+VALUE, "columns"?: 80, "rows"?: 0, "events"?: [...]}` steps one instance of the
+mod's `api.component` module at the scenario's virtual time, delivering the
+`key` and `pointer` events and every due tick, and returns `{tree, post,
+next_ms}`; the instance mounts on its first step and keeps its state until the
+scenario ends, so `advance_time` steps drive `every` ticks. The module gets no
+host authority and its tree is validated as for a terminal; `omd-mod test` and
+`mod_host_check --scenarios` run it like any other step.
 `{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000,
 "max_ms": N}` runs `check`, and while its value differs from `until` advances
 virtual time by `every_ms` and checks again (at most 256 checks); it returns
@@ -3147,7 +3217,9 @@ specifiers (`import { draw } from './draw.ts'`, `'./lib/util.mjs'`, or a
 context, so they share module state for that callback; anything else, including
 value imports of the SDK, fails with `unsupported_import`. Imported code counts
 toward the source-use report like the entrypoint; assets that are only read
-(for example scripts passed to `exec.run`) do not.
+(for example scripts passed to `exec.run`) do not. Declare the required features
+`package_text_assets_v1` for assets and `package_imports_v1` for relative
+imports; `mod_host_check.py --static` fails a package that omits them.
 
 The engine strips TypeScript types in place, so callback stacks report the
 authored line and column as `<package>/<file>:line:col`. `omd-mod-author

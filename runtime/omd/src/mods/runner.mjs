@@ -99,7 +99,11 @@ function serve(line) {
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
-  state = structuredCloneFallback(activatedState);
+  if (request.event === 'component') {
+    state = structuredCloneFallback(next.state);
+    uiState = structuredCloneFallback(next.ui_state ?? null);
+    uiRead = false;
+  } else state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
   updates.length = 0;
@@ -446,6 +450,10 @@ function component(id, definition) {
   components.set(id, definition);
   registrations.components.push(id);
 }
+function synchronous(value) {
+  if (typeof value?.then === 'function') throw new Error('component_handlers_must_be_synchronous');
+  return value;
+}
 function step(frame) {
   const definition = components.get(request.name);
   if (!definition) throw new Error('unknown_component: ' + request.name);
@@ -462,13 +470,13 @@ function step(frame) {
   if (mounting) {
     instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined, overruns: 0 };
     instances.set(address, instance);
-    if (definition.init) instance.state = definition.init(instance.props, context());
+    if (definition.init) instance.state = synchronous(definition.init(instance.props, context()));
   } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
     instance.props = deepFreeze(structuredCloneFallback(frame.props));
   }
   const apply = (handler, ...input) => {
     const next = handler(instance.state, ...input, context());
-    if (next !== undefined) instance.state = next;
+    if (next !== undefined) instance.state = synchronous(next);
   };
   const period = () => {
     const ms = typeof definition.every.ms === 'function' ? definition.every.ms(instance.state) : definition.every.ms;

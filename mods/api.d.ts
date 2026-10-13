@@ -1,10 +1,10 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
-  | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
+  | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'sessions_tools' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
   | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write'
-  | 'fs.external' | 'http' | 'mcp' | 'policy';
+  | 'history_persist' | 'fs.external' | 'http' | 'mcp' | 'policy';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -98,8 +98,12 @@ export type ToolInventory = { thread_id: string; tools: ToolInventoryEntry[] };
 export type VirtualReadRequest = { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number };
 export type VirtualReadResponse = { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean };
 export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; handle: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean };
-export type SessionRecord = { session_id: string; turn_id: string; item: number; truncated: boolean; redacted: boolean; timestamp: string | null; untrusted: true } & (
-  { kind: 'message'; role: 'user' | 'assistant'; text: string } | { kind: 'tool_call'; name: string; call_id: string; arguments: string } | { kind: 'tool_result'; call_id: string; output: string });
+/** A record's text, or without `sessions_tools` a tool record's size and digest. */
+export type SessionText<K extends string> = ({ [P in K]: string } & { truncated: boolean; redacted: boolean }) | { bytes: number; sha256: string };
+export type SessionRecord = { session_id: string; turn_id: string; item: number; timestamp: string | null; untrusted: true } & (
+  { kind: 'message'; role: 'user' | 'assistant'; text: string; truncated: boolean; redacted: boolean }
+  | ({ kind: 'tool_call'; name: string; call_id: string } & SessionText<'arguments'>)
+  | ({ kind: 'tool_result'; call_id: string } & SessionText<'output'>));
 export type Ledger = { thread_id: string; cwd: string; cost: Json | null };
 export type Context = { thread_id: string; turn_id: string; ledger: Ledger };
 export type ContextResult = { text: string };
@@ -263,9 +267,9 @@ export type RenderTree = { tree: TerminalComponent[] };
 export type ComponentKey = { kind: 'key'; key: string | null; text: string | null };
 export type ComponentPointer = { kind: 'pointer'; column: number; row: number; half?: 0 | 1 | null;
   action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
-/** The region a component module draws: its size in cells, the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
+/** The region a component module draws: its width in cells, its height in rows (the node's `height`, 0 when it has none), the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
 export type ComponentContext<P extends Json = Json> = { readonly columns: number; readonly rows: number; readonly props: P; post(data: Json): void };
-/** Experimental: handlers run on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
+/** Experimental: handlers run synchronously on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
 export type ComponentModule<S = unknown, P extends Json = Json> = {
   init?(props: P, ui: ComponentContext<P>): S;
   view(state: S, ui: ComponentContext<P>): TerminalComponent | TerminalComponent[];
@@ -391,7 +395,7 @@ export interface HostOperations {
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
   'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
-  /** Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
+  /** One call returns messages until the next would push their encoded size past 48 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -528,6 +532,7 @@ export interface Events {
   prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }
     | { kind: 'image'; source?: string; start?: number; end?: number; bytes?: number; sha256?: string } | { kind: 'paste'; start: number; end: number; bytes: number; sha256: string })[] }; output: void };
 }
+/** A raw read of at most 16 KiB: UTF-8 text as `data`, bytes that are not UTF-8 as their own `data_base64` chunk. */
 export type ProcessChunk = { stream: 'stdout' | 'stderr'; data?: string; data_base64?: string };
 export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
 export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };

@@ -65,7 +65,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "contract.status"
                         | "workspace.fingerprint"
                 ))
-        || matches!(event, "component_event" | "command")
+        || matches!(event, "component_event" | "component_post" | "command")
             && (codex_omd::host::served(operation)
                 || codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation)
                 || matches!(

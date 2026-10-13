@@ -708,10 +708,21 @@ fn validate_result(
 
 use crate::model_request::bounded;
 
-/// Final-request pages carry provider-bound text, so their records keep only digests.
+/// Final-request pages and persisted history carry private text, so their records keep only
+/// digests (of the entry texts alone for history, so a link's input and result compare).
 fn recorded(surface: &str, value: &Value) -> Value {
     if surface == "model_send" {
         let bytes = serde_json::to_vec(value).unwrap_or_default();
+        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
+    }
+    if surface == "history_persist" {
+        let texts = value["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|entry| &entry["text"])
+            .collect::<Vec<_>>();
+        let bytes = serde_json::to_vec(&texts).unwrap_or_default();
         return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
     }
     bounded(value)

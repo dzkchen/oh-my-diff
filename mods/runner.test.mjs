@@ -132,6 +132,19 @@ test('component module steps deliver input, ticks and one post without host auth
   const paused = start => `export default api => api.component("p", { init: () => ${start}, every: { ms: n => n ? null : 20, tick: n => n + 1 }, view: n => [{ type: "text", id: "n", label: "N", text: String(n) }] })`;
   const pausedStep = start => run(paused(start), { capabilities: ['terminal'], event: 'component', name: 'p', payload: { now: 100, events: [] } }).value.next_ms;
   assert.deepEqual([pausedStep(0), pausedStep(1)], [20, null]);
+  const asynchronous = handler => run(`export default api => api.component("a", { ${handler}, view: s => [{ type: "text", id: "t", label: "a", text: JSON.stringify(s) }] })`,
+    { capabilities: ['terminal'], event: 'component', name: 'a', payload: { now: 0, events: [{ kind: 'key', key: 'x', text: null }] } });
+  assert.match(asynchronous('init: () => 0, key: async s => s + 1').error, /component_handlers_must_be_synchronous/);
+  assert.match(asynchronous('init: async () => 0, key: s => s').error, /component_handlers_must_be_synchronous/);
+});
+test('a pinned component runner reads the state and UI state of the step it serves', () => {
+  const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface: currentSurface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
+  const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
+  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+    input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
+  }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
+  assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
 });
 test('entrypoints import declared assets by relative path and report them', () => {
   const asset = text => ({ text, sha256: 'a'.repeat(64) });

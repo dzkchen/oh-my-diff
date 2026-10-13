@@ -717,6 +717,7 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
             .cache_through = Some(through);
         let body = json!({"model":"fixture-model","stream":true,"max_output_tokens":128,"instructions":"base","input":[
             {"type":"message","id":format!("msg_{prompt}"),"role":"developer","content":[{"type":"input_text","text":"system"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>"}]},
             {"type":"message","role":"user","content":[{"type":"input_text","text":"document"},{"type":"input_text","text":prompt}]}]});
         let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
         accounts.prepare(&mut request, &mut encoded).unwrap();
@@ -736,7 +737,7 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
     let (first_breakpoint, first) = mark(json!(0), "first question");
     let (_, second) = mark(json!(0), "second question");
     let (system_breakpoint, system) = mark(json!("system"), "first question");
-    assert_eq!(first_breakpoint, "1:0");
+    assert_eq!(first_breakpoint, "2:0");
     assert_eq!(system_breakpoint, "0:0");
     assert!(first.starts_with("omd-cache-"));
     assert_eq!(first, second, "calls sharing the marked prefix share a key");

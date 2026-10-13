@@ -284,13 +284,17 @@ function through(profile) {
   return `${gateway}/${profile.credential}${target.pathname}${target.search}`;
 }
 
-export async function forward(body, profile, inbound, response, signal) {
+export async function forward(body, profile, inbound, response, signal, owner = new Map()) {
   const url = through(profile);
   if (profile.protocol === 'responses') {
     const headers = Object.fromEntries(Object.entries(inbound).filter(([key]) => !DROPPED.includes(key)));
     const upstream = await post(url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
     response.writeHead(upstream.statusCode, Object.fromEntries(Object.entries(upstream.headers).filter(([key]) => !['transfer-encoding', 'connection', 'content-length'].includes(key))));
-    for await (const chunk of upstream) response.write(chunk);
+    const learn = frames(event => event.type === 'response.output_item.done' && event.item?.type === 'reasoning' && remember(owner, identity(event.item), profile.name));
+    for await (const chunk of upstream) {
+      response.write(chunk);
+      try { learn(chunk); } catch {}
+    }
     return;
   }
   const anthropic = profile.protocol === 'anthropic';
@@ -316,10 +320,28 @@ export async function forward(body, profile, inbound, response, signal) {
   emitter.finish(emitter.usage ?? { input_tokens: input, input_tokens_details: { cached_tokens: 0 }, output_tokens: output, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + output, omd_usage_estimated: true });
 }
 
-// Reasoning produced before a switch stays with its account: every later request on that conversation drops it (cache-marked worker requests share their key across calls and skip this).
+const identity = item => item.id ?? item.encrypted_content;
+
+// Which profile's account produced each Responses reasoning item it streamed, oldest forgotten first.
+function remember(owner, id, name) {
+  if (id === undefined) return;
+  owner.delete(id);
+  owner.set(id, name);
+  if (owner.size > 4096) owner.delete(owner.keys().next().value);
+}
+
+// A cache-marked request keeps its item order, so foreign reasoning is dropped and the breakpoint item index follows (forks bring the lead's history to another account).
+export function scrub(body, profile, header, owner) {
+  const input = body.input ?? [];
+  const keep = input.map(item => item?.type !== 'reasoning' || (owner.get(identity(item)) ?? profile.name) === profile.name);
+  if (keep.every(Boolean)) return { body, header };
+  const at = breakpoint(header);
+  return { body: { ...body, input: input.filter((_, index) => keep[index]) }, header: at ? `${keep.slice(0, at[0]).filter(Boolean).length}:${at[1]}` : header };
+}
+
+// Reasoning produced before a switch stays with its account: every later request on that conversation drops it (cache-marked worker requests share their key across calls and use scrub instead).
 export function prepare(body, profile, last, foreign = new Map()) {
   const key = body.prompt_cache_key;
-  const identity = item => item.id ?? item.encrypted_content;
   const reasoning = (body.input ?? []).filter(item => item?.type === 'reasoning');
   if (key && last.has(key) && last.get(key) !== profile.name) foreign.set(key, new Set([...foreign.get(key) ?? [], ...reasoning.map(identity)]));
   if (key) last.set(key, profile.name);
@@ -356,6 +378,7 @@ async function serve(routePath) {
   const active = new Set();
   const last = new Map();
   const foreign = new Map();
+  const owner = new Map();
   let nonce = ready;
   let stopping = false;
   const server = createServer(async (request, response) => {
@@ -377,7 +400,10 @@ async function serve(routePath) {
       if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
       const tokens = estimate(body.input);
       if (profile.window && tokens > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${tokens} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });
-      await forward(request.headers['x-omd-cache-breakpoint'] ? body : prepare(body, profile, last, foreign), profile, request.headers, response, controller.signal);
+      const marked = request.headers['x-omd-cache-breakpoint'];
+      const scrubbed = marked && profile.protocol === 'responses' ? scrub(body, profile, marked, owner) : { body, header: marked };
+      const headers = scrubbed.header === marked ? request.headers : { ...request.headers, 'x-omd-cache-breakpoint': scrubbed.header };
+      await forward(marked ? scrubbed.body : prepare(body, profile, last, foreign), profile, headers, response, controller.signal, owner);
     } catch (error) {
       const message = String(error?.message ?? 'profile_transport_failed').slice(0, 500);
       if (!response.headersSent) response.writeHead(error?.status ?? 502, { 'content-type': 'application/json' });

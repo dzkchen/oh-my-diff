@@ -256,8 +256,13 @@ fn inspect_package(
         hash.update(read_file(script)?);
     }
     let mut assets = BTreeMap::new();
+    let mut text = source.len();
     for asset in &package.assets {
         let content = read_file(asset)?;
+        text += std::str::from_utf8(&content).map_or(0, str::len);
+        if text > 256 * 1024 {
+            return Err(failure(format!("package_text_input_limit: {}", package.id)));
+        }
         hash.update([0]);
         hash.update(asset.as_bytes());
         hash.update([0]);

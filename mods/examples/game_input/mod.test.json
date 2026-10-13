@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "steps": [
+    {"type": "component", "mod": "game_input", "module": "catch", "columns": 24, "rows": 8, "expect": {"tree": [{"type": "text", "id": "board", "label": "Catch board", "text": "···●····················\n························\n························\n························\n························\n························\n··········▀▀▀▀··········\nScore 0  ·  lives 3  ·  a/d or the pointer"}], "post": null, "next_ms": 120}},
+    {"type": "component", "mod": "game_input", "module": "catch", "columns": 24, "rows": 8, "events": [{"kind": "key", "key": "Right", "text": null}], "expect": {"tree": [{"type": "text", "id": "board", "label": "Catch board", "text": "···●····················\n························\n························\n························\n························\n························\n············▀▀▀▀········\nScore 0  ·  lives 3  ·  a/d or the pointer"}], "post": null, "next_ms": 120}},
+    {"type": "advance_time", "ms": 120},
+    {"type": "component", "mod": "game_input", "module": "catch", "columns": 24, "rows": 8, "expect": {"tree": [{"type": "text", "id": "board", "label": "Catch board", "text": "························\n····●···················\n························\n························\n························\n························\n············▀▀▀▀········\nScore 0  ·  lives 3  ·  a/d or the pointer"}], "post": null, "next_ms": 120}},
+    {"type": "advance_time", "ms": 960},
+    {"type": "component", "mod": "game_input", "module": "catch", "columns": 24, "rows": 8},
+    {"type": "advance_time", "ms": 960},
+    {"type": "component", "mod": "game_input", "module": "catch", "columns": 24, "rows": 8},
+    {"type": "advance_time", "ms": 960},
+    {"type": "component", "mod": "game_input", "module": "catch", "columns": 24, "rows": 8, "expect": {"tree": [{"type": "text", "id": "board", "label": "Catch board", "text": "···●····················\n························\n························\n························\n························\n························\n············▀▀▀▀········\nGame over at 0. Click or press Space."}], "post": {"data": {"score": 0}}, "next_ms": null}}
+  ]
+}

@@ -1,6 +1,7 @@
 mod author;
 mod bridge;
 mod chain;
+mod persisted;
 mod render;
 pub use chain::ModChain;
 pub use chain::ModInterceptor;
@@ -9,6 +10,13 @@ pub use chain::access_receipt;
 pub use chain::compose_rows;
 pub use chain::continue_operation;
 pub use chain::intercept_shared;
+pub use persisted::PERSIST_CHUNK_BYTES;
+pub use persisted::PERSIST_WITHHELD;
+pub use persisted::PersistedRewrite;
+pub use persisted::persist_changed_by;
+pub use persisted::persist_chunks;
+pub use persisted::persist_cut;
+pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
 pub use render::component_detach;
 pub use render::component_events;
@@ -551,6 +559,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "agents",
     "store",
     "sessions",
+    "sessions_tools",
     "contracts",
     "builtins",
     "threads",
@@ -577,6 +586,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "peers",
     "autonomous",
     "history_write",
+    "history_persist",
 ];
 pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "os",
@@ -589,6 +599,7 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "peers",
     "autonomous",
     "history_write",
+    "history_persist",
 ];
 
 /// What a user accepts by granting the authority capabilities, shown before trust and in status.
@@ -627,6 +638,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     }
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
+    }
+    if granted("history_persist") {
+        exposure.push("history_persist: this mod sees every text OMD stores for your sessions (prompts, instructions, replies, reasoning, tool arguments and results, command output, file changes and prompt recall) and may replace any of it before it is written, which changes what resume, fork, search and export show and what the model sees next; the live session keeps the original, and rewritten rows are marked.");
     }
     exposure
 }
@@ -711,7 +725,7 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("peer_receive", "peers"),
     ("turn_stop", "autonomous"),
     ("compaction", "compaction"),
-    ("history_persist", "history"),
+    ("history_persist", "history_persist"),
     ("elicitation", "approvals"),
     ("composer_edit", "composer"),
     ("component_change", "terminal"),
@@ -1075,6 +1089,9 @@ fn source_use(
                 && declared("fs.write")
             {
                 used.push("fs.write".to_owned());
+            }
+            if !used.is_empty() && operation == "sessions.read" && declared("sessions_tools") {
+                used.push("sessions_tools".to_owned());
             }
             used
         };
@@ -2838,6 +2855,9 @@ fn invoke(
                     }
                     return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
                 }
+                if matches!(event, "terminal" | "component") {
+                    return host(id, call);
+                }
                 let mut call = call;
                 if call.operation == "turns.queue"
                     && let Some(arguments) = call.arguments.as_object_mut()
@@ -3379,9 +3399,6 @@ impl ModHost {
                         "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
                         package.id
                     )));
-                }
-                if source.len() + files.values().map(String::len).sum::<usize>() > 256 * 1024 {
-                    return Err(failure(format!("package_text_input_limit: {}", package.id)));
                 }
                 Ok(files
                     .into_iter()
@@ -4656,7 +4673,7 @@ impl ModHost {
                 ]
                 .iter()
                 .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
-                    && event != "service"
+                    && !matches!(event, "service" | "component")
                 {
                     current.fault(message);
                 }

@@ -58,7 +58,25 @@ pub fn redact(text: &str) -> String {
                         lower.match_indices(prefix).any(|(offset, _)| {
                             offset == 0 || !lower.as_bytes()[offset - 1].is_ascii_alphanumeric()
                         })
-                    });
+                    })
+                || assigns_secret(line)
+                || line.match_indices("AKIA").any(|(offset, _)| {
+                    (offset == 0 || !line.as_bytes()[offset - 1].is_ascii_alphanumeric())
+                        && line.as_bytes()[offset + 4..]
+                            .iter()
+                            .take_while(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+                            .count()
+                            >= 16
+                })
+                || line.match_indices("://").any(|(offset, _)| {
+                    let authority = line[offset + 3..]
+                        .split(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'')
+                        .next()
+                        .unwrap_or_default();
+                    authority
+                        .find('@')
+                        .is_some_and(|at| authority[..at].contains(':'))
+                });
             if ends_key {
                 private_key = false;
             }
@@ -69,6 +87,40 @@ pub fn redact(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// `NAME=value`, `NAME: value` or `"name": value` where a segment of the name reads as a secret.
+fn assigns_secret(line: &str) -> bool {
+    line.match_indices(['=', ':']).any(|(offset, _)| {
+        let before = line[..offset].trim_end().trim_end_matches(['"', '\'']);
+        let start = before.len()
+            - before
+                .bytes()
+                .rev()
+                .take_while(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(byte))
+                .count();
+        let value = line[offset + 1..]
+            .trim_start()
+            .trim_start_matches(['"', '\'', '=']);
+        let segments = before[start..]
+            .split(['_', '-', '.'])
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>();
+        !value.is_empty()
+            && segments.iter().enumerate().any(|(index, segment)| {
+                ["token", "secret", "password", "passwd", "apikey"]
+                    .iter()
+                    .any(|word| segment.ends_with(word))
+                    || segment == "pwd"
+                    || segment.starts_with("credential")
+                    || (segment == "key"
+                        && index > 0
+                        && [
+                            "api", "access", "private", "secret", "signing", "client", "master",
+                        ]
+                        .contains(&segments[index - 1].as_str()))
+            })
+    })
 }
 
 pub fn contains_secret(text: &str) -> bool {

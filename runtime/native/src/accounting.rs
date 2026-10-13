@@ -134,8 +134,9 @@ const REQUEST_HEADER: &str = "x-omd-request-id";
 const SYNTHETIC_HEADER: &str = "x-omd-synthetic";
 const CACHE_HEADER: &str = "x-omd-cache-breakpoint";
 
-/// The last cacheable `input[item].content[part]`: the block before the turn's user message
-/// for `"system"`, else that message's context block.
+/// The last cacheable `input[item].content[part]`: for `"system"` the end of the last developer
+/// message before the turn's user message (the worker instructions holding `system`), else that
+/// user message's context block.
 fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
     let items = input.as_array()?;
     let user = items
@@ -147,12 +148,11 @@ fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
             (block + 1 < items[user]["content"].as_array()?.len()).then_some((user, block))
         }
         None => {
-            let item = user.checked_sub(1)?;
-            let parts = items[item]["content"]
-                .as_array()
-                .filter(|parts| items[item]["type"] == "message" && !parts.is_empty())?
-                .len();
-            Some((item, parts - 1))
+            let item = items[..user]
+                .iter()
+                .rposition(|item| item["type"] == "message" && item["role"] == "developer")?;
+            let parts = items[item]["content"].as_array()?.len();
+            Some((item, parts.checked_sub(1)?))
         }
     }
 }

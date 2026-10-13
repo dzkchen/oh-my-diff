@@ -16,6 +16,7 @@ pub struct SessionIndex<'a> {
     pub database: Option<&'a Path>,
     pub repository: &'a Path,
     pub enabled: bool,
+    pub tools: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -378,11 +379,16 @@ impl SessionIndex<'_> {
                 }
                 _ => continue,
             };
-            let redacted = redact(&text);
-            let limited: String = redacted.chars().take(2048).collect();
-            record["truncated"] = json!(limited.len() < redacted.len());
-            record["redacted"] = json!(redacted != text);
-            record[field] = json!(limited);
+            if field == "text" || self.tools {
+                let redacted = redact(&text);
+                let limited: String = redacted.chars().take(2048).collect();
+                record["truncated"] = json!(limited.len() < redacted.len());
+                record["redacted"] = json!(redacted != text);
+                record[field] = json!(limited);
+            } else {
+                record["bytes"] = json!(text.len());
+                record["sha256"] = json!(hash(text.as_bytes()));
+            }
             records.push(record);
             if records.len() >= 4096 {
                 return Ok((records, true));

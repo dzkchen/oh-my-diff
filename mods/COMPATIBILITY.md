@@ -42,6 +42,11 @@ Require `turn_abort_v1` for `turns.abort`, `terminal_selection_v1` for
 16–999 ms timers. These labels reject older hosts before activation even when
 their API version matches.
 
+A package with declared assets requires `package_text_assets_v1`; one that
+imports its assets by relative path also requires `package_imports_v1`, and one
+that calls `api.component` also requires `component_modules_v1`
+(`scripts/mod_host_check.py --static` checks all three).
+
 ## Stability and change rules
 
 - `stable` means additions preserve the published contract. A breaking stable

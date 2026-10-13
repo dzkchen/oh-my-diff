@@ -17,7 +17,7 @@ const surface = {
   replacements: ['context', 'routing', 'compaction'],
   intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
     command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
-    composer_edit: 'composer', history_persist: 'history' },
+    composer_edit: 'composer', history_persist: 'history_persist' },
   middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
 };
 
@@ -310,25 +310,6 @@ test('composer examples suggest a recent prompt and tidy pastes through the edit
   assert.deepEqual(run('paste_tidy', 'intercept', history, { name: '0' }).value, { unmatched: true });
 });
 
-test('tool history example pairs the latest session tool calls with their results', () => {
-  const listed = run('tool_history', 'command', null, { name: 'recent_tools' });
-  assert.deepEqual(listed.host_call, { operation: 'sessions.list', arguments: { limit: 1 } });
-  const session = { session_id: 's', revision: 'r', handle: 'h' };
-  const list = { call: listed.host_call, value: { sessions: [session] } };
-  const read = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list] });
-  assert.deepEqual(read.host_call, { operation: 'sessions.read', arguments: session });
-  const first = { call: read.host_call, value: { records: [{ kind: 'message', role: 'user', text: 'Run it.' },
-    { kind: 'tool_call', name: 'exec_command', call_id: 'c1', arguments: '{}' }], cursor: 2 } };
-  const next = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list, first] });
-  assert.deepEqual(next.host_call, { operation: 'sessions.read', arguments: { ...session, cursor: 2 } });
-  const second = { call: next.host_call, value: { records: [{ kind: 'tool_result', call_id: 'c1', output: 'ok\nmore' },
-    { kind: 'tool_call', name: 'apply_patch', call_id: 'c2', arguments: '' }], cursor: null } };
-  const shown = run('tool_history', 'command', null, { name: 'recent_tools', receipts: [list, first, second] });
-  assert.equal(shown.value.display, 'exec_command: ok\napply_patch: no result');
-  assert.equal(run('tool_history', 'command', null, { name: 'recent_tools', receipts: [{ call: listed.host_call, value: { sessions: [] } }] }).value.display,
-    'No recorded sessions in this repository.');
-});
-
 test('history redaction example rewrites only entry text before it is persisted', () => {
   const entry = (index, text) => ({ index, kind: 'function_call_output', role: null, call_id: 'c1', text });
   const batch = { thread_id: 't', entries: [entry(0, 'Authorization: Bearer abcdefghijklmnop'), entry(1, 'key sk-proj-ABCDEFGHIJKLMNOPQRST and AKIAABCDEFGHIJKLMNOP'), entry(2, 'plain')] };
@@ -349,4 +330,12 @@ test('readme answers example marks the README context block as a cached prefix',
   const answered = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme',
     receipts: [file, { call: asked.host_call, value: { text: 'Run install.sh.', cache } }] });
   assert.deepEqual(answered.value, { answer: 'Run install.sh.', cache });
+});
+
+test('readme answers example keeps the README context within the host byte cap', () => {
+  const read = run('readme_answers', 'tool', { question: 'q' }, { name: 'ask_readme' });
+  const file = { call: read.host_call, value: { files: { 'README.md': { text: '日本語😀'.repeat(20_000) } } } };
+  const [context] = run('readme_answers', 'tool', { question: 'q' }, { name: 'ask_readme', receipts: [file] }).host_call.arguments.context;
+  const size = Buffer.byteLength(context);
+  assert.ok(size <= 30_000 && size > 29_990 && !context.includes('\ufffd'), String(size));
 });

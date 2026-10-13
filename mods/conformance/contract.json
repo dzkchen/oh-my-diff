@@ -24,6 +24,7 @@
     "capabilities:fs.read": {"status":"frozen","consumer":{"path":"mods/examples/coordination/mod.json","snippet":"\"fs.read\""},"decision":"tool.workspace"},
     "capabilities:fs.write": {"status":"frozen","consumer":{"path":"mods/examples/snapshot_review/mod.json","snippet":"\"fs.write\""},"decision":"tool.workspace"},
     "capabilities:history": {"status":"frozen","consumer":{"path":"mods/examples/context_fold/mod.json","snippet":"\"history\""},"decision":"context.history"},
+    "capabilities:history_persist": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`."},
     "capabilities:history_write": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "capabilities:http": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "capabilities:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/mod.json","snippet":"\"input\""},"decision":"context.input"},
@@ -43,6 +44,7 @@
     "capabilities:request_policy": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/mod.json","snippet":"\"request_policy\""},"decision":"kernel.final_request_policy"},
     "capabilities:services": {"status":"frozen","consumer":{"path":"mods/examples/service-consumer/mod.json","snippet":"\"services\""},"decision":"kernel.inter_mod_services"},
     "capabilities:sessions": {"status":"frozen","consumer":{"path":"mods/examples/port_list/mod.json","snippet":"\"sessions\""},"decision":"shared.session_index"},
+    "capabilities:sessions_tools": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`."},
     "capabilities:store": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/mod.json","snippet":"\"store\""},"decision":"context.store"},
     "capabilities:terminal": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/mod.json","snippet":"\"terminal\""},"decision":"terminal.view"},
     "capabilities:threads": {"status":"frozen","consumer":{"path":"mods/examples/notification_bridge/mod.json","snippet":"\"threads\""},"decision":"coordination.app_bridge"},
@@ -742,7 +744,7 @@
       "replace": null,
       "timing": "any callback; `migrate` on a state-version change",
       "ownership": "mod: keys and values; host: namespaces, revisions, provenance, bounds and export",
-      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 64 KiB per mod store or 192 KiB per thread or checkout, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
+      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 192 KiB in every scope, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
       "native": "native hooks hold no state between invocations",
       "covers": {
         "capabilities": [
@@ -779,7 +781,7 @@
       "id": "shared.session_index",
       "group": "context_recovery",
       "decision": "Session history and turn evidence",
-      "observe": "`sessions.list` and `sessions.read` page visible messages, tool calls and tool results; `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
+      "observe": "`sessions.list` and `sessions.read` page visible messages, tool calls and tool results (arguments and outputs with `sessions_tools`, else their size and digest); `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
       "alter": "none",
       "replace": null,
       "timing": "any callback; turn evidence at turn end",
@@ -788,7 +790,8 @@
       "native": "native hooks see only the current payload",
       "covers": {
         "capabilities": [
-          "sessions"
+          "sessions",
+          "sessions_tools"
         ],
         "events": [],
         "replacements": [],
@@ -1724,7 +1727,7 @@
       "replace": null,
       "timing": "background delivery at safe points",
       "ownership": "mod: subscriptions and payloads; host: namespaces, queues, watch roots and debounce",
-      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 100 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; at most ten timer deliveries per second per owner/thread, coalescing repeated pending keys",
+      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 16 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; timer deliveries spaced at least 16 ms apart per owner/thread (up to 60 per second), coalescing repeated pending keys",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1865,8 +1868,8 @@
       "replace": null,
       "timing": "frame steps, at most one per 16 ms, while a `module` node is drawn and has pending input, props or ticks",
       "ownership": "mod: module state and tree; host: mounting, focus, frame pacing and unmounting",
-      "limits": "16 modules per mod; 8 ms per step; render-tree bounds; one 64 KiB post per frame",
-      "native": "modules get no host operations or state writes; a throw, overrun or invalid tree unmounts until the next view revision",
+      "limits": "16 modules per mod; four mounted at once for the terminal and for each client, a fifth is refused; 8 ms per step; render-tree bounds; one 64 KiB post per frame",
+      "native": "modules get no host operations or state writes; a throw, overrun or invalid tree unmounts until the next view revision and never counts toward the mod fault limit",
       "covers": {
         "capabilities": [],
         "events": [
@@ -2029,7 +2032,7 @@
       "replace": null,
       "timing": "inside the calling callback",
       "ownership": "mod: when to call; host: the underlying operations and their grants",
-      "limits": "sleep ≤ 60 s; timers 100 ms to 24 h under the host timer limits; classification needs an explicit route",
+      "limits": "sleep ≤ 60 s; timers 16 ms to 24 h under the host timer limits; classification needs an explicit route",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -2107,15 +2110,17 @@
       "id": "context.history_persist",
       "group": "context_recovery",
       "decision": "Store-time rewriting of persisted history text",
-      "observe": "`history_persist` sees each batch's message, tool call, tool output, event-copy and compaction texts before the rollout is written",
+      "observe": "`history_persist` sees each batch's message, reasoning, tool call, tool output, event-copy (commands, MCP calls, file changes, web search, review, plan) and compaction texts before the rollout is written, and each prompt-recall entry before `history.jsonl` is",
       "alter": "change entry text only, for redaction; ids, call ids, roles, order and count are fixed",
       "replace": null,
       "timing": "synchronously before each rollout write; the live conversation keeps the original until the thread is reloaded",
-      "ownership": "mod: entry text; host: entry selection, chunking, provenance and the rollout",
-      "limits": "no host operations; 96 KiB of text per callback, longer texts split across entries with the same index; reasoning, images, encrypted content and realtime transcripts are not offered; a failing required interceptor persists a placeholder",
+      "ownership": "user: the hash-bound, revocable `history_persist` grant; mod: entry text; host: entry selection, chunking, provenance and the rollout",
+      "limits": "no host operations; 48 KiB of JSON-encoded entries per callback, longer texts split across entries with the same index; identifiers, names, paths and status fields, images and binary payloads, encrypted content, extension-owned items, sub-agent activity and realtime transcripts are not offered; a failing required interceptor or persist runtime stores a placeholder and drops the prompt-recall entry",
       "native": "no native equivalent",
       "covers": {
-        "capabilities": [],
+        "capabilities": [
+          "history_persist"
+        ],
         "events": [],
         "replacements": [],
         "intercepts": [
@@ -2569,7 +2574,7 @@
     },
     {
       "id": "limits",
-      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including host-call replays, and 64 KiB state.",
+      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 128 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 192 KiB state in every scope.",
       "evidence": [
         "rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget",
         "rust:mod_context_is_bounded_and_callback_failure_is_isolated",

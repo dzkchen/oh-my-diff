@@ -20996,7 +20996,7 @@ index 8c4203bf1..930f6ad99 100644
                  .map_err(std::io::Error::other)?;
          }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 263f08f2f..72665ae1f 100644
+index 263f08f2f..a461ba3c1 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -58,6 +58,8 @@ type McpToolApprovalMetadataMap =
@@ -21013,7 +21013,7 @@ index 263f08f2f..72665ae1f 100644
      pub(super) forked_from_ordinal_exclusive: Option<u64>,
      pub(super) next_internal_sub_id: AtomicU64,
 +    /// Keeps rollout appends in call order while store-time text rewrites run.
-+    pub(super) rollout_order: Mutex<()>,
++    pub(super) rollout_order: Arc<Mutex<()>>,
  }
 
  #[derive(Clone)]
@@ -21084,7 +21084,7 @@ index 263f08f2f..72665ae1f 100644
                  fork_persistence,
                  forked_from_ordinal_exclusive,
                  next_internal_sub_id: AtomicU64::new(0),
-+                rollout_order: Mutex::new(()),
++                rollout_order: Arc::new(Mutex::new(())),
              });
              if let Some(startup) = &startup {
                  startup.set_session(Arc::clone(&sess));
@@ -21110,7 +21110,7 @@ index c7a5de027..724125dbc 100644
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 496114a11..6bfb92282 100644
+index 496114a11..cd55f974b 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -3,6 +3,8 @@ use crate::agent::LocalAgentControl;
@@ -21165,7 +21165,7 @@ index 496114a11..6bfb92282 100644
          fork_persistence: ForkPersistence::Copied,
          forked_from_ordinal_exclusive: None,
          next_internal_sub_id: AtomicU64::new(0),
-+        rollout_order: tokio::sync::Mutex::new(()),
++        rollout_order: Arc::new(tokio::sync::Mutex::new(())),
      };
      let per_turn_config = session.build_per_turn_config(
          &session_configuration,
@@ -21207,7 +21207,7 @@ index 496114a11..6bfb92282 100644
          fork_persistence: ForkPersistence::Copied,
          forked_from_ordinal_exclusive: None,
          next_internal_sub_id: AtomicU64::new(0),
-+        rollout_order: tokio::sync::Mutex::new(()),
++        rollout_order: Arc::new(tokio::sync::Mutex::new(())),
      });
      let per_turn_config = session.build_per_turn_config(
          &session_configuration,
@@ -26592,7 +26592,7 @@ index d93373861..857e8752e 100644
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 61cdbe4da..2212150e7 100644
+index 61cdbe4da..a50859c56 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -26693,7 +26693,7 @@ index 61cdbe4da..2212150e7 100644
      /// Called before the host drops the completed turn runtime and turn store.
      /// The callback completes before the host emits the turn-complete event.
      fn on_turn_stop<'a>(&'a self, input: TurnStopInput<'a>) -> ExtensionFuture<'a, ()> {
-@@ -259,6 +301,93 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -259,6 +301,98 @@ pub trait TurnLifecycleContributor: Send + Sync {
              let _input = input;
          })
      }
@@ -26707,6 +26707,11 @@ index 61cdbe4da..2212150e7 100644
 +            let _input = input;
 +            UserInputDecision::Keep
 +        })
++    }
++
++    /// Whether `rewrite_persisted_text` may change text now; persistence copies items only then.
++    fn rewrites_persisted_text(&self) -> bool {
++        false
 +    }
 +
 +    /// Rewrites history text before it is persisted; the live history keeps the original.
@@ -26787,7 +26792,7 @@ index 61cdbe4da..2212150e7 100644
  }
 
  /// Extension contribution that can add turn-local model input.
-@@ -285,6 +414,18 @@ pub trait TurnInputContributor: Send + Sync {
+@@ -285,6 +419,18 @@ pub trait TurnInputContributor: Send + Sync {
  /// Implementations should treat the supplied values as immutable before/after
  /// snapshots of the effective thread configuration.
  pub trait ConfigContributor<C>: Send + Sync {
@@ -26806,7 +26811,7 @@ index 61cdbe4da..2212150e7 100644
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -371,6 +512,17 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -371,6 +517,17 @@ pub trait ToolLifecycleContributor: Send + Sync {
      /// Excludes nested code-mode calls. Observers must return promptly.
      fn on_tool_dispatch(&self, _input: ToolDispatchInput<'_>) {}
 
@@ -26824,7 +26829,7 @@ index 61cdbe4da..2212150e7 100644
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -387,6 +539,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -387,6 +544,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -26836,7 +26841,7 @@ index 61cdbe4da..2212150e7 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -405,6 +562,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -405,6 +567,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -27080,7 +27085,7 @@ index 3b31eaaf5..92e18ac0b 100644
 
  /// The execution interval represented by a tool timing observation.
 diff --git a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
-index 7361c20c5..de6998af4 100644
+index 7361c20c5..75dabc2f5 100644
 --- a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
 @@ -70,3 +70,204 @@ pub struct TurnErrorInput<'a> {
@@ -27130,8 +27135,9 @@ index 7361c20c5..de6998af4 100644
 +/// One text field of a history entry about to be persisted.
 +#[derive(Clone, Debug, PartialEq, Eq)]
 +pub struct PersistedText {
-+    /// The response item type, `event:user_message`, `event:agent_message`,
-+    /// `compacted`, `delivered_message`, `sender_user_messages` or `inter_agent_communication`.
++    /// The response item type (`message`, `reasoning`, `local_shell_call`, …), an event copy
++    /// (`event:user_message`, `event:command_execution`, …), `compacted`, `delivered_message`,
++    /// `sender_user_messages` or `inter_agent_communication`.
 +    pub kind: &'static str,
 +    pub role: Option<String>,
 +    pub call_id: Option<String>,
@@ -27139,9 +27145,8 @@ index 7361c20c5..de6998af4 100644
 +}
 +
 +pub struct PersistedTextInput<'a> {
++    pub thread_id: &'a str,
 +    pub entries: &'a [PersistedText],
-+    pub session_store: &'a ExtensionData,
-+    pub thread_store: &'a ExtensionData,
 +}
 +
 +/// Replacement texts in entry order and who supplied them.
@@ -31684,7 +31689,7 @@ index c65cc64ea..b8e1e68b4 100644
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
 diff --git a/codex-rs/tui/src/app/thread_routing.rs b/codex-rs/tui/src/app/thread_routing.rs
-index 9a6adc013..1efd40f3e 100644
+index 9a6adc013..f3f8ba5e8 100644
 --- a/codex-rs/tui/src/app/thread_routing.rs
 +++ b/codex-rs/tui/src/app/thread_routing.rs
 @@ -421,6 +421,7 @@ impl App {
@@ -31695,6 +31700,21 @@ index 9a6adc013..1efd40f3e 100644
                  request.changes.clone(),
                  &request.cwd,
              ));
+@@ -561,6 +562,14 @@ impl App {
+             &self.local_settings.history,
+         );
+         tokio::spawn(async move {
++            let thread = thread_id.to_string();
++            let Ok(Some(text)) = tokio::task::spawn_blocking(move || {
++                crate::mod_runtime::prompt_history(&thread, text)
++            })
++            .await
++            else {
++                return;
++            };
+             if let Err(err) =
+                 codex_message_history::append_entry(&text, thread_id, &history_config).await
+             {
 diff --git a/codex-rs/tui/src/app/thread_title_tests.rs b/codex-rs/tui/src/app/thread_title_tests.rs
 index ca73ee8d3..b3a606a68 100644
 --- a/codex-rs/tui/src/app/thread_title_tests.rs
@@ -45551,28 +45571,42 @@ index 000000000..e90443b07
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 000000000..a8a4cca11
+index 000000000..c46c78c97
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
-@@ -0,0 +1,266 @@
-+use std::borrow::Cow;
+@@ -0,0 +1,619 @@
++use std::collections::HashMap;
++use std::path::PathBuf;
++use std::sync::Arc;
 +
 +use codex_extension_api::PersistedText;
 +use codex_extension_api::PersistedTextInput;
++use codex_extension_api::TurnLifecycleContributor;
 +use codex_history::HistoryRewriteProvenance;
 +use codex_history::ResponseItemEnvelope;
 +use codex_history::RolloutItem;
++use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem;
 +use codex_protocol::items::AgentMessageContent;
 +use codex_protocol::items::TurnItem;
++use codex_protocol::mcp::CallToolResult;
 +use codex_protocol::models::AgentMessageInputContent;
 +use codex_protocol::models::ContentItem;
 +use codex_protocol::models::FunctionCallOutputBody;
 +use codex_protocol::models::FunctionCallOutputContentItem;
++use codex_protocol::models::LocalShellAction;
++use codex_protocol::models::ReasoningItemContent;
++use codex_protocol::models::ReasoningItemReasoningSummary;
 +use codex_protocol::models::ResponseItem;
++use codex_protocol::models::WebSearchAction;
 +use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::FileChange;
++use codex_protocol::protocol::ReviewOutputEvent;
++use codex_protocol::protocol::ReviewTarget;
 +use codex_protocol::user_input::UserInput;
 +use codex_thread_store::LiveThread;
++use codex_thread_store::ThreadStoreError;
 +use codex_thread_store::ThreadStoreResult;
++use serde_json::Value;
 +
 +use super::Session;
 +
@@ -45585,91 +45619,102 @@ index 000000000..a8a4cca11
 +        live_thread: &LiveThread,
 +        items: &[RolloutItem],
 +    ) -> ThreadStoreResult<()> {
-+        let _order = self.rollout_order.lock().await;
-+        live_thread.append_items(&self.persisted(items).await).await
-+    }
-+
-+    /// Offers the texts of items about to be persisted to store-time rewrites.
-+    pub(crate) async fn persisted<'a>(&self, items: &'a [RolloutItem]) -> Cow<'a, [RolloutItem]> {
-+        let contributors = self.services.extensions.turn_lifecycle_contributors();
-+        if contributors.is_empty() || !items.iter().any(offered) {
-+            return Cow::Borrowed(items);
++        let rewriters = self
++            .services
++            .extensions
++            .turn_lifecycle_contributors()
++            .iter()
++            .filter(|contributor| contributor.rewrites_persisted_text())
++            .cloned()
++            .collect::<Vec<_>>();
++        if rewriters.is_empty()
++            && let Ok(_order) = self.rollout_order.try_lock()
++        {
++            return live_thread.append_items(items).await;
 +        }
-+        let mut owned = items.to_vec();
-+        let mut entries = Vec::new();
-+        let unchanged = HistoryRewriteProvenance {
-+            revision: String::new(),
-+            op: String::new(),
-+            source: None,
-+            by: String::new(),
-+        };
-+        for item in &mut owned {
-+            rollout_item(item, &unchanged, &mut |kind, role, call_id, text| {
-+                entries.push(PersistedText {
-+                    kind,
-+                    role: role.map(str::to_owned),
-+                    call_id: call_id.map(str::to_owned),
-+                    text: text.clone(),
-+                });
-+                false
-+            });
-+        }
-+        if entries.is_empty() {
-+            return Cow::Borrowed(items);
-+        }
-+        let mut by = Vec::new();
-+        for contributor in contributors {
-+            let Some(rewrite) = contributor
-+                .rewrite_persisted_text(PersistedTextInput {
-+                    entries: &entries,
-+                    session_store: &self.services.session_extension_data,
-+                    thread_store: &self.services.thread_extension_data,
-+                })
-+                .await
-+            else {
-+                continue;
-+            };
-+            if rewrite.texts.len() == entries.len() {
-+                for (entry, text) in entries.iter_mut().zip(rewrite.texts) {
-+                    entry.text = text;
-+                }
-+                by.push(rewrite.by);
-+            }
-+        }
-+        if by.is_empty() {
-+            return Cow::Borrowed(items);
-+        }
-+        let provenance = HistoryRewriteProvenance {
-+            revision: self.thread_id().to_string(),
-+            op: "redact".to_owned(),
-+            source: None,
-+            by: by.join(", "),
-+        };
-+        let mut texts = entries.into_iter().map(|entry| entry.text);
-+        for item in &mut owned {
-+            rollout_item(item, &provenance, &mut |_, _, _, text| {
-+                let Some(replacement) = texts.next() else {
-+                    return false;
-+                };
-+                let changed = *text != replacement;
-+                *text = replacement;
-+                changed
-+            });
-+        }
-+        Cow::Owned(owned)
++        let order = Arc::clone(&self.rollout_order);
++        let live_thread = live_thread.clone();
++        let items = items.to_vec();
++        let thread_id = self.thread_id().to_string();
++        // Detached, so an interrupted turn cannot drop items its live history already holds.
++        tokio::spawn(async move {
++            let _order = order.lock_owned().await;
++            let items = persisted(&rewriters, &thread_id, items).await;
++            live_thread.append_items(&items).await
++        })
++        .await
++        .map_err(|error| ThreadStoreError::Internal {
++            message: error.to_string(),
++        })?
 +    }
 +}
 +
-+fn offered(item: &RolloutItem) -> bool {
-+    matches!(
-+        item,
-+        RolloutItem::ResponseItem(_)
-+            | RolloutItem::Compacted(_)
-+            | RolloutItem::InterAgentCommunication(_)
-+            | RolloutItem::EventMsg(
-+                EventMsg::UserMessage(_) | EventMsg::AgentMessage(_) | EventMsg::ItemCompleted(_)
-+            )
-+    )
++/// Offers the texts of items about to be persisted to store-time rewrites.
++async fn persisted(
++    rewriters: &[Arc<dyn TurnLifecycleContributor>],
++    thread_id: &str,
++    mut items: Vec<RolloutItem>,
++) -> Vec<RolloutItem> {
++    let mut entries = Vec::new();
++    let unchanged = HistoryRewriteProvenance {
++        revision: String::new(),
++        op: String::new(),
++        source: None,
++        by: String::new(),
++    };
++    for item in &mut items {
++        rollout_item(item, &unchanged, &mut |kind, role, call_id, text| {
++            entries.push(PersistedText {
++                kind,
++                role: role.map(str::to_owned),
++                call_id: call_id.map(str::to_owned),
++                text: text.clone(),
++            });
++            false
++        });
++    }
++    if entries.is_empty() || rewriters.is_empty() {
++        return items;
++    }
++    let mut by = Vec::new();
++    for rewriter in rewriters {
++        let Some(rewrite) = rewriter
++            .rewrite_persisted_text(PersistedTextInput {
++                thread_id,
++                entries: &entries,
++            })
++            .await
++        else {
++            continue;
++        };
++        if rewrite.texts.len() == entries.len() {
++            for (entry, text) in entries.iter_mut().zip(rewrite.texts) {
++                entry.text = text;
++            }
++            by.push(rewrite.by);
++        }
++    }
++    if by.is_empty() {
++        return items;
++    }
++    let provenance = HistoryRewriteProvenance {
++        revision: thread_id.to_owned(),
++        op: "redact".to_owned(),
++        source: None,
++        by: by.join(", "),
++    };
++    let mut texts = entries.into_iter().map(|entry| entry.text);
++    for item in &mut items {
++        rollout_item(item, &provenance, &mut |_, _, _, text| {
++            let Some(replacement) = texts.next() else {
++                return false;
++            };
++            let changed = *text != replacement;
++            *text = replacement;
++            changed
++        });
++    }
++    items
 +}
 +
 +fn rollout_item(
@@ -45693,12 +45738,19 @@ index 000000000..a8a4cca11
 +                &mut communication.content,
 +            );
 +        }
-+        RolloutItem::EventMsg(EventMsg::UserMessage(event)) => {
++        RolloutItem::EventMsg(event) => event_msg(event, visit),
++        _ => {}
++    }
++}
++
++fn event_msg(event: &mut EventMsg, visit: &mut Visit<'_>) {
++    match event {
++        EventMsg::UserMessage(event) => {
 +            if visit("event:user_message", Some("user"), None, &mut event.message) {
 +                event.text_elements.clear();
 +            }
 +        }
-+        RolloutItem::EventMsg(EventMsg::AgentMessage(event)) => {
++        EventMsg::AgentMessage(event) => {
 +            visit(
 +                "event:agent_message",
 +                Some("assistant"),
@@ -45706,26 +45758,177 @@ index 000000000..a8a4cca11
 +                &mut event.message,
 +            );
 +        }
-+        RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => match &mut event.item {
-+            TurnItem::UserMessage(message) => {
-+                for input in &mut message.content {
-+                    if let UserInput::Text {
-+                        text,
-+                        text_elements,
-+                    } = input
-+                        && visit("event:user_message", Some("user"), None, text)
-+                    {
-+                        text_elements.clear();
-+                    }
++        EventMsg::TurnComplete(event) => {
++            if let Some(message) = &mut event.last_agent_message {
++                visit("event:agent_message", Some("assistant"), None, message);
++            }
++        }
++        EventMsg::ThreadGoalUpdated(event) => {
++            visit("event:goal", Some("user"), None, &mut event.goal.objective);
++        }
++        EventMsg::AgentReasoning(event) => {
++            visit("event:reasoning", None, None, &mut event.text);
++        }
++        EventMsg::AgentReasoningRawContent(event) => {
++            visit("event:reasoning", None, None, &mut event.text);
++        }
++        EventMsg::McpToolCallEnd(event) => {
++            let call_id = Some(event.call_id.as_str());
++            if let Some(arguments) = &mut event.invocation.arguments {
++                json("event:mcp_tool_call", call_id, arguments, visit);
++            }
++            match &mut event.result {
++                Ok(result) => {
++                    tool_result("event:mcp_tool_call", call_id, result, visit);
++                }
++                Err(error) => {
++                    visit("event:mcp_tool_call", None, call_id, error);
 +                }
 +            }
-+            TurnItem::AgentMessage(message) => {
-+                for AgentMessageContent::Text { text } in &mut message.content {
-+                    visit("event:agent_message", Some("assistant"), None, text);
++        }
++        EventMsg::PatchApplyEnd(event) => {
++            let call_id = Some(event.call_id.as_str());
++            visit("event:file_change", None, call_id, &mut event.stdout);
++            visit("event:file_change", None, call_id, &mut event.stderr);
++            changes("event:file_change", call_id, &mut event.changes, visit);
++        }
++        EventMsg::WebSearchEnd(event) => {
++            let call_id = Some(event.call_id.as_str());
++            visit("event:web_search", None, call_id, &mut event.query);
++            web_search("event:web_search", call_id, &mut event.action, visit);
++            for result in event.results.iter_mut().flatten() {
++                json("event:web_search", call_id, result, visit);
++            }
++        }
++        EventMsg::ImageGenerationEnd(event) => {
++            if let Some(prompt) = &mut event.revised_prompt {
++                visit("event:image_generation", None, Some(&event.call_id), prompt);
++            }
++        }
++        EventMsg::EnteredReviewMode(event) => {
++            review_target(&mut event.target, event.user_facing_hint.as_mut(), visit);
++        }
++        EventMsg::ExitedReviewMode(event) => {
++            if let Some(output) = &mut event.review_output {
++                review_output(output, visit);
++            }
++        }
++        EventMsg::ItemCompleted(event) => turn_item(&mut event.item, visit),
++        _ => {}
++    }
++}
++
++fn turn_item(item: &mut TurnItem, visit: &mut Visit<'_>) {
++    match item {
++        TurnItem::UserMessage(message) => {
++            for input in &mut message.content {
++                if let UserInput::Text {
++                    text,
++                    text_elements,
++                } = input
++                    && visit("event:user_message", Some("user"), None, text)
++                {
++                    text_elements.clear();
 +                }
 +            }
-+            _ => {}
-+        },
++        }
++        TurnItem::AgentMessage(message) => {
++            for AgentMessageContent::Text { text } in &mut message.content {
++                visit("event:agent_message", Some("assistant"), None, text);
++            }
++        }
++        TurnItem::FunctionCallOutput(item) => {
++            body(
++                "event:function_call_output",
++                Some(&item.id),
++                &mut item.output,
++                visit,
++            );
++        }
++        TurnItem::HookPrompt(item) => {
++            for fragment in &mut item.fragments {
++                visit("event:hook_prompt", None, None, &mut fragment.text);
++            }
++        }
++        TurnItem::Plan(item) => {
++            visit("event:plan", None, None, &mut item.text);
++        }
++        TurnItem::Reasoning(item) => {
++            for text in item.summary_text.iter_mut().chain(&mut item.raw_content) {
++                visit("event:reasoning", None, None, text);
++            }
++        }
++        TurnItem::CommandExecution(item) => {
++            let call_id = Some(item.id.as_str());
++            for text in item
++                .command
++                .iter_mut()
++                .chain(&mut item.interaction_input)
++                .chain(&mut item.aggregated_output)
++            {
++                visit("event:command_execution", None, call_id, text);
++            }
++        }
++        TurnItem::DynamicToolCall(item) => {
++            let call_id = Some(item.id.as_str());
++            json(
++                "event:dynamic_tool_call",
++                call_id,
++                &mut item.arguments,
++                visit,
++            );
++            for content in item.content_items.iter_mut().flatten() {
++                if let DynamicToolCallOutputContentItem::InputText { text } = content {
++                    visit("event:dynamic_tool_call", None, call_id, text);
++                }
++            }
++            if let Some(error) = &mut item.error {
++                visit("event:dynamic_tool_call", None, call_id, error);
++            }
++        }
++        TurnItem::CollabAgentToolCall(item) => {
++            if let Some(prompt) = &mut item.prompt {
++                visit("event:collab_agent_tool_call", None, Some(&item.id), prompt);
++            }
++        }
++        TurnItem::WebSearch(item) => {
++            let call_id = Some(item.id.as_str());
++            visit("event:web_search", None, call_id, &mut item.query);
++            web_search("event:web_search", call_id, &mut item.action, visit);
++            for result in item.results.iter_mut().flatten() {
++                json("event:web_search", call_id, result, visit);
++            }
++        }
++        TurnItem::ImageGeneration(item) => {
++            if let Some(prompt) = &mut item.revised_prompt {
++                visit("event:image_generation", None, Some(&item.id), prompt);
++            }
++        }
++        TurnItem::EnteredReviewMode(item) => {
++            review_target(&mut item.target, Some(&mut item.user_facing_hint), visit);
++        }
++        TurnItem::ExitedReviewMode(item) => {
++            if let Some(output) = &mut item.review_output {
++                review_output(output, visit);
++            }
++        }
++        TurnItem::FileChange(item) => {
++            let call_id = Some(item.id.as_str());
++            changes("event:file_change", call_id, &mut item.changes, visit);
++            for text in item.stdout.iter_mut().chain(&mut item.stderr) {
++                visit("event:file_change", None, call_id, text);
++            }
++        }
++        TurnItem::McpToolCall(item) => {
++            let call_id = Some(item.id.as_str());
++            json("event:mcp_tool_call", call_id, &mut item.arguments, visit);
++            if let Some(result) = &mut item.result {
++                tool_result("event:mcp_tool_call", call_id, result, visit);
++            }
++            if let Some(error) = &mut item.error {
++                visit("event:mcp_tool_call", None, call_id, &mut error.message);
++            }
++        }
 +        _ => {}
 +    }
 +}
@@ -45771,9 +45974,34 @@ index 000000000..a8a4cca11
 +                }
 +            }
 +        }
++        ResponseItem::Reasoning {
++            summary, content, ..
++        } => {
++            for ReasoningItemReasoningSummary::SummaryText { text } in summary {
++                changed |= visit("reasoning", None, None, text);
++            }
++            for ReasoningItemContent::ReasoningText { text }
++            | ReasoningItemContent::Text { text } in content.iter_mut().flatten()
++            {
++                changed |= visit("reasoning", None, None, text);
++            }
++        }
++        ResponseItem::LocalShellCall {
++            call_id,
++            action: LocalShellAction::Exec(exec),
++            ..
++        } => {
++            let environment = exec.env.iter_mut().flat_map(|env| env.values_mut());
++            for text in exec.command.iter_mut().chain(environment) {
++                changed |= visit("local_shell_call", None, call_id.as_deref(), text);
++            }
++        }
 +        ResponseItem::FunctionCall {
 +            arguments, call_id, ..
 +        } => changed |= visit("function_call", None, Some(call_id), arguments),
++        ResponseItem::ToolSearchCall {
++            call_id, arguments, ..
++        } => changed |= json("tool_search_call", call_id.as_deref(), arguments, visit),
 +        ResponseItem::CustomToolCall { input, call_id, .. } => {
 +            changed |= visit("custom_tool_call", None, Some(call_id), input);
 +        }
@@ -45797,6 +46025,25 @@ index 000000000..a8a4cca11
 +                visit,
 +            );
 +        }
++        ResponseItem::ToolSearchOutput { call_id, tools, .. } => {
++            for tool in tools {
++                changed |= keyed(
++                    "description",
++                    "tool_search_output",
++                    call_id.as_deref(),
++                    tool,
++                    visit,
++                );
++            }
++        }
++        ResponseItem::WebSearchCall {
++            action: Some(action),
++            ..
++        } => changed |= web_search("web_search_call", None, action, visit),
++        ResponseItem::ImageGenerationCall {
++            revised_prompt: Some(prompt),
++            ..
++        } => changed |= visit("image_generation_call", None, None, prompt),
 +        _ => {}
 +    }
 +    changed
@@ -45821,18 +46068,148 @@ index 000000000..a8a4cca11
 +        }
 +    }
 +}
++
++/// Every string in model-authored JSON, in document order.
++fn json(
++    kind: &'static str,
++    call_id: Option<&str>,
++    value: &mut Value,
++    visit: &mut Visit<'_>,
++) -> bool {
++    let mut changed = false;
++    match value {
++        Value::String(text) => changed = visit(kind, None, call_id, text),
++        Value::Array(values) => {
++            for value in values {
++                changed |= json(kind, call_id, value, visit);
++            }
++        }
++        Value::Object(map) => {
++            for value in map.values_mut() {
++                changed |= json(kind, call_id, value, visit);
++            }
++        }
++        _ => {}
++    }
++    changed
++}
++
++/// The strings stored under `key` anywhere in `value`, leaving tags and identifiers alone.
++fn keyed(
++    key: &str,
++    kind: &'static str,
++    call_id: Option<&str>,
++    value: &mut Value,
++    visit: &mut Visit<'_>,
++) -> bool {
++    let mut changed = false;
++    match value {
++        Value::Array(values) => {
++            for value in values {
++                changed |= keyed(key, kind, call_id, value, visit);
++            }
++        }
++        Value::Object(map) => {
++            for (name, value) in map {
++                changed |= match value {
++                    Value::String(text) if name == key => visit(kind, None, call_id, text),
++                    value => keyed(key, kind, call_id, value, visit),
++                };
++            }
++        }
++        _ => {}
++    }
++    changed
++}
++
++fn tool_result(
++    kind: &'static str,
++    call_id: Option<&str>,
++    result: &mut CallToolResult,
++    visit: &mut Visit<'_>,
++) {
++    for content in &mut result.content {
++        keyed("text", kind, call_id, content, visit);
++    }
++    if let Some(structured) = &mut result.structured_content {
++        json(kind, call_id, structured, visit);
++    }
++}
++
++fn changes(
++    kind: &'static str,
++    call_id: Option<&str>,
++    changes: &mut HashMap<PathBuf, FileChange>,
++    visit: &mut Visit<'_>,
++) {
++    for change in changes.values_mut() {
++        match change {
++            FileChange::Add { content } | FileChange::Delete { content } => {
++                visit(kind, None, call_id, content);
++            }
++            FileChange::Update { unified_diff, .. } => {
++                visit(kind, None, call_id, unified_diff);
++            }
++        }
++    }
++}
++
++fn web_search(
++    kind: &'static str,
++    call_id: Option<&str>,
++    action: &mut WebSearchAction,
++    visit: &mut Visit<'_>,
++) -> bool {
++    let texts: Vec<&mut String> = match action {
++        WebSearchAction::Search { query, queries } => query
++            .iter_mut()
++            .chain(queries.iter_mut().flatten())
++            .collect(),
++        WebSearchAction::OpenPage { url } => url.iter_mut().collect(),
++        WebSearchAction::FindInPage { url, pattern } => {
++            url.iter_mut().chain(pattern.iter_mut()).collect()
++        }
++        _ => Vec::new(),
++    };
++    let mut changed = false;
++    for text in texts {
++        changed |= visit(kind, None, call_id, text);
++    }
++    changed
++}
++
++fn review_target(target: &mut ReviewTarget, hint: Option<&mut String>, visit: &mut Visit<'_>) {
++    if let ReviewTarget::Custom { instructions } = target {
++        visit("event:review", None, None, instructions);
++    }
++    if let Some(hint) = hint {
++        visit("event:review", None, None, hint);
++    }
++}
++
++fn review_output(output: &mut ReviewOutputEvent, visit: &mut Visit<'_>) {
++    for finding in &mut output.findings {
++        visit("event:review", None, None, &mut finding.title);
++        visit("event:review", None, None, &mut finding.body);
++    }
++    visit("event:review", None, None, &mut output.overall_explanation);
++}
 diff --git a/codex-rs/core/src/session/persisted_text_tests.rs b/codex-rs/core/src/session/persisted_text_tests.rs
 new file mode 100644
-index 000000000..0180237c7
+index 000000000..c94a7157f
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text_tests.rs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,222 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
 +struct Redactor;
 +
 +impl codex_extension_api::TurnLifecycleContributor for Redactor {
++    fn rewrites_persisted_text(&self) -> bool {
++        true
++    }
++
 +    fn rewrite_persisted_text<'a>(
 +        &'a self,
 +        input: codex_extension_api::PersistedTextInput<'a>,
@@ -45949,9 +46326,38 @@ index 000000000..0180237c7
 +    assert!(stored.contains("[redacted]"));
 +}
 +
++#[tokio::test]
++async fn tool_records_reasoning_and_event_copies_are_rewritten_at_rest() {
++    let (mut session, _turn_context) = make_session_and_context().await;
++    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++    builder.turn_lifecycle_contributor(Arc::new(Redactor));
++    session.services.extensions = Arc::new(builder.build());
++    let rollout_path = attach_thread_persistence(&mut session).await;
++    let items = [
++        serde_json::json!({"type":"response_item","payload":{"type":"local_shell_call","call_id":"c1","status":"completed","action":{"type":"exec","command":["echo","secret-sentinel"],"env":{"TOKEN":"secret-sentinel"}}}}),
++        serde_json::json!({"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"secret-sentinel"}],"content":[{"type":"reasoning_text","text":"secret-sentinel"}],"encrypted_content":"opaque-kept"}}),
++        serde_json::json!({"type":"event_msg","payload":{"type":"agent_reasoning","text":"secret-sentinel"}}),
++        serde_json::json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"t","last_agent_message":"secret-sentinel"}}),
++        serde_json::json!({"type":"event_msg","payload":{"type":"patch_apply_end","call_id":"c2","turn_id":"t","stdout":"secret-sentinel","stderr":"secret-sentinel","changes":{"/tmp/a":{"type":"add","content":"secret-sentinel"}},"success":true,"status":"completed"}}),
++        serde_json::json!({"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"c3","invocation":{"server":"s","tool":"t","arguments":{"q":"secret-sentinel"}},"duration":{"secs":0,"nanos":0},"result":{"Ok":{"content":[{"type":"text","text":"secret-sentinel"}],"structuredContent":{"k":"secret-sentinel"}}}}}),
++    ]
++    .map(|item| serde_json::from_value::<RolloutItem>(item).expect("rollout item"));
++    session.persist_rollout_items(&items).await;
++    session.flush_rollout().await.expect("rollout should flush");
++
++    let stored = std::fs::read_to_string(&rollout_path).expect("read rollout");
++    assert!(!stored.contains("secret-sentinel"), "{stored}");
++    assert!(stored.contains("opaque-kept"));
++    assert_eq!(stored.matches("[redacted]").count(), 12);
++}
++
 +struct SlowRewriter;
 +
 +impl codex_extension_api::TurnLifecycleContributor for SlowRewriter {
++    fn rewrites_persisted_text(&self) -> bool {
++        true
++    }
++
 +    fn rewrite_persisted_text<'a>(
 +        &'a self,
 +        input: codex_extension_api::PersistedTextInput<'a>,
@@ -45996,6 +46402,25 @@ index 000000000..0180237c7
 +    let first = stored.find("slow first").expect("first message stored");
 +    let second = stored.find("fast second").expect("second message stored");
 +    assert!(first < second);
++
++    let interrupted = [message("slow interrupted")];
++    assert!(
++        tokio::time::timeout(
++            std::time::Duration::from_millis(20),
++            session.persist_rollout_items(&interrupted),
++        )
++        .await
++        .is_err()
++    );
++    session
++        .persist_rollout_items(&[message("later sentinel")])
++        .await;
++    session.flush_rollout().await.expect("rollout should flush");
++    let stored = std::fs::read_to_string(&rollout_path).expect("read rollout");
++    let interrupted = stored
++        .find("slow interrupted")
++        .expect("an interrupted append is still stored");
++    assert!(interrupted < stored.find("later sentinel").expect("later message stored"));
 +}
 diff --git a/codex-rs/core/src/tools/approval_gate.rs b/codex-rs/core/src/tools/approval_gate.rs
 new file mode 100644
@@ -48928,7 +49353,7 @@ index 000000000..71f55c55f
 +codex-login = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..7b960bbee
+index 000000000..bfc8ac3ef
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2322 @@
@@ -49068,8 +49493,9 @@ index 000000000..7b960bbee
 +const SYNTHETIC_HEADER: &str = "x-omd-synthetic";
 +const CACHE_HEADER: &str = "x-omd-cache-breakpoint";
 +
-+/// The last cacheable `input[item].content[part]`: the block before the turn's user message
-+/// for `"system"`, else that message's context block.
++/// The last cacheable `input[item].content[part]`: for `"system"` the end of the last developer
++/// message before the turn's user message (the worker instructions holding `system`), else that
++/// user message's context block.
 +fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
 +    let items = input.as_array()?;
 +    let user = items
@@ -49081,12 +49507,11 @@ index 000000000..7b960bbee
 +            (block + 1 < items[user]["content"].as_array()?.len()).then_some((user, block))
 +        }
 +        None => {
-+            let item = user.checked_sub(1)?;
-+            let parts = items[item]["content"]
-+                .as_array()
-+                .filter(|parts| items[item]["type"] == "message" && !parts.is_empty())?
-+                .len();
-+            Some((item, parts - 1))
++            let item = items[..user]
++                .iter()
++                .rposition(|item| item["type"] == "message" && item["role"] == "developer")?;
++            let parts = items[item]["content"].as_array()?.len();
++            Some((item, parts.checked_sub(1)?))
 +        }
 +    }
 +}
@@ -51256,10 +51681,10 @@ index 000000000..7b960bbee
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..2cf761b75
+index 000000000..0a11dc0ae
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1351 @@
+@@ -0,0 +1,1352 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -51979,6 +52404,7 @@ index 000000000..2cf761b75
 +            .cache_through = Some(through);
 +        let body = json!({"model":"fixture-model","stream":true,"max_output_tokens":128,"instructions":"base","input":[
 +            {"type":"message","id":format!("msg_{prompt}"),"role":"developer","content":[{"type":"input_text","text":"system"}]},
++            {"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>"}]},
 +            {"type":"message","role":"user","content":[{"type":"input_text","text":"document"},{"type":"input_text","text":prompt}]}]});
 +        let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
 +        accounts.prepare(&mut request, &mut encoded).unwrap();
@@ -51998,7 +52424,7 @@ index 000000000..2cf761b75
 +    let (first_breakpoint, first) = mark(json!(0), "first question");
 +    let (_, second) = mark(json!(0), "second question");
 +    let (system_breakpoint, system) = mark(json!("system"), "first question");
-+    assert_eq!(first_breakpoint, "1:0");
++    assert_eq!(first_breakpoint, "2:0");
 +    assert_eq!(system_breakpoint, "0:0");
 +    assert!(first.starts_with("omd-cache-"));
 +    assert_eq!(first, second, "calls sharing the marked prefix share a key");
@@ -52613,7 +53039,7 @@ index 000000000..2cf761b75
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..be838cd26
+index 000000000..dd108bce2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
 @@ -0,0 +1,817 @@
@@ -52843,7 +53269,7 @@ index 000000000..be838cd26
 +static POSTING: Coalesce = Coalesce::new();
 +
 +/// Steps this client's own instance of a component module, delivering `events` and any due ticks
-+/// at the size given or last rendered (80×24 by default).
++/// at the size given or last rendered (80 columns and rows 0, the auto height a terminal node without `height` gets).
 +fn module_step(
 +    client: &str,
 +    component: &str,
@@ -52864,7 +53290,7 @@ index 000000000..be838cd26
 +            sizes
 +                .get(&(client.to_owned(), component.to_owned()))
 +                .copied()
-+                .unwrap_or((80, 24))
++                .unwrap_or((80, 0))
 +        });
 +        sizes.insert((client.to_owned(), component.to_owned()), size);
 +        size
@@ -53076,7 +53502,7 @@ index 000000000..be838cd26
 +        };
 +        let size = match (dimension("columns")?, dimension("rows")?) {
 +            (None, None) => None,
-+            (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(24))),
++            (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(0))),
 +        };
 +        let step = module_step(client, component, size, Vec::new())?;
 +        return Ok(
@@ -57435,10 +57861,10 @@ index 000000000..c4354f220
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..e0e0b0bfb
+index 000000000..3ce388795
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2292 @@
+@@ -0,0 +1,2413 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -57455,6 +57881,7 @@ index 000000000..e0e0b0bfb
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
++use std::collections::VecDeque;
 +use std::fs;
 +use std::io;
 +use std::io::BufRead;
@@ -57700,6 +58127,21 @@ index 000000000..e0e0b0bfb
 +    }
 +}
 +
++/// Blocks until the leader has exited, without reaping it; fails once something else has.
++fn wait_for_exit(pid: u32) -> io::Result<()> {
++    loop {
++        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
++        if unsafe { libc::waitid(libc::P_PID, pid, &mut info, libc::WEXITED | libc::WNOWAIT) } == 0
++        {
++            return Ok(());
++        }
++        let error = io::Error::last_os_error();
++        if error.kind() != io::ErrorKind::Interrupted {
++            return Err(error);
++        }
++    }
++}
++
 +fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
 +    if !*reaped.lock().unwrap_or_else(PoisonError::into_inner) {
 +        let _ = kill_process_group(group);
@@ -57856,11 +58298,17 @@ index 000000000..e0e0b0bfb
 +    }
 +}
 +
++const RAW_READ_BYTES: usize = 16 * 1024;
++const EXCHANGE_BYTES: usize = 48 * 1024;
++
++type Reader = Box<dyn FnMut() -> io::Result<Value> + Send>;
++
 +/// One stream read as written into a reused buffer whose first `held` bytes are a partial UTF-8 character.
 +struct RawReader<R> {
 +    reader: R,
 +    buffer: Vec<u8>,
 +    held: usize,
++    chunks: VecDeque<Value>,
 +    stream: &'static str,
 +}
 +
@@ -57868,14 +58316,18 @@ index 000000000..e0e0b0bfb
 +    fn new(reader: R, stream: &'static str) -> Self {
 +        Self {
 +            reader,
-+            buffer: vec![0; 64 * 1024 + 3],
++            buffer: vec![0; RAW_READ_BYTES],
 +            held: 0,
++            chunks: VecDeque::new(),
 +            stream,
 +        }
 +    }
 +
-+    fn next(&mut self) -> io::Result<Value> {
++    fn read_chunk(&mut self) -> io::Result<Value> {
 +        loop {
++            if let Some(chunk) = self.chunks.pop_front() {
++                return Ok(chunk);
++            }
 +            let read = match self.reader.read(&mut self.buffer[self.held..]) {
 +                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
 +                result => result?,
@@ -57887,23 +58339,46 @@ index 000000000..e0e0b0bfb
 +                    "process_stopped",
 +                ));
 +            }
-+            let end = match std::str::from_utf8(&self.buffer[..filled]) {
-+                Ok(text) => {
-+                    self.held = 0;
-+                    return Ok(json!({"stream": self.stream, "data": text}));
-+                }
-+                Err(error) if read > 0 && error.error_len().is_none() => error.valid_up_to(),
-+                Err(_) => filled,
-+            };
-+            let chunk = (end > 0).then(|| {
-+                let (field, data) = crate::mods::access::content("data", &self.buffer[..end]);
-+                json!({"stream": self.stream, field: data})
-+            });
-+            self.buffer.copy_within(end..filled, 0);
-+            self.held = filled - end;
-+            if let Some(chunk) = chunk {
-+                return Ok(chunk);
++            self.split(filled, read == 0);
++        }
++    }
++
++    /// Queues valid UTF-8 as `data` and each run of invalid bytes as `data_base64`; keeps an incomplete tail unless `eof`.
++    fn split(&mut self, filled: usize, eof: bool) {
++        let mut at = 0;
++        let mut invalid = None;
++        while at < filled {
++            let error = std::str::from_utf8(&self.buffer[at..filled]).err();
++            let valid = error
++                .as_ref()
++                .map_or(filled - at, std::str::Utf8Error::valid_up_to);
++            if valid > 0 {
++                self.queue(invalid.take(), at);
++                self.queue(Some(at), at + valid);
++                at += valid;
 +            }
++            match error.and_then(|error| error.error_len()) {
++                Some(length) => {
++                    invalid.get_or_insert(at);
++                    at += length;
++                }
++                None if at < filled && eof => {
++                    invalid.get_or_insert(at);
++                    at = filled;
++                }
++                None => break,
++            }
++        }
++        self.queue(invalid, at);
++        self.buffer.copy_within(at..filled, 0);
++        self.held = filled - at;
++    }
++
++    fn queue(&mut self, start: Option<usize>, end: usize) {
++        if let Some(start) = start.filter(|start| *start < end) {
++            let (field, data) = crate::mods::access::content("data", &self.buffer[start..end]);
++            self.chunks
++                .push_back(json!({"stream": self.stream, field: data}));
 +        }
 +    }
 +}
@@ -58460,25 +58935,46 @@ index 000000000..e0e0b0bfb
 +                    }
 +                    let notifier = self.notifier.get().cloned();
 +                    let (owner, session) = (id.to_owned(), input.session.clone());
-+                    let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
-+                        if framing == Framing::Raw {
-+                            let mut stdout = RawReader::new(stdout, "stdout");
-+                            let mut readers: Vec<Box<dyn FnMut() -> io::Result<Value> + Send>> =
-+                                vec![Box::new(move || stdout.next())];
-+                            if let Some(stderr) = stderr {
-+                                let mut stderr = RawReader::new(stderr, "stderr");
-+                                readers.push(Box::new(move || stderr.next()));
-+                            }
-+                            readers
-+                        } else {
-+                            let mut reader = BufReader::new(stdout);
-+                            vec![Box::new(move || read_framed(&mut reader, framing))]
-+                        };
++                    let mut readers: Vec<Reader> = if framing == Framing::Raw {
++                        let mut stdout = RawReader::new(stdout, "stdout");
++                        let mut readers: Vec<Reader> = vec![Box::new(move || stdout.read_chunk())];
++                        if let Some(stderr) = stderr {
++                            let mut stderr = RawReader::new(stderr, "stderr");
++                            readers.push(Box::new(move || stderr.read_chunk()));
++                        }
++                        readers
++                    } else {
++                        let mut reader = BufReader::new(stdout);
++                        vec![Box::new(move || read_framed(&mut reader, framing))]
++                    };
 +                    let open = Arc::new(std::sync::atomic::AtomicUsize::new(readers.len()));
++                    let announced = Arc::new(std::sync::atomic::AtomicBool::new(false));
++                    if let Some(notifier) = notifier.clone() {
++                        let (announced, owner, session) =
++                            (announced.clone(), owner.clone(), session.clone());
++                        std::thread::spawn(move || {
++                            if wait_for_exit(group).is_ok()
++                                && !announced.swap(true, std::sync::atomic::Ordering::AcqRel)
++                            {
++                                notifier(ProcessNotice {
++                                    owner,
++                                    session,
++                                    output_bytes: None,
++                                    exited: true,
++                                    deliver: notify_exit,
++                                });
++                            }
++                        });
++                    }
 +                    let mut frames = frames;
 +                    for mut next in readers.drain(..) {
-+                        let (sender, frames, alive, open) =
-+                            (sender.clone(), frames.take(), alive.clone(), open.clone());
++                        let (sender, frames, alive, open, announced) = (
++                            sender.clone(),
++                            frames.take(),
++                            alive.clone(),
++                            open.clone(),
++                            announced.clone(),
++                        );
 +                        let (notifier, owner, session) =
 +                            (notifier.clone(), owner.clone(), session.clone());
 +                        let reader_reaped = Arc::clone(&reaped);
@@ -58509,7 +59005,8 @@ index 000000000..e0e0b0bfb
 +                                    _ => None,
 +                                };
 +                                if sender.send(result).is_err() || terminal {
-+                                    if !alive.swap(false, std::sync::atomic::Ordering::AcqRel) {
++                                    alive.store(false, std::sync::atomic::Ordering::Release);
++                                    if announced.swap(true, std::sync::atomic::Ordering::AcqRel) {
 +                                        break;
 +                                    }
 +                                    if let Some(notifier) = &notifier {
@@ -58677,11 +59174,11 @@ index 000000000..e0e0b0bfb
 +                            let size = serde_json::to_vec(&message)
 +                                .map_err(|error| error.to_string())?
 +                                .len();
-+                            if !messages.is_empty() && bytes + size > 4 * 1024 * 1024 {
++                            if !messages.is_empty() && bytes + size + 1 > EXCHANGE_BYTES {
 +                                process.pending = Some(Ok(message));
 +                                break;
 +                            }
-+                            bytes += size;
++                            bytes += size + 1;
 +                            messages.push(message);
 +                        }
 +                        Ok(Err(error)) if !messages.is_empty() => {
@@ -58946,55 +59443,90 @@ index 000000000..e0e0b0bfb
 +        eprintln!("raw sandbox probe: {result}");
 +    }
 +
-+    #[test]
-+    fn raw_streams_deliver_both_streams_whole_characters_and_output_after_exit() {
-+        let directory = tempfile::tempdir().unwrap();
-+        let repository = directory.path().canonicalize().unwrap();
-+        let processes = ManagedProcesses::default();
-+        let policy = FileSystemSandboxPolicy::read_only();
-+        let owner = ProcessOwner {
-+            thread: None,
-+            id: "fixture",
-+            generation: 1,
-+            repository: &repository,
-+            policy: &policy,
-+            protected: &[],
-+            environment: None,
-+            os_access: None,
-+            blit: None,
-+        };
-+        let found = processes
-+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
-+            .unwrap();
-+        let sh = &found["found"][0];
-+        let start = |session: &str, extra: Value| {
-+            let mut arguments = json!({"session":session,"name":"sh","path":sh["path"],
-+                "sha256":sh["sha256"],"framing":"raw","arguments":["-c",
-+                "printf 'out\\n'; printf 'err\\n' >&2; read line; printf 'got:%s\\n' \"$line\"; printf '\\303'; sleep 0.2; printf '\\251'; sleep 0.2; printf '\\377'"]});
++    struct Fixture {
++        _directory: tempfile::TempDir,
++        repository: PathBuf,
++        policy: FileSystemSandboxPolicy,
++        processes: ManagedProcesses,
++        sh: Value,
++    }
++
++    impl Fixture {
++        fn new() -> Self {
++            let directory = tempfile::tempdir().unwrap();
++            let repository = directory.path().canonicalize().unwrap();
++            let fixture = Self {
++                _directory: directory,
++                repository,
++                policy: FileSystemSandboxPolicy::read_only(),
++                processes: ManagedProcesses::default(),
++                sh: Value::Null,
++            };
++            let found = fixture
++                .call("process.which", json!({"names":["sh"]}))
++                .unwrap();
++            Self {
++                sh: found["found"][0].clone(),
++                ..fixture
++            }
++        }
++
++        fn owner(&self) -> ProcessOwner<'_> {
++            ProcessOwner {
++                thread: None,
++                id: "fixture",
++                generation: 1,
++                repository: &self.repository,
++                policy: &self.policy,
++                protected: &[],
++                environment: None,
++                os_access: None,
++                blit: None,
++            }
++        }
++
++        fn call(&self, operation: &str, arguments: Value) -> Result<Value, String> {
++            self.processes
++                .call(self.owner(), operation, arguments, || true)
++        }
++
++        fn start(&self, session: &str, script: &str, extra: Value) -> Result<Value, String> {
++            let mut arguments = json!({"session":session,"name":"sh","path":self.sh["path"],
++                "sha256":self.sh["sha256"],"framing":"raw","arguments":["-c",script]});
 +            arguments
 +                .as_object_mut()
 +                .unwrap()
 +                .extend(extra.as_object().unwrap().clone());
-+            processes.call(owner, "process.start", arguments, || true)
-+        };
++            self.call("process.start", arguments)
++        }
++
++        /// Exchanges until the session ends, returning every message and the ending error.
++        fn drain(&self, session: &str, mut send: Value) -> (Vec<Value>, String) {
++            let mut messages = Vec::new();
++            loop {
++                match self.call(
++                    "process.exchange",
++                    json!({"session":session,"send":std::mem::replace(&mut send, json!([])),"wait_ms":2000}),
++                ) {
++                    Ok(answer) => messages.extend(answer["messages"].as_array().unwrap().clone()),
++                    Err(error) => return (messages, error),
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn raw_streams_deliver_both_streams_whole_characters_and_output_after_exit() {
++        let fixture = Fixture::new();
++        let script = "printf 'out\\n'; printf 'err\\n' >&2; read line; printf 'got:%s\\n' \"$line\"; printf '\\303'; sleep 0.2; printf '\\251'; sleep 0.2; printf '\\377'";
 +        assert_eq!(
-+            start("raster", json!({"raster":"screen"})).unwrap_err(),
++            fixture
++                .start("raster", script, json!({"raster":"screen"}))
++                .unwrap_err(),
 +            "process_raster_invalid"
 +        );
-+        start("raw", json!({})).unwrap();
-+        let mut send = json!(["hi\n"]);
-+        let mut chunks = Vec::new();
-+        let stopped = loop {
-+            match processes.call(
-+                owner,
-+                "process.exchange",
-+                json!({"session":"raw","send":std::mem::replace(&mut send, json!([])),"wait_ms":1000}),
-+                || true,
-+            ) {
-+                Ok(answer) => chunks.extend(answer["messages"].as_array().unwrap().clone()),
-+                Err(error) => break error,
-+            }
-+        };
++        fixture.start("raw", script, json!({})).unwrap();
++        let (chunks, stopped) = fixture.drain("raw", json!(["hi\n"]));
 +        assert_eq!(stopped, "process_stopped");
 +        let text = |stream: &str| {
 +            chunks
@@ -59015,53 +59547,98 @@ index 000000000..e0e0b0bfb
 +    }
 +
 +    #[test]
-+    fn an_exited_leader_keeps_queued_output_and_waits_for_its_readers_once() {
-+        let directory = tempfile::tempdir().unwrap();
-+        let repository = directory.path().canonicalize().unwrap();
-+        let processes = ManagedProcesses::default();
-+        let policy = FileSystemSandboxPolicy::read_only();
-+        let owner = ProcessOwner {
-+            thread: None,
-+            id: "fixture",
-+            generation: 1,
-+            repository: &repository,
-+            policy: &policy,
-+            protected: &[],
-+            environment: None,
-+            os_access: None,
-+            blit: None,
-+        };
-+        let found = processes
-+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
-+            .unwrap();
-+        let sh = &found["found"][0];
-+        processes
-+            .call(
-+                owner,
-+                "process.start",
-+                json!({"session":"linger","name":"sh","path":sh["path"],"sha256":sh["sha256"],
-+                    "framing":"raw","arguments":["-c","printf 'last\\n'; sleep 600 &"]}),
-+                || true,
-+            )
++    fn invalid_bytes_are_cut_out_of_the_text_around_them() {
++        struct Reads(VecDeque<&'static [u8]>);
++        impl Read for Reads {
++            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
++                let read = self.0.pop_front().unwrap_or_default();
++                buffer[..read.len()].copy_from_slice(read);
++                Ok(read.len())
++            }
++        }
++        let mut reader = RawReader::new(
++            Reads(VecDeque::from([
++                b"ab\xff\xfecd\xc3".as_slice(),
++                b"\xa9e\xe2\x82".as_slice(),
++            ])),
++            "stdout",
++        );
++        let mut chunks = Vec::new();
++        while let Ok(chunk) = reader.read_chunk() {
++            chunks.push(chunk);
++        }
++        assert_eq!(
++            chunks,
++            [
++                json!({"stream":"stdout","data":"ab"}),
++                json!({"stream":"stdout","data_base64":"//4="}),
++                json!({"stream":"stdout","data":"cd"}),
++                json!({"stream":"stdout","data":"\u{e9}e"}),
++                json!({"stream":"stdout","data_base64":"4oI="}),
++            ]
++        );
++    }
++
++    #[test]
++    fn one_exchange_stays_inside_the_receipt_budget_and_leaves_the_rest_for_the_next() {
++        let fixture = Fixture::new();
++        fixture
++            .start("flood", "head -c 200000 /dev/zero | tr '\\0' x", json!({}))
 +            .unwrap();
 +        let deadline = Instant::now() + Duration::from_secs(5);
-+        while processes.running("fixture", "linger") != Some(false) {
++        while fixture.processes.running("fixture", "flood") != Some(false) {
++            assert!(Instant::now() < deadline, "the leader never exited");
++            std::thread::sleep(Duration::from_millis(10));
++        }
++        std::thread::sleep(Duration::from_millis(200));
++        let (mut exchanges, mut total) = (0, 0);
++        loop {
++            let Ok(answer) = fixture.call(
++                "process.exchange",
++                json!({"session":"flood","wait_ms":2000}),
++            ) else {
++                break;
++            };
++            let messages = answer["messages"].as_array().unwrap();
++            assert!(
++                serde_json::to_vec(messages).unwrap().len() <= EXCHANGE_BYTES,
++                "{} messages",
++                messages.len()
++            );
++            total += messages
++                .iter()
++                .map(|chunk| chunk["data"].as_str().unwrap().len())
++                .sum::<usize>();
++            exchanges += 1;
++        }
++        assert_eq!(total, 200_000);
++        assert!(exchanges > 1);
++    }
++
++    #[test]
++    fn an_exited_leader_keeps_queued_output_and_waits_for_its_readers_once() {
++        let fixture = Fixture::new();
++        fixture
++            .start("linger", "printf 'last\\n'; sleep 600 &", json!({}))
++            .unwrap();
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while fixture.processes.running("fixture", "linger") != Some(false) {
 +            assert!(Instant::now() < deadline, "the leader never exited");
 +            std::thread::sleep(Duration::from_millis(10));
 +        }
 +        std::thread::sleep(Duration::from_millis(100));
-+        let call = |operation: &str, arguments: Value| {
-+            processes.call(owner, operation, arguments, || true)
-+        };
 +        assert_eq!(
-+            call("process.status", json!({"session":"linger"})).unwrap()["running"],
++            fixture
++                .call("process.status", json!({"session":"linger"}))
++                .unwrap()["running"],
 +            true
 +        );
-+        let answer = call(
-+            "process.exchange",
-+            json!({"session":"linger","send":["ignored\n"]}),
-+        )
-+        .unwrap();
++        let answer = fixture
++            .call(
++                "process.exchange",
++                json!({"session":"linger","send":["ignored\n"]}),
++            )
++            .unwrap();
 +        assert_eq!(
 +            answer["messages"],
 +            json!([{"stream":"stdout","data":"last\n"}])
@@ -59069,80 +59646,74 @@ index 000000000..e0e0b0bfb
 +        std::thread::sleep(Duration::from_millis(1100));
 +        let started = Instant::now();
 +        assert_eq!(
-+            call("process.exchange", json!({"session":"linger","wait_ms":0})).unwrap_err(),
++            fixture
++                .call("process.exchange", json!({"session":"linger","wait_ms":0}))
++                .unwrap_err(),
 +            "process_stopped"
 +        );
 +        assert!(started.elapsed() < Duration::from_millis(500));
 +    }
 +
 +    #[test]
-+    fn a_null_stdin_process_reads_end_of_input_and_refuses_sends() {
-+        let directory = tempfile::tempdir().unwrap();
-+        let repository = directory.path().canonicalize().unwrap();
-+        let processes = ManagedProcesses::default();
-+        let policy = FileSystemSandboxPolicy::read_only();
-+        let owner = ProcessOwner {
-+            thread: None,
-+            id: "fixture",
-+            generation: 1,
-+            repository: &repository,
-+            policy: &policy,
-+            protected: &[],
-+            environment: None,
-+            os_access: None,
-+            blit: None,
-+        };
-+        let found = processes
-+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
++    fn the_exit_notice_fires_once_when_the_leader_exits_even_while_a_child_holds_the_pipes() {
++        let fixture = Fixture::new();
++        let (sender, notices) = mpsc::channel();
++        fixture
++            .processes
++            .set_notifier(Arc::new(move |notice: ProcessNotice| {
++                if notice.exited {
++                    let _ = sender.send(notice.session);
++                }
++            }));
++        fixture
++            .start("server", "sleep 600 & echo hi", json!({"notify":["exit"]}))
 +            .unwrap();
-+        let sh = &found["found"][0];
-+        let start = |session: &str, extra: Value| {
-+            let mut arguments = json!({"session":session,"name":"sh","path":sh["path"],
-+                "sha256":sh["sha256"],"framing":"raw","stdin":"null","arguments":["-c","cat; printf done"]});
-+            arguments
-+                .as_object_mut()
-+                .unwrap()
-+                .extend(extra.as_object().unwrap().clone());
-+            processes.call(owner, "process.start", arguments, || true)
-+        };
 +        assert_eq!(
-+            start("raster", json!({"framing":"ndjson","raster":"screen"})).unwrap_err(),
++            notices.recv_timeout(Duration::from_secs(5)).as_deref(),
++            Ok("server")
++        );
++        fixture
++            .call("process.stop", json!({"session":"server"}))
++            .unwrap();
++        assert_eq!(
++            notices.recv_timeout(Duration::from_millis(500)),
++            Err(mpsc::RecvTimeoutError::Timeout)
++        );
++    }
++
++    #[test]
++    fn a_null_stdin_process_reads_end_of_input_and_refuses_sends() {
++        let fixture = Fixture::new();
++        let script = "cat; printf done";
++        let null = json!({"stdin":"null"});
++        assert_eq!(
++            fixture
++                .start(
++                    "raster",
++                    script,
++                    json!({"stdin":"null","framing":"ndjson","raster":"screen"})
++                )
++                .unwrap_err(),
 +            "process_raster_invalid"
 +        );
 +        assert_eq!(
-+            start("bad", json!({"stdin":"pipe"})).unwrap_err(),
++            fixture
++                .start("bad", script, json!({"stdin":"pipe"}))
++                .unwrap_err(),
 +            "process_program_or_arguments_invalid"
 +        );
-+        start("null", json!({})).unwrap();
++        fixture.start("null", script, null).unwrap();
 +        assert_eq!(
-+            processes
-+                .call(
-+                    owner,
-+                    "process.exchange",
-+                    json!({"session":"null","send":["x"]}),
-+                    || true
-+                )
++            fixture
++                .call("process.exchange", json!({"session":"null","send":["x"]}))
 +                .unwrap_err(),
 +            "process_stdin_null"
 +        );
-+        let mut text = String::new();
-+        let stopped = loop {
-+            match processes.call(
-+                owner,
-+                "process.exchange",
-+                json!({"session":"null","wait_ms":2000}),
-+                || true,
-+            ) {
-+                Ok(answer) => text.extend(
-+                    answer["messages"]
-+                        .as_array()
-+                        .unwrap()
-+                        .iter()
-+                        .filter_map(|chunk| chunk["data"].as_str().map(str::to_owned)),
-+                ),
-+                Err(error) => break error,
-+            }
-+        };
++        let (messages, stopped) = fixture.drain("null", json!([]));
++        let text = messages
++            .iter()
++            .filter_map(|chunk| chunk["data"].as_str())
++            .collect::<String>();
 +        assert_eq!(
 +            (text.as_str(), stopped.as_str()),
 +            ("done", "process_stopped")
@@ -59151,37 +59722,13 @@ index 000000000..e0e0b0bfb
 +
 +    #[test]
 +    fn a_child_that_breaks_the_framed_channel_is_stopped() {
-+        let directory = tempfile::tempdir().unwrap();
-+        let repository = directory.path().canonicalize().unwrap();
-+        let processes = ManagedProcesses::default();
-+        let policy = FileSystemSandboxPolicy::read_only();
-+        let owner = ProcessOwner {
-+            thread: None,
-+            id: "fixture",
-+            generation: 1,
-+            repository: &repository,
-+            policy: &policy,
-+            protected: &[],
-+            environment: None,
-+            os_access: None,
-+            blit: None,
-+        };
-+        let found = processes
-+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
-+            .unwrap();
-+        let sh = &found["found"][0];
-+        processes
-+            .call(
-+                owner,
-+                "process.start",
-+                json!({"session":"plain","name":"sh","path":sh["path"],"sha256":sh["sha256"],
-+                    "arguments":["-c","echo plain; sleep 30"],"framing":"ndjson"}),
-+                || true,
-+            )
++        let fixture = Fixture::new();
++        fixture
++            .start("plain", "echo plain; sleep 30", json!({"framing":"ndjson"}))
 +            .unwrap();
 +        let deadline = Instant::now() + std::time::Duration::from_secs(5);
-+        while processes
-+            .call(owner, "process.status", json!({"session":"plain"}), || true)
++        while fixture
++            .call("process.status", json!({"session":"plain"}))
 +            .is_ok_and(|status| status["running"] == true)
 +        {
 +            assert!(Instant::now() < deadline, "the child kept running");
@@ -59733,10 +60280,10 @@ index 000000000..e0e0b0bfb
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..19b55ead6
+index 000000000..ca5983be5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2401 @@
+@@ -0,0 +1,2410 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -59896,6 +60443,7 @@ index 000000000..19b55ead6
 +    input_runtime: Arc<Mutex<ModHost>>,
 +    persist_runtime: Arc<Mutex<ModHost>>,
 +    intercepted: Arc<Mutex<Vec<&'static str>>>,
++    required: Arc<Mutex<Vec<&'static str>>>,
 +    environment: Arc<codex_omd::host::Environment>,
 +    agents: agents::Agents,
 +    services: services::Services,
@@ -60162,7 +60710,7 @@ index 000000000..19b55ead6
 +    let intercepted = runtime.intercepted_surfaces();
 +    let environment = runtime.environment();
 +    let runtime = Arc::new(Mutex::new(runtime));
-+    host.accounts.install_mod_runtime(runtime.clone(), required);
++    host.accounts.install_mod_runtime(runtime.clone(), required.clone());
 +    let views = Arc::new(view::Views::new());
 +    let input_runtime = Arc::new(Mutex::new(input_runtime));
 +    let persist_runtime = Arc::new(Mutex::new(persist_runtime));
@@ -60174,6 +60722,7 @@ index 000000000..19b55ead6
 +            input_runtime,
 +            persist_runtime,
 +            intercepted,
++            required,
 +            environment,
 +            services: services::Services::default(),
 +            views,
@@ -61133,13 +61682,20 @@ index 000000000..19b55ead6
 +        }
 +    }
 +
++    fn rewrites_persisted_text(&self) -> bool {
++        self.core
++            .intercepted
++            .lock()
++            .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
++    }
++
 +    fn rewrite_persisted_text<'a>(
 +        &'a self,
 +        input: codex_extension_api::PersistedTextInput<'a>,
 +    ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
 +        Box::pin(persisted::rewrite(
 +            self.core.persist_runtime.clone(),
-+            &self.core.intercepted,
++            self.core.required.clone(),
 +            input,
 +        ))
 +    }
@@ -62909,7 +63465,7 @@ index 000000000..f2255febe
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..f8cce145f
+index 000000000..4a286b813
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2611 @@
@@ -62964,7 +63520,7 @@ index 000000000..f8cce145f
 +    responses
 +        .iter()
 +        .filter_map(|response| response["cache"][key].as_u64())
-+        .reduce(|sum, tokens| sum + tokens)
++        .reduce(u64::saturating_add)
 +}
 +
 +fn strip_private(value: &mut Value) {
@@ -64899,7 +65455,7 @@ index 000000000..f8cce145f
 +            "route": route, "model": last["served_model"].as_str().or(last["requested_model"].as_str()),
 +            "request_ids": responses.iter().map(|response| response["request_id"].clone()).collect::<Vec<_>>(),
 +            "usage": last["usage"], "cache": {"read_tokens": cache_total(&responses, "read_tokens"), "write_tokens": cache_total(&responses, "write_tokens")},
-+            "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.iter().sum::<u64>()),
++            "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.into_iter().fold(0, u64::saturating_add)),
 +                "basis": match bases.len() { 0 => "unknown", 1 => bases.first().copied().unwrap_or("unknown"), _ => "mixed" }},
 +            "timing": {"duration_ms": started.elapsed().as_millis() as u64,
 +                "first_event_ms": responses.first().map_or(Value::Null, |response| response["timing"]["first_event_ms"].clone())}}))
@@ -69433,10 +69989,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..79ad6a01c
+index 000000000..2318946cd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4768 @@
+@@ -0,0 +1,4807 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -69526,6 +70082,7 @@ index 000000000..79ad6a01c
 +    let runtime = ModHost::open(root.clone()).unwrap();
 +    let environment = runtime.environment();
 +    let intercepted = runtime.intercepted_surfaces();
++    let required = runtime.required_surfaces();
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
 +    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
@@ -69537,6 +70094,7 @@ index 000000000..79ad6a01c
 +        input_runtime,
 +        persist_runtime,
 +        intercepted,
++        required,
 +        environment,
 +        services: services::Services::default(),
 +        views,
@@ -72287,6 +72845,32 @@ index 000000000..79ad6a01c
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn component_post_hooks_make_the_host_calls_component_events_make() {
++    let Some(fixture) = fixture(&[Package {
++        id: "poster",
++        capabilities: &["terminal", "store", "commands", "inventory"],
++        manifest: Value::Null,
++        source: "export default function (api) {\n  api.on('component_post', () => { api.host.call('app.routes', null); api.state.set(true); });\n  api.command('seen', () => api.state.get());\n}\n",
++    }]) else {
++        return;
++    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let payload = json!({"component": "c", "module": "m", "client": "x", "data": null});
++    invoke_one(
++        &fixture.core,
++        &fixture.lead,
++        "poster".into(),
++        "component_post",
++        payload,
++    )
++    .await
++    .unwrap()
++    .unwrap();
++    assert_eq!(command(&fixture.core, "poster", "seen"), json!(true));
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn event_context_refuses_user_only_app_methods_before_the_client() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "steerer",
@@ -72338,32 +72922,38 @@ index 000000000..79ad6a01c
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
-+async fn persisted_text_skips_the_runtime_without_interceptors_and_splits_at_whitespace() {
-+    let token = format!("{} sk-{}", "a".repeat(98_300), "b".repeat(40));
-+    assert_eq!(persisted::cut(&token), 98_301);
-+    assert_eq!(persisted::cut(&"a".repeat(98_400)), 98_304);
++async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_runtime_fails() {
 +    let Some(fixture) = fixture(&[]) else {
 +        return;
 +    };
-+    let thread_store = ExtensionData::new("thread");
-+    thread_store.insert(fixture.lead.clone());
++    let extension = mods(&fixture.core);
++    assert!(!extension.rewrites_persisted_text());
 +    let entries = [codex_extension_api::PersistedText {
 +        kind: "message",
 +        role: Some("user".to_owned()),
 +        call_id: None,
 +        text: "hi".to_owned(),
 +    }];
-+    let (extension, session_store) = (mods(&fixture.core), ExtensionData::new("session"));
-+    let _held = fixture.core.persist_runtime.lock().unwrap();
-+    let rewrite = tokio::time::timeout(
-+        std::time::Duration::from_secs(5),
-+        extension.rewrite_persisted_text(codex_extension_api::PersistedTextInput {
-+            entries: &entries,
-+            session_store: &session_store,
-+            thread_store: &thread_store,
-+        }),
-+    );
-+    assert_eq!(rewrite.await.ok(), Some(None));
++    let input = || codex_extension_api::PersistedTextInput {
++        thread_id: "thread",
++        entries: &entries,
++    };
++    let runtime = fixture.core.persist_runtime.clone();
++    let _ = std::thread::spawn(move || {
++        let _held = runtime.lock().unwrap();
++        panic!("poison the persist runtime");
++    })
++    .join();
++    assert_eq!(extension.rewrite_persisted_text(input()).await, None);
++    fixture
++        .core
++        .required
++        .lock()
++        .unwrap()
++        .push("history_persist");
++    let withheld = extension.rewrite_persisted_text(input()).await.unwrap();
++    assert_eq!(withheld.texts, [codex_omd::PERSIST_WITHHELD]);
++    assert_eq!(withheld.by, "host");
 +}
 +
 +#[test]
@@ -72375,6 +72965,11 @@ index 000000000..79ad6a01c
 +    ];
 +    assert_eq!(agents::cache_total(&responses, "read_tokens"), Some(7));
 +    assert_eq!(agents::cache_total(&responses, "write_tokens"), None);
++    let huge = [
++        json!({"cache": {"read_tokens": u64::MAX}}),
++        json!({"cache": {"read_tokens": 1}}),
++    ];
++    assert_eq!(agents::cache_total(&huge, "read_tokens"), Some(u64::MAX));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -74805,7 +75400,7 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..0e1f07448
+index 000000000..269217e5f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,753 @@
@@ -74876,7 +75471,7 @@ index 000000000..0e1f07448
 +                        | "contract.status"
 +                        | "workspace.fingerprint"
 +                ))
-+        || matches!(event, "component_event" | "command")
++        || matches!(event, "component_event" | "component_post" | "command")
 +            && (codex_omd::host::served(operation)
 +                || codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation)
 +                || matches!(
@@ -75824,143 +76419,46 @@ index 000000000..89d5c4e69
 +}
 diff --git a/codex-rs/ext/omd/src/mods/persisted.rs b/codex-rs/ext/omd/src/mods/persisted.rs
 new file mode 100644
-index 000000000..dbf380e2e
+index 000000000..9b7e66b7e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/persisted.rs
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,37 @@
 +use super::*;
 +use codex_extension_api::PersistedTextInput;
 +use codex_extension_api::PersistedTextRewrite;
 +
-+const CHUNK_BYTES: usize = 98_304;
-+const WITHHELD: &str = "[withheld: a required history_persist interceptor failed]";
-+
-+/// Where a chunk of `text` ends: the last whitespace within `CHUNK_BYTES`, so a token stays whole.
-+pub(super) fn cut(text: &str) -> usize {
-+    let end = text.floor_char_boundary(CHUNK_BYTES);
-+    if end == text.len() {
-+        return end;
-+    }
-+    text[..end]
-+        .rfind(|c: char| c.is_ascii_whitespace())
-+        .map_or(end, |at| at + 1)
-+}
-+
-+/// Runs `history_persist` interceptors over the texts in chunks that fit one callback;
-+/// a longer text arrives as consecutive entries with the same index.
++/// Runs `history_persist` interceptors off the async runtime; when the persist runtime itself
++/// fails, a required interceptor withholds every entry.
 +pub(super) async fn rewrite(
 +    runtime: Arc<Mutex<ModHost>>,
-+    intercepted: &Mutex<Vec<&'static str>>,
++    required: Arc<Mutex<Vec<&'static str>>>,
 +    input: PersistedTextInput<'_>,
 +) -> Option<PersistedTextRewrite> {
-+    if !intercepted
-+        .lock()
-+        .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
-+    {
-+        return None;
-+    }
-+    let thread = input.thread_store.get::<Lead>()?.thread.to_string();
-+    let mut chunks: Vec<Vec<(usize, Value)>> = vec![Vec::new()];
-+    let mut size = 0;
-+    for (index, entry) in input.entries.iter().enumerate() {
-+        let mut rest = entry.text.as_str();
-+        loop {
-+            let cut = cut(rest);
-+            if size + cut > CHUNK_BYTES {
-+                chunks.push(Vec::new());
-+                size = 0;
-+            }
-+            size += cut;
-+            chunks.last_mut()?.push((
-+                index,
-+                json!({"index":index,"kind":entry.kind,"role":entry.role,
-+                    "call_id":entry.call_id,"text":&rest[..cut]}),
-+            ));
-+            rest = &rest[cut..];
-+            if rest.is_empty() {
-+                break;
-+            }
-+        }
-+    }
-+    let count = input.entries.len();
-+    tokio::task::spawn_blocking(move || {
-+        let _thread = codex_omd::StateThread::enter(Some(thread.clone()));
-+        let required = {
-+            let mut runtime = runtime.lock().ok()?;
-+            runtime.turn_boundary();
-+            runtime.intercepts("history_persist")?
-+        };
-+        let mut texts = vec![String::new(); count];
-+        let mut withheld = vec![false; count];
-+        let mut by = Vec::new();
-+        for chunk in chunks {
-+            let entries = chunk.iter().map(|(_, entry)| entry.clone()).collect::<Vec<_>>();
-+            let chain = codex_omd::intercept_shared(
-+                &runtime,
-+                "history_persist",
-+                required,
-+                json!({"thread_id":thread,"entries":entries}),
-+                json!({"caller":"host","thread_id":thread}),
-+                || true,
-+                |_, call| {
-+                    Err(std::io::Error::other(format!(
-+                        "host_operation_unavailable: history_persist interceptors run while history is persisted ({})",
-+                        call.operation
-+                    )))
-+                },
-+                |input| Ok(json!({"entries": input["entries"]})),
-+            )
-+            .ok();
-+            let rewritten = chain
-+                .as_ref()
-+                .and_then(|chain| chain.result["entries"].as_array());
-+            for (position, (index, original)) in chunk.iter().enumerate() {
-+                let given = original["text"].as_str().unwrap_or_default();
-+                let text = rewritten
-+                    .and_then(|entries| entries.get(position))
-+                    .and_then(|entry| entry["text"].as_str());
-+                match (text, &chain) {
-+                    (Some(text), Some(chain)) => {
-+                        if text != given {
-+                            by.extend(
-+                                chain
-+                                    .trace
-+                                    .iter()
-+                                    .filter(|entry| {
-+                                        matches!(entry["outcome"].as_str(), Some("returned" | "passed"))
-+                                    })
-+                                    .filter_map(|entry| entry["mod"].as_str())
-+                                    .filter(|id| *id != "engine")
-+                                    .map(|id| format!("mod:{id}")),
-+                            );
-+                        }
-+                        texts[*index].push_str(text);
-+                    }
-+                    _ => {
-+                        withheld[*index] |= required;
-+                        texts[*index].push_str(given);
-+                    }
-+                }
-+            }
-+        }
-+        for (text, withheld) in texts.iter_mut().zip(&withheld) {
-+            if *withheld {
-+                *text = WITHHELD.to_owned();
-+            }
-+        }
-+        if withheld.contains(&true) {
-+            by.push("host".to_owned());
-+        }
-+        by.sort();
-+        by.dedup();
-+        (!by.is_empty()).then(|| PersistedTextRewrite {
-+            texts,
-+            by: by.join(", "),
++    let thread = input.thread_id.to_owned();
++    let entries = input
++        .entries
++        .iter()
++        .map(|entry| {
++            json!({"kind":entry.kind,"role":entry.role,"call_id":entry.call_id,"text":entry.text})
 +        })
-+    })
-+    .await
-+    .ok()
-+    .flatten()
++        .collect::<Vec<_>>();
++    let count = entries.len();
++    let rewritten =
++        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries))
++            .await;
++    match rewritten {
++        Ok(Ok(rewrite)) => rewrite.map(|rewrite| PersistedTextRewrite {
++            texts: rewrite.texts,
++            by: rewrite.by,
++        }),
++        _ => required
++            .lock()
++            .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
++            .then(|| PersistedTextRewrite {
++                texts: vec![codex_omd::PERSIST_WITHHELD.to_owned(); count],
++                by: "host".to_owned(),
++            }),
++    }
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
@@ -95785,10 +96283,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..a713fa133
+index 000000000..a8349e94a
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,251 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -95994,6 +96492,9 @@ index 000000000..a713fa133
 +pub use mods::ModViewPatch;
 +pub use mods::ModViewSnapshot;
 +pub use mods::OMD_HOST_RELEASE;
++pub use mods::PERSIST_CHUNK_BYTES;
++pub use mods::PERSIST_WITHHELD;
++pub use mods::PersistedRewrite;
 +pub use mods::SUPPORTED_MOD_APIS;
 +pub use mods::SendPolicy;
 +pub use mods::StateThread;
@@ -96023,6 +96524,10 @@ index 000000000..a713fa133
 +pub use mods::mod_counts;
 +pub use mods::mod_key_name;
 +pub use mods::namespace_matches;
++pub use mods::persist_changed_by;
++pub use mods::persist_chunks;
++pub use mods::persist_cut;
++pub use mods::persist_texts;
 +pub use mods::profile;
 +pub use mods::render_shared;
 +pub use mods::valid_glyphs;
@@ -97924,13 +98429,14 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..153bc07b9
+index 000000000..69b4660ee
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5703 @@
+@@ -0,0 +1,5720 @@
 +mod author;
 +mod bridge;
 +mod chain;
++mod persisted;
 +mod render;
 +pub use chain::ModChain;
 +pub use chain::ModInterceptor;
@@ -97939,6 +98445,13 @@ index 000000000..153bc07b9
 +pub use chain::compose_rows;
 +pub use chain::continue_operation;
 +pub use chain::intercept_shared;
++pub use persisted::PERSIST_CHUNK_BYTES;
++pub use persisted::PERSIST_WITHHELD;
++pub use persisted::PersistedRewrite;
++pub use persisted::persist_changed_by;
++pub use persisted::persist_chunks;
++pub use persisted::persist_cut;
++pub use persisted::persist_texts;
 +pub use render::MOD_RENDER_COMPONENTS;
 +pub use render::component_detach;
 +pub use render::component_events;
@@ -98481,6 +98994,7 @@ index 000000000..153bc07b9
 +    "agents",
 +    "store",
 +    "sessions",
++    "sessions_tools",
 +    "contracts",
 +    "builtins",
 +    "threads",
@@ -98507,6 +99021,7 @@ index 000000000..153bc07b9
 +    "peers",
 +    "autonomous",
 +    "history_write",
++    "history_persist",
 +];
 +pub const AUTHORITY_CAPABILITIES: &[&str] = &[
 +    "os",
@@ -98519,6 +99034,7 @@ index 000000000..153bc07b9
 +    "peers",
 +    "autonomous",
 +    "history_write",
++    "history_persist",
 +];
 +
 +/// What a user accepts by granting the authority capabilities, shown before trust and in status.
@@ -98557,6 +99073,9 @@ index 000000000..153bc07b9
 +    }
 +    if granted("history_write") {
 +        exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
++    }
++    if granted("history_persist") {
++        exposure.push("history_persist: this mod sees every text OMD stores for your sessions (prompts, instructions, replies, reasoning, tool arguments and results, command output, file changes and prompt recall) and may replace any of it before it is written, which changes what resume, fork, search and export show and what the model sees next; the live session keeps the original, and rewritten rows are marked.");
 +    }
 +    exposure
 +}
@@ -98641,7 +99160,7 @@ index 000000000..153bc07b9
 +    ("peer_receive", "peers"),
 +    ("turn_stop", "autonomous"),
 +    ("compaction", "compaction"),
-+    ("history_persist", "history"),
++    ("history_persist", "history_persist"),
 +    ("elicitation", "approvals"),
 +    ("composer_edit", "composer"),
 +    ("component_change", "terminal"),
@@ -99005,6 +99524,9 @@ index 000000000..153bc07b9
 +                && declared("fs.write")
 +            {
 +                used.push("fs.write".to_owned());
++            }
++            if !used.is_empty() && operation == "sessions.read" && declared("sessions_tools") {
++                used.push("sessions_tools".to_owned());
 +            }
 +            used
 +        };
@@ -100768,6 +101290,9 @@ index 000000000..153bc07b9
 +                    }
 +                    return sleep(&mut *access, &call.arguments, invocation.virtual_time_ms, active);
 +                }
++                if matches!(event, "terminal" | "component") {
++                    return host(id, call);
++                }
 +                let mut call = call;
 +                if call.operation == "turns.queue"
 +                    && let Some(arguments) = call.arguments.as_object_mut()
@@ -101309,9 +101834,6 @@ index 000000000..153bc07b9
 +                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
 +                        package.id
 +                    )));
-+                }
-+                if source.len() + files.values().map(String::len).sum::<usize>() > 256 * 1024 {
-+                    return Err(failure(format!("package_text_input_limit: {}", package.id)));
 +                }
 +                Ok(files
 +                    .into_iter()
@@ -102586,7 +103108,7 @@ index 000000000..153bc07b9
 +                ]
 +                .iter()
 +                .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
-+                    && event != "service"
++                    && !matches!(event, "service" | "component")
 +                {
 +                    current.fault(message);
 +                }
@@ -103633,10 +104155,10 @@ index 000000000..153bc07b9
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..e0820010e
+index 000000000..d1de67cad
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,875 @@
+@@ -0,0 +1,910 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -103775,6 +104297,9 @@ index 000000000..e0820010e
 +    }
 +}
 +
++/// The owner of the component module runners an offline scenario mounts.
++const OFFLINE_CLIENT: &str = "offline";
++
 +impl ModHost {
 +    pub fn author_inspection(&self) -> Value {
 +        json!({
@@ -103892,6 +104417,7 @@ index 000000000..e0820010e
 +            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
 +        }
 +        let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
++        process::detach(OFFLINE_CLIENT);
 +        for (id, (_, selection)) in tiers {
 +            if let Some(loaded) = self
 +                .loaded
@@ -104219,6 +104745,37 @@ index 000000000..e0820010e
 +                    || active,
 +                    |caller, call| host.call(caller, call),
 +                )
++            }
++            "component" => {
++                let id = required_string(step, "mod")?;
++                let module = required_string(step, "module")?;
++                let instance = step
++                    .get("instance")
++                    .and_then(Value::as_str)
++                    .unwrap_or(module);
++                let size = |name: &str, default: u64| {
++                    step.get(name).and_then(Value::as_u64).unwrap_or(default)
++                };
++                let frame = json!({"instance": format!("{OFFLINE_CLIENT}.{instance}"),
++                    "client": OFFLINE_CLIENT, "props": step.get("props").cloned().unwrap_or(Value::Null),
++                    "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
++                    "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
++                let result = self.invoke_scoped_with(
++                    id,
++                    self.generation,
++                    "component",
++                    module,
++                    frame,
++                    || active,
++                    |_, call| {
++                        Err(failure(format!(
++                            "host_operation_unavailable: {} is not available to component modules",
++                            call.operation
++                        )))
++                    },
++                )?;
++                render::checked_tree(&result)?;
++                Ok(result)
 +            }
 +            "terminal_mount" | "terminal_interact" => {
 +                let id = required_string(step, "mod")?;
@@ -104933,10 +105490,10 @@ index 000000000..c601d818d
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..2746825db
+index 000000000..ed38d60d9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1866 @@
+@@ -0,0 +1,1877 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -105647,10 +106204,21 @@ index 000000000..2746825db
 +
 +use crate::model_request::bounded;
 +
-+/// Final-request pages carry provider-bound text, so their records keep only digests.
++/// Final-request pages and persisted history carry private text, so their records keep only
++/// digests (of the entry texts alone for history, so a link's input and result compare).
 +fn recorded(surface: &str, value: &Value) -> Value {
 +    if surface == "model_send" {
 +        let bytes = serde_json::to_vec(value).unwrap_or_default();
++        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
++    }
++    if surface == "history_persist" {
++        let texts = value["entries"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .map(|entry| &entry["text"])
++            .collect::<Vec<_>>();
++        let bytes = serde_json::to_vec(&texts).unwrap_or_default();
 +        return json!({"sha256": crate::mods::digest(&bytes), "bytes": bytes.len()});
 +    }
 +    bounded(value)
@@ -109696,10 +110264,10 @@ index 000000000..48b2680a1
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 000000000..a4bd3f813
+index 000000000..6c19a9b2d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,254 @@
 +use super::*;
 +
 +impl ModStore {
@@ -109814,8 +110382,10 @@ index 000000000..a4bd3f813
 +            return Err(failure("migration_requires_trusted_store_capability"));
 +        }
 +        let name = ModStore::state_name(&package.id, &selection.scope);
-+        let previous: Value =
-+            serde_json::from_slice(&store::read(&self.root.join(&name), 65_536)?)?;
++        let previous: Value = serde_json::from_slice(&store::read(
++            &self.root.join(&name),
++            store::STATE_LIMIT as u64,
++        )?)?;
 +        let from = previous["version"]
 +            .as_u64()
 +            .ok_or_else(|| failure("invalid_state_version"))?;
@@ -109920,7 +110490,8 @@ index 000000000..a4bd3f813
 +        let Some(expected_digest) = backup_name.strip_prefix(&prefix) else {
 +            return Err(failure("rollback_backup_does_not_match_package_scope"));
 +        };
-+        let restored: Value = serde_json::from_slice(&store::read(&backup, 65_536)?)?;
++        let restored: Value =
++            serde_json::from_slice(&store::read(&backup, store::STATE_LIMIT as u64)?)?;
 +        if digest(&serde_json::to_vec(&restored)?) != expected_digest {
 +            return Err(failure("rollback_backup_digest_mismatch"));
 +        }
@@ -109931,7 +110502,8 @@ index 000000000..a4bd3f813
 +            return Err(failure("incompatible_state_storage_schema"));
 +        }
 +        let current_path = self.root.join(&state_name);
-+        let current: Value = serde_json::from_slice(&store::read(&current_path, 65_536)?)?;
++        let current: Value =
++            serde_json::from_slice(&store::read(&current_path, store::STATE_LIMIT as u64)?)?;
 +        if current["schema"] != MOD_STATE_STORAGE_SCHEMA_VERSION
 +            || current["version"].as_u64().is_none()
 +        {
@@ -109949,6 +110521,200 @@ index 000000000..a4bd3f813
 +            "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
 +        )
 +    }
++}
+diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
+new file mode 100644
+index 000000000..df4d01f62
+--- /dev/null
++++ b/codex-rs/omd/src/mods/persisted.rs
+@@ -0,0 +1,188 @@
++use super::*;
++
++/// JSON bytes of entries per callback; the payload carries them twice (`input` and `original`).
++pub const PERSIST_CHUNK_BYTES: usize = 49_152;
++pub const PERSIST_WITHHELD: &str = "[withheld: a required history_persist interceptor failed]";
++
++/// Replacement texts in entry order and who supplied them.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct PersistedRewrite {
++    pub texts: Vec<String>,
++    pub by: String,
++}
++
++fn escaped(c: char) -> usize {
++    match c {
++        '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
++        c if u32::from(c) < 0x20 => 6,
++        c => c.len_utf8(),
++    }
++}
++
++/// Where a chunk of `text` ends: within `budget` JSON-escaped bytes, after the last whitespace
++/// there so a token stays whole.
++pub fn persist_cut(text: &str, budget: usize) -> usize {
++    let mut size = 0;
++    let end = text
++        .char_indices()
++        .find(|(_, c)| {
++            size += escaped(*c);
++            size > budget
++        })
++        .map_or(text.len(), |(at, _)| at);
++    if end == text.len() {
++        return end;
++    }
++    text[..end]
++        .rfind(|c: char| c.is_ascii_whitespace())
++        .map_or(end, |at| at + 1)
++}
++
++/// Entries (`{kind, role, call_id, text}`) in callbacks of at most `PERSIST_CHUNK_BYTES` of JSON;
++/// a longer text arrives as consecutive entries with the same index.
++pub fn persist_chunks(entries: &[Value]) -> Vec<Vec<(usize, Value)>> {
++    let mut chunks: Vec<Vec<(usize, Value)>> = vec![Vec::new()];
++    let mut size = 0;
++    for (index, entry) in entries.iter().enumerate() {
++        let mut rest = entry["text"].as_str().unwrap_or_default();
++        let value = |text: &str| {
++            json!({"index":index,"kind":entry["kind"],"role":entry["role"],
++                "call_id":entry["call_id"],"text":text})
++        };
++        let overhead = value("").to_string().len();
++        loop {
++            let cut = persist_cut(rest, PERSIST_CHUNK_BYTES - overhead);
++            let piece = value(&rest[..cut]);
++            let bytes = piece.to_string().len();
++            if size + bytes > PERSIST_CHUNK_BYTES {
++                chunks.push(Vec::new());
++                size = 0;
++            }
++            size += bytes;
++            if let Some(chunk) = chunks.last_mut() {
++                chunk.push((index, piece));
++            }
++            rest = &rest[cut..];
++            if rest.is_empty() {
++                break;
++            }
++        }
++    }
++    chunks
++}
++
++/// Mods whose link changed the entries: what it passed down or returned differs from its
++/// downstream's, or, answering alone, its result differs from its input. Every mod that ran
++/// when a truncated trace shows no such link.
++pub fn persist_changed_by(trace: &[Value]) -> Vec<String> {
++    let ran = |entry: &&Value| entry.get("returned").is_some();
++    let links = trace
++        .iter()
++        .filter(ran)
++        .filter(|entry| entry["mod"] != "engine")
++        .collect::<Vec<_>>();
++    let changed = links
++        .iter()
++        .copied()
++        .filter(|link| {
++            match trace
++                .iter()
++                .filter(ran)
++                .filter(|entry| entry["index"].as_u64() > link["index"].as_u64())
++                .min_by_key(|entry| entry["index"].as_u64())
++            {
++                Some(next) => {
++                    link["received"] != next["received"] || link["returned"] != next["returned"]
++                }
++                None => link["received"] != link["returned"],
++            }
++        })
++        .collect::<Vec<_>>();
++    if changed.is_empty() { links } else { changed }
++        .into_iter()
++        .filter_map(|link| link["mod"].as_str())
++        .map(|id| format!("mod:{id}"))
++        .collect()
++}
++
++/// Runs `history_persist` interceptors over `entries` in chunks that fit one callback: `None`
++/// when none is installed or nothing changed; a required interceptor's failure withholds its
++/// entries. `Err` means the runtime itself was unusable, so the caller decides from the
++/// published requirement.
++pub fn persist_texts(
++    runtime: &Mutex<ModHost>,
++    thread: &str,
++    entries: &[Value],
++) -> std::result::Result<Option<PersistedRewrite>, ()> {
++    let _thread = StateThread::enter(Some(thread.to_owned()));
++    let required = {
++        let mut runtime = runtime.lock().map_err(|_| ())?;
++        runtime.turn_boundary();
++        match runtime.intercepts("history_persist") {
++            Some(required) => required,
++            None => return Ok(None),
++        }
++    };
++    let mut texts = vec![String::new(); entries.len()];
++    let mut withheld = vec![false; entries.len()];
++    let mut by = Vec::new();
++    for chunk in persist_chunks(entries) {
++        let values = chunk
++            .iter()
++            .map(|(_, entry)| entry.clone())
++            .collect::<Vec<_>>();
++        let chain = intercept_shared(
++            runtime,
++            "history_persist",
++            required,
++            json!({"thread_id":thread,"entries":values}),
++            json!({"caller":"host","thread_id":thread}),
++            || true,
++            |_, call| {
++                Err(std::io::Error::other(format!(
++                    "host_operation_unavailable: history_persist interceptors run while history is persisted ({})",
++                    call.operation
++                )))
++            },
++            |input| Ok(json!({"entries": input["entries"]})),
++        )
++        .ok();
++        let rewritten = chain
++            .as_ref()
++            .and_then(|chain| chain.result["entries"].as_array());
++        let mut changed = false;
++        for (position, (index, original)) in chunk.iter().enumerate() {
++            let given = original["text"].as_str().unwrap_or_default();
++            let text = rewritten
++                .and_then(|entries| entries.get(position))
++                .and_then(|entry| entry["text"].as_str());
++            match text {
++                Some(text) => {
++                    changed |= text != given;
++                    texts[*index].push_str(text);
++                }
++                None => {
++                    withheld[*index] |= required;
++                    texts[*index].push_str(given);
++                }
++            }
++        }
++        if changed && let Some(chain) = &chain {
++            by.extend(persist_changed_by(&chain.trace));
++        }
++    }
++    for (text, withheld) in texts.iter_mut().zip(&withheld) {
++        if *withheld {
++            *text = PERSIST_WITHHELD.to_owned();
++        }
++    }
++    if withheld.contains(&true) {
++        by.push("host".to_owned());
++    }
++    by.sort();
++    by.dedup();
++    Ok((!by.is_empty()).then(|| PersistedRewrite {
++        texts,
++        by: by.join(", "),
++    }))
 +}
 diff --git a/codex-rs/omd/src/mods/policy.rs b/codex-rs/omd/src/mods/policy.rs
 new file mode 100644
@@ -110462,13 +111228,14 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..cd7d715fe
+index 000000000..3a2066d4e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,578 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
++use std::collections::BTreeSet;
 +use std::io::BufRead;
 +use std::io::BufReader;
 +use std::io::Read;
@@ -110480,7 +111247,9 @@ index 000000000..cd7d715fe
 +use std::process::ChildStdout;
 +use std::process::Command;
 +use std::process::Stdio;
++use std::sync::Condvar;
 +use std::sync::Mutex;
++use std::sync::PoisonError;
 +use std::sync::mpsc;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -110677,7 +111446,7 @@ index 000000000..cd7d715fe
 +    used: Instant,
 +    serve: bool,
 +    /// A mounted component's runner and its owner (`""` for the terminal, else the client): never
-+    /// idle-retired, only unmounted or displaced by the owner's newer ones.
++    /// idle-retired or evicted, only unmounted or retired by a newer package identity.
 +    pinned: Option<String>,
 +    born: Instant,
 +    /// Bytes of the activation request outside its serve fields.
@@ -110686,6 +111455,11 @@ index 000000000..cd7d715fe
 +
 +impl Warm {
 +    fn stop(self) -> Vec<u8> {
++        if let Some(owner) = &self.pinned
++            && let Ok(mut mounted) = MOUNTED.lock()
++        {
++            mounted.remove(&(owner.clone(), self.key.clone()));
++        }
 +        stop(self.child);
 +        let _ = self.reader.join();
 +        self.errors.join().unwrap_or_default()
@@ -110722,10 +111496,67 @@ index 000000000..cd7d715fe
 +}
 +
 +static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
++/// Every live pinned runner, pooled or mid-step, by owner and key: the cap on a mount.
++static MOUNTED: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
++/// Pinned keys with a step running, so a second step of one instance waits instead of spawning a runner.
++static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new()), Condvar::new());
 +const WARM_RUNNERS: usize = 4;
 +const PINNED_RUNNERS: usize = 4;
 +const REUSED_RUNNERS: usize = 2;
 +const WARM_IDLE: Duration = Duration::from_secs(60);
++
++struct Stepping(Option<String>);
++
++impl Stepping {
++    fn enter(key: &str, pinned: bool) -> Self {
++        if !pinned {
++            return Self(None);
++        }
++        let (stepping, freed) = &STEPPING;
++        let mut stepping = stepping.lock().unwrap_or_else(PoisonError::into_inner);
++        while stepping.contains(key) {
++            stepping = freed.wait(stepping).unwrap_or_else(PoisonError::into_inner);
++        }
++        stepping.insert(key.to_owned());
++        Self(Some(key.to_owned()))
++    }
++}
++
++impl Drop for Stepping {
++    fn drop(&mut self) {
++        if let Some(key) = self.0.take() {
++            let (stepping, freed) = &STEPPING;
++            stepping
++                .lock()
++                .unwrap_or_else(PoisonError::into_inner)
++                .remove(&key);
++            freed.notify_all();
++        }
++    }
++}
++
++/// Registers a new pinned runner, refusing a fifth for its owner and retiring the owner's runner of
++/// the same instance under an older package identity.
++fn mount(owner: &str, key: &str) -> Result<()> {
++    let instance = key.rsplit_once(':').map_or(key, |(instance, _)| instance);
++    for stale in retire_warm(|runner| {
++        runner.pinned.as_deref() == Some(owner)
++            && runner.key != key
++            && runner.key.rsplit_once(':').map(|(prefix, _)| prefix) == Some(instance)
++    }) {
++        stale.stop();
++    }
++    let mut mounted = MOUNTED
++        .lock()
++        .map_err(|_| failure("mod_runtime_poisoned"))?;
++    if mounted.iter().filter(|(by, _)| by == owner).count() >= PINNED_RUNNERS {
++        return Err(failure(format!(
++            "component_limit: at most {PINNED_RUNNERS} modules stay mounted at once for the terminal or one client"
++        )));
++    }
++    mounted.insert((owner.to_owned(), key.to_owned()));
++    Ok(())
++}
 +
 +fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
 +    let mut child = runner(node)?;
@@ -110789,12 +111620,20 @@ index 000000000..cd7d715fe
 +        request_line(request)?
 +    } else {
 +        request_line(
-+            &["name", "payload", "receipts", "state", "virtual_time_ms"]
-+                .map(|field| (field, &request[field]))
-+                .into_iter()
-+                .collect::<std::collections::BTreeMap<_, _>>(),
++            &[
++                "name",
++                "payload",
++                "receipts",
++                "state",
++                "ui_state",
++                "virtual_time_ms",
++            ]
++            .map(|field| (field, &request[field]))
++            .into_iter()
++            .collect::<std::collections::BTreeMap<_, _>>(),
 +        )?
 +    };
++    let _stepping = Stepping::enter(key, request["event"] == "component");
 +    let mut reused = WARM.lock().ok().and_then(|mut runners| {
 +        let index = runners.iter().position(|runner| runner.key == key)?;
 +        Some(runners.swap_remove(index))
@@ -110813,13 +111652,25 @@ index 000000000..cd7d715fe
 +        }
 +        None => {
 +            let bytes = request_line(request)?;
-+            let mut warm = warm_runner(node, key, request["serve"] == true)?;
-+            warm.pinned = (request["event"] == "component").then(|| {
++            let pinned = (request["event"] == "component").then(|| {
 +                request["payload"]["client"]
 +                    .as_str()
 +                    .unwrap_or_default()
 +                    .to_owned()
 +            });
++            if let Some(owner) = &pinned {
++                mount(owner, key)?;
++            }
++            let mut warm = match warm_runner(node, key, request["serve"] == true) {
++                Ok(warm) => warm,
++                Err(error) => {
++                    if let (Some(owner), Ok(mut mounted)) = (&pinned, MOUNTED.lock()) {
++                        mounted.remove(&(owner.clone(), key.to_owned()));
++                    }
++                    return Err(error);
++                }
++            };
++            warm.pinned = pinned;
 +            warm.base = bytes.len().saturating_sub(serve.len());
 +            (warm, bytes)
 +        }
@@ -110855,7 +111706,7 @@ index 000000000..cd7d715fe
 +    runner.used = Instant::now();
 +    let kind = (runner.serve, runner.pinned.clone());
 +    let size = match kind {
-+        (_, Some(_)) => PINNED_RUNNERS,
++        (_, Some(_)) => usize::MAX,
 +        (true, None) => WARM_RUNNERS,
 +        (false, None) => REUSED_RUNNERS,
 +    };
@@ -111455,10 +112306,10 @@ index 000000000..1fc4e43b8
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..43c37f0d9
+index 000000000..206e90f9b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,286 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -111591,19 +112442,27 @@ index 000000000..43c37f0d9
 +        },
 +        |_| {},
 +    )?;
-+    let tree = serde_json::from_value::<Vec<ModComponent>>(value["tree"].clone())
++    if let Err(error) = checked_tree(&value) {
++        process::unmount(&owner, id, &instance);
++        return Err(error);
++    }
++    Ok(value)
++}
++
++/// A component module step's tree must parse, pass the render checks, stay under 64 KiB and not draw the native component.
++pub(super) fn checked_tree(step: &Value) -> Result<()> {
++    let tree = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
 +        .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
 +    if let Some(reason) = view::invalid_render_tree(&tree).or_else(|| {
 +        (tree
 +            .iter()
 +            .any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
-+            || serde_json::to_vec(&value["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
++            || serde_json::to_vec(&step["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
 +        .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
 +    }) {
-+        process::unmount(&owner, id, &instance);
 +        return Err(failure(format!("invalid_component_tree: {reason}")));
 +    }
-+    Ok(value)
++    Ok(())
 +}
 +
 +pub fn component_unmount(id: &str, component: &str) {
@@ -112084,10 +112943,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..4dc0f174a
+index 000000000..111fef0a8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,917 @@
+@@ -0,0 +1,925 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -112189,7 +113048,11 @@ index 000000000..4dc0f174a
 +  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
 +  receipts = request.receipts;
 +  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
-+  state = structuredCloneFallback(activatedState);
++  if (request.event === 'component') {
++    state = structuredCloneFallback(next.state);
++    uiState = structuredCloneFallback(next.ui_state ?? null);
++    uiRead = false;
++  } else state = structuredCloneFallback(activatedState);
 +  reads.clear();
 +  calls.length = 0;
 +  updates.length = 0;
@@ -112536,6 +113399,10 @@ index 000000000..4dc0f174a
 +  components.set(id, definition);
 +  registrations.components.push(id);
 +}
++function synchronous(value) {
++  if (typeof value?.then === 'function') throw new Error('component_handlers_must_be_synchronous');
++  return value;
++}
 +function step(frame) {
 +  const definition = components.get(request.name);
 +  if (!definition) throw new Error('unknown_component: ' + request.name);
@@ -112552,13 +113419,13 @@ index 000000000..4dc0f174a
 +  if (mounting) {
 +    instance = { props: deepFreeze(structuredCloneFallback(frame.props ?? null)), last: frame.now, state: undefined, overruns: 0 };
 +    instances.set(address, instance);
-+    if (definition.init) instance.state = definition.init(instance.props, context());
++    if (definition.init) instance.state = synchronous(definition.init(instance.props, context()));
 +  } else if (frame.props !== undefined && JSON.stringify(frame.props) !== JSON.stringify(instance.props)) {
 +    instance.props = deepFreeze(structuredCloneFallback(frame.props));
 +  }
 +  const apply = (handler, ...input) => {
 +    const next = handler(instance.state, ...input, context());
-+    if (next !== undefined) instance.state = next;
++    if (next !== undefined) instance.state = synchronous(next);
 +  };
 +  const period = () => {
 +    const ms = typeof definition.every.ms === 'function' ? definition.every.ms(instance.state) : definition.every.ms;
@@ -113007,10 +113874,10 @@ index 000000000..4dc0f174a
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..85c679b25
+index 000000000..49f254bdf
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1296 @@
+@@ -0,0 +1,1301 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -113269,8 +114136,13 @@ index 000000000..85c679b25
 +        hash.update(read_file(script)?);
 +    }
 +    let mut assets = BTreeMap::new();
++    let mut text = source.len();
 +    for asset in &package.assets {
 +        let content = read_file(asset)?;
++        text += std::str::from_utf8(&content).map_or(0, str::len);
++        if text > 256 * 1024 {
++            return Err(failure(format!("package_text_input_limit: {}", package.id)));
++        }
 +        hash.update([0]);
 +        hash.update(asset.as_bytes());
 +        hash.update([0]);
@@ -119772,10 +120644,10 @@ index 000000000..334cbf27e
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 000000000..9a978b298
+index 000000000..ecf899710
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,359 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use sha2::{Digest, Sha256};
@@ -119836,7 +120708,25 @@ index 000000000..9a978b298
 +                        lower.match_indices(prefix).any(|(offset, _)| {
 +                            offset == 0 || !lower.as_bytes()[offset - 1].is_ascii_alphanumeric()
 +                        })
-+                    });
++                    })
++                || assigns_secret(line)
++                || line.match_indices("AKIA").any(|(offset, _)| {
++                    (offset == 0 || !line.as_bytes()[offset - 1].is_ascii_alphanumeric())
++                        && line.as_bytes()[offset + 4..]
++                            .iter()
++                            .take_while(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
++                            .count()
++                            >= 16
++                })
++                || line.match_indices("://").any(|(offset, _)| {
++                    let authority = line[offset + 3..]
++                        .split(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'')
++                        .next()
++                        .unwrap_or_default();
++                    authority
++                        .find('@')
++                        .is_some_and(|at| authority[..at].contains(':'))
++                });
 +            if ends_key {
 +                private_key = false;
 +            }
@@ -119847,6 +120737,40 @@ index 000000000..9a978b298
 +            }
 +        })
 +        .collect()
++}
++
++/// `NAME=value`, `NAME: value` or `"name": value` where a segment of the name reads as a secret.
++fn assigns_secret(line: &str) -> bool {
++    line.match_indices(['=', ':']).any(|(offset, _)| {
++        let before = line[..offset].trim_end().trim_end_matches(['"', '\'']);
++        let start = before.len()
++            - before
++                .bytes()
++                .rev()
++                .take_while(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(byte))
++                .count();
++        let value = line[offset + 1..]
++            .trim_start()
++            .trim_start_matches(['"', '\'', '=']);
++        let segments = before[start..]
++            .split(['_', '-', '.'])
++            .map(str::to_ascii_lowercase)
++            .collect::<Vec<_>>();
++        !value.is_empty()
++            && segments.iter().enumerate().any(|(index, segment)| {
++                ["token", "secret", "password", "passwd", "apikey"]
++                    .iter()
++                    .any(|word| segment.ends_with(word))
++                    || segment == "pwd"
++                    || segment.starts_with("credential")
++                    || (segment == "key"
++                        && index > 0
++                        && [
++                            "api", "access", "private", "secret", "signing", "client", "master",
++                        ]
++                        .contains(&segments[index - 1].as_str()))
++            })
++    })
 +}
 +
 +pub fn contains_secret(text: &str) -> bool {
@@ -120085,10 +121009,10 @@ index 000000000..9a978b298
 +}
 diff --git a/codex-rs/omd/src/scoped_data.rs b/codex-rs/omd/src/scoped_data.rs
 new file mode 100644
-index 000000000..a0e34cf6a
+index 000000000..62c310ecd
 --- /dev/null
 +++ b/codex-rs/omd/src/scoped_data.rs
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,221 @@
 +use crate::resource_data::{ResourceBinding, ResourceStore, hash};
 +use crate::sessions::SessionIndex;
 +use serde_json::Value;
@@ -120215,6 +121139,10 @@ index 000000000..a0e34cf6a
 +                database: self.session_database.as_deref(),
 +                repository: &self.repository,
 +                enabled: true,
++                tools: selection
++                    .capabilities
++                    .iter()
++                    .any(|cap| cap == "sessions_tools"),
 +            }
 +            .call(name, arguments, active)?;
 +            if serde_json::to_vec(&result)?.len() > 1_048_576 {
@@ -120450,10 +121378,10 @@ index 000000000..c0fb9b585
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 000000000..16d27fb5e
+index 000000000..7c1d4aeb9
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,566 @@
+@@ -0,0 +1,572 @@
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
@@ -120472,6 +121400,7 @@ index 000000000..16d27fb5e
 +    pub database: Option<&'a Path>,
 +    pub repository: &'a Path,
 +    pub enabled: bool,
++    pub tools: bool,
 +}
 +
 +#[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120834,11 +121763,16 @@ index 000000000..16d27fb5e
 +                }
 +                _ => continue,
 +            };
-+            let redacted = redact(&text);
-+            let limited: String = redacted.chars().take(2048).collect();
-+            record["truncated"] = json!(limited.len() < redacted.len());
-+            record["redacted"] = json!(redacted != text);
-+            record[field] = json!(limited);
++            if field == "text" || self.tools {
++                let redacted = redact(&text);
++                let limited: String = redacted.chars().take(2048).collect();
++                record["truncated"] = json!(limited.len() < redacted.len());
++                record["redacted"] = json!(redacted != text);
++                record[field] = json!(limited);
++            } else {
++                record["bytes"] = json!(text.len());
++                record["sha256"] = json!(hash(text.as_bytes()));
++            }
 +            records.push(record);
 +            if records.len() >= 4096 {
 +                return Ok((records, true));
@@ -128191,10 +129125,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..4bd11c0a6
+index 000000000..393d02559
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5423 @@
+@@ -0,0 +1,5607 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -129078,6 +130012,40 @@ index 000000000..4bd11c0a6
 +            .to_string()
 +            .contains("migration_requires_different_state_version")
 +    );
++}
++
++#[test]
++fn migration_and_rollback_read_state_up_to_the_store_limit() {
++    let (temp, store, path) = fixture(
++        "export default api => api.command('big', () => { api.state.set({ pad: 'x'.repeat(100000) }); })",
++        &["commands", "store"],
++    );
++    let mut runtime = host(&temp);
++    runtime
++        .invoke(
++            "fixture",
++            runtime.generation(),
++            "command",
++            "big",
++            Value::Null,
++        )
++        .unwrap();
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_version"] = json!(2);
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    std::fs::write(
++        path.join("index.ts"),
++        "export default api => api.on('migrate', ({ to }) => { api.state.set({ to }); })",
++    )
++    .unwrap();
++    trust(&store, &path, &["commands", "store"]);
++    let receipt = store.migrate(&path).unwrap();
++    let backup = receipt["backup"].as_str().unwrap();
++    assert!(std::fs::metadata(backup).unwrap().len() > 65_536);
++    store.enable(&path, false).unwrap();
++    store.rollback(&path, std::path::Path::new(backup)).unwrap();
 +}
 +
 +#[test]
@@ -133170,6 +134138,14 @@ index 000000000..4bd11c0a6
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let plain = package(
++        &root,
++        "plain",
++        "export default api => api.intercept('history_persist', (e, next) => next(e))",
++        &["history"],
++    );
++    trust(&store, &plain, &["history"]);
++    assert!(!activation_error(&temp, "plain").is_empty());
 +    let path = package(
 +        &root,
 +        "redact",
@@ -133178,9 +134154,18 @@ index 000000000..4bd11c0a6
 +            if (e.entries.some(entry => entry.text === 'rename')) return {entries: e.entries.map(entry => ({...entry, call_id: 'other'}))};
 +            return next({...e, entries: e.entries.map(entry => ({...entry, text: entry.text.replaceAll('sk-live', '[redacted]')}))});
 +        })",
-+        &["history"],
++        &["history_persist"],
 +    );
-+    trust(&store, &path, &["history"]);
++    trust(&store, &path, &["history_persist"]);
++    for id in ["arelay", "zrelay"] {
++        let relay = package(
++            &root,
++            id,
++            "export default api => api.intercept('history_persist', (e, next) => next(e))",
++            &["history_persist"],
++        );
++        trust(&store, &relay, &["history_persist"]);
++    }
 +    let runtime = std::sync::Mutex::new(host(&temp));
 +    let persist = |texts: &[&str]| {
 +        let entries = texts
@@ -133210,6 +134195,57 @@ index 000000000..4bd11c0a6
 +    );
 +    assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
 +    assert_eq!(persist(&["rename"]), ["rename"]);
++    let entry = json!({"kind": "message", "role": "user", "call_id": null, "text": "sk-live"});
++    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry])
++        .unwrap()
++        .unwrap();
++    assert_eq!(rewrite.texts, ["[redacted]"]);
++    assert_eq!(rewrite.by, "mod:redact");
++}
++
++#[test]
++fn history_persist_chunks_fit_their_json_budget_and_credit_only_changing_links() {
++    let token = format!("{} sk-{}", "a".repeat(49_000), "b".repeat(400));
++    assert_eq!(codex_omd::persist_cut(&token, 49_152), 49_001);
++    assert_eq!(codex_omd::persist_cut(&"a".repeat(50_000), 49_152), 49_152);
++    assert_eq!(codex_omd::persist_cut(&"\"".repeat(30_000), 49_152), 24_576);
++    let entry =
++        |text: String| json!({"kind": "message", "role": "user", "call_id": null, "text": text});
++    let many = (0..3_000)
++        .map(|_| entry("x".repeat(10)))
++        .collect::<Vec<_>>();
++    let quoted = [entry("\"\n".repeat(40_000))];
++    for entries in [&many[..], &quoted[..]] {
++        let chunks = codex_omd::persist_chunks(entries);
++        assert!(chunks.len() > 1);
++        assert!(chunks.iter().all(|chunk| {
++            let values = chunk.iter().map(|(_, value)| value).collect::<Vec<_>>();
++            serde_json::to_vec(&values).unwrap().len()
++                <= codex_omd::PERSIST_CHUNK_BYTES + chunk.len() + 1
++        }));
++        let mut texts = vec![String::new(); entries.len()];
++        for (index, value) in chunks.iter().flatten() {
++            texts[*index].push_str(value["text"].as_str().unwrap());
++        }
++        assert!(
++            texts
++                .iter()
++                .zip(entries)
++                .all(|(text, entry)| *text == entry["text"])
++        );
++    }
++    let link = |index: u64, id: &str, received: &str, returned: &str| json!({"index": index, "mod": id, "received": received, "returned": returned});
++    let passed = [
++        link(2, "engine", "redacted", "redacted"),
++        link(1, "plain", "redacted", "redacted"),
++        link(0, "redactor", "original", "redacted"),
++    ];
++    assert_eq!(codex_omd::persist_changed_by(&passed), ["mod:redactor"]);
++    let answered = [
++        link(1, "answering", "original", "rewritten"),
++        link(0, "plain", "original", "rewritten"),
++    ];
++    assert_eq!(codex_omd::persist_changed_by(&answered), ["mod:answering"]);
 +}
 +
 +#[test]
@@ -133447,6 +134483,13 @@ index 000000000..4bd11c0a6
 +            .unwrap_err()
 +            .contains("host_operation_unavailable")
 +    );
++    for _ in 0..6 {
++        assert!(step("a", "h", "").is_err());
++    }
++    assert_eq!(
++        runtime.lock().unwrap().status()["mods"][0]["error"],
++        Value::Null
++    );
 +    assert_eq!(step("a", "x", ""), Ok(json!("1")));
 +    codex_omd::component_unmount("fixture", "b");
 +    assert_eq!(step("b", "x", ""), Ok(json!("1")));
@@ -133494,6 +134537,11 @@ index 000000000..4bd11c0a6
 +        }
 +    }
 +    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
++    assert!(
++        step(Some("owner1"), "owner1.e", "x")
++            .unwrap_err()
++            .contains("component_limit")
++    );
 +    codex_omd::component_detach("owner1");
 +    assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("1")));
 +    assert_eq!(step(Some("owner2"), "owner2.a", "x"), Ok(json!("2")));
@@ -133505,6 +134553,76 @@ index 000000000..4bd11c0a6
 +        assert_eq!(busy.join().unwrap(), Ok(json!("2")));
 +    });
 +    assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
++    assert_eq!(step(Some("twice"), "twice", "x"), Ok(json!("1")));
++    std::thread::scope(|scope| {
++        let first = scope.spawn(|| step(Some("twice"), "twice", "w"));
++        std::thread::sleep(std::time::Duration::from_millis(150));
++        assert_eq!(step(Some("twice"), "twice", "x"), Ok(json!("3")));
++        assert_eq!(first.join().unwrap(), Ok(json!("2")));
++    });
++}
++
++#[test]
++fn reloading_a_changed_package_retires_its_old_component_runners() {
++    let source = "export default api => api.component('tally', { init: () => 0, \
++         key: n => n + 1, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
++    let (temp, store, path) = fixture(source, &["terminal"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let step = |instance: &str| {
++        codex_omd::component_shared(
++            &runtime,
++            "fixture",
++            "tally",
++            json!({"instance": instance, "client": "reload", "now": 0, "columns": 20, "rows": 1,
++                "events": [{"kind": "key", "key": null, "text": "x"}]}),
++            || true,
++        )
++        .map(|step| step["tree"][0]["text"].clone())
++        .map_err(|error| error.to_string())
++    };
++    for instance in ["a", "b", "c", "d"] {
++        assert_eq!(step(instance), Ok(json!("1")));
++    }
++    assert_eq!(step("a"), Ok(json!("2")));
++    std::fs::write(path.join("index.ts"), format!("{source}\n")).unwrap();
++    trust(&store, &path, &["terminal"]);
++    runtime.lock().unwrap().reload().unwrap();
++    for instance in ["a", "b", "c", "d"] {
++        assert_eq!(step(instance), Ok(json!("1")));
++    }
++}
++
++#[test]
++fn refused_component_host_calls_never_reach_host_operation_interceptors() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let guard = package(
++        &root,
++        "guard",
++        "export default api => api.intercept('host_operation', {match: {operation: ['session.info']}}, () => ({value: {answered: true}}))",
++        &["middleware"],
++    );
++    trust(&store, &guard, &["middleware"]);
++    let component = package(
++        &root,
++        "tally",
++        "export default api => api.component('tally', { init: () => 0, key: n => { api.host.call('session.info', null); return n + 1; }, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })",
++        &["terminal", "inventory"],
++    );
++    trust(&store, &component, &["terminal", "inventory"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let error = codex_omd::component_shared(
++        &runtime,
++        "tally",
++        "tally",
++        json!({"instance": "a", "now": 0, "columns": 20, "rows": 1,
++            "events": [{"kind": "key", "key": null, "text": "x"}]}),
++        || true,
++    )
++    .unwrap_err()
++    .to_string();
++    assert!(error.contains("host_operation_unavailable"), "{error}");
 +}
 +
 +#[test]
@@ -133590,7 +134708,7 @@ index 000000000..4bd11c0a6
 +            &runtime,
 +            "fixture",
 +            "clock",
-+            json!({"instance": "c", "now": now, "columns": 20, "rows": 1, "events": events}),
++            json!({"instance": "c", "client": "clock", "now": now, "columns": 20, "rows": 1, "events": events}),
 +            || true,
 +        )
 +        .unwrap();
@@ -133620,10 +134738,10 @@ index 000000000..4bd11c0a6
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..456b9c43c
+index 000000000..ea1d90a41
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,2160 @@
+@@ -0,0 +1,2183 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -133738,6 +134856,29 @@ index 000000000..456b9c43c
 +        ModStore::inspect_package(&cache).unwrap()["sha256"]
 +            != lock.packages["asset_fixture"].integrity
 +    );
++}
++
++#[test]
++fn inspection_refuses_text_over_the_per_callback_input_limit() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "text_fixture", "1.0.0", &["commands"], json!([]));
++    let mut manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
++    manifest["assets"] = json!(["a.mjs", "b.mjs", "c.mjs"]);
++    std::fs::write(
++        package.join("mod.json"),
++        serde_json::to_vec(&manifest).unwrap(),
++    )
++    .unwrap();
++    for name in ["a.mjs", "b.mjs"] {
++        std::fs::write(package.join(name), vec![b'/'; 100_000]).unwrap();
++    }
++    std::fs::write(package.join("c.mjs"), vec![0xff; 100_000]).unwrap();
++    assert!(ModStore::inspect_package(&package).is_ok());
++    std::fs::write(package.join("c.mjs"), vec![b'/'; 100_000]).unwrap();
++    let error = ModStore::inspect_package(&package).unwrap_err().to_string();
++    assert!(error.contains("package_text_input_limit"), "{error}");
 +}
 +
 +#[test]
@@ -136365,10 +137506,10 @@ index 000000000..aca1c2bf7
 +}
 diff --git a/codex-rs/omd/tests/sessions.rs b/codex-rs/omd/tests/sessions.rs
 new file mode 100644
-index 000000000..cf7b470e4
+index 000000000..c35e39458
 --- /dev/null
 +++ b/codex-rs/omd/tests/sessions.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,624 @@
 +use codex_omd::sessions::SessionIndex;
 +use serde_json::{Value, json};
 +use std::fs;
@@ -136414,6 +137555,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let list = index
 +        .call("sessions.list", json!({"since":"2026-09-01"}), || true)
@@ -136484,6 +137626,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let list = index.call("sessions.list", json!({}), || true).unwrap();
 +    let summary = &list["sessions"][0];
@@ -136523,6 +137666,23 @@ index 000000000..cf7b470e4
 +    assert!(!result.to_string().contains("private-sentinel"));
 +    assert!(!result.to_string().contains("hidden-reasoning-sentinel"));
 +    assert!(!result.to_string().contains("base64"));
++    let digests = SessionIndex {
++        tools: false,
++        ..index
++    }
++    .call(
++        "sessions.read",
++        json!({"session_id":"session-t","revision":summary["revision"],"handle":summary["handle"]}),
++        || true,
++    )
++    .unwrap();
++    assert_eq!(digests["records"][0]["text"], "Run it.");
++    assert_eq!(digests["records"][1]["name"], "exec_command");
++    assert_eq!(digests["records"][1]["bytes"], 12);
++    assert_eq!(digests["records"][2]["bytes"], 3000);
++    assert_eq!(digests["records"][2]["sha256"].as_str().unwrap().len(), 64);
++    assert!(!digests.to_string().contains("cmd"));
++    assert!(!digests.to_string().contains("xxx"));
 +}
 +
 +#[test]
@@ -136535,6 +137695,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let summary = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
 +    let original = fs::read_to_string(&path).unwrap();
@@ -136571,6 +137732,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let page = index
 +        .call("sessions.list", json!({"limit":1}), || true)
@@ -136616,6 +137778,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    assert_eq!(
 +        index.call("sessions.list", json!({}), || true).unwrap()["sessions"],
@@ -136663,6 +137826,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let old = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
 +    let before = fs::read_to_string(&path).unwrap();
@@ -136754,6 +137918,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let summary = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
 +    let result = index
@@ -136781,6 +137946,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let list = index.call("sessions.list", json!({}), || true).unwrap();
 +    assert_eq!(list["scan_truncated"], true);
@@ -136827,6 +137993,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let list = index.call("sessions.list", json!({}), || true).unwrap();
 +    let listed = list["sessions"].as_array().unwrap();
@@ -136900,6 +138067,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    let list = index.call("sessions.list", json!({}), || true).unwrap();
 +    let listed = list["sessions"].as_array().unwrap();
@@ -136956,6 +138124,7 @@ index 000000000..cf7b470e4
 +        root: &sessions,
 +        repository: &repo,
 +        enabled: true,
++        tools: true,
 +    };
 +    assert_eq!(
 +        index.call("sessions.list", json!({}), || true).unwrap()["sessions"]
@@ -137169,10 +138338,10 @@ index 000000000..9f4056fd7
 +}
 diff --git a/codex-rs/omd/tests/turn_evidence.rs b/codex-rs/omd/tests/turn_evidence.rs
 new file mode 100644
-index 000000000..ee9388522
+index 000000000..4f0529669
 --- /dev/null
 +++ b/codex-rs/omd/tests/turn_evidence.rs
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,83 @@
 +use codex_omd::turn_evidence::project;
 +
 +#[test]
@@ -137181,6 +138350,29 @@ index 000000000..ee9388522
 +        "task-example is complete\nvalue=sk-private-token\nvalue=ghp_private_token",
 +    );
 +    assert_eq!(value, "task-example is complete\n[redacted]\n[redacted]");
++    for secret in [
++        "export TOKEN=abc",
++        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI",
++        "DB_URL=postgres://user:pw@host/db",
++        "id AKIAIOSFODNN7EXAMPLE",
++        r#"{"secret": "x"}"#,
++        r#"{"accessToken":"x"}"#,
++        "private_key: abc",
++    ] {
++        assert_eq!(
++            codex_omd::resource_data::redact(secret),
++            "[redacted]",
++            "{secret}"
++        );
++    }
++    for plain in [
++        "max_tokens: 64",
++        "https://example.com:8080/path",
++        "primary_key: id",
++        "token:",
++    ] {
++        assert_eq!(codex_omd::resource_data::redact(plain), plain);
++    }
 +}
 +use serde_json::json;
 +
@@ -149215,10 +150407,10 @@ index 000000000..8e4a9d37f
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
-index 000000000..a8eb62c12
+index 000000000..5da3e5105
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module.rs
-@@ -0,0 +1,369 @@
+@@ -0,0 +1,399 @@
 +use std::collections::HashMap;
 +use std::sync::Mutex;
 +use std::sync::OnceLock;
@@ -149234,6 +150426,8 @@ index 000000000..a8eb62c12
 +const FRAME: Duration = Duration::from_millis(16);
 +const RETRY: Duration = Duration::from_millis(100);
 +const EVENTS: usize = 256;
++/// A module not drawn for this long (a collapsed pane, a hidden site) stops ticking until it is drawn again.
++const UNDRAWN: Duration = Duration::from_secs(1);
 +
 +/// One mounted `module` component: its latest tree and the input waiting for its next frame step.
 +struct Instance {
@@ -149244,6 +150438,8 @@ index 000000000..a8eb62c12
 +    rows: u16,
 +    events: Vec<Value>,
 +    tree: Vec<ModComponent>,
++    composed: Option<(u16, Vec<Line<'static>>)>,
++    drawn: Instant,
 +    mounted: bool,
 +    changed: bool,
 +    due: Option<Instant>,
@@ -149292,9 +150488,11 @@ index 000000000..a8eb62c12
 +            .or_insert_with(|| fresh(owner, module));
 +        let mut replaced = None;
 +        if instance.owner != owner || instance.module != module {
-+            replaced = instance.mounted.then(|| instance.owner.clone());
++            replaced = Some(instance.owner.clone());
 +            *instance = fresh(owner, module);
 +        }
++        let resumed = instance.drawn.elapsed() > UNDRAWN;
++        instance.drawn = Instant::now();
 +        if instance.props != *props || instance.columns != width || instance.rows != rows {
 +            instance.props = props.clone();
 +            instance.columns = width;
@@ -149302,14 +150500,14 @@ index 000000000..a8eb62c12
 +            instance.changed = true;
 +        }
 +        let lines = match &instance.failed {
-+            Some(error) => vec![Line::from(format!("{owner}: {module}: {error}")).dim()],
-+            None => crate::mod_render::compose_lines(&instance.tree, width, None, Vec::new())
-+                .into_iter()
-+                .map(|line| line.line)
-+                .collect(),
++            Some(error) => vec![failure_line(owner, module, error)],
++            None => composed(instance, width),
 +        };
 +        let step = instance.failed.is_none()
-+            && (instance.changed || instance.due.is_some_and(|due| due <= Instant::now()));
++            && (instance.changed
++                || instance
++                    .due
++                    .is_some_and(|due| resumed || due <= Instant::now()));
 +        (lines, step, replaced)
 +    });
 +    if let Some(previous) = replaced {
@@ -149334,21 +150532,37 @@ index 000000000..a8eb62c12
 +/// Rows a module without a declared height takes: what its latest tree draws.
 +pub(crate) fn height(id: &str) -> u16 {
 +    instances(|instances| {
-+        instances.get(id).map_or(1, |instance| {
++        instances.get_mut(id).map_or(1, |instance| {
 +            let drawn = if instance.failed.is_some() {
 +                1
 +            } else {
-+                crate::mod_render::compose_lines(
-+                    &instance.tree,
-+                    instance.columns.max(1),
-+                    None,
-+                    Vec::new(),
-+                )
-+                .len()
++                let columns = instance.columns.max(1);
++                composed(instance, columns).len()
 +            };
 +            u16::try_from(drawn.max(1)).unwrap_or(u16::MAX)
 +        })
 +    })
++}
++
++/// The tree's lines at `width`, composed once per tree and width.
++fn composed(instance: &mut Instance, width: u16) -> Vec<Line<'static>> {
++    if let Some((cached, lines)) = &instance.composed
++        && *cached == width
++    {
++        return lines.clone();
++    }
++    let lines: Vec<Line<'static>> =
++        crate::mod_render::compose_lines(&instance.tree, width, None, Vec::new())
++            .into_iter()
++            .map(|line| line.line)
++            .collect();
++    instance.composed = Some((width, lines.clone()));
++    lines
++}
++
++fn failure_line(owner: &str, module: &str, error: &str) -> Line<'static> {
++    let error = error.lines().next().unwrap_or_default();
++    Line::from(format!("{owner}: {module}: {error}")).dim()
 +}
 +
 +fn fresh(owner: &str, module: &str) -> Instance {
@@ -149360,6 +150574,8 @@ index 000000000..a8eb62c12
 +        rows: 0,
 +        events: Vec::new(),
 +        tree: Vec::new(),
++        composed: None,
++        drawn: Instant::now(),
 +        mounted: false,
 +        changed: true,
 +        due: None,
@@ -149374,7 +150590,7 @@ index 000000000..a8eb62c12
 +        let mut gone = Vec::new();
 +        instances.retain(|id, instance| {
 +            let kept = ids.contains(id);
-+            if !kept && instance.mounted {
++            if !kept {
 +                gone.push((instance.owner.clone(), id.clone()));
 +            }
 +            kept
@@ -149459,6 +150675,8 @@ index 000000000..a8eb62c12
 +            }
 +            let wanted = if instance.changed || !instance.events.is_empty() {
 +                Some(now)
++            } else if now.saturating_duration_since(instance.drawn) > UNDRAWN {
++                None
 +            } else {
 +                instance.due
 +            };
@@ -149521,7 +150739,7 @@ index 000000000..a8eb62c12
 +        };
 +        let post = instances(|instances| {
 +            let instance = instances.get_mut(&job.id)?;
-+            match result {
++            Some(match result {
 +                Ok(step) => {
 +                    instance.mounted = true;
 +                    instance.due = step["next_ms"]
@@ -149532,6 +150750,7 @@ index 000000000..a8eb62c12
 +                        && tree != instance.tree
 +                    {
 +                        instance.tree = tree;
++                        instance.composed = None;
 +                        crate::mod_render::schedule_frame(Duration::ZERO);
 +                    }
 +                    step["post"]
@@ -149542,13 +150761,16 @@ index 000000000..a8eb62c12
 +                    instance.failed = Some(error);
 +                    instance.mounted = false;
 +                    instance.tree.clear();
++                    instance.composed = None;
 +                    crate::mod_render::schedule_frame(Duration::ZERO);
 +                    None
 +                }
-+            }
++            })
 +        });
-+        if let Some(post) = post {
-+            deliver(post);
++        match post {
++            Some(Some(post)) => deliver(post),
++            Some(None) => {}
++            None => codex_omd::component_unmount(&job.owner, &job.id),
 +        }
 +    }
 +}
@@ -152398,10 +153620,10 @@ index 000000000..4eecc0fba
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..5ba14f754
+index 000000000..55735e44c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1546 @@
+@@ -0,0 +1,1566 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -153499,6 +154721,26 @@ index 000000000..5ba14f754
 +    match result["deny"].as_str() {
 +        Some(reason) => Err(format!("composer_edit_denied: {reason}")),
 +        None => Ok(result["edit"].clone()),
++    }
++}
++
++/// Offers one prompt-recall entry to `history_persist` interceptors before it is written; `None`
++/// withholds it (a required interceptor failed, or the runtime is unusable while one is installed).
++pub(crate) fn prompt_history(thread: &str, text: String) -> Option<String> {
++    if !intercepts("history_persist") {
++        return Some(text);
++    }
++    let runtime = crate::omd::mod_paths()
++        .and_then(|paths| paths.store)
++        .and_then(|store| shared_host(store).ok())?;
++    let entry = serde_json::json!({"kind": "prompt_history", "role": "user", "call_id": null, "text": text});
++    match codex_omd::persist_texts(&runtime, thread, &[entry]).ok()? {
++        None => Some(text),
++        Some(rewrite) => rewrite
++            .texts
++            .into_iter()
++            .next()
++            .filter(|text| text != codex_omd::PERSIST_WITHHELD),
 +    }
 +}
 +
@@ -156853,10 +158095,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..c2fc73564
+index 000000000..e791561a2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4606 @@
+@@ -0,0 +1,4623 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -157712,12 +158954,28 @@ index 000000000..c2fc73564
 +    Option<(u8, u8, u8)>,
 +    crate::terminal_palette::StdoutColorLevel,
 +);
-+static MARKDOWN: Mutex<Vec<(MarkdownKey, usize, Vec<HyperlinkLine>)>> = Mutex::new(Vec::new());
++static MARKDOWN: Mutex<Vec<(MarkdownKey, usize, Arc<[HyperlinkLine]>)>> = Mutex::new(Vec::new());
 +const MARKDOWN_ENTRIES: usize = 256;
 +const MARKDOWN_BYTES: usize = 1024 * 1024;
 +
++/// An estimate of the memory a rendered markdown block retains: its lines, spans and links.
++fn markdown_weight(lines: &[HyperlinkLine]) -> usize {
++    lines
++        .iter()
++        .map(|line| {
++            let spans = line
++                .line
++                .spans
++                .iter()
++                .map(|span| 64 + span.content.len())
++                .sum::<usize>();
++            96 + spans + 96 * line.hyperlinks.len()
++        })
++        .sum()
++}
++
 +/// The most recently drawn markdown renders, so a draw re-parses only changed or resized text.
-+fn markdown_lines(text: &str, width: u16) -> Vec<HyperlinkLine> {
++fn markdown_lines(text: &str, width: u16) -> Arc<[HyperlinkLine]> {
 +    use std::hash::Hash;
 +    use std::hash::Hasher;
 +    let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -157736,23 +158994,24 @@ index 000000000..c2fc73564
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
 +        if let Some(index) = cache.iter().position(|(cached, _, _)| *cached == key) {
 +            let entry = cache.remove(index);
-+            let lines = entry.2.clone();
++            let lines = Arc::clone(&entry.2);
 +            cache.push(entry);
 +            return lines;
 +        }
 +    }
-+    let lines = crate::markdown::render_markdown_agent_with_list_spacing(
++    let lines: Arc<[HyperlinkLine]> = crate::markdown::render_markdown_agent_with_list_spacing(
 +        text,
 +        Some(usize::from(width)),
 +        None,
 +        None,
 +        crate::markdown_render::ListSpacing::AfterMultiline,
-+    );
++    )
++    .into();
 +    let mut cache = MARKDOWN
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    cache.retain(|(cached, _, _)| *cached != key);
-+    cache.push((key, text.len(), lines.clone()));
++    cache.push((key, markdown_weight(&lines), Arc::clone(&lines)));
 +    let mut bytes = cache.iter().map(|(_, bytes, _)| bytes).sum::<usize>();
 +    while cache.len() > MARKDOWN_ENTRIES || (cache.len() > 1 && bytes > MARKDOWN_BYTES) {
 +        bytes -= cache.remove(0).1;
@@ -158963,12 +160222,12 @@ index 000000000..c2fc73564
 +                }
 +            }
 +            ModComponent::Markdown { id, label, text } => {
-+                for (index, line) in markdown_lines(text, width).into_iter().enumerate() {
++                for (index, line) in markdown_lines(text, width).iter().enumerate() {
 +                    rows.push(ComponentRow {
 +                        id: (index == 0).then(|| id.clone()),
 +                        label: (index == 0).then(|| label.clone()),
-+                        links: line.hyperlinks,
-+                        line: line.line,
++                        links: line.hyperlinks.clone(),
++                        line: line.line.clone(),
 +                        target: None,
 +                        regions: Vec::new(),
 +                        ..ComponentRow::default()
@@ -161726,10 +162985,10 @@ index 000000000..e0cb74377
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..1556aeef7
+index 000000000..75f609f19
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2561 @@
+@@ -0,0 +1,2543 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -163239,6 +164498,7 @@ index 000000000..1556aeef7
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn markdown_cache_keeps_every_block_of_a_many_block_frame() {
 +    let texts = (0..24)
 +        .map(|block| format!("# Block {block} of markdown_cache_keeps_every_block\n\nbody"))
@@ -163266,35 +164526,16 @@ index 000000000..1556aeef7
 +}
 +
 +#[test]
-+#[ignore = "explicit bounded text render timing fixture"]
 +#[serial_test::serial]
-+#[allow(clippy::print_stdout)]
-+fn text_render_cost_fixture() {
-+    let block = "## Section\n\nA paragraph with `code`, **bold** text and a [link](https://example.com/) that wraps across the pane width.\n\n- first item\n- second item with more words\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n\n";
-+    let area = Rect::new(0, 0, 160, 48);
-+    let mut results = Vec::new();
-+    for kind in ["text", "markdown", "code"] {
-+        for bytes in [4096, 16_384, codex_omd::MOD_TEXT_BYTES] {
-+            let text = block.repeat(bytes / block.len());
-+            let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
-+                {"type":kind,"id":"body","label":"Body","text":text}]}},"sidebar_width":60}));
-+            sync_interaction(&snapshot.view);
-+            let mut samples = (0..30)
-+                .map(|_| {
-+                    let mut buffer = Buffer::empty(area);
-+                    let started = std::time::Instant::now();
-+                    render(area, area, &mut buffer, &snapshot);
-+                    std::hint::black_box(buffer);
-+                    started.elapsed().as_secs_f64() * 1000.0
-+                })
-+                .collect::<Vec<_>>();
-+            samples.sort_by(f64::total_cmp);
-+            results.push(serde_json::json!({"kind":kind,"bytes":text.len(),
-+                "median_ms":samples[15],"p95_ms":samples[28],"max_ms":samples[29]}));
-+        }
++fn markdown_cache_is_bounded_by_the_size_of_its_lines_not_its_source() {
++    for block in 0..40 {
++        markdown_lines(&format!("**b** x{block} ").repeat(3000), 40);
 +    }
-+    preview(ModViewSnapshot::default());
-+    println!("{}", serde_json::Value::Array(results));
++    let cached = MARKDOWN
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .len();
++    assert!(cached < 20, "{cached} entries");
 +}
 +
 +#[test]

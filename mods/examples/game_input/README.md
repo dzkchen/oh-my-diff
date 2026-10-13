@@ -8,3 +8,7 @@ in `api.state` for the pane title.
 
 The board's state lives in the component module's runner between frames; the
 module has no host authority, so the hook is the only place that writes state.
+
+`mod.test.json` plays the board offline with `component` steps: a key moves the
+paddle, `advance_time` drives the ticks, and the last step ends the game and
+checks the score the module posts.

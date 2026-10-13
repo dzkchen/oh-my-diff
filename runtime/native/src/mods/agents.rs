@@ -49,7 +49,7 @@ pub(super) fn cache_total(responses: &[Value], key: &str) -> Option<u64> {
     responses
         .iter()
         .filter_map(|response| response["cache"][key].as_u64())
-        .reduce(|sum, tokens| sum + tokens)
+        .reduce(u64::saturating_add)
 }
 
 fn strip_private(value: &mut Value) {
@@ -1984,7 +1984,7 @@ impl Agents {
             "route": route, "model": last["served_model"].as_str().or(last["requested_model"].as_str()),
             "request_ids": responses.iter().map(|response| response["request_id"].clone()).collect::<Vec<_>>(),
             "usage": last["usage"], "cache": {"read_tokens": cache_total(&responses, "read_tokens"), "write_tokens": cache_total(&responses, "write_tokens")},
-            "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.iter().sum::<u64>()),
+            "cost": {"microusd": costs.filter(|costs| !costs.is_empty()).map(|costs| costs.into_iter().fold(0, u64::saturating_add)),
                 "basis": match bases.len() { 0 => "unknown", 1 => bases.first().copied().unwrap_or("unknown"), _ => "mixed" }},
             "timing": {"duration_ms": started.elapsed().as_millis() as u64,
                 "first_event_ms": responses.first().map_or(Value::Null, |response| response["timing"]["first_event_ms"].clone())}}))

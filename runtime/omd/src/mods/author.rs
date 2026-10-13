@@ -136,6 +136,9 @@ impl OfflineHost {
     }
 }
 
+/// The owner of the component module runners an offline scenario mounts.
+const OFFLINE_CLIENT: &str = "offline";
+
 impl ModHost {
     pub fn author_inspection(&self) -> Value {
         json!({
@@ -253,6 +256,7 @@ impl ModHost {
             tiers.insert(id.clone(), (tier, loaded.selection.clone()));
         }
         let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
+        process::detach(OFFLINE_CLIENT);
         for (id, (_, selection)) in tiers {
             if let Some(loaded) = self
                 .loaded
@@ -580,6 +584,37 @@ impl ModHost {
                     || active,
                     |caller, call| host.call(caller, call),
                 )
+            }
+            "component" => {
+                let id = required_string(step, "mod")?;
+                let module = required_string(step, "module")?;
+                let instance = step
+                    .get("instance")
+                    .and_then(Value::as_str)
+                    .unwrap_or(module);
+                let size = |name: &str, default: u64| {
+                    step.get(name).and_then(Value::as_u64).unwrap_or(default)
+                };
+                let frame = json!({"instance": format!("{OFFLINE_CLIENT}.{instance}"),
+                    "client": OFFLINE_CLIENT, "props": step.get("props").cloned().unwrap_or(Value::Null),
+                    "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
+                    "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
+                let result = self.invoke_scoped_with(
+                    id,
+                    self.generation,
+                    "component",
+                    module,
+                    frame,
+                    || active,
+                    |_, call| {
+                        Err(failure(format!(
+                            "host_operation_unavailable: {} is not available to component modules",
+                            call.operation
+                        )))
+                    },
+                )?;
+                render::checked_tree(&result)?;
+                Ok(result)
             }
             "terminal_mount" | "terminal_interact" => {
                 let id = required_string(step, "mod")?;

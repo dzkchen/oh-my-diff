@@ -192,8 +192,10 @@ def static_problems(path):
         tools += len(re.findall(r"api\.tool\(", text))
         if RELATIVE_IMPORT.search(text):
             needed.add("package_imports_v1")
+        if re.search(r"api\.component\s*[<(]", text):
+            needed.add("component_modules_v1")
     required = set(package.get("compatibility", {}).get("required_features", []))
-    found += [f"declared assets or relative imports need required feature {feature}" for feature in sorted(needed - required)]
+    found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]
     found += [f"{count} {kind} exceed the limit of 16" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 16]
@@ -230,7 +232,8 @@ def check(host, paths, providers, commands, scenarios):
         status = host.status(location)
         found += problems_from_status(status, "default", ids)
         item = next((item for item in status.get("mods", []) if item["id"] == mod), None)
-        names = [command["name"] for command in (item or {}).get("registrations", {}).get("commands", [])]
+        names = [command["name"] for command in (item or {}).get("registrations", {}).get("commands", [])
+                 if not command.get("cli")]
         for name in names if commands else []:
             refused_operations = host.offline_command(location, mod, name) - TUI_OPERATIONS
             found += [f"/{mod}:{name} calls {operation}, which slash commands cannot use"

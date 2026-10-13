@@ -1,6 +1,7 @@
 use super::Result;
 use super::failure;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
@@ -12,7 +13,9 @@ use std::process::ChildStdin;
 use std::process::ChildStdout;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::Condvar;
 use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
@@ -209,7 +212,7 @@ struct Warm {
     used: Instant,
     serve: bool,
     /// A mounted component's runner and its owner (`""` for the terminal, else the client): never
-    /// idle-retired, only unmounted or displaced by the owner's newer ones.
+    /// idle-retired or evicted, only unmounted or retired by a newer package identity.
     pinned: Option<String>,
     born: Instant,
     /// Bytes of the activation request outside its serve fields.
@@ -218,6 +221,11 @@ struct Warm {
 
 impl Warm {
     fn stop(self) -> Vec<u8> {
+        if let Some(owner) = &self.pinned
+            && let Ok(mut mounted) = MOUNTED.lock()
+        {
+            mounted.remove(&(owner.clone(), self.key.clone()));
+        }
         stop(self.child);
         let _ = self.reader.join();
         self.errors.join().unwrap_or_default()
@@ -254,10 +262,67 @@ pub(super) fn detach(client: &str) {
 }
 
 static WARM: Mutex<Vec<Warm>> = Mutex::new(Vec::new());
+/// Every live pinned runner, pooled or mid-step, by owner and key: the cap on a mount.
+static MOUNTED: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
+/// Pinned keys with a step running, so a second step of one instance waits instead of spawning a runner.
+static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new()), Condvar::new());
 const WARM_RUNNERS: usize = 4;
 const PINNED_RUNNERS: usize = 4;
 const REUSED_RUNNERS: usize = 2;
 const WARM_IDLE: Duration = Duration::from_secs(60);
+
+struct Stepping(Option<String>);
+
+impl Stepping {
+    fn enter(key: &str, pinned: bool) -> Self {
+        if !pinned {
+            return Self(None);
+        }
+        let (stepping, freed) = &STEPPING;
+        let mut stepping = stepping.lock().unwrap_or_else(PoisonError::into_inner);
+        while stepping.contains(key) {
+            stepping = freed.wait(stepping).unwrap_or_else(PoisonError::into_inner);
+        }
+        stepping.insert(key.to_owned());
+        Self(Some(key.to_owned()))
+    }
+}
+
+impl Drop for Stepping {
+    fn drop(&mut self) {
+        if let Some(key) = self.0.take() {
+            let (stepping, freed) = &STEPPING;
+            stepping
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&key);
+            freed.notify_all();
+        }
+    }
+}
+
+/// Registers a new pinned runner, refusing a fifth for its owner and retiring the owner's runner of
+/// the same instance under an older package identity.
+fn mount(owner: &str, key: &str) -> Result<()> {
+    let instance = key.rsplit_once(':').map_or(key, |(instance, _)| instance);
+    for stale in retire_warm(|runner| {
+        runner.pinned.as_deref() == Some(owner)
+            && runner.key != key
+            && runner.key.rsplit_once(':').map(|(prefix, _)| prefix) == Some(instance)
+    }) {
+        stale.stop();
+    }
+    let mut mounted = MOUNTED
+        .lock()
+        .map_err(|_| failure("mod_runtime_poisoned"))?;
+    if mounted.iter().filter(|(by, _)| by == owner).count() >= PINNED_RUNNERS {
+        return Err(failure(format!(
+            "component_limit: at most {PINNED_RUNNERS} modules stay mounted at once for the terminal or one client"
+        )));
+    }
+    mounted.insert((owner.to_owned(), key.to_owned()));
+    Ok(())
+}
 
 fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
     let mut child = runner(node)?;
@@ -321,12 +386,20 @@ where
         request_line(request)?
     } else {
         request_line(
-            &["name", "payload", "receipts", "state", "virtual_time_ms"]
-                .map(|field| (field, &request[field]))
-                .into_iter()
-                .collect::<std::collections::BTreeMap<_, _>>(),
+            &[
+                "name",
+                "payload",
+                "receipts",
+                "state",
+                "ui_state",
+                "virtual_time_ms",
+            ]
+            .map(|field| (field, &request[field]))
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
         )?
     };
+    let _stepping = Stepping::enter(key, request["event"] == "component");
     let mut reused = WARM.lock().ok().and_then(|mut runners| {
         let index = runners.iter().position(|runner| runner.key == key)?;
         Some(runners.swap_remove(index))
@@ -345,13 +418,25 @@ where
         }
         None => {
             let bytes = request_line(request)?;
-            let mut warm = warm_runner(node, key, request["serve"] == true)?;
-            warm.pinned = (request["event"] == "component").then(|| {
+            let pinned = (request["event"] == "component").then(|| {
                 request["payload"]["client"]
                     .as_str()
                     .unwrap_or_default()
                     .to_owned()
             });
+            if let Some(owner) = &pinned {
+                mount(owner, key)?;
+            }
+            let mut warm = match warm_runner(node, key, request["serve"] == true) {
+                Ok(warm) => warm,
+                Err(error) => {
+                    if let (Some(owner), Ok(mut mounted)) = (&pinned, MOUNTED.lock()) {
+                        mounted.remove(&(owner.clone(), key.to_owned()));
+                    }
+                    return Err(error);
+                }
+            };
+            warm.pinned = pinned;
             warm.base = bytes.len().saturating_sub(serve.len());
             (warm, bytes)
         }
@@ -387,7 +472,7 @@ fn pool(mut runner: Warm) {
     runner.used = Instant::now();
     let kind = (runner.serve, runner.pinned.clone());
     let size = match kind {
-        (_, Some(_)) => PINNED_RUNNERS,
+        (_, Some(_)) => usize::MAX,
         (true, None) => WARM_RUNNERS,
         (false, None) => REUSED_RUNNERS,
     };

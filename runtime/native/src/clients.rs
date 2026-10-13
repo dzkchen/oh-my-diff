@@ -224,7 +224,7 @@ static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 static POSTING: Coalesce = Coalesce::new();
 
 /// Steps this client's own instance of a component module, delivering `events` and any due ticks
-/// at the size given or last rendered (80×24 by default).
+/// at the size given or last rendered (80 columns and rows 0, the auto height a terminal node without `height` gets).
 fn module_step(
     client: &str,
     component: &str,
@@ -245,7 +245,7 @@ fn module_step(
             sizes
                 .get(&(client.to_owned(), component.to_owned()))
                 .copied()
-                .unwrap_or((80, 24))
+                .unwrap_or((80, 0))
         });
         sizes.insert((client.to_owned(), component.to_owned()), size);
         size
@@ -457,7 +457,7 @@ pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
         };
         let size = match (dimension("columns")?, dimension("rows")?) {
             (None, None) => None,
-            (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(24))),
+            (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(0))),
         };
         let step = module_step(client, component, size, Vec::new())?;
         return Ok(

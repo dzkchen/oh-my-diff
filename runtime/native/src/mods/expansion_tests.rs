@@ -87,6 +87,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
     let runtime = ModHost::open(root.clone()).unwrap();
     let environment = runtime.environment();
     let intercepted = runtime.intercepted_surfaces();
+    let required = runtime.required_surfaces();
     let runtime = Arc::new(Mutex::new(runtime));
     let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
     let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
@@ -98,6 +99,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         input_runtime,
         persist_runtime,
         intercepted,
+        required,
         environment,
         services: services::Services::default(),
         views,
@@ -2848,6 +2850,32 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn component_post_hooks_make_the_host_calls_component_events_make() {
+    let Some(fixture) = fixture(&[Package {
+        id: "poster",
+        capabilities: &["terminal", "store", "commands", "inventory"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.on('component_post', () => { api.host.call('app.routes', null); api.state.set(true); });\n  api.command('seen', () => api.state.get());\n}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let payload = json!({"component": "c", "module": "m", "client": "x", "data": null});
+    invoke_one(
+        &fixture.core,
+        &fixture.lead,
+        "poster".into(),
+        "component_post",
+        payload,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(command(&fixture.core, "poster", "seen"), json!(true));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn event_context_refuses_user_only_app_methods_before_the_client() {
     let Some(fixture) = fixture(&[Package {
         id: "steerer",
@@ -2899,32 +2927,38 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn persisted_text_skips_the_runtime_without_interceptors_and_splits_at_whitespace() {
-    let token = format!("{} sk-{}", "a".repeat(98_300), "b".repeat(40));
-    assert_eq!(persisted::cut(&token), 98_301);
-    assert_eq!(persisted::cut(&"a".repeat(98_400)), 98_304);
+async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_runtime_fails() {
     let Some(fixture) = fixture(&[]) else {
         return;
     };
-    let thread_store = ExtensionData::new("thread");
-    thread_store.insert(fixture.lead.clone());
+    let extension = mods(&fixture.core);
+    assert!(!extension.rewrites_persisted_text());
     let entries = [codex_extension_api::PersistedText {
         kind: "message",
         role: Some("user".to_owned()),
         call_id: None,
         text: "hi".to_owned(),
     }];
-    let (extension, session_store) = (mods(&fixture.core), ExtensionData::new("session"));
-    let _held = fixture.core.persist_runtime.lock().unwrap();
-    let rewrite = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        extension.rewrite_persisted_text(codex_extension_api::PersistedTextInput {
-            entries: &entries,
-            session_store: &session_store,
-            thread_store: &thread_store,
-        }),
-    );
-    assert_eq!(rewrite.await.ok(), Some(None));
+    let input = || codex_extension_api::PersistedTextInput {
+        thread_id: "thread",
+        entries: &entries,
+    };
+    let runtime = fixture.core.persist_runtime.clone();
+    let _ = std::thread::spawn(move || {
+        let _held = runtime.lock().unwrap();
+        panic!("poison the persist runtime");
+    })
+    .join();
+    assert_eq!(extension.rewrite_persisted_text(input()).await, None);
+    fixture
+        .core
+        .required
+        .lock()
+        .unwrap()
+        .push("history_persist");
+    let withheld = extension.rewrite_persisted_text(input()).await.unwrap();
+    assert_eq!(withheld.texts, [codex_omd::PERSIST_WITHHELD]);
+    assert_eq!(withheld.by, "host");
 }
 
 #[test]
@@ -2936,6 +2970,11 @@ fn completion_cache_totals_sum_the_requests_that_reported_them() {
     ];
     assert_eq!(agents::cache_total(&responses, "read_tokens"), Some(7));
     assert_eq!(agents::cache_total(&responses, "write_tokens"), None);
+    let huge = [
+        json!({"cache": {"read_tokens": u64::MAX}}),
+        json!({"cache": {"read_tokens": 1}}),
+    ];
+    assert_eq!(agents::cache_total(&huge, "read_tokens"), Some(u64::MAX));
 }
 
 #[tokio::test(flavor = "multi_thread")]

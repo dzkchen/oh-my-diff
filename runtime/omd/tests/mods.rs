@@ -884,6 +884,40 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
 }
 
 #[test]
+fn migration_and_rollback_read_state_up_to_the_store_limit() {
+    let (temp, store, path) = fixture(
+        "export default api => api.command('big', () => { api.state.set({ pad: 'x'.repeat(100000) }); })",
+        &["commands", "store"],
+    );
+    let mut runtime = host(&temp);
+    runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "big",
+            Value::Null,
+        )
+        .unwrap();
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_version"] = json!(2);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(
+        path.join("index.ts"),
+        "export default api => api.on('migrate', ({ to }) => { api.state.set({ to }); })",
+    )
+    .unwrap();
+    trust(&store, &path, &["commands", "store"]);
+    let receipt = store.migrate(&path).unwrap();
+    let backup = receipt["backup"].as_str().unwrap();
+    assert!(std::fs::metadata(backup).unwrap().len() > 65_536);
+    store.enable(&path, false).unwrap();
+    store.rollback(&path, std::path::Path::new(backup)).unwrap();
+}
+
+#[test]
 fn retired_api_packages_are_rejected_before_trust_or_activation() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -4973,6 +5007,14 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store"), node()).unwrap();
+    let plain = package(
+        &root,
+        "plain",
+        "export default api => api.intercept('history_persist', (e, next) => next(e))",
+        &["history"],
+    );
+    trust(&store, &plain, &["history"]);
+    assert!(!activation_error(&temp, "plain").is_empty());
     let path = package(
         &root,
         "redact",
@@ -4981,9 +5023,18 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
             if (e.entries.some(entry => entry.text === 'rename')) return {entries: e.entries.map(entry => ({...entry, call_id: 'other'}))};
             return next({...e, entries: e.entries.map(entry => ({...entry, text: entry.text.replaceAll('sk-live', '[redacted]')}))});
         })",
-        &["history"],
+        &["history_persist"],
     );
-    trust(&store, &path, &["history"]);
+    trust(&store, &path, &["history_persist"]);
+    for id in ["arelay", "zrelay"] {
+        let relay = package(
+            &root,
+            id,
+            "export default api => api.intercept('history_persist', (e, next) => next(e))",
+            &["history_persist"],
+        );
+        trust(&store, &relay, &["history_persist"]);
+    }
     let runtime = std::sync::Mutex::new(host(&temp));
     let persist = |texts: &[&str]| {
         let entries = texts
@@ -5013,6 +5064,57 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
     );
     assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
     assert_eq!(persist(&["rename"]), ["rename"]);
+    let entry = json!({"kind": "message", "role": "user", "call_id": null, "text": "sk-live"});
+    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry])
+        .unwrap()
+        .unwrap();
+    assert_eq!(rewrite.texts, ["[redacted]"]);
+    assert_eq!(rewrite.by, "mod:redact");
+}
+
+#[test]
+fn history_persist_chunks_fit_their_json_budget_and_credit_only_changing_links() {
+    let token = format!("{} sk-{}", "a".repeat(49_000), "b".repeat(400));
+    assert_eq!(codex_omd::persist_cut(&token, 49_152), 49_001);
+    assert_eq!(codex_omd::persist_cut(&"a".repeat(50_000), 49_152), 49_152);
+    assert_eq!(codex_omd::persist_cut(&"\"".repeat(30_000), 49_152), 24_576);
+    let entry =
+        |text: String| json!({"kind": "message", "role": "user", "call_id": null, "text": text});
+    let many = (0..3_000)
+        .map(|_| entry("x".repeat(10)))
+        .collect::<Vec<_>>();
+    let quoted = [entry("\"\n".repeat(40_000))];
+    for entries in [&many[..], &quoted[..]] {
+        let chunks = codex_omd::persist_chunks(entries);
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|chunk| {
+            let values = chunk.iter().map(|(_, value)| value).collect::<Vec<_>>();
+            serde_json::to_vec(&values).unwrap().len()
+                <= codex_omd::PERSIST_CHUNK_BYTES + chunk.len() + 1
+        }));
+        let mut texts = vec![String::new(); entries.len()];
+        for (index, value) in chunks.iter().flatten() {
+            texts[*index].push_str(value["text"].as_str().unwrap());
+        }
+        assert!(
+            texts
+                .iter()
+                .zip(entries)
+                .all(|(text, entry)| *text == entry["text"])
+        );
+    }
+    let link = |index: u64, id: &str, received: &str, returned: &str| json!({"index": index, "mod": id, "received": received, "returned": returned});
+    let passed = [
+        link(2, "engine", "redacted", "redacted"),
+        link(1, "plain", "redacted", "redacted"),
+        link(0, "redactor", "original", "redacted"),
+    ];
+    assert_eq!(codex_omd::persist_changed_by(&passed), ["mod:redactor"]);
+    let answered = [
+        link(1, "answering", "original", "rewritten"),
+        link(0, "plain", "original", "rewritten"),
+    ];
+    assert_eq!(codex_omd::persist_changed_by(&answered), ["mod:answering"]);
 }
 
 #[test]
@@ -5250,6 +5352,13 @@ fn component_modules_keep_state_in_their_runner_until_unmounted() {
             .unwrap_err()
             .contains("host_operation_unavailable")
     );
+    for _ in 0..6 {
+        assert!(step("a", "h", "").is_err());
+    }
+    assert_eq!(
+        runtime.lock().unwrap().status()["mods"][0]["error"],
+        Value::Null
+    );
     assert_eq!(step("a", "x", ""), Ok(json!("1")));
     codex_omd::component_unmount("fixture", "b");
     assert_eq!(step("b", "x", ""), Ok(json!("1")));
@@ -5297,6 +5406,11 @@ fn component_runners_belong_to_their_owner_and_cannot_sleep() {
         }
     }
     assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
+    assert!(
+        step(Some("owner1"), "owner1.e", "x")
+            .unwrap_err()
+            .contains("component_limit")
+    );
     codex_omd::component_detach("owner1");
     assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("1")));
     assert_eq!(step(Some("owner2"), "owner2.a", "x"), Ok(json!("2")));
@@ -5308,6 +5422,76 @@ fn component_runners_belong_to_their_owner_and_cannot_sleep() {
         assert_eq!(busy.join().unwrap(), Ok(json!("2")));
     });
     assert_eq!(step(None, "busy", "x"), Ok(json!("1")));
+    assert_eq!(step(Some("twice"), "twice", "x"), Ok(json!("1")));
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| step(Some("twice"), "twice", "w"));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(step(Some("twice"), "twice", "x"), Ok(json!("3")));
+        assert_eq!(first.join().unwrap(), Ok(json!("2")));
+    });
+}
+
+#[test]
+fn reloading_a_changed_package_retires_its_old_component_runners() {
+    let source = "export default api => api.component('tally', { init: () => 0, \
+         key: n => n + 1, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
+    let (temp, store, path) = fixture(source, &["terminal"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let step = |instance: &str| {
+        codex_omd::component_shared(
+            &runtime,
+            "fixture",
+            "tally",
+            json!({"instance": instance, "client": "reload", "now": 0, "columns": 20, "rows": 1,
+                "events": [{"kind": "key", "key": null, "text": "x"}]}),
+            || true,
+        )
+        .map(|step| step["tree"][0]["text"].clone())
+        .map_err(|error| error.to_string())
+    };
+    for instance in ["a", "b", "c", "d"] {
+        assert_eq!(step(instance), Ok(json!("1")));
+    }
+    assert_eq!(step("a"), Ok(json!("2")));
+    std::fs::write(path.join("index.ts"), format!("{source}\n")).unwrap();
+    trust(&store, &path, &["terminal"]);
+    runtime.lock().unwrap().reload().unwrap();
+    for instance in ["a", "b", "c", "d"] {
+        assert_eq!(step(instance), Ok(json!("1")));
+    }
+}
+
+#[test]
+fn refused_component_host_calls_never_reach_host_operation_interceptors() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let guard = package(
+        &root,
+        "guard",
+        "export default api => api.intercept('host_operation', {match: {operation: ['session.info']}}, () => ({value: {answered: true}}))",
+        &["middleware"],
+    );
+    trust(&store, &guard, &["middleware"]);
+    let component = package(
+        &root,
+        "tally",
+        "export default api => api.component('tally', { init: () => 0, key: n => { api.host.call('session.info', null); return n + 1; }, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })",
+        &["terminal", "inventory"],
+    );
+    trust(&store, &component, &["terminal", "inventory"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let error = codex_omd::component_shared(
+        &runtime,
+        "tally",
+        "tally",
+        json!({"instance": "a", "now": 0, "columns": 20, "rows": 1,
+            "events": [{"kind": "key", "key": null, "text": "x"}]}),
+        || true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("host_operation_unavailable"), "{error}");
 }
 
 #[test]
@@ -5393,7 +5577,7 @@ fn a_resumed_component_ticks_from_now_instead_of_replaying_its_pause() {
             &runtime,
             "fixture",
             "clock",
-            json!({"instance": "c", "now": now, "columns": 20, "rows": 1, "events": events}),
+            json!({"instance": "c", "client": "clock", "now": now, "columns": 20, "rows": 1, "events": events}),
             || true,
         )
         .unwrap();

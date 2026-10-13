@@ -6,7 +6,7 @@
   "state_version": 1,
   "license": "MIT",
   "capabilities": [
-    "history"
+    "history_persist"
   ],
   "compatibility": {
     "required_features": [

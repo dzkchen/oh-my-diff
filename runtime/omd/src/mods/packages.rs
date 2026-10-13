@@ -112,8 +112,10 @@ impl ModStore {
             return Err(failure("migration_requires_trusted_store_capability"));
         }
         let name = ModStore::state_name(&package.id, &selection.scope);
-        let previous: Value =
-            serde_json::from_slice(&store::read(&self.root.join(&name), 65_536)?)?;
+        let previous: Value = serde_json::from_slice(&store::read(
+            &self.root.join(&name),
+            store::STATE_LIMIT as u64,
+        )?)?;
         let from = previous["version"]
             .as_u64()
             .ok_or_else(|| failure("invalid_state_version"))?;
@@ -218,7 +220,8 @@ impl ModStore {
         let Some(expected_digest) = backup_name.strip_prefix(&prefix) else {
             return Err(failure("rollback_backup_does_not_match_package_scope"));
         };
-        let restored: Value = serde_json::from_slice(&store::read(&backup, 65_536)?)?;
+        let restored: Value =
+            serde_json::from_slice(&store::read(&backup, store::STATE_LIMIT as u64)?)?;
         if digest(&serde_json::to_vec(&restored)?) != expected_digest {
             return Err(failure("rollback_backup_digest_mismatch"));
         }
@@ -229,7 +232,8 @@ impl ModStore {
             return Err(failure("incompatible_state_storage_schema"));
         }
         let current_path = self.root.join(&state_name);
-        let current: Value = serde_json::from_slice(&store::read(&current_path, 65_536)?)?;
+        let current: Value =
+            serde_json::from_slice(&store::read(&current_path, store::STATE_LIMIT as u64)?)?;
         if current["schema"] != MOD_STATE_STORAGE_SCHEMA_VERSION
             || current["version"].as_u64().is_none()
         {

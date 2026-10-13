@@ -43,6 +43,7 @@ fn repository_scope_opt_out_and_hidden_content_are_enforced() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let list = index
         .call("sessions.list", json!({"since":"2026-09-01"}), || true)
@@ -113,6 +114,7 @@ fn tool_calls_and_results_are_read_beside_messages_with_bounded_payloads() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let list = index.call("sessions.list", json!({}), || true).unwrap();
     let summary = &list["sessions"][0];
@@ -152,6 +154,23 @@ fn tool_calls_and_results_are_read_beside_messages_with_bounded_payloads() {
     assert!(!result.to_string().contains("private-sentinel"));
     assert!(!result.to_string().contains("hidden-reasoning-sentinel"));
     assert!(!result.to_string().contains("base64"));
+    let digests = SessionIndex {
+        tools: false,
+        ..index
+    }
+    .call(
+        "sessions.read",
+        json!({"session_id":"session-t","revision":summary["revision"],"handle":summary["handle"]}),
+        || true,
+    )
+    .unwrap();
+    assert_eq!(digests["records"][0]["text"], "Run it.");
+    assert_eq!(digests["records"][1]["name"], "exec_command");
+    assert_eq!(digests["records"][1]["bytes"], 12);
+    assert_eq!(digests["records"][2]["bytes"], 3000);
+    assert_eq!(digests["records"][2]["sha256"].as_str().unwrap().len(), 64);
+    assert!(!digests.to_string().contains("cmd"));
+    assert!(!digests.to_string().contains("xxx"));
 }
 
 #[test]
@@ -164,6 +183,7 @@ fn frozen_revision_rejects_append_and_ignores_partial_record() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let summary = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
     let original = fs::read_to_string(&path).unwrap();
@@ -200,6 +220,7 @@ fn index_cursors_reject_drift_and_ambiguous_ids() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let page = index
         .call("sessions.list", json!({"limit":1}), || true)
@@ -245,6 +266,7 @@ fn bounds_symlinks_and_changed_turn_scope_fail_closed() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     assert_eq!(
         index.call("sessions.list", json!({}), || true).unwrap()["sessions"],
@@ -292,6 +314,7 @@ fn later_metadata_and_state_database_opt_out_override_earlier_records() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let old = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
     let before = fs::read_to_string(&path).unwrap();
@@ -383,6 +406,7 @@ fn inherited_child_prefix_is_excluded_even_with_matching_turn_context() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let summary = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
     let result = index
@@ -410,6 +434,7 @@ fn truncated_scan_marks_the_list_without_blocking_handle_reads() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let list = index.call("sessions.list", json!({}), || true).unwrap();
     assert_eq!(list["scan_truncated"], true);
@@ -456,6 +481,7 @@ fn continuation_segments_list_separately_while_copies_stay_ambiguous() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let list = index.call("sessions.list", json!({}), || true).unwrap();
     let listed = list["sessions"].as_array().unwrap();
@@ -529,6 +555,7 @@ fn a_state_database_keeps_the_segments_its_current_rollout_continues() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     let list = index.call("sessions.list", json!({}), || true).unwrap();
     let listed = list["sessions"].as_array().unwrap();
@@ -585,6 +612,7 @@ fn wal_state_database_without_sidecar_files_is_readable() {
         root: &sessions,
         repository: &repo,
         enabled: true,
+        tools: true,
     };
     assert_eq!(
         index.call("sessions.list", json!({}), || true).unwrap()["sessions"]

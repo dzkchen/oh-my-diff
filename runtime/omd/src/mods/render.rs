@@ -130,19 +130,27 @@ pub fn component_shared(
         },
         |_| {},
     )?;
-    let tree = serde_json::from_value::<Vec<ModComponent>>(value["tree"].clone())
+    if let Err(error) = checked_tree(&value) {
+        process::unmount(&owner, id, &instance);
+        return Err(error);
+    }
+    Ok(value)
+}
+
+/// A component module step's tree must parse, pass the render checks, stay under 64 KiB and not draw the native component.
+pub(super) fn checked_tree(step: &Value) -> Result<()> {
+    let tree = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
         .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
     if let Some(reason) = view::invalid_render_tree(&tree).or_else(|| {
         (tree
             .iter()
             .any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
-            || serde_json::to_vec(&value["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
+            || serde_json::to_vec(&step["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
         .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
     }) {
-        process::unmount(&owner, id, &instance);
         return Err(failure(format!("invalid_component_tree: {reason}")));
     }
-    Ok(value)
+    Ok(())
 }
 
 pub fn component_unmount(id: &str, component: &str) {

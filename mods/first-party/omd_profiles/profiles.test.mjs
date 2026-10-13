@@ -85,7 +85,8 @@ test('router adapts Responses requests to each protocol through the credential g
       { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 't1', name: 'apply_patch', input: {} } },
       { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"input":"*** Begin Patch"}' } },
       { type: 'message_delta', usage: { output_tokens: 5 } }, { type: 'message_stop' }]));
-    else response.end(sse([{ type: 'response.completed', response: { id: 'r', usage: {} } }]));
+    else response.end(sse([{ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs-${credential}`, summary: [], encrypted_content: `enc-${credential}` } },
+      { type: 'response.completed', response: { id: 'r', usage: {} } }]));
   });
   const port = await listen(gateway);
   const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
@@ -130,6 +131,11 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
     await ask('a/up', `Bearer ${token}`, input, { 'x-omd-cache-breakpoint': '1:0' });
     assert.deepEqual(seen['/responses'].body.input, input);
+    const message = text => ({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] });
+    const reasoning = id => ({ type: 'reasoning', id, summary: [], encrypted_content: `enc-${id.slice(3)}` });
+    await ask('b/up', `Bearer ${token}`, [input[0], reasoning('rs-a'), message('earlier'), reasoning('rs-b'), input[1]], { 'x-omd-cache-breakpoint': '4:0' });
+    assert.deepEqual(seen['/responses'].body.input.map(item => item.id ?? item.role), ['developer', 'assistant', 'rs-b', 'user']);
+    assert.equal(seen['/responses'].headers['x-omd-cache-breakpoint'], '3:0');
 
     const chat = await ask('c/up');
     assert.deepEqual(seen['/chat'].body.messages, [
