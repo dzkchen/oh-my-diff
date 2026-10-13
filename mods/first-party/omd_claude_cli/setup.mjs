@@ -7,7 +7,7 @@ import { access, chmod, mkdir, readFile, realpath, writeFile } from 'node:fs/pro
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLI_VERSION, checkCli, cliArgs, eventQueue } from './transport.mjs';
+import { CLI_VERSION, checkCli, cliArgs, cliEnv, eventQueue } from './transport.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -46,9 +46,9 @@ async function offline(claude, argv, input) {
     });
   });
   await new Promise(done => server.listen(0, '127.0.0.1', done));
-  const child = spawn(claude, argv, { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env,
+  const child = spawn(claude, argv, { stdio: ['pipe', 'pipe', 'ignore'], env: cliEnv({
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-    CLAUDE_CODE_MAX_RETRIES: '0' } });
+    CLAUDE_CODE_MAX_RETRIES: '0' }) });
   const timer = setTimeout(() => child.kill('SIGKILL'), 30000);
   const next = eventQueue(child);
   child.stdin.end(`${input.map(row => JSON.stringify(row)).join('\n')}\n`);
@@ -94,34 +94,36 @@ function catalog(models, template) {
     priority: 90 + index })) };
 }
 
-async function setup(recordPath, claudePath) {
+async function setup(recordPath, claudePath, billing) {
   const record = JSON.parse(await readFile(recordPath, 'utf8'));
   if (record.profile !== 'full' || !record.packages?.omd_claude_cli) throw new Error('omd_plus_claude_mod_required');
   const mod = await realpath(join(record.store, 'sources', 'omd_claude_cli'));
   if (mod !== source) throw new Error('setup_must_run_from_installed_mod');
-  const claude = await findCli(claudePath);
-  checkCli(claude);
-  const models = await discover(claude);
   const directory = join(record.store, 'routes', 'claude');
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   const routePath = join(directory, 'route.json');
   const catalogPath = join(directory, 'models.json');
   const tokenPath = join(directory, 'local-token');
   let previous = {};
   try { previous = JSON.parse(await readFile(routePath, 'utf8')); } catch {}
+  billing ||= previous.billing ?? 'subscription';
+  if (!['subscription', 'api'].includes(billing)) throw new Error('claude_billing_must_be_subscription_or_api');
+  const claude = await findCli(claudePath);
+  checkCli(claude, billing);
+  const models = await discover(claude);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
   try { await writeFile(tokenPath, randomBytes(40).toString('base64url'), { flag: 'wx', mode: 0o600 }); }
   catch (error) { if (error.code !== 'EEXIST') throw error; }
   await chmod(tokenPath, 0o600);
   const port = previous.port ?? await unusedPort();
   const fallback = models.find(model => model.family === 'opus') ?? models[0];
-  await writeFile(routePath, `${JSON.stringify({ port, claude, default: fallback.slug, models }, null, 2)}\n`);
+  await writeFile(routePath, `${JSON.stringify({ port, claude, billing, default: fallback.slug, models }, null, 2)}\n`);
   const template = JSON.parse(await readFile(join(source, 'models.json'), 'utf8')).models[0];
   await writeFile(catalogPath, `${JSON.stringify(catalog(models, template), null, 2)}\n`);
   const node = await realpath(record.author.node);
   const home = homedir();
   const username = userInfo().username;
   const readPaths = [];
-  for (const path of [mod, directory, claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
+  for (const path of [mod, directory, join(record.store, 'mods.json'), claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
     join(home, '.claude'), join(home, '.claude.json'), join(home, 'Library/Keychains'), '/System', '/usr/lib',
     '/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld', '/System/Volumes/Preboot/Cryptexes/OS/usr/lib']) {
     try { const real = await realpath(path); if (!readPaths.includes(real)) readPaths.push(real); } catch {}
@@ -143,17 +145,17 @@ async function setup(recordPath, claudePath) {
     route: { name: 'claude', roles: ['lead'], provider: 'omd_claude_cli', model: fallback.slug, reasoning_effort: 'high',
       responses_url: `${url}/responses`, rates: { input_microusd_per_million: 0, cached_microusd_per_million: 0,
         output_microusd_per_million: 0, reservation_microusd: 0, max_output_tokens: 128000,
-        input_token_ceiling: fallback.window, included_subscription: true } } }];
+        input_token_ceiling: fallback.window, ...billing === 'api' ? { provider_billed: true } : { included_subscription: true } } } }];
   await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });
   return { provider: { id: 'omd_claude_cli', name: 'OMD Claude CLI', base_url: url, env_key: 'OMD_CLAUDE_LOCAL_TOKEN',
-    token: tokenPath, catalog: catalogPath, route: routePath }, cli: CLI_VERSION,
+    token: tokenPath, catalog: catalogPath, route: routePath }, cli: CLI_VERSION, billing,
     models: models.map(({ slug, family, window }) => ({ slug, family, window })), default: fallback.slug };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [action, record, claude] = process.argv.slice(2);
+  const [action, record, claude, billing] = process.argv.slice(2);
   try {
     if (action !== 'setup') throw new Error('unsupported_claude_setup_action');
-    console.log(JSON.stringify(await setup(record, claude || '')));
+    console.log(JSON.stringify(await setup(record, claude || '', billing)));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

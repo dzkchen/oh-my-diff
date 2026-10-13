@@ -30,7 +30,13 @@
           "program": {
             "path": "/bin/sh",
             "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_bytes": 0,
+          "output_artifact": null,
+          "stdout_preview_truncated": false,
+          "stderr_preview_truncated": false,
+          "guards_verified": 0
         }
       }
     ],
@@ -57,7 +63,21 @@
     "receipts.submit": [
       {
         "result": {
-          "kind": "checks"
+          "kind": "checks",
+          "candidate_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "acceptance_sha256": null,
+          "outcome": "pass",
+          "evidence": {
+            "reference": "e1",
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "producer": {
+            "kind": "host",
+            "handle": null
+          },
+          "findings": [],
+          "submitted_by": "release_check",
+          "at": 0
         }
       }
     ],

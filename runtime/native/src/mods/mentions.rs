@@ -64,8 +64,7 @@ pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Ve
                 consumed = index + 1 + quoted.byte_offset();
                 name
             } else {
-                rest
-                    .split(char::is_whitespace)
+                rest.split(char::is_whitespace)
                     .next()
                     .unwrap_or_default()
                     .trim_end_matches(|c: char| ",.;:!?)]}'\"`".contains(c))
@@ -226,7 +225,12 @@ mod tests {
     #[test]
     fn quoted_mentions_preserve_filenames_and_reject_unsafe_paths() {
         let directory = tempfile::tempdir().unwrap();
-        for name in ["report!", "notes \"quoted\".txt", "notes\\file.txt", "report"] {
+        for name in [
+            "report!",
+            "notes \"quoted\".txt",
+            "notes\\file.txt",
+            "report",
+        ] {
             std::fs::write(directory.path().join(name), name).unwrap();
         }
         let input = [UserInput::Text {
@@ -257,7 +261,9 @@ mod tests {
                     _ => "last".into(),
                 };
                 std::fs::write(directory.path().join(path), content).unwrap();
-                Some(json!({"files": {path: {"text": std::fs::read_to_string(directory.path().join(path)).unwrap()}}}))
+                Some(
+                    json!({"files": {path: {"text": std::fs::read_to_string(directory.path().join(path)).unwrap()}}}),
+                )
             },
         );
         assert_eq!(fragments.len(), 2);

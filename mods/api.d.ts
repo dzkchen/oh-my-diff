@@ -288,7 +288,7 @@ export type ExecResult = { exit_code: number | null; signal: string | null; stdo
 export type ExecGuard = { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdout_sha256: string };
 export type Fingerprint = string | { size: number; mtime_ms: number } | null;
 export type FileStat = { kind: 'file' | 'dir' | 'symlink'; size: number; mtime_ms: number; sha256?: string };
-export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: string };
+export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: number };
 export type StoreScope = 'repository' | 'user' | 'thread';
 
 export type ContractRequirement = { receipt: string; producer?: 'any' | 'lead' | 'separate_agent' | 'host' | 'integration'; bind?: ('candidate' | 'acceptance')[]; blocking_findings?: 'reject' | 'allow' };
@@ -624,7 +624,7 @@ export interface ModAPI {
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
-  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */
+  /** Experimental, terminal capability: 65,536 UTF-8 bytes of JSON.stringify output, no lone surrogates; only commands and component events write. */
   readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;

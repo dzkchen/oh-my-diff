@@ -77,6 +77,23 @@ def plugin_lock():
     return lock
 
 
+def plugin_inventory(source):
+    names = json.loads((ROOT / "plugins/release-files.json").read_text())
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("invalid bundled plugin release inventory")
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate bundled plugin release file")
+    for name in names:
+        path = Path(name)
+        if path.is_absolute() or path.as_posix() != name or ".." in path.parts:
+            raise ValueError(f"unsafe bundled plugin release file: {name}")
+        if any((source / parent).is_symlink() for parent in (path, *path.parents)):
+            raise ValueError(f"symlink in bundled plugin release file: {name}")
+        if not (source / path).is_file():
+            raise ValueError(f"missing bundled plugin release file: {name}")
+    return sorted(names)
+
+
 def plugin_sources(lock=None):
     lock = lock or plugin_lock()
     source = ROOT / lock["source"]
@@ -84,11 +101,7 @@ def plugin_sources(lock=None):
     if digest(guide) != lock["guide"]["sha256"]:
         raise ValueError("pinned bundled plugin guide changed")
     recorded = set(lock["files"])
-    actual = {
-        path.relative_to(source).as_posix()
-        for path in source.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-    }
+    actual = set(plugin_inventory(source))
     if actual != recorded:
         raise ValueError("bundled plugin file inventory changed")
     for name, expected in lock["files"].items():

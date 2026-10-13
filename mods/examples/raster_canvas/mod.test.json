@@ -9,11 +9,7 @@
       {"result": {"frame": 3, "queued": 1, "frame_ms": 16}},
       {"result": {"frame": 4, "queued": 2, "frame_ms": 16}},
       {"result": {"frame": 5, "queued": 1, "frame_ms": 16}}
-    ],
-    "events.schedule": [
-      {"result": {"key": "frame", "delay_ms": 1000}},
-      {"result": {"key": "frame", "delay_ms": 1000}},
-      {"result": {"key": "frame", "delay_ms": 1000}}
+
     ]
   },
   "steps": [

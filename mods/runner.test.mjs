@@ -31,6 +31,16 @@ function run(source, extra = {}) {
   return JSON.parse(result.stdout);
 }
 
+test('UI state serialized boundaries agree with the native validator', () => {
+  const cases = JSON.parse(readFileSync(new URL('../runtime/omd/tests/fixtures/ui_state.json', import.meta.url)));
+  for (const entry of cases) {
+    const encoded = entry.prefix + entry.unit.repeat(entry.repeat) + entry.suffix;
+    const reply = run('export default api => api.command("write", value => api.uiState.set(JSON.parse(value)))',
+      { capabilities: ['terminal', 'commands'], event: 'command', name: 'write', payload: encoded });
+    assert.equal(!reply.error, entry.valid, `${entry.name}: ${reply.error}`);
+  }
+});
+
 test('UI state requires terminal authority and refuses activation and render writes', () => {
   const read = 'export default api => api.command("read", () => api.uiState.get())';
   assert.match(run(read, { capabilities: ['commands'], event: 'command', name: 'read' }).error, /capability/);

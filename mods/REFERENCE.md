@@ -466,7 +466,8 @@ by hashes rather than plaintext; reproducing those runs requires the same secret
 most 256 bytes, values 64 KiB, a scope 16 MiB and 4,096 keys; `list` pages
 256 keys and `export {scope?, cursor?}` pages entries in at most 64 KiB, returning
 `{schema, owner, scope, generation, entries, cursor}`. Every record carries
-host-attested provenance `{mod, source_sha256, thread_id, origin, at}`. `reset`
+host-attested provenance `{mod, source_sha256, thread_id, origin, at}` (`at` is
+milliseconds since the Unix epoch). `reset`
 needs the current generation. Outside a session, `omd store export|reset --mod
 ID [--repo PATH] [--store PATH] [--scope repository|user]` exports the complete
 namespace or resets it without running any mod code. `evidence.write
@@ -2703,7 +2704,11 @@ any it refuses.
   do not survive general callbacks. Render hooks retain activation under their
   existing matching-input rules.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
-  `terminal`. Values are bounded to 64 KiB and shared by host instances in the
+  `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
+  `JSON.stringify(value)` output, including quotes, keys and escapes. Strings
+  and object keys must contain valid Unicode scalars (no lone surrogates).
+  The host checks the original serialized bytes before parsing; number
+  reformatting does not change the limit. Values are shared by host instances in the
   same process, store, repository, thread and package identity. Commands and
   component events may write; other callbacks may read. Writes commit only after
   successful validation and cancellation checks, with revision conflicts using
@@ -2812,7 +2817,7 @@ test('panel opens', () => {
 ```
 
 - Scenario fields: `clock(ms)` (`virtual_time_ms`), `environment(values)`,
-  `settings(id, values)`, `hostOperations({op: [reply | {error}]})`,
+  `settings(id, values)`, `hostOperations({op: [{result} | {error}]})`,
   `storeMock({get, put, delete})` (ordered `store.*` replies, `null` for a
   missing key), `packages(...paths)`, extra packages (a policy package, a user
   package) trusted in that order before the project, and
@@ -2824,6 +2829,28 @@ test('panel opens', () => {
   parts (queues and packages append, settings and tiers merge, the last value
   of any other field wins) and `runScenario(directory, ...parts)` runs the project and
   returns the engine trace; `calls(trace, operation)` lists its host calls.
+- Mock operation names, arguments and results derive from `HostOperations`.
+  Each reply can include `arguments` for exact JSON matching and `optional: true`
+  for a call that may be absent. Required replies must be consumed; unexpected
+  calls, argument mismatches and unused required replies fail the scenario.
+  Reply queues are ordered per operation. An optional reply with different
+  expected arguments can be skipped to reach the next reply.
+  An explicit queue for a timer or environment operation replaces its virtual
+  implementation; exhausted queues never fall back to simulated behavior.
+  Fixture records must contain exactly one of `result` or `error`.
+  Unexpected-call and argument-mismatch failures remain scenario failures even
+  when the mod catches the operation error. Malformed result fixtures fail
+  before the scenario runs unless explicitly marked unsafe.
+  Every normal mock validates request and result shapes. Shared pure validators
+  additionally check store keys, values and revision syntax, environment inputs
+  and timer inputs. Authority, declarations, persistence, revision conflicts,
+  quotas, filesystem resolution and process/network state require real-host
+  boundary tests; a valid mock cannot prove those behaviors.
+  `unsafeHostOperations({op: [{result, unsafe: {result: true}}]})` deliberately
+  bypasses result validation for negative tests. `unsafe.arguments` separately
+  bypasses request validation. Neither grants runtime authority. Unknown
+  operations still fail in the engine. `unsafeStep({...})` bypasses the SDK's
+  discriminated step type to test malformed scenario input.
 - Steps: `invoke(mod, event, name, payload)`, `emit(event, payload)`,
   `advance(ms)`, `waitUntil(check, until, {everyMs, maxMs})`, `reload()`,
   `mount(mod)`, `key(mod, name)`, `activate(mod, component)`,
