@@ -1,23 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = { events: { turn_start: 'lifecycle', completion: 'composer' }, replacements: ['completion'], middleware: [], intercept: { input: 'input' }, state: 'store', contracts: 'contracts' };
 
 function run(event, payload, host, name = '', state = null) {
-  const receipts = [];
-  for (;;) {
-    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 2000 };
-    const output = JSON.parse(runnerSync(request).stdout);
-    if (output.error) throw new Error(output.error);
-    if (!output.host_call) return { value: output.value, calls: output.calls, state: output.state };
-    receipts.push({ call: output.host_call, value: host(output.host_call) });
-  }
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, surface, hook_budget_ms: 2000 };
+  const output = callback(request, host, [], { capture: () => false });
+  if (output.error) throw new Error(output.error);
+  return { value: output.value, calls: output.calls, state: output.state };
 }
 
 function repository(files, status) {
@@ -57,6 +51,19 @@ test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and d
   assert.equal(run('service', { query: 'tree', paths: Array.from({ length: 60 }, (_, index) => `src/tree${index}.ts`) }, host, 'omd.frecency.rank').value.paths.length, 60);
 });
 
+test('backfilled history is statted page by page, so deleted files never surface and are forgotten in one save', () => {
+  const stale = Array.from({ length: 120 }, (_, index) => [`old/file${index}.ts`, [5, 10]]);
+  const kept = Array.from({ length: 30 }, (_, index) => [`keep/file${index}.ts`, [1, 10]]);
+  const { host, writes } = repository({ tick: 10, files: Object.fromEntries([...stale, ...kept]) }, ' M src/edited.ts\n');
+  const { value, calls } = run('completion', { kind: 'mention', query: '', candidates: [{ path: 'src/a.ts', score: 1 }] }, host);
+  const paths = value.items.map(item => item.path);
+  assert.deepEqual(paths.filter(path => path.startsWith('old/')), []);
+  assert.deepEqual(paths, ['src/edited.ts', ...kept.map(([path]) => path), 'src/a.ts']);
+  assert.equal(calls.filter(call => call.operation === 'workspace.stat').length, 4);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(Object.keys(writes[0].files), kept.map(([path]) => path));
+});
+
 test('submitted prompts queue paths; the next turn learns only files Git does not ignore', () => {
   const none = () => { throw new Error('no host call'); };
   const submit = text => run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
@@ -73,22 +80,22 @@ test('submitted prompts queue paths; the next turn learns only files Git does no
   assert.deepEqual(run('turn_start', { turn_id: 'u' }, none).calls, []);
 });
 
-for (const [label, component, count] of [['Unicode', '雪'.repeat(60), 200], ['JSON escaping', '\\'.repeat(120), 130]]) {
+for (const [label, component, count] of [['Unicode', '雪'.repeat(60), 150], ['JSON escaping', '\\'.repeat(120), 96]]) {
   test(`learning trims serialized UTF-8 storage bytes for ${label}`, () => {
     const path = index => `${component}/${component.slice(0, label === 'Unicode' ? 40 : 120)}${String(index).padStart(3, '0')}.ts`;
     const files = { tick: 0, files: Object.fromEntries(Array.from({ length: count }, (_, index) => [path(index), [1, 0]])) };
     const initialBytes = Buffer.byteLength(JSON.stringify(files));
-    assert.ok(initialBytes > 60_000 && initialBytes <= 65_536);
+    assert.ok(initialBytes > 46_000 && initialBytes <= 48_000);
     const tokens = Array.from({ length: 16 }, (_, index) => path(count + index));
     const queued = run('intercept', { surface: 'input', input: { text: tokens.join(' '), attachments: 0 }, origin: { caller: 'user' } },
       call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0').state;
     assert.deepEqual(queued, tokens);
-    assert.ok(Buffer.byteLength(JSON.stringify({ tick: 1, files: { ...files.files, ...Object.fromEntries(tokens.map(path => [path, [1, 1]])) } })) > 65_536);
+    assert.ok(Buffer.byteLength(JSON.stringify({ tick: 1, files: { ...files.files, ...Object.fromEntries(tokens.map(path => [path, [1, 1]])) } })) > 48_000);
     const { host, writes } = repository(files, tokens.join('\0') + '\0');
     const learned = run('turn_start', { turn_id: 'unicode' }, host, '', queued);
     assert.equal(learned.state, null);
     assert.equal(writes.length, 1);
-    assert.ok(Buffer.byteLength(JSON.stringify(writes[0])) <= 60_000);
+    assert.ok(Buffer.byteLength(JSON.stringify(writes[0])) < 48_000);
     assert.equal(writes[0].tick, 1);
     for (const path of tokens) assert.deepEqual(writes[0].files[path], [1, 1]);
     const retained = Object.keys(writes[0].files);

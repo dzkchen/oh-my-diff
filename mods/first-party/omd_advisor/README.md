@@ -21,7 +21,7 @@ Every-turn and completion reviewers receive a bounded visible turn excerpt and a
 
 `turn_end` starts review and `agent_end` validates its result. The next completed turn cancels any superseded review. Candidate changes hide previous advice and prevent stale receipt submission or context reuse. Session exit can interrupt unfinished review; resume never automatically relaunches it. Invalid results, permission denials and cancellation remain explicit unreviewed outcomes.
 
-Fullscreen presentation shows up to three notes above the composer; inline mode shows bounded status. The status tool rechecks evidence access before showing provenance. Context receives findings only for the same thread and unchanged candidate. Without every-turn or completion review there are no review lifecycle or context callbacks, and without `failure` or `loop` there is no tool-output callback.
+Fullscreen presentation shows up to three notes above the composer; inline mode shows bounded status. The status tool rechecks evidence access before showing provenance. Context receives findings only for the same thread and unchanged candidate: each as its severity, complete summary and up to three paths, in order, while they fit about 1,200 characters, then the number omitted. Without every-turn or completion review there are no review lifecycle or context callbacks, and without `failure` or `loop` there is no tool-output callback.
 
 ## Observer
 

@@ -13,11 +13,12 @@ const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview
 
 type Inline = { title: string; kind: string; text: string; source?: string; image?: ResourceRef };
 type Picture = { id: string; label: string; owner: string; image: ResourceRef | null };
-type State = { inline: Inline | null; revision: number; watch: string[]; hashes: Record<string, string>; images: Picture[]; attachments?: number };
+type State = { inline: Inline | null; revision: number; images: Picture[]; attachments?: number };
+type Watches = { watch: string[]; hashes: Record<string, string> };
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
 
-const outputFor = (source: string) => `${DIR}/${source.replace(/[/\\]/g, '__')}.html`;
+const outputFor = (source: string) => `${DIR}/files/${encodeURIComponent(source)}.html`;
 const inlineKind = (path: string) => {
   const extension = path.split('.').pop()?.toLowerCase() ?? '';
   if (['md', 'markdown', 'mdx'].includes(extension)) return 'markdown';
@@ -29,11 +30,13 @@ const pictures = (draft: ComposerDraft): Picture[] => draft.attachments.filter(i
 export default function activate(api: ModAPI) {
   const thumbnails = api.settings.thumbnails !== false;
   const diagrams = ['ascii', 'off'].includes(String(api.settings.diagrams)) ? String(api.settings.diagrams) : 'unicode';
-  const load = (): State => ({ inline: null, revision: 0, watch: [], hashes: {}, images: [], ...(api.state.get() as Partial<State> | null) });
+  const load = (): State => ({ inline: null, revision: 0, images: [], ...(api.state.get() as Partial<State> | null) });
   const save = (patch: Partial<State>) => api.state.set({ ...load(), ...patch } as unknown as Json);
+  const watches = (stored: { value: Json; revision: number } | null) =>
+    ({ revision: stored?.revision ?? null, watch: [], hashes: {}, ...(stored?.value as unknown as Partial<Watches> | null) });
+  const keep = (revision: number | null, value: Watches) => api.host.tryCall('store.put', { key: 'watch', value: value as unknown as Exclude<Json, null>, expected_revision: revision });
 
-  const render = (output: string, title: string, source?: string, markdown?: string): Rendered => {
-    const watch = source !== undefined && load().watch.includes(source);
+  const render = (output: string, title: string, source?: string, markdown?: string, watch = false): Rendered => {
     const input = markdown === undefined ? '' : `const markdown = ${JSON.stringify(markdown)};\n`;
     const run = api.host.tryCall('exec.run', {
       program: 'node',
@@ -85,7 +88,8 @@ export default function activate(api: ModAPI) {
       return null;
     }
     if (target === 'unwatch') {
-      save({ watch: [], hashes: {} });
+      const stored = api.host.call('store.get', { key: 'watch' });
+      if (stored) api.host.call('store.put', { key: 'watch', value: { watch: [], hashes: {} }, expected_revision: stored.revision });
       return { display: 'Stopped watching preview files' };
     }
     if (words[0] === 'server') {
@@ -133,30 +137,36 @@ export default function activate(api: ModAPI) {
     const file = api.host.call('workspace.stat', { paths: [path], hash: watched }).files[path];
     if (file?.kind !== 'file') return { display: `No file ${path} in the workspace` };
     if (inline) {
-      if (file.size > 1_000_000) return { display: `${path} is too large to show inline; use /preview ${path}` };
-      return show(path, inlineKind(path), api.host.call('workspace.read', { paths: [path] }).files[path]?.text ?? '');
+      const kind = inlineKind(path);
+      const read = api.host.tryCall('exec.run', { program: 'head', argv: ['-c', String((kind === 'diff' ? DIFF_BYTES : TEXT_BYTES) + 4), '--', path], timeout_ms: 5_000 });
+      if (!read.ok || read.value.exit_code !== 0) return { display: `Cannot show ${path} inline (${read.ok ? read.value.stderr.trim() || 'read failed' : read.error.split(':')[0]}); /preview ${path} opens it in the browser` };
+      return show(path, kind, read.value.stdout);
     }
-    if (watched) {
-      const watch = [...new Set([...load().watch, path])];
-      if (watch.length > MAX_WATCHES) return { display: `At most ${MAX_WATCHES} files can be watched; use /preview unwatch` };
-      save({ watch, hashes: { ...load().hashes, [path]: file.sha256 ?? '' } });
-    }
-    const result = open(render(outputFor(path), path, path), path);
-    if (watched) api.host.tryCall('events.publish', { channel: 'watch', data: null });
+    const stored = watches(api.host.call('store.get', { key: 'watch' }));
+    const watch = watched ? [...new Set([...stored.watch, path])] : stored.watch;
+    if (watch.length > MAX_WATCHES) return { display: `At most ${MAX_WATCHES} files can be watched; use /preview unwatch` };
+    const rendered = render(outputFor(path), path, path, undefined, watch.includes(path));
+    const saved = watched && keep(stored.revision, { watch, hashes: { ...stored.hashes, [path]: 'error' in rendered ? '' : file.sha256 ?? '' } });
+    const result = open(rendered, path);
+    if (saved && saved.ok) api.host.tryCall('events.publish', { channel: 'watch', data: null });
     return result;
   };
 
   const poll = (retry = false) => {
-    const { watch, hashes } = load();
+    const stored = api.host.tryCall('store.get', { key: 'watch' });
+    const { revision, watch, hashes } = watches(stored.ok ? stored.value : null);
     if (!watch.length) {
       if (retry) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
       return;
     }
     const stat = api.host.tryCall('workspace.stat', { paths: watch, hash: true });
     if (stat.ok) {
-      const next = Object.fromEntries(watch.map(path => [path, stat.value.files[path]?.sha256 ?? '']));
-      for (const path of watch) if (hashes[path] !== undefined && next[path] && next[path] !== hashes[path]) render(outputFor(path), path, path);
-      save({ hashes: next });
+      const next = { ...hashes };
+      for (const path of watch) {
+        const hash = stat.value.files[path]?.sha256;
+        if (hash && hash !== hashes[path] && !('error' in render(outputFor(path), path, path, undefined, true))) next[path] = hash;
+      }
+      if (watch.some(path => next[path] !== hashes[path])) keep(revision, { watch, hashes: next });
     }
     api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
   };

@@ -201,6 +201,18 @@ test('advisor keeps cross-thread and stale advice out of context, with explicit 
   invoke({ phase: 'resume' }, () => assert.fail('resume must not relaunch review'), { ...advisorOptions, event: 'resume', state });
 });
 
+test('advisor context lists complete finding summaries and paths within its budget and counts the rest', () => {
+  const first = 'The migration backfill skips archived rows, so rerun it with the archive filter removed before release.';
+  const long = Array.from({ length: 6 }, (_, index) => ({ key: `long-${index}`, severity: 'advice', summary: `${'Consider the wider refactor carefully. '.repeat(9)}${index}`, paths: ['src/a.ts'], quote: 'exact supporting concern' }));
+  const state = review(advisorOptions, { findings: [{ ...findings[0], summary: first, paths: ['db/c.sql', 'db/a.sql', 'db/b.sql', 'db/d.sql'] }, ...long] }).state;
+  const context = { thread_id: 'thread-1', turn_id: 'turn-2', checkpoint: { live: { workspace_sha256: evidence.workspace_sha256 } } };
+  const lines = invoke(context, advisorHost().host, { ...advisorOptions, event: 'context', state }).value.text.split('\n');
+  assert.equal(lines[1], `- warning: ${first} (db/a.sql, db/b.sql, db/c.sql and 1 more)`);
+  assert.deepEqual(lines.slice(2, -1), long.slice(0, 2).map(finding => `- advice: ${finding.summary} (src/a.ts)`));
+  assert.equal(lines.at(-1), '4 more findings omitted; the mod_omd_advisor_status tool lists them.');
+  assert.doesNotMatch(lines.join('\n'), /evidence|fingerprint|quote/);
+});
+
 test('advisor off has no completed-turn or context subscriber and aborts do not request review', () => {
   const registration = invoke(null, () => assert.fail('unexpected host call'), { ...advisorOptions, event: 'inspect', settings: {} });
   assert.deepEqual(registration.registrations.events, ['terminal']);

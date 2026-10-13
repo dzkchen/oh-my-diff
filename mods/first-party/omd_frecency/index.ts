@@ -5,6 +5,10 @@ type Files = { tick: number; files: Record<string, [number, number]> };
 const LIMIT = 50;
 const KEPT = 512;
 const HALF_LIFE = 64;
+const STAT_BATCH = 64;
+const STAT_BATCHES = 4;
+// Reading and rewriting the history must fit one callback's 128 KiB receipt budget.
+const STORED = 48_000;
 
 function serializedBytes(value: unknown): number {
   let bytes = 0;
@@ -72,22 +76,29 @@ export default function activate(api: ModAPI) {
     const boosts = git();
     const known = new Set([...upstream, ...boosts.keys()]);
     const order = new Map(upstream.map((path, index) => [path, index]));
-    let scored = [...new Set([...known, ...Object.keys(files.files)])]
+    const scored = [...new Set([...known, ...Object.keys(files.files)])]
       .map(path => ({ path, score: fuzzy(query, path) ?? (order.has(path) ? 0 : null) }))
       .filter((item): item is { path: string; score: number } => item.score !== null)
       .map(item => ({ path: item.path, score: item.score + weight(files, item.path) + (boosts.get(item.path) ?? 0) }))
-      .sort((a, b) => b.score - a.score || (order.get(a.path) ?? Infinity) - (order.get(b.path) ?? Infinity));
-    const unknown = scored.slice(0, limit).map(item => item.path).filter(path => !known.has(path));
-    if (unknown.length) {
-      const stat = api.host.tryCall('workspace.stat', { paths: unknown });
-      const missing = new Set(stat.ok ? unknown.filter(path => stat.value.files[path]?.kind !== 'file') : []);
-      if (missing.size) {
-        scored = scored.filter(item => !missing.has(item.path));
-        missing.forEach(path => delete files.files[path]);
-        save(files, revision);
-      }
+      .sort((a, b) => b.score - a.score || (order.get(a.path) ?? Infinity) - (order.get(b.path) ?? Infinity))
+      .map(item => item.path);
+    const ranked: string[] = [];
+    const missing: string[] = [];
+    let checks = 0;
+    for (let at = 0; ranked.length < limit && at < scored.length;) {
+      const page = scored.slice(at, at + Math.min(STAT_BATCH, limit - ranked.length));
+      at += page.length;
+      const unknown = page.filter(path => !known.has(path));
+      const stat = unknown.length && checks < STAT_BATCHES ? (checks++, api.host.tryCall('workspace.stat', { paths: unknown })) : null;
+      const present = new Set(stat?.ok ? unknown.filter(path => stat.value.files[path]?.kind === 'file') : []);
+      if (stat?.ok) missing.push(...unknown.filter(path => !present.has(path)));
+      ranked.push(...page.filter(path => known.has(path) || present.has(path)));
     }
-    return scored.slice(0, limit).map(item => item.path);
+    if (missing.length) {
+      missing.forEach(path => delete files.files[path]);
+      save(files, revision);
+    }
+    return ranked;
   };
 
   api.replace('completion', event => event.kind === 'mention'
@@ -129,7 +140,7 @@ export default function activate(api: ModAPI) {
     const kept: string[] = [];
     for (const path of Object.keys(files.files).sort((a, b) => weight(files, b) - weight(files, a)).slice(0, KEPT)) {
       bytes += serializedBytes({ [path]: files.files[path] }) - 2 + (kept.length ? 1 : 0);
-      if (bytes >= 60_000) break;
+      if (bytes >= STORED) break;
       kept.push(path);
     }
     files.files = Object.fromEntries(kept.map(path => [path, files.files[path]]));

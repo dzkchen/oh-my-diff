@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, relative, resolve } from 'node:path';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, relative, resolve } from 'node:path';
 
 const MAX_BYTES = 5_000_000;
 const CDN = 'https://cdn.jsdelivr.net/npm/';
@@ -225,6 +225,14 @@ const [output, title, watch, source] = process.argv.slice(2);
 if (source && statSync(source).size > MAX_BYTES) throw new Error(`${source} exceeds the 5 MB preview limit`);
 const base = relative(dirname(resolve(output)), source ? dirname(resolve(source)) : process.cwd());
 const html = page(title, renderSource(source ? readFileSync(source, 'utf8') : markdown, kindOf(source ?? ''), base ? `${base}/` : ''), watch === 'watch');
-mkdirSync(dirname(output), { recursive: true });
-writeFileSync(output, html);
+let directory = '.';
+for (const part of dirname(output).split('/')) {
+  directory = join(directory, part);
+  try { mkdirSync(directory); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is a link or file, not a directory; remove it to preview here`);
+}
+// An exclusive temporary file renamed over the page replaces a planted link instead of writing through it.
+const temporary = `${output}.${process.pid}.tmp`;
+writeFileSync(temporary, html, { flag: 'wx' });
+try { renameSync(temporary, output); } catch (error) { rmSync(temporary, { force: true }); throw error; }
 process.stdout.write(resolve(output));

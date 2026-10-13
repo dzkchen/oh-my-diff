@@ -325,11 +325,15 @@ export default function activate(api: ModAPI) {
       return done(items);
     }
     if (op === 'diagnostics') {
+      let reason = '';
       for (let wait = 0; wait < 4 && !s.diagnostics[path]; wait++) {
         const batch = exchange(s, [], 250);
-        if (!batch.ok || !settle(s, handle(s, batch.value)).ok) break;
+        const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
+        if (!settled.ok) { reason = settled.error; break; }
       }
       save(s);
+      if (reason) return failed(reason);
+      if (!s.diagnostics[path]) return failed('diagnostics pending: the language server has not published diagnostics for this file yet; try again');
       return done(errors(s, path));
     }
     if (op === 'actions') {
