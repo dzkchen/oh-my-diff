@@ -2,7 +2,7 @@
 
 Holds a risky shell command until you have seen what it would change.
 
-On every `exec_command` call the mod classifies the command. Anything else runs untouched. For a risky one it measures the effect with read-only, sandboxed `exec.run` calls, shows the result in a native confirmation (`terminal.prompt`) and runs the command only if you accept. Declining, dismissing, a prompt that cannot be shown, or a mod error denies the call with a reason the model sees ("do not retry unless the user asks").
+On every `exec_command` call the mod classifies the command. Anything else runs untouched. For a risky one it measures the effect with read-only, sandboxed `exec.run` calls, asks with a native Proceed / Cancel choice (`terminal.prompt`) and runs the command only on Proceed, with a `Blast Radius: running it` toast. Cancel, dismissing, a prompt that cannot be shown, or a mod error denies the call with a reason the model sees ("do not retry unless the user asks"). Codex's own approval may still ask afterwards when the command needs it.
 
 ## What counts as risky
 
@@ -15,14 +15,15 @@ On every `exec_command` call the mod classifies the command. Anything else runs 
 | `git push` with `--force`, `-f`, `--force-with-lease` or `+ref` | `git log <source>..<remote>/<branch>`: commits the push drops, as of the last fetch |
 | `alembic upgrade`, `rails db:migrate`, `prisma migrate`, `manage.py migrate`, other `migrate` | the tool's status or history command, pending migrations only |
 
-`cd`, `pushd`, `popd`, `( subshell )` and `git -C` earlier in the line move the folder measured. `sudo`, `env`, `time`, `VAR=value` and a leading backslash are looked through. Only the first risky segment of a compound command is measured.
+`cd`, `pushd`, `popd`, `( subshell )` and `git -C` earlier in the line move the folder measured. `sudo`, `env`, `time`, `nice`, `VAR=value` and a leading backslash are looked through. Only the first risky segment of a compound command is measured.
 
 ## Limits of this port
 
 - Measurements run in OMD's sandbox, so the folder must be inside the repository. A `cd` or `-C` to `-`, to `~` or outside the repository, and paths using `~`, `$` or backticks, are not measured. The prompt then says "could not measure" and still asks.
 - `exec.run` has no network and a private `HOME`. Migration status commands that need a database can fail; the prompt says so and still asks.
 - The Prisma lister is `pnpm exec prisma migrate status` and the Rails lister `bundle exec rails db:migrate:status`; upstream used `npx --no-install` and `bin/rails`, which `exec.run` cannot start.
-- Non-ASCII characters in the report are shown as `?`, and the report is cut at 1,900 bytes to fit the prompt.
+- The report is one line (`Command: … · Would … · note · files`) because the native prompt shows its message as one wrapped line; upstream's pane listed one file per line with colours. Non-ASCII characters are shown as `?`, and the report is cut at about 1,900 bytes.
+- A failed measurement says `could not measure it` with the error, where upstream had separate wording for a missing folder, a non-Git folder and a failed dry run. There is no 10-minute timeout or queue of held calls; the native prompt waits.
 - Only `exec_command` is intercepted, not `write_stdin` or tools that run commands another way.
 
 ## Capabilities

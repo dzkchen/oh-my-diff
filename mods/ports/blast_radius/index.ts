@@ -19,8 +19,8 @@ const RM_SCRIPT = [
   'done',
   '(( ${#p[@]} )) || { echo 0 0 0; exit; }',
   'for i in "${!p[@]}"; do [[ ${p[i]} == /* ]] || p[i]=./${p[i]}; done',
-  'echo "$(find "${p[@]}" ! -type d | wc -l) $(du -skc "${p[@]}" 2>/dev/null | tail -n1 | cut -f1) ${#p[@]}"',
-  `find "\${p[@]}" ! -type d 2>/dev/null | head -n ${LIST_MAX}`,
+  'echo "$(find "${p[@]}" \\( -type f -o -type l \\) 2>/dev/null | wc -l) $(du -skc "${p[@]}" 2>/dev/null | tail -n1 | cut -f1) ${#p[@]}"',
+  `find "\${p[@]}" \\( -type f -o -type l \\) 2>/dev/null | head -n ${LIST_MAX}`,
 ].join('\n');
 
 const MIGRATIONS: Record<string, { argv: string[]; pending: (line: string) => boolean }> = {
@@ -29,6 +29,8 @@ const MIGRATIONS: Record<string, { argv: string[]; pending: (line: string) => bo
   rails: { argv: ['bundle', 'exec', 'rails', 'db:migrate:status'], pending: line => /^\s*down\b/.test(line) },
   prisma: { argv: ['pnpm', 'exec', 'prisma', 'migrate', 'status'], pending: line => /^\s{2}\S/.test(line) },
 };
+
+const MIGRATE_LABELS: Record<string, string> = { alembic: 'alembic upgrade', rails: 'db:migrate', prisma: 'prisma migrate', django: 'manage.py migrate', unknown: 'migrate' };
 
 const tokenize = (text: string) => Array.from(text.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g), m => m[1] ?? m[2] ?? m[3]);
 
@@ -44,7 +46,7 @@ const normalize = (path: string) => {
   return `/${parts.join('/')}`;
 };
 
-function segment(text: string, dir: string | null, pushed: (string | null)[]): Risk | { cd: string } | null {
+function segment(text: string, dir: string | null, pushed: (string | null)[]): Risk | { cd: string | null } | null {
   const words = tokenize(text.trim().replace(/^[({]+\s*/, '').replace(/\s*[)}]+$/, ''));
   while (ASSIGN.test(words[0] ?? '')) words.shift();
   if (words[0] === 'sudo') {
@@ -52,6 +54,12 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
     while (words[0]?.startsWith('-')) if (SUDO_VALUE.has(words.shift()!)) words.shift();
   }
   while (words.length && (PREFIXES.has(words[0]) || ASSIGN.test(words[0]))) words.shift();
+  if (words[0] === 'nice') {
+    words.shift();
+    const option = words[0] as string | undefined;
+    if (option === '-n') words.splice(0, 2);
+    else if (/^-\d+$/.test(option ?? '')) words.shift();
+  }
   const [first, ...args] = words;
   if (first === undefined) return null;
   const cmd = first.replace(/^\\/, '');
@@ -60,7 +68,7 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
     pushed.push(dir);
     return { cd: joinDir(dir, args[0]) };
   }
-  if (cmd === 'popd') return { cd: pushed.length ? pushed.pop() ?? '~' : '-' };
+  if (cmd === 'popd') return { cd: pushed.length ? pushed.pop() as string | null : '-' };
   if (cmd === 'rm' || cmd.endsWith('/rm')) {
     const flags = args.filter(a => a.startsWith('-'));
     const short = (letter: string) => flags.some(f => /^-[^-]/.test(f) && f.includes(letter));
@@ -93,7 +101,7 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
     : /\bprisma\s+migrate\b/.test(joined) ? 'prisma'
     : /\bmanage\.py\s+migrate\b/.test(joined) ? 'django'
     : !READ_ONLY.has(cmd) && args.includes('migrate') ? 'unknown' : null;
-  return tool ? { kind: 'migrate', label: `${tool} migrate`, args: [], dir, tool } : null;
+  return tool ? { kind: 'migrate', label: MIGRATE_LABELS[tool], args: [], dir, tool } : null;
 }
 
 function classify(command: string): Risk | null {
@@ -112,21 +120,22 @@ function classify(command: string): Risk | null {
   return null;
 }
 
-const size = (kb: number) => {
+const size = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
-  let n = kb;
-  let i = 0;
+  let n = bytes;
+  let i = -1;
   while (n >= 1024 && i < units.length - 1) {
     n /= 1024;
     i += 1;
   }
-  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+  return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function activate(api: ModAPI) {
-  const run = (cwd: string | undefined, program: string, argv: string[], timeout_ms = 10_000): ExecResult =>
+  const run = (cwd: string | undefined, program: string, argv: string[], timeout_ms = 15_000): ExecResult =>
     api.host.call('exec.run', { program, argv, cwd, timeout_ms });
   const out = (result: ExecResult, program: string) => {
     if (result.exit_code !== 0) throw new Error(result.stderr.trim() || `${program} exited ${result.exit_code}`);
@@ -153,7 +162,7 @@ export default function activate(api: ModAPI) {
     const note = `Paths: ${targets.join(' ')}`;
     if (!found) return { summary: `delete nothing: no file matches ${targets.join(' ')}`, lines: [], more: 0, note: "The paths don't exist, so rm has nothing to remove." };
     if (!files) return { summary: `delete ${plural(found, 'path')} with no files in ${found === 1 ? 'it' : 'them'}`, lines: [], more: 0, note };
-    return { summary: `delete ${plural(files, 'file')} (about ${size(kb || 0)})`, lines: rest.map(l => l.replace(/^\.\//, '')), more: Math.max(0, files - rest.length), note };
+    return { summary: `delete ${plural(files, 'file')} (about ${size((kb || 0) * 1024)})`, lines: rest.map(l => l.replace(/^\.\//, '')), more: Math.max(0, files - rest.length), note };
   };
 
   const measureDiscard = (risk: Risk, cwd: string | undefined): Report => {
@@ -253,9 +262,13 @@ export default function activate(api: ModAPI) {
       report.note,
       ...(report.lines.length ? [[...report.lines.map(line => line.trim().slice(0, 100)), ...(report.more ? [`+ ${report.more} more`] : [])].join(', ')] : []),
     ].filter(Boolean).map(part => part.replace(/[^\x20-\x7e]/g, '?')).join(' · ').slice(0, 1890);
-    const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: `Blast Radius: proceed with ${risk.label}?`.slice(0, 100), message });
-    if (answer.ok && answer.value.status === 'accepted') return next(e);
-    const why = answer.ok ? 'the user declined' : 'the question could not be asked';
+    const answer = api.host.tryCall('terminal.prompt', { kind: 'choice', title: `Blast Radius: ${risk.label}`.slice(0, 100), message,
+      options: [{ value: 'proceed', label: 'Proceed' }, { value: 'cancel', label: 'Cancel' }] });
+    if (answer.ok && answer.value.status === 'accepted' && answer.value.values?.[0] === 'proceed') {
+      api.host.tryCall('terminal.notice', { text: 'Blast Radius: running it', kind: 'info', placement: 'toast', ttl_ms: 4000 });
+      return next(e);
+    }
+    const why = answer.ok ? 'the user pressed Cancel' : 'the question could not be asked';
     return { deny: `Blast Radius held this command and did not run it: ${why}. It would have: ${report.summary}. Do not retry it unless the user asks you to.` };
   });
 }

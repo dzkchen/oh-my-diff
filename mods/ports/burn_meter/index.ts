@@ -28,6 +28,7 @@ const RED = 0xe5484d;
 const WHITE = 0xfff4e0;
 const YELLOW = 0xffd166;
 const EMPTY_BAR = 0x2a2724;
+const PAPER = 0xe8e2d6;
 const EIGHTHS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
@@ -105,8 +106,7 @@ const fireCells = (columns: number, rows: number, h: number, t: number): Cell[][
       grid[rows - 1]![x] = { g: '░', fg: EMPTY_BAR };
       continue;
     }
-    const along = filled <= 1 ? 1 : x / (filled - 1);
-    grid[rows - 1]![x] = { g: '█', fg: mix(GOLD, flame(along * h), along) };
+    grid[rows - 1]![x] = { g: '█', fg: flame(h) };
     const lead = 1 - Math.min(1, (filled - 1 - x) / Math.max(4, filled * 0.6));
     const height = flameRows * 8 * Math.min(1, (0.35 + 0.4 * h + 0.45 * lead) * (0.35 + 0.9 * wobble(x, t)));
     for (let y = 0; y < flameRows; y++) {
@@ -193,7 +193,7 @@ export default function activate(api: ModAPI) {
       const level = p.level ?? heat(s.shown);
       const which = Math.floor(Date.now() / 6000) % THINGS.length;
       const spans: TerminalSpan[] = p.text !== null ? [{ text: p.text, tone: 'muted' }] : [
-        { text: money(s.shown), bold: true, ...(s.shown !== s.goal ? { fg: tint(level) } : {}) },
+        { text: money(s.shown), bold: true, fg: s.shown !== s.goal ? tint(level) : hex(PAPER) },
         { text: ` ${compare(s.shown, which)}`, fg: hex(GOLD) },
         ...(p.extra ? [{ text: ` (+${p.extra})`, tone: 'muted' as const }] : []),
       ];
@@ -208,7 +208,7 @@ export default function activate(api: ModAPI) {
   api.on('component_post', ({ data }) => {
     const post = object(data);
     if (typeof post.notice === 'number') toast(post.notice);
-    if (post.done === true) save({ ...saved(), demo: null, from: DEMO_TOP, rev: saved().rev + 1 });
+    if (post.done === true) save({ ...saved(), demo: null, from: 0, rev: saved().rev + 1 });
   });
 
   api.on('model_response', response => {
@@ -245,13 +245,13 @@ export default function activate(api: ModAPI) {
   api.on('resume', () => refresh(true));
 
   const summary = (state: State) => {
-    const limits = state.limits.length ? state.limits.map(l => `${l.name} ${Math.round(l.used)}%`).join(', ') : 'plan limits unavailable';
+    const limits = state.limits.length ? state.limits.map(l => `${l.name === 'wk' ? 'week' : l.name} ${Math.round(l.used)}%`).join(', ') : '5h --, week --';
     const used = modelsLine(state.models, 6);
     return `This session: ${spendText(state.spend)}. ${limits}. Lifetime: ${money(state.lifetime / 1e6)}.${used ? `\nModels: ${used}` : ''}`;
   };
 
   api.command('burn', value => {
-    const arg = String(value ?? '').trim().toLowerCase();
+    const [arg = '', quiet] = String(value ?? '').trim().toLowerCase().split(/\s+/);
     const state = saved();
     if (arg === 'lifetime') return { display: `Lifetime burn: ${money(state.lifetime / 1e6)} ${compare(state.lifetime / 1e6, 2)}.` };
     if (arg === 'close') {
@@ -260,20 +260,19 @@ export default function activate(api: ModAPI) {
     }
     if (arg === 'hide') {
       save({ ...state, hidden: true });
-      return { display: 'Burn meter hidden. /burn show brings it back.' };
+      return quiet ? null : { display: 'Burn meter hidden. /burn show brings it back.' };
     }
     if (arg === 'demo') {
       save({ ...state, hidden: false, demo: Date.now(), from: 0, rev: state.rev + 1 });
       api.uiState.set({ open: true });
       return { display: 'Burn demo: $0 to $30 in 20 seconds.' };
     }
-    if (arg !== '' && arg !== 'panel' && arg !== 'show') return { display: 'usage: /burn [panel|show|hide|demo|lifetime]' };
     save({ ...state, hidden: false });
-    if (arg !== 'show') api.uiState.set({ open: true });
+    if (arg === 'show' && quiet) return null;
+    if (arg === '' || arg === 'panel') api.uiState.set({ open: true });
     return { display: summary(saved()) };
   }, { description: 'Burn meter: /burn opens the panel; [panel|show|hide|demo|lifetime]', args_hint: '[panel|show|hide|demo|lifetime]' });
 
-  const text = (id: string, label: string, lines: string[]): TerminalComponent => ({ type: 'text', id, label, text: lines.join('\n') });
   const button = (id: string, label: string, args: string): TerminalComponent => ({ type: 'button', id, label, text: label, action: { command: 'burn_meter:burn', args } });
 
   const band = (state: State, reduced: boolean, columns: number): TerminalComponent => {
@@ -291,27 +290,43 @@ export default function activate(api: ModAPI) {
       ] },
       { type: 'box', id: 'burn_band_side', label: 'Lifetime', children: [
         { type: 'line', id: 'burn_band_models', label: 'Models', spans: [{ text: modelsLine(state.models, columns >= 140 ? 2 : 1) || 'no model turns yet', tone: 'muted' }] },
-        { type: 'line', id: 'burn_band_lifetime', label: 'Lifetime', spans: [{ text: `lifetime ${money(state.lifetime / 1e6)}`, tone: 'muted' }] },
-        button('burn_band_hide', 'hide', 'hide'),
+        { type: 'box', id: 'burn_band_lifetime_row', label: 'Lifetime', style: { direction: 'row', gap: 2 }, children: [
+          { type: 'line', id: 'burn_band_lifetime', label: 'Lifetime', spans: [{ text: `lifetime ${money(state.lifetime / 1e6)}`, tone: 'muted' }] },
+          button('burn_band_hide', 'hide', 'hide quiet'),
+        ] },
       ] },
     ] };
   };
 
+  const heading = (id: string, label: string): TerminalComponent => ({ type: 'line', id, label, spans: [{ text: label, bold: true, fg: hex(PAPER) }] });
   const dialog = (state: State, reduced: boolean, columns: number): TerminalComponent => {
     const now = Date.now();
-    const meter = Math.max(10, Math.min(40, columns - 40));
+    const width = Math.min(columns - 4, 76) - 2;
+    const meter = Math.max(10, Math.min(40, width - 24));
+    const turnBar = Math.max(8, Math.min(36, width - 22));
     const top = Math.max(0.01, ...state.turns.map(t => t.usd));
     const dollars = state.spend.micro / 1e6;
-    const turns = state.turns.map((t, i) => `#${String(i + 1).padStart(2)}  ${t.usd || !t.note ? `${barText(meter, t.usd / top)} ${money(t.usd)}${t.note ? ` (+${t.note})` : ''}` : `(${t.note === 'included' ? 'included in plan' : 'cost unknown'})`}`);
-    return { type: 'dialog', id: 'burn_dialog', label: 'Burn meter', title: state.demo !== null ? 'Burn meter (demo)' : 'Burn meter', children: [
-      text('burn_dialog_head', 'Session', [`Session: ${spendText(state.spend)}`, `Lifetime: ${money(state.lifetime / 1e6)} (priced requests only)`,
-        ...(modelsLine(state.models, 6) ? [`Models: ${modelsLine(state.models, 6)}`] : [])]),
+    const level = state.demo === null && state.limits[0] ? Math.max(0.02, clamp(state.limits[0].used / 100)) : heat(dollars);
+    const windowLabel = (l: Limit) => l.minutes === 300 ? '5 hour  ' : l.minutes === 10080 ? 'weekly  ' : `${l.name}`.padEnd(8);
+    const limitRow = (l: Limit, i: number): TerminalComponent => ({ type: 'line', id: `burn_dialog_limit_${i}`, label: 'Plan limit', spans: [
+      { text: windowLabel(l), tone: 'muted' }, { text: barText(meter, l.used / 100), fg: hex(l.used > 75 ? RED : GOLD) },
+      { text: ` ${Math.round(l.used)}% ` }, { text: resetsIn(l.resets, now), tone: 'muted' }] });
+    const turnRow = (t: Turn, i: number): TerminalComponent => ({ type: 'line', id: `burn_dialog_turn_${i}`, label: 'Turn', spans: [
+      { text: `#${String(i + 1).padStart(2)}  `, tone: 'muted' },
+      ...(t.usd || !t.note ? [{ text: barText(turnBar, t.usd / top), fg: hex(t.usd === top && state.turns.length > 1 ? ORANGE : GOLD) }, { text: ` ${money(t.usd)}${t.note ? ` (+${t.note})` : ''}` }]
+        : [{ text: t.note === 'included' ? '(included in plan)' : '(cost unknown)', tone: 'muted' as const }])] });
+    return { type: 'dialog', id: 'burn_dialog', label: 'Burn meter', title: 'Burn meter', children: [
+      { type: 'box', id: 'burn_dialog_head', label: 'Session', style: { direction: 'row', gap: 2 }, children: [
+        { type: 'line', id: 'burn_dialog_title', label: 'Session', spans: [{ text: state.demo !== null ? 'DEMO BURN' : 'SESSION BURN', bold: true, fg: tint(level) }] },
+        { type: 'line', id: 'burn_dialog_lifetime', label: 'Lifetime', spans: [{ text: `lifetime ${money(state.lifetime / 1e6)}`, tone: 'muted' }] },
+      ] },
       { type: 'module', id: `burn_dialog_fire_${state.rev}`, label: 'Burning fuse', module: 'fire', props: props(state, 'dialog', 6, reduced), height: 7 },
-      ...(state.limits.length ? [text('burn_dialog_limits', 'Limits', state.limits.map(l => `${l.name.padEnd(4)} ${barText(meter, l.used / 100)} ${Math.round(l.used)}% ${resetsIn(l.resets, now)}`.trimEnd()))] : []),
-      text('burn_dialog_turns', 'Per turn', turns.length ? turns : ['No finished turns yet.']),
-      ...(state.spend.priced ? [text('burn_dialog_things', 'That is', THINGS.map((_, i) => compare(dollars, i)))] : []),
+      ...(state.limits.length ? [heading('burn_dialog_limits', 'Limits'), ...state.limits.map(limitRow)] : []),
+      heading('burn_dialog_turns', 'Per turn'),
+      ...(state.turns.length ? state.turns.map(turnRow) : [{ type: 'line' as const, id: 'burn_dialog_no_turns', label: 'Turn', spans: [{ text: 'No finished turns yet.', tone: 'muted' as const }] }]),
+      ...(state.spend.priced ? [heading('burn_dialog_things', 'That is'), ...THINGS.map((_, i): TerminalComponent => ({ type: 'line', id: `burn_dialog_thing_${i}`, label: 'Comparison', spans: [{ text: compare(dollars, i), fg: hex(GOLD) }] }))] : []),
       { type: 'box', id: 'burn_dialog_buttons', label: 'Actions', style: { direction: 'row', gap: 2 }, children: [
-        button('burn_dialog_toggle', state.hidden ? 'show band' : 'hide band', state.hidden ? 'show' : 'hide'),
+        button('burn_dialog_toggle', state.hidden ? 'show band' : 'hide band', state.hidden ? 'show quiet' : 'hide quiet'),
         button('burn_dialog_close', 'close', 'close'),
       ] },
     ] };

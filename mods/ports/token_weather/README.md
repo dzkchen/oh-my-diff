@@ -14,7 +14,7 @@ A weather forecast of the context window, one line above the prompt.
 | 75–89% | ☇ Storm |
 | 90% up | ↯ Compact soon |
 
-After each turn the mod keeps one reading from the session's own token usage (`thread/tokenUsage/updated`): the last response's total tokens over the model's context window, the same figures as Codex's status line. The chart shows the last 12 readings scaled to the largest, and the delta is what the last turn added. Below 60 columns only the forecast, percent and tokens are shown.
+After each turn the mod keeps one reading from the session's own token usage (`thread/tokenUsage/updated`): the input tokens the last response was answered over, out of the model's context window, the same figures as Codex's status line. The chart shows the last 12 readings scaled to the largest, and the delta is what the last turn added. Below 60 columns only the forecast, percent and tokens are shown.
 
 ## Limits of this port
 

@@ -8,7 +8,7 @@ const directory = fileURLToPath(new URL('.', import.meta.url));
 const thread = 'lead';
 const usage = (tokens, window = 200_000) => emit('app_notification', {
   method: 'thread/tokenUsage/updated', thread_id: thread, coalesced: 0, dropped: 0,
-  params: { threadId: thread, turnId: 't', tokenUsage: { total: { totalTokens: tokens }, last: { totalTokens: tokens }, modelContextWindow: window } },
+  params: { threadId: thread, turnId: 't', tokenUsage: { total: { totalTokens: tokens }, last: { inputTokens: tokens }, modelContextWindow: window } },
 });
 const turn = (id, input) => [usage(input), emit('turn_end', { thread_id: thread })];
 const draw = (columns = 100) => emit('terminal', { event: 'idle', ledger: { thread_id: thread }, client: { columns } });

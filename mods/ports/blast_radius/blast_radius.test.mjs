@@ -8,8 +8,8 @@ const directory = fileURLToPath(new URL('.', import.meta.url));
 const ran = { output: 'ran', success: true };
 const exec = (stdout, exit_code = 0, stderr = '') => ({ exit_code, stdout, stderr });
 const root = exec('/work/repo\n');
-const accepted = { status: 'accepted' };
-const declined = { status: 'declined' };
+const accepted = { status: 'accepted', values: ['proceed'] };
+const declined = { status: 'accepted', values: ['cancel'] };
 
 function guard(cmd, operations, workdir) {
   const arguments_ = workdir ? { cmd, workdir } : { cmd };
@@ -35,7 +35,8 @@ test('rm -rf is measured and holds until the user accepts', { skip }, () => {
   assert.deepEqual(execs.map(call => call.program), ['pwd', 'bash']);
   assert.equal(execs[1].cwd, undefined);
   assert.deepEqual(execs[1].argv.slice(-2), ['blast-radius', 'build']);
-  assert.equal(prompt.kind, 'confirm');
+  assert.equal(prompt.kind, 'choice');
+  assert.deepEqual(prompt.options.map(option => option.label), ['Proceed', 'Cancel']);
   assert.match(prompt.message, /^Command: rm -rf build · Would delete 3 files \(about 24 KB\) · Paths: build · build\/a\.o, build\/b\.o, build\/c\.o$/);
   assert.deepEqual(trace.unused_mock_replies, []);
 });
@@ -43,7 +44,7 @@ test('rm -rf is measured and holds until the user accepts', { skip }, () => {
 test('declining denies the call with the measured summary and never reaches the tool', { skip }, () => {
   const { chain } = guard('rm -rf build', { 'exec.run': [root, exec('3 24 1\n./build/a.o\n')], 'terminal.prompt': [declined] });
   assertShortCircuit(chain, 'blast_radius');
-  assert.match(chain.result.deny, /did not run it: the user declined\. It would have: delete 3 files/);
+  assert.match(chain.result.deny, /did not run it: the user pressed Cancel\. It would have: delete 3 files/);
 });
 
 test('a prompt that cannot be asked denies', { skip }, () => {
@@ -111,4 +112,12 @@ test('pending migrations are listed from the tool status', { skip }, () => {
   });
   assert.deepEqual(execs[1].argv, ['manage.py', 'showmigrations', '--plan']);
   assert.match(prompt.message, /apply 2 pending migrations · .* · app\.0002, app\.0003/);
+});
+
+test('nice and popd are looked through', { skip }, () => {
+  for (const cmd of ['nice -n 5 rm -rf build', 'pushd sub && popd && rm -rf build']) {
+    const { prompt, execs } = guard(cmd, { 'exec.run': [root, exec('3 24 1\n./build/a.o\n')], 'terminal.prompt': [declined] });
+    assert.match(prompt.message, /Would delete 3 files/, cmd);
+    assert.equal(execs[1].cwd, undefined, cmd);
+  }
 });

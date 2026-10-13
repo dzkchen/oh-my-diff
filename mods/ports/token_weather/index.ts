@@ -6,11 +6,11 @@ type State = { readings: Reading[]; pending: Reading | null };
 const HISTORY = 12;
 const BARS = '▁▂▃▄▅▆▇█';
 const FORECAST = [
-  { upTo: 25, icon: '☀', word: 'Clear', color: '#e5c07b' },
-  { upTo: 50, icon: '☁', word: 'Cloudy', color: '#56b6c2' },
-  { upTo: 75, icon: '☂', word: 'Showers', color: '#61afef' },
-  { upTo: 90, icon: '☇', word: 'Storm', color: '#c678dd' },
-  { upTo: Infinity, icon: '↯', word: 'Compact soon', color: '#e06c75' },
+  { upTo: 25, icon: '☀', word: 'Clear', color: 3 },
+  { upTo: 50, icon: '☁', word: 'Cloudy', color: 6 },
+  { upTo: 75, icon: '☂', word: 'Showers', color: 4 },
+  { upTo: 90, icon: '☇', word: 'Storm', color: 5 },
+  { upTo: Infinity, icon: '↯', word: 'Compact soon', color: 1 },
 ] as const;
 
 const short = (n: number) =>
@@ -23,8 +23,8 @@ export default function activate(api: ModAPI) {
 
   api.on('app_notification', ({ method, params }) => {
     if (method !== 'thread/tokenUsage/updated') return;
-    const usage = (params as { tokenUsage?: { last?: { totalTokens?: unknown }; modelContextWindow?: unknown } } | null)?.tokenUsage;
-    const tokens = Number(usage?.last?.totalTokens), window = Number(usage?.modelContextWindow);
+    const usage = (params as { tokenUsage?: { last?: { inputTokens?: unknown }; modelContextWindow?: unknown } } | null)?.tokenUsage;
+    const tokens = Number(usage?.last?.inputTokens), window = Number(usage?.modelContextWindow);
     if (tokens >= 0 && window > 0) save({ ...saved(), pending: { tokens, window } });
   });
 
@@ -51,6 +51,7 @@ export default function activate(api: ModAPI) {
       spans.push({ text: readings.map(r => BARS[Math.min(BARS.length - 1, Math.floor((r.tokens / top) * (BARS.length - 1)))]).join(''), fg: forecast.color });
       if (readings.length > 1) spans.push({ text: delta > 0 ? `  ▲ +${short(delta)} last turn` : delta < 0 ? `  ▼ ${short(-delta)} last turn` : '  steady', tone: 'muted' });
     }
-    return { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'line', id: 'token_weather_line', label: 'Context forecast', spans }] } } };
+    return { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'box', id: 'token_weather_band', label: 'Context forecast', style: { padding: [0, 1] }, children: [
+      { type: 'line', id: 'token_weather_line', label: 'Context forecast', spans }] }] } } };
   });
 }

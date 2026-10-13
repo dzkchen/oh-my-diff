@@ -9,5 +9,5 @@
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/ports/blast_radius"},
   "capabilities": ["interception", "terminal", "exec"],
   "hook_budget_ms": 1000,
-  "compatibility": {"required_features": ["tool_continuation_v2", "terminal_prompt_v1", "exec_v1"]}
+  "compatibility": {"required_features": ["tool_continuation_v2", "terminal_prompt_v1", "ui_composition_v1", "exec_v1"]}
 }

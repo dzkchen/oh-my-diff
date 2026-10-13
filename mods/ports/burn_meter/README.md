@@ -4,7 +4,7 @@ Session spend as a burning fuse above the prompt.
 
 The band shows `BURN`, the plan windows from the account's rate limits (`5h 42% in 2h 0m`, `wk 12% in 3d 2h`), a fire bar, the session's priced spend with what it would buy (`$1.30 = 0.12 burritos`, alternating with McDoubles), the busiest model's tokens, the lifetime total and a `hide` button. Crossing $1, $5, $10, $25 or $50 in a session shows a toast once.
 
-`/burn` opens a dialog with the session total, lifetime total, models, a larger fuse, plan-window bars, a bar per finished turn (last 12) and the comparisons. `/burn show` and `/burn hide` toggle the band, `/burn lifetime` prints the lifetime total, `/burn demo` burns from $0 to $30 in 20 seconds with the threshold toasts.
+`/burn` opens a dialog like upstream's pane: `SESSION BURN` with the lifetime total, a larger fuse, `Limits` bars, a `Per turn` bar for each finished turn (last 12, the costliest in orange) and `That is` comparisons. `/burn show` and `/burn hide` toggle the band (any other argument acts as `show`), `/burn lifetime` prints the lifetime total, `/burn demo` burns from $0 to $30 in 20 seconds with the threshold toasts. Every reply but `lifetime`, `hide` and `demo` is the session summary with a `Models:` line.
 
 ## Spend
 
@@ -22,7 +22,11 @@ The fire flickers only while the amount rolls to a new value (70 ms frames, abou
 
 ## Limits of this port
 
-- Upstream drew the fire with a `Raster` element; this port draws it with block characters in a component module, at most 96 columns wide.
+- Upstream drew the fire with a `Raster` element; this port draws it with block characters in a component module, at most 96 columns wide, with at most 12 colour runs per row, and without the white flash on the bar's leading edge.
+- The fire and the burrito/McDouble rotation move only while the amount rolls or the demo runs; upstream sparks and rotates every 6 s while idle. This keeps an idle session at zero redraws.
+- The amount and comparison sit above the fire instead of at the top of the right-hand column, and `BURN`'s colour follows the real spend, not the demo ramp.
+- Without a price the band says `included in plan` or `cost unknown` instead of `$0.00`, and `That is` appears only for priced spend.
+- `/burn` is a modal dialog; upstream's pane stays open beside the prompt.
 - The plan windows come from `account/rateLimits/read`, refreshed at session start and after each turn. Accounts without rate limits show no plan bars.
 - Model names from Claude model IDs are shortened like upstream (`claude-opus-5-5` to `opus 5.5`); other IDs are shown as they are.
 

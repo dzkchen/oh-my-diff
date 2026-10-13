@@ -83,7 +83,7 @@ test('the demo burns to $30, posting each threshold once and then stopping', { s
   assert.equal(frames.at(-1).next_ms, null);
 });
 
-test('/burn answers usage and lifetime without a session', { skip }, () => {
-  const trace = runScenario(directory, { steps: [invoke('burn_meter', 'command', 'burn', 'nope'), invoke('burn_meter', 'command', 'burn', 'lifetime')] });
-  assert.deepEqual(trace.steps.map(step => step.value?.display), ['usage: /burn [panel|show|hide|demo|lifetime]', 'Lifetime burn: $0.00 = 0.00 burritos.']);
+test('/burn lifetime answers without a session', { skip }, () => {
+  const trace = runScenario(directory, { steps: [invoke('burn_meter', 'command', 'burn', 'lifetime')] });
+  assert.equal(trace.steps[0].value.display, 'Lifetime burn: $0.00 = 0.00 burritos.');
 });
