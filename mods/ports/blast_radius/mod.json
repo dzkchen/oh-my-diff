@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "blast_radius",
+  "version": "0.1.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "Measures what a risky shell command would delete, discard or drop and holds it for a Proceed or Cancel answer",
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/ports/blast_radius"},
+  "capabilities": ["interception", "terminal", "exec"],
+  "hook_budget_ms": 1000,
+  "compatibility": {"required_features": ["tool_continuation_v2", "terminal_prompt_v1", "exec_v1"]}
+}
