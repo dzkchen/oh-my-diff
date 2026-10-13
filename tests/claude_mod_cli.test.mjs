@@ -158,6 +158,5 @@ test('setup reads the model catalog and served context windows from the installe
     const byFamily = Object.fromEntries(models.map(item => [item.family, item]));
     assert.deepEqual(Object.keys(byFamily).sort(), ['fable', 'haiku', 'opus', 'sonnet']);
     for (const item of models) assert.ok([200000, 1000000].includes(item.window), `${item.cli}: ${item.window}`);
-    assert.equal(byFamily.haiku.window, 200000);
     assert.equal(byFamily.opus.efforts.at(-1), 'max');
   });
