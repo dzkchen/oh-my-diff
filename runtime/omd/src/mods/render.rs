@@ -157,6 +157,11 @@ pub fn component_unmount(id: &str, component: &str) {
     process::unmount("", id, component);
 }
 
+/// Unmounts one client's instance of a mod's component module.
+pub fn client_component_unmount(client: &str, id: &str, instance: &str) {
+    process::unmount(client, id, instance);
+}
+
 /// Unmounts every component module instance a detached client had mounted.
 pub fn component_detach(client: &str) {
     process::detach(client);

@@ -126,7 +126,7 @@ fn runner(node: &Path) -> Result<Child> {
     warm.map_or_else(|| spawn(node), Ok)
 }
 
-const INPUT_LIMIT: usize = 1_048_576;
+pub(super) const INPUT_LIMIT: usize = 1_048_576;
 
 fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;

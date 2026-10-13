@@ -274,6 +274,9 @@ pub(super) fn run(
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     request.invocation["receipts"] = Value::Array(receipts.clone());
+    if event == "history" {
+        fit_history(&mut request)?;
+    }
     let mut answer = |frame: Value| -> Result<Value> {
         if event == "inspect" {
             return Err(failure("invalid_host_call_sequence"));
@@ -345,6 +348,35 @@ pub(super) fn run(
     forward(event, &reply.updates, &mut forwarded, progress)?;
     reply.receipts = receipts;
     Ok(reply)
+}
+
+/// Keeps the newest history items the runner request has room for, in order and with their indices.
+fn fit_history(request: &mut Request) -> Result<()> {
+    let Some(items) = request
+        .invocation
+        .get_mut("payload")
+        .and_then(|payload| payload.get_mut("items"))
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+    else {
+        return Ok(());
+    };
+    let Some(mut room) = process::INPUT_LIMIT.checked_sub(serde_json::to_vec(&*request)?.len())
+    else {
+        request.invocation["payload"]["items"] = Value::Array(items);
+        return Ok(());
+    };
+    let mut kept = 0;
+    for item in items.iter().rev() {
+        let bytes = serde_json::to_vec(item)?.len() + usize::from(kept > 0);
+        if bytes > room {
+            break;
+        }
+        room -= bytes;
+        kept += 1;
+    }
+    request.invocation["payload"]["items"] = Value::Array(items[items.len() - kept..].to_vec());
+    Ok(())
 }
 
 fn receipt_for(

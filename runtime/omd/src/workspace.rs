@@ -956,7 +956,7 @@ pub fn create_worktree(
     let worker = directory.join("worker");
     for arguments in [
         vec!["init", "--quiet"],
-        vec!["add", "--all"],
+        vec!["add", "--all", "--force"],
         vec![
             "-c",
             "user.name=Oh My Diff",

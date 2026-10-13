@@ -185,10 +185,19 @@ pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
     let (source, target) = (thread_directory(root, from)?, thread_directory(root, to)?);
     match fs::symlink_metadata(&source) {
         Ok(metadata) if metadata.is_dir() => {
-            if target.try_exists()? {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
-            }
-            copy_regular_tree(&source, &target).map(|()| true)
+            let threads = target.parent().ok_or_else(|| failure("store_thread_invalid"))?;
+            let stage = tempfile::Builder::new().prefix(".fork-").tempdir_in(threads)?;
+            copy_regular_tree(&source, stage.path())?;
+            // A writer may create the target directory meanwhile; even an empty one is never replaced.
+            rustix::fs::renameat_with(
+                rustix::fs::CWD,
+                stage.path(),
+                rustix::fs::CWD,
+                &target,
+                rustix::fs::RenameFlags::NOREPLACE,
+            )?;
+            let _ = stage.keep();
+            Ok(true)
         }
         Ok(_) => Err(failure("store_directory_invalid")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),

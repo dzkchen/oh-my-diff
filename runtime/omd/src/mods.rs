@@ -19,6 +19,7 @@ pub use persisted::persist_chunks;
 pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
+pub use render::client_component_unmount;
 pub use render::component_detach;
 pub use render::component_events;
 pub use render::component_shared;

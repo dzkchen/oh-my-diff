@@ -255,9 +255,11 @@ impl CredentialProfiles {
     }
 
     fn home(&self, id: &str) -> io::Result<PathBuf> {
-        let known =
-            self.with_index(false, |index| Ok(index.profiles.iter().any(|p| p.id == id)))?;
-        if !known {
+        self.with_index(false, |index| self.indexed_home(index, id))
+    }
+
+    fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
+        if !index.profiles.iter().any(|p| p.id == id) {
             return Err(failure(format!("credential_profile_unknown: {id}")));
         }
         let home = self.root.join(id);
@@ -404,19 +406,41 @@ impl CredentialProfiles {
         ) {
             return result.map(drop);
         }
-        if self.profile(id)?.kind != "secret" || value.is_empty() || value.len() > SECRET_BYTES {
+        if value.is_empty() || value.len() > SECRET_BYTES {
             return Err(failure("credential_secret_invalid"));
         }
-        let path = self.home(id)?.join("secret");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(path)?;
-        file.write_all(value.as_bytes())?;
-        file.sync_all()
+        self.replace(id, "secret", value, |kind| kind == "secret", "credential_secret_invalid")
+    }
+
+    /// Publishes a profile's credential file whole, with private permissions, under the profile lock.
+    fn replace(
+        &self,
+        id: &str,
+        name: &str,
+        value: &str,
+        kind: impl FnOnce(&str) -> bool,
+        refusal: &str,
+    ) -> io::Result<()> {
+        self.with_index(false, |index| {
+            let profile = index
+                .profiles
+                .iter()
+                .find(|p| p.id == id)
+                .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))?;
+            if !kind(&profile.kind) {
+                return Err(failure(refusal));
+            }
+            let home = self.indexed_home(index, id)?;
+            let path = home.join(name);
+            if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file()) {
+                return Err(failure("credential_store_invalid"));
+            }
+            let mut staged = tempfile::NamedTempFile::new_in(&home)?;
+            staged.write_all(value.as_bytes())?;
+            staged.as_file().sync_all()?;
+            staged.persist(&path).map_err(|error| error.error)?;
+            fs::File::open(&home)?.sync_all()
+        })
     }
 
     pub fn store_auth(&self, id: &str, auth: &str) -> io::Result<()> {
@@ -427,21 +451,10 @@ impl CredentialProfiles {
         ) {
             return result.map(drop);
         }
-        if self.profile(id)?.kind == "secret"
-            || auth.len() > 65_536
-            || serde_json::from_str::<serde_json::Value>(auth).is_err()
-        {
+        if auth.len() > 65_536 || serde_json::from_str::<serde_json::Value>(auth).is_err() {
             return Err(failure("credential_auth_invalid"));
         }
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(self.home(id)?.join("auth.json"))?;
-        file.write_all(auth.as_bytes())?;
-        file.sync_all()
+        self.replace(id, "auth.json", auth, |kind| kind != "secret", "credential_auth_invalid")
     }
 
     pub fn owned_secret(&self, id: &str, owner: &str) -> io::Result<serde_json::Value> {
