@@ -22,9 +22,10 @@ test('Claude setup adds its provider grant to the OMD+ store without disturbing 
       const recordPath = join(prefix, 'install.json');
       await writeFile(recordPath, JSON.stringify({ profile: 'full', prefix, store, packages: { omd_claude_cli: {} },
         author: { node: process.execPath } }));
+      const run = () => spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), 'setup', recordPath,
+        process.env.OMD_TEST_CLAUDE], { encoding: 'utf8', timeout: 90000 });
       const setup = () => {
-        const result = spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), 'setup', recordPath,
-          process.env.OMD_TEST_CLAUDE], { encoding: 'utf8', timeout: 90000 });
+        const result = run();
         assert.equal(result.status, 0, result.stderr);
         return JSON.parse(result.stdout);
       };
@@ -39,7 +40,6 @@ test('Claude setup adds its provider grant to the OMD+ store without disturbing 
       assert.equal(first.billing, 'subscription');
       const route = JSON.parse(await readFile(first.provider.route, 'utf8'));
       assert.equal(route.billing, 'subscription');
-      assert.equal(route.settings.store, join(store, 'mods.json'));
       assert.ok(grant.read_paths.length <= 16);
       assert.equal(host.secret_refs.claude_local_token, first.provider.token);
       assert.equal((await stat(first.provider.token)).mode & 0o777, 0o600);
@@ -52,5 +52,7 @@ test('Claude setup adds its provider grant to the OMD+ store without disturbing 
       assert.equal(await readFile(first.provider.token, 'utf8'), token);
       const rerun = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
       assert.equal(rerun.services.filter(service => service.id === 'claude_cli').length, 1);
+      await writeFile(first.provider.route, JSON.stringify({ ...route, billing: 'api' }));
+      assert.match(run().stderr, /claude_console_api_key_login_required/);
     } finally { await rm(root, { recursive: true, force: true }); }
   });

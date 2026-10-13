@@ -48,11 +48,11 @@
         "index.ts": "6f8f6ed3d23a733b43af2f77663995f3ac54b9c9cab23610eafc801460aaae65",
         "mod.json": "6264cfa904b9b382c24662237a610b1cefa6fd8b030e91a2a05466597c464fed",
         "models.json": "21710d46d563a0d0e25fdbfd05f1cbdbf788ab235ca65bdd65a7b31f19f09cc8",
-        "setup.mjs": "5170dc689d39a49e31d36f6ab037223352aab8917bdab8804a0f9f828af0f830",
-        "transport.mjs": "20130444729f671cc89b7c7f4822e7bda301be6a269d7435ee88e54e7d69c2ef"
+        "setup.mjs": "c7d347f8e95ccd970cb69c9e754b23d44ed7c9a8aee4f554558e90eaaebc1c9d",
+        "transport.mjs": "a29cca095c44df9e6d3acfa224c07a659dc37fe6be7e61592fddd964dcf61c16"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "a6025df749c7a494ef75292a55bc538210dd41a2d9b74dc9dda5b1ab08a15bc5",
+      "package_sha256": "39c2958528f5be29db7916cf9d5ceefc4591a04b5144982788e468a8bb12497c",
       "source": "mods/first-party/omd_claude_cli",
       "version": "0.2.0-preview.3"
     },

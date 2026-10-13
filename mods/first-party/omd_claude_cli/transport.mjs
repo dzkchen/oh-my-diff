@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translateRequest, responseEvents, reasoningItem } from './index.ts';
 
@@ -14,15 +14,17 @@ const override = /^ANTHROPIC_|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CU
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 
+export function cliEnv(values = {}) {
+  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !override.test(name))), ...values };
+}
+
 export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER) {
-  const conflicts = Object.keys(process.env).filter(name => override.test(name) && process.env[name]);
-  if (conflicts.length) throw new Error(`conflicting_api_or_cloud_overrides:${conflicts.join(',')}`);
   const version = spawnSync(claude, ['--version'], { encoding: 'utf8', timeout: 10000 });
   if (version.status !== 0 || version.stdout.trim() !== CLI_VERSION) {
     throw new Error(`claude_cli_${CLI_VERSION.split(' ')[0]}_required`);
   }
   const probe = spawnSync(claude, ['auth', 'status'], { encoding: 'utf8', timeout: 10000,
-    env: { ...process.env, HOME: home, USER: username, LOGNAME: username } });
+    env: cliEnv({ HOME: home, USER: username, LOGNAME: username }) });
   let status;
   try { status = JSON.parse(probe.stdout); } catch { status = {}; }
   const signedIn = probe.status === 0 && status.loggedIn === true && status.apiProvider === 'firstParty';
@@ -59,14 +61,14 @@ export function withoutCliContext(body) {
     if (typeof block.text === 'string') block.text = block.text.replace(cliReminder, '');
     if (typeof block.content === 'string') block.content = block.content.replace(cliReminder, '');
     else if (Array.isArray(block.content)) {
-      block.content = block.content.filter(child => child.type !== 'text' || !cliReminder.test(child.text) || child.text.replace(cliReminder, ''));
       block.content.forEach(strip);
+      block.content = block.content.filter(child => child.type !== 'text' || child.text);
     }
   };
   if (!Array.isArray(body.messages)) return body;
-  body.messages = body.messages.filter(message => !(message.role === 'system' && (typeof message.content === 'string'
-    ? cliEnvironment.test(message.content) : message.content?.some?.(block => cliEnvironment.test(block.text ?? '')))));
   body.messages.forEach(strip);
+  body.messages = body.messages.filter(message => message.content?.length !== 0 && !(message.role === 'system' && (typeof message.content === 'string'
+    ? cliEnvironment.test(message.content) : message.content?.some?.(block => cliEnvironment.test(block.text ?? '')))));
   return body;
 }
 
@@ -95,33 +97,40 @@ export function limitHeaders(headers, note) {
   return out;
 }
 
-function resetText(headers, window) {
+function resetAt(headers, window) {
   const reset = Number(headers[`anthropic-ratelimit-unified-${window}-reset`] ?? headers['anthropic-ratelimit-unified-reset']);
-  return Number.isFinite(reset) && reset > 0 ? `; resets ${new Date(reset * 1000).toISOString()}` : '';
+  return Number.isFinite(reset) && reset > 0 ? reset * 1000 : null;
+}
+
+function resetText(headers, window) {
+  const reset = resetAt(headers, window);
+  return reset ? `; resets ${new Date(reset).toISOString()}` : '';
+}
+
+function overageWindow(headers) {
+  return headers['anthropic-ratelimit-unified-representative-claim']?.startsWith('seven_day') ? '7d' : '5h';
 }
 
 // After a response reports extra usage, later requests stay stopped until the reported reset.
 export function stoppedForExtraUsage(headers, now = Date.now()) {
-  if (!usingOverage(headers)) return false;
-  const reset = Number(headers['anthropic-ratelimit-unified-reset'] ?? headers['anthropic-ratelimit-unified-5h-reset']);
-  return !Number.isFinite(reset) || reset * 1000 > now;
+  return usingOverage(headers) && resetAt(headers, overageWindow(headers)) > now;
 }
 
 export function extraUsageStop(headers) {
-  return { code: 'claude_extra_usage_blocked', message: `Claude plan limit reached and this request was served from extra usage${resetText(headers, '5h')}. omd_claude_cli has extra_usage off, so OMD stopped and sends no further requests; Anthropic may still bill this one request. Extra usage itself is controlled at claude.ai/settings/usage.` };
+  return { code: 'claude_extra_usage_blocked', message: `Claude plan limit reached and this request was served from extra usage${resetText(headers, overageWindow(headers))}. omd_claude_cli has extra_usage off, so OMD stopped and sends no further requests; Anthropic may still bill this one request. Extra usage itself is controlled at claude.ai/settings/usage.` };
 }
 
 export function upstreamFailure(status, headers, body, billing = 'subscription') {
   const kind = headers['anthropic-ratelimit-unified-representative-claim'];
-  if (status === 429 || headers['anthropic-ratelimit-unified-status'] === 'rejected') {
+  if (status === 429 || (status !== 200 && headers['anthropic-ratelimit-unified-status'] === 'rejected')) {
     const overage = headers['anthropic-ratelimit-unified-overage-status'] === 'rejected'
       ? `; extra usage unavailable (${headers['anthropic-ratelimit-unified-overage-disabled-reason'] ?? 'not enabled'})` : '';
-    return { code: 'rate_limit_exceeded', message: `Claude ${kind ?? (billing === 'api' ? 'API' : 'subscription')} limit reached${resetText(headers, kind?.startsWith('seven_day') ? '7d' : '5h')}${overage}` };
+    return { code: 'rate_limit_exceeded', message: `Claude ${kind ?? (billing === 'api' ? 'API' : 'subscription')} limit reached${resetText(headers, overageWindow(headers))}${overage}` };
   }
   if (status === 400 && /prompt is too long/i.test(body)) {
     return { code: 'context_length_exceeded', message: 'Claude prompt is too long for the model context window' };
   }
-  if (status === 400 && /credit balance is too low/i.test(body)) {
+  if (billing === 'api' && status === 400 && /credit balance is too low/i.test(body)) {
     return { code: 'claude_api_credits_exhausted', message: 'Anthropic API credit balance is too low. OMD never falls back to your subscription; purchased credits and auto-reload are managed at console.anthropic.com/settings/billing.' };
   }
   if (status === 401 || (status === 403 && /oauth|revoked|authentication/i.test(body))) {
@@ -129,8 +138,8 @@ export function upstreamFailure(status, headers, body, billing = 'subscription')
       ? 'Anthropic API key was rejected; run `claude auth login --console` and retry'
       : 'Claude login expired or was revoked; run `claude auth login` and retry' };
   }
-  if (status === 403 || status === 404) {
-    return { code: 'claude_model_not_entitled', message: `Claude refused this model for your account (${status}); pick another model or check your plan at claude.ai/settings` };
+  if ((status === 403 || status === 404) && /model/i.test(body)) {
+    return { code: 'claude_model_not_entitled', message: `Claude refused this model for your account (${status}); pick another model or check ${billing === 'api' ? 'your Console workspace at console.anthropic.com' : 'your plan at claude.ai/settings'}` };
   }
   return null;
 }
@@ -368,11 +377,11 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
       args: [file, 'inert', join(root, 'tools.json')] } } };
     const argv = [...cliArgs(entry, translated.effort), '--system-prompt-file', join(root, 'system.md'),
       '--settings', join(root, 'settings.json'), '--mcp-config', JSON.stringify(mcp)];
-    const env = { ...process.env, HOME: home, USER: username, LOGNAME: username, TMPDIR: root,
+    const env = cliEnv({ HOME: home, USER: username, LOGNAME: username, TMPDIR: root,
       ANTHROPIC_BASE_URL: relay.url,
       ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_MAX_RETRIES: '0', DISABLE_AUTO_COMPACT: '1', DISABLE_COMPACT: '1',
-      CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off' };
+      CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off' });
     delete env.OMD_CLAUDE_LOCAL_TOKEN;
     delete env.OMD_READY_TOKEN;
     if (translated.extra.max_tokens) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(translated.extra.max_tokens);
@@ -466,10 +475,12 @@ async function claim(server, port, token, ready) {
 }
 
 // An unreadable setting stops at extra usage rather than silently allowing paid overage.
-export async function extraUsageAllowed(settings) {
+export async function extraUsageAllowed(routePath, mod = dirname(file)) {
+  const store = resolve(dirname(routePath), '../..');
+  const paths = [mod, join(store, 'sources', 'omd_claude_cli')];
   try {
-    const config = JSON.parse(await readFile(settings.store, 'utf8'));
-    const selection = config.mods.find(mod => settings.paths.includes(mod.path));
+    const config = JSON.parse(await readFile(join(store, 'mods.json'), 'utf8'));
+    const selection = config.mods.find(item => paths.includes(resolve(item.path)));
     return selection ? selection.settings?.extra_usage !== false : false;
   } catch { return false; }
 }
@@ -509,7 +520,7 @@ async function serve(routePath, home, username) {
     const controller = new AbortController();
     active.add(controller);
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
-    const extraUsage = await extraUsageAllowed(route.settings);
+    const extraUsage = await extraUsageAllowed(routePath);
     const head = (headers = {}) => {
       if (!response.headersSent) response.writeHead(200, { 'content-type': 'text/event-stream',
         'cache-control': 'no-store', ...limitHeaders(headers, providerNote(route.billing, subscriptionType, headers, extraUsage)) });

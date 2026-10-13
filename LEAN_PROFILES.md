@@ -189,8 +189,8 @@ enables the mod and makes the managed `codex` launcher define the provider.
 Launching adds the provider, model and catalog to an ordinary OMD+ session, so
 enabled mods, their data, `/status` and resume work as usual; `--model` takes a
 slug, family shortcut or profile name and further arguments go to `codex`. The Claude route
-requires official Claude CLI `2.1.296` and rejects inherited API-key and cloud
-overrides; the billing source chosen at setup is enforced on every request, with no
+requires official Claude CLI `2.1.296` and keeps inherited API-key and cloud
+overrides away from it; the billing source chosen at setup is enforced on every request, with no
 fallback between plan limits and API credits. The native host keeps process
 authority, tool execution, approvals and usage accounting; each Claude model
 call admits one upstream request. `ask_claude: true` gives other leads an

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { once } from 'node:events';
 import activate, { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, extraUsageAllowed, limitHeaders, providerNote, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from '../mods/first-party/omd_claude_cli/transport.mjs';
+import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from '../mods/first-party/omd_claude_cli/transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -184,8 +184,12 @@ test('subscription windows, resets and billing source reach /status headers; fai
   assert.equal(usingOverage({ 'anthropic-ratelimit-unified-overage-status': 'allowed' }), false);
   assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 1_000_000), true);
   assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 3_000_000), false);
-  assert.equal(stoppedForExtraUsage(overage), true);
+  assert.equal(stoppedForExtraUsage(overage), false);
   assert.equal(stoppedForExtraUsage(headers), false);
+  const both = { ...overage, 'anthropic-ratelimit-unified-5h-reset': '2000', 'anthropic-ratelimit-unified-reset': '9000' };
+  assert.equal(stoppedForExtraUsage(both, 3_000_000), false);
+  assert.match(extraUsageStop(both).message, new RegExp(new Date(2_000_000).toISOString()));
+  assert.equal(upstreamFailure(200, { ...headers, ...overage }, ''), null);
   const limited = upstreamFailure(429, { ...headers, 'anthropic-ratelimit-unified-status': 'rejected',
     'anthropic-ratelimit-unified-representative-claim': 'seven_day', 'anthropic-ratelimit-unified-overage-status': 'rejected',
     'anthropic-ratelimit-unified-overage-disabled-reason': 'out_of_credits' }, '');
@@ -193,11 +197,13 @@ test('subscription windows, resets and billing source reach /status headers; fai
     message: `Claude seven_day limit reached; resets ${new Date(1790500000 * 1000).toISOString()}; extra usage unavailable (out_of_credits)` });
   assert.equal(upstreamFailure(400, {}, '{"error":{"message":"prompt is too long: 1000001 tokens"}}').code, 'context_length_exceeded');
   assert.equal(upstreamFailure(400, {}, '{"error":{"message":"Your credit balance is too low"}}', 'api').code, 'claude_api_credits_exhausted');
+  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"Your credit balance is too low"}}'), null);
   assert.match(upstreamFailure(401, {}, '{"error":{"type":"authentication_error"}}').message, /claude auth login/);
   assert.match(upstreamFailure(401, {}, '', 'api').message, /--console/);
   assert.equal(upstreamFailure(403, {}, '{"error":{"message":"OAuth token has been revoked"}}').code, 'claude_login_expired');
-  assert.equal(upstreamFailure(403, {}, '{"error":{"type":"permission_error"}}').code, 'claude_model_not_entitled');
-  assert.equal(upstreamFailure(404, {}, '{"error":{"type":"not_found_error"}}').code, 'claude_model_not_entitled');
+  assert.equal(upstreamFailure(403, {}, '{"error":{"type":"permission_error","message":"Your workspace cannot use this API"}}'), null);
+  assert.equal(upstreamFailure(404, {}, '{"error":{"type":"not_found_error","message":"model: claude-x"}}').code, 'claude_model_not_entitled');
+  assert.match(upstreamFailure(403, {}, '{"error":{"message":"no access to model claude-x"}}', 'api').message, /Console workspace/);
   assert.equal(upstreamFailure(200, headers, ''), null);
 });
 
@@ -302,7 +308,9 @@ test('CLI-added environment and account context never reach the model', () => {
     { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'mcp__omd__exec_command', input: {} }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: `/repo${reminder}` },
       { type: 'text', text: `${omd}${reminder}` }] },
-    { role: 'system', content: [{ type: 'text', text: 'Today\'s date is 2026-10-13.' }] }] });
+    { role: 'system', content: [{ type: 'text', text: 'Today\'s date is 2026-10-13.' }] },
+    { role: 'user', content: [{ type: 'text', text: reminder.trim() }] },
+    { role: 'user', content: reminder }] });
   assert.deepEqual(body.messages.map(message => message.role), ['user', 'assistant', 'user', 'system']);
   assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'Run pwd.' }]);
   assert.equal(body.messages[2].content[0].content, '/repo');
@@ -313,13 +321,13 @@ test('CLI-added environment and account context never reach the model', () => {
 test('the extra-usage opt-out is read from the store per request and fails safe', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-settings-'));
   const store = join(root, 'mods.json');
-  const settings = { store, paths: ['/store/sources/omd_claude_cli', '/real/omd_claude_cli'] };
+  const allowed = () => extraUsageAllowed(join(root, 'routes/claude/route.json'), '/real/omd_claude_cli');
   try {
-    assert.equal(await extraUsageAllowed(settings), false);
-    await writeFile(store, JSON.stringify({ mods: [{ path: '/store/sources/omd_claude_cli', settings: {} }] }));
-    assert.equal(await extraUsageAllowed(settings), true);
+    assert.equal(await allowed(), false);
+    await writeFile(store, JSON.stringify({ mods: [{ path: `${root}/sources/omd_claude_cli/`, settings: {} }] }));
+    assert.equal(await allowed(), true);
     await writeFile(store, JSON.stringify({ mods: [{ path: '/real/omd_claude_cli', settings: { extra_usage: false } }] }));
-    assert.equal(await extraUsageAllowed(settings), false);
+    assert.equal(await allowed(), false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -356,22 +364,19 @@ test('a malformed upstream stream ends the relayed response instead of hanging',
   }
 });
 
-test('missing subscription login and inherited API override fail before routing', async () => {
+test('missing subscription login fails before routing and inherited API overrides never reach the CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-auth-'));
   const fake = join(root, 'claude');
+  const names = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CODE_USE_MANTLE', 'ANTHROPIC_PROFILE', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS'];
   try {
-    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; else echo '{"loggedIn":false}'; fi\n`);
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ -n "$ANTHROPIC_API_KEY" ]; then echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"max"}'; else echo '{"loggedIn":false}'; fi\n`);
     await chmod(fake, 0o700);
+    for (const name of names) process.env[name] = 'fixture';
     assert.throws(() => checkCli(fake), /claude_ai_subscription_login_required/);
-    for (const name of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CODE_USE_MANTLE', 'ANTHROPIC_PROFILE']) {
-      process.env[name] = 'fixture';
-      try { assert.throws(() => checkCli(fake), new RegExp(`conflicting_api_or_cloud_overrides:${name}`)); }
-      finally { delete process.env[name]; }
-    }
-    process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '1000';
-    try { assert.throws(() => checkCli(fake), /claude_ai_subscription_login_required/); }
-    finally { delete process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS; }
+    assert.deepEqual(names.filter(name => name in cliEnv({ ANTHROPIC_BASE_URL: 'relay' })), ['CLAUDE_CODE_MAX_OUTPUT_TOKENS']);
+    assert.equal(cliEnv({ ANTHROPIC_BASE_URL: 'relay' }).ANTHROPIC_BASE_URL, 'relay');
   } finally {
+    for (const name of names) delete process.env[name];
     await rm(root, { recursive: true, force: true });
   }
 });

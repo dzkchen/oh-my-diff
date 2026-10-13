@@ -364,7 +364,7 @@ def route(prefix, bin_dir, name, args):
         extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
         result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra,
-                                 *([args.billing] if name == "claude" else [])], stdout=subprocess.PIPE, text=True)
+                                 *([args.billing] if name == "claude" and args.billing else [])], stdout=subprocess.PIPE, text=True)
         if result.returncode:
             raise ValueError(f"{name} setup failed")
         details = json.loads(result.stdout)
@@ -790,8 +790,8 @@ def main():
         route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI or SDK module path for --setup")
         route_parser.add_argument("--model", help="model slug or family shortcut")
         if name == "claude":
-            route_parser.add_argument("--billing", choices=("subscription", "api"), default="subscription",
-                                      help="for --setup: claude.ai plan limits, or Console API credits")
+            route_parser.add_argument("--billing", choices=("subscription", "api"),
+                                      help="for --setup: claude.ai plan limits (first setup default), or Console API credits; reruns keep the current choice")
         if name == "profiles":
             for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):
                 route_parser.add_argument(f"--{flag}")
