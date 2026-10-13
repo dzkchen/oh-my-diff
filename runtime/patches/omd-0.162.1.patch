@@ -70359,10 +70359,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..f3b7c8605
+index 000000000..58ae354bc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5111 @@
+@@ -0,0 +1,5114 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -70423,7 +70423,10 @@ index 000000000..f3b7c8605
 +}
 +
 +fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
-+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE")?);
++    let node = PathBuf::from(
++        std::env::var_os("OMD_TEST_NODE")
++            .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
++    );
 +    let dir = tempfile::tempdir().unwrap();
 +    let base = dir.path().canonicalize().unwrap();
 +    let repository = base.join("repo");
@@ -126290,10 +126293,10 @@ index 000000000..63054c349
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 000000000..ff3b4d399
+index 000000000..1f976853f
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,139 @@
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
@@ -126338,10 +126341,27 @@ index 000000000..ff3b4d399
 +];
 +
 +#[test]
++fn missing_node_is_a_failure() {
++    let output = std::process::Command::new(std::env::current_exe().unwrap())
++        .args([
++            "--exact",
++            "host_feature_examples_load_and_register_together",
++            "--nocapture",
++        ])
++        .env_remove("OMD_TEST_NODE")
++        .output()
++        .unwrap();
++    assert!(
++        !output.status.success(),
++        "missing Node must fail the required suite"
++    );
++    assert!(String::from_utf8_lossy(&output.stderr).contains("OMD_TEST_NODE"));
++}
++
++#[test]
 +fn host_feature_examples_load_and_register_together() {
-+    let Some(node) = std::env::var_os("OMD_TEST_NODE") else {
-+        return;
-+    };
++    let node = std::env::var_os("OMD_TEST_NODE")
++        .expect("OMD_TEST_NODE required; sandbox tests must actually execute");
 +    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples");
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();

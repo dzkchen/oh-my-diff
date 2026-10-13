@@ -5,7 +5,10 @@
 Accumulated integration coverage for the rust-v0.162.1 pinned runtime as of
 2026-10-10. Each component names its owner, version, retained fixtures, limits,
 and removal path. Fixture references are cumulative; this source check does not rerun
-them or qualify the full release candidate. The matrix is checked against the
+them or verify test discovery, execution, assertions, or the full release candidate.
+Release qualification requires `--release --executed-evidence RECEIPT` for all
+combination and regression evidence at the clean validated revision; see `integration/EVIDENCE.md`.
+The matrix is checked against the
 shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language
 or evidence reference that disagrees with the runtime fails the check.
 
@@ -191,9 +194,9 @@ Deleted and not restored: `benchmarks/`.
 | **shared_state_store** | Several mods writing into one store | the store lock, per-mod state files and scope separation |
 | **optional_integration_isolation** | Optional integrations start, serve and tear down cleanly | loopback listeners, managed processes and detected external servers |
 
-## Exercised combinations
+## Combination evidence inventory
 
-| Combination | Components | Boundaries | Result | Executable evidence |
+| Combination | Components | Boundaries | Recorded result (not verified here) | Source evidence inventory |
 | --- | --- | --- | --- | --- |
 | **first_party_mods_on_the_published_api** | omd_workflow, mod_api |  | Every bundled mod declares the current API, requests only capabilities the host publishes, imports only the published type surface, touches no host-private symbol and is not named in host source. | `python:test_first_party_mods_use_only_the_published_api` |
 | **colliding_tool_and_terminal_slots** | omd_host, mod_api | duplicate_tools, duplicate_keybindings | Both claimants of one `mod_<id>_<name>` slot and both claimants of one exclusive replacement point fail closed before activation; the remaining mod keeps its tool and command. | `rust:omd/tests/integration.rs::colliding_tool_slots_and_contested_replacements_disable_only_the_claimants` · `rust:omd/tests/mods.rs::contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` |
@@ -212,16 +215,16 @@ Deleted and not restored: `benchmarks/`.
 
 ## Retained regression cases
 
-| Case | Retained for | What stays covered | Executable evidence |
+| Case | Retained for | Claimed behavior | Source evidence inventory |
 | --- | --- | --- | --- |
 | **current_api_composition** | 0.2.0-experimental.5 | Composition, precedence and conflict handling on the current API 0.2 row: declared order, cycles, contested replacements and scope shadowing. | `rust:omd/tests/mods.rs::composition_order_is_declared_dependencies_first_then_mod_id` · `rust:omd/tests/mods.rs::a_dependency_cycle_is_rejected_before_activation_and_isolated` · `script:scripts/mod_conformance.py` |
 | **state_migration_and_rollback** | 0.1.0 | Package-owned state survives a host upgrade only through an explicit migration, with a content-addressed backup and an interrupted-migration rollback. | `rust:omd/tests/mods.rs::migration_is_explicit_bounded_and_preserves_previous_state` · `rust:omd/tests/mods.rs::interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state` |
 | **pinned_codex_baseline** | 0.162.1 | The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces. | `script:scripts/apply_runtime_patch.py` · `script:scripts/verify_codex_compat.py` · `script:scripts/normalize_upstream_lock.py` |
 | **pinned_node_runtime** | 24.18.0 | Mods keep loading under the pinned Node erasable-TypeScript loader with no ambient process, fetch or code generation. | `node:no ambient process, fetch, or code generation` · `node:typed module context callback` · `script:scripts/mod_author_acceptance.py` |
 
-## Tested versus untested
+## Inventoried versus untested
 
-Tested: 14 combinations across 9 shared boundaries and 18 maintained components, plus 4 regression cases retained across versions.
+Inventoried: 14 combinations across 9 shared boundaries and 18 maintained components, plus 4 regression cases retained across versions.
 
 Untested and not claimed:
 

@@ -632,9 +632,12 @@ Every classic hook name `api.hook` accepts, the native event or interceptor it m
 
 `rust:` `runtime/omd/tests/*.rs` · `patch:` patched native/TUI tests ·
 `node:` `mods/runner.test.mjs` · `python:` `tests/`.
-Each reference is resolved by `scripts/mod_conformance.py`.
+Each reference is resolved by `scripts/mod_conformance.py` as a source inventory only.
+A matching name does not prove test discovery, execution, or assertion quality.
+Release qualification requires `--release --executed-evidence RECEIPT` for every
+frozen surface's evidence at the clean validated revision. See `integration/EVIDENCE.md`.
 
-| Decision or rule | Executable evidence |
+| Decision or rule | Source evidence inventory |
 | --- | --- |
 | coordination.lead_route | `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `patch:middleware_switches_only_configured_lead_routes_and_transforms_text` · `patch:host_config_defaults_are_bounded_and_route_free` |
 | coordination.agents | `rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks` · `rust:integration_candidate_preserves_unrelated_edits_and_rejects_conflicts` · `rust:worker_route_grants_are_exact_nontransferable_and_share_allowances` · `patch:structured_failures_do_not_classify_permissions_or_allowance_as_outages` · `patch:resumed_ledgers_keep_allowance_observation_and_uncertain_requests` · `patch:unexpected_http_status_survives_error_event_conversion` |

@@ -58,7 +58,10 @@ fn install(store: &ModStore, dir: &Path, package: &Package<'_>) {
 }
 
 fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE")?);
+    let node = PathBuf::from(
+        std::env::var_os("OMD_TEST_NODE")
+            .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
+    );
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
     let repository = base.join("repo");
