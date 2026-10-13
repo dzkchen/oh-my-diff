@@ -2439,6 +2439,8 @@ struct Reply {
     ui_state: Option<String>,
     #[serde(default)]
     ui_read: bool,
+    #[serde(default)]
+    ui_written: bool,
     value: Value,
     #[serde(default)]
     calls: Vec<ModHostCall>,
@@ -2469,6 +2471,7 @@ struct Loaded {
     ui: Option<(String, Arc<Mutex<UiState>>)>,
     ui_state: Value,
     ui_revision: u64,
+    ui_clears: u64,
     command_view: Option<AcceptedCommandView>,
     registrations: Registrations,
     source_use: ModSourceUse,
@@ -2483,6 +2486,7 @@ struct Loaded {
 struct UiState {
     value: Value,
     revision: u64,
+    clears: u64,
 }
 
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
@@ -2505,6 +2509,7 @@ fn reset_ui_states(root: &Path, revision: u64) {
             {
                 state.value = Value::Null;
                 state.revision = state.revision.wrapping_add(1);
+                state.clears = state.clears.wrapping_add(1);
             }
         }
     }
@@ -2596,6 +2601,7 @@ impl Loaded {
         {
             state.value = Value::Null;
             state.revision = state.revision.wrapping_add(1);
+            state.clears = state.clears.wrapping_add(1);
         }
     }
 
@@ -2723,6 +2729,7 @@ type NextFn<'n> = dyn FnMut(
 struct Invocation {
     authority_current: bool,
     location: store::StateLocation,
+    thread: Option<String>,
     loaded: Loaded,
     dynamic: Vec<String>,
     node: PathBuf,
@@ -3477,6 +3484,7 @@ impl ModHost {
                 ui: None,
                 ui_state: Value::Null,
                 ui_revision: 0,
+                ui_clears: 0,
                 command_view: None,
                 registrations: Registrations::default(),
                 source_use: ModSourceUse::default(),
@@ -4558,10 +4566,12 @@ impl ModHost {
             let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
             loaded.ui_state = state.value.clone();
             loaded.ui_revision = state.revision;
+            loaded.ui_clears = state.clears;
         }
         Ok(Invocation {
             authority_current: loaded.selection.authority_current(),
             location,
+            thread: thread.map(str::to_owned),
             dynamic: self
                 .dynamic_tools
                 .get(id)
@@ -4580,6 +4590,7 @@ impl ModHost {
         &mut self,
         loaded: &Loaded,
         location: &store::StateLocation,
+        thread: Option<&str>,
         event: &str,
         reply: Reply,
         active: &dyn Fn() -> bool,
@@ -4597,13 +4608,20 @@ impl ModHost {
             .map(|(_, state)| state.lock())
             .transpose()
             .map_err(|_| failure("ui_state_unavailable"))?;
+        let current = self.loaded.get(&loaded.package.id);
+        let rebind = loaded
+            .ui
+            .as_ref()
+            .zip(current)
+            .is_some_and(|((key, _), current)| {
+                current.ui.is_none() && key == &self.ui_key(current, thread)
+            });
         if reply.ui_read {
-            if self
-                .loaded
-                .get(&loaded.package.id)
-                .and_then(|current| current.ui.as_ref())
-                .zip(loaded.ui.as_ref())
-                .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
+            if !rebind
+                && current
+                    .and_then(|current| current.ui.as_ref())
+                    .zip(loaded.ui.as_ref())
+                    .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
             {
                 return Err(failure("callback_cancelled"));
             }
@@ -4615,10 +4633,10 @@ impl ModHost {
             {
                 return Err(failure("ui_state_capability_denied"));
             }
-            if ui
-                .as_ref()
-                .is_none_or(|state| state.revision != loaded.ui_revision)
-            {
+            if ui.as_ref().is_none_or(|state| {
+                state.revision.wrapping_sub(loaded.ui_revision)
+                    != state.clears.wrapping_sub(loaded.ui_clears)
+            }) {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
@@ -4693,11 +4711,17 @@ impl ModHost {
                 &reply.state,
             )?;
         }
-        if ui_state != loaded.ui_state
-            && let Some(state) = ui.as_mut()
+        if let Some(state) = ui.as_mut()
+            && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
         {
             state.value = ui_state;
             state.revision = state.revision.wrapping_add(1);
+        }
+        if rebind
+            && reply.ui_read
+            && let Some(current) = self.loaded.get_mut(&loaded.package.id)
+        {
+            current.ui = loaded.ui.clone();
         }
         if event == "command"
             && let Some(patch) = reply.value.get("terminal")
@@ -4732,7 +4756,14 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        if generation != self.generation {
+        // A reload that keeps this package binding (such as the callback's own
+        // `packages.apply`) must not discard a result whose host calls already ran.
+        let thread = invocation.thread.as_deref();
+        if generation != self.generation
+            && self.loaded.get(id).is_none_or(|current| {
+                self.ui_key(current, thread) != self.ui_key(&invocation.loaded, thread)
+            })
+        {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
         self.check_callback_authority(&invocation.loaded)?;
@@ -4745,6 +4776,7 @@ impl ModHost {
             self.accept(
                 &invocation.loaded,
                 &invocation.location,
+                invocation.thread.as_deref(),
                 event,
                 reply,
                 active,

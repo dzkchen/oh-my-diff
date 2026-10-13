@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "8aefc41f3e17127dba24cf944200af38c5a71a7a86f2f1f81d1c6de60baa34e6"
+    "sha256": "8ed3fe300ae9486db97f9318780f1928f08fd55731d60b4f16ec21220e52ee88"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1221,7 +1221,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "b4a78fdafd21e95b2baaa4fcc64ddd026c0cbd2426a85487769cd40da555b6f4"
+      "after": "2ac4bb869411a7d4d7d8ee84112ee45d84feab9f4bd1de0f5026e40265639d71"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1237,7 +1237,7 @@
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,
-      "after": "c0f600588bf3b797a876f155be505600a9d978a048453a101093f2c664404628"
+      "after": "592237ace0db007572ac438328d520a779d6de51c22e1d2a52364204e397b803"
     },
     "codex-rs/omd/src/mods/operation_validation.rs": {
       "before": null,
@@ -1253,7 +1253,7 @@
     },
     "codex-rs/omd/src/mods/packages.rs": {
       "before": null,
-      "after": "127fcc1cebba495e9167c9fe11a76ea19f46aae6a06295770e7e1e62aa3831c5"
+      "after": "147357ab298d2ab7bef8f6f858f5a6883064bb61b759f7a5dfb8cfe99af1b4da"
     },
     "codex-rs/omd/src/mods/persisted.rs": {
       "before": null,
@@ -1281,7 +1281,7 @@
     },
     "codex-rs/omd/src/mods/runner.mjs": {
       "before": null,
-      "after": "84e36a03afb952436e079d2c0910aead85bcdd1de3e9cf0e6befb14b931c477b"
+      "after": "1b960c3a2ef0abd54138d83f400c3c92f44c4cb21ef581b84d5035bd143c01b6"
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
@@ -1393,7 +1393,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "1224431a5924be4d131b343d9d5fbf9fa87543925fb9e6f5f31f253a5fb4230d"
+      "after": "7033ff570050e4c39027e4c021648cc2c82fe8d42d3b4af461d56956261e83cc"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
@@ -1553,7 +1553,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "c976ef1ec192d7a3d212116252d55f7bf74f753c56f4f82e7506e8a39181b260"
+      "after": "3795f313aad9dd67121e44f361130784de6878e30b7a3330fe86d9805deac5c3"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "e70c214b57f8e994175710222f0547f4f06e47d754573cbecdfd383f769f8655",
