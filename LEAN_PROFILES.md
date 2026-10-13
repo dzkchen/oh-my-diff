@@ -176,7 +176,7 @@ remain separate gates.
 
 The OMD+ profile includes inactive `omd_claude_cli` and `omd_profiles` route mods.
 `omd_claude_cli` uses the official Claude CLI's logged-in
-`claude.ai` Pro or Max subscription; `omd_profiles` switches between ChatGPT
+`claude.ai` Pro, Max, Team or Enterprise plan, or with `--billing api` its Anthropic Console login; `omd_profiles` switches between ChatGPT
 accounts, API keys and compatible providers
 ([details](mods/first-party/omd_profiles/README.md)). Set a route up once, then launch sessions on it:
 
@@ -196,8 +196,9 @@ enables the mod and makes the managed `codex` launcher define the provider.
 Launching adds the provider, model and catalog to an ordinary OMD+ session, so
 enabled mods, their data, `/status` and resume work as usual; `--model` takes a
 slug, family shortcut or profile name and further arguments go to `codex`. The Claude route
-requires official Claude CLI `2.1.285` and rejects inherited API-key and cloud
-overrides; there is no API-key fallback. The native host keeps process
+requires official Claude CLI `2.1.296` and keeps inherited API-key and cloud
+overrides away from it; the billing source chosen at setup is enforced on every request, with no
+fallback between plan limits and API credits. The native host keeps process
 authority, tool execution, approvals and usage accounting; each Claude model
 call admits one upstream request. `ask_claude: true` gives other leads an
 opt-in Claude delegation tool. The package READMEs list each route's limits.

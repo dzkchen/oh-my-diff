@@ -24,3 +24,16 @@ Rust through Cargo in the patched scratch tree, and scenarios through
 executed by this command. This is a filename inventory, not a check that a Rust
 module is enabled or an inline test executes; listing a file does not establish
 executed coverage.
+
+`mise run mods:check` checks mod declarations, example/first-party/optional
+TypeScript (including TSX), and bundled plugin TypeScript with `mods/tsconfig.json`.
+`mods/tsconfig.author.json` checks every public `mods/author/*.mjs` implementation
+with `checkJs`, Node types and declaration-linked JSDoc on the public client,
+testing and JSX exports. Internal JavaScript parameters may remain inferred
+(`noImplicitAny: false`); this is not a strict TypeScript conversion.
+`node scripts/mod_typecheck_inventory.mjs --list` prints each shipped source and
+its check. The inventory fails for newly uncovered source. Standalone browser
+examples, first-party hooks/sidecars and the Bun execution kernel have explicit
+syntax-only entries (with reasons), checked with Node. Their runtime behavior
+belongs to their package tests. Test files are owned by the suites above, not
+this inventory.

@@ -34,6 +34,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "b863e842cbfd7fd8e452edaf4c1e0368a5027d964513e51ab1542e3d0fd24c66"
+    "sha256": "fbe5aef36fbeecdb8add6221d4d61493947840b890259992d650cfaa832365b4"
   }
 }

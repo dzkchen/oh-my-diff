@@ -4918,8 +4918,8 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
         .try_local_environment()
         .unwrap()
         .get_filesystem();
-    let cwd =
-        codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository).unwrap();
+    let cwd = codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository)
+        .unwrap();
     let access = codex_file_system::FileSystemEnvironmentAccessor::new(
         &file_system,
         codex_file_system::FileSystemSandboxContext::from_permission_profile(
@@ -4999,8 +4999,8 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
         .try_local_environment()
         .unwrap()
         .get_filesystem();
-    let cwd =
-        codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository).unwrap();
+    let cwd = codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository)
+        .unwrap();
     let access = codex_file_system::FileSystemEnvironmentAccessor::new(
         &file_system,
         codex_file_system::FileSystemSandboxContext::from_permission_profile(

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { once } from 'node:events';
 import activate, { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, limitHeaders, upstreamFailure } from '../mods/first-party/omd_claude_cli/transport.mjs';
+import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from '../mods/first-party/omd_claude_cli/transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -40,6 +40,10 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
   assert.equal(response.at(-1).response.usage.omd_cache_ttl_seconds, 3600);
   assert.deepEqual(response.at(-1).response.usage.omd_reported_cost, { usd: 0.042, basis: 'client_list_estimate' });
+  const credits = responseEvents({ id: 'msg_api', usage: { input_tokens: 1, output_tokens: 1 }, content: [] },
+    {}, model, first.reverse, false, 0.001, 'api').at(-1).response.usage;
+  assert.equal('omd_subscription_charge' in credits, false);
+  assert.deepEqual(credits.omd_reported_cost, { usd: 0.001, basis: 'client_list_estimate' });
   const names = ['constructor', 'toString', '__proto__'];
   const prototypeTools = translateRequest({ ...prompt, tools: names.map(name => ({ type: 'function', name })) }, model);
   assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
@@ -160,17 +164,46 @@ test('Claude stream capture streams thinking as reasoning and preserves tool arg
   assert.deepEqual(reasoning.summary, [{ type: 'summary_text', text: 'Check pwd.' }]);
 });
 
-test('subscription windows reach /status headers and rate limits name their window', () => {
+test('subscription windows, resets and billing source reach /status headers; failures name their cause', () => {
   const headers = { 'anthropic-ratelimit-unified-5h-utilization': '0.42', 'anthropic-ratelimit-unified-5h-reset': '1790000000',
     'anthropic-ratelimit-unified-7d-utilization': '0.071', 'anthropic-ratelimit-unified-7d-reset': '1790500000' };
-  assert.deepEqual(limitHeaders(headers), { 'x-codex-primary-used-percent': '42', 'x-codex-primary-window-minutes': '300',
-    'x-codex-primary-reset-at': '1790000000', 'x-codex-secondary-used-percent': '7.1', 'x-codex-secondary-window-minutes': '10080',
-    'x-codex-secondary-reset-at': '1790500000' });
+  assert.deepEqual(limitHeaders(headers, 'note'), { 'x-claude-limit-name': 'Claude', 'x-omd-provider-note': 'note',
+    'x-claude-primary-used-percent': '42', 'x-claude-primary-window-minutes': '300', 'x-claude-primary-reset-at': '1790000000',
+    'x-claude-secondary-used-percent': '7.1', 'x-claude-secondary-window-minutes': '10080', 'x-claude-secondary-reset-at': '1790500000' });
+  assert.deepEqual(limitHeaders({}, 'note'), { 'x-claude-limit-name': 'Claude', 'x-omd-provider-note': 'note' });
+  const overage = { 'anthropic-ratelimit-unified-status': 'rejected', 'anthropic-ratelimit-unified-overage-status': 'allowed' };
+  assert.equal(providerNote('subscription', 'team', headers), 'Claude Team plan limits; extra usage unknown; claude.ai/settings/usage');
+  assert.equal(providerNote('subscription', 'max', { 'anthropic-ratelimit-unified-overage-status': 'allowed_warning' }, false),
+    'Claude Max plan limits; extra usage on, OMD stops at it; claude.ai/settings/usage');
+  assert.equal(providerNote('subscription', 'enterprise', overage), 'Claude Enterprise plan limits; extra usage in use; claude.ai/settings/usage');
+  assert.equal(providerNote('subscription', 'pro', { 'anthropic-ratelimit-unified-overage-status': 'rejected' }), 'Claude Pro plan limits; extra usage off; claude.ai/settings/usage');
+  assert.match(providerNote('api', null, headers), /^Anthropic API credits \(Console\); no plan limits/);
+  for (const note of [providerNote('subscription', 'enterprise', overage, false), providerNote('api')]) assert.ok(Buffer.byteLength(note) <= 120);
+  assert.equal(usingOverage(overage), true);
+  assert.equal(usingOverage({ 'anthropic-ratelimit-unified-overage-in-use': 'true' }), true);
+  assert.equal(usingOverage({ 'anthropic-ratelimit-unified-overage-status': 'allowed' }), false);
+  assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 1_000_000), true);
+  assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 3_000_000), false);
+  assert.equal(stoppedForExtraUsage(overage), false);
+  assert.equal(stoppedForExtraUsage(headers), false);
+  const both = { ...overage, 'anthropic-ratelimit-unified-5h-reset': '2000', 'anthropic-ratelimit-unified-reset': '9000' };
+  assert.equal(stoppedForExtraUsage(both, 3_000_000), false);
+  assert.match(extraUsageStop(both).message, new RegExp(new Date(2_000_000).toISOString()));
+  assert.equal(upstreamFailure(200, { ...headers, ...overage }, ''), null);
   const limited = upstreamFailure(429, { ...headers, 'anthropic-ratelimit-unified-status': 'rejected',
-    'anthropic-ratelimit-unified-representative-claim': 'seven_day' }, '');
+    'anthropic-ratelimit-unified-representative-claim': 'seven_day', 'anthropic-ratelimit-unified-overage-status': 'rejected',
+    'anthropic-ratelimit-unified-overage-disabled-reason': 'out_of_credits' }, '');
   assert.deepEqual(limited, { code: 'rate_limit_exceeded',
-    message: `Claude seven_day limit reached; resets ${new Date(1790500000 * 1000).toISOString()}` });
+    message: `Claude seven_day limit reached; resets ${new Date(1790500000 * 1000).toISOString()}; extra usage unavailable (out_of_credits)` });
   assert.equal(upstreamFailure(400, {}, '{"error":{"message":"prompt is too long: 1000001 tokens"}}').code, 'context_length_exceeded');
+  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"Your credit balance is too low"}}', 'api').code, 'claude_api_credits_exhausted');
+  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"Your credit balance is too low"}}'), null);
+  assert.match(upstreamFailure(401, {}, '{"error":{"type":"authentication_error"}}').message, /claude auth login/);
+  assert.match(upstreamFailure(401, {}, '', 'api').message, /--console/);
+  assert.equal(upstreamFailure(403, {}, '{"error":{"message":"OAuth token has been revoked"}}').code, 'claude_login_expired');
+  assert.equal(upstreamFailure(403, {}, '{"error":{"type":"permission_error","message":"Your workspace cannot use this API"}}'), null);
+  assert.equal(upstreamFailure(404, {}, '{"error":{"type":"not_found_error","message":"model: claude-x"}}').code, 'claude_model_not_entitled');
+  assert.match(upstreamFailure(403, {}, '{"error":{"message":"no access to model claude-x"}}', 'api').message, /Console workspace/);
   assert.equal(upstreamFailure(200, headers, ''), null);
 });
 
@@ -203,7 +236,7 @@ test('one upstream request is admitted and a second is refused', async () => {
   await relay.listen();
   const send = () => new Promise((resolve, reject) => {
     const target = new URL(`${relay.url}/v1/messages`);
-    const outgoing = request(target, { method: 'POST' }, response => {
+    const outgoing = request(target, { method: 'POST', headers: { authorization: 'Bearer fixture' } }, response => {
       response.resume(); response.on('end', () => resolve(response.statusCode));
     });
     outgoing.on('error', reject);
@@ -220,6 +253,84 @@ test('one upstream request is admitted and a second is refused', async () => {
   }
 });
 
+test('the relay sends nothing upstream for the wrong credential or model and stops at opted-out extra usage', async () => {
+  let forwarded = 0;
+  let served = {};
+  const upstream = createServer((incoming, response) => {
+    forwarded++;
+    incoming.resume();
+    incoming.on('end', () => {
+      response.writeHead(200, { 'content-type': 'text/event-stream', ...served });
+      response.end('event: ping\ndata: {"type":"ping"}\n\n');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${upstream.address().port}`;
+  const attempt = async (policy, headers, body = { model }) => {
+    const relay = new Relay(base, () => {}, () => {}, { model, ...policy });
+    await relay.listen();
+    try {
+      await new Promise(resolve => {
+        const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST', headers }, response => {
+          response.resume();
+          response.on('close', resolve);
+        });
+        outgoing.on('error', resolve);
+        outgoing.end(JSON.stringify(body));
+      });
+      return relay;
+    } finally { relay.abort(); }
+  };
+  try {
+    assert.equal((await attempt({}, { 'x-api-key': 'fixture' })).refusal.code, 'claude_billing_route_mismatch');
+    assert.equal((await attempt({ billing: 'api' }, { authorization: 'Bearer fixture' })).refusal.code, 'claude_billing_route_mismatch');
+    assert.equal((await attempt({}, { authorization: 'Bearer fixture' }, { model: 'claude-other' })).refusal.code, 'claude_model_mismatch');
+    assert.equal(forwarded, 0);
+    served = { 'anthropic-ratelimit-unified-status': 'rejected', 'anthropic-ratelimit-unified-overage-status': 'allowed' };
+    assert.equal((await attempt({ billing: 'api' }, { 'x-api-key': 'fixture' })).refusal, null);
+    const stopped = await attempt({ extraUsage: false }, { authorization: 'Bearer fixture' });
+    assert.equal(stopped.refusal.code, 'claude_extra_usage_blocked');
+    assert.match(stopped.refusal.message, /may still bill this one request/);
+    assert.equal(forwarded, 2);
+  } finally {
+    upstream.closeAllConnections();
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+test('CLI-added environment and account context never reach the model', () => {
+  const reminder = '\n\n<system-reminder>\nAs you answer the user\'s questions, you can use the following context:\n# userEmail\nThe user\'s email address is user@example.com.\n\nClaude Code attached this context automatically; it isn\'t part of the user\'s message.\n</system-reminder>';
+  const omd = 'tool output that quotes <system-reminder>keep me</system-reminder>';
+  const body = withoutCliContext({ model, messages: [
+    { role: 'user', content: [{ type: 'text', text: reminder.trim() }, { type: 'text', text: 'Run pwd.' }] },
+    { role: 'system', content: '# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /private/tmp/omd-claude-x' },
+    { role: 'system', content: [{ type: 'text', text: '# Environment\nYou have been invoked in the following environment: ' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'mcp__omd__exec_command', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: `/repo${reminder}` },
+      { type: 'text', text: `${omd}${reminder}` }] },
+    { role: 'system', content: [{ type: 'text', text: 'Today\'s date is 2026-10-13.' }] },
+    { role: 'user', content: [{ type: 'text', text: reminder.trim() }] },
+    { role: 'user', content: reminder }] });
+  assert.deepEqual(body.messages.map(message => message.role), ['user', 'assistant', 'user', 'system']);
+  assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'Run pwd.' }]);
+  assert.equal(body.messages[2].content[0].content, '/repo');
+  assert.equal(body.messages[2].content[1].text, omd);
+  assert.equal(JSON.stringify(body).includes('user@example.com'), false);
+});
+
+test('the extra-usage opt-out is read from the store per request and fails safe', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-settings-'));
+  const store = join(root, 'mods.json');
+  const allowed = () => extraUsageAllowed(join(root, 'routes/claude/route.json'), '/real/omd_claude_cli');
+  try {
+    assert.equal(await allowed(), false);
+    await writeFile(store, JSON.stringify({ mods: [{ path: `${root}/sources/omd_claude_cli/`, settings: {} }] }));
+    assert.equal(await allowed(), true);
+    await writeFile(store, JSON.stringify({ mods: [{ path: '/real/omd_claude_cli', settings: { extra_usage: false } }] }));
+    assert.equal(await allowed(), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('a malformed upstream stream ends the relayed response instead of hanging', async () => {
   const upstream = createServer((incoming, response) => {
     incoming.resume();
@@ -234,7 +345,7 @@ test('a malformed upstream stream ends the relayed response instead of hanging',
   try {
     const outcome = await Promise.race([
       new Promise(resolve => {
-        const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST' }, response => {
+        const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST', headers: { authorization: 'Bearer fixture' } }, response => {
           response.resume();
           response.on('error', () => resolve('closed'));
           response.on('close', () => resolve('closed'));
@@ -253,23 +364,47 @@ test('a malformed upstream stream ends the relayed response instead of hanging',
   }
 });
 
-test('missing subscription login and inherited API override fail before routing', async () => {
+test('missing subscription login fails before routing and inherited API overrides never reach the CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-auth-'));
   const fake = join(root, 'claude');
+  const names = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CODE_USE_MANTLE', 'ANTHROPIC_PROFILE', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS'];
   try {
-    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; else echo '{"loggedIn":false}'; fi\n`);
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ -n "$ANTHROPIC_API_KEY" ]; then echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"max"}'; else echo '{"loggedIn":false}'; fi\n`);
     await chmod(fake, 0o700);
-    assert.throws(() => checkCli(fake), /claude_ai_pro_or_max_login_required/);
-    const previous = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = 'fixture';
-    try { assert.throws(() => checkCli(fake), /conflicting_api_or_cloud_overrides/); }
-    finally {
-      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
-      else process.env.ANTHROPIC_API_KEY = previous;
-    }
+    for (const name of names) process.env[name] = 'fixture';
+    assert.throws(() => checkCli(fake), /claude_ai_subscription_login_required/);
+    assert.deepEqual(names.filter(name => name in cliEnv({ ANTHROPIC_BASE_URL: 'relay' })), ['CLAUDE_CODE_MAX_OUTPUT_TOKENS']);
+    assert.equal(cliEnv({ ANTHROPIC_BASE_URL: 'relay' }).ANTHROPIC_BASE_URL, 'relay');
   } finally {
+    for (const name of names) delete process.env[name];
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('eligibility follows the official auth status for each billing route', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-eligibility-'));
+  const fake = join(root, 'claude');
+  const status = join(root, 'status.json');
+  const login = value => writeFile(status, JSON.stringify({ loggedIn: true, apiProvider: 'firstParty', ...value }));
+  try {
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; else cat "${status}"; fi\n`, { mode: 0o700 });
+    for (const plan of ['pro', 'max', 'team', 'enterprise']) {
+      await login({ authMethod: 'claude.ai', subscriptionType: plan });
+      assert.equal(checkCli(fake).subscriptionType, plan);
+      assert.throws(() => checkCli(fake, 'api'), /claude_console_api_key_login_required/);
+    }
+    for (const value of [{ authMethod: 'claude.ai', subscriptionType: null }, { authMethod: 'claude.ai', subscriptionType: 'pro', apiProvider: 'bedrock' },
+      { authMethod: 'api_key', apiKeySource: '/login managed key' }, { authMethod: 'oauth_token' }]) {
+      await login(value);
+      assert.throws(() => checkCli(fake), /claude_ai_subscription_login_required/);
+    }
+    await login({ authMethod: 'api_key', apiKeySource: '/login managed key' });
+    assert.doesNotThrow(() => checkCli(fake, 'api'));
+    await login({ authMethod: 'api_key', apiKeySource: 'apiKeyHelper' });
+    assert.throws(() => checkCli(fake, 'api'), /claude_console_api_key_login_required/);
+    await writeFile(fake, '#!/bin/sh\necho "2.1.285 (Claude Code)"\n', { mode: 0o700 });
+    assert.throws(() => checkCli(fake), new RegExp(`claude_cli_${CLI_VERSION.split(' ')[0]}_required`));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('official CLI auth probe uses the approved user identity', async () => {
@@ -278,8 +413,8 @@ test('official CLI auth probe uses the approved user identity', async () => {
   try {
     await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$HOME" = "/opt/fixture-home" ] && [ "$USER" = "fixture" ] && [ "$LOGNAME" = "fixture" ]; then echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}'; else echo '{"loggedIn":false}'; fi\n`);
     await chmod(fake, 0o700);
-    assert.throws(() => checkCli(fake, root), /claude_ai_pro_or_max_login_required/);
-    assert.doesNotThrow(() => checkCli(fake, '/opt/fixture-home', 'fixture'));
+    assert.throws(() => checkCli(fake, 'subscription', root), /claude_ai_subscription_login_required/);
+    assert.doesNotThrow(() => checkCli(fake, 'subscription', '/opt/fixture-home', 'fixture'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

@@ -1,4 +1,5 @@
 mod author;
+mod operation_validation;
 mod bridge;
 mod chain;
 mod persisted;

@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "host_operations": {
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
     "store.get": [
       {"result": null}
     ],
