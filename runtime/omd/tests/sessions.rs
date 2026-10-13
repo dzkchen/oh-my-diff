@@ -143,7 +143,10 @@ fn tool_calls_and_results_are_read_beside_messages_with_bounded_payloads() {
     assert_eq!(records[1]["arguments"], "{\"cmd\":\"ls\"}");
     assert_eq!(records[2]["output"].as_str().unwrap().len(), 2048);
     assert_eq!(records[2]["truncated"], true);
-    assert_eq!(records[3]["arguments"], "*** Begin Patch\r\n*** End Patch\n");
+    assert_eq!(
+        records[3]["arguments"],
+        "*** Begin Patch\r\n*** End Patch\n"
+    );
     assert_eq!(records[3]["redacted"], false);
     assert_eq!(records[4]["redacted"], true);
     assert!(!result.to_string().contains("private-sentinel"));

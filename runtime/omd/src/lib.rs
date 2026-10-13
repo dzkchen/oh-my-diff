@@ -120,6 +120,7 @@ pub use mods::MOD_PACKAGE_SCHEMA_VERSION;
 pub use mods::MOD_RENDER_COMPONENTS;
 pub use mods::MOD_REPLACEMENT_POINTS;
 pub use mods::MOD_STATE_STORAGE_SCHEMA_VERSION;
+pub use mods::MOD_TEXT_BYTES;
 pub use mods::Managed;
 pub use mods::ManagedPolicy;
 pub use mods::ManagedTier;

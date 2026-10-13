@@ -118,7 +118,7 @@ export default function activate(api: ModAPI) {
         { type: 'document' as const, id: id('excerpt'), label: excerpt.path, lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text: visible(text, 1000) }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
         ...(own.length ? [{ type: 'list' as const, id: id('errors'), label: 'Errors in this file, Enter jumps', height: 6, rows: rows(own, 'failure'), action: { command: 'omd_lsp_view:lsp', args: 'open' } }] : []),
       ] : [
-        ...(current.text ? [{ type: 'pane' as const, id: id('text'), label: 'Details, scroll with arrows', children: [{ type: 'markdown' as const, id: id('markdown'), label: 'Details', text: clip(current.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ''), 4096) }] }] : []),
+        ...(current.text ? [{ type: 'pane' as const, id: id('text'), label: 'Details, scroll with arrows', children: [{ type: 'markdown' as const, id: id('markdown'), label: 'Details', text: clip(current.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ''), 32_768) }] }] : []),
         ...(current.items.length ? [{ type: 'list' as const, id: id('items'), label: current.action === 'apply' ? 'Code actions, Enter applies' : 'Results, Enter jumps', height: 12,
           rows: rows(current.items), action: { command: 'omd_lsp_view:lsp', args: current.action } }] : []),
       ]),

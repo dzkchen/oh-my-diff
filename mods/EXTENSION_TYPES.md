@@ -90,6 +90,7 @@ contains only the packages labeled `bundled` below.
 | `raster_canvas@1.0.0` | `mod` | `mods/examples/raster_canvas` | Draws an animated raster with pointer hover, drag and an anchored overlay. |
 | `box_model@1.0.0` | `mod` | `mods/examples/box_model` | Draws bordered cards, flat filled panels, flex rows, hover and focus accents and a gapped split layout with the box model. |
 | `external_client@1.0.0` | `mod` | `mods/examples/external_client` | Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol. |
+| `live_output@1.0.0` | `mod` | `mods/examples/live_output` | Streams a sandboxed command's raw stdout and stderr above the composer as they are written. |
 | `approval_desk@1.0.0` | `mod` | `mods/examples/approval_desk` | Keeps a filterable approval desk beside other sidebars, with a client adapter that answers approvals over the client protocol. |
 | `notification_bridge@1.0.0` | `mod` | `mods/examples/notification_bridge` | Turns live app-server notifications into terminal notifications with focus state. |
 | `output_budget@1.0.0` | `mod` | `mods/examples/output_budget` | Replaces model-visible tool output at the live tool boundary while the host keeps the original. |

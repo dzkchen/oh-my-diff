@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
+    "process.stop": [{"result": {"stopped": false}}],
+    "process.which": [{"result": {"found": [{"name": "sh", "path": "/bin/sh", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}]}}],
+    "process.start": [{"result": {"session": "live", "running": true}}],
+    "terminal.pane": [{"result": {"applied": true}}, {"result": {"applied": true}}],
+    "process.exchange": [
+      {"result": {"session": "live", "running": true, "messages": [
+        {"stream": "stderr", "data": "warning: slow\n"},
+        {"stream": "stdout", "data": "building\r"},
+        {"stream": "stdout", "data": "\n\u001b[3"}
+      ]}},
+      {"result": {"session": "live", "running": true, "messages": [
+        {"stream": "stdout", "data": "2mok\u001b[0m\n 10%\r 60%\r100%\n"},
+        {"stream": "stdout", "data_base64": "/w=="}
+      ]}},
+      {"error": "process_stopped"}
+    ]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "live_output", "event": "command", "name": "run", "payload": "make", "expect": {"display": "Running make"}},
+    {"type": "event", "event": "channel", "payload": {"publisher": "live_output", "channel": "live_output/run", "data": "make\txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "correlation": null, "sequence": 1, "dropped": 0}},
+    {"type": "event", "event": "process_event", "payload": {"session": "live", "kind": "output", "bytes": 64}},
+    {"type": "event", "event": "process_event", "payload": {"session": "live", "kind": "exit"}},
+    {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "draw", "ledger": null},
+      "expect": {"sites": {"above_composer": {"components": [
+        {"type": "pane", "id": "live_output", "label": "make xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… — exited", "children": [
+          {"type": "code", "id": "live_output_text", "label": "Output", "text": "warning: slow\nbuilding\nok\n100%\n[1 binary bytes]\n"}]}]}}}},
+    {"type": "state", "mod": "live_output", "value": {"command": "make", "text": "partial\n", "status": "running"}},
+    {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "startup", "ledger": null},
+      "expect": {"sites": {"above_composer": {"components": [
+        {"type": "pane", "id": "live_output", "label": "make — stopped", "children": [
+          {"type": "code", "id": "live_output_text", "label": "Output", "text": "partial\n"}]}]}}}}
+  ]
+}

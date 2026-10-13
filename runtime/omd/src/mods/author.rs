@@ -459,6 +459,26 @@ impl ModHost {
                 Ok(json!({"clients": host.clients}))
             }
             "status" => Ok(self.status()),
+            "state" => {
+                let id = required_string(step, "mod")?;
+                let loaded = self.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
+                let location = self.state_location(
+                    &loaded.package,
+                    &loaded.selection.scope,
+                    step.get("thread_id").and_then(Value::as_str),
+                );
+                let version = loaded.package.state_version;
+                let current = self.store.scoped_state(&location, version)?;
+                let Some(value) = step.get("value") else {
+                    return Ok(current);
+                };
+                if !loaded.package.capabilities.iter().any(|c| c == "store") {
+                    return Err(failure("state_capability_denied"));
+                }
+                self.store
+                    .write_scoped_state(&location, version, &current, value)?;
+                Ok(value.clone())
+            }
             "reload" => {
                 self.store.reload()?;
                 self.turn_boundary();

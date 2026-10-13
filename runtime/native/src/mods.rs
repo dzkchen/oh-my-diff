@@ -1,4 +1,4 @@
-mod access;
+pub(crate) mod access;
 mod agents;
 mod autonomy;
 #[path = "clients.rs"]

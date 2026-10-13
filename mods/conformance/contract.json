@@ -1049,7 +1049,7 @@
       "replace": null,
       "timing": "tools and lifecycle events",
       "ownership": "mod: program and protocol; host: program identity, sandbox, framing, bounds and cleanup",
-      "limits": "content-length or NDJSON framing; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
+      "limits": "content-length or NDJSON framing, or raw stdout and stderr chunks; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
       "native": "native MCP servers are fixed at startup and not owned by a mod",
       "covers": {
         "capabilities": [

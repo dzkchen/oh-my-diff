@@ -1019,8 +1019,25 @@ during activation, including when their native event is already registered.
 
 ### Framed processes
 
-`process.start` takes `framing: "content-length"` (default) or `"ndjson"` and
-`network: "none"` or `"loopback"`; the protocol-named transports are removed.
+`process.start` takes `framing: "content-length"` (default), `"ndjson"` or
+`"raw"` and `network: "none"` or `"loopback"`; the protocol-named transports are removed.
+`process.exchange` returns at most 64 messages or 4 MiB per call and leaves
+the rest queued. Once the process exits, its readers get one second to deliver
+what it wrote; output queued by then is returned before the exchange that fails
+with `process_stopped`, `process.status` reports `running: true` until it has
+been exchanged, and an exchange's `send` is dropped. `stdin: "null"` starts the
+process with standard input at end of file, for commands that would otherwise
+wait on an open pipe; its exchanges cannot `send` (`process_stdin_null`) and it
+cannot take `raster`.
+
+Experimental (`process_streams_v1`): under `raw` the host reads stdout and stderr as written and
+queues each read (at most 64 KiB) as `{stream: "stdout" | "stderr", data}`,
+or `data_base64` when the bytes are not UTF-8; a character split across
+writes arrives whole in the later chunk. The two streams are separate pipes, so
+chunks keep their order within a stream but not across streams. `send` takes strings, written
+verbatim. The queue keeps its bound of 128 messages: a process that writes
+faster than the mod exchanges blocks on its pipe, and nothing is dropped.
+`raw` cannot take `raster`, `keys` or `pixels`.
 The host replaces `{process.home}` in process arguments with that session's
 private scratch directory, for tools that do not honor the `HOME` environment.
 `environment` supplies at most eight explicit, bounded variables to that
@@ -1480,7 +1497,7 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
-| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
+| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 48 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
 | `tool_call` | call ID (row ID for agent rows; `explore:<first call ID>` for an exploration group) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
@@ -1501,7 +1518,7 @@ member as its compact row, and Find searches every member expanded. Native
 grouping remains when no member is replaced. Aggregate exploration rendering remains available on the
 group when member rendering does not replace it.
 
-Text props carry at most 4 KiB; a content digest is stable across resume and
+Text props carry at most 48 KiB; a content digest is stable across resume and
 reflow, so equal content draws identically. Tool rows are offered from live cells
 and committed history. In the fullscreen transcript a hooked tool row needs no control row: F4
 focuses it and Enter, →/← or a click opens and closes it, and `expanded` is
@@ -2481,8 +2498,10 @@ any it refuses.
   rows; a span `link` is an http(s) URL of at most 2,048 bytes on `line` and
   `list` spans (documents refuse it), drawn as an OSC 8 hyperlink, and
   `markdown` links become hyperlinks too; a control `hotkey` uses the
-  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code` and
-  `markdown` at most 4,096 bytes; `diff` and `document` at most 49,152 bytes. A
+  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code`,
+  `markdown`, `diff` and `document` at most 49,152 bytes (the terminal keeps
+  recent markdown renders, so a large `markdown` costs its parse, about 1 ms per
+  KiB, only when its text or width changes; stream into `code` or `text`). A
   view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
   `wrap` site contains exactly one `slot`. Text fields refuse control characters
   except newlines where a field is multi-line. The status row holds at most 4
@@ -2929,6 +2948,10 @@ required guard.
 never reads the host's environment: an unlisted name is `{set: false}`, and a
 secret-like name (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...)
 fails the scenario with `offline_environment_secret_name`.
+`{"type": "state", "mod": ID, "value"?: VALUE, "thread_id"?: ID}` returns that
+mod's persisted `api.state` from the scenario's store, so `expect` can check it
+after any step; with `value` it first writes that state (the mod needs `store`,
+and the usual state limits apply), seeding a test without a setup command.
 `{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000,
 "max_ms": N}` runs `check`, and while its value differs from `until` advances
 virtual time by `every_ms` and checks again (at most 256 checks); it returns
@@ -3043,7 +3066,8 @@ to the same declared capability and host permission checks.
 `process.start` frames stdio as `content-length` (default) or `ndjson`, and
 stops a process whose stdout breaks the framing (a line that is not JSON
 under `ndjson`; a blank line or 8 KiB without a valid header under
-`content-length`); stderr is discarded;
+`content-length`); stderr is discarded except under `raw`, which streams
+both unframed;
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch

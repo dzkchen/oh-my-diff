@@ -374,7 +374,8 @@ export interface HostOperations {
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
+  /** Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -509,6 +510,7 @@ export interface Events {
   prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }
     | { kind: 'image'; source?: string; start?: number; end?: number; bytes?: number; sha256?: string } | { kind: 'paste'; start: number; end: number; bytes: number; sha256: string })[] }; output: void };
 }
+export type ProcessChunk = { stream: 'stdout' | 'stderr'; data?: string; data_base64?: string };
 export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
 export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };
 export type CommandRow = { command: string; description: string; owner: string | null; hidden: boolean; args_hint: string | null; immediate: boolean; protected: boolean };
