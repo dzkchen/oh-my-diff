@@ -117,6 +117,7 @@
     "intercepts:config_list": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_list'"},"decision":"terminal.commands_config"},
     "intercepts:config_set": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_set'"},"decision":"terminal.commands_config"},
     "intercepts:elicitation": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "intercepts:history_persist": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`."},
     "intercepts:host_operation": {"status":"frozen","consumer":{"path":"mods/examples/admission_guard/index.ts","snippet":"api.intercept('host_operation'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/index.ts","snippet":"api.intercept('input'"},"decision":"context.input"},
     "intercepts:model_request": {"status":"frozen","consumer":{"path":"mods/examples/kernel/index.ts","snippet":"api.intercept('model_request'"},"decision":"kernel.request_stream_middleware"},
@@ -194,7 +195,7 @@
     "operations:session.info": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
     "operations:sessions.list": {"status":"frozen","consumer":{"path":"mods/examples/scoped_data/index.ts","snippet":"api.host.tryCall('sessions.list'"},"decision":"shared.session_index"},
     "operations:sessions.ports": {"status":"frozen","consumer":{"path":"mods/examples/port_list/index.ts","snippet":"api.host.call('sessions.ports'"},"decision":"terminal.surface"},
-    "operations:sessions.read": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "operations:sessions.read": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`."},
     "operations:sessions.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/snapshot_review/index.ts","snippet":"api.host.call('sessions.snapshot'"},"decision":"shared.session_index"},
     "operations:settings.write": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('settings.write'"},"decision":"coordination.packages"},
     "operations:sidecars.invoke": {"status":"frozen","consumer":{"path":"mods/examples/service_request/index.ts","snippet":"api.host.tryCall('sidecars.invoke'"},"decision":"tool.sidecars"},
@@ -778,7 +779,7 @@
       "id": "shared.session_index",
       "group": "context_recovery",
       "decision": "Session history and turn evidence",
-      "observe": "`sessions.list` and `sessions.read` page visible messages; `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
+      "observe": "`sessions.list` and `sessions.read` page visible messages, tool calls and tool results; `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
       "alter": "none",
       "replace": null,
       "timing": "any callback; turn evidence at turn end",
@@ -1050,7 +1051,7 @@
       "replace": null,
       "timing": "tools and lifecycle events",
       "ownership": "mod: program and protocol; host: program identity, sandbox, framing, bounds and cleanup",
-      "limits": "content-length or NDJSON framing; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
+      "limits": "content-length or NDJSON framing, or raw stdout and stderr chunks; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
       "native": "native MCP servers are fixed at startup and not owned by a mod",
       "covers": {
         "capabilities": [
@@ -1997,7 +1998,7 @@
       "group": "coordination",
       "decision": "One-shot model completions and conversation forks",
       "observe": "no",
-      "alter": "`model.complete` runs one tool-less worker turn with system, context, output schema, effort and output-cap options; `model.fork` runs it on a snapshot of the conversation, returning requested tool calls unexecuted",
+      "alter": "`model.complete` runs one tool-less worker turn with system, context, output schema, effort, output-cap and cache-mark options; `model.fork` runs it on a snapshot of the conversation, returning requested tool calls unexecuted; a cache mark sets a prefix-derived `prompt_cache_key` and an `x-omd-cache-breakpoint` for provider transports, and `cache` sums reads and writes",
       "replace": null,
       "timing": "event, tool, timer and channel callbacks and terminal commands in the session's process",
       "ownership": "mod: prompt, options and route; host: route grants, admission, settlement, interception and cancellation",
@@ -2014,7 +2015,8 @@
       },
       "evidence": [
         "patch:model_completions_use_only_configured_worker_routes",
-        "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses"
+        "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses",
+        "patch:completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports"
       ],
       "replace_note": null
     },
@@ -2098,6 +2100,32 @@
         "patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items",
         "patch:unsafe_edits_are_refused",
         "patch:call_arguments_and_image_messages_can_be_rewritten"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "context.history_persist",
+      "group": "context_recovery",
+      "decision": "Store-time rewriting of persisted history text",
+      "observe": "`history_persist` sees each batch's message, tool call, tool output, event-copy and compaction texts before the rollout is written",
+      "alter": "change entry text only, for redaction; ids, call ids, roles, order and count are fixed",
+      "replace": null,
+      "timing": "synchronously before each rollout write; the live conversation keeps the original until the thread is reloaded",
+      "ownership": "mod: entry text; host: entry selection, chunking, provenance and the rollout",
+      "limits": "no host operations; 96 KiB of text per callback, longer texts split across entries with the same index; reasoning, images, encrypted content and realtime transcripts are not offered; a failing required interceptor persists a placeholder",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "intercepts": [
+          "history_persist"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "rust:history_persist_interceptors_rewrite_only_entry_text",
+        "patch:persisted_text_is_rewritten_at_rest_while_live_history_keeps_the_original"
       ],
       "replace_note": null
     },

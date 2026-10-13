@@ -4969,6 +4969,53 @@ fn credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin() {
 }
 
 #[test]
+fn history_persist_interceptors_rewrite_only_entry_text() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = package(
+        &root,
+        "redact",
+        "export default api => api.intercept('history_persist', (e, next) => {
+            if (e.entries.some(entry => entry.text === 'swap')) return {entries: [...e.entries].reverse()};
+            if (e.entries.some(entry => entry.text === 'rename')) return {entries: e.entries.map(entry => ({...entry, call_id: 'other'}))};
+            return next({...e, entries: e.entries.map(entry => ({...entry, text: entry.text.replaceAll('sk-live', '[redacted]')}))});
+        })",
+        &["history"],
+    );
+    trust(&store, &path, &["history"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let persist = |texts: &[&str]| {
+        let entries = texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| json!({"index": index, "kind": "function_call_output", "role": null, "call_id": "c", "text": text}))
+            .collect::<Vec<_>>();
+        codex_omd::continue_operation(
+            &runtime,
+            "history_persist",
+            json!({"thread_id": "t", "entries": entries}),
+            json!({"caller": "host", "thread_id": "t"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |input| Ok(json!({"entries": input["entries"]})),
+        )
+        .unwrap()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["text"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        persist(&["key sk-live-1", "plain"]),
+        ["key [redacted]-1", "plain"]
+    );
+    assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
+    assert_eq!(persist(&["rename"]), ["rename"]);
+}
+
+#[test]
 fn component_change_interceptors_answer_only_for_the_components_owner() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -5243,7 +5290,10 @@ fn component_runners_belong_to_their_owner_and_cannot_sleep() {
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
     for client in ["owner1", "owner2"] {
         for instance in ["a", "b", "c", "d"] {
-            assert_eq!(step(Some(client), &format!("{client}.{instance}"), "x"), Ok(json!("1")));
+            assert_eq!(
+                step(Some(client), &format!("{client}.{instance}"), "x"),
+                Ok(json!("1"))
+            );
         }
     }
     assert_eq!(step(Some("owner1"), "owner1.a", "x"), Ok(json!("2")));
@@ -5269,8 +5319,10 @@ fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
     std::fs::create_dir_all(path.join("lib")).unwrap();
     std::fs::write(
         path.join("mod.json"),
-        serde_json::to_vec(&json!({"schema":1,"id":"fixture","version":"1.0.0","api":CURRENT_API,
-            "state_version":1,"capabilities":["commands"],"assets":["lib/draw.ts","worker.mjs"]}))
+        serde_json::to_vec(
+            &json!({"schema":1,"id":"fixture","version":"1.0.0","api":CURRENT_API,
+            "state_version":1,"capabilities":["commands"],"assets":["lib/draw.ts","worker.mjs"]}),
+        )
         .unwrap(),
     )
     .unwrap();
@@ -5320,7 +5372,11 @@ fn continuations_run_code_before_next_once_with_a_fixed_clock() {
             },
         )
         .unwrap();
-        assert!(chain.trace.iter().all(|entry| entry["reason"].is_null()), "{:?}", chain.trace);
+        assert!(
+            chain.trace.iter().all(|entry| entry["reason"].is_null()),
+            "{:?}",
+            chain.trace
+        );
     }
 }
 

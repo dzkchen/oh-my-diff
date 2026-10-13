@@ -1229,7 +1229,10 @@ impl ModStore {
         if !identifier(id) {
             return Err(failure("invalid_mod_id"));
         }
-        let bytes = match read(&self.root.join(Self::state_name(id, scope)), STATE_LIMIT as u64) {
+        let bytes = match read(
+            &self.root.join(Self::state_name(id, scope)),
+            STATE_LIMIT as u64,
+        ) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
             Err(e) => return Err(e),

@@ -118,6 +118,8 @@ pub struct Account {
     pub credential: Option<String>,
     pub context_window: Option<i64>,
     pub max_output_tokens: Option<u64>,
+    /// `"system"` or a context block index: the end of the caller's cacheable prefix.
+    pub cache_through: Option<Value>,
     pub capture_tools: bool,
 }
 
@@ -130,6 +132,30 @@ pub fn set_credential_root(root: std::path::PathBuf) {
 const ROUTE_HEADER: &str = "x-omd-route";
 const REQUEST_HEADER: &str = "x-omd-request-id";
 const SYNTHETIC_HEADER: &str = "x-omd-synthetic";
+const CACHE_HEADER: &str = "x-omd-cache-breakpoint";
+
+/// The last cacheable `input[item].content[part]`: the block before the turn's user message
+/// for `"system"`, else that message's context block.
+fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
+    let items = input.as_array()?;
+    let user = items
+        .iter()
+        .rposition(|item| item["type"] == "message" && item["role"] == "user")?;
+    match through.as_u64() {
+        Some(block) => {
+            let block = usize::try_from(block).ok()?;
+            (block + 1 < items[user]["content"].as_array()?.len()).then_some((user, block))
+        }
+        None => {
+            let item = user.checked_sub(1)?;
+            let parts = items[item]["content"]
+                .as_array()
+                .filter(|parts| items[item]["type"] == "message" && !parts.is_empty())?
+                .len();
+            Some((item, parts - 1))
+        }
+    }
+}
 const SUMMARY_TEXT_BYTES: usize = 4096;
 const COLLECTED_TEXT_BYTES: usize = 32_768;
 
@@ -1145,6 +1171,57 @@ impl ResponseObserver for Accounts {
             edited = true;
         } else if let Some(tokens) = account.max_output_tokens {
             value["max_output_tokens"] = tokens.into();
+            edited = true;
+        }
+        if let Some((item, part)) = account
+            .cache_through
+            .as_ref()
+            .and_then(|through| cache_breakpoint(&value["input"], through))
+        {
+            let mut prefix = value["input"].as_array().cloned().unwrap_or_default();
+            prefix.truncate(item + 1);
+            if let Some(content) = prefix[item]["content"].as_array_mut() {
+                content.truncate(part + 1);
+            }
+            for entry in &mut prefix {
+                if let Some(entry) = entry.as_object_mut() {
+                    entry.retain(|key, _| {
+                        matches!(
+                            key.as_str(),
+                            "type"
+                                | "role"
+                                | "content"
+                                | "name"
+                                | "namespace"
+                                | "arguments"
+                                | "input"
+                                | "call_id"
+                                | "output"
+                                | "summary"
+                                | "encrypted_content"
+                        )
+                    });
+                }
+            }
+            let key = json!([
+                value["model"],
+                value["instructions"],
+                value["tools"],
+                prefix
+            ]);
+            let key = format!(
+                "omd-cache-{}",
+                &crate::execution::hash(key.to_string().as_bytes())[..32]
+            );
+            // The ChatGPT backend routes prompt caches by session id, not by the body key.
+            request
+                .headers
+                .insert("session-id", key.parse().map_err(denied)?);
+            value["prompt_cache_key"] = key.into();
+            request.headers.insert(
+                CACHE_HEADER,
+                format!("{item}:{part}").parse().map_err(denied)?,
+            );
             edited = true;
         }
         if let Some(mods) = &mods {

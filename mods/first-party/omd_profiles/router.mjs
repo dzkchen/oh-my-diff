@@ -19,14 +19,20 @@ async function bodyOf(request, limit = BODY_LIMIT) {
   return Buffer.concat(chunks);
 }
 
-function parts(content) {
-  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
-  return (Array.isArray(content) ? content : []).flatMap(part => {
-    if (['input_text', 'output_text', 'text'].includes(part?.type) && part.text) return [{ type: 'text', text: part.text }];
+function parts(content, mark = -1) {
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content, ...mark === 0 ? { cache: true } : {} }] : [];
+  return (Array.isArray(content) ? content : []).flatMap((part, index) => {
+    const cache = index === mark ? { cache: true } : {};
+    if (['input_text', 'output_text', 'text'].includes(part?.type) && part.text) return [{ type: 'text', text: part.text, ...cache }];
     const image = part?.type === 'input_image' && /^data:(image\/[a-z+]+);base64,(.+)$/.exec(part.image_url ?? '');
-    return image ? [{ type: 'image', media: image[1], data: image[2], url: part.image_url }] : [];
+    return image ? [{ type: 'image', media: image[1], data: image[2], url: part.image_url, ...cache }] : [];
   });
 }
+
+const ephemeral = part => part.cache ? { cache_control: { type: 'ephemeral' } } : {};
+
+// The host's `x-omd-cache-breakpoint: ITEM:PART` names the last block of a caller's cacheable prefix.
+export const breakpoint = header => /^(\d+):(\d+)$/.exec(header ?? '')?.slice(1).map(Number) ?? null;
 
 const textOf = content => parts(content).map(part => part.type === 'text' ? part.text : '[image]').join('\n');
 
@@ -65,16 +71,21 @@ export function openThinking(item, profile) {
 }
 
 // History as provider-neutral turns; search and hosted-tool items have no portable form, and only this profile's thinking survives.
-export function turns(body, profile = null) {
+export function turns(body, profile = null, cache = null) {
   const table = toolTable(body);
   const system = body.instructions ? [body.instructions] : [];
   const list = [];
-  for (const item of body.input ?? []) {
+  let systemCache = false;
+  for (const [index, item] of (body.input ?? []).entries()) {
+    const mark = cache?.[0] === index ? cache[1] : -1;
     if (item?.type === 'message') {
       if (item.role === 'system' || item.role === 'developer') {
-        if (list.length) list.push({ role: 'user', content: [{ type: 'text', text: textOf(item.content) }] });
-        else system.push(textOf(item.content));
-      } else list.push({ role: item.role === 'assistant' ? 'assistant' : 'user', content: parts(item.content) });
+        if (list.length) list.push({ role: 'user', content: [{ type: 'text', text: textOf(item.content), ...mark >= 0 ? { cache: true } : {} }] });
+        else {
+          system.push(textOf(item.content));
+          systemCache ||= mark >= 0;
+        }
+      } else list.push({ role: item.role === 'assistant' ? 'assistant' : 'user', content: parts(item.content, mark) });
     } else if (item?.type === 'reasoning' && profile) {
       const blocks = openThinking(item, profile);
       if (blocks.length) list.push({ role: 'assistant', content: blocks.map(block => ({ type: 'thinking', block })) });
@@ -87,26 +98,28 @@ export function turns(body, profile = null) {
       list.push({ role: 'tool', content: [{ type: 'result', id: item.call_id, output }] });
     }
   }
-  return { system: system.join('\n\n'), list, table };
+  return { system: system.join('\n\n'), systemCache, list, table };
 }
 
-export function chatRequest(body, profile) {
-  const { system, list, table } = turns(body);
-  const messages = system ? [{ role: 'system', content: system }] : [];
+export function chatRequest(body, profile, cache = null) {
+  const { system, systemCache, list, table } = turns(body, null, profile.cache_control ? cache : null);
+  const messages = system ? [{ role: 'system', content: systemCache ? [{ type: 'text', text: system, ...ephemeral({ cache: true }) }] : system }] : [];
   for (const turn of list) {
     if (turn.role === 'tool') {
       for (const result of turn.content) messages.push({ role: 'tool', tool_call_id: result.id, content: result.output.map(part => part.text ?? '[image]').join('\n') });
       continue;
     }
     const calls = turn.content.filter(part => part.type === 'call').map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } }));
-    const content = turn.content.filter(part => part.type !== 'call').map(part => part.type === 'image' ? { type: 'image_url', image_url: { url: part.url } } : { type: 'text', text: part.text });
+    const content = turn.content.filter(part => part.type !== 'call').map(part => part.type === 'image'
+      ? { type: 'image_url', image_url: { url: part.url }, ...ephemeral(part) } : { type: 'text', text: part.text, ...ephemeral(part) });
     const last = messages.at(-1);
     if (turn.role === 'assistant' && last?.role === 'assistant' && (calls.length || !content.length)) {
       last.tool_calls = [...last.tool_calls ?? [], ...calls];
       continue;
     }
-    const text = content.every(part => part.type === 'text') ? content.map(part => part.text).join('\n') : null;
-    messages.push({ role: turn.role, content: turn.role === 'assistant' ? text || null : text ?? content, ...calls.length ? { tool_calls: calls } : {} });
+    const text = content.every(part => part.type === 'text' && !part.cache_control) ? content.map(part => part.text).join('\n') : null;
+    const said = content.filter(part => part.type === 'text');
+    messages.push({ role: turn.role, content: turn.role === 'assistant' ? text || (said.some(part => part.cache_control) ? said : null) : text ?? content, ...calls.length ? { tool_calls: calls } : {} });
   }
   const effort = body.reasoning?.effort;
   const chatEffort = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' }[effort];
@@ -115,13 +128,14 @@ export function chatRequest(body, profile) {
     ...profile.reasoning && chatEffort ? { reasoning_effort: chatEffort } : {} };
 }
 
-export function anthropicRequest(body, profile) {
-  const { system, list, table } = turns(body, profile.reasoning ? profile.name : null);
+export function anthropicRequest(body, profile, cache = null) {
+  const { system: text, systemCache, list, table } = turns(body, profile.reasoning ? profile.name : null, cache);
+  const system = systemCache ? [{ type: 'text', text, ...ephemeral({ cache: true }) }] : text;
   const messages = [];
   for (const turn of list) {
     const role = turn.role === 'assistant' ? 'assistant' : 'user';
-    const content = turn.content.flatMap(part => part.type === 'thinking' ? [part.block] : part.type === 'text' ? [{ type: 'text', text: part.text }]
-      : part.type === 'image' ? [{ type: 'image', source: { type: 'base64', media_type: part.media, data: part.data } }]
+    const content = turn.content.flatMap(part => part.type === 'thinking' ? [part.block] : part.type === 'text' ? [{ type: 'text', text: part.text, ...ephemeral(part) }]
+      : part.type === 'image' ? [{ type: 'image', source: { type: 'base64', media_type: part.media, data: part.data }, ...ephemeral(part) }]
         : part.type === 'call' ? [{ type: 'tool_use', id: part.id, name: part.name, input: plain(part.input) ? part.input : { value: part.input } }]
           : [{ type: 'tool_result', tool_use_id: part.id, content: part.output.map(item => item.type === 'image'
             ? { type: 'image', source: { type: 'base64', media_type: item.media, data: item.data } } : { type: 'text', text: item.text || ' ' }) }]);
@@ -280,7 +294,8 @@ export async function forward(body, profile, inbound, response, signal) {
     return;
   }
   const anthropic = profile.protocol === 'anthropic';
-  const payload = JSON.stringify(anthropic ? anthropicRequest(body, profile) : chatRequest(body, profile));
+  const cache = breakpoint(inbound['x-omd-cache-breakpoint']);
+  const payload = JSON.stringify(anthropic ? anthropicRequest(body, profile, cache) : chatRequest(body, profile, cache));
   const headers = { 'content-type': 'application/json', accept: 'text/event-stream',
     ...anthropic ? { 'x-omd-credential-header': 'x-api-key', 'anthropic-version': '2023-06-01' } : {} };
   const upstream = await post(url, headers, payload, signal);
@@ -301,7 +316,7 @@ export async function forward(body, profile, inbound, response, signal) {
   emitter.finish(emitter.usage ?? { input_tokens: input, input_tokens_details: { cached_tokens: 0 }, output_tokens: output, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + output, omd_usage_estimated: true });
 }
 
-// Reasoning produced before a switch stays with its account: every later request on that conversation drops it.
+// Reasoning produced before a switch stays with its account: every later request on that conversation drops it (cache-marked worker requests share their key across calls and skip this).
 export function prepare(body, profile, last, foreign = new Map()) {
   const key = body.prompt_cache_key;
   const identity = item => item.id ?? item.encrypted_content;
@@ -362,7 +377,7 @@ async function serve(routePath) {
       if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
       const tokens = estimate(body.input);
       if (profile.window && tokens > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${tokens} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });
-      await forward(prepare(body, profile, last, foreign), profile, request.headers, response, controller.signal);
+      await forward(request.headers['x-omd-cache-breakpoint'] ? body : prepare(body, profile, last, foreign), profile, request.headers, response, controller.signal);
     } catch (error) {
       const message = String(error?.message ?? 'profile_transport_failed').slice(0, 500);
       if (!response.headersSent) response.writeHead(error?.status ?? 502, { 'content-type': 'application/json' });

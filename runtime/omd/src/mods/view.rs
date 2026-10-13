@@ -3,6 +3,7 @@ use super::*;
 pub const MOD_KEY_LIMIT: usize = 12;
 pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
 pub const MOD_COMPONENT_LIMIT: usize = 64;
+pub const MOD_TEXT_BYTES: usize = 49_152;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -1494,7 +1495,7 @@ impl ModComponent {
             | Self::Markdown { id, label, text }
             | Self::Code {
                 id, label, text, ..
-            } => identified(id, label, ids) && multiline(text, 4096),
+            } => identified(id, label, ids) && multiline(text, MOD_TEXT_BYTES),
             Self::Button {
                 id,
                 label,
@@ -1629,7 +1630,7 @@ impl ModComponent {
                         .flatten()
                         .map(|span| span.text.chars().count())
                         .sum::<usize>()
-                        <= 49_152
+                        <= MOD_TEXT_BYTES
                     && anchors.len() <= lines.len().max(2000)
                     && anchors.iter().all(|anchor| visible(anchor, 128))
                     && selected.is_none_or(|range| range.start <= range.end)
@@ -1648,7 +1649,7 @@ impl ModComponent {
                 action,
             } => {
                 identified(id, label, ids)
-                    && multiline(unified, 49_152)
+                    && multiline(unified, MOD_TEXT_BYTES)
                     && selected.is_none_or(|range| range.start <= range.end)
                     && height.is_none_or(|height| (1..=40).contains(&height))
                     && action.as_ref().is_none_or(ModCommandAction::valid)
@@ -1698,9 +1699,9 @@ impl ModComponent {
                 identified(id, label, ids)
                     && module.len() <= 64
                     && !module.is_empty()
-                    && module
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+                    && module.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
+                    })
                     && props.to_string().len() <= 4096
                     && height.is_none_or(|height| (1..=40).contains(&height))
             }

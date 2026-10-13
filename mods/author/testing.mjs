@@ -52,6 +52,7 @@ export const emit = (event, payload = null, options) => withOptions({ type: 'eve
 export const advance = (ms, options) => withOptions({ type: 'advance_time', ms }, options);
 export const waitUntil = (check, until, { everyMs, maxMs, ...options }) => withOptions({ type: 'wait_until', check, until, every_ms: everyMs, max_ms: maxMs }, options);
 export const reload = options => withOptions({ type: 'reload' }, options);
+export const state = (mod, { value, threadId, ...options } = {}) => withOptions({ type: 'state', mod, ...(value !== undefined && { value }), ...(threadId && { thread_id: threadId }) }, options);
 export const mount = (mod, { payload = TERMINAL, ...options } = {}) => withOptions({ type: 'terminal_mount', mod, payload }, options);
 
 const interact = (mod, target, { payload = TERMINAL, ...options } = {}) => withOptions({ type: 'terminal_interact', mod, payload, ...target }, options);

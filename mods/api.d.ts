@@ -62,12 +62,14 @@ export type UsageSummary = {
 export type ModelCallOptions = {
   prompt: string; system?: string; context?: string[]; output?: { schema: Json }; effort?: ReasoningEffort;
   max_output_tokens?: number; timeout_ms?: number;
+  /** Marks the prefix through `system` or through context block N as cacheable; see `model_cache_v1`. */
+  cache?: { through: 'system' | number };
 };
 export type ModelCallResult = {
   /** `incomplete`: the provider stopped at `max_output_tokens` (or another limit in `stop_reason`); `text` is what streamed. */
   status: 'completed' | 'incomplete' | 'failed'; text: string; content: { type: 'text'; text: string }[];
   tool_calls: { call_id: string; tool: string; arguments: string; executed: false }[]; stop_reason: string | null; error: string | null;
-  route: string; model: string | null; request_ids: string[]; usage: Json; cache: ModelResponse['cache'] | null;
+  route: string; model: string | null; request_ids: string[]; usage: Json; cache: ModelResponse['cache'];
   cost: { microusd: number | null; basis: CostBasis | 'mixed' | 'unknown' }; timing: { duration_ms: number; first_event_ms: number | null };
 };
 export type ModelResponse = {
@@ -96,7 +98,8 @@ export type ToolInventory = { thread_id: string; tools: ToolInventoryEntry[] };
 export type VirtualReadRequest = { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number };
 export type VirtualReadResponse = { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean };
 export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; handle: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean };
-export type SessionRecord = { session_id: string; turn_id: string; item: number; role: 'user' | 'assistant'; text: string; truncated: boolean; redacted: boolean; timestamp: string | null; untrusted: true };
+export type SessionRecord = { session_id: string; turn_id: string; item: number; truncated: boolean; redacted: boolean; timestamp: string | null; untrusted: true } & (
+  { kind: 'message'; role: 'user' | 'assistant'; text: string } | { kind: 'tool_call'; name: string; call_id: string; arguments: string } | { kind: 'tool_result'; call_id: string; output: string });
 export type Ledger = { thread_id: string; cwd: string; cost: Json | null };
 export type Context = { thread_id: string; turn_id: string; ledger: Ledger };
 export type ContextResult = { text: string };
@@ -387,7 +390,8 @@ export interface HostOperations {
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
+  /** Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -524,6 +528,7 @@ export interface Events {
   prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }
     | { kind: 'image'; source?: string; start?: number; end?: number; bytes?: number; sha256?: string } | { kind: 'paste'; start: number; end: number; bytes: number; sha256: string })[] }; output: void };
 }
+export type ProcessChunk = { stream: 'stdout' | 'stderr'; data?: string; data_base64?: string };
 export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
 export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };
 export type CommandRow = { command: string; description: string; owner: string | null; hidden: boolean; args_hint: string | null; immediate: boolean; protected: boolean };
@@ -557,7 +562,9 @@ export interface InterceptSurfaces {
   elicitation: { input: { thread_id: string; turn_id: string; server: string; request_id: string; mode: 'form' | 'openai/form' | 'openaiForm'; message: string; schema: Json };
     result: { action: 'ask' }; answer: { accept: Record<string, Json> } | { decline: string } | { cancel: string } };
   compaction: { input: CompactionOccurrence; result: CompactionResult; answer: { skip: string } | { defer: string } | { summary: string } | { history: CompactionHistory } };
+  history_persist: { input: { thread_id: string; entries: PersistedEntry[] }; result: { entries: PersistedEntry[] }; answer: { entries: PersistedEntry[] } };
 }
+export type PersistedEntry = { index: number; kind: string; role: string | null; call_id: string | null; text: string };
 export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
 export type Next<S extends keyof InterceptSurfaces> = ((input: InterceptSurfaces[S]['input']) => Promise<InterceptSurfaces[S]['result']>) & {
   readonly event: S;
@@ -638,7 +645,7 @@ export interface ModAPI {
     ancestors(name: string, from?: string): { path: string; kind: FileStat['kind'] }[];
   };
   /** One `model.complete` on `options.route` constrained to `labels`. */
-  classify<L extends string>(text: string, labels: L[], options: { route: string; instructions?: string; effort?: ReasoningEffort; timeout_ms?: number; max_output_tokens?: number }): { label: L | null; result: ModelCallResult };
+  classify<L extends string>(text: string, labels: L[], options: { route: string; instructions?: string; effort?: ReasoningEffort; timeout_ms?: number; max_output_tokens?: number; cache?: { through: 'system' } }): { label: L | null; result: ModelCallResult };
   readonly usage: {
     summarize(response: ModelResponse): UsageSummary;
     /** `account/rateLimits/read` when the mod holds `account`. */

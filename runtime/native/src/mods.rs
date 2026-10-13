@@ -1,4 +1,4 @@
-mod access;
+pub(crate) mod access;
 mod agents;
 mod autonomy;
 #[path = "clients.rs"]
@@ -12,6 +12,7 @@ mod inventory;
 mod launch_snapshot;
 mod operations;
 mod peering;
+mod persisted;
 mod roles;
 pub(crate) mod services;
 mod snapshots;
@@ -154,6 +155,8 @@ pub(super) struct Core {
     host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
+    persist_runtime: Arc<Mutex<ModHost>>,
+    intercepted: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
     agents: agents::Agents,
     services: services::Services,
@@ -413,19 +416,25 @@ pub(super) fn install(
         .map_err(|e| e.to_string())?;
     let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
         .map_err(|e| e.to_string())?;
+    let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+        .map_err(|e| e.to_string())?;
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
+    let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts.install_mod_runtime(runtime.clone(), required);
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
+    let persist_runtime = Arc::new(Mutex::new(persist_runtime));
     let extension = Arc::new(Mods {
         core: Arc::new_cyclic(|core| Core {
             agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
             host,
             runtime,
             input_runtime,
+            persist_runtime,
+            intercepted,
             environment,
             services: services::Services::default(),
             views,
@@ -1383,6 +1392,17 @@ impl TurnLifecycleContributor for Mods {
                 .flatten()
                 .collect(),
         }
+    }
+
+    fn rewrite_persisted_text<'a>(
+        &'a self,
+        input: codex_extension_api::PersistedTextInput<'a>,
+    ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
+        Box::pin(persisted::rewrite(
+            self.core.persist_runtime.clone(),
+            &self.core.intercepted,
+            input,
+        ))
     }
 
     fn intercept_user_input<'a>(

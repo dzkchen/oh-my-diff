@@ -715,7 +715,7 @@ const api = Object.freeze({
       + (options.instructions ? ' ' + options.instructions : '') + ' Reply with JSON {"label": <label>}.';
     const call = { route: options.route, prompt: text, system: instructions,
       output: { schema: { type: 'object', properties: { label: { type: 'string', enum: labels } }, required: ['label'], additionalProperties: false } } };
-    for (const key of ['effort', 'timeout_ms', 'max_output_tokens']) if (options[key] !== undefined) call[key] = options[key];
+    for (const key of ['effort', 'timeout_ms', 'max_output_tokens', 'cache']) if (options[key] !== undefined) call[key] = options[key];
     const result = hostCall('model.complete', call);
     let label = null;
     try {

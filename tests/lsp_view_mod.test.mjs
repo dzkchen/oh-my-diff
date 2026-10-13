@@ -68,11 +68,11 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     const text = box => box.children.map(child => child.spans ? child.spans.map(span => span.text).join('') : child.text);
     assert.deepEqual(servers.map(text), [['python pylsp', '2 open · 1 errors', 'box.py:3:5 bad size'], ['rust rust server absent']]);
     assert.deepEqual(invoke(state, 'command', 'back', 'lsp').state.view.items.map(item => item.value), ['box.py:2']);
-    answer = { status: 'ready', message: '', items: [{ label: 'first', value: 'box.py:2' }, { label: 'second', value: 'box.py:2' }, { label: 'é'.repeat(300), value: 'box.py:3' }], text: `a\r\nb${'x'.repeat(5000)}`, action: 'open' };
+    answer = { status: 'ready', message: '', items: [{ label: 'first', value: 'box.py:2' }, { label: 'second', value: 'box.py:2' }, { label: 'é'.repeat(300), value: 'box.py:3' }], text: `a\r\nb${'x'.repeat(40000)}`, action: 'open' };
     state = invoke(state, 'command', 'back', 'lsp').state;
     state = invoke(state, 'channel', { publisher: 'omd_lsp_view', channel: 'omd_lsp_view/request', data: request.data, correlation: null, sequence: 4, dropped: 0 }).state;
     view = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[1].children;
-    assert.equal(view[1].children[0].text.length, 4096);
+    assert.equal(view[1].children[0].text.length, 32_768);
     assert.ok(!view[1].children[0].text.includes('\r'));
     assert.deepEqual(view[2].rows.map(row => row.value), ['box.py:2', 'box.py:3']);
     assert.ok(Buffer.byteLength(view[2].rows[1].label) <= 256);

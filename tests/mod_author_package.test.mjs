@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { activate, assertFailure, assertShortCircuit, assertWrapped, attach, clock, coreValue, detach, environment, find, intercept, invoke, mount, packages, pointer, runScenario, storeMock, text, tiers, waitUntil } from '../mods/author/testing.mjs';
+import { activate, assertFailure, assertShortCircuit, assertWrapped, attach, clock, coreValue, detach, environment, find, intercept, invoke, mount, packages, pointer, runScenario, state, storeMock, text, tiers, waitUntil } from '../mods/author/testing.mjs';
 
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
@@ -36,6 +36,18 @@ test('author test fails when a project has no tests', () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /no_tests/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the test kit seeds and reads persisted mod state through the engine', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
+  const counter = new URL('../mods/examples/counter', import.meta.url).pathname;
+  const trace = runScenario(counter, { steps: [
+    state('counter', { value: 41 }),
+    invoke('counter', 'tool', 'count', {}, { expect: { count: 42 } }),
+    state('counter', { expect: 42 }),
+    invoke('counter', 'command', 'reset'),
+    state('counter', { expect: 0 }),
+  ] });
+  assert.deepEqual(trace.steps.map(step => step.value), [41, { count: 42 }, 42, { display: 'Counter reset to 0' }, 0]);
 });
 
 test('author example and diagnostic commands preserve their public arguments', () => {

@@ -2043,7 +2043,12 @@ impl ModStore {
         std::fs::create_dir(&staging)?;
         let result = (|| {
             copy_file(source, &staging, "mod.json", 8192)?;
-            copy_file(source, &staging, &package.entrypoint, store::PACKAGE_FILE_LIMIT)?;
+            copy_file(
+                source,
+                &staging,
+                &package.entrypoint,
+                store::PACKAGE_FILE_LIMIT,
+            )?;
             for asset in &package.assets {
                 copy_file(source, &staging, asset, store::PACKAGE_FILE_LIMIT)?;
             }
@@ -2093,8 +2098,12 @@ impl ModStore {
             .lifecycle
             .get(event)
             .ok_or_else(|| failure("lifecycle_script_missing"))?;
-        let source = String::from_utf8(store::package_read(&package.path, script, store::PACKAGE_FILE_LIMIT)?)
-            .map_err(failure)?;
+        let source = String::from_utf8(store::package_read(
+            &package.path,
+            script,
+            store::PACKAGE_FILE_LIMIT,
+        )?)
+        .map_err(failure)?;
         let node = self.configuration()?.node;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,

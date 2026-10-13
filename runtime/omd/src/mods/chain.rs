@@ -266,6 +266,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_spawn" => &["definition", "prompt", "model", "effort", "cwd", "tools"],
         "peer_send" | "peer_receive" => &["data"],
         "compaction" => &["summary_prompt"],
+        "history_persist" => &["entries"],
         "composer_edit" => &["edit"],
         "component_change" => &["to"],
         _ => &[],
@@ -322,6 +323,7 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_spawn" => spawn_request(input, before),
         "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
         "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
+        "history_persist" => persisted_entries(&input["entries"], &before["entries"]),
         "component_change" => component_change(&input["kind"], &input["to"]),
         "compaction" => {
             input["summary_prompt"] == before["summary_prompt"]
@@ -362,6 +364,30 @@ fn composer_edit(edit: &Value, given: &Value) -> bool {
         && edit["text"]
             .as_str()
             .is_some_and(|text| text.len() <= 65_536)
+}
+
+/// Persisted entries keep their count, order and fields; only each entry's text may change.
+fn persisted_entries(entries: &Value, given: &Value) -> bool {
+    entries
+        .as_array()
+        .zip(given.as_array())
+        .is_some_and(|(entries, given)| {
+            entries.len() == given.len()
+                && entries.iter().zip(given).all(|(entry, given)| {
+                    entry
+                        .as_object()
+                        .zip(given.as_object())
+                        .is_some_and(|(entry, given)| {
+                            entry.len() == given.len()
+                                && entry.iter().all(|(key, value)| {
+                                    key == "text" || given.get(key) == Some(value)
+                                })
+                        })
+                        && entry["text"].as_str().is_some_and(|text| {
+                            text.len() <= given["text"].as_str().map_or(0, str::len).max(65_536)
+                        })
+                })
+        })
 }
 
 /// Tool specs may drop, defer or re-describe tools they were given, never add or rename one.
@@ -621,6 +647,10 @@ fn validate_result(
         "composer_edit" => {
             deny || object.is_some_and(|object| object.len() == 1)
                 && composer_edit(&result["edit"], &input["edit"])
+        }
+        "history_persist" => {
+            object.is_some_and(|object| object.len() == 1)
+                && persisted_entries(&result["entries"], &input["entries"])
         }
         "component_change" => {
             let key = if input["kind"] == "focus" {

@@ -36,7 +36,7 @@ const request = { source, filename: '/fixture/index.ts', api: '0.2.0-experimenta
 if (workload === 'render') Object.assign(request, {
   source: "export default api => api.intercept('render', () => ({text: 'render-marker'}));",
   capabilities: ['terminal'], surface: {...request.surface, intercept: {render: 'terminal'}},
-  event: 'intercept', name: '0', payload: {surface: 'render', input: {text: 'render-marker'}, original: {}, origin: {caller: 'engine'}}, serve: mode === 'serve'
+  event: 'intercept', name: '0', payload: {surface: 'render', input: {text: 'render-marker', props: {text: 'x'.repeat(Number(process.env.RENDER_PROPS_BYTES ?? 0))}}, original: {}, origin: {caller: 'engine'}}, serve: mode === 'serve'
 });
 if (mode === 'v8') request.source = "JSON.stringify({value:{result:{text:'render-marker'}}})";
 

@@ -460,8 +460,10 @@ pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
             (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(24))),
         };
         let step = module_step(client, component, size, Vec::new())?;
-        return Ok(json!({"original": props, "effective": {"next_ms": step["next_ms"]},
-            "tree": step["tree"], "answeredBy": null}));
+        return Ok(
+            json!({"original": props, "effective": {"next_ms": step["next_ms"]},
+            "tree": step["tree"], "answeredBy": null}),
+        );
     }
     if !codex_omd::MOD_RENDER_COMPONENTS
         .iter()

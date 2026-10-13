@@ -1020,8 +1020,25 @@ during activation, including when their native event is already registered.
 
 ### Framed processes
 
-`process.start` takes `framing: "content-length"` (default) or `"ndjson"` and
-`network: "none"` or `"loopback"`; the protocol-named transports are removed.
+`process.start` takes `framing: "content-length"` (default), `"ndjson"` or
+`"raw"` and `network: "none"` or `"loopback"`; the protocol-named transports are removed.
+`process.exchange` returns at most 64 messages or 4 MiB per call and leaves
+the rest queued. Once the process exits, its readers get one second to deliver
+what it wrote; output queued by then is returned before the exchange that fails
+with `process_stopped`, `process.status` reports `running: true` until it has
+been exchanged, and an exchange's `send` is dropped. `stdin: "null"` starts the
+process with standard input at end of file, for commands that would otherwise
+wait on an open pipe; its exchanges cannot `send` (`process_stdin_null`) and it
+cannot take `raster`.
+
+Experimental (`process_streams_v1`): under `raw` the host reads stdout and stderr as written and
+queues each read (at most 64 KiB) as `{stream: "stdout" | "stderr", data}`,
+or `data_base64` when the bytes are not UTF-8; a character split across
+writes arrives whole in the later chunk. The two streams are separate pipes, so
+chunks keep their order within a stream but not across streams. `send` takes strings, written
+verbatim. The queue keeps its bound of 128 messages: a process that writes
+faster than the mod exchanges blocks on its pipe, and nothing is dropped.
+`raw` cannot take `raster`, `keys` or `pixels`.
 The host replaces `{process.home}` in process arguments with that session's
 private scratch directory, for tools that do not honor the `HOME` environment.
 `environment` supplies at most eight explicit, bounded variables to that
@@ -1452,6 +1469,16 @@ inode changed. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
+`sessions.list {since?, until?, cursor?, limit?}` pages this repository's
+recorded sessions that allow memory, and `sessions.read {session_id, revision,
+handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
+`message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
+`arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
+each with credential lines replaced by `[redacted]` (`redacted`; line endings kept) and cut to 2,048 characters with `truncated`.
+Reasoning and other item types are left out. Pages hold at most 16 KiB, a
+session at most 4,096 records (`projection_truncated`), and a changed rollout
+fails the read against its `revision`.
+
 ### Render hooks (`render_hooks_v1`)
 
 `api.intercept('render', {match: {component: 'tool_call'}}, async (e, next) => …)`
@@ -1471,7 +1498,7 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
-| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
+| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 48 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
 | `tool_call` | call ID (row ID for agent rows; `explore:<first call ID>` for an exploration group) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
@@ -1492,7 +1519,7 @@ member as its compact row, and Find searches every member expanded. Native
 grouping remains when no member is replaced. Aggregate exploration rendering remains available on the
 group when member rendering does not replace it.
 
-Text props carry at most 4 KiB; a content digest is stable across resume and
+Text props carry at most 48 KiB; a content digest is stable across resume and
 reflow, so equal content draws identically. Tool rows are offered from live cells
 and committed history. In the fullscreen transcript a hooked tool row needs no control row: F4
 focuses it and Enter, →/← or a click opens and closes it, and `expanded` is
@@ -2216,8 +2243,9 @@ with `executed: false` and never run.
 
 Both return `{status, text, content, tool_calls, stop_reason, error, route,
 model, request_ids, usage, cache, cost, timing}` from the
-worker's `model_response` records: `usage` and `cache` are the last request's
-raw values, `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
+worker's `model_response` records: `usage` is the last request's raw value,
+`cache` sums `read_tokens` and `write_tokens` over the call's requests that reported them (`null`
+when none did), `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
 the provider cut at its token limit returns `status: 'incomplete'` with the
 text that streamed and `stop_reason` (`max_output_tokens`). A provider
 failure returns `status: 'failed'` with `error`; a timeout (at most 300 s) or
@@ -2229,6 +2257,22 @@ commands, which reach the session in the same process (`no session in this
 process` otherwise). Prompt cache reuse is reported by `cache.read_tokens`,
 not promised: a fork is a separate internal session whose cache key and
 instructions differ from the lead's.
+
+`cache: {through: 'system' | N}` (`model_cache_v1`) marks the request prefix
+through the mod's `system` text (everything before the turn's user message) or
+through context block `N` as cacheable. On each of the call's requests the host
+sets `prompt_cache_key` and the `session-id` header (the ChatGPT backend's cache
+routing) to `omd-cache-` plus a hash of the model, instructions, tools and that
+prefix's model-visible fields, so calls sharing a prefix share the provider's
+cache routing (OpenAI Responses caches prefixes automatically), and sends
+`x-omd-cache-breakpoint: ITEM:PART`, the last cacheable
+`input[ITEM].content[PART]` of the final body, for provider transports with
+explicit breakpoints: `omd_profiles` turns it into Anthropic `cache_control`
+on that block (or on the system prompt when it falls in the leading developer
+messages) and, for profiles set up with `--cache-control`, passes it on in Chat
+Completions content for providers such as OpenRouter. Cache reads and writes come back in `cache` and in each request's
+`model_response` record, priced with the route's cached and cache-write rates;
+a provider that ignores the mark reports no reads.
 
 ### SDK helpers (`sdk_helpers_v1`)
 
@@ -2245,7 +2289,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
-  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit` and `component_change` callbacks run
+  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit`, `component_change` and `history_persist` callbacks run
   without host operations and get `host_operation_unavailable`; `model_request`,
   `model_send` and `response_stream` interceptors run on the request path and get
   `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
@@ -2263,7 +2307,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   `workspace.stat` (`fs.read`); symlinked components and paths outside the
   workspace are refused there.
 - `api.classify(text, labels, {route, instructions?, effort?, timeout_ms?,
-  max_output_tokens?})` makes one `model.complete` on the named route with a
+  max_output_tokens?, cache?})` makes one `model.complete` on the named route with a
   JSON schema enumerating `labels` and returns `{label, result}` (`label` is
   `null` when the answer is not one of them).
 - `api.usage.summarize(response)` turns a `model_response` into
@@ -2290,6 +2334,31 @@ items are dropped as pairs; the last item (the current input) is kept; inserts
 are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
+
+### Store-time history rewriting (`history_persist_v1`)
+
+`api.intercept('history_persist', …)` (capability `history`) rewrites history
+text before it is written to the thread's rollout, for redaction. Each batch
+arrives as `{thread_id, entries}`; an entry is `{index, kind, role, call_id,
+text}` where `kind` is a response item type (`message`, `agent_message`,
+`function_call`, `custom_tool_call`, `function_call_output`,
+`custom_tool_call_output`), a text kept beside an item (`delivered_message`,
+`sender_user_messages`), an event copy (`event:user_message`,
+`event:agent_message`), `inter_agent_communication` or `compacted` (a compaction
+summary and its replacement history). Return `{entries}` with only `text`
+changed, or pass a changed input to `next`; a reordered, added, dropped or
+relabelled entry is rejected. A text longer than 96 KiB arrives as consecutive
+entries with the same index, and a batch is split across callbacks of at most
+96 KiB of text; a long text splits after its last whitespace within 96 KiB, so
+only a run of more than 96 KiB without whitespace is cut inside a token. Item ids, call
+ids, roles, order and count never change; a rewritten response item carries
+`rewritten {revision, op: "redact", by: "mod:<id>"}` and reads as not original,
+and a rewritten user message drops its text elements. The interceptor gets no
+host operations. The live conversation keeps the original text until the thread
+is resumed, forked or rolled back from the rollout; reasoning, images, encrypted
+content, tool call names and realtime transcripts are not offered. A failing
+optional interceptor keeps the original text; a failing required interceptor
+persists `[withheld: a required history_persist interceptor failed]` instead.
 
 ### Durable transcript rewriting (`history_rewrite_v1`)
 
@@ -2465,8 +2534,10 @@ any it refuses.
   rows; a span `link` is an http(s) URL of at most 2,048 bytes on `line` and
   `list` spans (documents refuse it), drawn as an OSC 8 hyperlink, and
   `markdown` links become hyperlinks too; a control `hotkey` uses the
-  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code` and
-  `markdown` at most 4,096 bytes; `diff` and `document` at most 49,152 bytes. A
+  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code`,
+  `markdown`, `diff` and `document` at most 49,152 bytes (the terminal keeps
+  recent markdown renders, so a large `markdown` costs its parse, about 1 ms per
+  KiB, only when its text or width changes; stream into `code` or `text`). A
   view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
   `wrap` site contains exactly one `slot`. Text fields refuse control characters
   except newlines where a field is multi-line. The status row holds at most 4
@@ -2914,6 +2985,10 @@ required guard.
 never reads the host's environment: an unlisted name is `{set: false}`, and a
 secret-like name (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...)
 fails the scenario with `offline_environment_secret_name`.
+`{"type": "state", "mod": ID, "value"?: VALUE, "thread_id"?: ID}` returns that
+mod's persisted `api.state` from the scenario's store, so `expect` can check it
+after any step; with `value` it first writes that state (the mod needs `store`,
+and the usual state limits apply), seeding a test without a setup command.
 `{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000,
 "max_ms": N}` runs `check`, and while its value differs from `until` advances
 virtual time by `every_ms` and checks again (at most 256 checks); it returns
@@ -3028,7 +3103,8 @@ to the same declared capability and host permission checks.
 `process.start` frames stdio as `content-length` (default) or `ndjson`, and
 stops a process whose stdout breaks the framing (a line that is not JSON
 under `ndjson`; a blank line or 8 KiB without a valid header under
-`content-length`); stderr is discarded;
+`content-length`); stderr is discarded except under `raw`, which streams
+both unframed;
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch

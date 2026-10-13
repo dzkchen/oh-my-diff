@@ -57,9 +57,9 @@ fn reap() {
         std::thread::spawn(|| {
             loop {
                 std::thread::sleep(Duration::from_secs(1));
-                for runner in
-                    retire_warm(|runner| runner.pinned.is_none() && runner.used.elapsed() >= WARM_IDLE)
-                {
+                for runner in retire_warm(|runner| {
+                    runner.pinned.is_none() && runner.used.elapsed() >= WARM_IDLE
+                }) {
                     runner.stop();
                 }
                 let surplus = {
@@ -346,8 +346,12 @@ where
         None => {
             let bytes = request_line(request)?;
             let mut warm = warm_runner(node, key, request["serve"] == true)?;
-            warm.pinned = (request["event"] == "component")
-                .then(|| request["payload"]["client"].as_str().unwrap_or_default().to_owned());
+            warm.pinned = (request["event"] == "component").then(|| {
+                request["payload"]["client"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            });
             warm.base = bytes.len().saturating_sub(serve.len());
             (warm, bytes)
         }

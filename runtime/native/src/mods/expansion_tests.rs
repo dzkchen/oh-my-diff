@@ -86,14 +86,18 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
     });
     let runtime = ModHost::open(root.clone()).unwrap();
     let environment = runtime.environment();
+    let intercepted = runtime.intercepted_surfaces();
     let runtime = Arc::new(Mutex::new(runtime));
     let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
     let views = Arc::new(view::Views::new());
     let core = Arc::new_cyclic(|core| Core {
         agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
         host: host.clone(),
         runtime,
         input_runtime,
+        persist_runtime,
+        intercepted,
         environment,
         services: services::Services::default(),
         views,
@@ -2892,6 +2896,46 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
         unattached.starts_with("client_surface_unavailable"),
         "{unattached}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn persisted_text_skips_the_runtime_without_interceptors_and_splits_at_whitespace() {
+    let token = format!("{} sk-{}", "a".repeat(98_300), "b".repeat(40));
+    assert_eq!(persisted::cut(&token), 98_301);
+    assert_eq!(persisted::cut(&"a".repeat(98_400)), 98_304);
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    let entries = [codex_extension_api::PersistedText {
+        kind: "message",
+        role: Some("user".to_owned()),
+        call_id: None,
+        text: "hi".to_owned(),
+    }];
+    let (extension, session_store) = (mods(&fixture.core), ExtensionData::new("session"));
+    let _held = fixture.core.persist_runtime.lock().unwrap();
+    let rewrite = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        extension.rewrite_persisted_text(codex_extension_api::PersistedTextInput {
+            entries: &entries,
+            session_store: &session_store,
+            thread_store: &thread_store,
+        }),
+    );
+    assert_eq!(rewrite.await.ok(), Some(None));
+}
+
+#[test]
+fn completion_cache_totals_sum_the_requests_that_reported_them() {
+    let responses = [
+        json!({"cache": null}),
+        json!({"cache": {"read_tokens": 3, "write_tokens": null}}),
+        json!({"cache": {"read_tokens": 4, "write_tokens": null}}),
+    ];
+    assert_eq!(agents::cache_total(&responses, "read_tokens"), Some(7));
+    assert_eq!(agents::cache_total(&responses, "write_tokens"), None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

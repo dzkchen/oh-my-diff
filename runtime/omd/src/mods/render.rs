@@ -133,7 +133,9 @@ pub fn component_shared(
     let tree = serde_json::from_value::<Vec<ModComponent>>(value["tree"].clone())
         .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
     if let Some(reason) = view::invalid_render_tree(&tree).or_else(|| {
-        (tree.iter().any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
+        (tree
+            .iter()
+            .any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
             || serde_json::to_vec(&value["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
         .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
     }) {
