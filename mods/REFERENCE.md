@@ -75,11 +75,11 @@ native work.
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
-| `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` interceptor and the `completion` replacement |
+| `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
 | `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
-| `input` | `input` interceptors |
+| `input` | `input` and `mention` interceptors |
 | `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
 | `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events; `compaction` also owns the `compaction` interceptor |
@@ -1245,6 +1245,8 @@ of the chain and then the native executor. Only the listed fields may change:
 | `config_set` | `value` | `{value}` | what `next` returned, or `{deny}` |
 | `admission` | nothing | `{admit: true}`, `{withhold}` or `{deny}` | the same or a tighter decision |
 | `render` | `props` keys the native drawing reads (see Render hooks) | `{tree}` | a `{tree}` of presentation components holding `{type: 'native'}` at most once, with or without calling `next` |
+| `composer_key` | `key` (one printable character or a mod key name) | `{key}` | `{key}` with or without calling `next`, or `{deny}` to drop the key |
+| `mention` | `path` | `{path}` | `{path}` with or without calling `next`, or `{deny}` to skip the read |
 
 A `{deny}` refuses only before the native executor runs: once `next` has run
 a `command`, `config_set`, `peer_send` or `agent_spawn`, a deny is an invalid
@@ -2204,6 +2206,18 @@ stale results are dropped. While the user types arguments to a mod command
 `{items: [{insert}]}` and the list opens only when it has items. A mod can
 therefore complete its own commands without owning `@` mention ranking.
 
+`api.completion({trigger}, handler)` (capability `composer`,
+`completion_tokens_v1`, experimental) completes arbitrary tokens: `trigger` is
+one ASCII punctuation character other than `@`, `/` and `$`, and a mod
+registers at most four during activation. While the token before the cursor
+(from the last whitespace) starts with the trigger, the handler receives
+`{kind: 'token', trigger, query, line}` (`query` without the trigger, `line` up
+to the cursor) and returns `{items: [{insert}]}` with the same limits, debounce
+and stale-result dropping as argument completion. The host shows the rows in
+the composer's completion list and, on Tab or Enter, replaces the whole token
+with the selected `insert`. When two mods register the same trigger, the first
+loaded mod keeps it and the other gets a status notice.
+
 ### Composer drafts and suggestions (`composer_v2`)
 
 `composer.read` returns `{text, cursor, selection, revision, attachments,
@@ -2241,7 +2255,22 @@ reason?}` to the suggestion's owner.
 it reaches the draft: `{source: 'mod' | 'paste' | 'history' | 'completion',
 caller, revision, edit}`; handlers may change only `edit.text` or answer
 `{deny}`, which leaves the draft unchanged and tells the user. They run while
-the terminal applies the edit, so they get no host operations. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
+the terminal applies the edit, so they get no host operations.
+`api.intercept('composer_key', …)` (`composer_key_v1`, experimental) sees each
+key press or repeat that reaches the prompt box, after mod key components,
+dialogs, chords and app key bindings and before popups and the editor keymap:
+`{key, text, revision, cursor}`, where a printable character without Ctrl or
+Alt is `key` and `text` as typed (`'a'`, `'#'`, `' '`) and any other key is
+its mod key name (`Ctrl+w`, `Enter`, `Shift+Tab`) with `text: null`; `text` is
+also `null` in vim normal mode, where characters are commands. Handlers
+may set `key` to another character or to a key name valid in view
+`keybindings` or an unmodified named key (`Left`, `Backspace`), which the
+composer then applies as if typed, or answer `{deny}` to drop the key silently.
+Paste bursts, bracketed paste and non-ASCII characters (IME) bypass the chain.
+The whole chain, including any wait for a runtime busy with another callback,
+gets 50 ms per keystroke and no host operations; when that runs out, or the
+result is invalid, the original key applies and a status notice shows. Use
+`match` on `key` so other keystrokes never start a callback. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
 interceptors also receive the submitted draft's `revision`, `attachments`
 (`{kind, source}`) and placeholder `elements` (`{kind: 'paste' | 'mention' |
 'skill' | 'image', start?, end?, name?, source}`). After skills and mentions are
@@ -2249,6 +2278,25 @@ expanded, `prompt_expanded` (capability `middleware`) lists them by name, path
 and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never
 their content, and the `prompt` event's `effective` is the text the model
 receives.
+
+### `@` file mentions (`mention_read_v1`)
+
+When a turn starts, the host reads each `@path` or `@"path with spaces"` of the
+submitted text that names an existing workspace file (at most 16 per turn; a
+leading `./` and trailing punctuation are ignored; picking a file from the `@`
+list inserts it in this form, except in a slash command or shell command, which
+get the bare path) and gives the model its contents after the prompt as
+`<mentioned_file><path>…</path>…</mentioned_file>`. Reads use the
+`workspace.read` checks: repository-relative paths without `..`, `.git` or
+symlink components, and the thread's effective read permissions and deny rules.
+Each file is read once, in mention order, while the turn's mentioned files
+total at most 256 KiB; a file that fails the checks, does not fit or is not
+UTF-8 is left to the model's own tools. Before each read,
+`api.intercept('mention', …)` (capability `input`, experimental) receives
+`{thread_id, path}`; handlers may set `path` to another workspace file, which
+is read under the same checks, or answer `{deny}` to skip the read. They run
+beside the session like `input` interceptors and may call host operations; a
+failing chain skips the read, and interrupting the turn cancels the chain.
 
 ### One-shot model calls and forks (`model_complete_v2`)
 
@@ -2318,7 +2366,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
-  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit`, `component_change` and `history_persist` callbacks run
+  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit`, `composer_key`, `component_change` and `history_persist` callbacks run
   without host operations and get `host_operation_unavailable`; `model_request`,
   `model_send` and `response_stream` interceptors run on the request path and get
   `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,

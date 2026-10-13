@@ -129,13 +129,13 @@
       "extension_type": "mod",
       "files": {
         "client.ts": "65a14a6457cb7c3a7b8f837ca1e32411f67b877f4059cf7fc549ee96a76d9107",
-        "index.ts": "1230eecc5ea02002ce83da055958397c830b42599cddae92fb3428bf3b0be956",
+        "index.ts": "41289decafcbea6d81c1ed83bff46ad0594b3bb3321475b4371ca33c23f3d559",
         "mod.json": "70c8b633c2bd26ea0aa9ff78f284ea02ede7084072adc120b32acae533c6bb96",
         "protocol.ts": "3256a0692f6ebee8e122c2e8de1e7c0e6e4067d075811828942c1d36d9b2339c",
         "semantic.ts": "c924b13b2921dde58dff087ddaf90f22f60ce990c2edb9f48334e9ca78cb564d"
       },
       "id": "omd_lsp_sync",
-      "package_sha256": "910ab7ba4124d15e5b6b55222a437f41f1f069c91b2358dc4a108fd1d586925c",
+      "package_sha256": "ce0f0be11fa08ed0d970bea6419216ef9ae21dd9d02163104eea196a83fa0efe",
       "source": "mods/first-party/omd_lsp_sync",
       "version": "0.5.0-preview.1"
     },

@@ -224,6 +224,8 @@ pub(super) async fn receive(
         return ("refused", Some("no_peer_message_handler".to_owned()));
     }
     if let Some(required) = required {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _cancellation = Cancellation(cancelled.clone());
         let chain = intercept::chain(
             core.clone(),
             Arc::new(lead.clone()),
@@ -232,7 +234,7 @@ pub(super) async fn receive(
             required,
             input.clone(),
             json!({"caller": "peer", "thread_id": lead.thread.to_string()}),
-            Arc::new(AtomicBool::new(false)),
+            cancelled,
             |effective| Ok(json!({"data": effective["data"]})),
         )
         .await;

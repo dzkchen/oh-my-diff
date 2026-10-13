@@ -10,6 +10,7 @@ mod expansion;
 mod intercept;
 mod inventory;
 mod launch_snapshot;
+mod mentions;
 mod operations;
 mod peering;
 mod persisted;
@@ -424,7 +425,8 @@ pub(super) fn install(
     let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
     let runtime = Arc::new(Mutex::new(runtime));
-    host.accounts.install_mod_runtime(runtime.clone(), required.clone());
+    host.accounts
+        .install_mod_runtime(runtime.clone(), required.clone());
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let persist_runtime = Arc::new(Mutex::new(persist_runtime));
@@ -463,6 +465,7 @@ pub(super) fn install(
     registry.thread_lifecycle_contributor(extension.clone());
     registry.tool_lifecycle_contributor(extension.clone());
     registry.turn_lifecycle_contributor(extension.clone());
+    registry.turn_input_contributor(extension.clone());
     registry.tool_output_contributor(extension.clone());
     registry.approval_gate_contributor(extension.clone());
     registry.tool_spec_contributor(extension.clone());
@@ -1302,6 +1305,8 @@ impl TurnLifecycleContributor for Mods {
                 "message": input.last_agent_message.map(|message| message.chars().take(8192).collect::<String>()),
                 "continued": input.continued, "limit": autonomy::CONTINUATIONS,
                 "provenance": self.autonomy.running(&thread).map(|owner| json!({"kind": "mod", "package": owner}))});
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let _cancellation = Cancellation(cancelled.clone());
             let chain = intercept::chain(
                 self.core.clone(),
                 lead,
@@ -1310,7 +1315,7 @@ impl TurnLifecycleContributor for Mods {
                 required,
                 payload,
                 json!({"caller": "engine", "thread_id": thread}),
-                Arc::new(AtomicBool::new(false)),
+                cancelled,
                 |_| Ok(json!({"stop": true})),
             )
             .await;

@@ -405,4 +405,3 @@ export default function activate(api: ModAPI) {
     return api.host.call('workspace.request_rename', { old, new: next });
   });
 }
-

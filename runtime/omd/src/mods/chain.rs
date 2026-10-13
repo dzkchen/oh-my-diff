@@ -268,6 +268,8 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "compaction" => &["summary_prompt"],
         "history_persist" => &["entries"],
         "composer_edit" => &["edit"],
+        "composer_key" => &["key"],
+        "mention" => &["path"],
         "component_change" => &["to"],
         _ => &[],
     };
@@ -323,6 +325,8 @@ fn validate_input(surface: &str, before: &Value, input: &Value) -> Result<()> {
         "agent_spawn" => spawn_request(input, before),
         "peer_send" | "peer_receive" => serde_json::to_vec(&input["data"])?.len() <= 65_536,
         "composer_edit" => composer_edit(&input["edit"], &before["edit"]),
+        "composer_key" => input["key"] == before["key"] || composer_key(&input["key"]),
+        "mention" => mention_path(&input["path"]),
         "history_persist" => persisted_entries(&input["entries"], &before["entries"]),
         "component_change" => component_change(&input["kind"], &input["to"]),
         "compaction" => {
@@ -349,6 +353,23 @@ fn component_change(kind: &Value, to: &Value) -> bool {
             .is_some_and(|offset| offset <= u64::from(u16::MAX)),
         _ => false,
     }
+}
+
+/// One printable character typed as is, or a key name such as `Left`, `F5` or `Ctrl+w`.
+fn composer_key(key: &Value) -> bool {
+    key.as_str().is_some_and(|key| {
+        let mut chars = key.chars();
+        match (chars.next(), chars.next()) {
+            (Some(character), None) => !character.is_control(),
+            _ => super::view::composer_key_name(key),
+        }
+    })
+}
+
+/// Workspace containment and read permission are enforced when the host reads the path.
+fn mention_path(path: &Value) -> bool {
+    path.as_str()
+        .is_some_and(|path| !path.is_empty() && path.len() <= 4096 && !path.contains('\0'))
 }
 
 /// A draft edit may change only its text.
@@ -647,6 +668,13 @@ fn validate_result(
         "composer_edit" => {
             deny || object.is_some_and(|object| object.len() == 1)
                 && composer_edit(&result["edit"], &input["edit"])
+        }
+        "composer_key" => {
+            deny || object.is_some_and(|object| object.len() == 1)
+                && (result["key"] == input["key"] || composer_key(&result["key"]))
+        }
+        "mention" => {
+            deny || object.is_some_and(|object| object.len() == 1) && mention_path(&result["path"])
         }
         "history_persist" => {
             object.is_some_and(|object| object.len() == 1)
@@ -1690,6 +1718,37 @@ impl ModHost {
                     .map(|interceptor| interceptor.required)
             })
             .max()
+    }
+
+    /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.
+    pub fn intercept_held(
+        &mut self,
+        surface: &str,
+        input: Value,
+        origin: Value,
+        active: &dyn Fn() -> bool,
+        core: &mut dyn FnMut(Value) -> Result<Value>,
+    ) -> Result<Option<Value>> {
+        let Some(required) = self.intercepts(surface) else {
+            return Ok(None);
+        };
+        let chain = intercept(
+            &mut Access::Held(self),
+            &mut |_, call| {
+                Err(failure(format!(
+                    "host_operation_unavailable: {surface} interceptors run without host operations ({})",
+                    call.operation
+                )))
+            },
+            &mut Core::Call(core),
+            surface,
+            required,
+            input,
+            origin,
+            active,
+            &InvocationScope::default(),
+        )?;
+        Ok(Some(chain.result))
     }
 
     pub(super) fn may_intercept(&self, surface: &str, input: &Value) -> bool {

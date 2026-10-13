@@ -17,7 +17,7 @@ const surface = {
   replacements: ['context', 'routing', 'compaction'],
   intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
     command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
-    composer_edit: 'composer', history_persist: 'history_persist' },
+    composer_edit: 'composer', composer_key: 'composer', mention: 'input', history_persist: 'history_persist' },
   middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
 };
 
@@ -308,6 +308,37 @@ test('composer examples suggest a recent prompt and tidy pastes through the edit
   assert.deepEqual(run('paste_tidy', 'intercept', paste('-----BEGIN OPENSSH PRIVATE KEY-----'), { name: '0' }).value, { result: { deny: 'the paste looks like a private key' } });
   const history = { ...paste('x '), input: { ...paste('x ').input, source: 'history' } };
   assert.deepEqual(run('paste_tidy', 'intercept', history, { name: '0' }).value, { unmatched: true });
+});
+
+test('composer key examples rewrite and drop only the keys they match', () => {
+  const key = (name, cursor = 3) => ({ surface: 'composer_key', input: { key: name, text: name.length === 1 ? name : null, revision: 1, cursor }, origin: { caller: 'user' } });
+  assert.deepEqual(run('key_remap', 'intercept', key('Ctrl+b'), { name: '0' }).host_call,
+    { operation: 'continuation.next', arguments: { input: { ...key('Ctrl+b').input, key: 'Left' } } });
+  assert.deepEqual(run('key_remap', 'intercept', key('b'), { name: '0' }).value, { unmatched: true });
+  assert.deepEqual(run('input_guard', 'intercept', key('Ctrl+u'), { name: '0' }).value, { result: { deny: 'Ctrl+U is disabled' } });
+  assert.deepEqual(run('input_guard', 'intercept', key(' ', 0), { name: '1' }).value, { result: { deny: 'leading space' } });
+  assert.deepEqual(run('input_guard', 'intercept', key(' ', 2), { name: '1' }).value, { unmatched: true });
+});
+
+test('token completion example answers each registered trigger', () => {
+  const token = (trigger, query) => ({ kind: 'token', trigger, query, line: `see ${trigger}${query}` });
+  assert.deepEqual(run('shortcodes', 'completion', token(':', 'r')).value, { items: [{ insert: '🚀' }] });
+  const log = run('shortcodes', 'completion', token('#', '1'));
+  assert.equal(log.host_call.operation, 'exec.run');
+  const answered = run('shortcodes', 'completion', token('#', '1'), { receipts: [{ call: log.host_call, value: { stdout: 'fix #12\nmerge #31 and #12\nrefs #7\n' } }] });
+  assert.deepEqual(answered.value, { items: [{ insert: '#12' }] });
+  assert.deepEqual(run('shortcodes', 'inspect').registrations.completions, [{ trigger: ':' }, { trigger: '#' }]);
+});
+
+test('mention example denies secrets and redirects build output to its source', () => {
+  const mention = path => ({ surface: 'mention', input: { thread_id: 't', path }, origin: { caller: 'user' } });
+  assert.deepEqual(run('mention_guard', 'intercept', mention('config/.env.local'), { name: '0' }).value, { result: { deny: 'secret files are not read into prompts' } });
+  assert.deepEqual(run('mention_guard', 'intercept', mention('src/app.ts'), { name: '0' }).value, { unmatched: true });
+  const stat = run('mention_guard', 'intercept', mention('dist/app.js'), { name: '1' });
+  assert.deepEqual(stat.host_call, { operation: 'workspace.stat', arguments: { paths: ['src/app.ts'] } });
+  const redirected = run('mention_guard', 'intercept', mention('dist/app.js'), { name: '1',
+    receipts: [{ call: stat.host_call, value: { files: { 'src/app.ts': { kind: 'file', size: 1, mtime_ms: 0 } } } }] });
+  assert.deepEqual(redirected.host_call, { operation: 'continuation.next', arguments: { input: { thread_id: 't', path: 'src/app.ts' } } });
 });
 
 test('history redaction example rewrites only entry text before it is persisted', () => {

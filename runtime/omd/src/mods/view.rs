@@ -1329,6 +1329,15 @@ pub const MOD_NAMED_KEYS: &[&str] = &[
 ];
 
 pub fn mod_key_name(key: &str) -> bool {
+    key_name(key, false)
+}
+
+/// A key name a `composer_key` handler may produce: a bindable key or an unmodified named key.
+pub fn composer_key_name(key: &str) -> bool {
+    key_name(key, true)
+}
+
+fn key_name(key: &str, bare: bool) -> bool {
     let mut parts = key.split('+').collect::<Vec<_>>();
     let Some(base) = parts.pop() else {
         return false;
@@ -1361,7 +1370,9 @@ pub fn mod_key_name(key: &str) -> bool {
     ];
     ordered
         && !reserved.contains(&key)
-        && (function || modified && (character || named) || parts == ["Shift"] && named)
+        && (function
+            || modified && (character || named)
+            || (parts == ["Shift"] || bare && parts.is_empty()) && named)
 }
 
 pub fn mod_command_reference(value: &str) -> bool {

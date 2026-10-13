@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "shortcodes",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "MIT",
+  "capabilities": ["composer", "exec"],
+  "compatibility": {"required_features": ["completion_tokens_v1"]}
+}

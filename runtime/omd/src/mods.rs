@@ -416,6 +416,9 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "svg_assets_v1",
     "history_persist_v1",
     "model_cache_v1",
+    "composer_key_v1",
+    "completion_tokens_v1",
+    "mention_read_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -728,7 +731,9 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("history_persist", "history_persist"),
     ("elicitation", "approvals"),
     ("composer_edit", "composer"),
+    ("composer_key", "composer"),
     ("component_change", "terminal"),
+    ("mention", "input"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "prompt",
@@ -1149,6 +1154,9 @@ fn source_use(
     }
     if !registrations.virtual_reads.is_empty() {
         capabilities.insert("virtual_reads".to_owned());
+    }
+    if !registrations.completions.is_empty() {
+        capabilities.insert("composer".to_owned());
     }
     for interceptor in &registrations.interceptors {
         capabilities.extend(
@@ -2402,6 +2410,19 @@ struct Registrations {
     modules: Vec<String>,
     #[serde(default)]
     components: Vec<String>,
+    #[serde(default)]
+    completions: Vec<ModCompletion>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ModCompletion {
+    trigger: String,
+}
+
+/// One ASCII punctuation character that the native `@`, `/` and `$` completions don't own.
+fn completion_trigger(trigger: &str) -> bool {
+    matches!(trigger.as_bytes(), [byte] if byte.is_ascii_punctuation() && !b"@/$".contains(byte))
 }
 
 #[derive(Deserialize)]
@@ -2727,6 +2748,7 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
                     .keys()
                     .any(|method| format!("{}.{}", contract.name, method) == name)
             }) => {}
+        "completion" if !loaded.registrations.completions.is_empty() => {}
         e if loaded
             .registrations
             .events
@@ -2753,6 +2775,7 @@ fn hostless(event: &str, payload: &Value) -> bool {
                         | "agent_offers"
                         | "admission"
                         | "composer_edit"
+                        | "composer_key"
                         | "component_change"
                         | "history_persist"
                 )
@@ -4133,6 +4156,19 @@ impl ModHost {
             ));
         }
         resources::validate_registrations(package, &registrations.virtual_reads)?;
+        let triggers = registrations
+            .completions
+            .iter()
+            .map(|completion| completion.trigger.as_str())
+            .collect::<BTreeSet<_>>();
+        if !registrations.completions.is_empty()
+            && (!has("composer")
+                || registrations.completions.len() > 4
+                || triggers.len() != registrations.completions.len()
+                || !triggers.iter().all(|trigger| completion_trigger(trigger)))
+        {
+            return Err(failure("invalid_completion_registration"));
+        }
         let mut contract_ids = BTreeSet::new();
         for contract in &registrations.contracts {
             let id = crate::ContractDocument::parse(contract)
@@ -5483,9 +5519,11 @@ impl ModHost {
     }
 
     pub fn registered(&self, id: &str, event: &str) -> bool {
-        self.loaded
-            .get(id)
-            .is_some_and(|m| m.error.is_none() && m.registrations.events.iter().any(|e| e == event))
+        self.loaded.get(id).is_some_and(|m| {
+            m.error.is_none()
+                && (m.registrations.events.iter().any(|e| e == event)
+                    || event == "completion" && !m.registrations.completions.is_empty())
+        })
     }
 
     /// Read-only launch identity for `Events.terminal.input.identity`.
@@ -5604,6 +5642,8 @@ impl ModHost {
             "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
             "intercept.input": {"thread_id":"observe_only","text":"replaceable","revision":"observe_only","attachments":"observe_only","elements":"observe_only"},
             "intercept.composer_edit": {"source":"observe_only","caller":"observe_only","revision":"observe_only","edit":"replaceable"},
+            "intercept.composer_key": {"key":"replaceable","text":"observe_only","revision":"observe_only","cursor":"observe_only"},
+            "intercept.mention": {"thread_id":"observe_only","path":"replaceable"},
             "intercept.component_change": {"kind":"observe_only","id":"observe_only","from":"observe_only","to":"replaceable","origin":"observe_only"},
             "intercept.model_request": {"request_id":"observe_only","attempt":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable","model":"observe_only","provider":"observe_only","effort":"replaceable","sections":"replaceable","tools":"observe_only"},
             "intercept.response_stream": {"request_id":"observe_only","scope":"observe_only","synthetic":"observe_only","kind":"observe_only","index":"observe_only","item_id":"observe_only","protected":"observe_only","call_id":"observe_only","format":"observe_only","text":"replaceable","tool":"replaceable","arguments":"replaceable","status":"observe_only","usage":"observe_only"},            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
