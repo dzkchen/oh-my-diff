@@ -19,7 +19,8 @@ it (`@src/a.ts:12`, `"docs/my notes.md"`, at most 16) in mod state, because the
 host gives that hook no host operations. When the turn starts, queued paths
 that Git tracks or would track count as a use. Ignored and missing files are
 not learned. Recency counts submitted uses, not wall
-time. The 512 strongest entries are kept in repository-scoped mod storage. A
+time. Up to 512 strongest entries are kept in repository-scoped mod storage,
+trimmed to a serialized UTF-8 value below 60,000 bytes (including JSON escaping). A
 renamed or deleted file is dropped from the results and from storage the first
 time it would be shown.
 

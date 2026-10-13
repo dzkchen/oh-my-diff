@@ -257,15 +257,15 @@ function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]
 export default function activate(api: ModAPI) {
   const load = (): Saved => {
     const value = api.state.get();
-    return value && typeof value === 'object' && !Array.isArray(value) ? JSON.parse(JSON.stringify(value)) as Saved : {};
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Saved : {};
   };
 
   api.intercept('model_send', { required: true }, async (page, next) => {
     if (!wellFormed(page)) return { deny: 'omd_privacy: malformed request page' };
     const inner = await next(page);
     const config = configure(api.settings);
-    const before = load();
     const saved = load();
+    const before = JSON.stringify(saved);
     const where = page.scope.kind;
     const refuse = (reason: string) => {
       saved.denied = (saved.denied ?? 0) + 1;
@@ -350,7 +350,7 @@ export default function activate(api: ModAPI) {
     }
     const names = Object.keys(ids);
     for (const name of names.slice(0, Math.max(0, names.length - MAX_IDS))) delete ids[name];
-    if (JSON.stringify(saved) !== JSON.stringify(before)) api.state.set(saved as Json);
+    if (JSON.stringify(saved) !== before) api.state.set(saved as Json);
     return { edits: [...inner.edits, ...edits], ...(inner.cache === false ? { cache: false as const } : {}) };
   });
 
