@@ -1090,7 +1090,10 @@ fn source_use(
             {
                 used.push("fs.write".to_owned());
             }
-            if !used.is_empty() && operation == "sessions.read" && declared("sessions_tools") {
+            if !used.is_empty()
+                && matches!(operation.as_str(), "sessions.read" | "sessions.snapshot")
+                && declared("sessions_tools")
+            {
                 used.push("sessions_tools".to_owned());
             }
             used
@@ -1177,6 +1180,7 @@ fn source_use(
         (".classify<", "agents"),
         (".rateLimits(", "account"),
         ("parent_history", "sessions"),
+        ("parent_history", "sessions_tools"),
     ] {
         if source.contains(call) {
             capabilities.insert(capability.to_owned());

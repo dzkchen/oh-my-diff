@@ -431,7 +431,8 @@ fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value>
     }
 }
 
-const RAW_READ_BYTES: usize = 16 * 1024;
+/// Small enough that a chunk of control bytes, six bytes each once escaped, fits one exchange.
+const RAW_READ_BYTES: usize = 8_000;
 const EXCHANGE_BYTES: usize = 48 * 1024;
 
 type Reader = Box<dyn FnMut() -> io::Result<Value> + Send>;
@@ -1083,10 +1084,15 @@ impl ManagedProcesses {
                     let open = Arc::new(std::sync::atomic::AtomicUsize::new(readers.len()));
                     let announced = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     if let Some(notifier) = notifier.clone() {
-                        let (announced, owner, session) =
-                            (announced.clone(), owner.clone(), session.clone());
+                        let (announced, owner, session, reaped) = (
+                            announced.clone(),
+                            owner.clone(),
+                            session.clone(),
+                            Arc::clone(&reaped),
+                        );
                         std::thread::spawn(move || {
                             if wait_for_exit(group).is_ok()
+                                && !*reaped.lock().unwrap_or_else(PoisonError::into_inner)
                                 && !announced.swap(true, std::sync::atomic::Ordering::AcqRel)
                             {
                                 notifier(ProcessNotice {
@@ -1280,7 +1286,7 @@ impl ManagedProcesses {
                 let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
                 let deadline = grace.map_or(deadline, |grace| deadline.max(grace));
                 let mut messages = Vec::new();
-                let mut bytes = 0_usize;
+                let mut bytes = 1_usize;
                 while messages.len() < 64 {
                     if !active() {
                         self.remove(&key, &session);
@@ -1716,7 +1722,11 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
     fn one_exchange_stays_inside_the_receipt_budget_and_leaves_the_rest_for_the_next() {
         let fixture = Fixture::new();
         fixture
-            .start("flood", "head -c 200000 /dev/zero | tr '\\0' x", json!({}))
+            .start(
+                "flood",
+                "head -c 200000 /dev/zero | tr '\\0' '\\001'",
+                json!({}),
+            )
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while fixture.processes.running("fixture", "flood") != Some(false) {

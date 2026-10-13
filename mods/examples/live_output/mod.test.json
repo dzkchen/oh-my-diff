@@ -19,7 +19,8 @@
       {"error": "process_stopped"},
       {"error": "host_result_limit"},
       {"result": {"session": "live-2", "running": true, "messages": [{"stream": "stdout", "data": "late\n"}]}},
-      {"error": "process_stopped"}
+      {"error": "process_stopped"},
+      {"error": "process_session_unavailable"}
     ]
   },
   "steps": [
@@ -27,6 +28,10 @@
     {"type": "event", "event": "channel", "payload": {"publisher": "live_output", "channel": "live_output/run", "data": "make\txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "correlation": null, "sequence": 1, "dropped": 0}},
     {"type": "event", "event": "process_event", "payload": {"session": "live-0", "kind": "output", "bytes": 64}},
     {"type": "event", "event": "process_event", "payload": {"session": "live-1", "kind": "output", "bytes": 64}},
+    {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "draw", "ledger": null},
+      "expect": {"sites": {"above_composer": {"components": [
+        {"type": "pane", "id": "live_output", "label": "make xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… — running", "children": [
+          {"type": "code", "id": "live_output_text", "label": "Output", "text": "warning: slow\nbuilding\nok\n100%\n[1 binary bytes]\n"}]}]}}}},
     {"type": "event", "event": "process_event", "payload": {"session": "live-1", "kind": "exit"}},
     {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "draw", "ledger": null},
       "expect": {"sites": {"above_composer": {"components": [
@@ -39,7 +44,7 @@
       "expect": {"sites": {"above_composer": {"components": [
         {"type": "pane", "id": "live_output", "label": "make — running", "children": [
           {"type": "code", "id": "live_output_text", "label": "Output", "text": "partial\n"}]}]}}}},
-    {"type": "event", "event": "timer", "payload": {"key": "live-2-exit"}},
+    {"type": "advance_time", "ms": 1000},
     {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "draw", "ledger": null},
       "expect": {"sites": {"above_composer": {"components": [
         {"type": "pane", "id": "live_output", "label": "make — exited", "children": [
@@ -48,6 +53,12 @@
     {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "startup", "ledger": null},
       "expect": {"sites": {"above_composer": {"components": [
         {"type": "pane", "id": "live_output", "label": "make — stopped", "children": [
-          {"type": "code", "id": "live_output_text", "label": "Output", "text": "partial\n"}]}]}}}}
+          {"type": "code", "id": "live_output_text", "label": "Output", "text": "partial\n"}]}]}}}},
+    {"type": "state", "mod": "live_output", "value": {"run": 3, "command": "make", "text": "", "status": "running"}},
+    {"type": "event", "event": "process_event", "payload": {"session": "live-3", "kind": "output", "bytes": 64}},
+    {"type": "terminal_mount", "mod": "live_output", "payload": {"event": "draw", "ledger": null},
+      "expect": {"sites": {"above_composer": {"components": [
+        {"type": "pane", "id": "live_output", "label": "make — stopped", "children": [
+          {"type": "code", "id": "live_output_text", "label": "Output", "text": " "}]}]}}}}
   ]
 }

@@ -2484,7 +2484,7 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
-        &["commands", "agents", "sessions"],
+        &["commands", "agents", "sessions", "sessions_tools"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
@@ -5078,6 +5078,18 @@ fn history_persist_chunks_fit_their_json_budget_and_credit_only_changing_links()
     assert_eq!(codex_omd::persist_cut(&token, 49_152), 49_001);
     assert_eq!(codex_omd::persist_cut(&"a".repeat(50_000), 49_152), 49_152);
     assert_eq!(codex_omd::persist_cut(&"\"".repeat(30_000), 49_152), 24_576);
+    assert_eq!(codex_omd::persist_cut("\u{1}a", 0), 1);
+    let long_id =
+        json!({"kind": "tool", "role": null, "call_id": "c".repeat(50_000), "text": "ab"});
+    let pieces = codex_omd::persist_chunks(&[long_id]);
+    assert_eq!(
+        pieces
+            .iter()
+            .flatten()
+            .map(|(_, value)| value["text"].as_str().unwrap())
+            .collect::<String>(),
+        "ab"
+    );
     let entry =
         |text: String| json!({"kind": "message", "role": "user", "call_id": null, "text": text});
     let many = (0..3_000)

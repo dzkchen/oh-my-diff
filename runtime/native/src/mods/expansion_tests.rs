@@ -2927,6 +2927,45 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn session_snapshots_need_the_sessions_tools_capability() {
+    let Some(fixture) = fixture(&[Package {
+        id: "snapper",
+        capabilities: &["commands", "sessions", "store"],
+        manifest: Value::Null,
+        source: "export default function (api) { api.command('snap', () => api.host.tryCall('sessions.snapshot', {})); }\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let grants = fixture.core.runtime.lock().unwrap().grants("snapper");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    let caller = Caller {
+        id: "snapper",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let refused = operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        caller,
+        None,
+        ModHostCall {
+            operation: "sessions.snapshot".into(),
+            arguments: json!({}),
+        },
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused, "capability_denied: sessions_tools");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_runtime_fails() {
     let Some(fixture) = fixture(&[]) else {
         return;

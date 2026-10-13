@@ -416,6 +416,14 @@ async fn run(
         .map_err(|e| e.to_string())?;
     }
     if operation == "sessions.snapshot" {
+        if !caller.grants.as_ref().is_some_and(|grants| {
+            grants
+                .capabilities
+                .iter()
+                .any(|cap| cap == "sessions_tools")
+        }) {
+            return Err("capability_denied: sessions_tools".into());
+        }
         let authority = authority(lead, call).await?;
         let scoped = Lead {
             permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),

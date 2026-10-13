@@ -786,7 +786,7 @@
       "replace": null,
       "timing": "any callback; turn evidence at turn end",
       "ownership": "host: repository scope, opt-outs, redaction and bounds",
-      "limits": "Snapshots require sessions and store, omit private reasoning and opaque metadata, and refuse missing call/output pairs or oversized history; all evidence remains owner, source and thread bound",
+      "limits": "Snapshots and parent history require sessions and sessions_tools (snapshots also store), omit private reasoning and opaque metadata, and refuse missing call/output pairs or oversized history; all evidence remains owner, source and thread bound",
       "native": "native hooks see only the current payload",
       "covers": {
         "capabilities": [

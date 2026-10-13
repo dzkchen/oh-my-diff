@@ -10,6 +10,8 @@ struct OfflineHost {
     environment: Option<BTreeMap<String, String>>,
     clients: Vec<Value>,
     attached: u64,
+    /// The owner of the component module runners this scenario mounts.
+    owner: String,
 }
 
 const POINTER_ACTIONS: [&str; 8] = [
@@ -25,8 +27,11 @@ const POINTER_ACTIONS: [&str; 8] = [
 
 impl OfflineHost {
     fn from_scenario(scenario: &Value, now_ms: u64) -> Result<Self> {
+        static SCENARIOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let scenario_number = SCENARIOS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut host = Self {
             now_ms,
+            owner: format!("offline-{scenario_number}"),
             ..Self::default()
         };
         if let Some(environment) = scenario.get("environment") {
@@ -135,9 +140,6 @@ impl OfflineHost {
         Ok(response.get("result").cloned().unwrap_or(response))
     }
 }
-
-/// The owner of the component module runners an offline scenario mounts.
-const OFFLINE_CLIENT: &str = "offline";
 
 impl ModHost {
     pub fn author_inspection(&self) -> Value {
@@ -256,7 +258,7 @@ impl ModHost {
             tiers.insert(id.clone(), (tier, loaded.selection.clone()));
         }
         let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
-        process::detach(OFFLINE_CLIENT);
+        process::detach(&host.owner);
         for (id, (_, selection)) in tiers {
             if let Some(loaded) = self
                 .loaded
@@ -595,8 +597,8 @@ impl ModHost {
                 let size = |name: &str, default: u64| {
                     step.get(name).and_then(Value::as_u64).unwrap_or(default)
                 };
-                let frame = json!({"instance": format!("{OFFLINE_CLIENT}.{instance}"),
-                    "client": OFFLINE_CLIENT, "props": step.get("props").cloned().unwrap_or(Value::Null),
+                let frame = json!({"instance": format!("{}.{instance}", host.owner),
+                    "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
                     "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
                     "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
                 let result = self.invoke_scoped_with(

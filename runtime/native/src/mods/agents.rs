@@ -2153,12 +2153,17 @@ impl Agents {
         let parent = parent_config(lead).await?;
         let parent_provider = parent.model_provider_id.clone();
         let history = if request.parent_history {
-            if !caller
-                .grants
-                .as_ref()
-                .is_some_and(|grants| grants.capabilities.iter().any(|cap| cap == "sessions"))
+            let granted = |capability: &str| {
+                caller
+                    .grants
+                    .as_ref()
+                    .is_some_and(|grants| grants.capabilities.iter().any(|cap| cap == capability))
+            };
+            if let Some(missing) = ["sessions", "sessions_tools"]
+                .into_iter()
+                .find(|capability| !granted(capability))
             {
-                return Err("capability_denied: sessions".into());
+                return Err(format!("capability_denied: {missing}"));
             }
             let parent_thread = manager
                 .get_thread(lead.thread)

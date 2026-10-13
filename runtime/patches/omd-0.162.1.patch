@@ -57861,10 +57861,10 @@ index 000000000..c4354f220
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..3ce388795
+index 000000000..683f2b20d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2413 @@
+@@ -0,0 +1,2423 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -58298,7 +58298,8 @@ index 000000000..3ce388795
 +    }
 +}
 +
-+const RAW_READ_BYTES: usize = 16 * 1024;
++/// Small enough that a chunk of control bytes, six bytes each once escaped, fits one exchange.
++const RAW_READ_BYTES: usize = 8_000;
 +const EXCHANGE_BYTES: usize = 48 * 1024;
 +
 +type Reader = Box<dyn FnMut() -> io::Result<Value> + Send>;
@@ -58950,10 +58951,15 @@ index 000000000..3ce388795
 +                    let open = Arc::new(std::sync::atomic::AtomicUsize::new(readers.len()));
 +                    let announced = Arc::new(std::sync::atomic::AtomicBool::new(false));
 +                    if let Some(notifier) = notifier.clone() {
-+                        let (announced, owner, session) =
-+                            (announced.clone(), owner.clone(), session.clone());
++                        let (announced, owner, session, reaped) = (
++                            announced.clone(),
++                            owner.clone(),
++                            session.clone(),
++                            Arc::clone(&reaped),
++                        );
 +                        std::thread::spawn(move || {
 +                            if wait_for_exit(group).is_ok()
++                                && !*reaped.lock().unwrap_or_else(PoisonError::into_inner)
 +                                && !announced.swap(true, std::sync::atomic::Ordering::AcqRel)
 +                            {
 +                                notifier(ProcessNotice {
@@ -59147,7 +59153,7 @@ index 000000000..3ce388795
 +                let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
 +                let deadline = grace.map_or(deadline, |grace| deadline.max(grace));
 +                let mut messages = Vec::new();
-+                let mut bytes = 0_usize;
++                let mut bytes = 1_usize;
 +                while messages.len() < 64 {
 +                    if !active() {
 +                        self.remove(&key, &session);
@@ -59583,7 +59589,11 @@ index 000000000..3ce388795
 +    fn one_exchange_stays_inside_the_receipt_budget_and_leaves_the_rest_for_the_next() {
 +        let fixture = Fixture::new();
 +        fixture
-+            .start("flood", "head -c 200000 /dev/zero | tr '\\0' x", json!({}))
++            .start(
++                "flood",
++                "head -c 200000 /dev/zero | tr '\\0' '\\001'",
++                json!({}),
++            )
 +            .unwrap();
 +        let deadline = Instant::now() + Duration::from_secs(5);
 +        while fixture.processes.running("fixture", "flood") != Some(false) {
@@ -63465,10 +63475,10 @@ index 000000000..f2255febe
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..4a286b813
+index 000000000..0bc3b7a5c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2611 @@
+@@ -0,0 +1,2616 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -65624,12 +65634,17 @@ index 000000000..4a286b813
 +        let parent = parent_config(lead).await?;
 +        let parent_provider = parent.model_provider_id.clone();
 +        let history = if request.parent_history {
-+            if !caller
-+                .grants
-+                .as_ref()
-+                .is_some_and(|grants| grants.capabilities.iter().any(|cap| cap == "sessions"))
++            let granted = |capability: &str| {
++                caller
++                    .grants
++                    .as_ref()
++                    .is_some_and(|grants| grants.capabilities.iter().any(|cap| cap == capability))
++            };
++            if let Some(missing) = ["sessions", "sessions_tools"]
++                .into_iter()
++                .find(|capability| !granted(capability))
 +            {
-+                return Err("capability_denied: sessions".into());
++                return Err(format!("capability_denied: {missing}"));
 +            }
 +            let parent_thread = manager
 +                .get_thread(lead.thread)
@@ -69989,10 +70004,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..2318946cd
+index 000000000..60d5bf980
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4807 @@
+@@ -0,0 +1,4846 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -72922,6 +72937,45 @@ index 000000000..2318946cd
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn session_snapshots_need_the_sessions_tools_capability() {
++    let Some(fixture) = fixture(&[Package {
++        id: "snapper",
++        capabilities: &["commands", "sessions", "store"],
++        manifest: Value::Null,
++        source: "export default function (api) { api.command('snap', () => api.host.tryCall('sessions.snapshot', {})); }\n",
++    }]) else {
++        return;
++    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let grants = fixture.core.runtime.lock().unwrap().grants("snapper");
++    let source = grants.as_ref().unwrap().source_sha256.clone();
++    let generation = fixture.core.runtime.lock().unwrap().generation();
++    let caller = Caller {
++        id: "snapper",
++        source: &source,
++        grants,
++        generation,
++        origin: Origin::Event,
++        record_changes: false,
++    };
++    let refused = operations::dispatch(
++        &fixture.core,
++        &fixture.lead,
++        caller,
++        None,
++        ModHostCall {
++            operation: "sessions.snapshot".into(),
++            arguments: json!({}),
++        },
++        &Arc::new(AtomicBool::new(false)),
++    )
++    .await
++    .unwrap_err();
++    assert_eq!(refused, "capability_denied: sessions_tools");
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_runtime_fails() {
 +    let Some(fixture) = fixture(&[]) else {
 +        return;
@@ -75400,10 +75454,10 @@ index 000000000..1dbd7f502
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..269217e5f
+index 000000000..700fb036e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,761 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -75822,6 +75876,14 @@ index 000000000..269217e5f
 +        .map_err(|e| e.to_string())?;
 +    }
 +    if operation == "sessions.snapshot" {
++        if !caller.grants.as_ref().is_some_and(|grants| {
++            grants
++                .capabilities
++                .iter()
++                .any(|cap| cap == "sessions_tools")
++        }) {
++            return Err("capability_denied: sessions_tools".into());
++        }
 +        let authority = authority(lead, call).await?;
 +        let scoped = Lead {
 +            permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
@@ -98429,10 +98491,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..69b4660ee
+index 000000000..0663c4267
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5720 @@
+@@ -0,0 +1,5724 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99525,7 +99587,10 @@ index 000000000..69b4660ee
 +            {
 +                used.push("fs.write".to_owned());
 +            }
-+            if !used.is_empty() && operation == "sessions.read" && declared("sessions_tools") {
++            if !used.is_empty()
++                && matches!(operation.as_str(), "sessions.read" | "sessions.snapshot")
++                && declared("sessions_tools")
++            {
 +                used.push("sessions_tools".to_owned());
 +            }
 +            used
@@ -99612,6 +99677,7 @@ index 000000000..69b4660ee
 +        (".classify<", "agents"),
 +        (".rateLimits(", "account"),
 +        ("parent_history", "sessions"),
++        ("parent_history", "sessions_tools"),
 +    ] {
 +        if source.contains(call) {
 +            capabilities.insert(capability.to_owned());
@@ -104155,10 +104221,10 @@ index 000000000..69b4660ee
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..d1de67cad
+index 000000000..95ee3b7af
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,910 @@
+@@ -0,0 +1,912 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -104171,6 +104237,8 @@ index 000000000..d1de67cad
 +    environment: Option<BTreeMap<String, String>>,
 +    clients: Vec<Value>,
 +    attached: u64,
++    /// The owner of the component module runners this scenario mounts.
++    owner: String,
 +}
 +
 +const POINTER_ACTIONS: [&str; 8] = [
@@ -104186,8 +104254,11 @@ index 000000000..d1de67cad
 +
 +impl OfflineHost {
 +    fn from_scenario(scenario: &Value, now_ms: u64) -> Result<Self> {
++        static SCENARIOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++        let scenario_number = SCENARIOS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 +        let mut host = Self {
 +            now_ms,
++            owner: format!("offline-{scenario_number}"),
 +            ..Self::default()
 +        };
 +        if let Some(environment) = scenario.get("environment") {
@@ -104296,9 +104367,6 @@ index 000000000..d1de67cad
 +        Ok(response.get("result").cloned().unwrap_or(response))
 +    }
 +}
-+
-+/// The owner of the component module runners an offline scenario mounts.
-+const OFFLINE_CLIENT: &str = "offline";
 +
 +impl ModHost {
 +    pub fn author_inspection(&self) -> Value {
@@ -104417,7 +104485,7 @@ index 000000000..d1de67cad
 +            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
 +        }
 +        let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
-+        process::detach(OFFLINE_CLIENT);
++        process::detach(&host.owner);
 +        for (id, (_, selection)) in tiers {
 +            if let Some(loaded) = self
 +                .loaded
@@ -104756,8 +104824,8 @@ index 000000000..d1de67cad
 +                let size = |name: &str, default: u64| {
 +                    step.get(name).and_then(Value::as_u64).unwrap_or(default)
 +                };
-+                let frame = json!({"instance": format!("{OFFLINE_CLIENT}.{instance}"),
-+                    "client": OFFLINE_CLIENT, "props": step.get("props").cloned().unwrap_or(Value::Null),
++                let frame = json!({"instance": format!("{}.{instance}", host.owner),
++                    "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
 +                    "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
 +                    "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
 +                let result = self.invoke_scoped_with(
@@ -110524,10 +110592,10 @@ index 000000000..6c19a9b2d
 +}
 diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
 new file mode 100644
-index 000000000..df4d01f62
+index 000000000..91b9eff11
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/persisted.rs
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,191 @@
 +use super::*;
 +
 +/// JSON bytes of entries per callback; the payload carries them twice (`input` and `original`).
@@ -110550,7 +110618,7 @@ index 000000000..df4d01f62
 +}
 +
 +/// Where a chunk of `text` ends: within `budget` JSON-escaped bytes, after the last whitespace
-+/// there so a token stays whole.
++/// there so a token stays whole, and after at least one character.
 +pub fn persist_cut(text: &str, budget: usize) -> usize {
 +    let mut size = 0;
 +    let end = text
@@ -110559,7 +110627,10 @@ index 000000000..df4d01f62
 +            size += escaped(*c);
 +            size > budget
 +        })
-+        .map_or(text.len(), |(at, _)| at);
++        .map_or(
++            text.len(),
++            |(at, c)| if at == 0 { c.len_utf8() } else { at },
++        );
 +    if end == text.len() {
 +        return end;
 +    }
@@ -110581,7 +110652,7 @@ index 000000000..df4d01f62
 +        };
 +        let overhead = value("").to_string().len();
 +        loop {
-+            let cut = persist_cut(rest, PERSIST_CHUNK_BYTES - overhead);
++            let cut = persist_cut(rest, PERSIST_CHUNK_BYTES.saturating_sub(overhead));
 +            let piece = value(&rest[..cut]);
 +            let bytes = piece.to_string().len();
 +            if size + bytes > PERSIST_CHUNK_BYTES {
@@ -129125,10 +129196,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..393d02559
+index 000000000..914047dd1
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5607 @@
+@@ -0,0 +1,5619 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131615,7 +131686,7 @@ index 000000000..393d02559
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let (temp, _, _) = fixture(
 +        "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
-+        &["commands", "agents", "sessions"],
++        &["commands", "agents", "sessions", "sessions_tools"],
 +    );
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let policies = &status["field_policies"];
@@ -134209,6 +134280,18 @@ index 000000000..393d02559
 +    assert_eq!(codex_omd::persist_cut(&token, 49_152), 49_001);
 +    assert_eq!(codex_omd::persist_cut(&"a".repeat(50_000), 49_152), 49_152);
 +    assert_eq!(codex_omd::persist_cut(&"\"".repeat(30_000), 49_152), 24_576);
++    assert_eq!(codex_omd::persist_cut("\u{1}a", 0), 1);
++    let long_id =
++        json!({"kind": "tool", "role": null, "call_id": "c".repeat(50_000), "text": "ab"});
++    let pieces = codex_omd::persist_chunks(&[long_id]);
++    assert_eq!(
++        pieces
++            .iter()
++            .flatten()
++            .map(|(_, value)| value["text"].as_str().unwrap())
++            .collect::<String>(),
++        "ab"
++    );
 +    let entry =
 +        |text: String| json!({"kind": "message", "role": "user", "call_id": null, "text": text});
 +    let many = (0..3_000)
@@ -141742,6 +141825,14 @@ index 000000000..1918d8535
 +    assert!(length >= 2000, "{length}");
 +    assert_eq!(builds, 1);
 +}
+diff --git a/codex-rs/tui/src/app/.tests.rs.pending-snap b/codex-rs/tui/src/app/.tests.rs.pending-snap
+new file mode 100644
+index 000000000..85f1ba218
+--- /dev/null
++++ b/codex-rs/tui/src/app/.tests.rs.pending-snap
+@@ -0,0 +1,2 @@
++{"run_id":"1791870317-73272000","line":3063,"new":{"module_name":"codex_tui__app__tests","snapshot_name":"open_agent_picker_prompts_when_subagents_disabled","metadata":{"source":"tui/src/app/tests.rs","assertion_line":3063,"expression":"render_bottom_popup(&app.chat_widget, 80)"},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  Oh                                                                        roj…\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"},"old":{"module_name":"codex_tui__app__tests","metadata":{},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  gp\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"}}
++{"run_id":"1791870369-287352000","line":3063,"new":{"module_name":"codex_tui__app__tests","snapshot_name":"open_agent_picker_prompts_when_subagents_disabled","metadata":{"source":"tui/src/app/tests.rs","assertion_line":3063,"expression":"render_bottom_popup(&app.chat_widget, 80)"},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  Oh                                                                        roj…\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"},"old":{"module_name":"codex_tui__app__tests","metadata":{},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  gp\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"}}
 diff --git a/codex-rs/tui/src/app/mod_credentials.rs b/codex-rs/tui/src/app/mod_credentials.rs
 new file mode 100644
 index 000000000..09b7a26fc

@@ -192,7 +192,7 @@ export class Emitter {
   }
 }
 
-export function frames(onData) {
+export function frames(onData, parse = JSON.parse) {
   let pending = '';
   const decoder = new TextDecoder();
   return chunk => {
@@ -200,10 +200,12 @@ export function frames(onData) {
     for (let match; (match = /\r?\n\r?\n/.exec(pending));) {
       const data = pending.slice(0, match.index).split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
       pending = pending.slice(match.index + match[0].length);
-      if (data) onData(data === '[DONE]' ? { done: true } : JSON.parse(data));
+      if (data) onData(data === '[DONE]' ? { done: true } : parse(data));
     }
   };
 }
+
+const lenient = data => { try { return JSON.parse(data); } catch { return {}; } };
 
 export function chatEvents(emitter) {
   return event => {
@@ -290,10 +292,11 @@ export async function forward(body, profile, inbound, response, signal, owner = 
     const headers = Object.fromEntries(Object.entries(inbound).filter(([key]) => !DROPPED.includes(key)));
     const upstream = await post(url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
     response.writeHead(upstream.statusCode, Object.fromEntries(Object.entries(upstream.headers).filter(([key]) => !['transfer-encoding', 'connection', 'content-length'].includes(key))));
-    const learn = frames(event => event.type === 'response.output_item.done' && event.item?.type === 'reasoning' && remember(owner, identity(event.item), profile.name));
+    const learn = /^text\/event-stream/.test(upstream.headers['content-type'] ?? '')
+      && frames(event => event?.type === 'response.output_item.done' && event.item?.type === 'reasoning' && remember(owner, identity(event.item), profile.name), lenient);
     for await (const chunk of upstream) {
       response.write(chunk);
-      try { learn(chunk); } catch {}
+      if (learn) learn(chunk);
     }
     return;
   }

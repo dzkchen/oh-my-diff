@@ -14,9 +14,10 @@ start processes; the channel handler starts the process as session `live-N`
 (`N` counts runs and is kept in the state) with `notify: ["output", "exit"]`.
 Each `process_event` for the current run drains the queue with at most two
 `process.exchange` calls, because one call returns up to 48 KiB and a callback's
-receipts total 131,072 bytes; when more may be queued (a full page, or the
-process exited and `process_stopped` has not been seen) it schedules a 50 ms
-timer that continues. Events and timers of earlier runs are ignored, so the late
-exit notice of a stopped run cannot touch the new one. Only `process_stopped`
-marks the run exited; any other `process.exchange` error leaves it running for
-the next event.
+receipts total 131,072 bytes; when more may be queued (the last page was not
+empty, or the process exited and `process_stopped` has not been seen) it
+schedules a 50 ms timer that continues until a page comes back empty. Events and
+timers of earlier runs are ignored, so the late exit notice of a stopped run
+cannot touch the new one. `process_stopped` marks the run exited and
+`process_session_unavailable` stopped; any other `process.exchange` error leaves
+it running and retries after a second.

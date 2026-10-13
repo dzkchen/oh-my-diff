@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { activate, assertFailure, assertShortCircuit, assertWrapped, attach, clock, coreValue, detach, environment, find, intercept, invoke, mount, packages, pointer, runScenario, state, storeMock, text, tiers, waitUntil } from '../mods/author/testing.mjs';
+import { activate, assertFailure, assertShortCircuit, assertWrapped, attach, clock, component, coreValue, detach, environment, find, intercept, invoke, mount, packages, pointer, runScenario, state, storeMock, text, tiers, waitUntil } from '../mods/author/testing.mjs';
 
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
@@ -26,6 +26,10 @@ test('author packaging preserves custom entrypoints, assets and lifecycle script
     if (!process.env.OMD_MOD_BIN) assert.ok(readFileSync(join(root, 'inspections'), 'utf8').trim().split('\n').includes(report.package));
     assert.equal(JSON.parse(readFileSync(join(report.package, 'package-report.json'))).sha256, report.sha256);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('component steps keep an explicit zero size', () => {
+  assert.deepEqual(component('m', 'grid', { columns: 0, rows: 0 }), { type: 'component', mod: 'm', module: 'grid', columns: 0, rows: 0 });
 });
 
 test('author test fails when a project has no tests', () => {

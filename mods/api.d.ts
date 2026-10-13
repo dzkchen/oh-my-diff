@@ -532,7 +532,7 @@ export interface Events {
   prompt_expanded: { input: { turn_id: string; items: ({ kind: 'skill'; name: string; source: string; sha256: string } | { kind: 'mention'; name: string; source: string }
     | { kind: 'image'; source?: string; start?: number; end?: number; bytes?: number; sha256?: string } | { kind: 'paste'; start: number; end: number; bytes: number; sha256: string })[] }; output: void };
 }
-/** A raw read of at most 16 KiB: UTF-8 text as `data`, bytes that are not UTF-8 as their own `data_base64` chunk. */
+/** A raw read of at most 8,000 bytes: UTF-8 text as `data`, bytes that are not UTF-8 as their own `data_base64` chunk. */
 export type ProcessChunk = { stream: 'stdout' | 'stderr'; data?: string; data_base64?: string };
 export type HttpRequest = { url: string; method?: string; headers?: Record<string, string>; body?: string; body_base64?: string; credential?: string; timeout_ms?: number; redirects?: number };
 export type HttpResponse = { status: number; url: string; headers: Record<string, string>; redirects: { status: number; origin: string | null }[] };

@@ -20,7 +20,7 @@ fn escaped(c: char) -> usize {
 }
 
 /// Where a chunk of `text` ends: within `budget` JSON-escaped bytes, after the last whitespace
-/// there so a token stays whole.
+/// there so a token stays whole, and after at least one character.
 pub fn persist_cut(text: &str, budget: usize) -> usize {
     let mut size = 0;
     let end = text
@@ -29,7 +29,10 @@ pub fn persist_cut(text: &str, budget: usize) -> usize {
             size += escaped(*c);
             size > budget
         })
-        .map_or(text.len(), |(at, _)| at);
+        .map_or(
+            text.len(),
+            |(at, c)| if at == 0 { c.len_utf8() } else { at },
+        );
     if end == text.len() {
         return end;
     }
@@ -51,7 +54,7 @@ pub fn persist_chunks(entries: &[Value]) -> Vec<Vec<(usize, Value)>> {
         };
         let overhead = value("").to_string().len();
         loop {
-            let cut = persist_cut(rest, PERSIST_CHUNK_BYTES - overhead);
+            let cut = persist_cut(rest, PERSIST_CHUNK_BYTES.saturating_sub(overhead));
             let piece = value(&rest[..cut]);
             let bytes = piece.to_string().len();
             if size + bytes > PERSIST_CHUNK_BYTES {

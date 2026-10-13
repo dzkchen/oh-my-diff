@@ -64,11 +64,13 @@ export default function activate(api: ModAPI) {
     let { text } = current;
     let status = current.status as string;
     const held = { ...current.held };
-    let more = false;
+    let [more, retry] = [false, false];
     for (let page = 0; page < 2; page += 1) {
       const answer = api.host.tryCall('process.exchange', { session: live(run), wait_ms: 0 });
       if (!answer.ok) {
         if (answer.error.startsWith('process_stopped')) status = 'exited';
+        else if (answer.error.startsWith('process_session_unavailable')) status = 'stopped';
+        else retry = true;
         more = false;
         break;
       }
@@ -76,10 +78,10 @@ export default function activate(api: ModAPI) {
         if (chunk.data === undefined) text += `[${decoded(chunk.data_base64 ?? '')} binary bytes]\n`;
         else [text, held[chunk.stream]] = append(text, held[chunk.stream] ?? '', chunk.data);
       }
-      more = answer.value.messages.length >= 64 || exit;
+      more = answer.value.messages.length > 0 || exit;
       if (!more) break;
     }
-    if (more) api.host.tryCall('events.schedule', { key: exit ? `${live(run)}-exit` : live(run), delay_ms: 50 });
+    if (more || retry) api.host.tryCall('events.schedule', { key: exit ? `${live(run)}-exit` : live(run), delay_ms: retry ? 1000 : 50 });
     while (bytes(JSON.stringify(text)) > LIMIT) {
       const cut = text.slice(Math.max(1024, text.length - LIMIT));
       text = cut.slice(cut.indexOf('\n') + 1);

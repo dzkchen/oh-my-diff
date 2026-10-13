@@ -67,7 +67,7 @@ native work.
 | `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
-| `sessions_tools` | tool arguments and outputs in `sessions.read` records (with `sessions`) |
+| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot` and `agents.spawn {parent_history}` (with `sessions`) |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
@@ -812,13 +812,14 @@ one handle run in order; a wait on one handle does not block calls on another.
 The host holds at most 16 agents, counting spawns in progress. Agents live
 until cancelled, the mod is disabled or fails, or the session stops.
 
-`parent_history: true` additionally requires `sessions` and delivers frozen
-parent conversation records including visible tool calls and outputs. It
+`parent_history: true` additionally requires `sessions` and `sessions_tools`
+and delivers frozen parent conversation records including visible tool calls
+and outputs. It
 refuses more than 8,192 records or 1 MiB instead of silently truncating them.
 The spawn result includes the history digest, byte count, item count and
 revision. The records are labelled untrusted task data. `sessions.snapshot
 {call_ids?}` preserves the same history in a caller-bound evidence reference
-and additionally requires `store`. A selection contains 1–32 unique IDs and
+and requires `sessions`, `sessions_tools` and `store`. A selection contains 1–32 unique IDs and
 must include each complete call/output pair; evidence storage's 256 KiB limit
 still applies. This does not expose hidden reasoning.
 
@@ -1036,7 +1037,8 @@ wait on an open pipe; its exchanges cannot `send` (`process_stdin_null`) and it
 cannot take `raster`.
 
 Experimental (`process_streams_v1`): under `raw` the host reads stdout and stderr as written and
-queues each read (at most 16 KiB) as `{stream: "stdout" | "stderr", data}`;
+queues each read (at most 8,000 bytes, so a chunk fits one exchange even when every
+byte is escaped) as `{stream: "stdout" | "stderr", data}`;
 bytes that are not UTF-8 arrive as their own `{stream, data_base64}` chunk
 between the text chunks around them, so one read can queue several chunks; a
 character split across writes arrives whole in the later chunk. The two streams are separate pipes, so

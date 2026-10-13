@@ -85,7 +85,7 @@ test('router adapts Responses requests to each protocol through the credential g
       { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 't1', name: 'apply_patch', input: {} } },
       { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"input":"*** Begin Patch"}' } },
       { type: 'message_delta', usage: { output_tokens: 5 } }, { type: 'message_stop' }]));
-    else response.end(sse([{ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs-${credential}`, summary: [], encrypted_content: `enc-${credential}` } },
+    else response.end(sse(['{',{ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs-${credential}`, summary: [], encrypted_content: `enc-${credential}` } },
       { type: 'response.completed', response: { id: 'r', usage: {} } }]));
   });
   const port = await listen(gateway);
@@ -115,7 +115,7 @@ test('router adapts Responses requests to each protocol through the credential g
       const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json', ...headers },
         body: JSON.stringify({ model, instructions: 'sys', input: history, tools, reasoning: { effort: 'high' }, stream: true, prompt_cache_key: 'conversation' }) });
       const text = await reply.text();
-      return { status: reply.status, events: text.split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
+      return { status: reply.status, events: text.split('\n\n').filter(frame => frame && frame !== 'data: {').map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
     };
     assert.equal((await ask('a/up', 'Bearer sk-test')).status, 401);
     const unauthorized = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization: 'Bearer sk-test' }, body: 'not json' });

@@ -54,7 +54,7 @@ export const waitUntil = (check, until, { everyMs, maxMs, ...options }) => withO
 export const reload = options => withOptions({ type: 'reload' }, options);
 export const state = (mod, { value, threadId, ...options } = {}) => withOptions({ type: 'state', mod, ...(value !== undefined && { value }), ...(threadId && { thread_id: threadId }) }, options);
 export const mount = (mod, { payload = TERMINAL, ...options } = {}) => withOptions({ type: 'terminal_mount', mod, payload }, options);
-export const component = (mod, module, { instance, props, columns, rows, events, ...options } = {}) => withOptions({ type: 'component', mod, module, ...(instance && { instance }), ...(props !== undefined && { props }), ...(columns && { columns }), ...(rows && { rows }), ...(events && { events }) }, options);
+export const component = (mod, module, { instance, props, columns, rows, events, ...options } = {}) => withOptions({ type: 'component', mod, module, ...(instance && { instance }), ...(props !== undefined && { props }), ...(columns !== undefined && { columns }), ...(rows !== undefined && { rows }), ...(events && { events }) }, options);
 
 const interact = (mod, target, { payload = TERMINAL, ...options } = {}) => withOptions({ type: 'terminal_interact', mod, payload, ...target }, options);
 export const key = (mod, name, options) => interact(mod, { key: name }, options);
