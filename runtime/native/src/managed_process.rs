@@ -643,10 +643,13 @@ impl ManagedProcesses {
     }
 
     pub fn running(&self, owner: &str, session: &str) -> Option<bool> {
-        let records = self.records.lock().ok()?;
-        let (_, process) = records
-            .iter()
-            .find(|((id, _, name), _)| id == owner && name == session)?;
+        let process = {
+            let records = self.records.lock().ok()?;
+            let (_, process) = records
+                .iter()
+                .find(|((id, _, name), _)| id == owner && name == session)?;
+            process.clone()
+        };
         let process = process.lock().ok()?;
         Some(!process.exited().ok()?)
     }
@@ -1652,6 +1655,37 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 }
             }
         }
+    }
+
+    #[test]
+    fn liveness_releases_registry_before_waiting_for_process() {
+        let fixture = Arc::new(Fixture::new());
+        fixture.start("locked", "read line", json!({})).unwrap();
+        let key = ("fixture".to_owned(), 1, "locked".to_owned());
+        let session = fixture.processes.session(&key).unwrap();
+        let held = session.lock().unwrap();
+        let count = Arc::strong_count(&session);
+        let reader = fixture.clone();
+        let reader = std::thread::spawn(move || reader.processes.running("fixture", "locked"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&session) == count
+            && fixture.processes.records.try_lock().is_ok()
+            && Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        let remover = fixture.clone();
+        let removing = session.clone();
+        let (sent, received) = mpsc::channel();
+        let remover = std::thread::spawn(move || {
+            remover.processes.remove(&key, &removing);
+            sent.send(()).unwrap();
+        });
+        let removed = received.recv_timeout(Duration::from_secs(2));
+        drop(held);
+        remover.join().unwrap();
+        assert_eq!(reader.join().unwrap(), Some(true));
+        assert!(removed.is_ok(), "removal blocked behind liveness while the process was locked");
     }
 
     #[test]

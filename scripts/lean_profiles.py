@@ -373,12 +373,6 @@ def route(prefix, bin_dir, name, args):
         support.atomic_text(launcher, selected_text(record), 0o755)
         record["activation"]["sha256"] = support.digest(launcher)
         write(prefix, record)
-        if name in ("cursor", "muse"):
-            source = (Path(record["store"]) / "sources" / identifier).resolve()
-            mods = json.loads((Path(record["store"]) / "mods.json").read_text())["mods"]
-            current = next((item.get("settings") or {} for item in mods if Path(item["path"]).resolve() == source), {})
-            settings = {**current, "route": record["providers"][identifier]["route"]}
-            invoke(record["manager"]["installed_path"], "settings", record["store"], source, json.dumps(settings))
         select_mod(prefix, bin_dir, identifier, True)
         return details
     provider = record.get("providers", {}).get(identifier)
@@ -724,11 +718,8 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
-    sources = record.get("sources")
-    if sources is None:
-        sources = {identifier: package["files"] for identifier, package in record["packages"].items()}
     managed.update(prefix / "sources" / identifier / name
-                   for identifier, files in sources.items() for name in files)
+                   for identifier, files in record["sources"].items() for name in files)
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])

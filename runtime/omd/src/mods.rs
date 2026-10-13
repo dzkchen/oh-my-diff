@@ -1047,15 +1047,19 @@ fn source_use(
                 .cloned()
                 .collect()
         } else {
-            let capability = ModHostCall {
+            let required = ModHostCall {
                 operation: operation.clone(),
                 arguments: Value::Null,
             }
-            .capability()?;
+            .capabilities()?;
+            if operation == "model.fork"
+                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
+                return Err(failure(format!("undeclared_operation_use: {operation}")));
+            }
             let mut used = package
                 .capabilities
                 .iter()
-                .filter(|declared| *declared == capability)
+                .filter(|declared| required.contains(&declared.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
             let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);

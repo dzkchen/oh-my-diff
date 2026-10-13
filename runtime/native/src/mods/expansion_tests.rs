@@ -3210,6 +3210,160 @@ fn completion_cache_totals_sum_the_requests_that_reported_them() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn model_fork_checks_history_authority_before_access() {
+    for (capabilities, expected) in [
+        (vec!["agents"], "capability_denied: sessions"),
+        (vec!["agents", "sessions"], "capability_denied: sessions_tools"),
+        (vec!["agents", "sessions", "sessions_tools"], "native_thread_manager_stopped"),
+    ] {
+        let fixture = fixture(&[Package {
+            id: "forker",
+            capabilities: &capabilities,
+            manifest: Value::Null,
+            source: "export default function () {}\n",
+        }]).expect("native fixture");
+        *fixture.lead.session.contract.lock().unwrap() =
+            crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+        let (grants, generation) = {
+            let runtime = fixture.core.runtime.lock().unwrap();
+            (runtime.grants("forker"), runtime.generation())
+        };
+        let error = operations::dispatch(
+            &fixture.core, &fixture.lead,
+            Caller { id: "forker", source: "", grants, generation,
+                origin: Origin::Event, record_changes: false },
+            None,
+            ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"repeat the tool output"}) },
+            &Arc::new(AtomicBool::new(false)),
+        ).await.unwrap_err();
+        assert_eq!(error, expected);
+    }
+}
+
+fn stream_fixture(origin: &str) -> Fixture {
+    let fixture = fixture(&[Package {
+        id: "fetcher",
+        capabilities: &["http"],
+        manifest: json!({"http_access":{"origins":[origin]}}),
+        source: "export default function () {}\n",
+    }]).expect("HTTP fixture");
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    fixture
+}
+
+async fn stream_call(fixture: &Fixture, operation: &str, arguments: Value) -> Result<Value, String> {
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("fetcher"), runtime.generation())
+    };
+    operations::dispatch(
+        &fixture.core, &fixture.lead,
+        Caller { id: "fetcher", source: "", grants, generation,
+            origin: Origin::Event, record_changes: false },
+        None, ModHostCall { operation: operation.into(), arguments }, &Arc::new(AtomicBool::new(false)),
+    ).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_read_drop_releases_the_handle_and_stream_slot() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let mut sockets = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for _ in 0..5 {
+            let (mut socket, _) = loop {
+                match listener.accept() {
+                    Ok(socket) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+                            || std::time::Instant::now() >= deadline { return; }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+            sockets.push(socket);
+        }
+        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
+    });
+    let fixture = stream_fixture(&origin);
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        handles.push(stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap()["handle"].clone());
+    }
+    let handle = handles[0].clone();
+    let mut read = Box::pin(stream_call(&fixture, "http.read", json!({"handle":handle,"wait_ms":5000})));
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(read.as_mut().poll(cx))).await.is_pending());
+    assert_eq!(stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err(), "http_stream_busy");
+    drop(read);
+    let after_drop = stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err();
+    let replacement = stream_call(&fixture, "http.open", json!({"url":origin})).await;
+    let _ = stop.send(());
+    server.join().unwrap();
+    assert_eq!(after_drop, "http_stream_unavailable");
+    assert!(replacement.is_ok(), "{replacement:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_http_opens_share_the_last_stream_slot() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let mut sockets = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for index in 0..5 {
+            let (mut socket, _) = loop {
+                match listener.accept() {
+                    Ok(socket) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+                            || std::time::Instant::now() >= deadline { return; }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).unwrap();
+            if index < 3 {
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+            }
+            sockets.push(socket);
+        }
+        for socket in &mut sockets[3..] {
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+        }
+        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
+    });
+    let fixture = stream_fixture(&origin);
+    for _ in 0..3 {
+        stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap();
+    }
+    let (first, second) = tokio::join!(
+        stream_call(&fixture, "http.open", json!({"url":origin})),
+        stream_call(&fixture, "http.open", json!({"url":origin})),
+    );
+    let _ = stop.send(());
+    server.join().unwrap();
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let error = first.err().or_else(|| second.err()).unwrap();
+    assert_eq!(error, "http_stream_limit: at most 4 open streams");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn model_completions_use_only_configured_worker_routes() {
     let Some(fixture) = fixture(&[Package {
         id: "summarizer",
@@ -3300,8 +3454,8 @@ async fn model_completions_use_only_configured_worker_routes() {
     .await
     .unwrap_err();
     assert_eq!(
-        fork, "native_thread_manager_stopped",
-        "a fork needs the live thread"
+        fork, "capability_denied: sessions",
+        "a fork needs history authority before accessing the live thread"
     );
 }
 

@@ -59211,10 +59211,10 @@ index 000000000..c4354f220
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..82f7a0f98
+index 000000000..310f9cf88
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2424 @@
+@@ -0,0 +1,2458 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -59860,10 +59860,13 @@ index 000000000..82f7a0f98
 +    }
 +
 +    pub fn running(&self, owner: &str, session: &str) -> Option<bool> {
-+        let records = self.records.lock().ok()?;
-+        let (_, process) = records
-+            .iter()
-+            .find(|((id, _, name), _)| id == owner && name == session)?;
++        let process = {
++            let records = self.records.lock().ok()?;
++            let (_, process) = records
++                .iter()
++                .find(|((id, _, name), _)| id == owner && name == session)?;
++            process.clone()
++        };
 +        let process = process.lock().ok()?;
 +        Some(!process.exited().ok()?)
 +    }
@@ -60869,6 +60872,37 @@ index 000000000..82f7a0f98
 +                }
 +            }
 +        }
++    }
++
++    #[test]
++    fn liveness_releases_registry_before_waiting_for_process() {
++        let fixture = Arc::new(Fixture::new());
++        fixture.start("locked", "read line", json!({})).unwrap();
++        let key = ("fixture".to_owned(), 1, "locked".to_owned());
++        let session = fixture.processes.session(&key).unwrap();
++        let held = session.lock().unwrap();
++        let count = Arc::strong_count(&session);
++        let reader = fixture.clone();
++        let reader = std::thread::spawn(move || reader.processes.running("fixture", "locked"));
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while Arc::strong_count(&session) == count
++            && fixture.processes.records.try_lock().is_ok()
++            && Instant::now() < deadline
++        {
++            std::thread::yield_now();
++        }
++        let remover = fixture.clone();
++        let removing = session.clone();
++        let (sent, received) = mpsc::channel();
++        let remover = std::thread::spawn(move || {
++            remover.processes.remove(&key, &removing);
++            sent.send(()).unwrap();
++        });
++        let removed = received.recv_timeout(Duration::from_secs(2));
++        drop(held);
++        remover.join().unwrap();
++        assert_eq!(reader.join().unwrap(), Some(true));
++        assert!(removed.is_ok(), "removal blocked behind liveness while the process was locked");
 +    }
 +
 +    #[test]
@@ -64073,10 +64107,10 @@ index 000000000..970004e0b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
-index 000000000..f2255febe
+index 000000000..304f44c7d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/access.rs
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,811 @@
 +use super::operations::Caller;
 +use super::*;
 +use base64::Engine;
@@ -64124,6 +64158,29 @@ index 000000000..f2255febe
 +    response: reqwest::Response,
 +    pending: Vec<u8>,
 +    done: bool,
++}
++
++struct StreamRead<'a> {
++    streams: &'a Mutex<BTreeMap<u64, Stream>>,
++    handle: u64,
++    owner: &'a str,
++    generation: u64,
++    active: bool,
++}
++
++impl Drop for StreamRead<'_> {
++    fn drop(&mut self) {
++        if self.active
++            && let Ok(mut streams) = self.streams.lock()
++            && streams.get(&self.handle).is_some_and(|stream| {
++                stream.owner == self.owner
++                    && stream.generation == self.generation
++                    && stream.body.is_none()
++            })
++        {
++            streams.remove(&self.handle);
++        }
++    }
 +}
 +
 +/// HTTP streams and MCP servers a session's mods hold; both end with the mod generation that opened them.
@@ -64535,24 +64592,36 @@ index 000000000..f2255febe
 +            let status = response.status().as_u16();
 +            let headers = response_headers(&response);
 +            let handle = lead.session.access.next.fetch_add(1, Ordering::Relaxed) + 1;
-+            lead.session
++            let mut streams = lead
++                .session
 +                .access
 +                .streams
 +                .lock()
-+                .map_err(|_| "http_streams_poisoned")?
-+                .insert(
-+                    handle,
-+                    Stream {
-+                        owner: caller.id.to_owned(),
-+                        generation,
-+                        used: Instant::now(),
-+                        body: Some(Body {
-+                            response,
-+                            pending: Vec::new(),
-+                            done: false,
-+                        }),
-+                    },
-+                );
++                .map_err(|_| "http_streams_poisoned")?;
++            let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
++            if runtime.generation() != generation
++                || !runtime
++                    .grants(caller.id)
++                    .is_some_and(|grants| grants.http_access.is_some())
++            {
++                return Err("host_caller_inactive".into());
++            }
++            if streams.values().filter(|stream| stream.owner == caller.id).count() >= STREAMS_PER_MOD {
++                return Err("http_stream_limit: at most 4 open streams".into());
++            }
++            streams.insert(
++                handle,
++                Stream {
++                    owner: caller.id.to_owned(),
++                    generation,
++                    used: Instant::now(),
++                    body: Some(Body {
++                        response,
++                        pending: Vec::new(),
++                        done: false,
++                    }),
++                },
++            );
 +            Ok(
 +                json!({"handle": handle, "status": status, "url": url, "headers": headers, "redirects": hops}),
 +            )
@@ -64578,16 +64647,24 @@ index 000000000..f2255febe
 +                    .map_err(|_| "http_streams_poisoned")?;
 +                let Some(stream) = streams
 +                    .get_mut(&input.handle)
-+                    .filter(|stream| stream.owner == caller.id)
++                    .filter(|stream| stream.owner == caller.id && stream.generation == caller.generation)
 +                else {
 +                    return Err("http_stream_unavailable".into());
 +                };
-+                stream.used = Instant::now();
 +                if request.operation == "http.close" {
 +                    streams.remove(&input.handle);
 +                    return Ok(json!({"closed": true}));
 +                }
-+                stream.body.take().ok_or("http_stream_busy")?
++                let body = stream.body.take().ok_or("http_stream_busy")?;
++                stream.used = Instant::now();
++                body
++            };
++            let mut reservation = StreamRead {
++                streams: &lead.session.access.streams,
++                handle: input.handle,
++                owner: caller.id,
++                generation: caller.generation,
++                active: true,
 +            };
 +            let limit = input.max_bytes.unwrap_or(16 * 1024).clamp(1, READ_BYTES);
 +            let wait = Duration::from_millis(input.wait_ms.unwrap_or(0).min(MAX_WAIT_MS));
@@ -64627,12 +64704,17 @@ index 000000000..f2255febe
 +                    .streams
 +                    .lock()
 +                    .map_err(|_| "http_streams_poisoned")?;
-+                if read.as_ref().is_ok_and(|(_, done)| *done) {
-+                    streams.remove(&input.handle);
-+                } else if let Some(stream) = streams.get_mut(&input.handle) {
-+                    stream.body = Some(body);
++                if let Some(stream) = streams.get_mut(&input.handle).filter(|stream| {
++                    stream.owner == caller.id && stream.generation == caller.generation && stream.body.is_none()
++                }) {
++                    if read.as_ref().is_ok_and(|(_, done)| *done) {
++                        streams.remove(&input.handle);
++                    } else {
++                        stream.body = Some(body);
++                    }
 +                }
 +            }
++            reservation.active = false;
 +            let (bytes, done) = read?;
 +            let (field, data) = content("data", &bytes);
 +            let mut result = json!({"done": done, "bytes": bytes.len()});
@@ -64842,10 +64924,10 @@ index 000000000..f2255febe
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..0bc3b7a5c
+index 000000000..3ab1e4389
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2616 @@
+@@ -0,0 +1,2623 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -66691,6 +66773,13 @@ index 000000000..0bc3b7a5c
 +            return Err("model_tools_require_fork".into());
 +        }
 +        let history = if fork {
++            for capability in ["sessions", "sessions_tools"] {
++                if !caller.grants.as_ref().is_some_and(|grants| {
++                    grants.capabilities.iter().any(|granted| granted == capability)
++                }) {
++                    return Err(format!("capability_denied: {capability}"));
++                }
++            }
 +            let manager = lead
 +                .host
 +                .manager
@@ -71361,10 +71450,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..079b4dade
+index 000000000..6bd1bae73
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5304 @@
+@@ -0,0 +1,5458 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -74577,6 +74666,160 @@ index 000000000..079b4dade
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn model_fork_checks_history_authority_before_access() {
++    for (capabilities, expected) in [
++        (vec!["agents"], "capability_denied: sessions"),
++        (vec!["agents", "sessions"], "capability_denied: sessions_tools"),
++        (vec!["agents", "sessions", "sessions_tools"], "native_thread_manager_stopped"),
++    ] {
++        let fixture = fixture(&[Package {
++            id: "forker",
++            capabilities: &capabilities,
++            manifest: Value::Null,
++            source: "export default function () {}\n",
++        }]).expect("native fixture");
++        *fixture.lead.session.contract.lock().unwrap() =
++            crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++        let (grants, generation) = {
++            let runtime = fixture.core.runtime.lock().unwrap();
++            (runtime.grants("forker"), runtime.generation())
++        };
++        let error = operations::dispatch(
++            &fixture.core, &fixture.lead,
++            Caller { id: "forker", source: "", grants, generation,
++                origin: Origin::Event, record_changes: false },
++            None,
++            ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"repeat the tool output"}) },
++            &Arc::new(AtomicBool::new(false)),
++        ).await.unwrap_err();
++        assert_eq!(error, expected);
++    }
++}
++
++fn stream_fixture(origin: &str) -> Fixture {
++    let fixture = fixture(&[Package {
++        id: "fetcher",
++        capabilities: &["http"],
++        manifest: json!({"http_access":{"origins":[origin]}}),
++        source: "export default function () {}\n",
++    }]).expect("HTTP fixture");
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    fixture
++}
++
++async fn stream_call(fixture: &Fixture, operation: &str, arguments: Value) -> Result<Value, String> {
++    let (grants, generation) = {
++        let runtime = fixture.core.runtime.lock().unwrap();
++        (runtime.grants("fetcher"), runtime.generation())
++    };
++    operations::dispatch(
++        &fixture.core, &fixture.lead,
++        Caller { id: "fetcher", source: "", grants, generation,
++            origin: Origin::Event, record_changes: false },
++        None, ModHostCall { operation: operation.into(), arguments }, &Arc::new(AtomicBool::new(false)),
++    ).await
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn http_read_drop_releases_the_handle_and_stream_slot() {
++    use std::io::{Read, Write};
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let origin = format!("http://{}", listener.local_addr().unwrap());
++    let (stop, stopped) = std::sync::mpsc::channel();
++    let server = std::thread::spawn(move || {
++        let mut sockets = Vec::new();
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
++        for _ in 0..5 {
++            let (mut socket, _) = loop {
++                match listener.accept() {
++                    Ok(socket) => break socket,
++                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
++                            || std::time::Instant::now() >= deadline { return; }
++                        std::thread::sleep(std::time::Duration::from_millis(5));
++                    }
++                    Err(error) => panic!("{error}"),
++                }
++            };
++            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
++            let mut request = [0; 4096];
++            socket.read(&mut request).unwrap();
++            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
++            sockets.push(socket);
++        }
++        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
++    });
++    let fixture = stream_fixture(&origin);
++    let mut handles = Vec::new();
++    for _ in 0..4 {
++        handles.push(stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap()["handle"].clone());
++    }
++    let handle = handles[0].clone();
++    let mut read = Box::pin(stream_call(&fixture, "http.read", json!({"handle":handle,"wait_ms":5000})));
++    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(read.as_mut().poll(cx))).await.is_pending());
++    assert_eq!(stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err(), "http_stream_busy");
++    drop(read);
++    let after_drop = stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err();
++    let replacement = stream_call(&fixture, "http.open", json!({"url":origin})).await;
++    let _ = stop.send(());
++    server.join().unwrap();
++    assert_eq!(after_drop, "http_stream_unavailable");
++    assert!(replacement.is_ok(), "{replacement:?}");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn concurrent_http_opens_share_the_last_stream_slot() {
++    use std::io::{Read, Write};
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let origin = format!("http://{}", listener.local_addr().unwrap());
++    let (stop, stopped) = std::sync::mpsc::channel();
++    let server = std::thread::spawn(move || {
++        let mut sockets = Vec::new();
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
++        for index in 0..5 {
++            let (mut socket, _) = loop {
++                match listener.accept() {
++                    Ok(socket) => break socket,
++                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
++                            || std::time::Instant::now() >= deadline { return; }
++                        std::thread::sleep(std::time::Duration::from_millis(5));
++                    }
++                    Err(error) => panic!("{error}"),
++                }
++            };
++            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
++            let mut request = [0; 4096];
++            socket.read(&mut request).unwrap();
++            if index < 3 {
++                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
++            }
++            sockets.push(socket);
++        }
++        for socket in &mut sockets[3..] {
++            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
++        }
++        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
++    });
++    let fixture = stream_fixture(&origin);
++    for _ in 0..3 {
++        stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap();
++    }
++    let (first, second) = tokio::join!(
++        stream_call(&fixture, "http.open", json!({"url":origin})),
++        stream_call(&fixture, "http.open", json!({"url":origin})),
++    );
++    let _ = stop.send(());
++    server.join().unwrap();
++    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
++    let error = first.err().or_else(|| second.err()).unwrap();
++    assert_eq!(error, "http_stream_limit: at most 4 open streams");
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn model_completions_use_only_configured_worker_routes() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "summarizer",
@@ -74667,8 +74910,8 @@ index 000000000..079b4dade
 +    .await
 +    .unwrap_err();
 +    assert_eq!(
-+        fork, "native_thread_manager_stopped",
-+        "a fork needs the live thread"
++        fork, "capability_denied: sessions",
++        "a fork needs history authority before accessing the live thread"
 +    );
 +}
 +
@@ -96104,19 +96347,23 @@ index 000000000..9bd432289
 +}
 diff --git a/codex-rs/omd/src/event_bus.rs b/codex-rs/omd/src/event_bus.rs
 new file mode 100644
-index 000000000..1523cdb7c
+index 000000000..1ba4088f8
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus.rs
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,213 @@
 +use crate::app_routes::subscribed;
 +use serde_json::Value;
-+use std::collections::{BTreeMap, VecDeque};
++use std::collections::{BTreeMap, BTreeSet, VecDeque};
 +use std::io;
 +use std::sync::{LazyLock, Mutex};
++use std::time::{Duration, Instant};
 +
 +pub const CHANNEL_QUEUE_EVENTS: usize = 256;
 +pub const CHANNEL_QUEUE_BYTES: usize = 1 << 20;
 +pub const CHANNEL_EVENT_BYTES: usize = 64 * 1024;
++pub const CHANNELS_PER_PUBLISHER: usize = 256;
++pub const CHANNEL_SEQUENCES: usize = 4096;
++pub const CHANNEL_PUBLISHER_IDLE: Duration = Duration::from_secs(15 * 60);
 +
 +#[derive(Clone, Debug, PartialEq)]
 +pub struct ChannelEvent {
@@ -96142,9 +96389,14 @@ index 000000000..1523cdb7c
 +    dropped: u64,
 +}
 +
++struct PublisherSequences {
++    used: Instant,
++    channels: BTreeMap<String, u64>,
++}
++
 +pub struct EventBus {
 +    subscribers: BTreeMap<String, Subscriber>,
-+    sequences: BTreeMap<String, u64>,
++    sequences: BTreeMap<String, PublisherSequences>,
 +    max_events: usize,
 +    max_bytes: usize,
 +}
@@ -96208,6 +96460,18 @@ index 000000000..1523cdb7c
 +        correlation: Option<String>,
 +        thread: &str,
 +    ) -> io::Result<Delivery> {
++        self.publish_at(publisher, name, data, correlation, thread, Instant::now())
++    }
++
++    fn publish_at(
++        &mut self,
++        publisher: &str,
++        name: &str,
++        data: Value,
++        correlation: Option<String>,
++        thread: &str,
++        now: Instant,
++    ) -> io::Result<Delivery> {
 +        if !valid_name(name) {
 +            return Err(io::Error::other(format!("channel_name_invalid: {name}")));
 +        }
@@ -96218,8 +96482,27 @@ index 000000000..1523cdb7c
 +        if correlation.as_ref().is_some_and(|c| c.len() > 256) {
 +            return Err(io::Error::other("channel_correlation_too_large"));
 +        }
++        let queued = self.subscribers.values()
++            .flat_map(|subscriber| subscriber.queue.iter().map(|(event, _)| event.publisher.as_str()))
++            .collect::<BTreeSet<_>>();
++        self.sequences.retain(|publisher, sequences| {
++            now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
++                || queued.contains(publisher.as_str())
++        });
++        let current = self.sequences.get(publisher);
++        if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
++            && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)
++                || self.sequences.values().map(|sequences| sequences.channels.len()).sum::<usize>() >= CHANNEL_SEQUENCES)
++        {
++            return Err(io::Error::other("channel_sequence_limit"));
++        }
 +        let channel = format!("{publisher}/{name}");
-+        let sequence = self.sequences.entry(channel.clone()).or_default();
++        let publisher_sequences = self.sequences.entry(publisher.to_owned()).or_insert_with(|| PublisherSequences {
++            used: now,
++            channels: BTreeMap::new(),
++        });
++        publisher_sequences.used = now;
++        let sequence = publisher_sequences.channels.entry(name.to_owned()).or_default();
 +        *sequence += 1;
 +        let event = ChannelEvent {
 +            publisher: publisher.to_owned(),
@@ -96283,12 +96566,61 @@ index 000000000..1523cdb7c
 +mod tests;
 diff --git a/codex-rs/omd/src/event_bus_tests.rs b/codex-rs/omd/src/event_bus_tests.rs
 new file mode 100644
-index 000000000..2f7615cc4
+index 000000000..0e31ecc6f
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus_tests.rs
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,185 @@
 +use super::*;
 +use serde_json::json;
++
++#[test]
++fn channel_sequence_admission_is_bounded_per_publisher_and_globally() {
++    let mut bus = EventBus::default();
++    for publisher in 0..16 {
++        for channel in 0..256 {
++            bus.publish(&format!("p{publisher}"), &format!("c{channel}"), json!(null), None, "t").unwrap();
++        }
++        assert_eq!(bus.publish(&format!("p{publisher}"), "extra", json!(null), None, "t").unwrap_err().to_string(), "channel_sequence_limit");
++    }
++    assert_eq!(bus.publish("extra", "c", json!(null), None, "t").unwrap_err().to_string(), "channel_sequence_limit");
++    bus.subscribe("watcher", vec!["p0/*".into()]);
++    bus.publish("p0", "c0", json!(null), None, "t").unwrap();
++    bus.publish("p0", "c1", json!(null), None, "t").unwrap();
++    assert_eq!(bus.drain("watcher", 10).iter().map(|event| event.sequence).collect::<Vec<_>>(), vec![2, 2]);
++}
++
++#[test]
++fn channel_sequences_expire_only_after_publisher_idle_and_queue_drain() {
++    let mut bus = EventBus::default();
++    let start = Instant::now();
++    bus.publish_at("expired", "c", json!(null), None, "t", start).unwrap();
++    bus.publish_at("probe", "c", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE - Duration::from_nanos(1)).unwrap();
++    assert!(bus.sequences.contains_key("expired"));
++    bus.publish_at("probe", "c", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert!(!bus.sequences.contains_key("expired"));
++    let mut bus = EventBus::default();
++    for channel in 0..CHANNELS_PER_PUBLISHER {
++        bus.publish_at("idle", &format!("c{channel}"), json!(null), None, "t", start).unwrap();
++    }
++    let before = start + CHANNEL_PUBLISHER_IDLE - Duration::from_nanos(1);
++    assert_eq!(bus.publish_at("idle", "extra", json!(null), None, "t", before).unwrap_err().to_string(), "channel_sequence_limit");
++    bus.publish_at("probe", "c", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert!(!bus.sequences.contains_key("idle"), "rejected publication must not extend retention");
++    bus.subscribe("watcher", vec!["idle/*".into()]);
++    bus.publish_at("idle", "c0", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert_eq!(bus.drain("watcher", 1)[0].sequence, 1);
++    bus.publish_at("idle", "c0", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    let later = start + CHANNEL_PUBLISHER_IDLE * 2;
++    bus.publish_at("probe", "c", json!(null), None, "t", later).unwrap();
++    assert!(bus.sequences.contains_key("idle"), "queued events retain their publisher's counters");
++    assert_eq!(bus.drain("watcher", 1)[0].sequence, 2);
++    bus.publish_at("idle", "c0", json!(null), None, "t", later).unwrap();
++    assert_eq!(bus.drain("watcher", 1)[0].sequence, 1);
++    bus.unsubscribe("watcher");
++    bus.publish_at("idle", "c0", json!(null), None, "t", later + Duration::from_secs(1)).unwrap();
++    bus.publish_at("probe", "c", json!(null), None, "t", later + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert!(bus.sequences.contains_key("idle"), "successful publications without subscribers refresh retention");
++}
 +
 +#[test]
 +fn publishers_are_namespaced_and_subscribers_filter_by_pattern() {
@@ -100959,10 +101291,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..d508ccf53
+index 000000000..85cd9c522
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5862 @@
+@@ -0,0 +1,5866 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -102012,15 +102344,19 @@ index 000000000..d508ccf53
 +                .cloned()
 +                .collect()
 +        } else {
-+            let capability = ModHostCall {
++            let required = ModHostCall {
 +                operation: operation.clone(),
 +                arguments: Value::Null,
 +            }
-+            .capability()?;
++            .capabilities()?;
++            if operation == "model.fork"
++                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
++                return Err(failure(format!("undeclared_operation_use: {operation}")));
++            }
 +            let mut used = package
 +                .capabilities
 +                .iter()
-+                .filter(|declared| *declared == capability)
++                .filter(|declared| required.contains(&declared.as_str()))
 +                .cloned()
 +                .collect::<Vec<_>>();
 +            let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);
@@ -107879,10 +108215,10 @@ index 000000000..27684b82d
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..c601d818d
+index 000000000..e6d1ab24c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,404 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -107990,7 +108326,7 @@ index 000000000..c601d818d
 +    pub fn capabilities(&self) -> Result<Vec<&'static str>> {
 +        let mut capabilities = vec![self.capability()?];
 +        if self.operation == "model.fork" {
-+            capabilities.push("sessions");
++            capabilities.extend(["sessions", "sessions_tools"]);
 +        }
 +        if self.operation == "terminal.pty" {
 +            if self.arguments["write"] == true {
@@ -108027,15 +108363,6 @@ index 000000000..c601d818d
 +
 +fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
 +    let capabilities = call.capabilities()?;
-+    if call.operation.starts_with("context.")
-+        && !loaded
-+            .package
-+            .capabilities
-+            .iter()
-+            .any(|cap| cap == "context")
-+    {
-+        return Err(failure("capability_denied: context"));
-+    }
 +    if let Some(missing) = capabilities
 +        .iter()
 +        .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
@@ -132678,10 +133005,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..fa015e9ba
+index 000000000..f58ed9859
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5738 @@
+@@ -0,0 +1,5759 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -132696,6 +133023,14 @@ index 000000000..fa015e9ba
 +use std::sync::atomic::AtomicUsize;
 +use std::sync::atomic::Ordering;
 +use tempfile::TempDir;
++
++#[test]
++fn model_fork_requires_tool_history_authority() {
++    let call = codex_omd::ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"p"}) };
++    assert_eq!(call.capabilities().unwrap(), vec!["agents", "sessions", "sessions_tools"]);
++    let complete = codex_omd::ModHostCall { operation: "model.complete".into(), arguments: json!({"route":"w","prompt":"p"}) };
++    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
++}
 +
 +fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
 +    packaged(root, id, id, source, capabilities, &[])
@@ -135138,6 +135473,14 @@ index 000000000..fa015e9ba
 +
 +#[test]
 +fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
++    for capabilities in [vec!["commands", "agents"], vec!["commands", "agents", "sessions"]] {
++        let (temp, _, _) = fixture(
++            "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
++            &capabilities,
++        );
++        let error = activation_error(&temp, "fixture");
++        assert!(error.contains("undeclared_operation_use: model.fork"), "{error}");
++    }
 +    let (temp, _, _) = fixture(
 +        "export default api => api.command('status',()=>api.host.call('task.status',null))",
 +        &["commands"],
@@ -135174,6 +135517,11 @@ index 000000000..fa015e9ba
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let (temp, _, _) = fixture(
 +        "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
++        &["commands", "agents", "sessions", "sessions_tools"],
++    );
++    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
++    let (temp, _, _) = fixture(
++        "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
 +        &["commands", "agents", "sessions", "sessions_tools"],
 +    );
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
