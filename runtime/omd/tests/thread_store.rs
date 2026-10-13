@@ -151,11 +151,11 @@ fn a_failed_fork_publishes_nothing_and_never_merges_into_an_existing_thread() {
     assert_eq!(std::fs::read(threads.join("child/b/store.json")).unwrap(), b"b");
     std::fs::create_dir_all(threads.join("empty")).unwrap();
     std::fs::create_dir_all(threads.join("full/a")).unwrap();
-    for existing in ["empty", "full"] {
-        assert_eq!(
-            fork_thread_data(&data, "parent", existing).unwrap_err().kind(),
-            std::io::ErrorKind::AlreadyExists
-        );
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let repeated = ["child", "empty", "full"].map(|existing| fork_thread_data(&data, "parent", existing));
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
+    for result in repeated {
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
     }
     assert_eq!(entries(), ["child", "empty", "full", "parent"]);
     assert_eq!(std::fs::read_dir(threads.join("empty")).unwrap().count(), 0);

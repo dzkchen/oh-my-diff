@@ -41,6 +41,15 @@ struct Index {
     profiles: Vec<CredentialProfile>,
 }
 
+impl Index {
+    fn profile(&self, id: &str) -> io::Result<&CredentialProfile> {
+        self.profiles
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))
+    }
+}
+
 pub struct CredentialProfiles {
     root: PathBuf,
     broker: Option<(PathBuf, PathBuf)>,
@@ -259,9 +268,7 @@ impl CredentialProfiles {
     }
 
     fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
-        if !index.profiles.iter().any(|p| p.id == id) {
-            return Err(failure(format!("credential_profile_unknown: {id}")));
-        }
+        index.profile(id)?;
         let home = self.root.join(id);
         match fs::DirBuilder::new().mode(0o700).create(&home) {
             Ok(()) => (),
@@ -422,12 +429,7 @@ impl CredentialProfiles {
         refusal: &str,
     ) -> io::Result<()> {
         self.with_index(false, |index| {
-            let profile = index
-                .profiles
-                .iter()
-                .find(|p| p.id == id)
-                .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))?;
-            if !kind(&profile.kind) {
+            if !kind(&index.profile(id)?.kind) {
                 return Err(failure(refusal));
             }
             let home = self.indexed_home(index, id)?;
@@ -562,9 +564,7 @@ impl CredentialProfiles {
             return result.map(drop);
         }
         self.with_index(true, |index| {
-            if !index.profiles.iter().any(|p| p.id == id) {
-                return Err(failure(format!("credential_profile_unknown: {id}")));
-            }
+            index.profile(id)?;
             for profile in &mut index.profiles {
                 profile.default = profile.id == id;
             }

@@ -3438,13 +3438,7 @@ impl ModHost {
                         package.id
                     )));
                 }
-                Ok(files
-                    .into_iter()
-                    .map(|(name, text)| {
-                        let sha256 = digest(text.as_bytes());
-                        (name, json!({"text": text, "sha256": sha256}))
-                    })
-                    .collect())
+                Ok(store::asset_map(files))
             })();
             let assets = match assets {
                 Ok(assets) => assets,

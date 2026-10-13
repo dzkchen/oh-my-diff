@@ -323,7 +323,6 @@ fn module_step(
         !revoked.load(Ordering::Acquire)
     });
     if revoked.load(Ordering::Acquire) {
-        codex_omd::client_component_unmount(client, &owner, &instance(client, component));
         return Err(format!("view_stale: {component}"));
     }
     let step = step.map_err(|error| error.to_string())?;

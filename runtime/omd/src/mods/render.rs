@@ -121,7 +121,7 @@ pub fn component_shared(
         "component",
         component,
         frame,
-        active,
+        &active,
         |_, call| {
             Err(failure(format!(
                 "host_operation_unavailable: {} is not available to component modules",
@@ -131,7 +131,9 @@ pub fn component_shared(
         |_| {},
     )?;
     if let Err(error) = checked_tree(&value) {
-        process::unmount(&owner, id, &instance);
+        if active() {
+            process::unmount(&owner, id, &instance);
+        }
         return Err(error);
     }
     Ok(value)

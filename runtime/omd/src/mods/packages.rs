@@ -128,10 +128,7 @@ impl ModStore {
         let mut loaded = Loaded {
             package,
             source: source.into(),
-            assets: Arc::new(assets.into_iter().map(|(name, text)| {
-                let sha256 = digest(text.as_bytes());
-                (name, json!({"text": text, "sha256": sha256}))
-            }).collect()),
+            assets: Arc::new(store::asset_map(assets)),
             request_metadata: Arc::new(OnceLock::new()),
             selection: selection.clone(),
             adapter: None,

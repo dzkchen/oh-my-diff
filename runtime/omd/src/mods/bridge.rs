@@ -352,6 +352,9 @@ pub(super) fn run(
 
 /// Keeps the newest history items the runner request has room for, in order and with their indices.
 fn fit_history(request: &mut Request) -> Result<()> {
+    if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
+        return Ok(());
+    }
     let Some(items) = request
         .invocation
         .get_mut("payload")

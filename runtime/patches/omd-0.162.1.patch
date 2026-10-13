@@ -54377,10 +54377,10 @@ index 000000000..0a11dc0ae
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..45e53f9c8
+index 000000000..c36da9265
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,892 @@
+@@ -0,0 +1,891 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -54706,7 +54706,6 @@ index 000000000..45e53f9c8
 +        !revoked.load(Ordering::Acquire)
 +    });
 +    if revoked.load(Ordering::Acquire) {
-+        codex_omd::client_component_unmount(client, &owner, &instance(client, component));
 +        return Err(format!("view_stale: {component}"));
 +    }
 +    let step = step.map_err(|error| error.to_string())?;
@@ -95317,7 +95316,7 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..ca13f4a85
+index 000000000..0bcadd832
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
 @@ -0,0 +1,578 @@
@@ -95362,6 +95361,15 @@ index 000000000..ca13f4a85
 +    schema: u32,
 +    next: u64,
 +    profiles: Vec<CredentialProfile>,
++}
++
++impl Index {
++    fn profile(&self, id: &str) -> io::Result<&CredentialProfile> {
++        self.profiles
++            .iter()
++            .find(|p| p.id == id)
++            .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))
++    }
 +}
 +
 +pub struct CredentialProfiles {
@@ -95582,9 +95590,7 @@ index 000000000..ca13f4a85
 +    }
 +
 +    fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
-+        if !index.profiles.iter().any(|p| p.id == id) {
-+            return Err(failure(format!("credential_profile_unknown: {id}")));
-+        }
++        index.profile(id)?;
 +        let home = self.root.join(id);
 +        match fs::DirBuilder::new().mode(0o700).create(&home) {
 +            Ok(()) => (),
@@ -95745,12 +95751,7 @@ index 000000000..ca13f4a85
 +        refusal: &str,
 +    ) -> io::Result<()> {
 +        self.with_index(false, |index| {
-+            let profile = index
-+                .profiles
-+                .iter()
-+                .find(|p| p.id == id)
-+                .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))?;
-+            if !kind(&profile.kind) {
++            if !kind(&index.profile(id)?.kind) {
 +                return Err(failure(refusal));
 +            }
 +            let home = self.indexed_home(index, id)?;
@@ -95885,9 +95886,7 @@ index 000000000..ca13f4a85
 +            return result.map(drop);
 +        }
 +        self.with_index(true, |index| {
-+            if !index.profiles.iter().any(|p| p.id == id) {
-+                return Err(failure(format!("credential_profile_unknown: {id}")));
-+            }
++            index.profile(id)?;
 +            for profile in &mut index.profiles {
 +                profile.default = profile.id == id;
 +            }
@@ -96181,10 +96180,10 @@ index 000000000..441c77d85
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 000000000..00a8fdeb1
+index 000000000..80a063bed
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,441 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -96372,16 +96371,18 @@ index 000000000..00a8fdeb1
 +    let (source, target) = (thread_directory(root, from)?, thread_directory(root, to)?);
 +    match fs::symlink_metadata(&source) {
 +        Ok(metadata) if metadata.is_dir() => {
++            if target.try_exists()? {
++                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
++            }
 +            let threads = target.parent().ok_or_else(|| failure("store_thread_invalid"))?;
 +            let stage = tempfile::Builder::new().prefix(".fork-").tempdir_in(threads)?;
 +            copy_regular_tree(&source, stage.path())?;
-+            // A writer may create the target directory meanwhile; even an empty one is never replaced.
-+            rustix::fs::renameat_with(
++            // A writer may create the target directory meanwhile; an exclusive rename never replaces even an empty one.
++            crate::workspace::rename_exclusive(
 +                rustix::fs::CWD,
 +                stage.path(),
 +                rustix::fs::CWD,
-+                &target,
-+                rustix::fs::RenameFlags::NOREPLACE,
++                target.as_path(),
 +            )?;
 +            let _ = stage.keep();
 +            Ok(true)
@@ -101596,10 +101597,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..1b450ca76
+index 000000000..fcabb9565
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5870 @@
+@@ -0,0 +1,5864 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -105040,13 +105041,7 @@ index 000000000..1b450ca76
 +                        package.id
 +                    )));
 +                }
-+                Ok(files
-+                    .into_iter()
-+                    .map(|(name, text)| {
-+                        let sha256 = digest(text.as_bytes());
-+                        (name, json!({"text": text, "sha256": sha256}))
-+                    })
-+                    .collect())
++                Ok(store::asset_map(files))
 +            })();
 +            let assets = match assets {
 +                Ok(assets) => assets,
@@ -108524,10 +108519,10 @@ index 000000000..27684b82d
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..99072fe1b
+index 000000000..2df092f2f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,439 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -108882,6 +108877,9 @@ index 000000000..99072fe1b
 +
 +/// Keeps the newest history items the runner request has room for, in order and with their indices.
 +fn fit_history(request: &mut Request) -> Result<()> {
++    if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
++        return Ok(());
++    }
 +    let Some(items) = request
 +        .invocation
 +        .get_mut("payload")
@@ -114229,10 +114227,10 @@ index 000000000..982558057
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 000000000..664720876
+index 000000000..4ccbdad8c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,254 @@
 +use super::*;
 +
 +impl ModStore {
@@ -114363,10 +114361,7 @@ index 000000000..664720876
 +        let mut loaded = Loaded {
 +            package,
 +            source: source.into(),
-+            assets: Arc::new(assets.into_iter().map(|(name, text)| {
-+                let sha256 = digest(text.as_bytes());
-+                (name, json!({"text": text, "sha256": sha256}))
-+            }).collect()),
++            assets: Arc::new(store::asset_map(assets)),
 +            request_metadata: Arc::new(OnceLock::new()),
 +            selection: selection.clone(),
 +            adapter: None,
@@ -115208,10 +115203,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..a57c20765
+index 000000000..1ce82949a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,591 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -115460,11 +115455,24 @@ index 000000000..a57c20765
 +        unmounted.retain(|(.., at)| at.elapsed() < WARM_IDLE);
 +        unmounted.push((owner.to_owned(), part.clone(), Instant::now()));
 +    }
-+    for runner in
-+        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part))
-+    {
-+        runner.stop();
++    let mut retired =
++        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part));
++    if retired.is_empty() {
++        return;
 +    }
++    if let Ok(mut mounted) = MOUNTED.lock() {
++        for runner in &mut retired {
++            if let Some(by) = runner.pinned.take() {
++                mounted.remove(&(by, runner.key.clone()));
++            }
++        }
++    }
++    // Callers hold view and instance locks; the runners are already out of the pool and the mount count.
++    std::thread::spawn(move || {
++        for runner in retired {
++            runner.stop();
++        }
++    });
 +}
 +
 +pub(super) fn unmount(owner: &str, id: &str, component: &str) {
@@ -116286,10 +116294,10 @@ index 000000000..1fc4e43b8
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 000000000..22545ffcd
+index 000000000..020b96212
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,293 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -116413,7 +116421,7 @@ index 000000000..22545ffcd
 +        "component",
 +        component,
 +        frame,
-+        active,
++        &active,
 +        |_, call| {
 +            Err(failure(format!(
 +                "host_operation_unavailable: {} is not available to component modules",
@@ -116423,7 +116431,9 @@ index 000000000..22545ffcd
 +        |_| {},
 +    )?;
 +    if let Err(error) = checked_tree(&value) {
-+        process::unmount(&owner, id, &instance);
++        if active() {
++            process::unmount(&owner, id, &instance);
++        }
 +        return Err(error);
 +    }
 +    Ok(value)
@@ -117880,10 +117890,10 @@ index 000000000..a5fe536b7
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..49f254bdf
+index 000000000..5db2f9aa0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1301 @@
+@@ -0,0 +1,1312 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -118064,6 +118074,17 @@ index 000000000..49f254bdf
 +) -> Result<(ModPackage, String, String, BTreeMap<String, String>)> {
 +    let (package, source, hash, assets, _) = inspect_package(path, true)?;
 +    Ok((package, source, hash, assets))
++}
++
++/// A package's assets as the runner receives them.
++pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Value> {
++    assets
++        .into_iter()
++        .map(|(name, text)| {
++            let sha256 = digest(text.as_bytes());
++            (name, serde_json::json!({"text": text, "sha256": sha256}))
++        })
++        .collect()
 +}
 +
 +/// Reuses the last verified manifest and digest while every hashed file keeps its identity.
@@ -127075,10 +127096,10 @@ index 000000000..a128af3ed
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..9caced4e8
+index 000000000..ba8978e8c
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1312 @@
+@@ -0,0 +1,1322 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -127444,13 +127465,7 @@ index 000000000..9caced4e8
 +                {
 +                    return Err(invalid("workspace changed before rename"));
 +                }
-+                renameat_with(
-+                    &old_parent,
-+                    &old_name,
-+                    &new_parent,
-+                    &new_name,
-+                    RenameFlags::NOREPLACE,
-+                )?;
++                rename_exclusive(&old_parent, &old_name, &new_parent, &new_name)?;
 +                applied.insert(rename.old.clone(), None);
 +                applied.insert(rename.new.clone(), expected_old);
 +            }
@@ -127718,6 +127733,22 @@ index 000000000..9caced4e8
 +        }
 +    }
 +    Ok(directory)
++}
++
++/// Renames onto an absent target; where the filesystem has no exclusive rename, the caller's absence
++/// check stands in for it.
++pub(crate) fn rename_exclusive<D: std::os::fd::AsFd + Copy, P: rustix::path::Arg + Copy>(
++    old_dir: D,
++    old: P,
++    new_dir: D,
++    new: P,
++) -> io::Result<()> {
++    match renameat_with(old_dir, old, new_dir, new, RenameFlags::NOREPLACE) {
++        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOTSUP | rustix::io::Errno::NOSYS) => {
++            Ok(rustix::fs::renameat(old_dir, old, new_dir, new)?)
++        }
++        result => Ok(result?),
++    }
 +}
 +
 +fn open_parent(root: &Path, name: &str) -> io::Result<(fs::File, std::ffi::OsString)> {
@@ -142674,7 +142705,7 @@ index 000000000..ec1840ecb
 +}
 diff --git a/codex-rs/omd/tests/thread_store.rs b/codex-rs/omd/tests/thread_store.rs
 new file mode 100644
-index 000000000..f1ee800df
+index 000000000..1f6ee571d
 --- /dev/null
 +++ b/codex-rs/omd/tests/thread_store.rs
 @@ -0,0 +1,163 @@
@@ -142831,11 +142862,11 @@ index 000000000..f1ee800df
 +    assert_eq!(std::fs::read(threads.join("child/b/store.json")).unwrap(), b"b");
 +    std::fs::create_dir_all(threads.join("empty")).unwrap();
 +    std::fs::create_dir_all(threads.join("full/a")).unwrap();
-+    for existing in ["empty", "full"] {
-+        assert_eq!(
-+            fork_thread_data(&data, "parent", existing).unwrap_err().kind(),
-+            std::io::ErrorKind::AlreadyExists
-+        );
++    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
++    let repeated = ["child", "empty", "full"].map(|existing| fork_thread_data(&data, "parent", existing));
++    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
++    for result in repeated {
++        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
 +    }
 +    assert_eq!(entries(), ["child", "empty", "full", "parent"]);
 +    assert_eq!(std::fs::read_dir(threads.join("empty")).unwrap().count(), 0);
