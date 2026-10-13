@@ -36,6 +36,11 @@ test('Claude setup adds its provider grant to the OMD+ store without disturbing 
       const grant = host.services.find(service => service.id === 'claude_cli');
       assert.deepEqual(grant.arguments.slice(1, 3), ['serve', first.provider.route]);
       assert.equal(grant.route.rates.included_subscription, true);
+      assert.equal(first.billing, 'subscription');
+      const route = JSON.parse(await readFile(first.provider.route, 'utf8'));
+      assert.equal(route.billing, 'subscription');
+      assert.equal(route.settings.store, join(store, 'mods.json'));
+      assert.ok(grant.read_paths.length <= 16);
       assert.equal(host.secret_refs.claude_local_token, first.provider.token);
       assert.equal((await stat(first.provider.token)).mode & 0o777, 0o600);
       const catalog = JSON.parse(await readFile(first.provider.catalog, 'utf8')).models;

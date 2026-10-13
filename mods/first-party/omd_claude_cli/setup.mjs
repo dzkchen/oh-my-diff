@@ -94,13 +94,15 @@ function catalog(models, template) {
     priority: 90 + index })) };
 }
 
-async function setup(recordPath, claudePath) {
+async function setup(recordPath, claudePath, billing) {
+  if (!['subscription', 'api'].includes(billing)) throw new Error('claude_billing_must_be_subscription_or_api');
   const record = JSON.parse(await readFile(recordPath, 'utf8'));
   if (record.profile !== 'full' || !record.packages?.omd_claude_cli) throw new Error('omd_plus_claude_mod_required');
-  const mod = await realpath(join(record.store, 'sources', 'omd_claude_cli'));
+  const installed = join(record.store, 'sources', 'omd_claude_cli');
+  const mod = await realpath(installed);
   if (mod !== source) throw new Error('setup_must_run_from_installed_mod');
   const claude = await findCli(claudePath);
-  checkCli(claude);
+  checkCli(claude, billing);
   const models = await discover(claude);
   const directory = join(record.store, 'routes', 'claude');
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -114,14 +116,15 @@ async function setup(recordPath, claudePath) {
   await chmod(tokenPath, 0o600);
   const port = previous.port ?? await unusedPort();
   const fallback = models.find(model => model.family === 'opus') ?? models[0];
-  await writeFile(routePath, `${JSON.stringify({ port, claude, default: fallback.slug, models }, null, 2)}\n`);
+  const settings = { store: join(record.store, 'mods.json'), paths: [installed, mod] };
+  await writeFile(routePath, `${JSON.stringify({ port, claude, billing, settings, default: fallback.slug, models }, null, 2)}\n`);
   const template = JSON.parse(await readFile(join(source, 'models.json'), 'utf8')).models[0];
   await writeFile(catalogPath, `${JSON.stringify(catalog(models, template), null, 2)}\n`);
   const node = await realpath(record.author.node);
   const home = homedir();
   const username = userInfo().username;
   const readPaths = [];
-  for (const path of [mod, directory, claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
+  for (const path of [mod, directory, settings.store, claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
     join(home, '.claude'), join(home, '.claude.json'), join(home, 'Library/Keychains'), '/System', '/usr/lib',
     '/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld', '/System/Volumes/Preboot/Cryptexes/OS/usr/lib']) {
     try { const real = await realpath(path); if (!readPaths.includes(real)) readPaths.push(real); } catch {}
@@ -143,17 +146,17 @@ async function setup(recordPath, claudePath) {
     route: { name: 'claude', roles: ['lead'], provider: 'omd_claude_cli', model: fallback.slug, reasoning_effort: 'high',
       responses_url: `${url}/responses`, rates: { input_microusd_per_million: 0, cached_microusd_per_million: 0,
         output_microusd_per_million: 0, reservation_microusd: 0, max_output_tokens: 128000,
-        input_token_ceiling: fallback.window, included_subscription: true } } }];
+        input_token_ceiling: fallback.window, ...billing === 'api' ? { provider_billed: true } : { included_subscription: true } } } }];
   await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });
   return { provider: { id: 'omd_claude_cli', name: 'OMD Claude CLI', base_url: url, env_key: 'OMD_CLAUDE_LOCAL_TOKEN',
-    token: tokenPath, catalog: catalogPath, route: routePath }, cli: CLI_VERSION,
+    token: tokenPath, catalog: catalogPath, route: routePath }, cli: CLI_VERSION, billing,
     models: models.map(({ slug, family, window }) => ({ slug, family, window })), default: fallback.slug };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [action, record, claude] = process.argv.slice(2);
+  const [action, record, claude, billing = 'subscription'] = process.argv.slice(2);
   try {
     if (action !== 'setup') throw new Error('unsupported_claude_setup_action');
-    console.log(JSON.stringify(await setup(record, claude || '')));
+    console.log(JSON.stringify(await setup(record, claude || '', billing)));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
