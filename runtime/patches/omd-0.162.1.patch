@@ -61613,10 +61613,10 @@ index 000000000..683f2b20d
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..e182f9953
+index 000000000..514b0fd73
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2415 @@
+@@ -0,0 +1,2422 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -62028,6 +62028,13 @@ index 000000000..e182f9953
 +    registry: &mut ExtensionRegistryBuilder<Config>,
 +    host: Arc<Host>,
 +) -> Result<(), String> {
++    initialize(registry, host).map(|_| ())
++}
++
++fn initialize(
++    registry: &mut ExtensionRegistryBuilder<Config>,
++    host: Arc<Host>,
++) -> Result<Arc<Mods>, String> {
 +    let validator = |schema: &Value| {
 +        codex_extension_api::parse_tool_input_schema(schema)
 +            .map(|_| ())
@@ -62091,8 +62098,8 @@ index 000000000..e182f9953
 +    registry.agent_role_contributor(extension.clone());
 +    registry.token_usage_contributor(extension.clone());
 +    registry.tool_batch_contributor(extension.clone());
-+    registry.tool_contributor(extension);
-+    Ok(())
++    registry.tool_contributor(extension.clone());
++    Ok(extension)
 +}
 +
 +fn publish(
@@ -71322,16 +71329,18 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..7167a21ed
+index 000000000..a2037df34
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5114 @@
+@@ -0,0 +1,5165 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
 +use std::path::Path;
 +use std::path::PathBuf;
++
++static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 +
 +struct Fixture {
 +    _dir: tempfile::TempDir,
@@ -71386,6 +71395,13 @@ index 000000000..7167a21ed
 +}
 +
 +fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
++    fixture_with_registry(packages, None)
++}
++
++fn fixture_with_registry(
++    packages: &[Package<'_>],
++    registry: Option<&mut ExtensionRegistryBuilder<Config>>,
++) -> Option<Fixture> {
 +    let node = PathBuf::from(
 +        std::env::var_os("OMD_TEST_NODE")
 +            .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
@@ -71394,6 +71410,7 @@ index 000000000..7167a21ed
 +    let base = dir.path().canonicalize().unwrap();
 +    let repository = base.join("repo");
 +    std::fs::create_dir(&repository).unwrap();
++    std::fs::create_dir(repository.join(".git")).unwrap();
 +    let store = ModStore::create(base.join("store"), node).unwrap();
 +    let sources = base.join("packages");
 +    std::fs::create_dir(&sources).unwrap();
@@ -71415,31 +71432,35 @@ index 000000000..7167a21ed
 +        manager: std::sync::Weak::new(),
 +        epoch: 1,
 +    });
-+    let runtime = ModHost::open(root.clone()).unwrap();
-+    let environment = runtime.environment();
-+    let intercepted = runtime.intercepted_surfaces();
-+    let required = runtime.required_surfaces();
-+    let runtime = Arc::new(Mutex::new(runtime));
-+    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-+    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-+    let views = Arc::new(view::Views::new());
-+    let core = Arc::new_cyclic(|core| Core {
-+        agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
-+        host: host.clone(),
-+        runtime,
-+        input_runtime,
-+        persist_runtime,
-+        intercepted,
-+        required,
-+        environment,
-+        services: services::Services::default(),
-+        views,
-+        expansion: State::default(),
-+        inventory: inventory::Inventory::default(),
-+        autonomy: autonomy::Queues::default(),
-+        peering: peering::Registry::default(),
-+        this: core.clone(),
-+    });
++    let core = if let Some(registry) = registry {
++        initialize(registry, host.clone()).unwrap().core.clone()
++    } else {
++        let runtime = ModHost::open(root.clone()).unwrap();
++        let environment = runtime.environment();
++        let intercepted = runtime.intercepted_surfaces();
++        let required = runtime.required_surfaces();
++        let runtime = Arc::new(Mutex::new(runtime));
++        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++        let views = Arc::new(view::Views::new());
++        Arc::new_cyclic(|core| Core {
++            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
++            host: host.clone(),
++            runtime,
++            input_runtime,
++            persist_runtime,
++            intercepted,
++            required,
++            environment,
++            services: services::Services::default(),
++            views,
++            expansion: State::default(),
++            inventory: inventory::Inventory::default(),
++            autonomy: autonomy::Queues::default(),
++            peering: peering::Registry::default(),
++            this: core.clone(),
++        })
++    };
 +    let thread = ThreadId::new();
 +    let session = host.open_session(thread, false).unwrap();
 +    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
@@ -71464,6 +71485,42 @@ index 000000000..7167a21ed
 +        core,
 +        lead,
 +    })
++}
++
++#[test]
++fn production_initialization_binds_checkout_validates_schemas_and_registers_contributors() {
++    let _guard = DISPATCHER_TEST.blocking_lock();
++    let mut registry = ExtensionRegistryBuilder::new();
++    let fixture = fixture_with_registry(&[
++        Package {
++            id: "bound", capabilities: &["store", "commands"],
++            manifest: json!({"state_scope":"checkout"}),
++            source: "export default api => { api.state.get(); api.command('bound', () => null); }",
++        },
++        Package {
++            id: "invalid", capabilities: &["tools"], manifest: json!({}),
++            source: "export default api => api.tool({name:'bad',description:'Bad',parameters:{type:'object',properties:{},required:7}}, () => null)",
++        },
++    ], Some(&mut registry)).unwrap();
++    for runtime in [&fixture.core.runtime, &fixture.core.input_runtime, &fixture.core.persist_runtime] {
++        let status = runtime.lock().unwrap().status();
++        let mods = status["mods"].as_array().unwrap();
++        let bound = mods.iter().find(|item| item["id"] == "bound").unwrap();
++        assert!(bound["error"].is_null(), "{bound}");
++        assert_eq!(bound["registrations"]["commands"][0]["name"], "bound");
++        let invalid = mods.iter().find(|item| item["id"] == "invalid").unwrap();
++        assert!(!invalid["error"].is_null(), "{invalid}");
++    }
++    let registry = registry.build();
++    for count in [registry.config_contributors().len(), registry.context_contributors().len(),
++        registry.thread_lifecycle_contributors().len(), registry.tool_lifecycle_contributors().len(),
++        registry.turn_lifecycle_contributors().len(), registry.turn_input_contributors().len(),
++        registry.tool_output_contributors().len(), registry.approval_gate_contributors().len(),
++        registry.tool_spec_contributors().len(), registry.agent_role_contributors().len(),
++        registry.token_usage_contributors().len(), registry.tool_batch_contributors().len(),
++        registry.tool_contributors().len()] {
++        assert_eq!(count, 1);
++    }
 +}
 +
 +fn mods(core: &Arc<Core>) -> Mods {
@@ -71852,6 +71909,7 @@ index 000000000..7167a21ed
 +
 +#[tokio::test(flavor = "multi_thread")]
 +async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
++    let _guard = DISPATCHER_TEST.lock().await;
 +    let Some(mut fixture) = fixture(&[Package {
 +        id: "control",
 +        capabilities: &["exec", "fs.read", "fs.write"],
@@ -100574,10 +100632,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..2ae2c0d4d
+index 000000000..8c7e26c55
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5765 @@
+@@ -0,0 +1,5793 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -103012,7 +103070,7 @@ index 000000000..2ae2c0d4d
 +    registrations: Registrations,
 +    state: Value,
 +    #[serde(default)]
-+    ui_state: Value,
++    ui_state: Option<String>,
 +    #[serde(default)]
 +    ui_read: bool,
 +    value: Value,
@@ -105101,6 +105159,7 @@ index 000000000..2ae2c0d4d
 +        reply: Reply,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<(Value, Value)> {
++        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
 +        }
@@ -105138,12 +105197,9 @@ index 000000000..2ae2c0d4d
 +                return Err(failure("state_conflict: ui revision changed"));
 +            }
 +        }
-+        if reply.ui_state != loaded.ui_state {
++        if ui_state != loaded.ui_state {
 +            if !reply.ui_read || !matches!(event, "command" | "component_event") {
 +                return Err(failure("ui_state_write_unavailable"));
-+            }
-+            if serde_json::to_vec(&reply.ui_state)?.len() > 65_536 {
-+                return Err(failure("ui_state_limit"));
 +            }
 +        }
 +        let mut parsed_command = None;
@@ -105212,10 +105268,10 @@ index 000000000..2ae2c0d4d
 +                &reply.state,
 +            )?;
 +        }
-+        if reply.ui_state != loaded.ui_state
++        if ui_state != loaded.ui_state
 +            && let Some(state) = ui.as_mut()
 +        {
-+            state.value = reply.ui_state;
++            state.value = ui_state;
 +            state.revision = state.revision.wrapping_add(1);
 +        }
 +        if event == "command"
@@ -106329,6 +106385,36 @@ index 000000000..2ae2c0d4d
 +            "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
 +                .collect::<Vec<_>>()})));
 +        status
++    }
++}
++
++fn validate_ui_state(encoded: &str) -> Result<Value> {
++    if encoded.len() > 65_536 {
++        return Err(failure("ui_state_limit"));
++    }
++    serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
++}
++
++#[cfg(test)]
++#[test]
++fn ui_state_serialized_boundaries() {
++    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
++    for case in cases.as_array().unwrap() {
++        let encoded = format!(
++            "{}{}{}",
++            case["prefix"].as_str().unwrap(),
++            case["unit"]
++                .as_str()
++                .unwrap()
++                .repeat(case["repeat"].as_u64().unwrap() as usize),
++            case["suffix"].as_str().unwrap()
++        );
++        assert_eq!(
++            validate_ui_state(&encoded).is_ok(),
++            case["valid"].as_bool().unwrap(),
++            "{}",
++            case["name"]
++        );
 +    }
 +}
 +
@@ -115717,10 +115803,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..81343c1f0
+index 000000000..a5fe536b7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,946 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -116379,8 +116465,17 @@ index 000000000..81343c1f0
 +    set(value) {
 +      requireCapability('terminal');
 +      if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
-+      const encoded = JSON.stringify(value);
-+      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
++      const encoded = JSON.stringify(value, (key, item) => {
++        if (!key.isWellFormed() || (typeof item === 'string' && !item.isWellFormed())) throw new Error('ui_state_invalid_json');
++        return item;
++      });
++      if (typeof encoded !== 'string') throw new Error('ui_state_limit');
++      let bytes = 0;
++      for (const character of encoded) {
++        const code = character.codePointAt(0);
++        bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
++        if (bytes > 65536) throw new Error('ui_state_limit');
++      }
 +      uiState = JSON.parse(encoded); uiRead = true;
 +    },
 +  }),
@@ -116492,7 +116587,7 @@ index 000000000..81343c1f0
 +  }),
 +});
 +globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
++  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead}), request, calls,
 +  pending: () => pending, ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
 +  }, suspension, serve, base, component: step };
@@ -127950,6 +128045,241 @@ index 000000000..1f976853f
 +        status["rejected"]
 +    );
 +}
+diff --git a/codex-rs/omd/tests/fixtures/ui_state.json b/codex-rs/omd/tests/fixtures/ui_state.json
+new file mode 100644
+index 000000000..19fc4ef97
+--- /dev/null
++++ b/codex-rs/omd/tests/fixtures/ui_state.json
+@@ -0,0 +1,229 @@
++[
++  {"name":"unicode-object-key-at-limit","prefix":"{\"界\":\"","unit":"a","repeat":65526,"suffix":"\"}","valid":true},
++  {"name":"unicode-object-key-over-limit","prefix":"{\"界\":\"","unit":"a","repeat":65527,"suffix":"\"}","valid":false},
++  {"name":"lone-surrogate-key","prefix":"{\"\\ud800\":","unit":"0","repeat":1,"suffix":"}","valid":false},
++  {
++    "name": "ascii-65535",
++    "prefix": "\"",
++    "unit": "a",
++    "repeat": 65533,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "ascii-65536",
++    "prefix": "\"",
++    "unit": "a",
++    "repeat": 65534,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "ascii-65537",
++    "prefix": "\"",
++    "unit": "a",
++    "repeat": 65535,
++    "suffix": "\"",
++    "valid": false
++  },
++  {
++    "name": "two-65535",
++    "prefix": "\"",
++    "unit": "é",
++    "repeat": 32766,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "two-65536",
++    "prefix": "\"",
++    "unit": "é",
++    "repeat": 32767,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "two-65537",
++    "prefix": "\"",
++    "unit": "é",
++    "repeat": 32767,
++    "suffix": "a\"",
++    "valid": false
++  },
++  {
++    "name": "three-65535",
++    "prefix": "\"",
++    "unit": "界",
++    "repeat": 21844,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "three-65536",
++    "prefix": "\"",
++    "unit": "界",
++    "repeat": 21844,
++    "suffix": "aa\"",
++    "valid": true
++  },
++  {
++    "name": "three-65537",
++    "prefix": "\"",
++    "unit": "界",
++    "repeat": 21845,
++    "suffix": "\"",
++    "valid": false
++  },
++  {
++    "name": "four-65535",
++    "prefix": "\"",
++    "unit": "😀",
++    "repeat": 16383,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "four-65536",
++    "prefix": "\"",
++    "unit": "😀",
++    "repeat": 16383,
++    "suffix": "aa\"",
++    "valid": true
++  },
++  {
++    "name": "four-65537",
++    "prefix": "\"",
++    "unit": "😀",
++    "repeat": 16383,
++    "suffix": "aaa\"",
++    "valid": false
++  },
++  {
++    "name": "quote-65535",
++    "prefix": "\"",
++    "unit": "\\\"",
++    "repeat": 32766,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "quote-65536",
++    "prefix": "\"",
++    "unit": "\\\"",
++    "repeat": 32767,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "quote-65537",
++    "prefix": "\"",
++    "unit": "\\\"",
++    "repeat": 32767,
++    "suffix": "a\"",
++    "valid": false
++  },
++  {
++    "name": "slash-65535",
++    "prefix": "\"",
++    "unit": "\\\\",
++    "repeat": 32766,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "slash-65536",
++    "prefix": "\"",
++    "unit": "\\\\",
++    "repeat": 32767,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "slash-65537",
++    "prefix": "\"",
++    "unit": "\\\\",
++    "repeat": 32767,
++    "suffix": "a\"",
++    "valid": false
++  },
++  {
++    "name": "control-65535",
++    "prefix": "\"",
++    "unit": "\\u0001",
++    "repeat": 10922,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "control-65536",
++    "prefix": "\"",
++    "unit": "\\u0001",
++    "repeat": 10922,
++    "suffix": "aa\"",
++    "valid": true
++  },
++  {
++    "name": "control-65537",
++    "prefix": "\"",
++    "unit": "\\u0001",
++    "repeat": 10922,
++    "suffix": "aaa\"",
++    "valid": false
++  },
++  {
++    "name": "1e-7-65536",
++    "prefix": "[1e-7,\"",
++    "unit": "a",
++    "repeat": 65527,
++    "suffix": "\"]",
++    "valid": true
++  },
++  {
++    "name": "1e-7-65537",
++    "prefix": "[1e-7,\"",
++    "unit": "a",
++    "repeat": 65528,
++    "suffix": "\"]",
++    "valid": false
++  },
++  {
++    "name": "100000000000000000000-65536",
++    "prefix": "[100000000000000000000,\"",
++    "unit": "a",
++    "repeat": 65510,
++    "suffix": "\"]",
++    "valid": true
++  },
++  {
++    "name": "100000000000000000000-65537",
++    "prefix": "[100000000000000000000,\"",
++    "unit": "a",
++    "repeat": 65511,
++    "suffix": "\"]",
++    "valid": false
++  },
++  {
++    "name": "0-65536",
++    "prefix": "[0,\"",
++    "unit": "a",
++    "repeat": 65530,
++    "suffix": "\"]",
++    "valid": true
++  },
++  {
++    "name": "0-65537",
++    "prefix": "[0,\"",
++    "unit": "a",
++    "repeat": 65531,
++    "suffix": "\"]",
++    "valid": false
++  },
++  {
++    "name": "lone-surrogate",
++    "prefix": "\"",
++    "unit": "\\ud800",
++    "repeat": 1,
++    "suffix": "\"",
++    "valid": false
++  }
++]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
 index 000000000..9f64a20d4
@@ -131943,10 +132273,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..086463c0f
+index 000000000..9da06a810
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5727 @@
+@@ -0,0 +1,5731 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -133775,6 +134105,10 @@ index 000000000..086463c0f
 +    }
 +    assert_eq!(invoke(&mut second, "read", Value::Null), 5);
 +    assert_eq!(invoke(&mut first, "read", Value::Null), 5);
++    for value in [json!([1e-7, "a".repeat(65_527)]), json!("界".repeat(21_844) + "aa")] {
++        invoke(&mut first, "write", value.clone());
++        assert_eq!(invoke(&mut second, "read", Value::Null), value);
++    }
 +    let error = first
 +        .invoke(
 +            "fixture",

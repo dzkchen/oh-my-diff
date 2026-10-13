@@ -2432,7 +2432,7 @@ struct Reply {
     registrations: Registrations,
     state: Value,
     #[serde(default)]
-    ui_state: Value,
+    ui_state: Option<String>,
     #[serde(default)]
     ui_read: bool,
     value: Value,
@@ -4521,6 +4521,7 @@ impl ModHost {
         reply: Reply,
         active: &dyn Fn() -> bool,
     ) -> Result<(Value, Value)> {
+        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -4558,12 +4559,9 @@ impl ModHost {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
-        if reply.ui_state != loaded.ui_state {
+        if ui_state != loaded.ui_state {
             if !reply.ui_read || !matches!(event, "command" | "component_event") {
                 return Err(failure("ui_state_write_unavailable"));
-            }
-            if serde_json::to_vec(&reply.ui_state)?.len() > 65_536 {
-                return Err(failure("ui_state_limit"));
             }
         }
         let mut parsed_command = None;
@@ -4632,10 +4630,10 @@ impl ModHost {
                 &reply.state,
             )?;
         }
-        if reply.ui_state != loaded.ui_state
+        if ui_state != loaded.ui_state
             && let Some(state) = ui.as_mut()
         {
-            state.value = reply.ui_state;
+            state.value = ui_state;
             state.revision = state.revision.wrapping_add(1);
         }
         if event == "command"
@@ -5749,6 +5747,36 @@ impl ModHost {
             "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
                 .collect::<Vec<_>>()})));
         status
+    }
+}
+
+fn validate_ui_state(encoded: &str) -> Result<Value> {
+    if encoded.len() > 65_536 {
+        return Err(failure("ui_state_limit"));
+    }
+    serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
+}
+
+#[cfg(test)]
+#[test]
+fn ui_state_serialized_boundaries() {
+    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let encoded = format!(
+            "{}{}{}",
+            case["prefix"].as_str().unwrap(),
+            case["unit"]
+                .as_str()
+                .unwrap()
+                .repeat(case["repeat"].as_u64().unwrap() as usize),
+            case["suffix"].as_str().unwrap()
+        );
+        assert_eq!(
+            validate_ui_state(&encoded).is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
     }
 }
 

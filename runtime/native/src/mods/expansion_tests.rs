@@ -5,6 +5,8 @@ use codex_omd::ModStore;
 use std::path::Path;
 use std::path::PathBuf;
 
+static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Fixture {
     _dir: tempfile::TempDir,
     core: Arc<Core>,
@@ -58,6 +60,13 @@ fn install(store: &ModStore, dir: &Path, package: &Package<'_>) {
 }
 
 fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
+    fixture_with_registry(packages, None)
+}
+
+fn fixture_with_registry(
+    packages: &[Package<'_>],
+    registry: Option<&mut ExtensionRegistryBuilder<Config>>,
+) -> Option<Fixture> {
     let node = PathBuf::from(
         std::env::var_os("OMD_TEST_NODE")
             .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
@@ -66,6 +75,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
     let base = dir.path().canonicalize().unwrap();
     let repository = base.join("repo");
     std::fs::create_dir(&repository).unwrap();
+    std::fs::create_dir(repository.join(".git")).unwrap();
     let store = ModStore::create(base.join("store"), node).unwrap();
     let sources = base.join("packages");
     std::fs::create_dir(&sources).unwrap();
@@ -87,31 +97,35 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         manager: std::sync::Weak::new(),
         epoch: 1,
     });
-    let runtime = ModHost::open(root.clone()).unwrap();
-    let environment = runtime.environment();
-    let intercepted = runtime.intercepted_surfaces();
-    let required = runtime.required_surfaces();
-    let runtime = Arc::new(Mutex::new(runtime));
-    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-    let views = Arc::new(view::Views::new());
-    let core = Arc::new_cyclic(|core| Core {
-        agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
-        host: host.clone(),
-        runtime,
-        input_runtime,
-        persist_runtime,
-        intercepted,
-        required,
-        environment,
-        services: services::Services::default(),
-        views,
-        expansion: State::default(),
-        inventory: inventory::Inventory::default(),
-        autonomy: autonomy::Queues::default(),
-        peering: peering::Registry::default(),
-        this: core.clone(),
-    });
+    let core = if let Some(registry) = registry {
+        initialize(registry, host.clone()).unwrap().core.clone()
+    } else {
+        let runtime = ModHost::open(root.clone()).unwrap();
+        let environment = runtime.environment();
+        let intercepted = runtime.intercepted_surfaces();
+        let required = runtime.required_surfaces();
+        let runtime = Arc::new(Mutex::new(runtime));
+        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let views = Arc::new(view::Views::new());
+        Arc::new_cyclic(|core| Core {
+            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
+            host: host.clone(),
+            runtime,
+            input_runtime,
+            persist_runtime,
+            intercepted,
+            required,
+            environment,
+            services: services::Services::default(),
+            views,
+            expansion: State::default(),
+            inventory: inventory::Inventory::default(),
+            autonomy: autonomy::Queues::default(),
+            peering: peering::Registry::default(),
+            this: core.clone(),
+        })
+    };
     let thread = ThreadId::new();
     let session = host.open_session(thread, false).unwrap();
     *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
@@ -136,6 +150,42 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         core,
         lead,
     })
+}
+
+#[test]
+fn production_initialization_binds_checkout_validates_schemas_and_registers_contributors() {
+    let _guard = DISPATCHER_TEST.blocking_lock();
+    let mut registry = ExtensionRegistryBuilder::new();
+    let fixture = fixture_with_registry(&[
+        Package {
+            id: "bound", capabilities: &["store", "commands"],
+            manifest: json!({"state_scope":"checkout"}),
+            source: "export default api => { api.state.get(); api.command('bound', () => null); }",
+        },
+        Package {
+            id: "invalid", capabilities: &["tools"], manifest: json!({}),
+            source: "export default api => api.tool({name:'bad',description:'Bad',parameters:{type:'object',properties:{},required:7}}, () => null)",
+        },
+    ], Some(&mut registry)).unwrap();
+    for runtime in [&fixture.core.runtime, &fixture.core.input_runtime, &fixture.core.persist_runtime] {
+        let status = runtime.lock().unwrap().status();
+        let mods = status["mods"].as_array().unwrap();
+        let bound = mods.iter().find(|item| item["id"] == "bound").unwrap();
+        assert!(bound["error"].is_null(), "{bound}");
+        assert_eq!(bound["registrations"]["commands"][0]["name"], "bound");
+        let invalid = mods.iter().find(|item| item["id"] == "invalid").unwrap();
+        assert!(!invalid["error"].is_null(), "{invalid}");
+    }
+    let registry = registry.build();
+    for count in [registry.config_contributors().len(), registry.context_contributors().len(),
+        registry.thread_lifecycle_contributors().len(), registry.tool_lifecycle_contributors().len(),
+        registry.turn_lifecycle_contributors().len(), registry.turn_input_contributors().len(),
+        registry.tool_output_contributors().len(), registry.approval_gate_contributors().len(),
+        registry.tool_spec_contributors().len(), registry.agent_role_contributors().len(),
+        registry.token_usage_contributors().len(), registry.tool_batch_contributors().len(),
+        registry.tool_contributors().len()] {
+        assert_eq!(count, 1);
+    }
 }
 
 fn mods(core: &Arc<Core>) -> Mods {
@@ -524,6 +574,7 @@ async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
+    let _guard = DISPATCHER_TEST.lock().await;
     let Some(mut fixture) = fixture(&[Package {
         id: "control",
         capabilities: &["exec", "fs.read", "fs.write"],
