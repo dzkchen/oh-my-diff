@@ -60,8 +60,53 @@ def inspect(root):
 
 def production(path):
     text = path.read_text()
-    cut = text.find("#[cfg(test)]")
-    return text if cut < 0 else text[:cut]
+    if path.suffix != ".rs":
+        return text
+    masked = list(text)
+    token = re.compile(r'//[^\n]*|/\*|(?:br|r)(\#*)"|b?"(?:\\.|[^"\\])*"|b?\'(?:\\.|[^\'\\])\'', re.S)
+    cursor = 0
+    while match := token.search(text, cursor):
+        end = match.end()
+        if match.group() == "/*":
+            depth = 1
+            while depth and end < len(text):
+                nested = re.search(r"/\*|\*/", text[end:])
+                if not nested:
+                    end = len(text)
+                    break
+                depth += 1 if nested.group() == "/*" else -1
+                end += nested.end()
+        elif match.group(1) is not None:
+            close = '"' + match.group(1)
+            stop = text.find(close, end)
+            end = len(text) if stop < 0 else stop + len(close)
+        masked[match.start():end] = ['\n' if c == '\n' else ' ' for c in text[match.start():end]]
+        cursor = end
+    syntax = ''.join(masked)
+    result = list(text)
+    cursor = 0
+    cfg = re.compile(r'#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]')
+    while match := cfg.search(syntax, cursor):
+        stack = []
+        opened = False
+        end = match.end()
+        for end in range(end, len(syntax)):
+            char = syntax[end]
+            if char in '([{':
+                stack.append(char)
+                opened |= char == '{' and len(stack) == 1
+            elif char in ')]}':
+                if not stack or stack.pop() != {')': '(', ']': '[', '}': '{'}[char]:
+                    raise ValueError(f"unbalanced test item in {path}")
+                if opened and not stack:
+                    break
+            elif char == ';' and not stack:
+                break
+        else:
+            raise ValueError(f"unterminated test item in {path}")
+        cursor = end + 1
+        result[match.start():cursor] = ['\n' if c == '\n' else ' ' for c in text[match.start():cursor]]
+    return ''.join(result)
 
 
 def native_files(root):

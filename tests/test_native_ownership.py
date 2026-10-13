@@ -2,10 +2,46 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from scripts.check_native_ownership import first_party, inspect
+from scripts.check_native_ownership import first_party, inspect, literals, production
 
 
 class NativeOwnershipTests(unittest.TestCase):
+    def test_production_resumes_after_test_items(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sample.rs"
+            before = 'fn before() { let _ = "workflow"; }\n'
+            tests = ('#[cfg(test)]\nmod tests {\n'
+                     ' /* nested /* } */ comment */\n'
+                     ' fn fixture() { let _ = r###" } #[cfg(test)] "###; }\n}\n'
+                     '#[cfg ( test )]\n#[test]\nfn test_only() { let _ = "{"; }\n')
+            after = 'fn after() { let _ = "review"; }\n'
+            path.write_text(before + tests + after)
+            self.assertEqual(production(path), before + ''.join('\n' if c == '\n' else ' ' for c in tests.rstrip('\n')) + '\n' + after)
+
+    def test_scans_include_production_after_test_module(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "runtime/omd/src/mods.rs"
+            package = root / "mods/first-party/omd_sample/mod.json"
+            path.parent.mkdir(parents=True)
+            package.parent.mkdir(parents=True)
+            package.write_text('{"id": "omd_sample"}')
+            path.write_text('fn before() { let _ = "workflow"; }\n'
+                            '#[cfg(test)]\nmod tests { fn fixture() { let _ = "omd_sample"; } }\n'
+                            'fn after() { let _ = ("review", "omd_sample"); }\n')
+            self.assertEqual([(f['name'], f['line']) for f in literals(root)],
+                             [('workflow', 1), ('review', 4)])
+            self.assertEqual([(f['name'], f['line']) for f in first_party(root)],
+                             [('omd_sample', 4)])
+
+    def test_unknown_test_boundary_cannot_hide_later_production(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sample.rs"
+            path.write_text('struct S { #[cfg(test)] field: bool }\n'
+                            'fn after() { let _ = "workflow"; }\n')
+            with self.assertRaisesRegex(ValueError, "unbalanced test item"):
+                production(path)
+
     def test_feature_named_surfaces_and_config_are_reported(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

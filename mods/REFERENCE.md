@@ -2205,6 +2205,8 @@ stale results are dropped. While the user types arguments to a mod command
 (`api.on` or `replace`), otherwise the exclusive owner does; it returns
 `{items: [{insert}]}` and the list opens only when it has items. A mod can
 therefore complete its own commands without owning `@` mention ranking.
+Accepting an argument choice advances past a separator and keeps completion
+closed until the draft or cursor changes, so the next Enter submits the command.
 
 `api.completion({trigger}, handler)` (capability `composer`,
 `completion_tokens_v1`, experimental) completes arbitrary tokens: `trigger` is
@@ -2215,8 +2217,9 @@ registers at most four during activation. While the token before the cursor
 to the cursor) and returns `{items: [{insert}]}` with the same limits, debounce
 and stale-result dropping as argument completion. The host shows the rows in
 the composer's completion list and, on Tab or Enter, replaces the whole token
-with the selected `insert`. When two mods register the same trigger, the first
-loaded mod keeps it and the other gets a status notice.
+with the selected `insert` and advances past a separator so the accepted token
+does not immediately reopen completion. When two mods register the same trigger,
+the first loaded mod keeps it and the other gets a status notice.
 
 ### Composer drafts and suggestions (`composer_v2`)
 
@@ -2283,14 +2286,20 @@ receives.
 
 When a turn starts, the host reads each `@path` or `@"path with spaces"` of the
 submitted text that names an existing workspace file (at most 16 per turn; a
-leading `./` and trailing punctuation are ignored; picking a file from the `@`
+leading `./` and unquoted trailing punctuation are ignored; quoted paths use
+JSON string escaping and preserve punctuation, quotes and backslashes. An `@`
+inside a quoted path is part of that path. Picking a file from the `@`
 list inserts it in this form, except in a slash command or shell command, which
 get the bare path) and gives the model its contents after the prompt as
 `<mentioned_file><path>…</path>…</mentioned_file>`. Reads use the
-`workspace.read` checks: repository-relative paths without `..`, `.git` or
-symlink components, and the thread's effective read permissions and deny rules.
+`workspace.read` checks: repository-relative paths without `..`, `.git`, backslashes or
+symlink components, and the intersection of the selected turn environment's
+filesystem permissions with the thread's effective read permissions and deny
+rules. Expansion requires exactly one local environment at the thread's
+repository; other environments or working directories skip expansion.
 Each file is read once, in mention order, while the turn's mentioned files
-total at most 256 KiB; a file that fails the checks, does not fit or is not
+total at most 256 KiB of returned UTF-8 bytes, checked again after reading; a
+file that fails the checks, does not fit or is not
 UTF-8 is left to the model's own tools. Before each read,
 `api.intercept('mention', …)` (capability `input`, experimental) receives
 `{thread_id, path}`; handlers may set `path` to another workspace file, which

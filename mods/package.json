@@ -55,7 +55,7 @@
     "examples/reactive_dashboard"
   ],
   "scripts": {
-    "test": "node --test runner.test.mjs presentation.test.mjs first-party/omd_mods/mods.test.mjs first-party/omd_frecency/frecency.test.mjs first-party/omd_profiles/profiles.test.mjs first-party/omd_update/update.test.mjs first-party/omd_privacy/privacy.test.mjs ../tests/*.test.mjs",
+    "test": "node ../scripts/mod_test_suite.mjs",
     "check": "tsc -p tsconfig.json",
     "package": "pnpm pack --pack-destination dist"
   },
