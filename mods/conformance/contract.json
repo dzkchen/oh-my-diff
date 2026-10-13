@@ -2558,10 +2558,10 @@
     },
     {
       "id": "reload",
-      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
+      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale local generations are refused. In-flight work retains its captured source, but cancellation or changed authority, source or enablement rejects completion before state or results are committed. Settings and state survive an edit.",
       "evidence": [
         "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
-        "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"
+        "rust:disabling_during_native_work_rejects_completion_and_next_generation"
       ]
     },
     {

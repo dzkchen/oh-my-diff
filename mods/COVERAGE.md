@@ -570,7 +570,7 @@ deterministic and composable; the added control per decision is:
 
 - **failed_mod_isolation** — A mod that throws while activating, loses a capability, or is rejected by the store is disabled alone with a source-located error. Every other mod keeps running, its owned agents and services are cleaned up, and a healthy mod keeps its terminal view with the error panel inserted above it. The failure is reported to the user through that panel, `omd-mod status` and the persisted `mod-status.json`; a failure inside a callback is additionally reported to the model for that turn.
 
-- **reload** — Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.
+- **reload** — Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale local generations are refused. In-flight work retains its captured source, but cancellation or changed authority, source or enablement rejects completion before state or results are committed. Settings and state survive an edit.
 
 - **cancellation** — Every callback is cancellable. Cancellation discards the callback's state write, cancels its owned agents and services, records the turn outcome, and leaves the terminal usable; an explicit reload recovers the mod.
 
@@ -719,7 +719,7 @@ frozen surface's evidence at the clean validated revision. See `integration/EVID
 | dependencies_and_cycles | `rust:a_dependency_cycle_is_rejected_before_activation_and_isolated` · `rust:an_unavailable_dependency_disables_only_the_dependent_chain` |
 | user_project_precedence | `rust:project_scope_takes_precedence_over_user_scope_without_sharing_state` · `rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed` |
 | failed_mod_isolation | `rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error` |
-| reload | `rust:mod_reload_is_transactional_and_stale_calls_are_rejected` · `rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation` |
+| reload | `rust:mod_reload_is_transactional_and_stale_calls_are_rejected` · `rust:disabling_during_native_work_rejects_completion_and_next_generation` |
 | cancellation | `rust:mod_cancellation_discards_state_and_explicit_reload_recovers` · `rust:mod_pending_callback_has_a_host_deadline` |
 | streaming | `rust:tool_progress_is_forwarded_once_across_host_call_replay` |
 | limits | `rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget` · `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:mod_pending_callback_has_a_host_deadline` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` |

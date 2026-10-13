@@ -349,7 +349,7 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
 }
 
 #[test]
-fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one() {
+fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_generation() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
     let middleware =
@@ -412,7 +412,7 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
         .unwrap();
     assert_eq!(value, json!({"task":"running"}));
     assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
-    assert_eq!(text(&mut runtime), json!("HELLO"));
+    assert!(runtime.event("context", json!({})).into_iter().find(|(id, _)| id == "stream").unwrap().1.is_err());
 
     assert!(runtime.reload().unwrap());
     assert_ne!(runtime.generation(), generation);

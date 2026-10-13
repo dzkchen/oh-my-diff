@@ -137,7 +137,7 @@ pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
     match fs::symlink_metadata(&source) {
         Ok(metadata) if metadata.is_dir() => {
             if target.try_exists()? {
-                return Err(failure("store_thread_exists"));
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
             }
             copy_regular_tree(&source, &target).map(|()| true)
         }

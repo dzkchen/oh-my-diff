@@ -30,6 +30,32 @@ First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
 raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
 launch; outside authors can use the public client APIs.
 
+## Host lifetime and callback authority
+
+One native host owns the process-wide session dispatcher and client bridge at a
+time. A second live installation is rejected. Stopping the owner releases its
+registrations; teardown from an older registration cannot remove a newer one.
+
+Main, input and persistence runtimes may have different idle snapshots, local
+generation numbers, telemetry and callback failure state. Numeric generations
+are local to a runtime, not a cross-runtime authority token. Each callback uses
+its executing runtime's selected source and grants. Persistence refreshes its own
+runtime and uses that runtime's required-interceptor decision, including failure
+fallback. Required persistence failure withholds text; dropping persistence work
+cancels the callback.
+
+Safety change (2026-10-13): callback admission and completion validate current
+source and authority. Cancellation, disablement, revocation, source replacement
+or a changed executing generation rejects completion before callback state or
+results are accepted. Effects already performed by a host call are not rolled
+back. Authors must not rely on a disabled or replaced callback committing state
+after its host call finishes. Failed-reload transactional restoration is a
+separate contract; retaining an older runtime does not authorize stale callbacks.
+
+Raster producers distinguish retryable, revoked and fatal failures by explicit
+categories, independently of diagnostic wording. Thread-store destination
+conflicts use the native `AlreadyExists` category.
+
 ## API 0.2 host primitives
 
 The host is feature-agnostic: every operation, event and capability below is

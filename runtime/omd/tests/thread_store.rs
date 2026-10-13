@@ -101,7 +101,7 @@ fn thread_scope_is_per_thread_forks_by_copy_and_is_removed_with_the_thread() {
         .unwrap()["value"]["text"],
         "ship"
     );
-    assert!(fork_thread_data(&data, "thread-1", "thread-3").is_err());
+    assert_eq!(fork_thread_data(&data, "thread-1", "thread-3").unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
     assert!(!fork_thread_data(&data, "absent", "thread-4").unwrap());
     assert!(fork_thread_data(&data, "../x", "thread-5").is_err());
 
