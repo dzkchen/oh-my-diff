@@ -3,7 +3,7 @@
 A conformance fixture (not packed in the author SDK) of a full-pane raster fed
 by a managed Node process. The producer supports encoded PNG and file-backed
 RGB publication (`raster_pixels_v1`). The same raw transport works for video
-decoders, image viewers and simulations. The synthetic PNG producer offers up
+decoders, image viewers, and simulations. The synthetic PNG producer offers up
 to 120 frames/sec, and the host's 16 ms raster cadence folds pending images to
 the newest frame. The raw producer renders each frame when the host
 acknowledges the previous one; the host times that acknowledgement so the new
