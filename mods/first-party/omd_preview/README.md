@@ -77,8 +77,8 @@ change and shows every PNG and JPEG attachment above the composer in one row:
 each tile keeps its image's shape (from the pixel size `composer.read`
 reports), and the tiles shrink together, from 8 rows (at most a quarter of the
 terminal) down to 2, until the row fits the width; when even 2-row tiles do not
-fit, the row ends with `+N more`. Each tile has a `#N` Preview button (click the
-thumbnail too). The images come from the
+fit, the row ends with `+N more: /preview image K to M`, the command that opens
+the hidden ones. Each tile has a `#N` Preview button (click the thumbnail too). The images come from the
 host's draft attachment resources (`composer.read`), never from another
 program's cache; other formats or files over 8 MiB show a text tile. Pasting,
 removing or replacing an image, switching drafts and submitting update or clear

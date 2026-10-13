@@ -1840,34 +1840,46 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
 
 #[test]
 fn ui_state_write_survives_a_reload_during_its_command() {
-    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('read', () => api.uiState.get()); };";
+    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('keep', () => { const value = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set(value); return 'kept'; }); api.command('read', () => api.uiState.get()); };";
     let (temp, store, _) = fixture(source, &["commands", "terminal", "fs.read"]);
     let runtime = std::sync::Mutex::new(host(&temp));
-    let generation = runtime.lock().unwrap().generation();
-    let value = codex_omd::invoke_shared(
-        &runtime,
-        "fixture",
-        generation,
-        "command",
-        "apply",
-        Value::Null,
-        || true,
-        |_, _| {
-            store.reload().unwrap();
-            runtime.lock().unwrap().reload().unwrap();
-            Ok(json!("contents"))
-        },
-        |_| {},
-    )
-    .unwrap();
-    assert_eq!(value, "applied");
-    let mut host = runtime.into_inner().unwrap();
-    let generation = host.generation();
-    assert_eq!(
+    let during = |name: &str, change: &dyn Fn()| {
+        let generation = runtime.lock().unwrap().generation();
+        codex_omd::invoke_shared(
+            &runtime,
+            "fixture",
+            generation,
+            "command",
+            name,
+            Value::Null,
+            || true,
+            |_, _| {
+                change();
+                Ok(json!("contents"))
+            },
+            |_| {},
+        )
+    };
+    let read = || {
+        let mut host = runtime.lock().unwrap();
+        let generation = host.generation();
         host.invoke("fixture", generation, "command", "read", Value::Null)
-            .unwrap(),
-        json!({"open": true, "before": null})
-    );
+            .unwrap()
+    };
+    let reload = || {
+        store.reload().unwrap();
+        runtime.lock().unwrap().reload().unwrap();
+    };
+    assert_eq!(during("apply", &reload).unwrap(), "applied");
+    assert_eq!(read(), json!({"open": true, "before": null}));
+    assert_eq!(during("keep", &reload).unwrap(), "kept");
+    assert_eq!(read(), json!({"open": true, "before": null}));
+    let error = during("apply", &|| {
+        runtime.lock().unwrap().set_checkout(temp.path());
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("callback_cancelled"), "{error}");
+    assert_eq!(read(), Value::Null);
 }
 
 #[test]

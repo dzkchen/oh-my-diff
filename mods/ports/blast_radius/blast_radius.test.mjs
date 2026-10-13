@@ -65,7 +65,7 @@ test('cd and git -C move where the measurement runs', { skip }, () => {
     'terminal.prompt': [accepted],
   });
   assertWrapped(chain, 'blast_radius');
-  assert.deepEqual(execs.slice(1).map(call => [call.program, call.cwd]), [['git', 'app/pkg'], ['git', 'app/pkg']]);
+  assert.deepEqual(execs.slice(1).map(call => [call.program, call.cwd]), [['env', 'app/pkg'], ['env', 'app/pkg']]);
   assert.match(prompt.message, /discard uncommitted changes in 2 files/);
   assert.match(prompt.message, /M {2}src\/a\.ts, M src\/b\.ts/);
   assert.doesNotMatch(prompt.message, /new\.txt/);
@@ -92,7 +92,7 @@ test('a force-push lists the commits it would drop', { skip }, () => {
     'terminal.prompt': [accepted],
   });
   assertWrapped(chain, 'blast_radius');
-  assert.deepEqual(execs[2].argv.slice(-4), ['log', '--oneline', '--no-decorate', 'feature..origin/feature']);
+  assert.deepEqual(execs[2].argv.slice(-5), ['log', '--oneline', '--no-decorate', '--end-of-options', 'feature..origin/feature']);
   assert.match(prompt.message, /force-push to origin\/feature: drops 2 commits · .* · abc123 first, def456 second/);
 });
 
@@ -102,7 +102,29 @@ test('git clean is dry-run with the user flags but never -f', { skip }, () => {
     'terminal.prompt': [declined],
   });
   assert.deepEqual(execs[1].argv.slice(-6), ['clean', '-n', '-dx', '-e', 'keep', '--']);
+  assert.deepEqual([execs[1].program, ...execs[1].argv.slice(0, 2)], ['env', 'LC_ALL=C', 'git'], 'git output is parsed in the C locale');
   assert.match(prompt.message, /remove 2 untracked paths · .* · tmp\/, out\.log/);
+});
+
+test('git checkout . and git restore . measure only the current folder', { skip }, () => {
+  for (const cmd of ['cd app && git checkout .', 'cd app && git restore .']) {
+    const { execs } = guard(cmd, { 'exec.run': [root, exec(' M a.ts\n'), exec('')], 'terminal.prompt': [declined] });
+    assert.deepEqual(execs.slice(1).map(call => [call.cwd, ...call.argv.slice(-2)]), [['app', '--', '.'], ['app', '--', '.']], cmd);
+  }
+});
+
+test('a refspec source cannot become a git option', { skip }, () => {
+  const { prompt, execs } = guard('git push origin +--output=x:main', { 'exec.run': [root, exec('')], 'terminal.prompt': [declined] });
+  assert.ok(execs.every(call => !call.argv.some(word => word.startsWith('--output'))), JSON.stringify(execs));
+  assert.match(prompt.message, /could not measure it/);
+});
+
+test('prisma migrations are listed with the runner the command used', { skip }, () => {
+  for (const [cmd, program, argv] of [['npx prisma migrate deploy', 'npx', ['prisma', 'migrate', 'status']], ['yarn prisma migrate dev', 'yarn', ['prisma', 'migrate', 'status']],
+    ['pnpm exec prisma migrate deploy', 'pnpm', ['exec', 'prisma', 'migrate', 'status']]]) {
+    const { execs } = guard(cmd, { 'exec.run': [root, exec('')], 'terminal.prompt': [declined] });
+    assert.deepEqual([execs[1].program, execs[1].argv], [program, argv], cmd);
+  }
 });
 
 test('pending migrations are listed from the tool status', { skip }, () => {

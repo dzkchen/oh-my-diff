@@ -1,7 +1,7 @@
 import type { ExecResult, ModAPI } from '@oh-my-diff/mod-api';
 
 type Kind = 'rm' | 'reset' | 'clean' | 'push' | 'checkout' | 'migrate';
-type Risk = { kind: Kind; label: string; args: string[]; dir: string | null; tool?: string };
+type Risk = { kind: Kind; label: string; args: string[]; dir: string | null; tool?: string; via?: string[] };
 type Report = { summary: string; lines: string[]; more: number; note: string };
 
 const LIST_MAX = 10;
@@ -27,8 +27,9 @@ const MIGRATIONS: Record<string, { argv: string[]; pending: (line: string) => bo
   django: { argv: ['python3', 'manage.py', 'showmigrations', '--plan'], pending: line => line.startsWith('[ ]') },
   alembic: { argv: ['alembic', 'history', '-r', 'current:head'], pending: line => line.includes('->') },
   rails: { argv: ['bundle', 'exec', 'rails', 'db:migrate:status'], pending: line => /^\s*down\b/.test(line) },
-  prisma: { argv: ['pnpm', 'exec', 'prisma', 'migrate', 'status'], pending: line => /^\s{2}\S/.test(line) },
+  prisma: { argv: ['prisma', 'migrate', 'status'], pending: line => /^\s{2}\S/.test(line) },
 };
+const RUNNERS = new Set(['', 'npx', 'pnpm', 'pnpm exec', 'yarn', 'bunx']);
 
 const MIGRATE_LABELS: Record<string, string> = { alembic: 'alembic upgrade', rails: 'db:migrate', prisma: 'prisma migrate', django: 'manage.py migrate', unknown: 'migrate' };
 
@@ -101,7 +102,8 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
     : /\bprisma\s+migrate\b/.test(joined) ? 'prisma'
     : /\bmanage\.py\s+migrate\b/.test(joined) ? 'django'
     : !READ_ONLY.has(cmd) && args.includes('migrate') ? 'unknown' : null;
-  return tool ? { kind: 'migrate', label: MIGRATE_LABELS[tool], args: [], dir, tool } : null;
+  const at = words.indexOf('prisma');
+  return tool ? { kind: 'migrate', label: MIGRATE_LABELS[tool], args: [], dir, tool, via: tool === 'prisma' && at >= 0 ? words.slice(0, at) : [] } : null;
 }
 
 function classify(command: string): Risk | null {
@@ -141,7 +143,8 @@ export default function activate(api: ModAPI) {
     if (result.exit_code !== 0) throw new Error(result.stderr.trim() || `${program} exited ${result.exit_code}`);
     return result.stdout;
   };
-  const git = (cwd: string | undefined, ...argv: string[]) => out(run(cwd, 'git', ['--no-optional-locks', ...argv]), 'git');
+  const gitRun = (cwd: string | undefined, argv: string[]) => run(cwd, 'env', ['LC_ALL=C', 'git', '--no-optional-locks', ...argv]);
+  const git = (cwd: string | undefined, ...argv: string[]) => out(gitRun(cwd, argv), 'git');
   const listed = (items: string[], summary: string, note: string): Report =>
     ({ summary, lines: items.slice(0, LIST_MAX), more: Math.max(0, items.length - LIST_MAX), note });
 
@@ -166,9 +169,10 @@ export default function activate(api: ModAPI) {
   };
 
   const measureDiscard = (risk: Risk, cwd: string | undefined): Report => {
-    const rows = git(cwd, 'status', '--porcelain').split('\n').filter(l => l.length > 3 && !l.startsWith('??'));
+    const scope = risk.kind === 'reset' ? [] : ['--', '.'];
+    const rows = git(cwd, 'status', '--porcelain', ...scope).split('\n').filter(l => l.length > 3 && !l.startsWith('??'));
     const lost = risk.kind === 'reset' ? rows : rows.filter(l => l[1] !== ' ');
-    const stat = run(cwd, 'git', ['diff', '--shortstat', risk.kind === 'reset' ? 'HEAD' : '--']).stdout.trim();
+    const stat = gitRun(cwd, ['diff', '--shortstat', ...(risk.kind === 'reset' ? ['HEAD'] : scope)]).stdout.trim();
     return listed(
       lost.map(l => `${l.slice(0, 2)} ${l.slice(3)}`),
       lost.length ? `discard uncommitted changes in ${plural(lost.length, 'file')}` : 'discard nothing: no uncommitted changes',
@@ -213,11 +217,12 @@ export default function activate(api: ModAPI) {
       source = 'HEAD';
     }
     source ||= 'HEAD';
+    if (source.startsWith('-')) throw new Error(`${source} is not a revision`);
     const ref = `${remote}/${branch}`;
-    if (run(cwd, 'git', ['rev-parse', '--verify', '--quiet', ref]).exit_code !== 0) {
+    if (gitRun(cwd, ['rev-parse', '--verify', '--quiet', ref]).exit_code !== 0) {
       return { summary: `force-push to ${ref}`, lines: [], more: 0, note: `No local copy of ${ref}, so I can't tell which commits the push would drop. Run git fetch first.` };
     }
-    const dropped = git(cwd, 'log', '--oneline', '--no-decorate', `${source}..${ref}`).split('\n').filter(Boolean);
+    const dropped = git(cwd, 'log', '--oneline', '--no-decorate', '--end-of-options', `${source}..${ref}`).split('\n').filter(Boolean);
     return listed(
       dropped,
       dropped.length ? `force-push to ${ref}: drops ${plural(dropped.length, 'commit')}` : `force-push to ${ref}: drops no commits`,
@@ -227,13 +232,13 @@ export default function activate(api: ModAPI) {
 
   const measureMigrations = (risk: Risk, cwd: string | undefined): Report => {
     const lister = MIGRATIONS[risk.tool ?? ''];
-    if (!lister) return { summary: 'run migrations', lines: [], more: 0, note: "I can't list the pending migrations for this tool, so the list is not shown." };
-    const [program, ...argv] = lister.argv;
+    if (!lister || !RUNNERS.has((risk.via ?? []).join(' '))) return { summary: 'run migrations', lines: [], more: 0, note: "I can't list the pending migrations for this tool, so the list is not shown." };
+    const [program, ...argv] = [...risk.via ?? [], ...lister.argv];
     const pending = out(run(cwd, program, argv, 20_000), program).split('\n').filter(lister.pending).map(l => l.replace(/^\[ \]\s*/, '').trim());
     return listed(
       pending,
       pending.length ? `apply ${plural(pending.length, 'pending migration')}` : `run ${risk.label}: nothing pending`,
-      `From ${lister.argv.join(' ')}.`,
+      `From ${[program, ...argv].join(' ')}.`,
     );
   };
 

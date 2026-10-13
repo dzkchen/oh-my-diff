@@ -10,7 +10,7 @@ On every `exec_command` call the mod classifies the command. Anything else runs 
 | --- | --- |
 | `rm` with `-r`, `-R`, `-f` or long forms | `find` and `du -k` over the expanded paths: files, size, first 10 names |
 | `git reset --hard` | `git status --porcelain` (tracked changes) and `git diff --shortstat HEAD` |
-| `git checkout .`, `git restore .` (not `--staged` only) | the unstaged subset of the same status |
+| `git checkout .`, `git restore .` (not `--staged` only) | the unstaged subset of the same status, limited to the current folder |
 | `git clean` | `git clean -n` with your `-d`, `-x`, `-X`, `-e` and pathspecs, never `-f` |
 | `git push` with `--force`, `-f`, `--force-with-lease` or `+ref` | `git log <source>..<remote>/<branch>`: commits the push drops, as of the last fetch |
 | `alembic upgrade`, `rails db:migrate`, `prisma migrate`, `manage.py migrate`, other `migrate` | the tool's status or history command, pending migrations only |
@@ -21,7 +21,8 @@ On every `exec_command` call the mod classifies the command. Anything else runs 
 
 - Measurements run in OMD's sandbox, so the folder must be inside the repository. A `cd` or `-C` to `-`, to `~` or outside the repository, and paths using `~`, `$` or backticks, are not measured. The prompt then says "could not measure" and still asks.
 - `exec.run` has no network and a private `HOME`. Migration status commands that need a database can fail; the prompt says so and still asks.
-- The Prisma lister is `pnpm exec prisma migrate status` and the Rails lister `bundle exec rails db:migrate:status`; upstream used `npx --no-install` and `bin/rails`, which `exec.run` cannot start.
+- The Prisma lister runs `prisma migrate status` through the runner the command used (`npx`, `pnpm`, `pnpm exec`, `yarn`, `bunx` or none; any other prefix is not measured). The Rails lister is `bundle exec rails db:migrate:status`; upstream used `bin/rails`, which `exec.run` cannot start from inside the repository.
+- Git runs with `LC_ALL=C` so its output parses the same in every locale.
 - The report is one line (`Command: … · Would … · note · files`) because the native prompt shows its message as one wrapped line; upstream's pane listed one file per line with colours. Non-ASCII characters are shown as `?`, and the report is cut at about 1,900 bytes.
 - A failed measurement says `could not measure it` with the error, where upstream had separate wording for a missing folder, a non-Git folder and a failed dry run. There is no 10-minute timeout or queue of held calls; the native prompt waits.
 - Only `exec_command` is intercepted, not `write_stdin` or tools that run commands another way.
@@ -30,7 +31,7 @@ On every `exec_command` call the mod classifies the command. Anything else runs 
 
 - `interception`: a required `tool` interceptor for `exec_command`, so a mod fault fails the call closed rather than letting it run.
 - `terminal`: `terminal.prompt` confirmation.
-- `exec`: read-only `exec.run` for `pwd`, `bash`, `git`, `python3`, `alembic`, `bundle` and `pnpm`.
+- `exec`: read-only `exec.run` for `pwd`, `bash`, `env` (to run `git`), `python3`, `alembic`, `bundle` and the Prisma runner.
 
 No state, store, settings or network.
 

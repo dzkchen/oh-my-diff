@@ -145,29 +145,35 @@ test('draft image thumbnails show every image aspect-sized in one row that fits 
   const changed = invoke(null, null, 'composer', { kind: 'change', revision: 2, attachments_revision: 1, origin: 'user' });
   assert.deepEqual(changed.state.images.map(item => item.id), ['img-1', 'img-2', 'img-3', 'img-4']);
   assert.deepEqual(invoke(null, changed.state, 'composer', { kind: 'change', revision: 3, attachments_revision: 1, origin: 'user' }).calls, [], 'typing does not reread the draft');
-  const strip = columns => {
-    const site = invoke(null, changed.state, 'terminal', { event: 'redraw', ledger: null, client: { kind: 'terminal', graphics: 'kitty', pointer: 'cell', reduced_motion: false, cell_px: { width: 10, height: 20 }, columns, rows: 40 } }).value.sites.above_composer;
+  const strip = (columns, state = changed.state) => {
+    const site = invoke(null, state, 'terminal', { event: 'redraw', ledger: null, client: { kind: 'terminal', graphics: 'kitty', pointer: 'cell', reduced_motion: false, cell_px: { width: 10, height: 20 }, columns, rows: 40 } }).value.sites.above_composer;
     assert.equal(site.mode, 'wrap');
     assert.deepEqual(site.components[0], { type: 'slot' });
-    assert.equal(site.components[1].title, 'Draft images (4)');
+    assert.equal(site.components[1].title, `Draft images (${state.images.length})`);
     const tiles = site.components[1].children[0].children[0];
     const flexible = tiles.children.filter(child => child.type === 'box');
-    const room = tiles.max_width - (tiles.children.length - 1) - tiles.children.filter(child => child.type === 'text').reduce((sum, child) => sum + [...child.text].length, 0);
+    const room = tiles.max_width - (tiles.children.length - 1) - tiles.children.filter(child => child.type === 'text').reduce((sum, child) => sum + Math.max(...child.text.split('\n').map(line => [...line].length)), 0);
+    assert.ok(tiles.max_width <= columns - 4, 'the row fits the terminal');
     const weight = flexible.reduce((sum, child) => sum + child.flex, 0);
     flexible.forEach(child => assert.ok(Math.floor(room * child.flex / weight) >= child.max_width, `${child.id} gets its width`));
     return tiles;
   };
   const wide = strip(100);
-  assert.equal(wide.max_width, 81);
-  assert.deepEqual(wide.children.map(child => `${child.type}:${child.id}:${child.max_width ?? child.text}`), ['box:omd_preview_tile_0:29', 'text:omd_preview_thumb_1:[Image #2]: no preview',
+  const absent = '[Image #2]: no preview\nonly PNG and JPEG up to 8 MiB';
+  assert.equal(wide.max_width, 88);
+  assert.deepEqual(wide.children.map(child => `${child.type}:${child.id}:${child.max_width ?? child.text}`), ['box:omd_preview_tile_0:29', `text:omd_preview_thumb_1:${absent}`,
     'box:omd_preview_tile_2:9', 'box:omd_preview_tile_3:16']);
   assert.deepEqual(wide.children[0].children[0], { type: 'image', id: 'omd_preview_thumb_0', label: '[Image #1] thumbnail', image: image(1).resource, alt: '[Image #1]', height: 8, pointer: true });
   assert.deepEqual(wide.children[0].children[1], { type: 'button', id: 'omd_preview_open_0', label: 'Preview [Image #1]', text: '#1', action: { command: 'omd_preview:preview', args: 'image 1' } });
   const medium = strip(60);
-  assert.deepEqual(medium.children.map(child => child.max_width ?? child.text), [11, '[Image #2]: no preview', 7, 7], 'tiles shrink together to fit the width');
-  assert.equal(medium.children[0].children[0].height, 3);
-  const narrow = strip(40);
-  assert.deepEqual(narrow.children.map(child => `${child.id}:${child.text ?? child.children[0].height}`), ['omd_preview_tile_0:2', 'omd_preview_more:+3 more']);
+  assert.deepEqual(medium.children.map(child => child.max_width ?? child.text), [8, absent, 7, 7], 'tiles shrink together to fit the width');
+  assert.equal(medium.children[0].children[0].height, 2);
+  assert.deepEqual(strip(40).children.map(child => `${child.id}:${child.text}`), ['omd_preview_more:/preview image 1 to 4'], 'hidden images keep the command that opens them');
+  draft = { ...draft, revision: 2, attachments: [image(1, 4000, 400), image(2, 4000, 400)] };
+  const banners = invoke(null, null, 'composer', { kind: 'change', revision: 2, attachments_revision: 1, origin: 'user' }).state;
+  assert.deepEqual(strip(60, banners).children.map(child => child.max_width ?? child.text), [25, '+1 more: /preview image 2 to 2'], 'a wide tile leaves room for the note');
+  assert.deepEqual(strip(40, banners).children.map(child => child.text), ['/preview image 1 to 2']);
+  draft = { ...draft, revision: 2, attachments: [image(1, 1600, 900), image(2, undefined, undefined, null), image(3, 900, 1600), image(4, 1000, 1000)] };
 
   const clicked = invoke(null, changed.state, 'component_event', { component: 'omd_preview_thumb_2', kind: 'pointer', pointer: { column: 0, row: 0, action: 'down', button: 'left' } });
   const dialog = invoke(null, clicked.state, 'terminal', { event: 'redraw', ledger: null }).value.sites.dialog.components[0];

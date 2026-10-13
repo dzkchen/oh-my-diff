@@ -2434,6 +2434,8 @@ struct Reply {
     ui_state: Value,
     #[serde(default)]
     ui_read: bool,
+    #[serde(default)]
+    ui_written: bool,
     value: Value,
     #[serde(default)]
     calls: Vec<ModHostCall>,
@@ -2721,6 +2723,7 @@ type NextFn<'n> = dyn FnMut(
 
 struct Invocation {
     location: store::StateLocation,
+    thread: Option<String>,
     loaded: Loaded,
     dynamic: Vec<String>,
     previous_state: Value,
@@ -4503,6 +4506,7 @@ impl ModHost {
         }
         Ok(Invocation {
             location,
+            thread: thread.map(str::to_owned),
             dynamic: self
                 .dynamic_tools
                 .get(id)
@@ -4522,6 +4526,7 @@ impl ModHost {
         &mut self,
         loaded: &Loaded,
         location: &store::StateLocation,
+        thread: Option<&str>,
         event: &str,
         reply: Reply,
         active: &dyn Fn() -> bool,
@@ -4539,11 +4544,12 @@ impl ModHost {
             .transpose()
             .map_err(|_| failure("ui_state_unavailable"))?;
         let current = self.loaded.get(&loaded.package.id);
-        let rebind = loaded.ui.is_some()
-            && current.is_some_and(|current| {
-                current.ui.is_none()
-                    && json!([&current.selection, &current.adapter])
-                        == json!([&loaded.selection, &loaded.adapter])
+        let rebind = loaded
+            .ui
+            .as_ref()
+            .zip(current)
+            .is_some_and(|((key, _), current)| {
+                current.ui.is_none() && key == &self.ui_key(current, thread)
             });
         if reply.ui_read {
             if !rebind
@@ -4643,8 +4649,9 @@ impl ModHost {
                 &reply.state,
             )?;
         }
-        if reply.ui_state != loaded.ui_state
-            && let Some(state) = ui.as_mut()
+        if let Some(state) = ui.as_mut()
+            && (reply.ui_state != loaded.ui_state
+                || reply.ui_written && reply.ui_state != state.value)
         {
             state.value = reply.ui_state;
             state.revision = state.revision.wrapping_add(1);
@@ -4689,6 +4696,7 @@ impl ModHost {
             self.accept(
                 &invocation.loaded,
                 &invocation.location,
+                invocation.thread.as_deref(),
                 event,
                 reply,
                 active,

@@ -32,22 +32,26 @@ const pictures = (draft: ComposerDraft): Picture[] => draft.attachments.filter(i
 const strip = (images: Picture[], client: TerminalClient | null | undefined): TerminalComponent[] => {
   const room = Math.max(TILE_MIN, (client?.columns ?? 80) - 4), ratio = client?.cell_px ? client.cell_px.height / client.cell_px.width : 2;
   const tallest = Math.max(TILE_ROWS[0], Math.min(TILE_ROWS[1], Math.floor((client?.rows ?? 24) / 4)));
-  const absent = (picture: Picture) => `${picture.label}: no preview`;
-  const width = (picture: Picture, rows: number) => picture.image ? Math.min(room, Math.max(TILE_MIN, Math.ceil(rows * ratio * picture.aspect))) : cells(absent(picture));
-  const more = (count: number) => count < images.length ? `+${images.length - count} more` : '';
+  const absent = (picture: Picture) => `${picture.label}: no preview\nonly PNG and JPEG up to 8 MiB`;
+  const more = (count: number) => count < images.length ? `${count ? `+${images.length - count} more: ` : ''}/preview image ${count + 1} to ${images.length}` : '';
+  const cap = (count: number) => room - (more(count) ? cells(more(count)) + 1 : 0);
+  const width = (picture: Picture, rows: number, count: number) => picture.image ? Math.min(cap(count), Math.max(TILE_MIN, Math.ceil(rows * ratio * picture.aspect)))
+    : Math.max(...absent(picture).split('\n').map(cells));
   const flex = (wide: number, widest: number) => Math.max(1, Math.round(12 * wide / widest));
   const total = (rows: number, count: number) => {
-    const shown = images.slice(0, count), boxes = shown.filter(picture => picture.image).map(picture => width(picture, rows));
+    const shown = images.slice(0, count), boxes = shown.filter(picture => picture.image).map(picture => width(picture, rows, count));
+    if (boxes.length && cap(count) < TILE_MIN) return Infinity;
     const widest = Math.max(1, ...boxes), weight = boxes.reduce((sum, wide) => sum + flex(wide, widest), 0);
     const share = Math.max(0, ...boxes.map(wide => Math.ceil(wide * weight / flex(wide, widest))));
-    return share + shown.filter(picture => !picture.image).reduce((sum, picture) => sum + width(picture, rows), 0) + count - 1 + (more(count) ? cells(more(count)) + 1 : 0);
+    return share + shown.filter(picture => !picture.image).reduce((sum, picture) => sum + width(picture, rows, count), 0) + count - 1 + (more(count) ? cells(more(count)) + 1 : 0);
   };
   let rows = tallest, count = images.length;
   while (rows > TILE_ROWS[0] && total(rows, count) > room) rows -= 1;
-  while (count > 1 && total(rows, count) > room) count -= 1;
-  const widest = Math.max(1, ...images.slice(0, count).filter(picture => picture.image).map(picture => width(picture, rows)));
+  while (count > 0 && total(rows, count) > room) count -= 1;
+  const wide = (picture: Picture) => width(picture, rows, count);
+  const widest = Math.max(1, ...images.slice(0, count).filter(picture => picture.image).map(wide));
   const tiles = images.slice(0, count).map((picture, index): TerminalComponent => picture.image ? {
-    type: 'box', id: `omd_preview_tile_${index}`, label: `${picture.label} tile`, max_width: width(picture, rows), flex: flex(width(picture, rows), widest), children: [
+    type: 'box', id: `omd_preview_tile_${index}`, label: `${picture.label} tile`, max_width: wide(picture), flex: flex(wide(picture), widest), children: [
       { type: 'image', id: `omd_preview_thumb_${index}`, label: `${picture.label} thumbnail`, image: picture.image, alt: picture.label, height: rows, pointer: true },
       { type: 'button', id: `omd_preview_open_${index}`, label: `Preview ${picture.label}`, text: `#${index + 1}`, action: { command: 'omd_preview:preview', args: `image ${index + 1}` } },
     ] } : { type: 'text', id: `omd_preview_thumb_${index}`, label: picture.label, text: absent(picture), tone: 'muted' });

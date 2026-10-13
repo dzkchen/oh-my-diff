@@ -2675,7 +2675,8 @@ any it refuses.
   the existing receipt-replay rules. State is cleared on reload, revocation,
   package changes and session teardown, and is never written to disk; a reload
   during a command or component event (such as one its own `packages.apply`
-  caused) does not cancel it, and its write lands on the cleared state. Durable
+  caused) does not cancel it, and its `set` lands on the cleared state, even
+  with the value it read; a change of repository during it cancels it. Durable
   `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
   state for preferences that must survive a restart.
 - Experimental command views: return `{terminal: patch}` with a `TerminalPatch`

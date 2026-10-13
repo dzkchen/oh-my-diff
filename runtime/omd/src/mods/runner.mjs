@@ -79,6 +79,7 @@ const updates = [];
 let state = structuredCloneFallback(request.state);
 let uiState = structuredCloneFallback(request.ui_state ?? null);
 let uiRead = false;
+let uiWritten = false;
 const initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
@@ -105,6 +106,7 @@ function serve(line) {
     state = structuredCloneFallback(next.state);
     uiState = structuredCloneFallback(next.ui_state ?? null);
     uiRead = false;
+    uiWritten = false;
   } else state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
@@ -658,7 +660,7 @@ const api = Object.freeze({
       if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
       const encoded = JSON.stringify(value);
       if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
-      uiState = JSON.parse(encoded); uiRead = true;
+      uiState = JSON.parse(encoded); uiRead = true; uiWritten = true;
     },
   }),
   atom(key, fallback = null) { return cell(key, fallback); },
@@ -769,7 +771,7 @@ const api = Object.freeze({
   }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead, ui_written: uiWritten}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
   }, suspension, serve, base, component: step };
