@@ -99194,10 +99194,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..afd3ba46c
+index 000000000..275b74eff
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5764 @@
+@@ -0,0 +1,5782 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -101664,6 +101664,7 @@ index 000000000..afd3ba46c
 +    ui: Option<(String, Arc<Mutex<UiState>>)>,
 +    ui_state: Value,
 +    ui_revision: u64,
++    ui_clears: u64,
 +    command_view: Option<AcceptedCommandView>,
 +    registrations: Registrations,
 +    source_use: ModSourceUse,
@@ -101678,6 +101679,7 @@ index 000000000..afd3ba46c
 +struct UiState {
 +    value: Value,
 +    revision: u64,
++    clears: u64,
 +}
 +
 +static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
@@ -101700,6 +101702,7 @@ index 000000000..afd3ba46c
 +            {
 +                state.value = Value::Null;
 +                state.revision = state.revision.wrapping_add(1);
++                state.clears = state.clears.wrapping_add(1);
 +            }
 +        }
 +    }
@@ -101791,6 +101794,7 @@ index 000000000..afd3ba46c
 +        {
 +            state.value = Value::Null;
 +            state.revision = state.revision.wrapping_add(1);
++            state.clears = state.clears.wrapping_add(1);
 +        }
 +    }
 +
@@ -102667,6 +102671,7 @@ index 000000000..afd3ba46c
 +                ui: None,
 +                ui_state: Value::Null,
 +                ui_revision: 0,
++                ui_clears: 0,
 +                command_view: None,
 +                registrations: Registrations::default(),
 +                source_use: ModSourceUse::default(),
@@ -103694,6 +103699,7 @@ index 000000000..afd3ba46c
 +            let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
 +            loaded.ui_state = state.value.clone();
 +            loaded.ui_revision = state.revision;
++            loaded.ui_clears = state.clears;
 +        }
 +        Ok(Invocation {
 +            location,
@@ -103732,13 +103738,19 @@ index 000000000..afd3ba46c
 +            .map(|(_, state)| state.lock())
 +            .transpose()
 +            .map_err(|_| failure("ui_state_unavailable"))?;
++        let current = self.loaded.get(&loaded.package.id);
++        let rebind = loaded.ui.is_some()
++            && current.is_some_and(|current| {
++                current.ui.is_none()
++                    && json!([&current.selection, &current.adapter])
++                        == json!([&loaded.selection, &loaded.adapter])
++            });
 +        if reply.ui_read {
-+            if self
-+                .loaded
-+                .get(&loaded.package.id)
-+                .and_then(|current| current.ui.as_ref())
-+                .zip(loaded.ui.as_ref())
-+                .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
++            if !rebind
++                && current
++                    .and_then(|current| current.ui.as_ref())
++                    .zip(loaded.ui.as_ref())
++                    .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
 +            {
 +                return Err(failure("callback_cancelled"));
 +            }
@@ -103750,10 +103762,10 @@ index 000000000..afd3ba46c
 +            {
 +                return Err(failure("ui_state_capability_denied"));
 +            }
-+            if ui
-+                .as_ref()
-+                .is_none_or(|state| state.revision != loaded.ui_revision)
-+            {
++            if ui.as_ref().is_none_or(|state| {
++                state.revision.wrapping_sub(loaded.ui_revision)
++                    != state.clears.wrapping_sub(loaded.ui_clears)
++            }) {
 +                return Err(failure("state_conflict: ui revision changed"));
 +            }
 +        }
@@ -103836,6 +103848,12 @@ index 000000000..afd3ba46c
 +        {
 +            state.value = reply.ui_state;
 +            state.revision = state.revision.wrapping_add(1);
++        }
++        if rebind
++            && reply.ui_read
++            && let Some(current) = self.loaded.get_mut(&loaded.package.id)
++        {
++            current.ui = loaded.ui.clone();
 +        }
 +        if event == "command"
 +            && let Some(patch) = reply.value.get("terminal")
@@ -111134,10 +111152,10 @@ index 000000000..48b2680a1
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 000000000..6c19a9b2d
+index 000000000..432d46883
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,255 @@
 +use super::*;
 +
 +impl ModStore {
@@ -111276,6 +111294,7 @@ index 000000000..6c19a9b2d
 +            ui: None,
 +            ui_state: Value::Null,
 +            ui_revision: 0,
++            ui_clears: 0,
 +            command_view: None,
 +            registrations: Registrations::default(),
 +            source_use: ModSourceUse::default(),
@@ -130025,10 +130044,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..95a68867b
+index 000000000..42a93a214
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5708 @@
+@@ -0,0 +1,5740 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131867,6 +131886,38 @@ index 000000000..95a68867b
 +        )
 +        .unwrap_err();
 +    assert!(error.to_string().contains("ui_state_limit"));
++}
++
++#[test]
++fn ui_state_write_survives_a_reload_during_its_command() {
++    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('read', () => api.uiState.get()); };";
++    let (temp, store, _) = fixture(source, &["commands", "terminal", "fs.read"]);
++    let runtime = std::sync::Mutex::new(host(&temp));
++    let generation = runtime.lock().unwrap().generation();
++    let value = codex_omd::invoke_shared(
++        &runtime,
++        "fixture",
++        generation,
++        "command",
++        "apply",
++        Value::Null,
++        || true,
++        |_, _| {
++            store.reload().unwrap();
++            runtime.lock().unwrap().reload().unwrap();
++            Ok(json!("contents"))
++        },
++        |_| {},
++    )
++    .unwrap();
++    assert_eq!(value, "applied");
++    let mut host = runtime.into_inner().unwrap();
++    let generation = host.generation();
++    assert_eq!(
++        host.invoke("fixture", generation, "command", "read", Value::Null)
++            .unwrap(),
++        json!({"open": true, "before": null})
++    );
 +}
 +
 +#[test]

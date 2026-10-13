@@ -2673,7 +2673,9 @@ any it refuses.
   component events may write; other callbacks may read. Writes commit only after
   successful validation and cancellation checks, with revision conflicts using
   the existing receipt-replay rules. State is cleared on reload, revocation,
-  package changes and session teardown, and is never written to disk. Durable
+  package changes and session teardown, and is never written to disk; a reload
+  during a command or component event (such as one its own `packages.apply`
+  caused) does not cancel it, and its write lands on the cleared state. Durable
   `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
   state for preferences that must survive a restart.
 - Experimental command views: return `{terminal: patch}` with a `TerminalPatch`

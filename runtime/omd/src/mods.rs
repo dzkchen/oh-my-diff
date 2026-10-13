@@ -2464,6 +2464,7 @@ struct Loaded {
     ui: Option<(String, Arc<Mutex<UiState>>)>,
     ui_state: Value,
     ui_revision: u64,
+    ui_clears: u64,
     command_view: Option<AcceptedCommandView>,
     registrations: Registrations,
     source_use: ModSourceUse,
@@ -2478,6 +2479,7 @@ struct Loaded {
 struct UiState {
     value: Value,
     revision: u64,
+    clears: u64,
 }
 
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
@@ -2500,6 +2502,7 @@ fn reset_ui_states(root: &Path, revision: u64) {
             {
                 state.value = Value::Null;
                 state.revision = state.revision.wrapping_add(1);
+                state.clears = state.clears.wrapping_add(1);
             }
         }
     }
@@ -2591,6 +2594,7 @@ impl Loaded {
         {
             state.value = Value::Null;
             state.revision = state.revision.wrapping_add(1);
+            state.clears = state.clears.wrapping_add(1);
         }
     }
 
@@ -3467,6 +3471,7 @@ impl ModHost {
                 ui: None,
                 ui_state: Value::Null,
                 ui_revision: 0,
+                ui_clears: 0,
                 command_view: None,
                 registrations: Registrations::default(),
                 source_use: ModSourceUse::default(),
@@ -4494,6 +4499,7 @@ impl ModHost {
             let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
             loaded.ui_state = state.value.clone();
             loaded.ui_revision = state.revision;
+            loaded.ui_clears = state.clears;
         }
         Ok(Invocation {
             location,
@@ -4532,13 +4538,19 @@ impl ModHost {
             .map(|(_, state)| state.lock())
             .transpose()
             .map_err(|_| failure("ui_state_unavailable"))?;
+        let current = self.loaded.get(&loaded.package.id);
+        let rebind = loaded.ui.is_some()
+            && current.is_some_and(|current| {
+                current.ui.is_none()
+                    && json!([&current.selection, &current.adapter])
+                        == json!([&loaded.selection, &loaded.adapter])
+            });
         if reply.ui_read {
-            if self
-                .loaded
-                .get(&loaded.package.id)
-                .and_then(|current| current.ui.as_ref())
-                .zip(loaded.ui.as_ref())
-                .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
+            if !rebind
+                && current
+                    .and_then(|current| current.ui.as_ref())
+                    .zip(loaded.ui.as_ref())
+                    .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
             {
                 return Err(failure("callback_cancelled"));
             }
@@ -4550,10 +4562,10 @@ impl ModHost {
             {
                 return Err(failure("ui_state_capability_denied"));
             }
-            if ui
-                .as_ref()
-                .is_none_or(|state| state.revision != loaded.ui_revision)
-            {
+            if ui.as_ref().is_none_or(|state| {
+                state.revision.wrapping_sub(loaded.ui_revision)
+                    != state.clears.wrapping_sub(loaded.ui_clears)
+            }) {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
@@ -4636,6 +4648,12 @@ impl ModHost {
         {
             state.value = reply.ui_state;
             state.revision = state.revision.wrapping_add(1);
+        }
+        if rebind
+            && reply.ui_read
+            && let Some(current) = self.loaded.get_mut(&loaded.package.id)
+        {
+            current.ui = loaded.ui.clone();
         }
         if event == "command"
             && let Some(patch) = reply.value.get("terminal")

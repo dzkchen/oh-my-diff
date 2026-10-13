@@ -1839,6 +1839,38 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
 }
 
 #[test]
+fn ui_state_write_survives_a_reload_during_its_command() {
+    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('read', () => api.uiState.get()); };";
+    let (temp, store, _) = fixture(source, &["commands", "terminal", "fs.read"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let generation = runtime.lock().unwrap().generation();
+    let value = codex_omd::invoke_shared(
+        &runtime,
+        "fixture",
+        generation,
+        "command",
+        "apply",
+        Value::Null,
+        || true,
+        |_, _| {
+            store.reload().unwrap();
+            runtime.lock().unwrap().reload().unwrap();
+            Ok(json!("contents"))
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(value, "applied");
+    let mut host = runtime.into_inner().unwrap();
+    let generation = host.generation();
+    assert_eq!(
+        host.invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap(),
+        json!({"open": true, "before": null})
+    );
+}
+
+#[test]
 fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() {
     let source = "export default api => { api.command('view', () => { api.uiState.set('open'); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('close', () => ({terminal:null})); api.command('change', () => api.uiState.set('changed')); api.command('durable', () => api.state.set('changed')); api.command('bad', () => { api.uiState.set('bad'); return {terminal:{title:'x'.repeat(10000)}}; }); api.on('terminal', () => ({title:'First'})); };";
     let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
