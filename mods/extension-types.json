@@ -189,6 +189,30 @@
       "why_mod": "Rewrites or refuses pasted draft text through the composer_edit interceptor chain before it reaches the draft."
     },
     {
+      "path": "mods/examples/key_remap",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Rewrites matched keystrokes through the composer_key interceptor chain before the prompt box applies them."
+    },
+    {
+      "path": "mods/examples/input_guard",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Drops matched keystrokes through the composer_key interceptor chain before the prompt box applies them."
+    },
+    {
+      "path": "mods/examples/shortcodes",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Supplies composer completion rows for its own token triggers, which skills and hooks cannot add to the prompt box."
+    },
+    {
+      "path": "mods/examples/mention_guard",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Redirects or refuses the host's read of @-mentioned files through the mention interceptor chain."
+    },
+    {
       "path": "mods/examples/approval_delegate",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -261,6 +285,12 @@
       "why_mod": "Keeps one state per Git checkout that every OMD session working there shares."
     },
     {
+      "path": "mods/examples/readme_answers",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Answers questions from the README through one-shot completions whose README prefix is marked for the provider's prompt cache."
+    },
+    {
       "path": "mods/examples/quiet_inline",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -273,16 +303,40 @@
       "why_mod": "Renders an imported image inside a live terminal render site and opens links after native confirmation."
     },
     {
+      "path": "mods/examples/history_redact",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Redacts credentials from history text in the host's persistence path before the rollout is written."
+    },
+    {
       "path": "mods/examples/layout_explorer",
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Replaces the live terminal layout with splits, tabs, documents and diffs."
     },
     {
+      "path": "mods/examples/frame_stream",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look."
+    },
+    {
       "path": "mods/examples/raster_canvas",
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Draws an animated raster with pointer hover, drag and an anchored overlay."
+    },
+    {
+      "path": "mods/examples/game_input",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Runs a keyboard and pointer game in a component module on the frame clock and posts scores to its hooks."
+    },
+    {
+      "path": "mods/examples/client_tag",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Ports Claude Code's Tag Client example to a component module that posts pointer clicks to its hooks."
     },
     {
       "path": "mods/examples/box_model",
@@ -295,6 +349,12 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
+    },
+    {
+      "path": "mods/examples/live_output",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Streams a sandboxed command's raw stdout and stderr above the composer as they are written."
     },
     {
       "path": "mods/examples/approval_desk",
@@ -379,6 +439,12 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Defers and re-describes model-visible tool specs per route through the composable tool_specs chain."
+    },
+    {
+      "path": "mods/examples/tool_history",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Pages the latest repository session's tool calls and results through the host's scoped session reader."
     },
     {
       "path": "mods/examples/tool_workflows",

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "readme_answers",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "MIT",
+  "capabilities": ["tools", "agents", "fs.read"],
+  "compatibility": {
+    "required_features": ["model_complete_v2", "model_cache_v1"]
+  }
+}

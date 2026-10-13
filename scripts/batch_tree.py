@@ -123,6 +123,9 @@ def cargo_env(batch):
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
     env.setdefault("RUSTY_V8_ARCHIVE", str(V8 / f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz"))
     env.setdefault("RUSTY_V8_SRC_BINDING_PATH", str(V8 / f"src_binding_ptrcomp_sandbox_release_{target}.rs"))
+    if "CARGO_BUILD_JOBS" not in env and run("pgrep", "-x", "cargo", allowed=(0, 1)).strip():
+        env["CARGO_BUILD_JOBS"] = str(max(2, os.cpu_count() // 2))
+        print(f"another cargo is running: CARGO_BUILD_JOBS={env['CARGO_BUILD_JOBS']}")
     return env
 
 

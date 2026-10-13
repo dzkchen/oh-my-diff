@@ -86,14 +86,20 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
     });
     let runtime = ModHost::open(root.clone()).unwrap();
     let environment = runtime.environment();
+    let intercepted = runtime.intercepted_surfaces();
+    let required = runtime.required_surfaces();
     let runtime = Arc::new(Mutex::new(runtime));
     let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
     let views = Arc::new(view::Views::new());
     let core = Arc::new_cyclic(|core| Core {
         agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
         host: host.clone(),
         runtime,
         input_runtime,
+        persist_runtime,
+        intercepted,
+        required,
         environment,
         services: services::Services::default(),
         views,
@@ -2759,10 +2765,114 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
     assert!(
         matches!(delivery::next_pending(&state, now), Some(delivery::Pending::Timer { owner, .. }) if owner == "b")
     );
-    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(99)).is_none());
+    assert!(delivery::next_pending(&state, now + std::time::Duration::from_millis(15)).is_none());
     assert!(
-        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(100)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
+        matches!(delivery::next_pending(&state, now + std::time::Duration::from_millis(16)), Some(delivery::Pending::Timer { key, .. }) if key == "two")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn raw_frame_sink_detects_external_revocation_without_an_event() {
+    let fixture = fixture(&[Package {
+        id: "control",
+        capabilities: &["terminal"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }])
+    .unwrap();
+    let grants = fixture.core.runtime.lock().unwrap().grants("control");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    let caller = Caller {
+        id: "control",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
+    let store = ModStore::open(fixture.lead.host.root.clone()).unwrap();
+    let package = fixture
+        ._dir
+        .path()
+        .join("packages/control")
+        .canonicalize()
+        .unwrap();
+    struct LateValidity;
+    impl codex_omd::client_surface::ClientSurface for LateValidity {
+        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            std::thread::sleep(std::time::Duration::from_millis(2_100));
+            let valid = (call.validity.0)();
+            call.reply
+                .send(Ok(json!({"valid": valid})))
+                .map_err(|error| error.to_string())
+        }
+    }
+    let surface = codex_omd::client_surface::register(Arc::new(LateValidity));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let late = sink.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(late(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
+    });
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let held = fixture.core.runtime.lock().unwrap();
+    let late = receiver
+        .recv_timeout(std::time::Duration::from_secs(4))
+        .expect("a late validity check does not wait for the mod runtime");
+    assert!(
+        !late.is_ok_and(|reply| reply["valid"] == true),
+        "a verification older than two seconds is not trusted"
+    );
+    drop((held, surface));
+    let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
+    assert_ne!(first, "process_raster_revoked");
+    let held = fixture.core.runtime.lock().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let busy = sink.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(busy(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)));
+    });
+    assert_eq!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err(),
+        first
+    );
+    drop(held);
+    store.enable(&package, false).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
+        "process_raster_revoked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn component_post_hooks_make_the_host_calls_component_events_make() {
+    let Some(fixture) = fixture(&[Package {
+        id: "poster",
+        capabilities: &["terminal", "store", "commands", "inventory"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.on('component_post', () => { api.host.call('app.routes', null); api.state.set(true); });\n  api.command('seen', () => api.state.get());\n}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let payload = json!({"component": "c", "module": "m", "client": "x", "data": null});
+    invoke_one(
+        &fixture.core,
+        &fixture.lead,
+        "poster".into(),
+        "component_post",
+        payload,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(command(&fixture.core, "poster", "seen"), json!(true));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2814,6 +2924,96 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
         unattached.starts_with("client_surface_unavailable"),
         "{unattached}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_snapshots_need_the_sessions_tools_capability() {
+    let Some(fixture) = fixture(&[Package {
+        id: "snapper",
+        capabilities: &["commands", "sessions", "store"],
+        manifest: Value::Null,
+        source: "export default function (api) { api.command('snap', () => api.host.tryCall('sessions.snapshot', {})); }\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let grants = fixture.core.runtime.lock().unwrap().grants("snapper");
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let generation = fixture.core.runtime.lock().unwrap().generation();
+    let caller = Caller {
+        id: "snapper",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let refused = operations::dispatch(
+        &fixture.core,
+        &fixture.lead,
+        caller,
+        None,
+        ModHostCall {
+            operation: "sessions.snapshot".into(),
+            arguments: json!({}),
+        },
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused, "capability_denied: sessions_tools");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_runtime_fails() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let extension = mods(&fixture.core);
+    assert!(!extension.rewrites_persisted_text());
+    let entries = [codex_extension_api::PersistedText {
+        kind: "message",
+        role: Some("user".to_owned()),
+        call_id: None,
+        text: "hi".to_owned(),
+    }];
+    let input = || codex_extension_api::PersistedTextInput {
+        thread_id: "thread",
+        entries: &entries,
+    };
+    let runtime = fixture.core.persist_runtime.clone();
+    let _ = std::thread::spawn(move || {
+        let _held = runtime.lock().unwrap();
+        panic!("poison the persist runtime");
+    })
+    .join();
+    assert_eq!(extension.rewrite_persisted_text(input()).await, None);
+    fixture
+        .core
+        .required
+        .lock()
+        .unwrap()
+        .push("history_persist");
+    let withheld = extension.rewrite_persisted_text(input()).await.unwrap();
+    assert_eq!(withheld.texts, [codex_omd::PERSIST_WITHHELD]);
+    assert_eq!(withheld.by, "host");
+}
+
+#[test]
+fn completion_cache_totals_sum_the_requests_that_reported_them() {
+    let responses = [
+        json!({"cache": null}),
+        json!({"cache": {"read_tokens": 3, "write_tokens": null}}),
+        json!({"cache": {"read_tokens": 4, "write_tokens": null}}),
+    ];
+    assert_eq!(agents::cache_total(&responses, "read_tokens"), Some(7));
+    assert_eq!(agents::cache_total(&responses, "write_tokens"), None);
+    let huge = [
+        json!({"cache": {"read_tokens": u64::MAX}}),
+        json!({"cache": {"read_tokens": 1}}),
+    ];
+    assert_eq!(agents::cache_total(&huge, "read_tokens"), Some(u64::MAX));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4643,4 +4843,114 @@ async fn timer_invocation_rechecks_source_and_incarnation_at_generation_capture(
     .unwrap();
     assert_eq!(command(core, "observer", "seen"), json!("replacement"));
     assert!(core.expansion.timers.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_them() {
+    use codex_extension_api::TurnInputContext;
+    use codex_extension_api::TurnInputContributor;
+    use codex_protocol::user_input::UserInput;
+    let Some(mut fixture) = fixture(&[Package {
+        id: "mentions",
+        capabilities: &["input"],
+        manifest: json!({}),
+        source: "export default api => { api.intercept('mention', {match: {path: 'secret.txt'}}, () => ({deny: 'secret'})); api.intercept('mention', {match: {path: 'old.txt'}}, (e, next) => next({...e, path: 'new.txt'})); }",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    let repository = fixture.lead.host.repository.clone();
+    for (name, text) in [
+        ("plain.txt", "plain".to_owned()),
+        ("secret.txt", "hidden".to_owned()),
+        ("old.txt", "old".to_owned()),
+        ("new.txt", "new".to_owned()),
+        ("big.txt", "x".repeat(300_000)),
+        ("spaced name.txt", "spaced".to_owned()),
+        ("first.txt", "1".repeat(200_000)),
+        ("second.txt", "2".repeat(200_000)),
+    ] {
+        std::fs::write(repository.join(name), text).unwrap();
+    }
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    let input = TurnInputContext {
+        turn_id: "turn".into(),
+        user_input: vec![UserInput::Text {
+            text: "see @plain.txt, @secret.txt and @old.txt @new.txt @big.txt @missing.txt me@plain.txt @\"spaced name.txt\" @first.txt @second.txt"
+                .into(),
+            text_elements: Vec::new(),
+        }],
+        environments: Vec::new(),
+    };
+    let fragments = mods(&fixture.core)
+        .contribute(
+            input,
+            None,
+            &ExtensionData::new("session"),
+            &thread_store,
+            &ExtensionData::new("turn"),
+        )
+        .await
+        .iter()
+        .map(|fragment| fragment.render())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fragments[..3],
+        [
+            "<mentioned_file>\n<path>plain.txt</path>\nplain\n</mentioned_file>",
+            "<mentioned_file>\n<path>new.txt</path>\nnew\n</mentioned_file>",
+            "<mentioned_file>\n<path>spaced name.txt</path>\nspaced\n</mentioned_file>",
+        ]
+    );
+    assert_eq!(fragments.len(), 4);
+    assert!(fragments[3].starts_with("<mentioned_file>\n<path>first.txt</path>"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn interrupted_mention_reads_cancel_their_interceptors() {
+    use codex_extension_api::TurnInputContext;
+    use codex_extension_api::TurnInputContributor;
+    use codex_protocol::user_input::UserInput;
+    let Some(mut fixture) = fixture(&[Package {
+        id: "mentions",
+        capabilities: &["input"],
+        manifest: json!({}),
+        source: "export default api => api.intercept('mention', () => { for (;;); });",
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    std::fs::write(fixture.lead.host.repository.join("slow.txt"), "slow").unwrap();
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    let (session_store, turn_store) = (ExtensionData::new("session"), ExtensionData::new("turn"));
+    let mods = mods(&fixture.core);
+    let interrupted = mods.contribute(
+        TurnInputContext {
+            turn_id: "turn".into(),
+            user_input: vec![UserInput::Text {
+                text: "read @slow.txt".into(),
+                text_elements: Vec::new(),
+            }],
+            environments: Vec::new(),
+        },
+        None,
+        &session_store,
+        &thread_store,
+        &turn_store,
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), interrupted)
+            .await
+            .is_err()
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let runtime = mods.input_runtime.clone();
+    let telemetry = tokio::task::spawn_blocking(move || {
+        runtime.lock().unwrap().status()["mods"][0]["telemetry"].clone()
+    })
+    .await
+    .unwrap();
+    assert_eq!(telemetry["faults"], 0, "{telemetry}");
 }

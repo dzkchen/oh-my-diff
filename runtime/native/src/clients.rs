@@ -217,11 +217,110 @@ fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String
         .collect())
 }
 
+/// Each client's module instances and the size it last rendered them at.
+static MODULE_SIZES: Mutex<BTreeMap<(String, String), (u64, u64)>> = Mutex::new(BTreeMap::new());
+/// Undelivered `component_post` payloads by owner, the latest per client instance.
+static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
+static POSTING: Coalesce = Coalesce::new();
+
+/// Steps this client's own instance of a component module, delivering `events` and any due ticks
+/// at the size given or last rendered (80 columns and rows 0, the auto height a terminal node without `height` gets).
+fn module_step(
+    client: &str,
+    component: &str,
+    size: Option<(u64, u64)>,
+    events: Vec<Value>,
+) -> Result<Value, String> {
+    static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let core = core()?;
+    let snapshot = snapshot(&core)?;
+    let owner = owner(&snapshot, component)?.to_owned();
+    let (module, props) = snapshot
+        .view
+        .module(component)
+        .ok_or_else(|| format!("view_stale: {component}"))?;
+    let (columns, rows) = {
+        let mut sizes = MODULE_SIZES.lock().map_err(|_| "mod_runtime_poisoned")?;
+        let size = size.unwrap_or_else(|| {
+            sizes
+                .get(&(client.to_owned(), component.to_owned()))
+                .copied()
+                .unwrap_or((80, 0))
+        });
+        sizes.insert((client.to_owned(), component.to_owned()), size);
+        size
+    };
+    let _thread =
+        codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
+    let frame = json!({"instance": format!("client.{client}.{component}"), "client": client,
+        "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
+        "columns": columns, "rows": rows, "events": events});
+    let step = codex_omd::component_shared(&core.runtime, &owner, module, frame, || true)
+        .map_err(|error| error.to_string())?;
+    if let Some(post) = step["post"].as_object() {
+        let payload = json!({"component": component, "module": module, "client": client,
+            "data": post["data"]});
+        if let Ok(mut posts) = POSTS.lock() {
+            posts.retain(|(queued, queued_payload)| {
+                *queued != owner
+                    || queued_payload["component"] != payload["component"]
+                    || queued_payload["client"] != payload["client"]
+            });
+            posts.push((owner, payload));
+        }
+        POSTING.request(deliver_posts);
+    }
+    Ok(step)
+}
+
+/// Delivers queued posts to their owners' `component_post` hooks off the client's request.
+fn deliver_posts() {
+    while let Some((owner, payload)) = POSTS
+        .lock()
+        .ok()
+        .and_then(|mut posts| (!posts.is_empty()).then(|| posts.remove(0)))
+    {
+        let Ok(core) = core() else {
+            return;
+        };
+        let registered = core
+            .runtime
+            .lock()
+            .is_ok_and(|runtime| runtime.registered(&owner, "component_post"));
+        let Ok(lead) = session(&core) else {
+            return;
+        };
+        if registered {
+            let lead = Lead {
+                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
+                ..lead
+            };
+            let _ = block(expansion::REMOTE.scope(
+                true,
+                expansion::invoke_one(&core, &lead, owner, "component_post", payload),
+            ));
+        }
+    }
+}
+
+/// Unmounts a detached client's module instances.
+pub fn detached(client: &str) {
+    if let Ok(mut sizes) = MODULE_SIZES.lock() {
+        sizes.retain(|(owner, _), _| owner != client);
+    }
+    codex_omd::component_detach(client);
+}
+
 pub fn component_event(client: &str, component: &str, event: Value) -> Result<Value, String> {
     let mut payload = event_payload(&event)?;
     let core = core()?;
     let snapshot = snapshot(&core)?;
     let owner = owner(&snapshot, component)?.to_owned();
+    if snapshot.view.module(component).is_some() {
+        let events = codex_omd::component_events(&Value::Object(payload));
+        module_step(client, component, None, events)?;
+        return Ok(json!({"delivered": true}));
+    }
     payload.insert("component".into(), component.into());
     payload.insert("client".into(), client.into());
     let lead = session(&core)?;
@@ -343,7 +442,29 @@ pub fn action(
     Ok(json!({"status": "completed", "result": result["result"]}))
 }
 
-pub fn render(slot: &str, props: Value) -> Result<Value, String> {
+pub fn render(client: &str, slot: &str, props: Value) -> Result<Value, String> {
+    if slot == "module" {
+        let component = props["component"]
+            .as_str()
+            .ok_or("render_props_invalid: a module render names its view component")?;
+        let dimension = |name: &str| match &props[name] {
+            Value::Null => Ok(None),
+            value => value
+                .as_u64()
+                .filter(|cells| (1..=u64::from(u16::MAX)).contains(cells))
+                .map(Some)
+                .ok_or_else(|| format!("render_props_invalid: {name} must be 1 to 65535 cells")),
+        };
+        let size = match (dimension("columns")?, dimension("rows")?) {
+            (None, None) => None,
+            (columns, rows) => Some((columns.unwrap_or(80), rows.unwrap_or(0))),
+        };
+        let step = module_step(client, component, size, Vec::new())?;
+        return Ok(
+            json!({"original": props, "effective": {"next_ms": step["next_ms"]},
+            "tree": step["tree"], "answeredBy": null}),
+        );
+    }
     if !codex_omd::MOD_RENDER_COMPONENTS
         .iter()
         .any(|(name, _)| *name == slot)

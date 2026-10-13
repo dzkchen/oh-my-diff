@@ -21,7 +21,7 @@ Before the release freeze names the API `1.0.0`, only safety fixes and the
 recorded launch gap list may change it. After launch, additions use minor
 versions; breaking changes require a major version and a migration note.
 
-The raster frame-stream (`terminal.blit`, `process_raster_v1`) remains experimental.
+The raster frame-stream (`terminal.blit`, `process_raster_v1`, `raster_pixels_v1`) remains experimental.
 Launch does not promise closure-based client modules, vendor kill switches,
 raw secret access, hosted mobile/desktop clients or rich children inside buttons.
 Buttons use their typed `text` field. [COMPATIBILITY.md](COMPATIBILITY.md) defines
@@ -67,6 +67,7 @@ native work.
 | `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
+| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot` and `agents.spawn {parent_history}` (with `sessions`) |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
@@ -74,11 +75,11 @@ native work.
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
-| `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` interceptor and the `completion` replacement |
+| `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
 | `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
-| `input` | `input` interceptors |
+| `input` | `input` and `mention` interceptors |
 | `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
 | `context`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events; `compaction` also owns the `compaction` interceptor |
@@ -92,6 +93,7 @@ native work.
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
+| `history_persist` | `history_persist` interceptors, which see and may replace every stored history text (`history_persist_v1`) |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -101,7 +103,7 @@ the mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous` and `history_write` are authority grants. The manifest
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous`, `history_write` and `history_persist` are authority grants. The manifest
 declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
@@ -351,8 +353,10 @@ execution nor socket access.
 
 `api.assets.read(name)` returns a selected package's UTF-8 entrypoint or
 declared text asset with its SHA-256. It reads only the caller's hash-bound
-package. Installed package caches include declared assets. The total declared
-text sent to one callback is limited to 128 KiB. A mod can supply its own
+package. Installed package caches include declared assets. A package declares
+at most 16 assets; each package file is at most 128 KiB, and the entrypoint and
+declared text together at most 256 KiB per callback (`package_text_input_limit`,
+refused by inspection, install and `omd-mod-author check`). A mod can supply its own
 source to a sandboxed `exec.run` process without relying on a workspace copy.
 For a live-workspace write, `guards` may contain up to four read-only command
 preconditions: `{program, sha256?, argv?, cwd?, env?, stdout_sha256}`. The host
@@ -447,11 +451,12 @@ namespace or resets it without running any mod code. `evidence.write
 compare-and-swap. If another process wrote it meanwhile, the host runs the
 callback again against the fresh state, within the callback's 5 s budget,
 answering its host calls from the results already recorded, so no operation
-runs twice. If a retry asks for a different host call, it runs again fresh when
+runs twice (the clock stays at the first attempt's start, so `Date.now()` in
+arguments replays). If a retry asks for a different host call, it runs again fresh when
 every recorded call was read-only; otherwise it fails with the transient
 `state_conflict`, because an operation that already ran is never repeated.
 Its location follows the manifest's `state_scope` (`state_scopes_v1`).
-`"store"` (the default) keeps one state of at most 64 KiB in the mod store,
+`"store"` (the default) keeps one state of at most 192 KiB in the mod store,
 shared by every OMD process that uses that store. `"thread"` keeps one state per
 session thread and selection scope, so a project copy cannot inherit a same-ID
 user copy's state. It forks with the thread and is removed
@@ -467,9 +472,8 @@ projectless session, checkout state is unavailable
 never run with the home directory or filesystem root as the session directory:
 the host stays off with a notice in `/omd`. `omd-mod command
 STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
-given thread and the checkout of their working directory. Thread and checkout
-state may be up to 192 KiB, but a callback result, including its state, stays
-within 256 KiB. Package update, migration and rollback commands act on
+given thread and the checkout of their working directory. A callback result,
+including its state, stays within 256 KiB. Package update, migration and rollback commands act on
 `"store"` state only.
 
 ### Reactive state (`reactive_state_v1`)
@@ -808,13 +812,14 @@ one handle run in order; a wait on one handle does not block calls on another.
 The host holds at most 16 agents, counting spawns in progress. Agents live
 until cancelled, the mod is disabled or fails, or the session stops.
 
-`parent_history: true` additionally requires `sessions` and delivers frozen
-parent conversation records including visible tool calls and outputs. It
+`parent_history: true` additionally requires `sessions` and `sessions_tools`
+and delivers frozen parent conversation records including visible tool calls
+and outputs. It
 refuses more than 8,192 records or 1 MiB instead of silently truncating them.
 The spawn result includes the history digest, byte count, item count and
 revision. The records are labelled untrusted task data. `sessions.snapshot
 {call_ids?}` preserves the same history in a caller-bound evidence reference
-and additionally requires `store`. A selection contains 1–32 unique IDs and
+and requires `sessions`, `sessions_tools` and `store`. A selection contains 1–32 unique IDs and
 must include each complete call/output pair; evidence storage's 256 KiB limit
 still applies. This does not expose hidden reasoning.
 
@@ -1019,8 +1024,28 @@ during activation, including when their native event is already registered.
 
 ### Framed processes
 
-`process.start` takes `framing: "content-length"` (default) or `"ndjson"` and
-`network: "none"` or `"loopback"`; the protocol-named transports are removed.
+`process.start` takes `framing: "content-length"` (default), `"ndjson"` or
+`"raw"` and `network: "none"` or `"loopback"`; the protocol-named transports are removed.
+`process.exchange` returns messages until the next one would push the encoded
+`messages` past 48 KiB (at most 64, and always at least one), so a result fits
+a callback's receipt budget; the rest stays queued for the next call. Once the process exits, its readers get one second to deliver
+what it wrote; output queued by then is returned before the exchange that fails
+with `process_stopped`, `process.status` reports `running: true` until it has
+been exchanged, and an exchange's `send` is dropped. `stdin: "null"` starts the
+process with standard input at end of file, for commands that would otherwise
+wait on an open pipe; its exchanges cannot `send` (`process_stdin_null`) and it
+cannot take `raster`.
+
+Experimental (`process_streams_v1`): under `raw` the host reads stdout and stderr as written and
+queues each read (at most 8,000 bytes, so a chunk fits one exchange even when every
+byte is escaped) as `{stream: "stdout" | "stderr", data}`;
+bytes that are not UTF-8 arrive as their own `{stream, data_base64}` chunk
+between the text chunks around them, so one read can queue several chunks; a
+character split across writes arrives whole in the later chunk. The two streams are separate pipes, so
+chunks keep their order within a stream but not across streams. `send` takes strings, written
+verbatim. The queue keeps its bound of 128 messages: a process that writes
+faster than the mod exchanges blocks on its pipe, and nothing is dropped.
+`raw` cannot take `raster`, `keys` or `pixels`.
 The host replaces `{process.home}` in process arguments with that session's
 private scratch directory, for tools that do not honor the `HOME` environment.
 `environment` supplies at most eight explicit, bounded variables to that
@@ -1038,6 +1063,50 @@ take `raster: KEY` (one of the caller's raster ids) and optionally `keys: ID`
 are drawn into that raster by the host as `terminal.blit {key, image}` from the
 mod, with the same validation, but without a callback per frame: the newest
 frame wins and a frame the terminal cannot take yet is retried for up to 5 s.
+With `raster_pixels_v1` and `pixels: true` the host also creates a private raw buffer and sends
+`{"pixels": {"source": HANDLE, "path": PATH}}` on stdin before bound input;
+without it the process gets no buffer and its raw publications stop it with
+`terminal_blit_source_not_owned`. The child opens that
+file, writes exactly `width * height * channels` packed bytes at offset zero,
+and publishes `{"blit": {"pixels": {"source": HANDLE, "format": "rgb" | "rgba",
+"width": W, "height": H, "sequence": N}}}`. The equivalent mod call is
+`terminal.blit {key, pixels: {...}}`. Sequence numbers start at 1 and increase
+for each publication. The child must not modify the buffer until stdin
+acknowledges `{"pixels": {"source": HANDLE, "sequence": N, "ready": true,
+"error": null}}`. The host sends a successful acknowledgement when the next
+frame should start, not right after the copy: it aims the next publication just
+before the following 16 ms tick, using the time the producer took from its
+previous acknowledgement to publish. A producer that renders on each
+acknowledgement shows fresh frames with one copy per shown frame. An owned
+invalid descriptor or failed copy returns `ready: false` with an error at once. A failed copy does not consume the sequence, so
+direct callers may retry the same publication; retrying an accepted publication
+reuses its copy without a second acknowledgement. A managed producer's pending raw
+publication is retried while the process is active only for surface, layout and
+callback admission errors (`terminal_blit_unknown`, `terminal_blit_not_owned`,
+`terminal_blit_limit`, `callback_*`, `client_surface_*`); any other error, and
+confirmed owner revocation, stops the process. While a raw frame waits for its
+16 ms tick, a newer raw publication gets backpressure; a raster whose last frame
+stayed undrawn for four ticks (an inactive tab or unplaced layout) answers
+`retry_after_ms: 250` until it is drawn again. Backpressure neither copies nor
+acknowledges the buffer, so the same publication can be retried safely.
+The host retains the original descriptor, copies a bounded immutable frame,
+and never reopens a child-supplied path. Replacing the pathname cannot redirect
+the read. Handles are bound to the thread, mod generation, raster and process lifetime;
+stopping/reloading the process revokes them. Frames are limited to 4096 pixels
+per side (64 MiB for RGBA), with one newest pending image per raster. General
+POSIX shared memory is not granted by the sandbox; the private file works
+under the existing process sandbox. Raw frames reach Kitty without PNG
+encoding; inline-image terminals and external PNG/JPEG clients receive encoded
+snapshots scaled down to the raster's pixel size (a client's `cell_px`, else
+8×16) and at most 8 MiB, and cells-only clients receive half-blocks. Host paths and handles
+never reach external renderers.
+
+Experimental pacing changed from 33 to 16 ms in Batch 4gh. Use `frame_ms` and
+`retry_after_ms` instead of hardcoded timing. Encoded producers keep their
+stdin and stdout shapes.
+For local profiling, `OMD_FRAME_TRACE=/absolute/new/file.jsonl` enables
+per-stage wall and thread-CPU timings; the file must not already exist.
+
 Other messages reach `process_event` and `process.exchange` as usual. Pointer
 events on the raster are written to its stdin as `{"pointer": {action, button,
 x, y, inside}}` with `x`/`y` in the drawn frame's pixels (null before a frame;
@@ -1176,6 +1245,8 @@ of the chain and then the native executor. Only the listed fields may change:
 | `config_set` | `value` | `{value}` | what `next` returned, or `{deny}` |
 | `admission` | nothing | `{admit: true}`, `{withhold}` or `{deny}` | the same or a tighter decision |
 | `render` | `props` keys the native drawing reads (see Render hooks) | `{tree}` | a `{tree}` of presentation components holding `{type: 'native'}` at most once, with or without calling `next` |
+| `composer_key` | `key` (one printable character or a mod key name) | `{key}` | `{key}` with or without calling `next`, or `{deny}` to drop the key |
+| `mention` | `path` | `{path}` | `{path}` with or without calling `next`, or `{deny}` to skip the read |
 
 A `{deny}` refuses only before the native executor runs: once `next` has run
 a `command`, `config_set`, `peer_send` or `agent_spawn`, a deny is an invalid
@@ -1203,10 +1274,9 @@ settled the result.
 thread, agent and call IDs),
 `signal.aborted`, `trace` (the entries beneath this handler on its latest call),
 `budget` (`ms`, `remainingMs`, `hostCalls`) and `is(pattern)`. Calling `next`
-suspends the callback: the host releases the runtime, runs the downstream chain,
-then replays the handler from its recorded host results. Code before `next` runs
-again, but its host calls are not repeated, so keep their arguments
-deterministic. A handler may call `next` up to three times; each call is a
+waits in place while the host runs the downstream chain; code before `next`
+runs once and the wait does not count as own time. A handler may call `next`
+up to three times; each call is a
 separate attempt through the same executor and admission, so a retried write or
 request is a second effect. A tool's first attempt is the model's call; each
 further `next` re-dispatches the effective call through the turn's tool
@@ -1317,7 +1387,9 @@ it without timings.
 namespace; subscribers declare channel patterns and receive `channel` events
 (256 events / 1 MiB per subscriber) in the publishing thread. Events whose
 originating thread is gone are dropped. `process.start {notify: ['output','exit']}`
-delivers coalesced `process_event`s. `workspace.watch {paths, recursive?,
+delivers coalesced `process_event`s; `exit` fires once, when the leader exits,
+even while a background child keeps the output streams open and more output may
+follow. `workspace.watch {paths, recursive?,
 debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
 with source `external` (16 watches per mod; protected paths are always
 excluded, Git-ignored paths unless `include_ignored` is true). Watches
@@ -1328,11 +1400,12 @@ state republishes the terminal view, so background results appear without
 waiting for the next turn. `process_event` exits carry
 only the session; read the exit status with `process.status`.
 `events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
-`{key}` to the calling mod after 100 ms to 24 h; scheduling a key again replaces
+`{key}` to the calling mod after 16 ms to 24 h; scheduling a key again replaces
 it within that thread, `events.cancel {key}` stops only that thread's timer,
 16 timers per mod across all threads, including ticks pending delivery. Require
-`timers_100ms_v1` for delays below 1000 ms. Deliveries are spaced at least 100 ms
-apart per mod/thread; pending ticks with the same key coalesce and other
+`timers_16ms_v1` for delays below 1000 ms. Deliveries are spaced at least 16 ms
+apart per mod/thread, and each is a full callback: draw animation from a
+component module's frame clock instead; pending ticks with the same key coalesce and other
 owners continue while one owner waits for its budget. A timer never starts a
 turn by itself; only `turns.queue` under an `autonomous` grant can.
 
@@ -1407,6 +1480,25 @@ inode changed. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
+`sessions.list {since?, until?, cursor?, limit?}` pages this repository's
+recorded sessions that allow memory, and `sessions.read {session_id, revision,
+handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
+`message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
+`arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
+each with credential lines replaced by `[redacted]` (`redacted`; line endings
+kept) and cut to 2,048 characters with `truncated`. Credential lines are those
+naming a credential (`Authorization:`, `api_key`, `password=`, …), assigning a
+secret-like name (`TOKEN=…`, `"secret": …`, `AWS_SECRET_ACCESS_KEY=…`), holding a
+known token prefix (`sk-`, `ghp_`, `AKIA…`) or URL credentials
+(`scheme://user:password@`), and private-key blocks. Without the
+`sessions_tools` capability, tool records carry `bytes` and `sha256` of their
+arguments or output instead of the text. Reasoning and other item types are
+left out. Pages hold at most 16 KiB, a session at most 4,096 records
+(`projection_truncated`, the oldest are kept), and a changed rollout fails the
+read against its `revision`. `sessions.list` and `sessions.read` serve mod CLI
+commands (`api.command(name, …, {cli})`) and `context` callbacks, not TUI slash
+commands.
+
 ### Render hooks (`render_hooks_v1`)
 
 `api.intercept('render', {match: {component: 'tool_call'}}, async (e, next) => …)`
@@ -1426,7 +1518,7 @@ wrappers nest, and each hook sees the props the hook before it passed on.
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
 | `user_message` | content digest | `text`, `images`, `spoken` | — |
-| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 4 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
+| `assistant_message` | content digest | `text`, `first`, `truncated` (the host cut `text` at 48 KiB; streamed chunks and the final message; the streaming tail is `live`) | — |
 | `tool_call` | call ID (row ID for agent rows; `explore:<first call ID>` for an exploration group) | every agent tool row (`RenderToolCall`): `call_id`, `kind`, `status` (`running`/`completed`/`failed`/`interrupted`), `duration_ms`, `expanded`, and per kind: `exec` `command`, `parsed`, `exit_code`, `output_lines`, `output_tail`, `user_shell`; `explore` `calls` (grouped reads, searches and listings); `patch` `files` (`path`, `change`, `added`, `removed`), `error`; `web_search` `action`, `query`; `agent` `tool`, `agents`, `prompt`; `mcp` `server`, `tool`, `arguments`, `output_lines`; `dynamic` `tool`, `arguments`, `output_lines`; `image` `tool`, `path`, `prompt` | — |
 | `tool_result` | call ID | `tool`, `success`, `text` (MCP results inside their call) | — |
 | `spinner` | `main` | `header`, `elapsed_seconds`, `details`, `message`, `interrupt_hint` | `header` |
@@ -1447,7 +1539,7 @@ member as its compact row, and Find searches every member expanded. Native
 grouping remains when no member is replaced. Aggregate exploration rendering remains available on the
 group when member rendering does not replace it.
 
-Text props carry at most 4 KiB; a content digest is stable across resume and
+Text props carry at most 48 KiB; a content digest is stable across resume and
 reflow, so equal content draws identically. Tool rows are offered from live cells
 and committed history. In the fullscreen transcript a hooked tool row needs no control row: F4
 focuses it and Enter, →/← or a click opens and closes it, and `expanded` is
@@ -1631,6 +1723,50 @@ select's new `value` or a multiselect's checked `values` on every edit, `scroll`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
 and dialogs (`ui_composition_v1`).
 
+Component modules (experimental, required feature `component_modules_v1`,
+which `mod_host_check.py --static` requires of any package that calls
+`api.component`): `api.component(module, {init?, view,
+key?, pointer?, every?})`, registered during activation under the `terminal`
+capability (at most 16 per mod), draws `{type: 'module', id, label, module,
+props?, height?, keys?, pointer?}` nodes. Each mounted node runs in its own
+runner that stays alive while the node is in the view (at most four at once
+for the terminal and four for each external client; a fifth node draws a
+`component_limit` error line and no mounted runner is evicted for it), so
+`init(props, ui)` runs once
+and the state handlers return carries over between frames (returning
+`undefined` keeps it; handlers are synchronous, a returned promise fails with
+`component_handlers_must_be_synchronous`). A step runs at most once per 16 ms frame and only when
+something is pending: a mount, new props or size, queued input, or a due
+`every: {ms, tick}` tick (16 ms to 24 h, at most 8 missed ticks caught up;
+`ms` may be a function of the state, and `null` pauses ticks, so a paused
+module costs nothing until input or new props arrive).
+`key(state, {kind: 'key', key, text})` receives keys while the node, given
+`keys: true`, has focus from a click or Tab (Esc and Ctrl+] return focus;
+pasted text arrives as one event with `key: null`);
+`pointer(state, {kind: 'pointer', column, row, action, button})` receives
+pointer events over the region with `pointer: true`, consecutive moves
+coalesced. `view(state, ui)` returns a render tree (`box` without style, `line`,
+`text`, `markdown`, `code`, `diff`, `list`; at most 64 components, depth 6, 64
+KiB). `ui` is `{columns, rows, props, post(data)}`, where `rows` is the node's
+`height` and 0 when it has none (auto height); `post` hands the mod's
+`component_post` hooks `{component, module, data}` at most once per frame (a
+later post in the same frame replaces it; 64 KiB). Handlers have no host
+authority (`host_operation_unavailable`, `time.sleep` included, and no
+`host_operation` hook or interceptor sees the attempt) and cannot write state,
+but `api.state.get()` and `api.uiState.get()` read the current values at every
+step; a throw, three consecutive steps over 8 ms after the mounting one
+(`component_overrun`) or an invalid tree unmounts the node,
+which then draws one dim error line (the error's first line) until the next
+view revision mounts it again. A failed step never counts toward the mod's
+fault limit. Without `height` the region is as tall as its latest tree. External
+clients read a node's tree with `omd/render {slot: 'module', props:
+{component, columns?, rows?}}` (their own instance, sized as given or as last
+rendered, 80 columns and rows 0 by default; `effective.next_ms` says when the next tick is due)
+and send it key and pointer events through `omd/client/event`; their posts reach
+`component_post` as `{component, module, client, data}` (hooks there make the
+same host operations `component_event` hooks make, on either surface), and
+detaching unmounts their instances.
+
 Raster, pointer and overlays (`terminal_raster_v1`):
 
 - The `terminal` event carries `client: {kind: 'terminal', graphics, pointer,
@@ -1656,7 +1792,7 @@ Raster, pointer and overlays (`terminal_raster_v1`):
   has not received in a view yet, such as one returned by the same callback,
   is `terminal_blit_unknown`): `cells` lists the rect's cells
   row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
-  null. Updates queue per raster and apply one per 33 ms frame, so a timer
+  null. Updates queue per raster and apply one per 16 ms frame, so a timer
   tick can enqueue an animation; at 32 queued updates or 256 KiB the call
   returns `{status: 'backpressure', retry_after_ms}` instead of
   `{frame, queued, frame_ms}`; one call over 256 KiB is
@@ -1861,7 +1997,7 @@ runtime or published view in this host), `command_unavailable` and
 | `omd/view/read` | `{}` | `{epoch, revision, snapshot, actionToken}` |
 | `omd/client/event` | `{epoch, component, event}` with `event` one of `{kind: 'change', value}`, `{kind: 'change', values}` (strings), `{kind: 'pointer', pointer: {column, row, half?: 0\|1\|null, action: 'down'\|'up'\|'scroll_up'\|'scroll_down'\|'move'\|'drag'\|'enter'\|'leave', button: 'left'\|'right'\|'middle'\|null}}`, `{kind: 'scroll', offset}`, `{kind: 'key', key, text?}` or `{kind: 'focus'}` | `{delivered}`, answered in the order the connection sent its events and actions; the owner (from `component_owners`) gets `component_event` with `client: clientId` and only the kind's fields above (`origin`, `events`, `anchor`, `range`, `index` and any other field a client sends are dropped); `view_stale` on another epoch, `view_stale: <component>` when it is gone; `component_event_invalid` for another kind, a missing or malformed field the kind requires or an event over 64 KiB |
 | `omd/action` | `{actionToken, component, row?, value?}` | `{status: 'completed', outcome, actionToken}`: `outcome` is the command's result (`insert`, `submit`, `display`, `preview`) or null, which the client applies in its own UI (a `submit` through `turn/start`); `action_stale` (also when the view changed before the action ran), `action_replayed`, `action_unknown`, `action_unavailable: <component>`, `action_value_invalid: <component>` (including document anchors and lines and diff lines) |
-| `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}` |
+| `omd/render` | `{slot, props}` | `{original, effective, tree, answeredBy}`: the client's native props before and after `render` interceptors, drawn with the envelope `{id: 'client:<slot>', surface: 'inline', lifecycle: 'final', viewport: {columns: 80, rows: 24}, owner: null}`; slot `module` with `props: {component, columns?, rows?}` (1–65535 cells) steps the client's own instance of that view's component module and answers its `tree` with `effective: {next_ms}` |
 | `omd/resource/read` | `{reference}` | `{mediaType, data, sha256}` (base64 `data`), only for references in the current view |
 | `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails with `recovery_unavailable_during_turn` while the lead thread's turn runs. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
@@ -1921,7 +2057,7 @@ attached clients in both modes, blits only to clients listing `cells`; others
 draw a raster's `alt`. Headless, the host answers those three itself with the
 terminal's validation: a blit is checked against `component_owners`
 (`terminal_blit_not_owned`, `terminal_blit_unknown`) and the raster's size and
-paced at one frame per 33 ms with the same 32-update backpressure, a notice
+paced at one frame per 16 ms with the same 32-update backpressure, a notice
 fails with `terminal_notice_invalid` like in the terminal, and a
 `model`-audience notice is still queued for the model.
 
@@ -2070,6 +2206,18 @@ stale results are dropped. While the user types arguments to a mod command
 `{items: [{insert}]}` and the list opens only when it has items. A mod can
 therefore complete its own commands without owning `@` mention ranking.
 
+`api.completion({trigger}, handler)` (capability `composer`,
+`completion_tokens_v1`, experimental) completes arbitrary tokens: `trigger` is
+one ASCII punctuation character other than `@`, `/` and `$`, and a mod
+registers at most four during activation. While the token before the cursor
+(from the last whitespace) starts with the trigger, the handler receives
+`{kind: 'token', trigger, query, line}` (`query` without the trigger, `line` up
+to the cursor) and returns `{items: [{insert}]}` with the same limits, debounce
+and stale-result dropping as argument completion. The host shows the rows in
+the composer's completion list and, on Tab or Enter, replaces the whole token
+with the selected `insert`. When two mods register the same trigger, the first
+loaded mod keeps it and the other gets a status notice.
+
 ### Composer drafts and suggestions (`composer_v2`)
 
 `composer.read` returns `{text, cursor, selection, revision, attachments,
@@ -2107,7 +2255,22 @@ reason?}` to the suggestion's owner.
 it reaches the draft: `{source: 'mod' | 'paste' | 'history' | 'completion',
 caller, revision, edit}`; handlers may change only `edit.text` or answer
 `{deny}`, which leaves the draft unchanged and tells the user. They run while
-the terminal applies the edit, so they get no host operations. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
+the terminal applies the edit, so they get no host operations.
+`api.intercept('composer_key', …)` (`composer_key_v1`, experimental) sees each
+key press or repeat that reaches the prompt box, after mod key components,
+dialogs, chords and app key bindings and before popups and the editor keymap:
+`{key, text, revision, cursor}`, where a printable character without Ctrl or
+Alt is `key` and `text` as typed (`'a'`, `'#'`, `' '`) and any other key is
+its mod key name (`Ctrl+w`, `Enter`, `Shift+Tab`) with `text: null`; `text` is
+also `null` in vim normal mode, where characters are commands. Handlers
+may set `key` to another character or to a key name valid in view
+`keybindings` or an unmodified named key (`Left`, `Backspace`), which the
+composer then applies as if typed, or answer `{deny}` to drop the key silently.
+Paste bursts, bracketed paste and non-ASCII characters (IME) bypass the chain.
+The whole chain, including any wait for a runtime busy with another callback,
+gets 50 ms per keystroke and no host operations; when that runs out, or the
+result is invalid, the original key applies and a status notice shows. Use
+`match` on `key` so other keystrokes never start a callback. `api.intercept('component_change', …)` (capability `terminal`, `ui_controls_v1`) runs before a user's focus or scroll change is reported, and only for the mod that owns the component being left or entered: `{kind: 'focus', id, from, to, origin: 'user'}` or `{kind: 'scroll', id, from, to, origin}`. Handlers answer `{deny}` to keep the previous focus or offset, `{focus: id}` to move focus to another of their own components (or `null` to release it), or `{scroll: n}` to clamp the offset; they run while the terminal handles the gesture, so they get no host operations. The `input`
 interceptors also receive the submitted draft's `revision`, `attachments`
 (`{kind, source}`) and placeholder `elements` (`{kind: 'paste' | 'mention' |
 'skill' | 'image', start?, end?, name?, source}`). After skills and mentions are
@@ -2115,6 +2278,25 @@ expanded, `prompt_expanded` (capability `middleware`) lists them by name, path
 and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never
 their content, and the `prompt` event's `effective` is the text the model
 receives.
+
+### `@` file mentions (`mention_read_v1`)
+
+When a turn starts, the host reads each `@path` or `@"path with spaces"` of the
+submitted text that names an existing workspace file (at most 16 per turn; a
+leading `./` and trailing punctuation are ignored; picking a file from the `@`
+list inserts it in this form, except in a slash command or shell command, which
+get the bare path) and gives the model its contents after the prompt as
+`<mentioned_file><path>…</path>…</mentioned_file>`. Reads use the
+`workspace.read` checks: repository-relative paths without `..`, `.git` or
+symlink components, and the thread's effective read permissions and deny rules.
+Each file is read once, in mention order, while the turn's mentioned files
+total at most 256 KiB; a file that fails the checks, does not fit or is not
+UTF-8 is left to the model's own tools. Before each read,
+`api.intercept('mention', …)` (capability `input`, experimental) receives
+`{thread_id, path}`; handlers may set `path` to another workspace file, which
+is read under the same checks, or answer `{deny}` to skip the read. They run
+beside the session like `input` interceptors and may call host operations; a
+failing chain skips the read, and interrupting the turn cancels the chain.
 
 ### One-shot model calls and forks (`model_complete_v2`)
 
@@ -2136,8 +2318,9 @@ with `executed: false` and never run.
 
 Both return `{status, text, content, tool_calls, stop_reason, error, route,
 model, request_ids, usage, cache, cost, timing}` from the
-worker's `model_response` records: `usage` and `cache` are the last request's
-raw values, `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
+worker's `model_response` records: `usage` is the last request's raw value,
+`cache` sums `read_tokens` and `write_tokens` over the call's requests that reported them (`null`
+when none did), `cost` sums the settled charges (`null` when a request is unsettled or unpriced) with their basis. A response
 the provider cut at its token limit returns `status: 'incomplete'` with the
 text that streamed and `stop_reason` (`max_output_tokens`). A provider
 failure returns `status: 'failed'` with `error`; a timeout (at most 300 s) or
@@ -2150,6 +2333,24 @@ process` otherwise). Prompt cache reuse is reported by `cache.read_tokens`,
 not promised: a fork is a separate internal session whose cache key and
 instructions differ from the lead's.
 
+`cache: {through: 'system' | N}` (`model_cache_v1`) marks the request prefix
+through the worker's instructions (the last developer message before the
+turn's user message, which holds the host's role text, a fork's frozen parent
+conversation and the mod's `system`; environment context after it is not
+included) or through context block `N` as cacheable. On each of the call's requests the host
+sets `prompt_cache_key` and the `session-id` header (the ChatGPT backend's cache
+routing) to `omd-cache-` plus a hash of the model, instructions, tools and that
+prefix's model-visible fields, so calls sharing a prefix share the provider's
+cache routing (OpenAI Responses caches prefixes automatically), and sends
+`x-omd-cache-breakpoint: ITEM:PART`, the last cacheable
+`input[ITEM].content[PART]` of the final body, for provider transports with
+explicit breakpoints: `omd_profiles` turns it into Anthropic `cache_control`
+on that block (or on the system prompt when it falls in the leading developer
+messages) and, for profiles set up with `--cache-control`, passes it on in Chat
+Completions content for providers such as OpenRouter. Cache reads and writes come back in `cache` and in each request's
+`model_response` record, priced with the route's cached and cache-write rates;
+a provider that ignores the mark reports no reads.
+
 ### SDK helpers (`sdk_helpers_v1`)
 
 The runner adds small helpers to `api`; each calls the host operations named
@@ -2161,17 +2362,17 @@ here under the mod's own grants, and none starts paid work implicitly.
   thread, also from terminal commands in the same process. `turns_started`
   counts turns this process started in the thread.
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the
-  callback's process ends and it replays from its receipts afterwards, so the
-  wait holds no runtime lock and does not count as own time; cancellation
+  callback waits in place, holding no runtime lock, and the wait does not
+  count as own time; cancellation
   wakes it and ends the callback. Callbacks that hold the runtime (offline
   steps aside) get `time_sleep_unavailable`; render, `terminal`, `command_list`,
-  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit` and `component_change` callbacks run
+  `config_list`, `tool_specs`, `agent_offers`, `admission`, `composer_edit`, `composer_key`, `component_change` and `history_persist` callbacks run
   without host operations and get `host_operation_unavailable`; `model_request`,
   `model_send` and `response_stream` interceptors run on the request path and get
   `time_sleep_unavailable`. `api.time.wait(check, {interval_ms,
-  timeout_ms})` polls `check` between sleeps within the 32 host calls.
+  timeout_ms})` polls `check` between sleeps within the 128 host calls.
   `api.time.after(key, delay_ms, handler)` and `api.time.every(key,
-  interval_ms, handler)` register during activation (100 ms to 24 h) and return
+  interval_ms, handler)` register during activation (16 ms to 24 h) and return
   `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`; `every` reschedules after each handler run until `cancel()`,
   the handler returns `false`, or a reload with changed source, disable or
@@ -2183,7 +2384,7 @@ here under the mod's own grants, and none starts paid work implicitly.
   `workspace.stat` (`fs.read`); symlinked components and paths outside the
   workspace are refused there.
 - `api.classify(text, labels, {route, instructions?, effort?, timeout_ms?,
-  max_output_tokens?})` makes one `model.complete` on the named route with a
+  max_output_tokens?, cache?})` makes one `model.complete` on the named route with a
   JSON schema enumerating `labels` and returns `{label, result}` (`label` is
   `null` when the answer is not one of them).
 - `api.usage.summarize(response)` turns a `model_response` into
@@ -2210,6 +2411,53 @@ items are dropped as pairs; the last item (the current input) is kept; inserts
 are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
+
+### Store-time history rewriting (`history_persist_v1`)
+
+`api.intercept('history_persist', …)` (authority capability `history_persist`)
+rewrites history text before it is stored, for redaction: every text written to
+the thread's rollout and the prompt-recall file (`~/.codex/history.jsonl`). Each
+batch arrives as `{thread_id, entries}`; an entry is `{index, kind, role,
+call_id, text}` where `kind` is one of:
+
+- a response item type: `message`, `agent_message`, `reasoning` (summary and
+  raw text), `function_call`, `custom_tool_call`, `local_shell_call` (each
+  command word and environment value), `tool_search_call` (each string in its
+  arguments), `function_call_output`, `custom_tool_call_output`,
+  `tool_search_output` (tool descriptions), `web_search_call` (queries, URLs,
+  patterns) or `image_generation_call` (the revised prompt);
+- a text kept beside an item: `delivered_message`, `sender_user_messages`;
+- an event copy: `event:user_message`, `event:agent_message` (also a turn's
+  last agent message), `event:reasoning`, `event:plan`, `event:goal` (a thread
+  goal's objective), `event:command_execution` (command words, input and output),
+  `event:function_call_output`, `event:mcp_tool_call` (each argument string,
+  result text, structured content string and error), `event:dynamic_tool_call`,
+  `event:file_change` (added and deleted file contents, diffs, stdout and
+  stderr), `event:web_search` (query, action and result strings),
+  `event:review` (custom instructions, hint, findings and explanation),
+  `event:image_generation`, `event:hook_prompt` or
+  `event:collab_agent_tool_call` (the prompt);
+- `inter_agent_communication`, `compacted` (a compaction summary and its
+  replacement history) or `prompt_history` (a prompt-recall entry).
+
+Return `{entries}` with only `text` changed, or pass a changed input to `next`;
+a reordered, added, dropped or relabelled entry is rejected. A batch is split
+across callbacks of at most 48 KiB of JSON-encoded entries (escaping counts); a
+longer text arrives as consecutive entries with the same index, split after its
+last whitespace within the budget, so only a long run without whitespace is cut
+inside a token. Item ids, call ids, roles, order and count never change; a
+rewritten response item carries `rewritten {revision, op: "redact", by}` and
+reads as not original, where `by` names the mods whose link changed the text
+(`mod:<id>`) and `host` when entries were withheld; a rewritten user message
+drops its text elements. The interceptor gets no host operations. The live
+conversation keeps the original text until the thread is resumed, forked or
+rolled back from the rollout. Not offered: identifiers, names, paths and status
+fields, images and other binary payloads, encrypted content, extension-owned
+items (standalone web search, image generation and sleep), sub-agent activity
+and realtime transcripts. A failing optional interceptor keeps the original
+text; a failing required interceptor, or a persist runtime that fails while one
+is installed, stores `[withheld: a required history_persist interceptor
+failed]` instead (a withheld prompt-recall entry is not written).
 
 ### Durable transcript rewriting (`history_rewrite_v1`)
 
@@ -2385,9 +2633,14 @@ any it refuses.
   rows; a span `link` is an http(s) URL of at most 2,048 bytes on `line` and
   `list` spans (documents refuse it), drawn as an OSC 8 hyperlink, and
   `markdown` links become hyperlinks too; a control `hotkey` uses the
-  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code` and
-  `markdown` at most 4,096 bytes; `diff` and `document` at most 49,152 bytes. A
-  view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
+  keybinding names; row values, labels and spans are at most 256 bytes; `text`, `code`,
+  `markdown`, `diff` and `document` at most 49,152 bytes (the terminal keeps
+  recent markdown renders, so a large `markdown` costs its parse, about 1 ms per
+  KiB, only when its text or width changes; stream into `code` or `text`). A
+  view or patch is at most 64 KiB of JSON and the composed view 256 KiB; those
+  JSON limits still apply to text-heavy views, and escaping can double a text
+  (`\n`, `"` and `\` take two bytes), so clip long text on its
+  `JSON.stringify` size rather than its 48 KiB length. A
   `wrap` site contains exactly one `slot`. Text fields refuse control characters
   except newlines where a field is multi-line. The status row holds at most 4
   segments of 40 characters across all mods. An invalid view is dropped with the
@@ -2406,6 +2659,33 @@ any it refuses.
   appears and nothing has focus, reported as a `focus` event with origin `mod`. An `input`, `select` or `multiselect` is controlled: the user's edits stay
   while the view repeats a value, an echo of one of the user's own recent
   values is ignored, and a new `value` from the mod resets the field.
+- Callback lifetime: general callbacks get a fresh VM context and activation.
+  A package's later callbacks may reuse its sandboxed runner process and a
+  bounded cache of stripped source and bytecode; runners are never shared
+  between packages. Work a callback leaves running settles before its result
+  is returned, and a host call from it after the callback returned fails that
+  callback. Persist state through `api.state`; module globals
+  do not survive general callbacks. Render hooks retain activation under their
+  existing matching-input rules.
+- Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
+  `terminal`. Values are bounded to 64 KiB and shared by host instances in the
+  same process, store, repository, thread and package identity. Commands and
+  component events may write; other callbacks may read. Writes commit only after
+  successful validation and cancellation checks, with revision conflicts using
+  the existing receipt-replay rules. State is cleared on reload, revocation,
+  package changes and session teardown, and is never written to disk. Durable
+  `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
+  state for preferences that must survive a restart.
+- Experimental command views: return `{terminal: patch}` with a `TerminalPatch`
+  to replace your complete terminal contribution, or `{terminal: null}` to clear
+  it. The host validates capability, ownership and generation, composes it with
+  other owners' last valid contributions and displays it before asynchronously
+  refreshing expired callbacks. Keep a `terminal` handler that reconstructs the
+  same contribution from UI state for subsequent view updates. This opt-in path
+  changes when other owners refresh; commands without `terminal` retain their
+  synchronous preview behavior. Migration from durable dialog state consists of
+  moving only transient presentation fields to `api.uiState` and returning the
+  view from the command; persisted settings, replay and module lifetimes are unchanged.
 - Callback contexts: `terminal` renders and `render` hooks get no host
   operations; draw from `api.state`. Slash commands, buttons and keybindings run in the terminal
   as user actions and reach only `exec.*`, `workspace.read/list/stat/check_access/
@@ -2421,8 +2701,9 @@ any it refuses.
   which runs with the session.
 - Settings: callbacks receive explicit settings over each `settings_schema`
   property's `default`; give every property a default.
-- Memory: each mod runs with a 64 MB V8 heap; exceeding it fails the callback
-  with `mod_out_of_memory`.
+- Memory: each runner process has a 64 MiB V8 old-space limit; exceeding it
+  fails the callback with `mod_out_of_memory`. This is not a total process RSS
+  limit; compiled data and other runtime allocations also use memory.
 
 ### Streaming providers
 
@@ -2573,7 +2854,17 @@ one module with no value imports. The project needs `typescript` installed
 `jsx_requires_typescript`. Edit `index.tsx` and treat `index.ts` as generated
 output; a hand-written `index.ts` beside `index.tsx` is never overwritten and
 fails with `jsx_entrypoint_conflict`. The scaffolded `tsconfig.json` sets `jsx: "react-jsx"` and
-`jsxImportSource: "@oh-my-diff/mod-api"`; `check` type-checks `index.tsx` itself.
+`jsxImportSource: "@oh-my-diff/mod-api"` and `allowImportingTsExtensions`;
+`check` type-checks `index.tsx` itself.
+
+A `.tsx` file in any subdirectory is an asset source too (skipping `node_modules`,
+`dist` and dot directories): each compiles to the `.ts` file beside it with the
+same rules and its own inlined factory, and a relative import of `./row.tsx`
+becomes `./row.ts` in the output. List the compiled name in `mod.json` `assets`
+(`"row.ts"`; the host accepts only `.ts`, `.mjs` and `.json` assets, and
+`package` ships only the compiled files, never the `.tsx`). The 128 KiB package
+file limit applies to each compiled file. A hand-written `.ts` beside a `.tsx`
+fails with `jsx_entrypoint_conflict`.
 
 Each `TerminalComponent` kind is an intrinsic element (`<box>`, `<line>`,
 `<text>`, ...) with the component's fields as props. Children of `box`, `pane`
@@ -2650,7 +2941,7 @@ match the registry's sha512 `dist.integrity` and is extracted safely: regular
 files only, with symlinks, hardlinks and path escapes rejected, a tarball of at
 most 4 MiB, at most 16 MiB unpacked and at most 1024 entries. Its `package.json`
 `name` and `version` must match the request and `dependencies` must be empty:
-bundle runtime code into the self-contained entrypoint (`peerDependencies` and
+ship runtime code as the entrypoint and its imported assets (`peerDependencies` and
 `devDependencies` on `@oh-my-diff/mod-api` are fine). The package must publish
 `mod.json` (same version as `package.json`), the entrypoint, the assets and the
 lifecycle scripts. npm `scripts` such as `preinstall` and `postinstall` never
@@ -2762,7 +3053,8 @@ doesn't produce a tarball, so check the npm tarball with `pnpm pack`.
    equal to `mod.json`'s; set `license` and `provenance` in `mod.json`.
 2. Keep `files` listing `mod.json` and the entrypoint (the scaffold starts with
    both) and add every declared asset and lifecycle script.
-3. Keep `dependencies` empty: bundle runtime code into the entrypoint and keep
+3. Keep `dependencies` empty: ship runtime code as the entrypoint and its
+   imported assets, and keep
    `@oh-my-diff/mod-api` a `peerDependency` or `devDependency`.
 4. Run `pnpm check`, `pnpm test`, then `pnpm pack`; the tarball must stay under
    4 MiB and 1024 entries and list only regular files. Inspect it with
@@ -2805,6 +3097,18 @@ required guard.
 never reads the host's environment: an unlisted name is `{set: false}`, and a
 secret-like name (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...)
 fails the scenario with `offline_environment_secret_name`.
+`{"type": "state", "mod": ID, "value"?: VALUE, "thread_id"?: ID}` returns that
+mod's persisted `api.state` from the scenario's store, so `expect` can check it
+after any step; with `value` it first writes that state (the mod needs `store`,
+and the usual state limits apply), seeding a test without a setup command.
+`{"type": "component", "mod": ID, "module": NAME, "instance"?: NAME, "props"?:
+VALUE, "columns"?: 80, "rows"?: 0, "events"?: [...]}` steps one instance of the
+mod's `api.component` module at the scenario's virtual time, delivering the
+`key` and `pointer` events and every due tick, and returns `{tree, post,
+next_ms}`; the instance mounts on its first step and keeps its state until the
+scenario ends, so `advance_time` steps drive `every` ticks. The module gets no
+host authority and its tree is validated as for a terminal; `omd-mod test` and
+`mod_host_check --scenarios` run it like any other step.
 `{"type": "wait_until", "check": STEP, "until": VALUE, "every_ms": 1000,
 "max_ms": N}` runs `check`, and while its value differs from `until` advances
 virtual time by `every_ms` and checks again (at most 256 checks); it returns
@@ -2919,7 +3223,8 @@ to the same declared capability and host permission checks.
 `process.start` frames stdio as `content-length` (default) or `ndjson`, and
 stops a process whose stdout breaks the framing (a line that is not JSON
 under `ndjson`; a blank line or 8 KiB without a valid header under
-`content-length`); stderr is discarded;
+`content-length`); stderr is discarded except under `raw`, which streams
+both unframed;
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch
@@ -2956,8 +3261,20 @@ Copy-on-select and right-click paste are Codex settings (`tui.copy_on_select`,
 
 ## Diagnostics and source maps
 
+A package spans several files by importing its declared assets with relative
+specifiers (`import { draw } from './draw.ts'`, `'./lib/util.mjs'`, or a
+`'./table.json'` default export). The runner links them in the callback's
+context, so they share module state for that callback; anything else, including
+value imports of the SDK, fails with `unsupported_import`. Imported code counts
+toward the source-use report like the entrypoint; assets that are only read
+(for example scripts passed to `exec.run`) do not. Declare the required features
+`package_text_assets_v1` for assets and `package_imports_v1` for relative
+imports; `mod_host_check.py --static` fails a package that omits them.
+
 The engine strips TypeScript types in place, so callback stacks report the
-authored line and column as `<package>/<file>:line:col`. Only erasable syntax
+authored line and column as `<package>/<file>:line:col`. `omd-mod-author
+package` also writes a `.js` file and `.js.map` source map beside every `.ts`
+file it ships. Only erasable syntax
 loads: `enum`, namespaces with values and constructor parameter properties fail
 with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`, and `pnpm check` reports them before
 packaging.
@@ -2988,10 +3305,12 @@ at 8 MiB. These skips apply to `api.middleware` hooks; interceptors hold the
 runtime only while a handler starts or settles, never while `next` waits, and
 follow the required/optional waits of continuation middleware.
 
-`service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and host-operation provenance when a consumer calls it. A nested call shares the initiating callback's cancellation, 32-call and 5 s execution budgets; recursive providers and chains beyond eight callback frames fail closed. Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation. Offline `host_calls` records the actual mod caller for every mocked operation.
+`service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and host-operation provenance when a consumer calls it. A nested call shares the initiating callback's cancellation, 128-call and 5 s execution budgets; recursive providers and chains beyond eight callback frames fail closed. Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation. Offline `host_calls` records the actual mod caller for every mocked operation.
 
-The host answers each host call inside the running callback, so a callback
-runs once. `hook_budget_ms` bounds the callback's own JavaScript time. A separate 5 s total bounds the callback's JavaScript time plus its waits on terminal operations that need no user answer; exceeding it fails the callback with `callback_execution_budget`. Confirmations and prompts may wait longer, and other host operations keep their own timeouts.
+The host answers each host call, including `next` and `time.sleep`, inside the
+running callback, so a callback runs once and makes at most 128 host calls.
+`Date.now()` and `new Date()` return the callback's start time, advanced only by
+each `time.sleep`'s `slept_ms`, including in a state-conflict retry. `hook_budget_ms` bounds the callback's own JavaScript time. A separate 5 s total bounds the callback's JavaScript time plus its waits on terminal operations that need no user answer; exceeding it fails the callback with `callback_execution_budget`. Confirmations and prompts may wait longer, and other host operations keep their own timeouts.
 Offline runners without an interactive host replay the callback once per host
 call instead.
 

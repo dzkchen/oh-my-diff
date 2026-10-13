@@ -361,7 +361,7 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
-        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
+        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
         result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra],
                                 stdout=subprocess.PIPE, text=True)
@@ -793,6 +793,7 @@ def main():
             for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):
                 route_parser.add_argument(f"--{flag}")
             route_parser.add_argument("--reasoning", action="store_true")
+            route_parser.add_argument("--cache-control", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))

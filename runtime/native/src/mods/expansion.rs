@@ -642,6 +642,7 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
 
 /// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
 pub(in crate::mods) fn blit_sink(
+    core: &Core,
     lead: &Lead,
     caller: &Caller<'_>,
 ) -> Option<crate::managed_process::BlitSink> {
@@ -660,7 +661,60 @@ pub(in crate::mods) fn blit_sink(
         caller.generation,
         lead.thread.to_string(),
     );
+    let runtime = core.runtime.clone();
+    let owner = id.clone();
+    let admitted_source = source.clone();
+    let capabilities = grants.capabilities.clone();
+    let verified = Arc::new(Mutex::new(None::<std::time::Instant>));
+    let last = verified.clone();
+    let current = move || {
+        let age = last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .map(|at| at.elapsed());
+        if age.is_some_and(|age| age < std::time::Duration::from_millis(250)) {
+            return Ok(());
+        }
+        let mut runtime = match runtime.try_lock() {
+            Ok(runtime) => runtime,
+            Err(std::sync::TryLockError::WouldBlock)
+                if age.is_some_and(|age| age < std::time::Duration::from_secs(2)) =>
+            {
+                return Ok(());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => runtime
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        let result = runtime
+            .reload()
+            .map_err(|_| "callback_cancelled".to_owned())
+            .and_then(|_| {
+                (runtime.generation() == generation
+                    && runtime.grants(&owner).is_some_and(|grants| {
+                        grants.source_sha256 == admitted_source
+                            && grants.capabilities == capabilities
+                    }))
+                .then_some(())
+                .ok_or_else(|| "process_raster_revoked".to_owned())
+            });
+        *last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            result.is_ok().then(std::time::Instant::now);
+        result
+    };
     Some(Arc::new(move |arguments, active| {
+        current()?;
+        let verified = verified.clone();
+        let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            active()
+                && verified
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
+        });
         codex_omd::client_surface::with_admission(&source, generation, None, || {
             codex_omd::client_surface::call(
                 &id,

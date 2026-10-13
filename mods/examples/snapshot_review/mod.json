@@ -17,6 +17,7 @@
     "fs.write",
     "lifecycle",
     "sessions",
+    "sessions_tools",
     "store",
     "tools"
   ],

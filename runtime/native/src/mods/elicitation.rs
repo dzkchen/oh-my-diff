@@ -85,6 +85,8 @@ impl Mods {
         let payload = json!({"thread_id": thread, "turn_id": input.turn_id, "server": input.server,
             "request_id": input.request_id, "mode": mode, "message": input.request["message"],
             "schema": schema});
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _cancellation = Cancellation(cancelled.clone());
         let chain = intercept::chain(
             self.core.clone(),
             lead,
@@ -93,7 +95,7 @@ impl Mods {
             required,
             payload,
             json!({"caller": "engine", "thread_id": thread}),
-            Arc::new(AtomicBool::new(false)),
+            cancelled,
             |_| Ok(json!({"action": "ask"})),
         )
         .await;

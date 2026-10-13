@@ -80,6 +80,7 @@ STEPS = [
     ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod",
                                    str(batch_tree.batch_dir(BATCH) / "artifacts/omd-mod"), "--scenarios"]),
     ("client acceptance", ["python3", "scripts/client_acceptance.py", "--binaries", str(batch_tree.batch_dir(BATCH) / "artifacts")]),
+    ("pty smoke", ["python3", "scripts/pty_smoke.py", "--binaries", str(batch_tree.batch_dir(BATCH) / "artifacts")]),
 ]
 
 

@@ -17,7 +17,7 @@ const surface = {
   replacements: ['context', 'routing', 'compaction'],
   intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
     command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
-    composer_edit: 'composer' },
+    composer_edit: 'composer', composer_key: 'composer', mention: 'input', history_persist: 'history_persist' },
   middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
 };
 
@@ -308,4 +308,65 @@ test('composer examples suggest a recent prompt and tidy pastes through the edit
   assert.deepEqual(run('paste_tidy', 'intercept', paste('-----BEGIN OPENSSH PRIVATE KEY-----'), { name: '0' }).value, { result: { deny: 'the paste looks like a private key' } });
   const history = { ...paste('x '), input: { ...paste('x ').input, source: 'history' } };
   assert.deepEqual(run('paste_tidy', 'intercept', history, { name: '0' }).value, { unmatched: true });
+});
+
+test('composer key examples rewrite and drop only the keys they match', () => {
+  const key = (name, cursor = 3) => ({ surface: 'composer_key', input: { key: name, text: name.length === 1 ? name : null, revision: 1, cursor }, origin: { caller: 'user' } });
+  assert.deepEqual(run('key_remap', 'intercept', key('Ctrl+b'), { name: '0' }).host_call,
+    { operation: 'continuation.next', arguments: { input: { ...key('Ctrl+b').input, key: 'Left' } } });
+  assert.deepEqual(run('key_remap', 'intercept', key('b'), { name: '0' }).value, { unmatched: true });
+  assert.deepEqual(run('input_guard', 'intercept', key('Ctrl+u'), { name: '0' }).value, { result: { deny: 'Ctrl+U is disabled' } });
+  assert.deepEqual(run('input_guard', 'intercept', key(' ', 0), { name: '1' }).value, { result: { deny: 'leading space' } });
+  assert.deepEqual(run('input_guard', 'intercept', key(' ', 2), { name: '1' }).value, { unmatched: true });
+});
+
+test('token completion example answers each registered trigger', () => {
+  const token = (trigger, query) => ({ kind: 'token', trigger, query, line: `see ${trigger}${query}` });
+  assert.deepEqual(run('shortcodes', 'completion', token(':', 'r')).value, { items: [{ insert: '🚀' }] });
+  const log = run('shortcodes', 'completion', token('#', '1'));
+  assert.equal(log.host_call.operation, 'exec.run');
+  const answered = run('shortcodes', 'completion', token('#', '1'), { receipts: [{ call: log.host_call, value: { stdout: 'fix #12\nmerge #31 and #12\nrefs #7\n' } }] });
+  assert.deepEqual(answered.value, { items: [{ insert: '#12' }] });
+  assert.deepEqual(run('shortcodes', 'inspect').registrations.completions, [{ trigger: ':' }, { trigger: '#' }]);
+});
+
+test('mention example denies secrets and redirects build output to its source', () => {
+  const mention = path => ({ surface: 'mention', input: { thread_id: 't', path }, origin: { caller: 'user' } });
+  assert.deepEqual(run('mention_guard', 'intercept', mention('config/.env.local'), { name: '0' }).value, { result: { deny: 'secret files are not read into prompts' } });
+  assert.deepEqual(run('mention_guard', 'intercept', mention('src/app.ts'), { name: '0' }).value, { unmatched: true });
+  const stat = run('mention_guard', 'intercept', mention('dist/app.js'), { name: '1' });
+  assert.deepEqual(stat.host_call, { operation: 'workspace.stat', arguments: { paths: ['src/app.ts'] } });
+  const redirected = run('mention_guard', 'intercept', mention('dist/app.js'), { name: '1',
+    receipts: [{ call: stat.host_call, value: { files: { 'src/app.ts': { kind: 'file', size: 1, mtime_ms: 0 } } } }] });
+  assert.deepEqual(redirected.host_call, { operation: 'continuation.next', arguments: { input: { thread_id: 't', path: 'src/app.ts' } } });
+});
+
+test('history redaction example rewrites only entry text before it is persisted', () => {
+  const entry = (index, text) => ({ index, kind: 'function_call_output', role: null, call_id: 'c1', text });
+  const batch = { thread_id: 't', entries: [entry(0, 'Authorization: Bearer abcdefghijklmnop'), entry(1, 'key sk-proj-ABCDEFGHIJKLMNOPQRST and AKIAABCDEFGHIJKLMNOP'), entry(2, 'plain')] };
+  const result = run('history_redact', 'intercept', { surface: 'history_persist', input: batch, origin: { caller: 'host' } }, { name: '0' });
+  assert.deepEqual(result.host_call, { operation: 'continuation.next', arguments: { input: { thread_id: 't',
+    entries: [entry(0, 'Authorization: Bearer [redacted]'), entry(1, 'key [redacted] and [redacted]'), entry(2, 'plain')] } } });
+});
+
+test('readme answers example marks the README context block as a cached prefix', () => {
+  const read = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme' });
+  assert.deepEqual(read.host_call, { operation: 'workspace.read', arguments: { paths: ['README.md'] } });
+  const file = { call: read.host_call, value: { files: { 'README.md': { text: 'Run install.sh.' } } } };
+  const asked = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme', receipts: [file] });
+  assert.equal(asked.host_call.operation, 'model.complete');
+  assert.deepEqual(asked.host_call.arguments.context, ['Run install.sh.']);
+  assert.deepEqual(asked.host_call.arguments.cache, { through: 0 });
+  const cache = { read_tokens: 1024, write_tokens: 0 };
+  const answered = run('readme_answers', 'tool', { question: 'How do I install?' }, { name: 'ask_readme',
+    receipts: [file, { call: asked.host_call, value: { text: 'Run install.sh.', cache } }] });
+  assert.deepEqual(answered.value, { answer: 'Run install.sh.', cache });
+});
+
+test('readme answers example keeps the README context within the host byte cap', () => {
+  const read = run('readme_answers', 'tool', { question: 'q' }, { name: 'ask_readme' });
+  const file = { call: read.host_call, value: { files: { 'README.md': { text: '日本語😀'.repeat(20_000) } } } };
+  const [context] = run('readme_answers', 'tool', { question: 'q' }, { name: 'ask_readme', receipts: [file] }).host_call.arguments.context;
+  const size = Buffer.byteLength(context);
+  assert.ok(size <= 30_000 && size > 29_990 && !context.includes('\ufffd'), String(size));
 });

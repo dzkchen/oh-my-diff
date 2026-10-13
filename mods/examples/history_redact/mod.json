@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "history_redact",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "MIT",
+  "capabilities": [
+    "history_persist"
+  ],
+  "compatibility": {
+    "required_features": [
+      "history_persist_v1"
+    ]
+  }
+}

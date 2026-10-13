@@ -82,7 +82,7 @@ function client(name, renderer, answer) {
 
 const TEXT = { kind: 'text', formats: ['text'], pointer: 'none', reducedMotion: true };
 const GUI = { kind: 'gui', formats: ['svg', 'png', 'cells'], pointer: 'pixel', reducedMotion: false };
-const TEXT_DRAWN = ['line', 'text', 'list', 'button', 'markdown', 'code'];
+const TEXT_DRAWN = ['line', 'text', 'list', 'button', 'markdown', 'code', 'module'];
 const GUI_DRAWN = [...TEXT_DRAWN, 'input', 'select', 'multiselect', 'image', 'raster'];
 
 async function turn(owner, threadId, text, during) {
@@ -165,6 +165,14 @@ async function headless() {
   await rejects(desk.session.event('no_such_component', { kind: 'change', value: 'x' }), 'view_stale');
   await rejects(desk.session.event('desk_kinds', { kind: 'teleport' }), 'component_event_invalid');
   say({ step: 'inputs', note: 'reviewed by desk', kinds: ['exec'] });
+
+  await until('module node', () => component(desk.view(), 'client_tag'));
+  const tag = await desk.session.render('module', { component: 'client_tag', columns: 30, rows: 1 });
+  assert.equal(tag.tree[0].text, 'Click this tag');
+  await rejects(desk.session.render('module', { component: 'client_tag', columns: 0 }), 'render_props_invalid');
+  assert.deepEqual(await text.session.event('client_tag', { kind: 'pointer', pointer: { column: 3, row: 0, action: 'down', button: 'left' } }), { delivered: true });
+  await until('module post reached its hook', () => component(desk.view(), 'client_tag_clicked')?.text === 'Last click at column 3, row 0');
+  say({ step: 'modules', tree: tag.tree[0].text });
 
   const hello = await time('turn_ms', () => turn(desk, thread.id, 'hello'));
   assert.equal(hello.status, 'completed');

@@ -208,6 +208,18 @@ fn patches_claim_layout_and_backdrop_once() {
 }
 
 #[test]
+fn text_components_take_the_shared_text_bound() {
+    for kind in ["text", "markdown", "code"] {
+        let component = |text: String| {
+            view(json!({"sites":{"sidebar":{"components":[
+                {"type":kind,"id":"body","label":"Body","text":text}]}}}))
+        };
+        assert!(component("é".repeat(MOD_TEXT_BYTES / 2)).is_ok(), "{kind}");
+        assert!(component("x".repeat(MOD_TEXT_BYTES + 1)).is_err(), "{kind}");
+    }
+}
+
+#[test]
 fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
     assert!(view(json!({"surface_styles":{"approval":{"border":"#888888"}}})).is_ok());
     assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());

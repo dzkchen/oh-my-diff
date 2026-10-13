@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "game_input",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "MIT",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/examples"
+  },
+  "capabilities": [
+    "terminal",
+    "store"
+  ],
+  "compatibility": {
+    "required_features": [
+      "terminal_components_v1",
+      "component_modules_v1"
+    ]
+  }
+}
