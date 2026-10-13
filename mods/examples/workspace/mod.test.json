@@ -9,11 +9,11 @@
       }}}
     ],
     "workspace.transaction": [
-      {"result": {"files": {"src/old.ts": null, "src/new.ts": "old-sha", "src/index.ts": "updated-sha"}}}
+      {"result": {"files": {"src/old.ts": null, "src/new.ts": "old-sha", "src/index.ts": "updated-sha"}, "backup": null}}
     ]
   },
   "steps": [
     {"type": "event", "event": "workspace_change", "payload": {"repository": "/repo", "call_id": "a", "source": "tool", "changes": [{"path": "src/index.ts", "before": "index-sha", "after": "updated-sha"}], "status": "observed"}},
-    {"type": "invoke", "mod": "workspace_author", "event": "tool", "name": "move", "payload": {"old_path": "src/old.ts", "new_path": "src/new.ts", "rewrites": {"src/index.ts": "export * from './new';\n"}}, "expect": {"files": {"src/old.ts": null, "src/new.ts": "old-sha", "src/index.ts": "updated-sha"}}}
+    {"type": "invoke", "mod": "workspace_author", "event": "tool", "name": "move", "payload": {"old_path": "src/old.ts", "new_path": "src/new.ts", "rewrites": {"src/index.ts": "export * from './new';\n"}}, "expect": {"files": {"src/old.ts": null, "src/new.ts": "old-sha", "src/index.ts": "updated-sha"}, "backup": null}}
   ]
 }

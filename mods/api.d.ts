@@ -288,7 +288,7 @@ export type ExecResult = { exit_code: number | null; signal: string | null; stdo
 export type ExecGuard = { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdout_sha256: string };
 export type Fingerprint = string | { size: number; mtime_ms: number } | null;
 export type FileStat = { kind: 'file' | 'dir' | 'symlink'; size: number; mtime_ms: number; sha256?: string };
-export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: string };
+export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: number };
 export type StoreScope = 'repository' | 'user' | 'thread';
 
 export type ContractRequirement = { receipt: string; producer?: 'any' | 'lead' | 'separate_agent' | 'host' | 'integration'; bind?: ('candidate' | 'acceptance')[]; blocking_findings?: 'reject' | 'allow' };
