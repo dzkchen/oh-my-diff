@@ -157,12 +157,69 @@ pub type SessionDispatcher = Arc<
         + Sync,
 >;
 
-static SESSION_DISPATCHER: Mutex<Option<SessionDispatcher>> = Mutex::new(None);
+static SESSION_DISPATCHER: Mutex<Option<(Arc<()>, Option<SessionDispatcher>)>> = Mutex::new(None);
+
+pub struct SessionRegistration(Arc<()>);
+
+impl SessionRegistration {
+    pub fn install(&self, dispatcher: SessionDispatcher) -> std::io::Result<()> {
+        let mut installed = SESSION_DISPATCHER.lock().map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
+        match installed.as_mut() {
+            Some((owner, slot)) if Arc::ptr_eq(owner, &self.0) && slot.is_none() => {
+                *slot = Some(dispatcher);
+                Ok(())
+            }
+            _ => Err(std::io::Error::other("host_installation_stale")),
+        }
+    }
+}
+
+impl Drop for SessionRegistration {
+    fn drop(&mut self) {
+        let mut installed = SESSION_DISPATCHER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if installed.as_ref().is_some_and(|(owner, _)| Arc::ptr_eq(owner, &self.0)) {
+            *installed = None;
+        }
+    }
+}
 
 /// Lets callbacks outside the session (terminal commands) reach the session's model operations.
-pub fn install_session_dispatcher(dispatcher: SessionDispatcher) {
-    if let Ok(mut installed) = SESSION_DISPATCHER.lock() {
-        *installed = Some(dispatcher);
+pub fn install_session_dispatcher(dispatcher: SessionDispatcher) -> std::io::Result<SessionRegistration> {
+    let registration = reserve_session_dispatcher()?;
+    registration.install(dispatcher)?;
+    Ok(registration)
+}
+
+pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
+    let mut installed = SESSION_DISPATCHER.lock().map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
+    if installed.is_some() {
+        return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "host_already_installed"));
+    }
+    let owner = Arc::new(());
+    *installed = Some((owner.clone(), None));
+    Ok(SessionRegistration(owner))
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+
+    #[test]
+    fn singleton_rejects_replacement_and_stale_teardown() {
+        let dispatcher = || Arc::new(|_: &str, _: &str, _: Option<&str>, _: Option<&Value>, _: crate::ModHostCall, _: &dyn Fn() -> bool| Ok(Value::Null)) as SessionDispatcher;
+        let pending = reserve_session_dispatcher().unwrap();
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(pending);
+        let first = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists));
+        let stale = SessionRegistration(first.0.clone());
+        drop(first);
+        let second = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(stale.install(dispatcher()).is_err());
+        drop(stale);
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(second);
+        assert!(install_session_dispatcher(dispatcher()).is_ok());
     }
 }
 
@@ -177,7 +234,7 @@ pub fn session_call(
     let dispatcher = SESSION_DISPATCHER
         .lock()
         .ok()
-        .and_then(|installed| installed.clone())
+        .and_then(|installed| installed.as_ref().and_then(|(_, dispatcher)| dispatcher.clone()))
         .ok_or_else(|| {
             std::io::Error::other("host_operation_unavailable: no session in this process")
         })?;

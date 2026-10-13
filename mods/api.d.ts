@@ -592,6 +592,7 @@ export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readon
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
 export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+/** Callback completion rejects cancelled or stale authority before committing state; see REFERENCE.md. */
 export interface ModAPI {
   readonly version: '0.2.0-experimental.5';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
@@ -627,7 +628,7 @@ export interface ModAPI {
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
-  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */
+  /** Experimental, terminal capability: 65,536 UTF-8 bytes of JSON.stringify output, no lone surrogates; only commands and component events write. */
   readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;

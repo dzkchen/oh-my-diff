@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,53 @@ PATCH_DIRECTORY = "runtime/patches"
 PATCH_MIRRORS = ("codex-rs/omd/", "codex-rs/ext/omd/")
 SURFACES = ("MOD_HOST_FEATURES", "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS",
             "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")
+FORBIDDEN_DEPENDENCIES = {
+    "omd": {"codex-omd-extension", "codex-core", "codex-tui", "codex-app-server"},
+    "native": {"codex-tui", "codex-app-server"},
+}
+
+
+def dependencies(root):
+    findings = []
+    inherited = {}
+    workspace = root / "Cargo.toml"
+    if workspace.exists():
+        inherited.update(tomllib.loads(workspace.read_text()).get("workspace", {}).get("dependencies", {}))
+    for patch in (root / PATCH_DIRECTORY).glob("*.patch"):
+        path = None
+        declarations = []
+        for line in patch.read_text().splitlines():
+            if line.startswith("diff --git"):
+                path = None
+            if line.startswith("+++ b/"):
+                path = line[6:]
+            elif path == "codex-rs/Cargo.toml" and line[:1] in ("+", " "):
+                declarations.append(line[1:])
+        text = "\n".join(declarations)
+        for match in re.finditer(r'(?m)^[\w".-]+\s*=\s*\{[^}]*\}', text):
+            values = tomllib.loads(match.group())
+            inherited.update({name: value for name, value in values.items()
+                              if isinstance(value, dict) and "package" in value})
+        for match in re.finditer(r'(?m)^\[workspace\.dependencies\.[^\]\n]+\][^\[]*', text):
+            inherited.update(tomllib.loads(match.group())["workspace"]["dependencies"])
+    for directory, forbidden in FORBIDDEN_DEPENDENCIES.items():
+        path = root / "runtime" / directory / "Cargo.toml"
+        if not path.exists():
+            continue
+        text = path.read_text()
+        manifest = tomllib.loads(text)
+        scopes = [manifest, *manifest.get("target", {}).values()]
+        for scope in scopes:
+            for section in ("dependencies", "build-dependencies", "dev-dependencies"):
+                for alias, spec in scope.get(section, {}).items():
+                    if isinstance(spec, dict) and spec.get("workspace"):
+                        spec = inherited.get(alias, spec)
+                    package = spec.get("package", alias) if isinstance(spec, dict) else alias
+                    if package in forbidden:
+                        findings.append({"path": str(path.relative_to(root)),
+                                         "line": 1, "surface": "dependency",
+                                         "name": package, "feature": directory})
+    return findings
 
 
 def feature(name):
@@ -55,6 +103,7 @@ def inspect(root):
     findings.extend(literals(root))
     findings.extend(runner(root))
     findings.extend(first_party(root))
+    findings.extend(dependencies(root))
     return findings
 
 

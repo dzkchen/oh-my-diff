@@ -48,7 +48,7 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
     frozen = json.loads(release.OUTPUT.read_text())
     if source_rebuild:
         for name in set(record) | set(frozen):
-            if name != "artifacts" and record.get(name) != frozen.get(name):
+            if name not in ("artifacts", "build_provenance") and record.get(name) != frozen.get(name):
                 raise ValueError("source package differs from the prebuilt source and profile manifest")
     elif record != frozen:
         raise ValueError("release lock differs from exact artifacts and sources")
@@ -64,7 +64,7 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
             support.atomic_text(payload / "runtime/lean-release.lock.json", expected)
         binaries = payload / "artifacts"
         binaries.mkdir()
-        for name in release.BINARIES + (release.AUTHOR_ARCHIVE,):
+        for name in release.BINARIES + (release.AUTHOR_ARCHIVE, release.build_provenance.RECORD):
             shutil.copy2(artifact_dir / name, binaries / name)
         files = {path.relative_to(payload).as_posix():
                  {"sha256": support.digest(path), "bytes": path.stat().st_size}
@@ -155,16 +155,25 @@ def source_build(args):
         target = Path(args.target_dir).resolve() if args.target_dir else Path(temporary) / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
-        run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
+        arguments = ["build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker",
-            cwd=checkout / "codex-rs", env=environment)
+            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
+        before = release.build_provenance.inputs(checkout, arguments, environment)
+        (target / "release" / release.build_provenance.RECORD).unlink(missing_ok=True)
+        run("cargo", f"+{upstream['rust_toolchain']}", *arguments, cwd=checkout / "codex-rs", env=environment)
+        release.build_provenance.record_build(target / "release", before,
+            release.build_provenance.inputs(checkout, arguments, environment))
+        unsigned = release.build_provenance.verify(target / "release", signed=False, expected_inputs=before)
         artifacts = Path(temporary) / "artifacts"
         artifacts.mkdir()
         for name in release.BINARIES:
             shutil.copy2(target / "release" / name, artifacts / name)
+        if release.build_provenance.hashes(artifacts) != unsigned["unsigned"]:
+            raise ValueError("release artifacts changed during copying")
+        for name in release.BINARIES:
             if name in release.HARDENED:
                 release.sign(artifacts / name)
+        release.build_provenance.record_signing(artifacts, unsigned)
         shutil.copy2(args.author_archive, artifacts / release.AUTHOR_ARCHIVE)
         archive = args.output_archive.resolve() if args.output_archive else Path(temporary) / "package.tar.xz"
         packed = archive_payload(artifacts, archive, source_rebuild=True)

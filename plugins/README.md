@@ -4,6 +4,12 @@ The bundled `oh-my-diff` marketplace (`plugins/bundled/oh-my-diff`) contains
 three Codex plugins. The OMD+ package stages all three as inert source
 packages. Staging a plugin does not install or enable it in Codex.
 
+`release-files.json` declares every bundled release file relative to the
+marketplace directory. Update this list deliberately when adding or removing
+release sources, then regenerate the plugin lock. Unlisted scratch files,
+dependencies and build outputs do not enter the package. Declared files must
+exist and cannot be symlinks.
+
 Plugins outside this launch collection are not shipped; see the
 [restore and wave note](../LEAN_PROFILES.md).
 

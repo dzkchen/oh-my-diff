@@ -29,6 +29,13 @@ The historical `0.155.1` candidate and private build remain frozen. Verify the
 current host and SDK artifacts with
 `python3 -m scripts.lean_release_lock --artifact-dir /path/to/release`.
 
+Release artifacts require `build-provenance.json`, written by the build workflow
+after a successful build from the verified patch and dependency lock. It binds
+the compiler, build arguments, configuration and unsigned binary hashes to the
+signed binary hashes. Packaging includes and verifies this record. Old binaries
+without a record must be rebuilt; generating a release lock cannot certify them.
+This is a local build record, not an independently signed builder attestation.
+
 To create a checksum-bound prebuilt archive and install either profile locally:
 
 ```sh
