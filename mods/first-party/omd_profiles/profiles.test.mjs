@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter } from './router.mjs';
+import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
 
 const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
@@ -167,9 +167,125 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.equal(anthropic.events.at(-1).response.model, 'claude-served-1');
     assert.equal(anthropic.events.at(-1).response.usage.output_tokens, 5);
     const thought = calls.find(item => item.type === 'reasoning');
-    assert.match(thought.encrypted_content, /^omd-thinking:d:/);
+    assert.match(thought.encrypted_content, /^omd-thinking:[0-9a-f]{16}:/);
     await ask('d/up', `Bearer ${token}`, [input[1], thought, { type: 'custom_tool_call', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' }, { type: 'custom_tool_call_output', call_id: 't1', output: 'ok' }]);
     assert.deepEqual(seen['/anthropic'].body.messages[1].content.slice(0, 2), [{ type: 'thinking', thinking: 'plan', signature: 'sig' }, { type: 'tool_use', id: 't1', name: 'apply_patch', input: { input: '*** Begin Patch' } }]);
+  } finally {
+    child.kill();
+    gateway.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('chat and anthropic requests carry the smaller of the caller and profile output limits', () => {
+  const limits = (body, max_output) => [chatRequest(body, { max_output }).max_tokens, anthropicRequest(body, { max_output }).max_tokens];
+  assert.deepEqual(limits({ max_output_tokens: 17 }, 4096), [17, 17]);
+  assert.deepEqual(limits({ max_output_tokens: 9000 }, 4096), [4096, 4096]);
+  assert.deepEqual(limits({}, 4096), [4096, 4096]);
+  assert.equal('max_tokens' in chatRequest({}, {}), false);
+});
+
+test('chat tool-result images follow the tool messages as image messages while user images stay in place', () => {
+  const png = 'data:image/png;base64,AAAA';
+  const call = id => ({ type: 'function_call', call_id: id, name: 'view', arguments: '{}' });
+  const body = { input: [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'look' }, { type: 'input_image', image_url: png }] },
+    call('a'), call('b'),
+    { type: 'function_call_output', call_id: 'a', output: [{ type: 'input_text', text: 'shot' }, { type: 'input_image', image_url: png }] },
+    { type: 'function_call_output', call_id: 'b', output: 'plain' },
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'seen' }] },
+  ] };
+  const { messages } = chatRequest(body, {});
+  assert.deepEqual(messages.map(message => message.role), ['user', 'assistant', 'tool', 'tool', 'user', 'assistant']);
+  assert.deepEqual(messages[0].content, [{ type: 'text', text: 'look' }, { type: 'image_url', image_url: { url: png } }]);
+  assert.match(messages[2].content, /^shot\n/);
+  assert.equal(messages[3].content, 'plain');
+  assert.deepEqual(messages[4].content, [{ type: 'text', text: 'Image output of tool call a:' }, { type: 'image_url', image_url: { url: png } }]);
+  assert.ok(!JSON.stringify(messages).includes('[image]'));
+});
+
+const replay = (make, events, tools = [{ type: 'function', name: 'exec_command' }, { type: 'custom', name: 'apply_patch' }]) => {
+  const sent = [];
+  const emitter = new Emitter(event => sent.push(event), toolTable({ tools }).reverse, 'response');
+  const feed = make(emitter);
+  events.forEach(feed);
+  return { emitter, sent, types: () => sent.map(event => event.type) };
+};
+const chatCall = (index, id, name, args) => ({ choices: [{ delta: { tool_calls: [{ index, id, function: { name, arguments: args } }] } }] });
+const anthropicCall = (index, id, name, json) => [{ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name } },
+  { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: json } }];
+
+test('output cut off at the limit ends incomplete and never emits a tool call', () => {
+  const chat = replay(chatEvents, [{ choices: [{ delta: { content: 'part' } }] }, chatCall(0, 'c1', 'apply_patch', '{"input":"rm .'), { choices: [{ finish_reason: 'length' }] }]);
+  const anthropic = replay(anthropicEvents, [...anthropicCall(0, 't1', 'exec_command', '{"cmd":"rm'), { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }, { type: 'message_stop' }]);
+  for (const run of [chat, anthropic]) {
+    run.emitter.finish({});
+    assert.ok(!run.types().includes('response.completed'));
+    assert.ok(!run.sent.some(event => event.item?.name));
+    assert.deepEqual(run.sent.at(-1).response.incomplete_details, { reason: 'max_output_tokens' });
+    assert.equal(run.sent.at(-1).type, 'response.incomplete');
+  }
+  assert.equal(chat.sent.find(event => event.item?.type === 'message' && event.type === 'response.output_item.done').item.content[0].text, 'part');
+});
+
+test('a batch with any unparseable tool arguments fails before any call is emitted', () => {
+  const chat = replay(chatEvents, [chatCall(0, 'c1', 'exec_command', '{"cmd":"ls"}'), chatCall(1, 'c2', 'apply_patch', '{"input":"rm .'), { choices: [{ finish_reason: 'tool_calls' }] }]);
+  const anthropic = replay(anthropicEvents, [...anthropicCall(0, 't1', 'exec_command', '{"cmd":"ls"}'), ...anthropicCall(1, 't2', 'exec_command', '{"cmd":'),
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' } }, { type: 'message_stop' }]);
+  for (const run of [chat, anthropic]) {
+    assert.throws(() => run.emitter.finish({}), { code: 'invalid_tool_arguments' });
+    assert.deepEqual(run.types(), ['response.created']);
+  }
+});
+
+test('reasoning from a credential replaced under the same profile name is not sent to the new account', async () => {
+  const seen = [];
+  const gateway = createServer(async (request, response) => {
+    let text = '';
+    for await (const chunk of request) text += chunk;
+    const [, , credential, ...rest] = request.url.split('/');
+    seen.push({ body: JSON.parse(text), credential });
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(sse(rest[0] === 'anthropic' ? [
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
+      { type: 'content_block_stop', index: 0 }, { type: 'message_stop' }]
+      : [{ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs-${credential}`, summary: [], encrypted_content: `enc-${credential}` } },
+        { type: 'response.completed', response: { id: 'r', usage: {} } }]));
+  });
+  const gatewayPort = await listen(gateway);
+  const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
+  const probe = createServer();
+  const port = await listen(probe);
+  await new Promise(resolve => probe.close(resolve));
+  const routePath = join(directory, 'route.json');
+  const table = credential => ({ port, profiles: {
+    'a/up': { name: 'a', protocol: 'responses', url: 'https://up.example/responses', model: 'up-model', credential, max_output: 4096 },
+    'd/up': { name: 'd', protocol: 'anthropic', url: 'https://up.example/anthropic', model: 'up-model', credential, max_output: 4096, reasoning: true } } });
+  writeFileSync(routePath, JSON.stringify(table('cred-1')));
+  const token = 'local-token-'.repeat(4);
+  const child = spawn(process.execPath, [router, 'serve', routePath], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_CREDENTIAL_GATEWAY: `http://127.0.0.1:${gatewayPort}/key` }, stdio: 'ignore' });
+  try {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.ok, () => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const ask = async (model, input, headers = {}) => {
+      const reply = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ model, input, stream: true, prompt_cache_key: model }) });
+      return { events: (await reply.text()).split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))), body: seen.at(-1).body };
+    };
+    const user = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] };
+    const thinking = body => body.messages.flatMap(message => message.content).filter(block => block.type === 'thinking');
+    const reasoning = (await ask('a/up', [user])).events.find(event => event.type === 'response.output_item.done').item;
+    const thought = (await ask('d/up', [user])).events.find(event => event.type === 'response.output_item.done' && event.item.type === 'reasoning').item;
+    assert.equal(thinking((await ask('d/up', [user, thought])).body).length, 1);
+    assert.ok((await ask('a/up', [user, reasoning], { 'x-omd-cache-breakpoint': '0:0' })).body.input.some(item => item.type === 'reasoning'));
+    writeFileSync(routePath, JSON.stringify(table('cred-2')));
+    assert.ok(!(await ask('a/up', [user, reasoning], { 'x-omd-cache-breakpoint': '0:0' })).body.input.some(item => item.type === 'reasoning'));
+    assert.ok(!(await ask('a/up', [user, reasoning])).body.input.some(item => item.type === 'reasoning'));
+    assert.equal(thinking((await ask('d/up', [user, thought])).body).length, 0);
   } finally {
     child.kill();
     gateway.close();

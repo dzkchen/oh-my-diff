@@ -34,6 +34,8 @@ DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
+LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
+UNINSTALL_JOURNAL = ".uninstall.json"
 ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
@@ -64,22 +66,30 @@ def sync_sources(manager, store, origin, packages):
     changed = []
     for identifier, package in packages.items():
         target = store / "sources" / identifier
+        # Trusting resets the selection, so the intended one is journaled until it is restored.
+        pending = target.with_name(f".{identifier}.pending.json")
+        selection = selections.get(str(target), {})
         files = {path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()}
-        if files == set(package["files"]) and all(support.digest(target / name) == digest
-                                                  for name, digest in package["files"].items()):
+        current = files == set(package["files"]) and all(support.digest(target / name) == digest
+                                                         for name, digest in package["files"].items())
+        if current and not pending.exists() and selection.get("sha256", package["sha256"]) == package["sha256"]:
             continue
-        staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
-        for leftover in (staged, retired):
-            shutil.rmtree(leftover, ignore_errors=True)
-        shutil.copytree(origin / identifier, staged)
-        if target.is_dir():
-            target.rename(retired)
-        staged.rename(target)
-        shutil.rmtree(retired, ignore_errors=True)
+        if not pending.exists():
+            support.atomic_text(pending, json.dumps({"selected": bool(selection.get("selected"))}))
+        if not current:
+            staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
+            for leftover in (staged, retired):
+                shutil.rmtree(leftover, ignore_errors=True)
+            shutil.copytree(origin / identifier, staged)
+            if target.is_dir():
+                target.rename(retired)
+            staged.rename(target)
+            shutil.rmtree(retired, ignore_errors=True)
         invoke(manager, "trust-all", store, json.dumps([{"path": str(target), "sha256": package["sha256"],
                                                          "capabilities": package["capabilities"]}]))
-        if selections.get(str(target), {}).get("selected"):
+        if json.loads(pending.read_text())["selected"]:
             invoke(manager, "enable", store, target)
+        pending.unlink()
         changed.append(identifier)
     if changed:
         invoke(manager, "reload", store)
@@ -207,18 +217,15 @@ def check(record, bin_dir):
                            (manager, record["manager"]["sha256"])):
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed artifact changed: {path}")
-    launcher = bin_dir / "codex"
-    if launcher.is_symlink() or not launcher.is_file() or support.digest(launcher) != record["activation"]["sha256"]:
-        raise ValueError("managed launcher is absent or modified")
-    if support.digest(launcher) != hashlib.sha256(selected_text(record).encode()).hexdigest():
+    for name, expected in launchers(record).items():
+        if not ours(bin_dir / name, expected):
+            raise ValueError(f"managed launcher is absent or modified: {name}")
+    if support.digest(bin_dir / "codex") != hashlib.sha256(selected_text(record).encode()).hexdigest():
         raise ValueError("managed launcher differs from effective settings")
     for name, details in record.get("tools", {}).items():
         tool = Path(details["installed_path"])
         if not tool.is_file() or support.digest(tool) != details["sha256"]:
             raise ValueError(f"managed tool changed: {name}")
-        tool_launcher = bin_dir / name
-        if tool_launcher.is_symlink() or not tool_launcher.is_file() or support.digest(tool_launcher) != details["launcher_sha256"]:
-            raise ValueError(f"managed tool launcher changed: {name}")
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -234,20 +241,21 @@ def check(record, bin_dir):
         path = Path(record["prefix"]) / name
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed author package changed: {name}")
-    author_launcher = bin_dir / "omd-mod-author"
-    if (author_launcher.is_symlink() or not author_launcher.is_file()
-            or support.digest(author_launcher) != author["launcher_sha256"]):
-        raise ValueError("managed author launcher changed")
-    management = record["management"]
-    for name, expected in management["files"].items():
+    for name, expected in record["management"]["files"].items():
         path = Path(record["prefix"]) / "management" / name
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed package control changed: {name}")
-    control_launcher = bin_dir / "omd-package"
-    if (control_launcher.is_symlink() or not control_launcher.is_file()
-            or support.digest(control_launcher) != management["launcher_sha256"]):
-        raise ValueError("managed package control launcher changed")
     return binary, manager
+
+
+def launchers(record):
+    return {"codex": record["activation"]["sha256"], "omd-mod-author": record["author"]["launcher_sha256"],
+            "omd-package": record["management"]["launcher_sha256"],
+            **{name: details["launcher_sha256"] for name, details in record.get("tools", {}).items()}}
+
+
+def ours(path, expected):
+    return not path.is_symlink() and path.is_file() and support.digest(path) == expected
 
 
 def status(prefix, bin_dir):
@@ -412,11 +420,7 @@ def install(args):
     prefix, bin_dir, store = paths(args.prefix, args.bin_dir, args.store)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("this candidate installer supports Apple Silicon macOS")
-    if (prefix.exists() or (bin_dir / "codex").exists() or (bin_dir / "codex").is_symlink()
-            or (bin_dir / "omd-mod-author").exists() or (bin_dir / "omd-mod-author").is_symlink()
-            or (bin_dir / "omd").exists() or (bin_dir / "omd").is_symlink()
-            or (bin_dir / "omd-contract").exists() or (bin_dir / "omd-contract").is_symlink()
-            or (bin_dir / "omd-package").exists() or (bin_dir / "omd-package").is_symlink()):
+    if prefix.exists() or any((bin_dir / name).exists() or (bin_dir / name).is_symlink() for name in LAUNCHERS):
         raise ValueError("managed prefix or launcher already exists")
     if store.exists() != args.attach_store:
         raise ValueError("use --attach-store for an existing mod store; omit it for a new store")
@@ -708,11 +712,14 @@ def administrator_policy(prefix, bin_dir, action, source=None):
 
 
 def uninstall(prefix, bin_dir, keep_broker=False):
-    record = load(prefix)
-    check(record, bin_dir)
+    journal = prefix / UNINSTALL_JOURNAL
+    resuming = journal.is_file()
+    record = json.loads(journal.read_text()) if resuming else load(prefix)
+    if not resuming:
+        check(record, bin_dir)
     if authority_broker.deployed() and not keep_broker:
         raise ValueError("the authority broker is deployed; run omd-package broker uninstall first")
-    managed = {prefix / "install.json", Path(record["binary"]["installed_path"]),
+    managed = {prefix / "install.json", journal, Path(record["binary"]["installed_path"]),
                Path(record["code_mode_host"]["installed_path"]), Path(record["broker"]["installed_path"]),
                Path(record["manager"]["installed_path"])}
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
@@ -726,8 +733,10 @@ def uninstall(prefix, bin_dir, keep_broker=False):
         managed.add(root / ".agents/plugins/marketplace.json")
         managed.update(root / name for name in bundle["files"])
     actual = {path for path in prefix.rglob("*") if path.is_file() or path.is_symlink()}
-    if actual != managed:
+    if not (actual <= managed if resuming else actual == managed - {journal}):
         raise ValueError("installation prefix contains unmanaged files; move them before uninstall")
+    if resuming:
+        return removed(prefix, bin_dir, record)
     config = Path(record["shared_state"]["codex_home"]) / "config.toml"
     if config.is_file():
         marketplaces = tomllib.loads(config.read_text()).get("marketplaces", {})
@@ -739,14 +748,24 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     if not found:
         raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
     support.binary_identity(found)
-    for name in record.get("tools", {}):
-        (bin_dir / name).unlink()
-    (bin_dir / "omd-package").unlink()
-    (bin_dir / "omd-mod-author").unlink()
-    (bin_dir / "codex").unlink()
-    shutil.rmtree(prefix)
-    return {"uninstalled": True, "upstream": str(support.resolved(found)),
-            "preserved_mod_store": record["store"], "shared_state": record["shared_state"]}
+    support.atomic_text(journal, json.dumps(record))
+    return {**removed(prefix, bin_dir, record), "upstream": str(support.resolved(found))}
+
+
+def removed(prefix, bin_dir, record):
+    # The journal goes last, so an interrupted removal resumes from it; launchers replaced since are kept.
+    journal = prefix / UNINSTALL_JOURNAL
+    for name, expected in launchers(record).items():
+        if ours(bin_dir / name, expected):
+            (bin_dir / name).unlink()
+    for path in prefix.iterdir():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        elif path != journal:
+            path.unlink()
+    journal.unlink()
+    prefix.rmdir()
+    return {"uninstalled": True, "preserved_mod_store": record["store"], "shared_state": record["shared_state"]}
 
 
 def main():

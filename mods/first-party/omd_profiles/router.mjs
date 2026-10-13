@@ -1,5 +1,6 @@
 import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +61,8 @@ export function toolTable(body) {
   return { tools, reverse, name };
 }
 
+const accountOf = profile => createHash('sha256').update(JSON.stringify([profile.name, profile.credential, new URL(profile.url).origin])).digest('hex').slice(0, 16);
+
 const THINKING = 'omd-thinking:';
 // Anthropic thinking blocks ride in a reasoning item's encrypted_content, tagged with the profile that produced them.
 export const sealThinking = (profile, blocks) => `${THINKING}${profile}:${Buffer.from(JSON.stringify(blocks)).toString('base64')}`;
@@ -101,14 +104,24 @@ export function turns(body, profile = null, cache = null) {
   return { system: system.join('\n\n'), systemCache, list, table };
 }
 
+const outputLimit = (body, ceiling) => Math.min(ceiling, Number.isInteger(body.max_output_tokens) && body.max_output_tokens > 0 ? body.max_output_tokens : Infinity);
+
 export function chatRequest(body, profile, cache = null) {
   const { system, systemCache, list, table } = turns(body, null, profile.cache_control ? cache : null);
   const messages = system ? [{ role: 'system', content: systemCache ? [{ type: 'text', text: system, ...ephemeral({ cache: true }) }] : system }] : [];
+  let seen = [];
   for (const turn of list) {
     if (turn.role === 'tool') {
-      for (const result of turn.content) messages.push({ role: 'tool', tool_call_id: result.id, content: result.output.map(part => part.text ?? '[image]').join('\n') });
+      for (const result of turn.content) {
+        const images = result.output.filter(part => part.type === 'image');
+        const text = [...result.output.filter(part => part.type === 'text').map(part => part.text), ...images.length ? [`${images.length} image(s) from this result follow in the next user message`] : []];
+        messages.push({ role: 'tool', tool_call_id: result.id, content: text.join('\n') });
+        if (images.length) seen.push({ role: 'user', content: [{ type: 'text', text: `Image output of tool call ${result.id}:` }, ...images.map(part => ({ type: 'image_url', image_url: { url: part.url } }))] });
+      }
       continue;
     }
+    messages.push(...seen);
+    seen = [];
     const calls = turn.content.filter(part => part.type === 'call').map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } }));
     const content = turn.content.filter(part => part.type !== 'call').map(part => part.type === 'image'
       ? { type: 'image_url', image_url: { url: part.url }, ...ephemeral(part) } : { type: 'text', text: part.text, ...ephemeral(part) });
@@ -121,15 +134,17 @@ export function chatRequest(body, profile, cache = null) {
     const said = content.filter(part => part.type === 'text');
     messages.push({ role: turn.role, content: turn.role === 'assistant' ? text || (said.some(part => part.cache_control) ? said : null) : text ?? content, ...calls.length ? { tool_calls: calls } : {} });
   }
+  messages.push(...seen);
   const effort = body.reasoning?.effort;
   const chatEffort = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' }[effort];
-  return { model: profile.model, messages, stream: true, stream_options: { include_usage: true },
+  const limit = outputLimit(body, profile.max_output ?? Infinity);
+  return { model: profile.model, messages, stream: true, stream_options: { include_usage: true }, ...Number.isFinite(limit) ? { max_tokens: limit } : {},
     ...table.tools.length ? { tools: table.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.schema } })), parallel_tool_calls: body.parallel_tool_calls !== false } : {},
     ...profile.reasoning && chatEffort ? { reasoning_effort: chatEffort } : {} };
 }
 
 export function anthropicRequest(body, profile, cache = null) {
-  const { system: text, systemCache, list, table } = turns(body, profile.reasoning ? profile.name : null, cache);
+  const { system: text, systemCache, list, table } = turns(body, profile.reasoning ? accountOf(profile) : null, cache);
   const system = systemCache ? [{ type: 'text', text, ...ephemeral({ cache: true }) }] : text;
   const messages = [];
   for (const turn of list) {
@@ -145,16 +160,18 @@ export function anthropicRequest(body, profile, cache = null) {
   }
   const effort = body.reasoning?.effort;
   const budget = { minimal: 1024, low: 2048, medium: 8192, high: 16384, xhigh: 24576, max: 32000 }[effort];
-  const max = Math.min(profile.max_output ?? 32000, Number.isInteger(body.max_output_tokens) && body.max_output_tokens > 0 ? body.max_output_tokens : Infinity);
+  const max = outputLimit(body, profile.max_output ?? 32000);
   return { model: profile.model, max_tokens: max, stream: true, messages, ...system ? { system } : {},
     ...table.tools.length ? { tools: table.tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.schema })) } : {},
     ...profile.reasoning && budget && max > 2048 ? { thinking: { type: 'enabled', budget_tokens: Math.min(budget, max - 1024) } } : {} };
 }
 
+const CUT = new Map([['length', 'max_output_tokens'], ['max_tokens', 'max_output_tokens'], ['content_filter', 'content_filter'], ['refusal', 'content_filter']]);
+
 // Emits the Responses stream events Codex consumes from either provider's deltas.
 export class Emitter {
   constructor(send, reverse, id) {
-    Object.assign(this, { send, reverse, id, text: null, reasoning: null, calls: new Map(), usage: null, model: null, thinking: [], sealed: null, done: false });
+    Object.assign(this, { send, reverse, id, stop: null, text: null, reasoning: null, calls: new Map(), usage: null, model: null, thinking: [], sealed: null, done: false });
     send({ type: 'response.created', response: { id } });
   }
   delta(kind, value) {
@@ -174,21 +191,26 @@ export class Emitter {
     const call = this.calls.get(key) ?? { id: '', name: '', args: '' };
     this.calls.set(key, { id: id || call.id, name: name || call.name, args: call.args + (args ?? '') });
   }
+  toolItem(call) {
+    const tool = this.reverse[call.name] ?? { namespace: '', name: call.name, kind: 'function' };
+    let input = {};
+    try { input = call.args.trim() ? JSON.parse(call.args) : {}; } catch { input = null; }
+    if (!plain(input)) throw Object.assign(new Error(`invalid_tool_arguments: the provider sent unparseable arguments for ${tool.name}`), { code: 'invalid_tool_arguments' });
+    return tool.kind === 'custom'
+      ? { type: 'custom_tool_call', id: call.id, call_id: call.id, ...tool.namespace ? { namespace: tool.namespace } : {}, name: tool.name, input: String(input.input ?? '') }
+      : { type: 'function_call', id: call.id, call_id: call.id, ...tool.namespace ? { namespace: tool.namespace } : {}, name: tool.name, arguments: JSON.stringify(input) };
+  }
   finish(usage) {
+    const cut = CUT.get(this.stop);
+    const items = cut ? [] : [...this.calls.values()].map(call => this.toolItem(call));
     const sealed = this.sealed && this.thinking.length ? { encrypted_content: this.sealed(this.thinking) } : {};
     if (this.reasoning || sealed.encrypted_content) this.send({ type: 'response.output_item.done', item: { type: 'reasoning', id: this.reasoning?.id ?? `${this.id}-reasoning`, summary: this.reasoning ? [{ type: 'summary_text', text: this.reasoning.value }] : [], ...sealed } });
     if (this.text) this.send({ type: 'response.output_item.done', item: { type: 'message', id: this.text.id, role: 'assistant', content: [{ type: 'output_text', text: this.text.value }] } });
-    for (const call of this.calls.values()) {
-      const tool = this.reverse[call.name] ?? { namespace: '', name: call.name, kind: 'function' };
-      let input = {};
-      try { input = call.args.trim() ? JSON.parse(call.args) : {}; } catch { input = { input: call.args }; }
-      const item = tool.kind === 'custom'
-        ? { type: 'custom_tool_call', id: call.id, call_id: call.id, ...tool.namespace ? { namespace: tool.namespace } : {}, name: tool.name, input: String(input.input ?? '') }
-        : { type: 'function_call', id: call.id, call_id: call.id, ...tool.namespace ? { namespace: tool.namespace } : {}, name: tool.name, arguments: JSON.stringify(input) };
+    for (const item of items) {
       this.send({ type: 'response.output_item.added', item });
       this.send({ type: 'response.output_item.done', item });
     }
-    this.send({ type: 'response.completed', response: { id: this.id, ...this.model ? { model: this.model } : {}, usage } });
+    this.send({ type: cut ? 'response.incomplete' : 'response.completed', response: { id: this.id, ...this.model ? { model: this.model } : {}, ...cut ? { incomplete_details: { reason: cut } } : {}, usage } });
   }
 }
 
@@ -211,6 +233,7 @@ export function chatEvents(emitter) {
   return event => {
     if (event.error) throw Object.assign(new Error(event.error.message ?? 'chat_stream_error'), { code: event.error.code ?? event.error.type });
     if (event.done || event.choices?.[0]?.finish_reason) emitter.done = true;
+    emitter.stop = event.choices?.[0]?.finish_reason ?? emitter.stop;
     const choice = event.choices?.[0]?.delta ?? {};
     emitter.delta('reasoning', choice.reasoning_content ?? choice.reasoning);
     emitter.delta('text', choice.content);
@@ -256,6 +279,7 @@ export function anthropicEvents(emitter) {
       if (event.delta?.type === 'input_json_delta') emitter.call(event.index, { args: event.delta.partial_json });
     }
     if (event.type === 'message_delta') {
+      emitter.stop = event.delta?.stop_reason ?? emitter.stop;
       usage.output = event.usage?.output_tokens ?? usage.output;
       native = { ...native, ...event.usage };
     }
@@ -293,7 +317,7 @@ export async function forward(body, profile, inbound, response, signal, owner = 
     const upstream = await post(url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
     response.writeHead(upstream.statusCode, Object.fromEntries(Object.entries(upstream.headers).filter(([key]) => !['transfer-encoding', 'connection', 'content-length'].includes(key))));
     const learn = /^text\/event-stream/.test(upstream.headers['content-type'] ?? '')
-      && frames(event => event?.type === 'response.output_item.done' && event.item?.type === 'reasoning' && remember(owner, identity(event.item), profile.name), lenient);
+      && frames(event => event?.type === 'response.output_item.done' && event.item?.type === 'reasoning' && remember(owner, identity(event.item), accountOf(profile)), lenient);
     for await (const chunk of upstream) {
       response.write(chunk);
       if (learn) learn(chunk);
@@ -314,7 +338,7 @@ export async function forward(body, profile, inbound, response, signal, owner = 
   }
   response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
   const emitter = new Emitter(event => response.write(`data: ${JSON.stringify(event)}\n\n`), toolTable(body).reverse, `omd-${profile.name}-${Date.now()}`);
-  if (anthropic && profile.reasoning) emitter.sealed = blocks => sealThinking(profile.name, blocks);
+  if (anthropic && profile.reasoning) emitter.sealed = blocks => sealThinking(accountOf(profile), blocks);
   const feed = frames(anthropic ? anthropicEvents(emitter) : chatEvents(emitter));
   for await (const chunk of upstream) feed(chunk);
   if (!emitter.done) throw Object.assign(new Error('upstream_stream_incomplete: the provider closed the stream before finishing'), { code: 'upstream_stream_incomplete' });
@@ -336,7 +360,8 @@ function remember(owner, id, name) {
 // A cache-marked request keeps its item order, so foreign reasoning is dropped and the breakpoint item index follows (forks bring the lead's history to another account).
 export function scrub(body, profile, header, owner) {
   const input = body.input ?? [];
-  const keep = input.map(item => item?.type !== 'reasoning' || (owner.get(identity(item)) ?? profile.name) === profile.name);
+  const account = accountOf(profile);
+  const keep = input.map(item => item?.type !== 'reasoning' || (owner.get(identity(item)) ?? account) === account);
   if (keep.every(Boolean)) return { body, header };
   const at = breakpoint(header);
   return { body: { ...body, input: input.filter((_, index) => keep[index]) }, header: at ? `${keep.slice(0, at[0]).filter(Boolean).length}:${at[1]}` : header };
@@ -346,8 +371,9 @@ export function scrub(body, profile, header, owner) {
 export function prepare(body, profile, last, foreign = new Map()) {
   const key = body.prompt_cache_key;
   const reasoning = (body.input ?? []).filter(item => item?.type === 'reasoning');
-  if (key && last.has(key) && last.get(key) !== profile.name) foreign.set(key, new Set([...foreign.get(key) ?? [], ...reasoning.map(identity)]));
-  if (key) last.set(key, profile.name);
+  const account = accountOf(profile);
+  if (key && last.has(key) && last.get(key) !== account) foreign.set(key, new Set([...foreign.get(key) ?? [], ...reasoning.map(identity)]));
+  if (key) last.set(key, account);
   const dropped = key ? foreign.get(key) : null;
   return dropped?.size ? { ...body, input: body.input.filter(item => item?.type !== 'reasoning' || !dropped.has(identity(item))) } : body;
 }

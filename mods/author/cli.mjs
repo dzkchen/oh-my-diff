@@ -252,14 +252,17 @@ function jsxSources(directory, folder = '') {
 function compileJsx(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return;
-  let ts;
+  const ts = typescript(directory);
+  for (const source of sources) compileJsxFile(ts, directory, source);
+}
+
+function typescript(directory) {
   try {
-    ts = createRequire(join(directory, 'package.json'))('typescript');
+    return createRequire(join(directory, 'package.json'))('typescript');
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
     throw error;
   }
-  for (const source of sources) compileJsxFile(ts, directory, source);
 }
 
 function compileJsxFile(ts, directory, source) {
@@ -301,8 +304,12 @@ function checkProject(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
   // TypeScript drops a .tsx from a program that also lists its generated .ts, so check the sources rather than their output.
+  const ts = typescript(directory);
+  const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
+  const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
+  const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
   const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files: sources }));
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }));
   try {
     command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
   } finally {

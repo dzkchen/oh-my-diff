@@ -104,7 +104,10 @@ def checked_extract(archive_path, expected, destination):
         if any(item.size > MAX_MEMBER_BYTES for item in members):
             raise ValueError("prebuilt package member exceeds byte limit")
         archive.extractall(destination, filter="data")
-    payload = destination / "payload"
+    return verified_payload(destination / "payload")
+
+
+def verified_payload(payload):
     manifest = json.loads((payload / "package-manifest.json").read_text())
     actual = {path.relative_to(payload).as_posix() for path in payload.rglob("*") if path.is_file()}
     expected_files = manifest["files"]
@@ -118,28 +121,32 @@ def checked_extract(archive_path, expected, destination):
 
 
 def install_archive(args):
-    archive_path = Path(args.archive).resolve()
+    if getattr(args, "payload", None):
+        return install_payload(verified_payload(Path(args.payload).resolve()), args)
+    with tempfile.TemporaryDirectory(prefix="omd-package-install-", dir="/private/tmp") as temporary:
+        install_payload(checked_extract(Path(args.archive).resolve(), args.sha256, Path(temporary)), args)
+
+
+def install_payload(payload, args):
     upstream = support.binary_identity(args.upstream)
     expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
     if not support.compatible_upstream(upstream["version"], expected_version):
         raise ValueError("upstream fallback does not match the package's Codex minor version")
-    with tempfile.TemporaryDirectory(prefix="omd-package-install-", dir="/private/tmp") as temporary:
-        payload = checked_extract(archive_path, args.sha256, Path(temporary))
-        run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
-            "--package-mode",
-            cwd=payload)
-        command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
-                   "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
-                   "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
-                   "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
-                   "--store", args.store]
-        if args.attach_store:
-            command.append("--attach-store")
-        if getattr(args, "previous", None):
-            command += ["--previous", args.previous]
-        environment = os.environ.copy()
-        environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
-        run(*command, cwd=payload, env=environment)
+    run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
+        "--package-mode",
+        cwd=payload)
+    command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
+               "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
+               "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
+               "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
+               "--store", args.store]
+    if args.attach_store:
+        command.append("--attach-store")
+    if getattr(args, "previous", None):
+        command += ["--previous", args.previous]
+    environment = os.environ.copy()
+    environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
+    run(*command, cwd=payload, env=environment)
 
 
 def source_build(args):
@@ -191,8 +198,10 @@ def main():
     pack.add_argument("--artifact-dir", type=Path, required=True)
     pack.add_argument("--output", type=Path, required=True)
     install = commands.add_parser("install")
-    install.add_argument("--archive", type=Path, required=True)
-    install.add_argument("--sha256", required=True)
+    source_group = install.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--archive", type=Path)
+    source_group.add_argument("--payload", type=Path, help=argparse.SUPPRESS)
+    install.add_argument("--sha256")
     install.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     source = commands.add_parser("source-install")
     source.add_argument("--repository", required=True)
@@ -209,6 +218,8 @@ def main():
         command.add_argument("--node", type=Path, required=True)
         command.add_argument("--attach-store", action="store_true")
     args = parser.parse_args()
+    if args.command == "install" and args.archive and not args.sha256:
+        parser.error("--archive needs --sha256")
     if args.command == "pack":
         print(json.dumps(archive_payload(args.artifact_dir.resolve(), args.output), indent=2))
     elif args.command == "install":
