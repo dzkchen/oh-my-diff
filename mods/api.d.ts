@@ -288,7 +288,7 @@ export type ExecResult = { exit_code: number | null; signal: string | null; stdo
 export type ExecGuard = { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdout_sha256: string };
 export type Fingerprint = string | { size: number; mtime_ms: number } | null;
 export type FileStat = { kind: 'file' | 'dir' | 'symlink'; size: number; mtime_ms: number; sha256?: string };
-export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: string };
+export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: number };
 export type StoreScope = 'repository' | 'user' | 'thread';
 
 export type ContractRequirement = { receipt: string; producer?: 'any' | 'lead' | 'separate_agent' | 'host' | 'integration'; bind?: ('candidate' | 'acceptance')[]; blocking_findings?: 'reject' | 'allow' };
@@ -351,6 +351,7 @@ export interface HostOperations {
   'workspace.transaction': { arguments: { expected: Record<string, Fingerprint>; writes?: Record<string, string>; deletes?: string[]; renames?: { old: string; new: string }[]; backup?: boolean; root?: string }; result: { files: Record<string, string | null>; backup: ResourceRef | null } };
   'http.request': { arguments: HttpRequest & { max_bytes?: number }; result: HttpResponse & { truncated: boolean; bytes: number; body?: string; body_base64?: string } };
   'http.open': { arguments: HttpRequest; result: HttpResponse & { handle: number } };
+  /** Dropping an in-flight read closes the stream and releases its quota slot. */
   'http.read': { arguments: { handle: number; max_bytes?: number; wait_ms?: number }; result: { done: boolean; bytes: number; data?: string; data_base64?: string } };
   'http.close': { arguments: { handle: number }; result: { closed: true } };
   'mcp.connect': { arguments: { server: string }; result: { server: string; connected: true; tool_prefix: string } };
@@ -409,6 +410,7 @@ export interface HostOperations {
   'app.routes': { arguments: null; result: AppRoute[] };
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
+  /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
   /** Require timers_16ms_v1 for delays below 1000 ms. */
   'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
@@ -467,6 +469,7 @@ export interface HostOperations {
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
+  /** Requires agents, sessions and sessions_tools because the snapshot includes tool payloads. */
   'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
   'session.info': { arguments: null; result: SessionInfo };
   'ledger.settle': { arguments: { request_id: string; microusd: number; source: string }; result: Json };
@@ -509,6 +512,7 @@ export interface Events {
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
+  /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
   component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
@@ -588,6 +592,7 @@ export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readon
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
 export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+/** Callback completion rejects cancelled or stale authority before committing state; see REFERENCE.md. */
 export interface ModAPI {
   readonly version: '0.2.0-experimental.5';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
@@ -623,7 +628,7 @@ export interface ModAPI {
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
-  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */
+  /** Experimental, terminal capability: 65,536 UTF-8 bytes of JSON.stringify output, no lone surrogates; only commands and component events write. Unchanged authority polling preserves it; explicit reload resets it. */
   readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;

@@ -30,6 +30,32 @@ First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
 raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
 launch; outside authors can use the public client APIs.
 
+## Host lifetime and callback authority
+
+One native host owns the process-wide session dispatcher and client bridge at a
+time. A second live installation is rejected. Stopping the owner releases its
+registrations; teardown from an older registration cannot remove a newer one.
+
+Main, input and persistence runtimes may have different idle snapshots, local
+generation numbers, telemetry and callback failure state. Numeric generations
+are local to a runtime, not a cross-runtime authority token. Each callback uses
+its executing runtime's selected source and grants. Persistence refreshes its own
+runtime and uses that runtime's required-interceptor decision, including failure
+fallback. Required persistence failure withholds text; dropping persistence work
+cancels the callback.
+
+Safety change (2026-10-13): callback admission and completion validate current
+source and authority. Cancellation, disablement, revocation, source replacement
+or a changed executing generation rejects completion before callback state or
+results are accepted. Effects already performed by a host call are not rolled
+back. Authors must not rely on a disabled or replaced callback committing state
+after its host call finishes. Failed-reload transactional restoration is a
+separate contract; retaining an older runtime does not authorize stale callbacks.
+
+Raster producers distinguish retryable, revoked and fatal failures by explicit
+categories, independently of diagnostic wording. Thread-store destination
+conflicts use the native `AlreadyExists` category.
+
 ## API 0.2 host primitives
 
 The host is feature-agnostic: every operation, event and capability below is
@@ -64,10 +90,10 @@ native work.
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `unix_sockets` | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
-| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
+| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions` and `sessions_tools`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
-| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot` and `agents.spawn {parent_history}` (with `sessions`) |
+| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (with `sessions`) |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
@@ -168,7 +194,11 @@ without an unrestricted child process.
   {handle, max_bytes?, wait_ms?}` returns up to 64 KiB (`data` or
   `data_base64`, never splitting a UTF-8 character) and `done`, or
   `http_stream_busy` while another read of the handle runs; `http.close`
-  ends it. A mod holds at most four streams; they close after 60 s idle and at
+  ends it. Dropping an in-flight read closes its stream and releases its slot;
+  later reads return `http_stream_unavailable`. Busy reads do not renew idle
+  time. A mod holds at most four streams, including concurrent successful
+  opens; excess responses are discarded with `http_stream_limit`. Pending
+  requests do not reserve slots. Streams close after 60 s idle and at
   reload, disable, revoke or expiry. Cancelling the callback aborts a request
   in flight (`host_operation_cancelled`); the deadline fails it with
   `http_timeout`.
@@ -440,7 +470,8 @@ by hashes rather than plaintext; reproducing those runs requires the same secret
 most 256 bytes, values 64 KiB, a scope 16 MiB and 4,096 keys; `list` pages
 256 keys and `export {scope?, cursor?}` pages entries in at most 64 KiB, returning
 `{schema, owner, scope, generation, entries, cursor}`. Every record carries
-host-attested provenance `{mod, source_sha256, thread_id, origin, at}`. `reset`
+host-attested provenance `{mod, source_sha256, thread_id, origin, at}` (`at` is
+milliseconds since the Unix epoch). `reset`
 needs the current generation. Outside a session, `omd store export|reset --mod
 ID [--repo PATH] [--store PATH] [--scope repository|user]` exports the complete
 namespace or resets it without running any mod code. `evidence.write
@@ -1386,7 +1417,15 @@ it without timings.
 `events.publish {channel, data, correlation?}` publishes under the caller's
 namespace; subscribers declare channel patterns and receive `channel` events
 (256 events / 1 MiB per subscriber) in the publishing thread. Events whose
-originating thread is gone are dropped. `process.start {notify: ['output','exit']}`
+originating thread is gone are dropped. Sequence numbers are independent per
+publisher/channel. The host retains at most 256 channel counters per publisher
+and 4,096 process-wide; a new channel beyond either limit fails with
+`channel_sequence_limit`, while existing channels remain publishable. On
+publication, counters for a publisher with no successful publication for at
+least 15 minutes and no queued events are reclaimed. Its next publication
+starts at sequence 1. Successful publication with no subscribers still counts
+as activity; rejected publication does not. Unsubscribing alone does not reset
+counters. `process.start {notify: ['output','exit']}`
 delivers coalesced `process_event`s; `exit` fires once, when the leader exits,
 even while a background child keeps the output streams open and more output may
 follow. `workspace.watch {paths, recursive?,
@@ -1668,7 +1707,9 @@ detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
 reduced motion, other protocols and inline viewports use ASCII fallback.
 Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
 Components add `document` (up to 100,000 lines with anchors, selection and
-find), `diff`, `image`, `raster` and `terminal` (a PTY session). An `image`
+find), `diff`, `image`, `raster` and `terminal` (a PTY session). Updating only a
+document's anchors updates activation targets without resetting its cursor,
+selection or scroll, including when source-backed text is unchanged. An `image`
 places a Kitty graphics image in its cells, aspect-fit to the measured cell
 size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
 and hides under dialogs and overlays like text); elsewhere it draws truecolor
@@ -1740,6 +1781,8 @@ something is pending: a mount, new props or size, queued input, or a due
 `every: {ms, tick}` tick (16 ms to 24 h, at most 8 missed ticks caught up;
 `ms` may be a function of the state, and `null` pauses ticks, so a paused
 module costs nothing until input or new props arrive).
+In the terminal, removing a node or changing its owner or module starts a new
+mount. Results, retries and undelivered posts from the previous mount are discarded.
 `key(state, {kind: 'key', key, text})` receives keys while the node, given
 `keys: true`, has focus from a click or Tab (Esc and Ctrl+] return focus;
 pasted text arrives as one event with `key: null`);
@@ -2205,6 +2248,8 @@ stale results are dropped. While the user types arguments to a mod command
 (`api.on` or `replace`), otherwise the exclusive owner does; it returns
 `{items: [{insert}]}` and the list opens only when it has items. A mod can
 therefore complete its own commands without owning `@` mention ranking.
+Accepting an argument choice advances past a separator and keeps completion
+closed until the draft or cursor changes, so the next Enter submits the command.
 
 `api.completion({trigger}, handler)` (capability `composer`,
 `completion_tokens_v1`, experimental) completes arbitrary tokens: `trigger` is
@@ -2215,8 +2260,9 @@ registers at most four during activation. While the token before the cursor
 to the cursor) and returns `{items: [{insert}]}` with the same limits, debounce
 and stale-result dropping as argument completion. The host shows the rows in
 the composer's completion list and, on Tab or Enter, replaces the whole token
-with the selected `insert`. When two mods register the same trigger, the first
-loaded mod keeps it and the other gets a status notice.
+with the selected `insert` and advances past a separator so the accepted token
+does not immediately reopen completion. When two mods register the same trigger,
+the first loaded mod keeps it and the other gets a status notice.
 
 ### Composer drafts and suggestions (`composer_v2`)
 
@@ -2283,14 +2329,20 @@ receives.
 
 When a turn starts, the host reads each `@path` or `@"path with spaces"` of the
 submitted text that names an existing workspace file (at most 16 per turn; a
-leading `./` and trailing punctuation are ignored; picking a file from the `@`
+leading `./` and unquoted trailing punctuation are ignored; quoted paths use
+JSON string escaping and preserve punctuation, quotes and backslashes. An `@`
+inside a quoted path is part of that path. Picking a file from the `@`
 list inserts it in this form, except in a slash command or shell command, which
 get the bare path) and gives the model its contents after the prompt as
 `<mentioned_file><path>…</path>…</mentioned_file>`. Reads use the
-`workspace.read` checks: repository-relative paths without `..`, `.git` or
-symlink components, and the thread's effective read permissions and deny rules.
+`workspace.read` checks: repository-relative paths without `..`, `.git`, backslashes or
+symlink components, and the intersection of the selected turn environment's
+filesystem permissions with the thread's effective read permissions and deny
+rules. Expansion requires exactly one local environment at the thread's
+repository; other environments or working directories skip expansion.
 Each file is read once, in mention order, while the turn's mentioned files
-total at most 256 KiB; a file that fails the checks, does not fit or is not
+total at most 256 KiB of returned UTF-8 bytes, checked again after reading; a
+file that fails the checks, does not fit or is not
 UTF-8 is left to the model's own tools. Before each read,
 `api.intercept('mention', …)` (capability `input`, experimental) receives
 `{thread_id, path}`; handlers may set `path` to another workspace file, which
@@ -2309,7 +2361,7 @@ read-only worker turn. `route` is a configured worker route the mod may use, or
 asks for structured JSON output, `effort` picks the reasoning effort and
 `max_output_tokens` (at most 128,000, never above a paid route's own ceiling)
 is sent on every route, the included subscription too. `model.fork {prompt,
-route?, tools?, …}` (capabilities `agents` and `sessions`) does the same on a
+route?, tools?, …}` (capabilities `agents`, `sessions` and `sessions_tools`) does the same on a
 snapshot of the current conversation: the thread's committed model-visible
 history, with opaque reasoning kept for a same-provider route and left out
 for another provider, on `lead` unless `route` names a worker route. It is
@@ -2668,11 +2720,16 @@ any it refuses.
   do not survive general callbacks. Render hooks retain activation under their
   existing matching-input rules.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
-  `terminal`. Values are bounded to 64 KiB and shared by host instances in the
+  `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
+  `JSON.stringify(value)` output, including quotes, keys and escapes. Strings
+  and object keys must contain valid Unicode scalars (no lone surrogates).
+  The host checks the original serialized bytes before parsing; number
+  reformatting does not change the limit. Values are shared by host instances in the
   same process, store, repository, thread and package identity. Commands and
   component events may write; other callbacks may read. Writes commit only after
   successful validation and cancellation checks, with revision conflicts using
-  the existing receipt-replay rules. State is cleared on reload, revocation,
+  the existing receipt-replay rules. Authority polling with unchanged configuration
+  preserves UI state and command views. State is cleared on explicit reload, revocation,
   package changes and session teardown, and is never written to disk; a reload
   during a command or component event (such as one its own `packages.apply`
   caused) does not cancel it, and its `set` lands on the cleared state, even
@@ -2780,7 +2837,7 @@ test('panel opens', () => {
 ```
 
 - Scenario fields: `clock(ms)` (`virtual_time_ms`), `environment(values)`,
-  `settings(id, values)`, `hostOperations({op: [reply | {error}]})`,
+  `settings(id, values)`, `hostOperations({op: [{result} | {error}]})`,
   `storeMock({get, put, delete})` (ordered `store.*` replies, `null` for a
   missing key), `packages(...paths)`, extra packages (a policy package, a user
   package) trusted in that order before the project, and
@@ -2792,6 +2849,28 @@ test('panel opens', () => {
   parts (queues and packages append, settings and tiers merge, the last value
   of any other field wins) and `runScenario(directory, ...parts)` runs the project and
   returns the engine trace; `calls(trace, operation)` lists its host calls.
+- Mock operation names, arguments and results derive from `HostOperations`.
+  Each reply can include `arguments` for exact JSON matching and `optional: true`
+  for a call that may be absent. Required replies must be consumed; unexpected
+  calls, argument mismatches and unused required replies fail the scenario.
+  Reply queues are ordered per operation. An optional reply with different
+  expected arguments can be skipped to reach the next reply.
+  An explicit queue for a timer or environment operation replaces its virtual
+  implementation; exhausted queues never fall back to simulated behavior.
+  Fixture records must contain exactly one of `result` or `error`.
+  Unexpected-call and argument-mismatch failures remain scenario failures even
+  when the mod catches the operation error. Malformed result fixtures fail
+  before the scenario runs unless explicitly marked unsafe.
+  Every normal mock validates request and result shapes. Shared pure validators
+  additionally check store keys, values and revision syntax, environment inputs
+  and timer inputs. Authority, declarations, persistence, revision conflicts,
+  quotas, filesystem resolution and process/network state require real-host
+  boundary tests; a valid mock cannot prove those behaviors.
+  `unsafeHostOperations({op: [{result, unsafe: {result: true}}]})` deliberately
+  bypasses result validation for negative tests. `unsafe.arguments` separately
+  bypasses request validation. Neither grants runtime authority. Unknown
+  operations still fail in the engine. `unsafeStep({...})` bypasses the SDK's
+  discriminated step type to test malformed scenario input.
 - Steps: `invoke(mod, event, name, payload)`, `emit(event, payload)`,
   `advance(ms)`, `waitUntil(check, until, {everyMs, maxMs})`, `reload()`,
   `mount(mod)`, `key(mod, name)`, `activate(mod, component)`,

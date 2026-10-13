@@ -81,20 +81,27 @@ answers from your mocks. A test file beside `mod.test.json`:
 ```ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { calls, find, hostOperations, invoke, mount, runScenario, state } from '@oh-my-diff/mod-api/testing';
+import { find, invoke, mount, runScenario, state } from '@oh-my-diff/mod-api/testing';
 
 test('count persists and draws', () => {
-  const trace = runScenario('.', hostOperations({ 'exec.run': [{ code: 0, stdout: 'ok', stderr: '' }] }), { steps: [
+  const trace = runScenario('.', { steps: [
     state('my_mod', { value: 41 }),
     invoke('my_mod', 'tool', 'count', {}, { expect: { count: 42 } }),
     state('my_mod', { expect: 42 }),
     mount('my_mod'),
   ] });
   assert.ok(find(trace.steps[3].value, 'counter'));
-  assert.equal(calls(trace, 'exec.run').length, 1);
-  assert.deepEqual(trace.unused_mock_replies, []);
 });
 ```
+
+Mock host calls with typed reply records, for example
+`hostOperations({ 'store.get': [{ arguments: { key: 'theme' }, result: null }] })`.
+Unexpected calls, mismatched arguments and unused replies fail the scenario.
+Mark a reply `optional: true` only when its call is deliberately optional.
+Normal replies validate operation shapes and shared pure request rules;
+state, authority and external effects still need real-host boundary tests.
+Use `unsafeHostOperations` with `unsafe: { result: true }` for a deliberately
+malformed result, or `unsafeStep` for a malformed scenario step.
 
 `state` seeds and then reads the mod's `api.state`; `invoke` runs a tool,
 command or any other event; `mount` returns the terminal view after the host

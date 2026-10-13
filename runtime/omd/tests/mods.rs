@@ -13,6 +13,14 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::TempDir;
 
+#[test]
+fn model_fork_requires_tool_history_authority() {
+    let call = codex_omd::ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"p"}) };
+    assert_eq!(call.capabilities().unwrap(), vec!["agents", "sessions", "sessions_tools"]);
+    let complete = codex_omd::ModHostCall { operation: "model.complete".into(), arguments: json!({"route":"w","prompt":"p"}) };
+    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
+}
+
 fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
     packaged(root, id, id, source, capabilities, &[])
 }
@@ -918,24 +926,6 @@ fn migration_and_rollback_read_state_up_to_the_store_limit() {
 }
 
 #[test]
-fn retired_api_packages_are_rejected_before_trust_or_activation() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let path = package(&root, "retired", "export default () => {}", &[]);
-    for version in 4..=9 {
-        let retired = format!("0.1.0-experimental.{version}");
-        let manifest_path = path.join("mod.json");
-        let mut manifest: Value =
-            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-        manifest["api"] = json!(retired);
-        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let error = ModStore::inspect_package(&path).unwrap_err().to_string();
-        assert!(error.contains(&retired), "{error}");
-        assert!(error.contains(MOD_API_VERSION), "{error}");
-    }
-}
-
-#[test]
 fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -961,6 +951,10 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
         std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let error = ModStore::inspect_package(&path).unwrap_err().to_string();
         assert!(error.contains(expected), "{field}: {error}");
+        if field == "api" {
+            assert!(error.contains("9.0.0"), "{error}");
+            assert!(error.contains(MOD_API_VERSION), "{error}");
+        }
         assert!(
             error.contains("package") || error.contains("host"),
             "{error}"
@@ -1789,6 +1783,8 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     };
     assert!(invoke(&mut first, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(2));
+    assert!(!first.refresh_guarded(&|| true).unwrap());
+    assert!(!second.refresh_guarded(&|| true).unwrap());
     assert_eq!(invoke(&mut second, "read", Value::Null), 2);
     assert!(first.state("fixture").unwrap().is_null());
     let mut raced = false;
@@ -1812,7 +1808,7 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     assert_eq!(invoke(&mut second, "read", Value::Null), 11);
     store.enable(&path, false).unwrap();
     first.turn_boundary();
-    assert!(invoke(&mut second, "read", Value::Null).is_null());
+    assert!(second.invoke("fixture", second.generation(), "command", "read", Value::Null).is_err());
     store.enable(&path, true).unwrap();
     first.reload().unwrap();
     invoke(&mut first, "write", json!(4));
@@ -1826,6 +1822,10 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     }
     assert_eq!(invoke(&mut second, "read", Value::Null), 5);
     assert_eq!(invoke(&mut first, "read", Value::Null), 5);
+    for value in [json!([1e-7, "a".repeat(65_527)]), json!("界".repeat(21_844) + "aa")] {
+        invoke(&mut first, "write", value.clone());
+        assert_eq!(invoke(&mut second, "read", Value::Null), value);
+    }
     let error = first
         .invoke(
             "fixture",
@@ -2492,6 +2492,14 @@ fn task_scoped_tool_decisions_cannot_select_another_mod_or_hide_unscoped_tools()
 
 #[test]
 fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
+    for capabilities in [vec!["commands", "agents"], vec!["commands", "agents", "sessions"]] {
+        let (temp, _, _) = fixture(
+            "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
+            &capabilities,
+        );
+        let error = activation_error(&temp, "fixture");
+        assert!(error.contains("undeclared_operation_use: model.fork"), "{error}");
+    }
     let (temp, _, _) = fixture(
         "export default api => api.command('status',()=>api.host.call('task.status',null))",
         &["commands"],
@@ -2528,6 +2536,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
+        &["commands", "agents", "sessions", "sessions_tools"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
         &["commands", "agents", "sessions", "sessions_tools"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
@@ -2673,7 +2686,7 @@ fn native_discovery_prefers_project_packages_without_trust() {
 }
 
 #[test]
-fn disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation() {
+fn disabling_during_native_work_rejects_completion_and_next_generation() {
     let (temp, store, path) = fixture(
         "export default api => api.command('run', () => api.host.call('task.status',null))",
         &["commands", "agents"],
@@ -2693,8 +2706,8 @@ fn disabling_during_native_work_preserves_inflight_source_and_revokes_next_gener
                 Ok(json!({"completed":true}))
             },
         )
-        .unwrap();
-    assert_eq!(result, json!({"completed":true}));
+        .unwrap_err();
+    assert!(result.to_string().contains("callback_authority_changed"));
     runtime.turn_boundary();
     assert!(
         runtime
@@ -3296,7 +3309,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     let harness = package(
         &root,
         "harness",
-        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('receipts.submit',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.on('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
+        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('receipts.submit',{kind:'check',candidate_sha256:'candidate',outcome:'pass',evidence:{reference:'fixture',sha256:'hash'}}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.on('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
         &[
             "tools",
             "commands",
@@ -3350,16 +3363,16 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
         "schema":1,
         "virtual_time_ms":1000,
         "host_operations":{
-            "task.status":[{"result":{"status":"running"}}],
+            "task.status":[{"result":{"ledger":{"thread_id":"thread","cwd":"/fixture","cost":null},"limits":{},"worker_limits":{}}}],
             "agents.spawn":[{"result":{"handle":"agent-1","route":"sol","permissions":"read_only"}}],
-            "agents.wait":[{"result":{"status":"completed","text":"done","consumed":true}}],
-            "receipts.submit":[{"result":{"saved":true}}]
+            "agents.wait":[{"result":{"status":"completed","text":"done","consumed":true,"evidence":{"reference":"fixture","sha256":"hash"}}}],
+            "receipts.submit":[{"result":{"kind":"check","candidate_sha256":"candidate","acceptance_sha256":null,"outcome":"pass","evidence":{"reference":"fixture","sha256":"hash"},"producer":{"kind":"lead","handle":null},"findings":[],"submitted_by":"harness","at":0}}]
         },
         "steps":[
             {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1000},
             {"type":"advance_time","ms":25,"expect":{"now_ms":1025}},
             {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1025},
-            {"type":"invoke","mod":"harness","event":"tool","name":"exercise","expect":{"task":{"status":"running"},"agent":{"handle":"agent-1","route":"sol","permissions":"read_only"},"result":{"status":"completed","text":"done","consumed":true},"checkpoint":{"saved":true}}},
+            {"type":"invoke","mod":"harness","event":"tool","name":"exercise","expect":{"task":{"ledger":{"thread_id":"thread","cwd":"/fixture","cost":null},"limits":{},"worker_limits":{}},"agent":{"handle":"agent-1","route":"sol","permissions":"read_only"},"result":{"status":"completed","text":"done","consumed":true,"evidence":{"reference":"fixture","sha256":"hash"}},"checkpoint":{"kind":"check","candidate_sha256":"candidate","acceptance_sha256":null,"outcome":"pass","evidence":{"reference":"fixture","sha256":"hash"},"producer":{"kind":"lead","handle":null},"findings":[],"submitted_by":"harness","at":0}}},
             {"type":"tool_outcome","payload":{"call_id":"call-1","agent_id":null,"tool":"exercise","outcome":{"status":"ok"}},"expect":[{"mod":"harness","value":null}]},
             {"type":"agent","payload":{"phase":"end","agent":{"agent_id":"agent-1","origin":"mod","role":"worker","status":"completed"}},"expect":[{"mod":"harness","value":null}]},
             {"type":"intercept","surface":"response_stream","payload":{"kind":"text","index":0,"text":"hello","protected":false},"core":[{"value":{"chunks":[{"kind":"text","index":0,"text":"HELLO","protected":false}]}}]},
@@ -3412,7 +3425,7 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
                     {"result": {"files": {"src/a.ts": {"kind":"file","size":1,"mtime_ms":0,"sha256":"abc"}}}},
                     {"result": {"files": {"src/deep/package.json": null, "src/package.json": null, "package.json": file}}}
                 ],
-                "model.complete": [{"result": {"status": "completed", "text": "{\"label\":\"yes\"}"}}]
+                "model.complete": [{"result": {"status": "completed", "text": "{\"label\":\"yes\"}", "content": [], "tool_calls": [], "stop_reason": null, "error": null, "route": "worker", "model": null, "request_ids": [], "usage": {}, "cache": {"read_tokens": null, "write_tokens": null}, "cost": {"microusd": null, "basis": "unknown"}, "timing": {"duration_ms": 0, "first_event_ms": null}}}]
             },
             "steps": [
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "start"},
@@ -3422,7 +3435,7 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
                     "canonical": {"path": "src/a.ts", "kind": "file", "sha256": "abc"}, "ancestors": [{"path": "package.json", "kind": "file"}]}},
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "label", "expect": "yes"},
                 {"type": "invoke", "mod": "sdk", "event": "command", "name": "usage"},
-                {"type": "invoke", "mod": "sdk", "event": "command", "name": "invalid_timer", "expect_error": "timer_delay_invalid"}
+                {"type": "invoke", "mod": "sdk", "event": "command", "name": "invalid_timer", "expect_error": "timer_invalid"}
             ]
         }))
         .unwrap();
@@ -4029,13 +4042,13 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
 }
 
 #[test]
-fn retired_git_host_operations_are_rejected() {
+fn unsupported_host_operations_are_rejected_before_activation() {
     let source =
-        "export default api => api.command('probe', () => api.host.call('git.status', null))";
+        "export default api => api.command('probe', () => api.host.call('future.unsupported', null))";
     let (temp, _, _) = fixture(source, &["commands"]);
     let error = activation_error(&temp, "fixture");
     assert!(
-        error.contains("unsupported_host_operation: git.status"),
+        error.contains("unsupported_host_operation: future.unsupported"),
         "{error}"
     );
 }
@@ -4779,7 +4792,11 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
         Ok(json!({"output":"ran","success":true}))
     })
     .unwrap();
-    assert_eq!(drained.result["output"], "ran x y");
+    assert_eq!(drained.result["output"], "ran x");
+    assert!(drained.trace.iter().any(|entry| entry["mod"] == "y"
+        && entry["reason"] == "callback_authority_changed"));
+    assert!(!drained.trace.iter().any(|entry| entry["mod"] == "x" && entry["reason"].is_string()));
+    runtime.lock().unwrap().reload().unwrap();
     assert_eq!(
         dispatch(&|| true, &mut { ran }).unwrap().result["output"],
         "ran x y2"
@@ -5198,7 +5215,7 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
     assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
     assert_eq!(persist(&["rename"]), ["rename"]);
     let entry = json!({"kind": "message", "role": "user", "call_id": null, "text": "sk-live"});
-    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry])
+    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry], || true)
         .unwrap()
         .unwrap();
     assert_eq!(rewrite.texts, ["[redacted]"]);
@@ -5749,4 +5766,23 @@ fn component_input_maps_keys_pastes_and_pointer_events() {
         codex_omd::component_events(&pointer),
         vec![json!({"kind": "pointer", "column": 2, "row": 1, "action": "down", "button": "left"})]
     );
+}
+
+#[test]
+fn offline_mock_boundary_cannot_hide_unexpected_calls_with_try_call() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let harness = package(&root, "strict_mock", "export default api => api.command('read', () => { api.host.tryCall('store.get', {key:'k'}); return null; })", &["commands", "store"]);
+    trust(&store, &harness, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let step = json!({"type":"invoke","mod":"strict_mock","event":"command","name":"read","expect":null});
+    let error = runtime.offline_test(json!({"schema":1,"steps":[step]})).unwrap_err().to_string();
+    assert!(error.contains("offline_mock_violation"), "{error}");
+    let error = runtime.offline_test(json!({"schema":1,"host_operations":{"store.get":[{"arguments":{"key":"other"},"result":null}]},"steps":[step]})).unwrap_err().to_string();
+    assert!(error.contains("offline_mock_arguments_mismatch"), "{error}");
+    let error = runtime.offline_test(json!({"schema":1,"host_operations":{"store.get":[{"result":42}]},"steps":[step]})).unwrap_err().to_string();
+    assert!(error.contains("offline_invalid_result"), "{error}");
+    let error = runtime.offline_test(json!({"schema":1,"host_operations":{"store.get":[{"result":null}]},"steps":[]})).unwrap_err().to_string();
+    assert!(error.contains("offline_unused_mock_replies"), "{error}");
 }

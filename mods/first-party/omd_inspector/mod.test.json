@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "host_operations": {
-    "task.status": [{ "result": { "ledger": { "thread_id": "fixture-thread", "cost": null }, "limits": { "turns": 3 }, "worker_limits": null } }],
-    "contract.status": [{ "result": { "status": "none" } }]
+    "task.status": [{ "result": { "ledger": { "thread_id": "fixture-thread", "cwd": "/repo", "cost": null }, "limits": { "turns": 3 }, "worker_limits": null } }],
+    "contract.status": [{ "result": { "status": "none", "active": null, "provenance": null, "receipts": [], "finding_ledger": {}, "restrictions": [], "scoped_restrictions": [] } }]
   },
   "steps": [
     {

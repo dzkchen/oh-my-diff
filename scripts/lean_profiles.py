@@ -363,8 +363,8 @@ def route(prefix, bin_dir, name, args):
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
         extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
-        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra],
-                                stdout=subprocess.PIPE, text=True)
+        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra,
+                                 *([args.billing] if name == "claude" and args.billing else [])], stdout=subprocess.PIPE, text=True)
         if result.returncode:
             raise ValueError(f"{name} setup failed")
         details = json.loads(result.stdout)
@@ -373,12 +373,6 @@ def route(prefix, bin_dir, name, args):
         support.atomic_text(launcher, selected_text(record), 0o755)
         record["activation"]["sha256"] = support.digest(launcher)
         write(prefix, record)
-        if name in ("cursor", "muse"):
-            source = (Path(record["store"]) / "sources" / identifier).resolve()
-            mods = json.loads((Path(record["store"]) / "mods.json").read_text())["mods"]
-            current = next((item.get("settings") or {} for item in mods if Path(item["path"]).resolve() == source), {})
-            settings = {**current, "route": record["providers"][identifier]["route"]}
-            invoke(record["manager"]["installed_path"], "settings", record["store"], source, json.dumps(settings))
         select_mod(prefix, bin_dir, identifier, True)
         return details
     provider = record.get("providers", {}).get(identifier)
@@ -728,11 +722,8 @@ def uninstall(prefix, bin_dir, keep_broker=False):
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
-    sources = record.get("sources")
-    if sources is None:
-        sources = {identifier: package["files"] for identifier, package in record["packages"].items()}
     managed.update(prefix / "sources" / identifier / name
-                   for identifier, files in sources.items() for name in files)
+                   for identifier, files in record["sources"].items() for name in files)
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -793,6 +784,9 @@ def main():
         route_parser.add_argument("--setup", action="store_true")
         route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI or SDK module path for --setup")
         route_parser.add_argument("--model", help="model slug or family shortcut")
+        if name == "claude":
+            route_parser.add_argument("--billing", choices=("subscription", "api"),
+                                      help="for --setup: claude.ai plan limits (first setup default), or Console API credits; reruns keep the current choice")
         if name == "profiles":
             for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):
                 route_parser.add_argument(f"--{flag}")

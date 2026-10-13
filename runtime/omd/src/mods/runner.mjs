@@ -658,8 +658,17 @@ const api = Object.freeze({
     set(value) {
       requireCapability('terminal');
       if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
-      const encoded = JSON.stringify(value);
-      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
+      const encoded = JSON.stringify(value, (key, item) => {
+        if (!key.isWellFormed() || (typeof item === 'string' && !item.isWellFormed())) throw new Error('ui_state_invalid_json');
+        return item;
+      });
+      if (typeof encoded !== 'string') throw new Error('ui_state_limit');
+      let bytes = 0;
+      for (const character of encoded) {
+        const code = character.codePointAt(0);
+        bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+        if (bytes > 65536) throw new Error('ui_state_limit');
+      }
       uiState = JSON.parse(encoded); uiRead = true; uiWritten = true;
     },
   }),
@@ -771,7 +780,7 @@ const api = Object.freeze({
   }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead, ui_written: uiWritten}), request, calls,
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
   }, suspension, serve, base, component: step };

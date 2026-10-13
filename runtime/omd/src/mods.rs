@@ -1,4 +1,5 @@
 mod author;
+mod operation_validation;
 mod bridge;
 mod chain;
 mod persisted;
@@ -1046,15 +1047,19 @@ fn source_use(
                 .cloned()
                 .collect()
         } else {
-            let capability = ModHostCall {
+            let required = ModHostCall {
                 operation: operation.clone(),
                 arguments: Value::Null,
             }
-            .capability()?;
+            .capabilities()?;
+            if operation == "model.fork"
+                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
+                return Err(failure(format!("undeclared_operation_use: {operation}")));
+            }
             let mut used = package
                 .capabilities
                 .iter()
-                .filter(|declared| *declared == capability)
+                .filter(|declared| required.contains(&declared.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
             let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);
@@ -2431,7 +2436,7 @@ struct Reply {
     registrations: Registrations,
     state: Value,
     #[serde(default)]
-    ui_state: Value,
+    ui_state: Option<String>,
     #[serde(default)]
     ui_read: bool,
     #[serde(default)]
@@ -2563,23 +2568,23 @@ mod reload_tests {
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
-            assert!(!host.reload().unwrap());
+            assert!(!host.refresh_authority().unwrap());
         }
         assert_eq!(store::READS.get(), reads);
         host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         assert!(store::READS.get() > reads);
         let path = root.join("mods.json");
         let original = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"invalid").unwrap();
-        assert!(host.reload().is_err());
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
+        assert!(host.refresh_authority().is_err());
         std::fs::write(&path, original).unwrap();
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         let moved = root.join("moved.json");
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
     }
 }
 type Authority = (
@@ -2722,11 +2727,11 @@ type NextFn<'n> = dyn FnMut(
     + 'n;
 
 struct Invocation {
+    authority_current: bool,
     location: store::StateLocation,
     thread: Option<String>,
     loaded: Loaded,
     dynamic: Vec<String>,
-    previous_state: Value,
     node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
@@ -3216,6 +3221,11 @@ impl ModHost {
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
+        self.refresh_authority()
+    }
+
+    /// Refresh package authority without resetting UI state when configuration is unchanged.
+    pub fn refresh_authority(&mut self) -> Result<bool> {
         self.reload_guarded(&|| true)
     }
 
@@ -4453,6 +4463,59 @@ impl ModHost {
         )
     }
 
+    fn check_callback_authority(&self, loaded: &Loaded) -> Result<()> {
+        let managed = self.store.managed()?;
+        let brokered = store::brokered_grants(&self.store.root)?;
+        let deployment = if managed.is_some() {
+            self.store.managed_deployment()?
+        } else {
+            policy::ManagedDeployment::default()
+        };
+        let mut selections = match &managed {
+            Some(managed) => managed.selections(
+                &deployment,
+                &self.store.managed_user(),
+                self.project.as_deref(),
+            ).0,
+            None => Vec::new(),
+        };
+        let mut administered = selections.len();
+        let path = self.store.root.join("mods.json");
+        let bytes = store::read(&path, 65_536);
+        let hash = format!("{}:{}:{}:{}:{}",
+            digest(bytes.as_deref().unwrap_or_default()),
+            brokered.as_ref().map_or(0, |(generation, _)| *generation),
+            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
+            deployment.generation,
+            self.project.as_deref().unwrap_or(Path::new("")).display());
+        match bytes.and_then(|bytes| ModConfiguration::parse(&bytes, &path)) {
+            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
+            _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
+            _ => return Err(failure("callback_authority_changed")),
+        }
+        // An unchanged authority inventory cannot introduce a different precedence winner.
+        if hash == self.configuration_sha256 {
+            administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
+            selections.retain(|selection| selection.path == loaded.selection.path);
+        }
+        let selected = Self::select(
+            &selections, administered, false,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+        )?;
+        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
+            return Err(failure("callback_authority_changed"));
+        };
+        if selection.path != loaded.selection.path
+            || selection.scope != loaded.selection.scope
+            || store::grant(&json!(selection)) != store::grant(&json!(loaded.selection))
+        {
+            return Err(failure("callback_authority_changed"));
+        }
+        Ok(())
+    }
+
     fn begin(
         &mut self,
         id: &str,
@@ -4476,6 +4539,7 @@ impl ModHost {
                 "mod_failed: {error}; explicitly reload to recover"
             )));
         }
+        self.check_callback_authority(&loaded)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         loaded.state = self
             .store
@@ -4505,6 +4569,7 @@ impl ModHost {
             loaded.ui_clears = state.clears;
         }
         Ok(Invocation {
+            authority_current: loaded.selection.authority_current(),
             location,
             thread: thread.map(str::to_owned),
             dynamic: self
@@ -4514,7 +4579,6 @@ impl ModHost {
                 .flatten()
                 .map(|tool| tool.name.clone())
                 .collect(),
-            previous_state: loaded.state.clone(),
             loaded,
             node: self.node.clone(),
             virtual_time_ms: self.virtual_time_ms,
@@ -4531,6 +4595,7 @@ impl ModHost {
         reply: Reply,
         active: &dyn Fn() -> bool,
     ) -> Result<(Value, Value)> {
+        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -4575,12 +4640,9 @@ impl ModHost {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
-        if reply.ui_state != loaded.ui_state {
+        if ui_state != loaded.ui_state {
             if !reply.ui_read || !matches!(event, "command" | "component_event") {
                 return Err(failure("ui_state_write_unavailable"));
-            }
-            if serde_json::to_vec(&reply.ui_state)?.len() > 65_536 {
-                return Err(failure("ui_state_limit"));
             }
         }
         let mut parsed_command = None;
@@ -4650,10 +4712,9 @@ impl ModHost {
             )?;
         }
         if let Some(state) = ui.as_mut()
-            && (reply.ui_state != loaded.ui_state
-                || reply.ui_written && reply.ui_state != state.value)
+            && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
         {
-            state.value = reply.ui_state;
+            state.value = ui_state;
             state.revision = state.revision.wrapping_add(1);
         }
         if rebind
@@ -4692,6 +4753,25 @@ impl ModHost {
         reply: Result<Reply>,
         active: &dyn Fn() -> bool,
     ) -> Result<Value> {
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
+        // A reload that keeps this package binding (such as the callback's own
+        // `packages.apply`) must not discard a result whose host calls already ran.
+        let thread = invocation.thread.as_deref();
+        if generation != self.generation
+            && self.loaded.get(id).is_none_or(|current| {
+                self.ui_key(current, thread) != self.ui_key(&invocation.loaded, thread)
+            })
+        {
+            return Err(failure("stale_mod_generation: retry on the next turn"));
+        }
+        self.check_callback_authority(&invocation.loaded)?;
+        if invocation.authority_current && !invocation.loaded.selection.authority_current()
+            && invocation.loaded.package.capabilities.iter().any(|cap| AUTHORITY_CAPABILITIES.contains(&cap.as_str()))
+        {
+            return Err(failure("callback_authority_changed"));
+        }
         let result = reply.and_then(|reply| {
             self.accept(
                 &invocation.loaded,
@@ -4702,10 +4782,7 @@ impl ModHost {
                 active,
             )
         });
-        if generation != self.generation {
-            return result.map(|(value, _)| value);
-        }
-        let (started, previous_state) = (invocation.started, invocation.previous_state);
+        let (started, previous_state) = (invocation.started, invocation.loaded.state);
         let current = self
             .loaded
             .get_mut(id)
@@ -5217,6 +5294,10 @@ impl ModHost {
 
     pub fn turn_boundary(&mut self) {
         self.turn_boundary_guarded(&|| true);
+    }
+
+    pub fn refresh_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
+        self.reload_guarded(active)
     }
 
     pub fn turn_boundary_guarded(&mut self, active: &dyn Fn() -> bool) {
@@ -5774,6 +5855,36 @@ impl ModHost {
             "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
                 .collect::<Vec<_>>()})));
         status
+    }
+}
+
+fn validate_ui_state(encoded: &str) -> Result<Value> {
+    if encoded.len() > 65_536 {
+        return Err(failure("ui_state_limit"));
+    }
+    serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
+}
+
+#[cfg(test)]
+#[test]
+fn ui_state_serialized_boundaries() {
+    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let encoded = format!(
+            "{}{}{}",
+            case["prefix"].as_str().unwrap(),
+            case["unit"]
+                .as_str()
+                .unwrap()
+                .repeat(case["repeat"].as_u64().unwrap() as usize),
+            case["suffix"].as_str().unwrap()
+        );
+        assert_eq!(
+            validate_ui_state(&encoded).is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
     }
 }
 

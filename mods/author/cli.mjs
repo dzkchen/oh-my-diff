@@ -19,13 +19,14 @@ const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
 const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow', 'workspace', 'virtual_reader', 'scoped_data', 'review_probe', 'service_request', 'release_check', 'snapshot_review', 'render_hooks', 'reactive_dashboard'];
 
+/** @returns {never} */
 function fail(message) {
   throw new Error(message);
 }
 
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { cwd: options.cwd, encoding: 'utf8', stdio: options.capture ? 'pipe' : 'inherit' });
-  if (result.error?.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
+  if (result.error && 'code' in result.error && result.error.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
   if (result.error) throw result.error;
   if (result.status !== 0) fail((result.stderr || result.stdout || `${program} failed`).trim());
   return options.capture ? result.stdout.trim() : '';
@@ -255,7 +256,7 @@ function compileJsx(directory) {
   try {
     ts = createRequire(join(directory, 'package.json'))('typescript');
   } catch (error) {
-    if (error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
+    if (error instanceof Error && 'code' in error && error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
     throw error;
   }
   for (const source of sources) compileJsxFile(ts, directory, source);
@@ -429,7 +430,7 @@ function watchProject(directory, store, once) {
     try {
       reload();
     } catch (error) {
-      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error.message })}\n`);
+      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error instanceof Error ? error.message : String(error) })}\n`);
     }
   };
   let pending;

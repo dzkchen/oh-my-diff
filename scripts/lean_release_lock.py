@@ -8,11 +8,12 @@ import tarfile
 
 try:
     from scripts import install_support as support
-    from scripts import full_mods_lock, lean_profiles
+    from scripts import full_mods_lock, lean_profiles, build_provenance
 except ModuleNotFoundError:
     import install_support as support
     import full_mods_lock
     import lean_profiles
+    import build_provenance
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,8 @@ HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
 ENTITLEMENTS = ROOT / "runtime/hardened-entitlements.plist"
 AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
+    "scripts/build_provenance.py",
+    "plugins/release-files.json",
     "scripts/lean_profiles.py", "scripts/lean_release_lock.py",
     "scripts/lean_package.py", "scripts/install_support.py",
     "scripts/preview_lock.py", "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
@@ -64,6 +67,7 @@ SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
 def build(artifact_dir, package_mode=False):
+    provenance = build_provenance.verify(artifact_dir)
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
     if support.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
@@ -121,6 +125,7 @@ def build(artifact_dir, package_mode=False):
         "node": preview["node"],
         "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
+        "build_provenance": provenance,
         "platform_tools": ["omd", "omd-contract"],
         "profiles": {
             "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods", "omd_update"], "first_party_default_active": ["omd_logo", "omd_mods", "omd_update"],

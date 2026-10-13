@@ -19,11 +19,11 @@ const surface = { events: { terminal: 'terminal', channel: 'events', timer: 'eve
 let responses = ['Latest **answer** with <script>alert(1)</script> and [x](javascript:alert(1))', 'Earlier answer'];
 let draft = { text: '', cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
 
-function invoke(repository, state, event, payload, name, settings = {}) {
+function invoke(repository, state, event, payload, name, settings = {}, modSource = source) {
   const receipts = [];
   const calls = [];
   for (;;) {
-    const request = { source, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings, event, name, payload,
+    const request = { source: modSource, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings, event, name, payload,
       receipts, surface, hook_budget_ms: 10000, assets };
     const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
@@ -51,10 +51,18 @@ function invoke(repository, state, event, payload, name, settings = {}) {
     } else if (operation === 'terminal.open') value = { opened: true };
     else if (operation === 'composer.read') value = draft;
     else if (operation === 'sessions.ports') value = { ports: [{ port: 3000, pid: 7, address: '127.0.0.1:3000' }, { port: 5173, pid: 8, address: '*:5173' }] };
-    else value = { delivered: 1, dropped: 0 };
+    else if (operation === 'events.publish') value = { delivered: 1, dropped: 0 };
+    else if (operation === 'events.schedule') value = { key: args.key, delay_ms: args.delay_ms };
+    else assert.fail(`unexpected preview host operation: ${operation}`);
     receipts.push({ call: output.host_call, value });
   }
 }
+
+test('preview harness rejects unhandled host operations', () => {
+  assert.throws(() => invoke(tmpdir(), null, 'command', '', 'fixture', {},
+    "export default api => api.command('fixture', () => api.host.tryCall('events.cancel', { key: 'poll' }));"),
+  /unexpected preview host operation: events.cancel/);
+});
 
 test('preview dismisses its popup on owned Escape or startup while preserving watches with thumbnails off', () => {
   const state = { inline: { title: 'Preview', kind: 'markdown', text: 'Content' }, revision: 1, watch: ['README.md'], hashes: {}, images: [] };

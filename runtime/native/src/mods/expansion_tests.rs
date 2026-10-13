@@ -5,6 +5,8 @@ use codex_omd::ModStore;
 use std::path::Path;
 use std::path::PathBuf;
 
+static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Fixture {
     _dir: tempfile::TempDir,
     core: Arc<Core>,
@@ -58,11 +60,22 @@ fn install(store: &ModStore, dir: &Path, package: &Package<'_>) {
 }
 
 fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE")?);
+    fixture_with_registry(packages, None)
+}
+
+fn fixture_with_registry(
+    packages: &[Package<'_>],
+    registry: Option<&mut ExtensionRegistryBuilder<Config>>,
+) -> Option<Fixture> {
+    let node = PathBuf::from(
+        std::env::var_os("OMD_TEST_NODE")
+            .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
+    );
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
     let repository = base.join("repo");
     std::fs::create_dir(&repository).unwrap();
+    std::fs::create_dir(repository.join(".git")).unwrap();
     let store = ModStore::create(base.join("store"), node).unwrap();
     let sources = base.join("packages");
     std::fs::create_dir(&sources).unwrap();
@@ -84,31 +97,34 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         manager: std::sync::Weak::new(),
         epoch: 1,
     });
-    let runtime = ModHost::open(root.clone()).unwrap();
-    let environment = runtime.environment();
-    let intercepted = runtime.intercepted_surfaces();
-    let required = runtime.required_surfaces();
-    let runtime = Arc::new(Mutex::new(runtime));
-    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-    let views = Arc::new(view::Views::new());
-    let core = Arc::new_cyclic(|core| Core {
-        agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
-        host: host.clone(),
-        runtime,
-        input_runtime,
-        persist_runtime,
-        intercepted,
-        required,
-        environment,
-        services: services::Services::default(),
-        views,
-        expansion: State::default(),
-        inventory: inventory::Inventory::default(),
-        autonomy: autonomy::Queues::default(),
-        peering: peering::Registry::default(),
-        this: core.clone(),
-    });
+    let core = if let Some(registry) = registry {
+        initialize(registry, host.clone()).unwrap().core.clone()
+    } else {
+        let runtime = ModHost::open(root.clone()).unwrap();
+        let environment = runtime.environment();
+        let runtime = Arc::new(Mutex::new(runtime));
+        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let persist_required = persist_runtime.lock().unwrap().required_surfaces();
+        let views = Arc::new(view::Views::new());
+        Arc::new_cyclic(|core| Core {
+            session_runtime: tokio::runtime::Handle::try_current().ok(),
+            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
+            host: host.clone(),
+            runtime,
+            input_runtime,
+            persist_runtime,
+            persist_required,
+            environment,
+            services: services::Services::default(),
+            views,
+            expansion: State::default(),
+            inventory: inventory::Inventory::default(),
+            autonomy: autonomy::Queues::default(),
+            peering: peering::Registry::default(),
+            this: core.clone(),
+        })
+    };
     let thread = ThreadId::new();
     let session = host.open_session(thread, false).unwrap();
     *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
@@ -135,8 +151,45 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
     })
 }
 
+#[test]
+fn production_initialization_binds_checkout_validates_schemas_and_registers_contributors() {
+    let _guard = DISPATCHER_TEST.blocking_lock();
+    let mut registry = ExtensionRegistryBuilder::new();
+    let fixture = fixture_with_registry(&[
+        Package {
+            id: "bound", capabilities: &["store", "commands"],
+            manifest: json!({"state_scope":"checkout"}),
+            source: "export default api => { api.state.get(); api.command('bound', () => null); }",
+        },
+        Package {
+            id: "invalid", capabilities: &["tools"], manifest: json!({}),
+            source: "export default api => api.tool({name:'bad',description:'Bad',parameters:{type:'object',properties:{},required:7}}, () => null)",
+        },
+    ], Some(&mut registry)).unwrap();
+    for runtime in [&fixture.core.runtime, &fixture.core.input_runtime, &fixture.core.persist_runtime] {
+        let status = runtime.lock().unwrap().status();
+        let mods = status["mods"].as_array().unwrap();
+        let bound = mods.iter().find(|item| item["id"] == "bound").unwrap();
+        assert!(bound["error"].is_null(), "{bound}");
+        assert_eq!(bound["registrations"]["commands"][0]["name"], "bound");
+        let invalid = mods.iter().find(|item| item["id"] == "invalid").unwrap();
+        assert!(!invalid["error"].is_null(), "{invalid}");
+    }
+    let registry = registry.build();
+    for count in [registry.config_contributors().len(), registry.context_contributors().len(),
+        registry.thread_lifecycle_contributors().len(), registry.tool_lifecycle_contributors().len(),
+        registry.turn_lifecycle_contributors().len(), registry.turn_input_contributors().len(),
+        registry.tool_output_contributors().len(), registry.approval_gate_contributors().len(),
+        registry.tool_spec_contributors().len(), registry.agent_role_contributors().len(),
+        registry.token_usage_contributors().len(), registry.tool_batch_contributors().len(),
+        registry.tool_contributors().len()] {
+        assert_eq!(count, 1);
+    }
+}
+
 fn mods(core: &Arc<Core>) -> Mods {
     Mods {
+        registration: Mutex::new(None),
         core: core.clone(),
         turns: Mutex::new(BTreeMap::new()),
         sessions: Mutex::new(BTreeMap::new()),
@@ -521,6 +574,7 @@ async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
+    let _guard = DISPATCHER_TEST.lock().await;
     let Some(mut fixture) = fixture(&[Package {
         id: "control",
         capabilities: &["exec", "fs.read", "fs.write"],
@@ -535,7 +589,9 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     )
     .await;
     fixture.core.expansion.thread_started(&fixture.lead);
-    super::intercept::install_dispatcher(&fixture.core);
+    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    let registration = clients::install(&fixture.core, dispatcher).unwrap();
+    assert!(codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).is_err());
     let source = fixture
         .core
         .runtime
@@ -647,6 +703,20 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
             .join("scoped-policy-proof")
             .exists()
     );
+    drop(registration);
+    assert!(call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).is_err());
+    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    let _reinstalled = clients::install(&fixture.core, dispatcher).unwrap();
+    call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).unwrap();
+    drop(_reinstalled);
+    let mut first = ExtensionRegistryBuilder::new();
+    super::install(&mut first, fixture.core.host.clone()).unwrap();
+    let installed = fixture.core.host.accounts.mod_installation();
+    let mut second = ExtensionRegistryBuilder::new();
+    assert_eq!(super::install(&mut second, fixture.core.host.clone()).unwrap_err(), "host_already_installed");
+    assert_eq!(fixture.core.host.accounts.mod_installation(), installed);
+    drop(first);
+    super::install(&mut second, fixture.core.host.clone()).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2826,7 +2896,7 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
     );
     drop((held, surface));
     let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
-    assert_ne!(first, "process_raster_revoked");
+    assert_ne!(first.kind, codex_omd::client_surface::BlitErrorKind::Revoked);
     let held = fixture.core.runtime.lock().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
     let busy = sink.clone();
@@ -2844,8 +2914,118 @@ async fn raw_frame_sink_detects_external_revocation_without_an_event() {
     store.enable(&package, false).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(
-        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err().to_string(),
         "process_raster_revoked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn surface_authority_polling_preserves_ui_and_in_flight_callbacks() {
+    let fixture = fixture(&[Package {
+        id: "control",
+        capabilities: &["commands", "terminal", "composer"],
+        manifest: Value::Null,
+        source: "export default api => { api.on('terminal', () => ({title:'Control'})); api.command('open', () => { api.uiState.set(7); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('read', () => api.uiState.get()); api.command('poll', () => { const before = api.uiState.get(); api.host.call('composer.read', null); api.uiState.set(before + 1); return before + 1; }); };",
+    }])
+    .unwrap();
+    let opened = command(&fixture.core, "control", "open");
+    let (grants, generation) = {
+        let mut runtime = fixture.core.runtime.lock().unwrap();
+        let generation = runtime.generation();
+        let view = runtime
+            .command_view("control", generation, opened["terminal"].clone(), &json!({}))
+            .unwrap();
+        assert!(view.component_owners.contains_key("own"));
+        (runtime.grants("control"), generation)
+    };
+    let source = grants.as_ref().unwrap().source_sha256.clone();
+    let caller = Caller {
+        id: "control",
+        source: &source,
+        grants,
+        generation,
+        origin: Origin::UserCommand,
+        record_changes: false,
+    };
+    struct Queued(std::sync::mpsc::Sender<codex_omd::client_surface::SurfaceCall>);
+    impl codex_omd::client_surface::ClientSurface for Queued {
+        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            self.0.send(call).map_err(|error| error.to_string())
+        }
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let registration = codex_omd::client_surface::register(Arc::new(Queued(sender)));
+    let handle = tokio::runtime::Handle::current();
+    std::thread::scope(|scope| {
+        let pending = scope.spawn(|| {
+            codex_omd::invoke_shared(
+                &fixture.core.runtime,
+                "control",
+                generation,
+                "command",
+                "poll",
+                Value::Null,
+                || true,
+                |_, request| {
+                    handle
+                        .block_on(surface(
+                            &fixture.core,
+                            &fixture.lead,
+                            &caller,
+                            request,
+                            &Arc::new(AtomicBool::new(false)),
+                        ))
+                        .map_err(std::io::Error::other)
+                },
+                |_| {},
+            )
+        });
+        let call = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(call.operation, "composer.read");
+        // Exercise client-side validity checks and allow the queued wait loop to poll too.
+        for _ in 0..3 {
+            assert!((call.validity.0)());
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            assert_eq!(command(&fixture.core, "control", "read"), json!(7));
+            let mut runtime = fixture.core.runtime.lock().unwrap();
+            runtime
+                .command_view("control", generation, opened["terminal"].clone(), &json!({}))
+                .unwrap();
+            let view = runtime.terminal_view(json!({}), || true);
+            assert_eq!(
+                view.component_owners.get("own").map(String::as_str),
+                Some("control")
+            );
+        }
+        call.reply
+            .send(Ok(json!({"text":"", "cursor":0, "selection":null, "revision":0,
+                "attachments":[], "suggestion":null})))
+            .unwrap();
+        assert_eq!(pending.join().unwrap().unwrap(), json!(8));
+    });
+    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
+    drop(registration);
+    let sink = blit_sink(&fixture.core, &fixture.lead, &caller).unwrap();
+    assert!(
+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true))
+            .unwrap_err()
+            .message
+            .starts_with("client_surface_unavailable")
+    );
+    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
+    fixture.core.runtime.lock().unwrap().reload().unwrap();
+    assert!(command(&fixture.core, "control", "read").is_null());
+    assert!(
+        !fixture
+            .core
+            .runtime
+            .lock()
+            .unwrap()
+            .terminal_view(json!({}), || true)
+            .component_owners
+            .contains_key("own")
     );
 }
 
@@ -2971,7 +3151,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         return;
     };
     let extension = mods(&fixture.core);
-    assert!(!extension.rewrites_persisted_text());
+    assert!(extension.rewrites_persisted_text());
     let entries = [codex_extension_api::PersistedText {
         kind: "message",
         role: Some("user".to_owned()),
@@ -2982,6 +3162,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         thread_id: "thread",
         entries: &entries,
     };
+    fixture.core.runtime.lock().unwrap().required_surfaces().lock().unwrap().push("history_persist");
     let runtime = fixture.core.persist_runtime.clone();
     let _ = std::thread::spawn(move || {
         let _held = runtime.lock().unwrap();
@@ -2991,13 +3172,135 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
     assert_eq!(extension.rewrite_persisted_text(input()).await, None);
     fixture
         .core
-        .required
+        .persist_required
         .lock()
         .unwrap()
         .push("history_persist");
     let withheld = extension.rewrite_persisted_text(input()).await.unwrap();
     assert_eq!(withheld.texts, [codex_omd::PERSIST_WITHHELD]);
     assert_eq!(withheld.by, "host");
+}
+
+#[test]
+fn lanes_reject_changed_authority_before_committing_callback_state() {
+    for lane in ["main", "input", "persist"] {
+        for change in ["disable", "revoke", "replace", "broken", "cancel"] {
+            let fixture = fixture(&[Package {
+                id: "writer", capabilities: &["commands", "agents", "store"], manifest: Value::Null,
+                source: "export default api => api.command('run', () => { api.host.call('task.status', null); api.state.set('unsafe'); return 'unsafe'; })",
+            }]).unwrap();
+            let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+            let path = fixture._dir.path().join("packages/writer").canonicalize().unwrap();
+            std::fs::write(fixture.core.host.root.join("managed.json"), "{").unwrap();
+            let runtime = match lane {
+                "input" => &fixture.core.input_runtime,
+                "persist" => &fixture.core.persist_runtime,
+                _ => &fixture.core.runtime,
+            };
+            let mut runtime = runtime.lock().unwrap();
+            let generation = runtime.generation();
+            let state = fixture.core.host.root.join("state-writer.json");
+            let before = std::fs::read(&state).ok();
+            let active = std::cell::Cell::new(true);
+            let result = runtime.invoke_with("writer", generation, "command", "run", Value::Null,
+                || active.get(), |_| {
+                    match change {
+                        "disable" => store.enable(&path, false)?,
+                        "revoke" => {
+                            let config = fixture.core.host.root.join("mods.json");
+                            let mut value: Value = serde_json::from_slice(&std::fs::read(&config)?)?;
+                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
+                            std::fs::write(config, serde_json::to_vec(&value)?)?;
+                        }
+                        "replace" => std::fs::write(path.join("index.ts"), "export default () => {}")?,
+                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
+                        "cancel" => active.set(false),
+                        _ => unreachable!(),
+                    }
+                    Ok(Value::Null)
+                });
+            assert!(result.is_err(), "{lane} {change}");
+            assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
+            if change == "broken" {
+                assert!(runtime.refresh_guarded(&|| true).is_err());
+            }
+            let next = runtime.invoke_with("writer", generation, "command", "run", Value::Null, || true, |_| Ok(Value::Null));
+            assert_eq!(next.is_ok(), change == "cancel", "next admission {lane} {change}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn persistence_admits_new_requirements_without_main_lane_refresh() {
+    let fixture = fixture(&[]).unwrap();
+    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+    install(&store, &fixture._dir.path().join("packages"), &Package {
+        id: "redact", capabilities: &["history_persist"], manifest: Value::Null,
+        source: "export default api => api.intercept('history_persist', {required:true}, e => ({entries:e.entries.map(v=>({...v,text:'masked'}))}))",
+    });
+    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
+    let extension = mods(&fixture.core);
+    assert!(extension.rewrites_persisted_text());
+    let entries = [codex_extension_api::PersistedText {
+        kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
+    }];
+    let input = || codex_extension_api::PersistedTextInput { thread_id: "t", entries: &entries };
+    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, ["masked"]);
+    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
+    std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
+    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, [codex_omd::PERSIST_WITHHELD]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secondary_lane_calls_preserve_ui_with_distinct_generations() {
+    let fixture = fixture(&[Package {
+        id: "input", capabilities: &["input", "commands", "terminal", "exec"], manifest: json!({"exec_environment":["FIXTURE_VALUE"]}),
+        source: "export default api => { api.command('write', () => api.uiState.set(42)); api.command('read', () => api.uiState.get()); api.intercept('input', (e,next) => { api.host.call('environment.read',{names:['FIXTURE_VALUE']}); return next(e); }); }",
+    }]).unwrap();
+    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+    let path = fixture._dir.path().join("packages/input").canonicalize().unwrap();
+    store.enable(&path, false).unwrap();
+    fixture.core.runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
+    store.enable(&path, true).unwrap();
+    fixture.core.runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
+    fixture.core.input_runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
+    assert_ne!(fixture.core.runtime.lock().unwrap().generation(), fixture.core.input_runtime.lock().unwrap().generation());
+    command(&fixture.core, "input", "write");
+    let result = super::intercept::chain(
+        fixture.core.clone(), Arc::new(fixture.lead.clone()), fixture.core.input_runtime.clone(),
+        "input", true, json!({"text":"hello"}), json!({"caller":"user"}),
+        Arc::new(AtomicBool::new(false)), |input| Ok(json!({"text":input["text"]})),
+    ).await.unwrap();
+    assert_eq!(result.result["text"], "hello");
+    assert_eq!(command(&fixture.core, "input", "read"), 42);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_persistence_cancels_callback_state_commit() {
+    let fixture = fixture(&[Package {
+        id: "persist", capabilities: &["history_persist", "store"], manifest: Value::Null,
+        source: "export default api => api.intercept('history_persist', e => { let n = 0; for (let i = 0; i < 1000000; i++) n += i; api.state.set(n); return {entries: e.entries}; })",
+    }]).unwrap();
+    let runtime = fixture.core.persist_runtime.clone();
+    let required = fixture.core.persist_required.clone();
+    let worker_runtime = runtime.clone();
+    let state = fixture.core.host.root.join("state-persist.json");
+    let before = std::fs::read(&state).ok();
+    let task = tokio::spawn(async move {
+        let entries = [codex_extension_api::PersistedText {
+            kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
+        }];
+        persisted::rewrite(worker_runtime, required, codex_extension_api::PersistedTextInput {
+            thread_id: "t", entries: &entries,
+        }).await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while runtime.try_lock().is_ok() { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::task::spawn_blocking(move || { drop(runtime.lock().unwrap()); }).await.unwrap();
+    assert_eq!(std::fs::read(state).ok(), before);
 }
 
 #[test]
@@ -3014,6 +3317,160 @@ fn completion_cache_totals_sum_the_requests_that_reported_them() {
         json!({"cache": {"read_tokens": 1}}),
     ];
     assert_eq!(agents::cache_total(&huge, "read_tokens"), Some(u64::MAX));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn model_fork_checks_history_authority_before_access() {
+    for (capabilities, expected) in [
+        (vec!["agents"], "capability_denied: sessions"),
+        (vec!["agents", "sessions"], "capability_denied: sessions_tools"),
+        (vec!["agents", "sessions", "sessions_tools"], "native_thread_manager_stopped"),
+    ] {
+        let fixture = fixture(&[Package {
+            id: "forker",
+            capabilities: &capabilities,
+            manifest: Value::Null,
+            source: "export default function () {}\n",
+        }]).expect("native fixture");
+        *fixture.lead.session.contract.lock().unwrap() =
+            crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+        let (grants, generation) = {
+            let runtime = fixture.core.runtime.lock().unwrap();
+            (runtime.grants("forker"), runtime.generation())
+        };
+        let error = operations::dispatch(
+            &fixture.core, &fixture.lead,
+            Caller { id: "forker", source: "", grants, generation,
+                origin: Origin::Event, record_changes: false },
+            None,
+            ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"repeat the tool output"}) },
+            &Arc::new(AtomicBool::new(false)),
+        ).await.unwrap_err();
+        assert_eq!(error, expected);
+    }
+}
+
+fn stream_fixture(origin: &str) -> Fixture {
+    let fixture = fixture(&[Package {
+        id: "fetcher",
+        capabilities: &["http"],
+        manifest: json!({"http_access":{"origins":[origin]}}),
+        source: "export default function () {}\n",
+    }]).expect("HTTP fixture");
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    fixture
+}
+
+async fn stream_call(fixture: &Fixture, operation: &str, arguments: Value) -> Result<Value, String> {
+    let (grants, generation) = {
+        let runtime = fixture.core.runtime.lock().unwrap();
+        (runtime.grants("fetcher"), runtime.generation())
+    };
+    operations::dispatch(
+        &fixture.core, &fixture.lead,
+        Caller { id: "fetcher", source: "", grants, generation,
+            origin: Origin::Event, record_changes: false },
+        None, ModHostCall { operation: operation.into(), arguments }, &Arc::new(AtomicBool::new(false)),
+    ).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_read_drop_releases_the_handle_and_stream_slot() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let mut sockets = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for _ in 0..5 {
+            let (mut socket, _) = loop {
+                match listener.accept() {
+                    Ok(socket) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+                            || std::time::Instant::now() >= deadline { return; }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+            sockets.push(socket);
+        }
+        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
+    });
+    let fixture = stream_fixture(&origin);
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        handles.push(stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap()["handle"].clone());
+    }
+    let handle = handles[0].clone();
+    let mut read = Box::pin(stream_call(&fixture, "http.read", json!({"handle":handle,"wait_ms":5000})));
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(read.as_mut().poll(cx))).await.is_pending());
+    assert_eq!(stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err(), "http_stream_busy");
+    drop(read);
+    let after_drop = stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err();
+    let replacement = stream_call(&fixture, "http.open", json!({"url":origin})).await;
+    let _ = stop.send(());
+    server.join().unwrap();
+    assert_eq!(after_drop, "http_stream_unavailable");
+    assert!(replacement.is_ok(), "{replacement:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_http_opens_share_the_last_stream_slot() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let mut sockets = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for index in 0..5 {
+            let (mut socket, _) = loop {
+                match listener.accept() {
+                    Ok(socket) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+                            || std::time::Instant::now() >= deadline { return; }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).unwrap();
+            if index < 3 {
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+            }
+            sockets.push(socket);
+        }
+        for socket in &mut sockets[3..] {
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+        }
+        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
+    });
+    let fixture = stream_fixture(&origin);
+    for _ in 0..3 {
+        stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap();
+    }
+    let (first, second) = tokio::join!(
+        stream_call(&fixture, "http.open", json!({"url":origin})),
+        stream_call(&fixture, "http.open", json!({"url":origin})),
+    );
+    let _ = stop.send(());
+    server.join().unwrap();
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let error = first.err().or_else(|| second.err()).unwrap();
+    assert_eq!(error, "http_stream_limit: at most 4 open streams");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3107,8 +3564,8 @@ async fn model_completions_use_only_configured_worker_routes() {
     .await
     .unwrap_err();
     assert_eq!(
-        fork, "native_thread_manager_stopped",
-        "a fork needs the live thread"
+        fork, "capability_denied: sessions",
+        "a fork needs history authority before accessing the live thread"
     );
 }
 
@@ -4858,7 +5315,21 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
     }]) else {
         return;
     };
-    let _manager = attach_thread(&mut fixture).await;
+    let manager = attach_thread(&mut fixture).await;
+    let file_system = manager
+        .environment_manager()
+        .try_local_environment()
+        .unwrap()
+        .get_filesystem();
+    let cwd = codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository)
+        .unwrap();
+    let access = codex_file_system::FileSystemEnvironmentAccessor::new(
+        &file_system,
+        codex_file_system::FileSystemSandboxContext::from_permission_profile(
+            fixture.lead.permission_profile.lock().unwrap().clone(),
+            cwd.clone(),
+        ),
+    );
     let repository = fixture.lead.host.repository.clone();
     for (name, text) in [
         ("plain.txt", "plain".to_owned()),
@@ -4881,7 +5352,12 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
                 .into(),
             text_elements: Vec::new(),
         }],
-        environments: Vec::new(),
+        environments: vec![codex_extension_api::TurnInputEnvironment {
+            environment_id: "local".into(),
+            cwd,
+            is_primary: true,
+            fs: &access,
+        }],
     };
     let fragments = mods(&fixture.core)
         .contribute(
@@ -4920,7 +5396,21 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
     }]) else {
         return;
     };
-    let _manager = attach_thread(&mut fixture).await;
+    let manager = attach_thread(&mut fixture).await;
+    let file_system = manager
+        .environment_manager()
+        .try_local_environment()
+        .unwrap()
+        .get_filesystem();
+    let cwd = codex_utils_path_uri::PathUri::from_host_native_path(&fixture.lead.host.repository)
+        .unwrap();
+    let access = codex_file_system::FileSystemEnvironmentAccessor::new(
+        &file_system,
+        codex_file_system::FileSystemSandboxContext::from_permission_profile(
+            fixture.lead.permission_profile.lock().unwrap().clone(),
+            cwd.clone(),
+        ),
+    );
     std::fs::write(fixture.lead.host.repository.join("slow.txt"), "slow").unwrap();
     let thread_store = ExtensionData::new("thread");
     thread_store.insert(fixture.lead.clone());
@@ -4933,7 +5423,12 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
                 text: "read @slow.txt".into(),
                 text_elements: Vec::new(),
             }],
-            environments: Vec::new(),
+            environments: vec![codex_extension_api::TurnInputEnvironment {
+                environment_id: "local".into(),
+                cwd,
+                is_primary: true,
+                fs: &access,
+            }],
         },
         None,
         &session_store,
@@ -4953,4 +5448,121 @@ async fn interrupted_mention_reads_cancel_their_interceptors() {
     .await
     .unwrap();
     assert_eq!(telemetry["faults"], 0, "{telemetry}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mentioned_files_use_selected_turn_environment_authority() {
+    use codex_extension_api::TurnInputContext;
+    use codex_extension_api::TurnInputContributor;
+    use codex_extension_api::TurnInputEnvironment;
+    use codex_file_system::FileSystemEnvironmentAccessor;
+    use codex_file_system::FileSystemSandboxContext;
+    use codex_protocol::permissions::FileSystemAccessMode;
+    use codex_protocol::permissions::FileSystemPath;
+    use codex_protocol::permissions::FileSystemSandboxEntry;
+    use codex_protocol::permissions::FileSystemSandboxPolicy;
+    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use codex_protocol::user_input::UserInput;
+    use codex_utils_path_uri::PathUri;
+
+    let Some(mut fixture) = fixture(&[]) else {
+        return;
+    };
+    let manager = attach_thread(&mut fixture).await;
+    let repository = &fixture.lead.host.repository;
+    std::fs::write(repository.join("plain.txt"), "plain").unwrap();
+    let cwd = PathUri::from_host_native_path(repository).unwrap();
+    let file_system = manager
+        .environment_manager()
+        .try_local_environment()
+        .unwrap()
+        .get_filesystem();
+    let profile = fixture.lead.permission_profile.lock().unwrap().clone();
+    let access = FileSystemEnvironmentAccessor::new(
+        &file_system,
+        FileSystemSandboxContext::from_permission_profile(profile, cwd.clone()),
+    );
+    let denied_profile = PermissionProfile::from_runtime_permissions(
+        &FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Path { path: cwd.clone() },
+                FileSystemAccessMode::Read,
+            ),
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Path {
+                    path: PathUri::from_host_native_path(repository.join("plain.txt")).unwrap(),
+                },
+                FileSystemAccessMode::Deny,
+            ),
+        ]),
+        NetworkSandboxPolicy::Restricted,
+    );
+    let denied_access = FileSystemEnvironmentAccessor::new(
+        &file_system,
+        FileSystemSandboxContext::from_permission_profile(denied_profile, cwd.clone()),
+    );
+    let unavailable_access = FileSystemEnvironmentAccessor::unrestricted(&file_system);
+    let local = TurnInputEnvironment {
+        environment_id: "local".into(),
+        cwd: cwd.clone(),
+        is_primary: true,
+        fs: &access,
+    };
+    let thread_store = ExtensionData::new("thread");
+    thread_store.insert(fixture.lead.clone());
+    for (label, environments, expected) in [
+        ("selected local", vec![local.clone()], 1),
+        ("missing", vec![], 0),
+        (
+            "remote",
+            vec![TurnInputEnvironment {
+                environment_id: "remote".into(),
+                ..local.clone()
+            }],
+            0,
+        ),
+        (
+            "other cwd",
+            vec![TurnInputEnvironment {
+                cwd: PathUri::from_host_native_path(fixture._dir.path()).unwrap(),
+                ..local.clone()
+            }],
+            0,
+        ),
+        ("multiple", vec![local.clone(), local.clone()], 0),
+        (
+            "narrowed turn read",
+            vec![TurnInputEnvironment {
+                fs: &denied_access,
+                ..local.clone()
+            }],
+            0,
+        ),
+        (
+            "missing sandbox context",
+            vec![TurnInputEnvironment {
+                fs: &unavailable_access,
+                ..local
+            }],
+            0,
+        ),
+    ] {
+        let fragments = mods(&fixture.core)
+            .contribute(
+                TurnInputContext {
+                    turn_id: "turn".into(),
+                    user_input: vec![UserInput::Text {
+                        text: "@plain.txt".into(),
+                        text_elements: Vec::new(),
+                    }],
+                    environments,
+                },
+                None,
+                &ExtensionData::new("session"),
+                &thread_store,
+                &ExtensionData::new("turn"),
+            )
+            .await;
+        assert_eq!(fragments.len(), expected, "{label}");
+    }
 }

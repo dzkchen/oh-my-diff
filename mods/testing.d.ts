@@ -1,9 +1,27 @@
-import type { ComponentKey, ComponentPointer, InterceptTraceEntry, Json, KeyName, TerminalComponent, TerminalView } from './api.d.ts';
+import type { ComponentKey, ComponentPointer, HostOperations, InterceptTraceEntry, Json, KeyName, TerminalComponent, TerminalView } from './api.d.ts';
 
 export type StepOptions = { expect?: Json; expectError?: string; cancelled?: boolean };
-export type Step = { type: string; [field: string]: Json | undefined };
-/** A host operation reply: the result, or `{ error }` to fail the call. */
-export type HostReply = Json | { error: string };
+export type Step = { expect?: Json; expect_error?: string; cancelled?: boolean } & (
+  | { type: 'invoke'; mod: string; event: string; name: string; payload?: Json }
+  | { type: 'event'; event: string; payload?: Json }
+  | { type: 'tool_outcome' | 'agent'; payload?: Json }
+  | { type: 'advance_time'; ms: number }
+  | { type: 'wait_until'; check: Step; until: Json; every_ms?: number; max_ms: number }
+  | { type: 'reload' | 'status' }
+  | { type: 'state'; mod: string; value?: Json; thread_id?: string }
+  | { type: 'tool_exposure'; thread_id?: string; payload?: Json }
+  | { type: 'terminal_mount'; mod: string; payload?: Json }
+  | ({ type: 'terminal_interact'; mod: string; payload?: Json; client?: string } & ({ key: string } | { component: string; value?: string; pointer?: PointerEvent }))
+  | { type: 'component'; mod: string; module: string; instance?: string; props?: Json; columns?: number; rows?: number; events?: (ComponentKey | ComponentPointer)[] }
+  | { type: 'client_attach'; name: string; renderer?: Record<string, Json>; viewport?: { width: number; height: number; unit: string }; focused?: boolean }
+  | { type: 'client_detach'; id: string }
+  | { type: 'intercept'; surface: string; payload: Json; core?: ({ value: Json } | { error: string })[]; origin?: Json }
+);
+export type HostReply<K extends keyof HostOperations> = {
+  arguments?: HostOperations[K]['arguments']; optional?: boolean;
+} & ({ result: HostOperations[K]['result']; error?: never } | { error: string; result?: never });
+export type HostMocks = { [K in keyof HostOperations]?: HostReply<K>[] };
+export type UnsafeHostReply = { arguments?: Json; optional?: boolean; unsafe?: { arguments?: boolean; result?: boolean } } & ({ result: Json } | { error: string });
 export type ScenarioPart = {
   virtual_time_ms?: number;
   /** Nonsecret values `environment.read` answers; secret-like names are refused. */
@@ -13,7 +31,7 @@ export type ScenarioPart = {
   packages?: string[];
   /** Mod IDs run as administrator-managed packages in the `prepend` or `append` tier. */
   tiers?: Record<string, 'prepend' | 'append'>;
-  host_operations?: Record<string, ({ result: Json } | { error: string })[]>;
+  host_operations?: HostMocks;
   steps?: Step[];
 };
 export type Scenario = ScenarioPart & { schema: 1; steps: Step[] };
@@ -38,9 +56,13 @@ export function settings(id: string, values: Record<string, Json>): { settings: 
 export function packages(...paths: string[]): { packages: string[] };
 /** Runs these mod IDs as administrator-managed packages: `prepend` outside every other mod, `append` inside. */
 export function tiers(tiers: { prepend?: string[]; append?: string[] }): { tiers: Record<string, 'prepend' | 'append'> };
-export function hostOperations(operations: Record<string, HostReply[]>): { host_operations: Record<string, ({ result: Json } | { error: string })[]> };
-/** Ordered `store.get` (null for a missing key), `store.put` and `store.delete` replies; they are canned, so the host's argument checks (such as the non-null `store.put` value) do not run. */
-export function storeMock(replies?: { get?: Json[]; put?: unknown[]; delete?: unknown[] }): { host_operations: Record<string, ({ result: Json } | { error: string })[]> };
+export function hostOperations(operations: HostMocks): { host_operations: HostMocks };
+/** Deliberate negative fixtures. Set unsafe.arguments/result to bypass that boundary check; unknown operations still fail in the engine. */
+export function unsafeHostOperations(operations: Record<string, UnsafeHostReply[]>): { host_operations: HostMocks };
+/** Deliberate malformed scenario input for engine rejection tests. */
+export function unsafeStep(value: Record<string, Json>): Step;
+/** Ordered store replies, validated by the engine; persisted-state, authority and revision-conflict behavior require real-host tests. */
+export function storeMock(replies?: { get?: Json[]; put?: unknown[]; delete?: unknown[] }): { host_operations: HostMocks };
 export function scenario(...parts: ScenarioPart[]): Scenario;
 /** Runs the project and its tiers against the engine offline and returns the trace; needs `omd-mod` (`OMD_MOD_BIN`). */
 export function runScenario(directory: string, ...parts: ScenarioPart[]): Trace;

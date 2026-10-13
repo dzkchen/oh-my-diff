@@ -5,7 +5,10 @@
 Accumulated integration coverage for the rust-v0.162.1 pinned runtime as of
 2026-10-10. Each component names its owner, version, retained fixtures, limits,
 and removal path. Fixture references are cumulative; this source check does not rerun
-them or qualify the full release candidate. The matrix is checked against the
+them or verify test discovery, execution, assertions, or the full release candidate.
+Release qualification requires `--release --executed-evidence RECEIPT` for all
+combination and regression evidence at the clean validated revision; see `integration/EVIDENCE.md`.
+The matrix is checked against the
 shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language
 or evidence reference that disagrees with the runtime fails the check.
 
@@ -191,15 +194,15 @@ Deleted and not restored: `benchmarks/`.
 | **shared_state_store** | Several mods writing into one store | the store lock, per-mod state files and scope separation |
 | **optional_integration_isolation** | Optional integrations start, serve and tear down cleanly | loopback listeners, managed processes and detected external servers |
 
-## Exercised combinations
+## Combination evidence inventory
 
-| Combination | Components | Boundaries | Result | Executable evidence |
+| Combination | Components | Boundaries | Recorded result (not verified here) | Source evidence inventory |
 | --- | --- | --- | --- | --- |
 | **first_party_mods_on_the_published_api** | omd_workflow, mod_api |  | Every bundled mod declares the current API, requests only capabilities the host publishes, imports only the published type surface, touches no host-private symbol and is not named in host source. | `python:test_first_party_mods_use_only_the_published_api` |
 | **colliding_tool_and_terminal_slots** | omd_host, mod_api | duplicate_tools, duplicate_keybindings | Both claimants of one `mod_<id>_<name>` slot and both claimants of one exclusive replacement point fail closed before activation; the remaining mod keeps its tool and command. | `rust:omd/tests/integration.rs::colliding_tool_slots_and_contested_replacements_disable_only_the_claimants` · `rust:omd/tests/mods.rs::contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` |
 | **cross_mod_keybindings** | omd_host, mod_api | duplicate_keybindings | The first mod in composition order owns each key and later claims are reported as conflicts; bindings may target another mod's command, and a patch that claims a reserved native key is rejected by the host before the terminal sees it. | `rust:omd/tests/integration.rs::terminal_patches_bind_keys_that_may_target_another_mods_command` · `rust:omd/tests/mods.rs::terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `patch:native_escape_and_cancel_keys_cannot_be_intercepted` |
 | **disabled_service_provider** | omd_host, mod_api, mod_package_lifecycle | disabled_dependencies | Disabling a provider refuses the transactional reload, and the next session disables only the required consumer; the optional consumer catches the absence, unrelated mods keep composing and the generated installed-contract types follow the active set. | `rust:omd/tests/integration.rs::disabling_a_shared_service_provider_stops_only_its_required_consumer` · `rust:omd/tests/mods.rs::an_unavailable_dependency_disables_only_the_dependent_chain` · `rust:omd/tests/mods.rs::missing_incompatible_optional_cyclic_and_colliding_services_fail_independently` |
-| **streamed_work_with_reload** | omd_host, mod_api | streaming_reload | An edited mod is swapped only at the next generation: the in-flight tool call keeps its source and forwards each progress update once, the stream middleware keeps its old transform until reload, stale generations are rejected and the replacement owner is unchanged. | `rust:omd/tests/integration.rs::reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one` · `rust:omd/tests/mods.rs::disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation` |
+| **streamed_work_with_reload** | omd_host, mod_api | streaming_reload | Unchanged in-flight tool sources may complete and forward progress once. Changed or disabled sources cannot commit callback results or state; the next boundary activates the new source, stale local generations are rejected and the replacement owner is unchanged. | `rust:omd/tests/integration.rs::reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_generation` · `rust:omd/tests/mods.rs::disabling_during_native_work_rejects_completion_and_next_generation` |
 | **host_upgrade_negotiation** | omd_host, mod_api, mod_package_lifecycle | host_upgrade | Packages on the supported API row activate with per-package stability and feature negotiation; a package pinned to another host release or API is refused before activation, and a bumped state version keeps only that package inactive until its explicit migration runs. | `rust:omd/tests/mods.rs::migration_is_explicit_bounded_and_preserves_previous_state` · `rust:omd/tests/mods.rs::incompatible_host_schema_api_and_features_are_rejected_before_activation` · `script:scripts/mod_compatibility.py` |
 | **shared_event_and_store_boundaries** | omd_host, mod_api | shared_context_budget, shared_state_store | Context observers run in activation order under the per-fragment limit; an observer that throws or exceeds its fragment is isolated and dropped for the runtime, and each package keeps a separate state file that a failing neighbour never creates or touches. | `rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries` · `rust:omd/tests/mods.rs::project_scope_takes_precedence_over_user_scope_without_sharing_state` · `rust:omd/tests/mods.rs::mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates` |
 | **five_language_lsp_with_host** | lsp_rust, lsp_typescript, lsp_javascript, lsp_python, lsp_java, omd_host | optional_integration_isolation | One TypeScript mod manages separate Python, TypeScript/JavaScript, Rust and Java server sessions over process.*. Semantic reads are scope-checked, edits are exact-scope and hash-bound with a host backup, an absent server is a visible non-success fallback, and a failed post-edit synchronisation restores the backup. | `python:test_symbol_rename_and_code_action_apply_exact_text_scopes` · `python:test_semantic_reads_are_scoped_and_actions_are_discovery_only` · `python:test_semantic_request_rejects_untracked_target_and_foreign_store` · `python:test_installed_python_server_synchronizes_open_change_close` · `python:test_code_action_apply_requires_exact_preview_and_rejects_deferred_edit` · `python:test_failed_semantic_sync_restores_exact_backup` · `python:test_fake_server_requests_rename_changes_and_idle` |
@@ -212,16 +215,16 @@ Deleted and not restored: `benchmarks/`.
 
 ## Retained regression cases
 
-| Case | Retained for | What stays covered | Executable evidence |
+| Case | Retained for | Claimed behavior | Source evidence inventory |
 | --- | --- | --- | --- |
 | **current_api_composition** | 0.2.0-experimental.5 | Composition, precedence and conflict handling on the current API 0.2 row: declared order, cycles, contested replacements and scope shadowing. | `rust:omd/tests/mods.rs::composition_order_is_declared_dependencies_first_then_mod_id` · `rust:omd/tests/mods.rs::a_dependency_cycle_is_rejected_before_activation_and_isolated` · `script:scripts/mod_conformance.py` |
 | **state_migration_and_rollback** | 0.1.0 | Package-owned state survives a host upgrade only through an explicit migration, with a content-addressed backup and an interrupted-migration rollback. | `rust:omd/tests/mods.rs::migration_is_explicit_bounded_and_preserves_previous_state` · `rust:omd/tests/mods.rs::interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state` |
 | **pinned_codex_baseline** | 0.162.1 | The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces. | `script:scripts/apply_runtime_patch.py` · `script:scripts/verify_codex_compat.py` · `script:scripts/normalize_upstream_lock.py` |
 | **pinned_node_runtime** | 24.18.0 | Mods keep loading under the pinned Node erasable-TypeScript loader with no ambient process, fetch or code generation. | `node:no ambient process, fetch, or code generation` · `node:typed module context callback` · `script:scripts/mod_author_acceptance.py` |
 
-## Tested versus untested
+## Inventoried versus untested
 
-Tested: 14 combinations across 9 shared boundaries and 18 maintained components, plus 4 regression cases retained across versions.
+Inventoried: 14 combinations across 9 shared boundaries and 18 maintained components, plus 4 regression cases retained across versions.
 
 Untested and not claimed:
 

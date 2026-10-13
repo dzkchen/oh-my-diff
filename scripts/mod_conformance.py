@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Check the public mod API contract against the host source and its executable evidence."""
+"""Check the public mod API source inventory; optionally require release execution receipts."""
+import argparse
 import json
 from functools import cache
 import re
 import sys
 from pathlib import Path
+
+try:
+    from scripts import execution_evidence
+except ModuleNotFoundError:
+    import execution_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "mods/conformance/contract.json"
@@ -58,6 +64,7 @@ def host_sets():
 
 @cache
 def resolve(reference):
+    """Resolve a source inventory reference, without claiming collection or execution."""
     kind, _, name = reference.partition(":")
     if kind == "rust":
         return any(f"fn {name}(" in path.read_text() for path in RUST_TESTS.glob("*.rs"))
@@ -72,6 +79,13 @@ def resolve(reference):
     if kind == "python":
         return any(f"def {name}(" in path.read_text() for path in PYTHON_TESTS.glob("test_*.py"))
     return False
+
+
+def release_evidence(contract):
+    decisions = {entry["id"]: entry for entry in contract["decisions"]}
+    return {reference for entry in contract.get("launch", {}).values()
+            if entry.get("status") == "frozen"
+            for reference in entry.get("evidence", decisions.get(entry.get("decision"), {}).get("evidence", []))}
 
 
 def declaration(source, name):
@@ -292,24 +306,34 @@ def render(contract):
         "",
         "`rust:` `runtime/omd/tests/*.rs` · `patch:` patched native/TUI tests ·",
         "`node:` `mods/runner.test.mjs` · `python:` `tests/`.",
-        "Each reference is resolved by `scripts/mod_conformance.py`.",
+        "Each reference is resolved by `scripts/mod_conformance.py` as a source inventory only.",
+        "A matching name does not prove test discovery, execution, or assertion quality.",
+        "Release qualification requires `--release --executed-evidence RECEIPT` for every",
+        "frozen surface's evidence at the clean validated revision. See `integration/EVIDENCE.md`.",
         "",
         table(
             [(entry["id"], " · ".join(f"`{reference}`" for reference in entry["evidence"]))
              for entry in contract["decisions"] + contract["composition"]],
-            ["Decision or rule", "Executable evidence"],
+            ["Decision or rule", "Source evidence inventory"],
         ),
         "",
     ]
     return "\n".join(out)
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--write", action="store_true")
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
+    args = parser.parse_args(argv)
     contract = json.loads(CONTRACT.read_text())
     version, sets = host_sets()
     problems = check(contract, version, sets)
+    if args.release or args.executed_evidence:
+        problems += execution_evidence.verify(release_evidence(contract), args.executed_evidence)
     rendered = render(contract)
-    if "--write" in sys.argv[1:]:
+    if args.write:
         COVERAGE.write_text(rendered)
         print(f"wrote {COVERAGE.relative_to(ROOT)}")
     elif COVERAGE.read_text() != rendered:
@@ -319,9 +343,10 @@ def main():
     print(
         f"contract {contract['api']}: {len(contract['decisions'])} decisions, "
         f"{len(contract['composition'])} composition rules, all capabilities, events, "
-        f"replacement points, intercept surfaces and host operations documented with resolved evidence"
+        f"replacement points, intercept surfaces and host operations documented with resolved source inventory; "
+        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
     )
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

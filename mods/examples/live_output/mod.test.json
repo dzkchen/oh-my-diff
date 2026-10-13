@@ -5,7 +5,7 @@
     "process.stop": [{"result": {"stopped": false}}],
     "process.which": [{"result": {"found": [{"name": "sh", "path": "/bin/sh", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}]}}],
     "process.start": [{"result": {"session": "live-1", "running": true}}],
-    "terminal.pane": [{"result": {"applied": true}}, {"result": {"applied": true}}],
+    "terminal.pane": [{"result": {"applied": true}}, {"result": {"applied": true}}, {"result": {"applied": true}}, {"result": {"applied": true}}, {"result": {"applied": true}}],
     "process.exchange": [
       {"result": {"session": "live-1", "running": true, "messages": [
         {"stream": "stderr", "data": "warning: slow\n"},

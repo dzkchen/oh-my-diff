@@ -105,7 +105,7 @@ impl ModHostCall {
     pub fn capabilities(&self) -> Result<Vec<&'static str>> {
         let mut capabilities = vec![self.capability()?];
         if self.operation == "model.fork" {
-            capabilities.push("sessions");
+            capabilities.extend(["sessions", "sessions_tools"]);
         }
         if self.operation == "terminal.pty" {
             if self.arguments["write"] == true {
@@ -142,15 +142,6 @@ impl ModHostCall {
 
 fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
     let capabilities = call.capabilities()?;
-    if call.operation.starts_with("context.")
-        && !loaded
-            .package
-            .capabilities
-            .iter()
-            .any(|cap| cap == "context")
-    {
-        return Err(failure("capability_denied: context"));
-    }
     if let Some(missing) = capabilities
         .iter()
         .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))

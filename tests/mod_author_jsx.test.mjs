@@ -16,7 +16,7 @@ function project(source, { typescript = true, typecheck = false } = {}) {
   if (typescript) symlinkSync(join(mods, 'node_modules/typescript'), join(directory, 'node_modules/typescript'));
   if (typecheck) {
     mkdirSync(join(directory, 'node_modules/.bin'));
-    symlinkSync(join(mods, 'node_modules/.bin/tsc'), join(directory, 'node_modules/.bin/tsc'));
+    symlinkSync(join(mods, 'node_modules/typescript/bin/tsc'), join(directory, 'node_modules/.bin/tsc'));
     symlinkSync(mods, join(directory, 'node_modules/@oh-my-diff/mod-api'));
     writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true, allowImportingTsExtensions: true, jsx: 'react-jsx', jsxImportSource: '@oh-my-diff/mod-api', types: [] },

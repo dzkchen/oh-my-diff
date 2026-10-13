@@ -12,12 +12,26 @@ use codex_omd::resource_data::ResourceRef;
 const RESETTABLE: &[&str] = &["host.json", "mods.json"];
 
 struct Installed {
+    owner: Arc<()>,
     core: std::sync::Weak<Core>,
-    handle: Option<tokio::runtime::Handle>,
     _roster: codex_omd::client_surface::Registration,
 }
 
 static INSTALLED: Mutex<Option<Installed>> = Mutex::new(None);
+
+pub(super) struct Registration {
+    owner: Arc<()>,
+    _dispatcher: codex_omd::host::SessionRegistration,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        let mut installed = INSTALLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if installed.as_ref().is_some_and(|current| Arc::ptr_eq(&current.owner, &self.owner)) {
+            *installed = None;
+        }
+    }
+}
 
 /// Runs requested work on one thread at a time; requests during a run cause one trailing run.
 struct Coalesce {
@@ -55,25 +69,27 @@ impl Coalesce {
 
 static REPUBLISH: Coalesce = Coalesce::new();
 
-pub(super) fn install(core: &Arc<Core>) {
-    let weak = Arc::downgrade(core);
-    let roster = codex_omd::client_surface::register_observer(Arc::new(move |observed| {
+pub(super) fn install(core: &Arc<Core>, dispatcher: codex_omd::host::SessionRegistration) -> Result<Registration, String> {
+    let mut installed = INSTALLED.lock().map_err(|_| "host_installation_poisoned")?;
+    if installed.is_some() {
+        return Err("host_already_installed".into());
+    }
+    let owner = Arc::new(());
+    let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
         if matches!(observed, codex_omd::client_surface::Observed::Roster) {
-            let weak = weak.clone();
-            REPUBLISH.request(move || {
-                if let Some(core) = weak.upgrade() {
+            REPUBLISH.request(|| {
+                if let Ok(core) = self::core() {
                     republish(&core);
                 }
             });
         }
     }));
-    if let Ok(mut installed) = INSTALLED.lock() {
-        *installed = Some(Installed {
+    *installed = Some(Installed {
+            owner: owner.clone(),
             core: Arc::downgrade(core),
-            handle: tokio::runtime::Handle::try_current().ok(),
             _roster: roster,
         });
-    }
+    Ok(Registration { owner, _dispatcher: dispatcher })
 }
 
 /// Renders the view again so mods see the changed roster, keeping the last published event.
@@ -108,21 +124,17 @@ fn session(core: &Core) -> Result<Lead, String> {
         .ok_or_else(|| "session_unavailable: no thread is running in this host".to_owned())
 }
 
-fn block<T>(future: impl std::future::Future<Output = T>) -> Result<T, String> {
+fn block<T>(core: &Core, future: impl std::future::Future<Output = T>) -> Result<T, String> {
+    let owner = core.session_runtime.as_ref().ok_or("host_operation_unavailable: no session runtime")?;
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            Ok(tokio::task::block_in_place(|| handle.block_on(future)))
+            Ok(tokio::task::block_in_place(|| owner.block_on(future)))
         }
         Ok(_) => Err(
             "host_operation_unavailable: client calls need the multi-threaded session runtime"
                 .into(),
         ),
-        Err(_) => INSTALLED
-            .lock()
-            .ok()
-            .and_then(|installed| installed.as_ref()?.handle.clone())
-            .map(|handle| handle.block_on(future))
-            .ok_or_else(|| "host_operation_unavailable: no session runtime".into()),
+        Err(_) => Ok(owner.block_on(future)),
     }
 }
 
@@ -295,7 +307,7 @@ fn deliver_posts() {
                 permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
                 ..lead
             };
-            let _ = block(expansion::REMOTE.scope(
+            let _ = block(&core, expansion::REMOTE.scope(
                 true,
                 expansion::invoke_one(&core, &lead, owner, "component_post", payload),
             ));
@@ -336,7 +348,7 @@ pub fn component_event(client: &str, component: &str, event: Value) -> Result<Va
         permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
         ..lead
     };
-    block(expansion::REMOTE.scope(
+    block(&core, expansion::REMOTE.scope(
         true,
         expansion::invoke_one(
             &core,
@@ -438,7 +450,7 @@ pub fn action(
             result
         },
     );
-    let result = block(expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
+    let result = block(&core, expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
     Ok(json!({"status": "completed", "result": result["result"]}))
 }
 
