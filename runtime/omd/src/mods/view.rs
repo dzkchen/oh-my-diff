@@ -257,14 +257,33 @@ pub struct ModSurfacePaint {
     pub border: Option<ModColor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass: Option<ModSurfaceGlass>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSurfaceGlass {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blur: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
 }
 
 fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
+    let unit = |value: Option<f32>| {
+        value.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+    };
     styles.iter().all(|(name, paint)| {
         matches!(name.as_str(), "composer" | "backdrop" | "approval")
-            && paint
-                .opacity
-                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+            && unit(paint.opacity)
+            && paint.glass.as_ref().is_none_or(|glass| {
+                name == "composer"
+                    && glass.blur.is_none_or(|blur| blur <= 16)
+                    && unit(glass.opacity)
+            })
     })
 }
 

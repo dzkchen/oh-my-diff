@@ -78,7 +78,7 @@ with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
 `--profile full` installs the first-party launch collection. A fresh OMD+ store enables
 `omd_inspector`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
-`omd_plan_removal` and `omd_tool_lines`; Codex's
+`omd_plan_removal`, `omd_tool_lines`, `omd_plan_panel` and `omd_continue`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
 intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
 the privacy policy and the usage HUD (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,
@@ -104,8 +104,7 @@ activation steps. OMD Core can install the same packages explicitly.
 Packages outside this launch collection are not shipped. They remain in the
 annotated Git tag `pre-launch-collection`, except for later additions whose restore
 revision is recorded in the launch cut inventory, and return in post-launch waves. Wave 1 is `omd_source_knowledge`,
-`omd_mini`, `omd_plan_panel`, `omd_cursor`, `omd_programmable_context`, `omd_continue`
-and the `omd_profiles` account-switcher upgrade; wave 2 is the remaining deferred
+`omd_mini`, `omd_cursor`, `omd_programmable_context` and the `omd_profiles` account-switcher upgrade; wave 2 is the remaining deferred
 mods and plugins, `bridge/` and `browser/`.
 See the [launch cut inventory](INTEGRATION.md#launch-cut-inventory) for restoration
 requirements and dependency notes.

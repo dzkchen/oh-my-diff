@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackageControl {
@@ -94,14 +95,66 @@ fn source_kind(source: &ModPackageSource) -> &'static str {
     }
 }
 
-/// Lists every store selection; `runtime` is the serving session's mod status.
-pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
+struct Selections {
+    lock: crate::ModPackageLock,
+    configuration: crate::ModConfiguration,
+    status: Value,
+    manifests: Vec<Value>,
+}
+
+type Listed = (Value, Vec<(PathBuf, crate::FileStamp)>, Arc<Selections>);
+
+static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
+
+/// The store side of a listing, reused while the store files and every package file are unchanged.
+fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
+    let key = store.listing_stamp();
+    let listed = LISTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let (Some(key), Some((cached, stamps, selections))) = (&key, listed)
+        && key == &cached
+        && ModStore::stamps_unchanged(&stamps)
+    {
+        return Ok(selections);
+    }
     let lock = store.package_lock()?;
     let configuration = store.configuration()?;
-    let generation = configuration.revision;
+    let stamps = key.as_ref().and_then(|_| {
+        ModStore::package_stamps(
+            configuration
+                .mods
+                .iter()
+                .map(|selection| selection.path.as_path()),
+        )
+    });
     let mut manifests = Vec::new();
     let status =
         store.selection_status_inspected_in(None, &configuration, &lock, Some(&mut manifests))?;
+    let selections = Arc::new(Selections {
+        lock,
+        configuration,
+        status,
+        manifests,
+    });
+    if let (Some(key), Some(stamps)) = (key, stamps) {
+        *LISTED.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((key, stamps, selections.clone()));
+    }
+    Ok(selections)
+}
+
+/// Lists every store selection; `runtime` is the serving session's mod status.
+pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
+    let selections = selections(store)?;
+    let Selections {
+        lock,
+        configuration,
+        status,
+        manifests,
+    } = &*selections;
+    let generation = configuration.revision;
     let selections = status["selections"]
         .as_array()
         .map(Vec::as_slice)

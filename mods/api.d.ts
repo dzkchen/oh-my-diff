@@ -191,7 +191,8 @@ export type AsciiBackdrop = BackdropTransform & { text: string };
 export type TerminalBackdrop =
   | { ascii: AsciiBackdrop }
   | { image: BackdropTransform & { resource: ResourceRef; overlay?: TerminalSurfacePaint }; fallback?: { ascii: AsciiBackdrop } };
-export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
+/** `glass` (composer only) draws the image backdrop under the surface, blurred and tinted; elsewhere the gradient stays. */
+export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number; glass?: { blur?: number; tint?: ThemeColor; opacity?: number } };
 /** An overlay draws a `owner/name` site above the layout at its anchor's top-left plus `offset`; higher `z` draws later. */
 export type TerminalOverlay = {
   anchor: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center' | { component: string };

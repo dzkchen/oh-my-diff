@@ -144,6 +144,10 @@ test('Codex account samples are deduplicated, projected only with enough span an
   state = notify(state, 20, NOW + 60_000);
   assert.equal(state.hud.samples.filter(sample => sample.minutes === 300).length, 1);
   assert.match(dialog(state, hud, NOW + 60_000).text, /5h: 20% used · resets in 1h59m · observed 0m ago · insufficient data for a projection/);
+  const scheduled = [];
+  call(usageMod, { event: 'app_notification', payload: { method: 'account/rateLimits/updated', params: { rateLimits: limits(20) }, thread_id: null, coalesced: 0, dropped: 0 }, state, settings: hud, virtual_time_ms: NOW + 3_700_000 },
+    hostCall => hostCall.operation === 'events.schedule' ? (scheduled.push(hostCall.arguments.key), { key: hostCall.arguments.key, delay_ms: 60_000 }) : { delivered: 1, dropped: 0 });
+  assert.deepEqual(scheduled, ['time:countdown']);
   state = notify(state, 40, NOW + 1_860_000);
   const text = dialog(state, hud, NOW + 1_860_000).text;
   assert.match(text, /5h: 40% used · resets in 1h29m .* projection ~97% at reset \(2 samples over 31m\)/);

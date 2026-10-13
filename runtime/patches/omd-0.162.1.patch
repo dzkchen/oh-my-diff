@@ -60508,10 +60508,10 @@ index 000000000..683f2b20d
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..e182f9953
+index 000000000..0abd5e033
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2415 @@
+@@ -0,0 +1,2421 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -60674,6 +60674,7 @@ index 000000000..e182f9953
 +    intercepted: Arc<Mutex<Vec<&'static str>>>,
 +    required: Arc<Mutex<Vec<&'static str>>>,
 +    environment: Arc<codex_omd::host::Environment>,
++    codex_config: std::collections::BTreeSet<String>,
 +    agents: agents::Agents,
 +    services: services::Services,
 +    views: Arc<view::Views>,
@@ -60938,6 +60939,7 @@ index 000000000..e182f9953
 +    let required = runtime.required_surfaces();
 +    let intercepted = runtime.intercepted_surfaces();
 +    let environment = runtime.environment();
++    let codex_config = runtime.codex_config();
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    host.accounts
 +        .install_mod_runtime(runtime.clone(), required.clone());
@@ -60954,6 +60956,7 @@ index 000000000..e182f9953
 +            intercepted,
 +            required,
 +            environment,
++            codex_config,
 +            services: services::Services::default(),
 +            views,
 +            expansion: expansion::State::default(),
@@ -61538,6 +61541,9 @@ index 000000000..e182f9953
 +            ));
 +        }
 +        config.model_provider.supports_websockets = false;
++        if self.codex_config.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
++            config.update_plan_enabled = true;
++        }
 +        let mut filesystem = profile.file_system_sandbox_policy();
 +        filesystem
 +            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
@@ -70229,10 +70235,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..298a60ff7
+index 000000000..cac4a96a4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4956 @@
+@@ -0,0 +1,4957 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -70336,6 +70342,7 @@ index 000000000..298a60ff7
 +        intercepted,
 +        required,
 +        environment,
++        codex_config: Default::default(),
 +        services: services::Services::default(),
 +        views,
 +        expansion: State::default(),
@@ -97048,10 +97055,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..a8349e94a
+index 000000000..96dea6046
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,253 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -97154,6 +97161,7 @@ index 000000000..a8349e94a
 +pub use workspace::workspace_path;
 +
 +pub use mods::AUTHORITY_CAPABILITIES;
++pub use mods::CODEX_CONFIG_UPDATE_PLAN;
 +pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::DELEGABLE_APPROVAL_KINDS;
 +pub use mods::FileStamp;
@@ -97245,6 +97253,7 @@ index 000000000..a8349e94a
 +pub use mods::ModStore;
 +pub use mods::ModStyle;
 +pub use mods::ModSubscriptions;
++pub use mods::ModSurfaceGlass;
 +pub use mods::ModSurfacePaint;
 +pub use mods::ModTab;
 +pub use mods::ModTerminalView;
@@ -99194,10 +99203,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..afd3ba46c
+index 000000000..d8e2c908c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5764 @@
+@@ -0,0 +1,5803 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99265,6 +99274,7 @@ index 000000000..afd3ba46c
 +pub use view::ModSpan;
 +pub use view::ModSplit;
 +pub use view::ModStyle;
++pub use view::ModSurfaceGlass;
 +pub use view::ModSurfacePaint;
 +pub use view::ModTab;
 +pub use view::ModTheme;
@@ -99576,6 +99586,8 @@ index 000000000..afd3ba46c
 +    "terminal_media_v1",
 +    "terminal_surface_paint_v1",
 +    "terminal_backdrop_transform_v1",
++    "terminal_surface_glass_v1",
++    "codex_config_v1",
 +    "terminal_image_sample_v1",
 +    "terminal_import_lifetime_v1",
 +    "secrets_v1",
@@ -100507,7 +100519,12 @@ index 000000000..afd3ba46c
 +    pub hook_budget_ms: u64,
 +    #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
 +    pub subscriptions: ModSubscriptions,
++    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
++    pub codex_config: BTreeMap<String, Value>,
 +}
++
++pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
++const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
@@ -100850,6 +100867,20 @@ index 000000000..afd3ba46c
 +            text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
 +        }) {
 +            return Err(failure("invalid_description: 1-160 printable characters"));
++        }
++        if !self.codex_config.is_empty()
++            && (!self
++                .compatibility
++                .required_features
++                .iter()
++                .any(|feature| feature == "codex_config_v1")
++                || self.codex_config.iter().any(|(key, value)| {
++                    !CODEX_CONFIG_KEYS.contains(&key.as_str()) || *value != Value::Bool(true)
++                }))
++        {
++            return Err(failure(
++                "invalid_codex_config: keys from the host allowlist set to true, with codex_config_v1 required",
++            ));
 +        }
 +        if let Some(adapter) = self.adapter.as_deref()
 +            && (adapter == self.id
@@ -101852,7 +101883,7 @@ index 000000000..afd3ba46c
 +    dynamic_tools: BTreeMap<String, Vec<ModTool>>,
 +    checkout: Option<PathBuf>,
 +    valid_views: BTreeMap<String, Value>,
-+    renders: BTreeMap<String, (String, Value, Instant)>,
++    renders: BTreeMap<String, (String, Value)>,
 +    rendered: HashMap<String, render::Rendered>,
 +    chains: Vec<Value>,
 +    access: Vec<Value>,
@@ -102832,6 +102863,12 @@ index 000000000..afd3ba46c
 +        self.environment.clone()
 +    }
 +
++    pub fn codex_config(&self) -> BTreeSet<String> {
++        self.active()
++            .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
++            .collect()
++    }
++
 +    fn retain_environment(&self) {
 +        self.environment.retain(
 +            &self
@@ -102862,6 +102899,11 @@ index 000000000..afd3ba46c
 +        if let Ok(mut published) = self.intercepted_surfaces.lock() {
 +            *published = intercepted;
 +        }
++        process::reserve_reused(
++            self.active()
++                .filter(|(_, loaded)| loaded.registrations.events.iter().any(|e| e == "terminal"))
++                .count(),
++        );
 +    }
 +
 +    /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
@@ -103843,7 +103885,11 @@ index 000000000..afd3ba46c
 +            let stamp = Self::terminal_stamp(
 +                loaded,
 +                &reply.state,
-+                ui.as_ref().map(|state| state.revision),
++                loaded
++                    .ui
++                    .as_ref()
++                    .map(|(scope, _)| scope.as_str())
++                    .zip(ui.as_ref().map(|state| state.revision)),
 +            );
 +            if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
 +                current.command_view = Some(AcceptedCommandView {
@@ -104179,14 +104225,14 @@ index 000000000..afd3ba46c
 +        )
 +    }
 +
-+    fn terminal_stamp(loaded: &Loaded, state: &Value, revision: Option<u64>) -> String {
++    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, u64)>) -> String {
 +        digest(
 +            json!([
 +                loaded.selection.sha256,
 +                loaded.selection.settings,
 +                state,
-+                loaded.ui.as_ref().map(|(scope, _)| scope),
-+                revision
++                ui.map(|(scope, _)| scope),
++                ui.map(|(_, revision)| revision)
 +            ])
 +            .to_string()
 +            .as_bytes(),
@@ -104195,23 +104241,29 @@ index 000000000..afd3ba46c
 +
 +    fn terminal_state_key(&self, id: &str, thread: Option<&str>) -> Option<String> {
 +        let loaded = self.loaded.get(id)?;
-+        if loaded
-+            .ui
-+            .as_ref()
-+            .is_none_or(|(scope, _)| scope != &self.ui_key(loaded, thread))
-+        {
-+            return None;
-+        }
++        let scope = self.ui_key(loaded, thread);
++        let ui = match &loaded.ui {
++            Some((current, state)) if current == &scope => Some(state.clone()),
++            _ => UI_STATES
++                .lock()
++                .ok()?
++                .get(&scope)
++                .and_then(std::sync::Weak::upgrade),
++        };
++        let revision = match ui {
++            Some(state) => state.lock().ok()?.revision,
++            None => 0,
++        };
 +        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
 +        let state = self
 +            .store
 +            .scoped_state(&location, loaded.package.state_version)
 +            .ok()?;
-+        let revision = match &loaded.ui {
-+            Some((_, state)) => Some(state.lock().ok()?.revision),
-+            None => None,
-+        };
-+        Some(Self::terminal_stamp(loaded, &state, revision))
++        Some(Self::terminal_stamp(
++            loaded,
++            &state,
++            Some((&scope, revision)),
++        ))
 +    }
 +
 +    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -104224,10 +104276,8 @@ index 000000000..afd3ba46c
 +                let key = self
 +                    .terminal_state_key(&id, thread.as_deref())
 +                    .map(|stamp| format!("{stamp}:{payload_hash}"));
-+                // Renders may read the clock, so a cached one lives for a second.
-+                if let (Some(key), Some((cached, value, at))) = (&key, self.renders.get(&id))
++                if let (Some(key), Some((cached, value))) = (&key, self.renders.get(&id))
 +                    && key == cached
-+                    && at.elapsed() < Duration::from_secs(1)
 +                {
 +                    return (id, Ok(value.clone()));
 +                }
@@ -104241,8 +104291,7 @@ index 000000000..afd3ba46c
 +                );
 +                match (&result, key) {
 +                    (Ok(value), Some(key)) => {
-+                        self.renders
-+                            .insert(id.clone(), (key, value.clone(), Instant::now()));
++                        self.renders.insert(id.clone(), (key, value.clone()));
 +                    }
 +                    _ => {
 +                        self.renders.remove(&id);
@@ -104297,8 +104346,7 @@ index 000000000..afd3ba46c
 +        self.renders.remove(id);
 +        if matched && let Some(stamp) = stamp {
 +            let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
-+            self.renders
-+                .insert(id.to_owned(), (key, patch, Instant::now()));
++            self.renders.insert(id.to_owned(), (key, patch));
 +        }
 +        let results = self
 +            .active()
@@ -112101,10 +112149,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..3a2066d4e
+index 000000000..b0b7b3ae4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,584 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -112375,7 +112423,7 @@ index 000000000..3a2066d4e
 +static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new()), Condvar::new());
 +const WARM_RUNNERS: usize = 4;
 +const PINNED_RUNNERS: usize = 4;
-+const REUSED_RUNNERS: usize = 2;
++static REUSED_RUNNERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2);
 +const WARM_IDLE: Duration = Duration::from_secs(60);
 +
 +struct Stepping(Option<String>);
@@ -112567,6 +112615,12 @@ index 000000000..3a2066d4e
 +    Ok(value)
 +}
 +
++/// Keeps a reused runner for each package whose `terminal` handler runs on every view, so one view
++/// never evicts another package's runner.
++pub(super) fn reserve_reused(packages: usize) {
++    REUSED_RUNNERS.fetch_max(packages, std::sync::atomic::Ordering::Relaxed);
++}
++
 +fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
 +    WARM.lock()
 +        .map(|mut runners| runners.extract_if(.., retire).collect())
@@ -112581,7 +112635,7 @@ index 000000000..3a2066d4e
 +    let size = match kind {
 +        (_, Some(_)) => usize::MAX,
 +        (true, None) => WARM_RUNNERS,
-+        (false, None) => REUSED_RUNNERS,
++        (false, None) => REUSED_RUNNERS.load(std::sync::atomic::Ordering::Relaxed),
 +    };
 +    let evicted = match WARM.lock() {
 +        Ok(mut runners) => {
@@ -114759,10 +114813,10 @@ index 000000000..81343c1f0
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..49f254bdf
+index 000000000..76559f98f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1301 @@
+@@ -0,0 +1,1337 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -115399,6 +115453,42 @@ index 000000000..49f254bdf
 +
 +    pub fn selection_status(&self) -> Result<Value> {
 +        self.selection_status_in(None)
++    }
++
++    /// Stamps of the store files a package listing reads; `None` under administrator policy or the broker.
++    pub fn listing_stamp(&self) -> Option<Value> {
++        if crate::broker::deployed() || std::fs::symlink_metadata(&self.policy.0).is_ok() {
++            return None;
++        }
++        let stamps = [
++            self.root.join("mods.json"),
++            self.root.join("packages.lock.json"),
++            self.root.join("package-transaction.json"),
++            self.root.join("managed.json"),
++        ]
++        .iter()
++        .map(|path| std::fs::metadata(path).ok().map(|metadata| file_stamp(&metadata)))
++        .collect::<Vec<_>>();
++        Some(json!([self.root, stamps]))
++    }
++
++    /// File stamps of verified packages; `None` if any package is unverified.
++    pub fn package_stamps<'a>(
++        paths: impl IntoIterator<Item = &'a Path>,
++    ) -> Option<Vec<(PathBuf, FileStamp)>> {
++        let verified = VERIFIED_PACKAGES.lock().ok()?;
++        paths
++            .into_iter()
++            .map(|path| verified.get(path).map(|package| package.0.clone()))
++            .collect::<Option<Vec<_>>>()
++            .map(|files| files.concat())
++    }
++
++    pub fn stamps_unchanged(stamps: &[(PathBuf, FileStamp)]) -> bool {
++        stamps.iter().all(|(file, expected)| {
++            std::fs::symlink_metadata(file)
++                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
++        })
 +    }
 +
 +    pub fn verify_selections(&self) -> Result<()> {
@@ -116066,10 +116156,10 @@ index 000000000..49f254bdf
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..22050cc39
+index 000000000..28c21bc2f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2312 @@
+@@ -0,0 +1,2331 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -116329,14 +116419,33 @@ index 000000000..22050cc39
 +    pub border: Option<ModColor>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub opacity: Option<f32>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub glass: Option<ModSurfaceGlass>,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModSurfaceGlass {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub blur: Option<u8>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub tint: Option<ModColor>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub opacity: Option<f32>,
 +}
 +
 +fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
++    let unit = |value: Option<f32>| {
++        value.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
++    };
 +    styles.iter().all(|(name, paint)| {
 +        matches!(name.as_str(), "composer" | "backdrop" | "approval")
-+            && paint
-+                .opacity
-+                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
++            && unit(paint.opacity)
++            && paint.glass.as_ref().is_none_or(|glass| {
++                name == "composer"
++                    && glass.blur.is_none_or(|blur| blur <= 16)
++                    && unit(glass.opacity)
++            })
 +    })
 +}
 +
@@ -118384,10 +118493,10 @@ index 000000000..22050cc39
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..d1ed42747
+index 000000000..e61ebee80
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,460 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -118613,9 +118722,13 @@ index 000000000..d1ed42747
 +fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
 +    assert!(view(json!({"surface_styles":{"approval":{"border":"#888888"}}})).is_ok());
 +    assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());
++    assert!(view(json!({"surface_styles":{"composer":{"glass":{"blur":16,"tint":"#102030","opacity":0.4}}}})).is_ok());
 +    for value in [
 +        json!({"surface_styles":{"transcript":{"top":0}}}),
 +        json!({"surface_styles":{"composer":{"opacity":1.01}}}),
++        json!({"surface_styles":{"composer":{"glass":{"blur":17}}}}),
++        json!({"surface_styles":{"composer":{"glass":{"opacity":-0.1}}}}),
++        json!({"surface_styles":{"approval":{"glass":{}}}}),
 +        json!({"backdrop":{"ascii":{"text":"x","scale":0.01}}}),
 +        json!({"backdrop":{"ascii":{"text":"x","offset":{"x":4097,"y":0}}}}),
 +        json!({"backdrop":{"ascii":{"text":"x","tint":"red"}}}),
@@ -118863,16 +118976,17 @@ index 000000000..257d49d33
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 000000000..f5537a3eb
+index 000000000..f9afa6bd8
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,533 @@
+@@ -0,0 +1,586 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
 +use std::io;
 +use std::path::{Path, PathBuf};
++use std::sync::{Arc, Mutex, PoisonError};
 +
 +#[derive(Clone, Debug, PartialEq)]
 +pub struct PackageControl {
@@ -118963,14 +119077,66 @@ index 000000000..f5537a3eb
 +    }
 +}
 +
-+/// Lists every store selection; `runtime` is the serving session's mod status.
-+pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
++struct Selections {
++    lock: crate::ModPackageLock,
++    configuration: crate::ModConfiguration,
++    status: Value,
++    manifests: Vec<Value>,
++}
++
++type Listed = (Value, Vec<(PathBuf, crate::FileStamp)>, Arc<Selections>);
++
++static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
++
++/// The store side of a listing, reused while the store files and every package file are unchanged.
++fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
++    let key = store.listing_stamp();
++    let listed = LISTED
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .clone();
++    if let (Some(key), Some((cached, stamps, selections))) = (&key, listed)
++        && key == &cached
++        && ModStore::stamps_unchanged(&stamps)
++    {
++        return Ok(selections);
++    }
 +    let lock = store.package_lock()?;
 +    let configuration = store.configuration()?;
-+    let generation = configuration.revision;
++    let stamps = key.as_ref().and_then(|_| {
++        ModStore::package_stamps(
++            configuration
++                .mods
++                .iter()
++                .map(|selection| selection.path.as_path()),
++        )
++    });
 +    let mut manifests = Vec::new();
 +    let status =
 +        store.selection_status_inspected_in(None, &configuration, &lock, Some(&mut manifests))?;
++    let selections = Arc::new(Selections {
++        lock,
++        configuration,
++        status,
++        manifests,
++    });
++    if let (Some(key), Some(stamps)) = (key, stamps) {
++        *LISTED.lock().unwrap_or_else(PoisonError::into_inner) =
++            Some((key, stamps, selections.clone()));
++    }
++    Ok(selections)
++}
++
++/// Lists every store selection; `runtime` is the serving session's mod status.
++pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
++    let selections = selections(store)?;
++    let Selections {
++        lock,
++        configuration,
++        status,
++        manifests,
++    } = &*selections;
++    let generation = configuration.revision;
 +    let selections = status["selections"]
 +        .as_array()
 +        .map(Vec::as_slice)
@@ -130025,10 +130191,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..95a68867b
+index 000000000..0f1e5df0a
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5708 @@
+@@ -0,0 +1,5782 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131965,15 +132131,6 @@ index 000000000..95a68867b
 +            .title
 +            .is_none()
 +    );
-+    std::thread::sleep(std::time::Duration::from_millis(1100));
-+    assert_eq!(
-+        runtime
-+            .terminal_view(json!({}), || true)
-+            .view
-+            .title
-+            .as_deref(),
-+        Some("First")
-+    );
 +    for change in ["change", "durable"] {
 +        let value = runtime
 +            .invoke(
@@ -132039,6 +132196,25 @@ index 000000000..95a68867b
 +            .as_deref(),
 +        Some("First")
 +    );
++}
++
++#[test]
++fn terminal_handlers_rerun_only_when_state_or_input_changes() {
++    let source = "export default api => { api.command('bump', () => { api.state.set(Number(api.state.get() ?? 0) + 1); }); api.on('terminal', () => ({title: String(Date.now())})); }";
++    let (temp, _, _) = fixture(source, &["commands", "terminal", "store"]);
++    let mut runtime = host(&temp);
++    let title = |runtime: &mut ModHost, payload: Value| {
++        std::thread::sleep(std::time::Duration::from_millis(20));
++        runtime.terminal_view(payload, || true).view.title.unwrap()
++    };
++    let first = title(&mut runtime, json!({"event": "draw"}));
++    assert_eq!(title(&mut runtime, json!({"event": "draw"})), first);
++    let input = title(&mut runtime, json!({"event": "resize"}));
++    assert_ne!(input, first);
++    runtime
++        .invoke("fixture", runtime.generation(), "command", "bump", Value::Null)
++        .unwrap();
++    assert_ne!(title(&mut runtime, json!({"event": "resize"})), input);
 +}
 +
 +#[test]
@@ -132831,6 +133007,70 @@ index 000000000..95a68867b
 +    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
 +    assert!(error.contains(MOD_API_VERSION), "{error}");
 +    assert!(error.contains("0.1.0-experimental.1"), "{error}");
++}
++
++#[test]
++fn codex_config_is_allowlisted_and_reported_for_active_mods() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let write = |directory: &str, extra: Value| {
++        let path = packaged(
++            &root,
++            directory,
++            directory,
++            "export default () => {}",
++            &[],
++            &[],
++        );
++        let mut manifest: Value =
++            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++        manifest
++            .as_object_mut()
++            .unwrap()
++            .extend(extra.as_object().unwrap().clone());
++        std::fs::write(
++            path.join("mod.json"),
++            serde_json::to_vec(&manifest).unwrap(),
++        )
++        .unwrap();
++        path
++    };
++    let feature = json!({"compatibility":{"required_features":["codex_config_v1"]}});
++    let planner = write(
++        "planner",
++        json!({"codex_config":{"tools.update_plan.enabled":true},"compatibility":feature["compatibility"]}),
++    );
++    trust(&store, &planner, &[]);
++    for (directory, extra) in [
++        (
++            "unlisted",
++            json!({"codex_config":{"model":true},"compatibility":feature["compatibility"]}),
++        ),
++        (
++            "disabled",
++            json!({"codex_config":{"tools.update_plan.enabled":false},"compatibility":feature["compatibility"]}),
++        ),
++        (
++            "undeclared",
++            json!({"codex_config":{"tools.update_plan.enabled":true}}),
++        ),
++    ] {
++        let error = ModStore::inspect_package(&write(directory, extra))
++            .unwrap_err()
++            .to_string();
++        assert!(
++            error.contains("invalid_codex_config"),
++            "{directory}: {error}"
++        );
++    }
++    let plain = write("plain", json!({}));
++    trust(&store, &plain, &[]);
++    let runtime = ModHost::open(root.join("store")).unwrap();
++    assert_eq!(
++        runtime.codex_config().into_iter().collect::<Vec<_>>(),
++        ["tools.update_plan.enabled"]
++    );
 +}
 +
 +fn error_of(runtime: &ModHost, id: &str) -> String {
@@ -135739,10 +135979,10 @@ index 000000000..95a68867b
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..ea1d90a41
+index 000000000..a9cb18be1
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,2183 @@
+@@ -0,0 +1,2185 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -135959,6 +136199,8 @@ index 000000000..ea1d90a41
 +        "shadowed_by_project_scope"
 +    );
 +    assert_eq!(status["selections"][1]["effective"], true);
++    let listed = codex_omd::package_controls::list(&store, None).unwrap();
++    assert!(listed["packages"].as_array().unwrap().iter().all(|item| item["failed"].is_null()));
 +    std::fs::write(project_mod.join("main.ts"), "export default () => 0;\n").unwrap();
 +    let status = store.selection_status().unwrap();
 +    assert_eq!(status["selections"][0]["effective"], true);
@@ -147306,15 +147548,16 @@ index 000000000..bf8d3805c
 +}
 diff --git a/codex-rs/tui/src/mod_backdrop.rs b/codex-rs/tui/src/mod_backdrop.rs
 new file mode 100644
-index 000000000..69431fda2
+index 000000000..a804f9b41
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_backdrop.rs
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,549 @@
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
 +use codex_omd::ModAsciiBackdrop;
 +use codex_omd::ModColor;
 +use codex_omd::ModImageBackdrop;
++use codex_omd::ModSurfaceGlass;
 +use codex_omd::ModSurfacePaint;
 +use codex_omd::client_surface::decode_image;
 +use image::ImageFormat;
@@ -147383,11 +147626,78 @@ index 000000000..69431fda2
 +    }
 +}
 +
++pub(crate) struct Glass<'a> {
++    pub(crate) transcript: Rect,
++    pub(crate) surface: Rect,
++    pub(crate) settings: &'a ModSurfaceGlass,
++}
++
++fn pixels(rect: Rect, area: Rect, canvas: &image::RgbaImage) -> (u32, u32, u32, u32) {
++    let column = |cell: u16| {
++        u32::from(cell.saturating_sub(area.x)) * canvas.width() / u32::from(area.width.max(1))
++    };
++    let row = |cell: u16| {
++        u32::from(cell.saturating_sub(area.y)) * canvas.height() / u32::from(area.height.max(1))
++    };
++    let (x, y) = (column(rect.x), row(rect.y));
++    (x, y, column(rect.right()) - x, row(rect.bottom()) - y)
++}
++
++fn apply_glass(canvas: &mut image::RgbaImage, area: Rect, glass: &Glass<'_>) {
++    let (x, y, width, height) = pixels(glass.surface.intersection(area), area, canvas);
++    let (width, height) = (
++        width.min(canvas.width().saturating_sub(x)),
++        height.min(canvas.height().saturating_sub(y)),
++    );
++    if width == 0 || height == 0 {
++        return;
++    }
++    let sigma = f32::from(glass.settings.blur.unwrap_or(6)) * 2.0;
++    let margin = (sigma * 3.0).ceil() as u32;
++    let (left, top) = (x.saturating_sub(margin), y.saturating_sub(margin));
++    let region = image::imageops::crop_imm(
++        canvas,
++        left,
++        top,
++        (x + width + margin).min(canvas.width()) - left,
++        (y + height + margin).min(canvas.height()) - top,
++    )
++    .to_image();
++    let region = if sigma > 0.0 {
++        image::imageops::fast_blur(&region, sigma)
++    } else {
++        region
++    };
++    let tint = glass.settings.tint.map(rgb);
++    let amount = glass.settings.opacity.unwrap_or(0.35);
++    let (transcript_x, transcript_y, transcript_width, transcript_height) =
++        pixels(glass.transcript.intersection(area), area, canvas);
++    for (px, py, pixel) in canvas.enumerate_pixels_mut() {
++        let in_surface = (x..x + width).contains(&px) && (y..y + height).contains(&py);
++        if in_surface {
++            *pixel = *region.get_pixel(px - left, py - top);
++            if let Some(tint) = tint {
++                for i in 0..3 {
++                    pixel.0[i] = (f32::from(pixel.0[i]) * (1.0 - amount)
++                        + f32::from(tint[i]) * amount)
++                        .round() as u8;
++                }
++                pixel.0[3] = pixel.0[3].max((amount * 255.0).round() as u8);
++            }
++        } else if !((transcript_x..transcript_x + transcript_width).contains(&px)
++            && (transcript_y..transcript_y + transcript_height).contains(&py))
++        {
++            *pixel = image::Rgba([0; 4]);
++        }
++    }
++}
++
 +pub(crate) fn transformed_png(
 +    bytes: &[u8],
 +    settings: &ModImageBackdrop,
 +    area: Rect,
 +    paint: Option<&ModSurfacePaint>,
++    glass: Option<&Glass<'_>>,
 +) -> Result<Vec<u8>, String> {
 +    let decoded = decode_image(bytes)?;
 +    let width = (u32::from(area.width) * 8).clamp(1, 2048);
@@ -147452,6 +147762,9 @@ index 000000000..69431fda2
 +                }
 +            }
 +        }
++    }
++    if let Some(glass) = glass {
++        apply_glass(&mut canvas, area, glass);
 +    }
 +    let mut png = Vec::new();
 +    image::DynamicImage::ImageRgba8(canvas)
@@ -147635,7 +147948,7 @@ index 000000000..69431fda2
 +        let centered =
 +            settings(serde_json::json!({"resource":reference,"position":"center","dim":0}));
 +        let image =
-+            image::load_from_memory(&transformed_png(&png(), &centered, area, None).unwrap())
++            image::load_from_memory(&transformed_png(&png(), &centered, area, None, None).unwrap())
 +                .unwrap()
 +                .to_rgba8();
 +        assert_eq!(image.get_pixel(0, 0).0[3], 0);
@@ -147643,18 +147956,20 @@ index 000000000..69431fda2
 +        let tile = settings(
 +            serde_json::json!({"resource":reference,"position":"tile","dim":0.5,"tint":"#ffffff","opacity":0.5}),
 +        );
-+        let image = image::load_from_memory(&transformed_png(&png(), &tile, area, None).unwrap())
-+            .unwrap()
-+            .to_rgba8();
++        let image =
++            image::load_from_memory(&transformed_png(&png(), &tile, area, None, None).unwrap())
++                .unwrap()
++                .to_rgba8();
 +        assert_eq!(image.get_pixel(0, 0).0, [228, 178, 153, 128]);
 +        let paint = serde_json::from_value::<ModSurfacePaint>(
 +            serde_json::json!({"top":"#ffffff","bottom":"#000000","opacity":0.5}),
 +        )
 +        .unwrap();
-+        let gloss =
-+            image::load_from_memory(&transformed_png(&png(), &tile, area, Some(&paint)).unwrap())
-+                .unwrap()
-+                .to_rgba8();
++        let gloss = image::load_from_memory(
++            &transformed_png(&png(), &tile, area, Some(&paint), None).unwrap(),
++        )
++        .unwrap()
++        .to_rgba8();
 +        assert!(gloss.get_pixel(0, 0).0[0] > gloss.get_pixel(0, 31).0[0]);
 +        assert_eq!(
 +            image::load_from_memory(&png())
@@ -147664,6 +147979,67 @@ index 000000000..69431fda2
 +                .0,
 +            [200, 100, 50, 255]
 +        );
++    }
++
++    #[test]
++    fn glass_blurs_and_tints_only_its_surface_and_clears_uncovered_rows() {
++        let mut source = image::RgbaImage::from_pixel(2, 1, image::Rgba([0, 0, 0, 255]));
++        source.put_pixel(1, 0, image::Rgba([255, 255, 255, 255]));
++        let mut bytes = Vec::new();
++        source
++            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
++            .unwrap();
++        let reference = serde_json::json!({"reference":"r","sha256":"0".repeat(64)});
++        let settings = serde_json::from_value::<ModImageBackdrop>(
++            serde_json::json!({"resource":reference,"position":"fill","dim":0}),
++        )
++        .unwrap();
++        let glass_settings = serde_json::from_value::<ModSurfaceGlass>(
++            serde_json::json!({"blur":2,"tint":"#000000","opacity":0.5}),
++        )
++        .unwrap();
++        let glass = Glass {
++            transcript: Rect::new(0, 0, 4, 2),
++            surface: Rect::new(1, 3, 2, 1),
++            settings: &glass_settings,
++        };
++        let area = Rect::new(0, 0, 4, 4);
++        let image = image::load_from_memory(
++            &transformed_png(&bytes, &settings, area, None, Some(&glass)).unwrap(),
++        )
++        .unwrap()
++        .to_rgba8();
++        assert_eq!(image.get_pixel(15, 8).0, [0, 0, 0, 255]);
++        assert_eq!(image.get_pixel(16, 8).0, [255, 255, 255, 255]);
++        assert_eq!(image.get_pixel(16, 40).0[3], 0);
++        assert_eq!(image.get_pixel(2, 56).0[3], 0);
++        let (left, right) = (image.get_pixel(15, 56).0, image.get_pixel(16, 56).0);
++        assert!(
++            right[0] <= 128 && right[0] - left[0] < 40,
++            "{left:?} {right:?}"
++        );
++        assert_eq!(right[3], 255);
++
++        let glass = Glass {
++            transcript: Rect::new(0, 0, 4, 190),
++            surface: Rect::new(0, 195, 4, 5),
++            settings: &glass_settings,
++        };
++        let image = image::load_from_memory(
++            &transformed_png(
++                &bytes,
++                &settings,
++                Rect::new(0, 0, 4, 200),
++                None,
++                Some(&glass),
++            )
++            .unwrap(),
++        )
++        .unwrap()
++        .to_rgba8();
++        assert_eq!(image.height(), 2048);
++        assert_eq!(image.get_pixel(0, 1980).0[3], 0);
++        assert_eq!(image.get_pixel(0, 2047).0[3], 255);
 +    }
 +
 +    #[test]
@@ -147727,10 +148103,10 @@ index 000000000..69431fda2
 +}
 diff --git a/codex-rs/tui/src/mod_backdrop_sync.rs b/codex-rs/tui/src/mod_backdrop_sync.rs
 new file mode 100644
-index 000000000..15d84aafe
+index 000000000..2db7aaf4d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_backdrop_sync.rs
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,204 @@
 +use crate::mod_backdrop::BackdropEnvironment;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModViewSnapshot;
@@ -147750,6 +148126,14 @@ index 000000000..15d84aafe
 +    key: None,
 +    decided: None,
 +});
++
++static GLASS_SURFACE: Mutex<Option<Rect>> = Mutex::new(None);
++
++pub(crate) fn note_glass_surface(area: Rect) {
++    *GLASS_SURFACE
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(area);
++}
 +
 +fn placed() -> std::sync::MutexGuard<'static, Placed> {
 +    PLACED
@@ -147808,18 +148192,47 @@ index 000000000..15d84aafe
 +    }
 +}
 +
-+pub(crate) fn sync(snapshot: &ModViewSnapshot, area: Rect, animations: bool, owned_viewport: bool) {
++pub(crate) fn sync(
++    snapshot: &ModViewSnapshot,
++    transcript: Rect,
++    animations: bool,
++    owned_viewport: bool,
++) {
++    let surface = GLASS_SURFACE
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .take();
 +    let mut placed = placed();
 +    let Some(ModBackdrop::Image { image, .. }) = snapshot.view.backdrop.as_ref() else {
 +        clear(&mut placed);
 +        return;
 +    };
-+    let environment = environment(area.width, animations, owned_viewport);
++    let glass = surface
++        .filter(|surface| !surface.is_empty() && !transcript.is_empty())
++        .zip(
++            snapshot
++                .view
++                .surface_styles
++                .get("composer")
++                .and_then(|paint| paint.glass.as_ref()),
++        )
++        .map(|(surface, settings)| crate::mod_backdrop::Glass {
++            transcript,
++            surface,
++            settings,
++        });
++    let area = glass
++        .as_ref()
++        .map_or(transcript, |glass| transcript.union(glass.surface));
++    let environment = environment(transcript.width, animations, owned_viewport);
 +    let paint = image.overlay.as_ref();
 +    let key = format!(
-+        "{}:{}:{area:?}:{environment:?}:{paint:?}",
++        "{}:{}:{area:?}:{environment:?}:{paint:?}:{:?}",
 +        snapshot.epoch,
-+        serde_json::to_string(image).unwrap_or_default()
++        serde_json::to_string(image).unwrap_or_default(),
++        glass
++            .as_ref()
++            .map(|glass| (glass.transcript, glass.surface, glass.settings)),
 +    );
 +    if placed.key.as_ref() == Some(&(key.clone(), area)) {
 +        return;
@@ -147831,13 +148244,15 @@ index 000000000..15d84aafe
 +                .then(|| load(snapshot, &image.resource))
 +                .flatten()
 +                .and_then(|bytes| {
-+                    crate::mod_backdrop::transformed_png(&bytes, image, area, paint).ok()
++                    crate::mod_backdrop::transformed_png(&bytes, image, area, paint, glass.as_ref())
++                        .ok()
 +                });
 +            placed.decided = Some((key.clone(), png.clone()));
 +            png
 +        }
 +    };
-+    let Some(png) = png.filter(|_| area.width >= crate::mod_backdrop::BACKDROP_MIN_COLUMNS) else {
++    let Some(png) = png.filter(|_| transcript.width >= crate::mod_backdrop::BACKDROP_MIN_COLUMNS)
++    else {
 +        clear(&mut placed);
 +        return;
 +    };
@@ -154666,10 +155081,10 @@ index 000000000..4eecc0fba
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..27a554951
+index 000000000..3ec469f99
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1607 @@
+@@ -0,0 +1,1609 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -154918,8 +155333,10 @@ index 000000000..27a554951
 +            if let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
 +            {
 +                std::thread::spawn(move || {
-+                    let _ = codex_omd::ModStore::open(store)
-+                        .and_then(|store| store.verify_selections());
++                    let _ = codex_omd::ModStore::open(store).and_then(|store| {
++                        store.verify_selections()?;
++                        codex_omd::package_controls::list(&store, None)
++                    });
 +                });
 +            }
 +        }
@@ -159304,10 +159721,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..693b8efa5
+index 000000000..1c281cb91
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4687 @@
+@@ -0,0 +1,4690 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -162528,6 +162945,9 @@ index 000000000..693b8efa5
 +    let Some(paint) = snapshot().view.surface_styles.get(name).cloned() else {
 +        return;
 +    };
++    if paint.glass.is_some() {
++        crate::mod_backdrop_sync::note_glass_surface(area);
++    }
 +    paint_surface(area, buffer, &paint, base, /*border_clip*/ None);
 +    if name != APPROVAL_VIEW_ID {
 +        return;
@@ -164258,7 +164678,7 @@ index 000000000..e0cb74377
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..75f609f19
+index 000000000..2e6a29010
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,2543 @@
@@ -165344,7 +165764,7 @@ index 000000000..75f609f19
 +        let timing = measure(
 +            || {
 +                let png =
-+                    crate::mod_backdrop::transformed_png(&source, &settings, area, Some(&overlay))
++                    crate::mod_backdrop::transformed_png(&source, &settings, area, Some(&overlay), None)
 +                        .unwrap();
 +                encoded_bytes = png.len();
 +                black_box(png);

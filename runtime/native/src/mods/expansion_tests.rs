@@ -101,6 +101,7 @@ fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
         intercepted,
         required,
         environment,
+        codex_config: Default::default(),
         services: services::Services::default(),
         views,
         expansion: State::default(),

@@ -160,6 +160,7 @@ pub(super) struct Core {
     intercepted: Arc<Mutex<Vec<&'static str>>>,
     required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
+    codex_config: std::collections::BTreeSet<String>,
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
@@ -424,6 +425,7 @@ pub(super) fn install(
     let required = runtime.required_surfaces();
     let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
+    let codex_config = runtime.codex_config();
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts
         .install_mod_runtime(runtime.clone(), required.clone());
@@ -440,6 +442,7 @@ pub(super) fn install(
             intercepted,
             required,
             environment,
+            codex_config,
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),
@@ -1024,6 +1027,9 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             ));
         }
         config.model_provider.supports_websockets = false;
+        if self.codex_config.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
+            config.update_plan_enabled = true;
+        }
         let mut filesystem = profile.file_system_sandbox_policy();
         filesystem
             .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));

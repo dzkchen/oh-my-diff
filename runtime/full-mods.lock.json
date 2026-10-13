@@ -56,6 +56,22 @@
       "source": "mods/first-party/omd_claude_cli",
       "version": "0.2.0-preview.3"
     },
+    "omd_continue": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "sessions"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "47f1db57459509642054d17b45f1786c10cbd5f987b251fa99caafef11dd2656",
+        "mod.json": "1202fbadbfb15e2a3d23fe8dbefc6e5b3cf646c72059eec8999e8a21e54fe1bf"
+      },
+      "id": "omd_continue",
+      "package_sha256": "af1d7202c07a0e002eb655c16c81fd3b55772a98cc18c980a87182ee66114735",
+      "source": "mods/first-party/omd_continue",
+      "version": "0.1.0-preview.1"
+    },
     "omd_frecency": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -192,6 +208,24 @@
       "id": "omd_mods",
       "package_sha256": "96e76f8a04ad01aae3074233d5b6be5db96350673eef65f3f4c56115fda42eca",
       "source": "mods/first-party/omd_mods",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_plan_panel": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "store",
+        "threads"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "8206c106009533df4003004a38446995684ec11c5cd8643592db119be4694a85",
+        "mod.json": "0623718834b14434dda4b6478d37c1611ff4fa952981e76534664460d9dd2759"
+      },
+      "id": "omd_plan_panel",
+      "package_sha256": "315403711b8762b5ed063a90bc627830967153239fd56aeebc749c9231844cd4",
+      "source": "mods/first-party/omd_plan_panel",
       "version": "0.1.0-preview.1"
     },
     "omd_plan_removal": {
@@ -333,11 +367,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "7948ee70ab29a28707877baf01533021e727e60d14ca7517e22933fb1875338e",
+        "index.ts": "ba8107121af39317c4e5a7f3e875ad41b2c283010a2758a15b4e4ea21be2375a",
         "mod.json": "6725227f37426e3f3a610959d886a761830a9ebe218172b59c5eb01a4f4c857a"
       },
       "id": "omd_usage",
-      "package_sha256": "48da48e8b6b552ed9ce5843a03510fbaaf037711c6a6dedb411b052f5c2ab5cc",
+      "package_sha256": "5410740c418e88496b0864ca7e907d85b4c115ff3eef9443ffd7b0dcecfde82a",
       "source": "mods/first-party/omd_usage",
       "version": "0.1.0-preview.1"
     }

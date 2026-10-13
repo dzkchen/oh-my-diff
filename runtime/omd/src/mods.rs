@@ -65,6 +65,7 @@ pub use view::ModSpacing;
 pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
+pub use view::ModSurfaceGlass;
 pub use view::ModSurfacePaint;
 pub use view::ModTab;
 pub use view::ModTheme;
@@ -376,6 +377,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_media_v1",
     "terminal_surface_paint_v1",
     "terminal_backdrop_transform_v1",
+    "terminal_surface_glass_v1",
+    "codex_config_v1",
     "terminal_image_sample_v1",
     "terminal_import_lifetime_v1",
     "secrets_v1",
@@ -1307,7 +1310,12 @@ pub struct ModPackage {
     pub hook_budget_ms: u64,
     #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
     pub subscriptions: ModSubscriptions,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codex_config: BTreeMap<String, Value>,
 }
+
+pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1650,6 +1658,20 @@ impl ModPackage {
             text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
         }) {
             return Err(failure("invalid_description: 1-160 printable characters"));
+        }
+        if !self.codex_config.is_empty()
+            && (!self
+                .compatibility
+                .required_features
+                .iter()
+                .any(|feature| feature == "codex_config_v1")
+                || self.codex_config.iter().any(|(key, value)| {
+                    !CODEX_CONFIG_KEYS.contains(&key.as_str()) || *value != Value::Bool(true)
+                }))
+        {
+            return Err(failure(
+                "invalid_codex_config: keys from the host allowlist set to true, with codex_config_v1 required",
+            ));
         }
         if let Some(adapter) = self.adapter.as_deref()
             && (adapter == self.id
@@ -2652,7 +2674,7 @@ pub struct ModHost {
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
-    renders: BTreeMap<String, (String, Value, Instant)>,
+    renders: BTreeMap<String, (String, Value)>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
@@ -3632,6 +3654,12 @@ impl ModHost {
         self.environment.clone()
     }
 
+    pub fn codex_config(&self) -> BTreeSet<String> {
+        self.active()
+            .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
+            .collect()
+    }
+
     fn retain_environment(&self) {
         self.environment.retain(
             &self
@@ -3662,6 +3690,11 @@ impl ModHost {
         if let Ok(mut published) = self.intercepted_surfaces.lock() {
             *published = intercepted;
         }
+        process::reserve_reused(
+            self.active()
+                .filter(|(_, loaded)| loaded.registrations.events.iter().any(|e| e == "terminal"))
+                .count(),
+        );
     }
 
     /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
@@ -4643,7 +4676,11 @@ impl ModHost {
             let stamp = Self::terminal_stamp(
                 loaded,
                 &reply.state,
-                ui.as_ref().map(|state| state.revision),
+                loaded
+                    .ui
+                    .as_ref()
+                    .map(|(scope, _)| scope.as_str())
+                    .zip(ui.as_ref().map(|state| state.revision)),
             );
             if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
                 current.command_view = Some(AcceptedCommandView {
@@ -4979,14 +5016,14 @@ impl ModHost {
         )
     }
 
-    fn terminal_stamp(loaded: &Loaded, state: &Value, revision: Option<u64>) -> String {
+    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, u64)>) -> String {
         digest(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
                 state,
-                loaded.ui.as_ref().map(|(scope, _)| scope),
-                revision
+                ui.map(|(scope, _)| scope),
+                ui.map(|(_, revision)| revision)
             ])
             .to_string()
             .as_bytes(),
@@ -4995,23 +5032,29 @@ impl ModHost {
 
     fn terminal_state_key(&self, id: &str, thread: Option<&str>) -> Option<String> {
         let loaded = self.loaded.get(id)?;
-        if loaded
-            .ui
-            .as_ref()
-            .is_none_or(|(scope, _)| scope != &self.ui_key(loaded, thread))
-        {
-            return None;
-        }
+        let scope = self.ui_key(loaded, thread);
+        let ui = match &loaded.ui {
+            Some((current, state)) if current == &scope => Some(state.clone()),
+            _ => UI_STATES
+                .lock()
+                .ok()?
+                .get(&scope)
+                .and_then(std::sync::Weak::upgrade),
+        };
+        let revision = match ui {
+            Some(state) => state.lock().ok()?.revision,
+            None => 0,
+        };
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let state = self
             .store
             .scoped_state(&location, loaded.package.state_version)
             .ok()?;
-        let revision = match &loaded.ui {
-            Some((_, state)) => Some(state.lock().ok()?.revision),
-            None => None,
-        };
-        Some(Self::terminal_stamp(loaded, &state, revision))
+        Some(Self::terminal_stamp(
+            loaded,
+            &state,
+            Some((&scope, revision)),
+        ))
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -5024,10 +5067,8 @@ impl ModHost {
                 let key = self
                     .terminal_state_key(&id, thread.as_deref())
                     .map(|stamp| format!("{stamp}:{payload_hash}"));
-                // Renders may read the clock, so a cached one lives for a second.
-                if let (Some(key), Some((cached, value, at))) = (&key, self.renders.get(&id))
+                if let (Some(key), Some((cached, value))) = (&key, self.renders.get(&id))
                     && key == cached
-                    && at.elapsed() < Duration::from_secs(1)
                 {
                     return (id, Ok(value.clone()));
                 }
@@ -5041,8 +5082,7 @@ impl ModHost {
                 );
                 match (&result, key) {
                     (Ok(value), Some(key)) => {
-                        self.renders
-                            .insert(id.clone(), (key, value.clone(), Instant::now()));
+                        self.renders.insert(id.clone(), (key, value.clone()));
                     }
                     _ => {
                         self.renders.remove(&id);
@@ -5097,8 +5137,7 @@ impl ModHost {
         self.renders.remove(id);
         if matched && let Some(stamp) = stamp {
             let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
-            self.renders
-                .insert(id.to_owned(), (key, patch, Instant::now()));
+            self.renders.insert(id.to_owned(), (key, patch));
         }
         let results = self
             .active()

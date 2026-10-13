@@ -636,6 +636,42 @@ impl ModStore {
         self.selection_status_in(None)
     }
 
+    /// Stamps of the store files a package listing reads; `None` under administrator policy or the broker.
+    pub fn listing_stamp(&self) -> Option<Value> {
+        if crate::broker::deployed() || std::fs::symlink_metadata(&self.policy.0).is_ok() {
+            return None;
+        }
+        let stamps = [
+            self.root.join("mods.json"),
+            self.root.join("packages.lock.json"),
+            self.root.join("package-transaction.json"),
+            self.root.join("managed.json"),
+        ]
+        .iter()
+        .map(|path| std::fs::metadata(path).ok().map(|metadata| file_stamp(&metadata)))
+        .collect::<Vec<_>>();
+        Some(json!([self.root, stamps]))
+    }
+
+    /// File stamps of verified packages; `None` if any package is unverified.
+    pub fn package_stamps<'a>(
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Option<Vec<(PathBuf, FileStamp)>> {
+        let verified = VERIFIED_PACKAGES.lock().ok()?;
+        paths
+            .into_iter()
+            .map(|path| verified.get(path).map(|package| package.0.clone()))
+            .collect::<Option<Vec<_>>>()
+            .map(|files| files.concat())
+    }
+
+    pub fn stamps_unchanged(stamps: &[(PathBuf, FileStamp)]) -> bool {
+        stamps.iter().all(|(file, expected)| {
+            std::fs::symlink_metadata(file)
+                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
+        })
+    }
+
     pub fn verify_selections(&self) -> Result<()> {
         for selection in self.configuration()?.mods {
             let _ = verified_package(&selection.path);

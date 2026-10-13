@@ -95,6 +95,8 @@
         "terminal_media_v1",
         "terminal_surface_paint_v1",
         "terminal_backdrop_transform_v1",
+        "terminal_surface_glass_v1",
+        "codex_config_v1",
         "terminal_image_sample_v1",
         "terminal_import_lifetime_v1",
         "secrets_v1",
@@ -895,6 +897,7 @@
       "first_party_installed": [
         "omd_advisor",
         "omd_claude_cli",
+        "omd_continue",
         "omd_frecency",
         "omd_inspector",
         "omd_logo",
@@ -902,6 +905,7 @@
         "omd_lsp_view",
         "omd_model_picker",
         "omd_mods",
+        "omd_plan_panel",
         "omd_plan_removal",
         "omd_preview",
         "omd_privacy",
@@ -912,10 +916,12 @@
         "omd_workflow"
       ],
       "first_party_default_active": [
+        "omd_continue",
         "omd_inspector",
         "omd_logo",
         "omd_model_picker",
         "omd_mods",
+        "omd_plan_panel",
         "omd_plan_removal",
         "omd_tool_lines",
         "omd_update"
@@ -935,6 +941,10 @@
     "omd_claude_cli": {
       "version": "0.2.0-preview.3",
       "source": "mods/first-party/omd_claude_cli"
+    },
+    "omd_continue": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_continue"
     },
     "omd_frecency": {
       "version": "0.1.0-preview.2",
@@ -963,6 +973,10 @@
     "omd_mods": {
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_mods"
+    },
+    "omd_plan_panel": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_plan_panel"
     },
     "omd_plan_removal": {
       "version": "0.1.0-preview.1",
@@ -1066,6 +1080,26 @@
         "id": "omd_plan_removal",
         "kind": "mod",
         "path": "mods/first-party/omd_plan_removal",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_plan_panel",
+        "kind": "mod",
+        "path": "mods/first-party/omd_plan_panel",
+        "disposition": "launch",
+        "tier": "default-active",
+        "profiles": [
+          "full"
+        ]
+      },
+      {
+        "id": "omd_continue",
+        "kind": "mod",
+        "path": "mods/first-party/omd_continue",
         "disposition": "launch",
         "tier": "default-active",
         "profiles": [
@@ -1225,12 +1259,6 @@
         "disposition": "wave_1"
       },
       {
-        "id": "omd_plan_panel",
-        "kind": "mod",
-        "path": "mods/first-party/omd_plan_panel",
-        "disposition": "wave_1"
-      },
-      {
         "id": "omd_cursor",
         "kind": "mod",
         "path": "mods/first-party/omd_cursor",
@@ -1240,12 +1268,6 @@
         "id": "omd_programmable_context",
         "kind": "mod",
         "path": "mods/first-party/omd_programmable_context",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_continue",
-        "kind": "mod",
-        "path": "mods/first-party/omd_continue",
         "disposition": "wave_1"
       },
       {

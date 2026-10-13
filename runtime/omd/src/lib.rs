@@ -100,6 +100,7 @@ pub use workspace::tracked_paths;
 pub use workspace::workspace_path;
 
 pub use mods::AUTHORITY_CAPABILITIES;
+pub use mods::CODEX_CONFIG_UPDATE_PLAN;
 pub use mods::CODEX_HOST_RELEASE;
 pub use mods::DELEGABLE_APPROVAL_KINDS;
 pub use mods::FileStamp;
@@ -191,6 +192,7 @@ pub use mods::ModSplit;
 pub use mods::ModStore;
 pub use mods::ModStyle;
 pub use mods::ModSubscriptions;
+pub use mods::ModSurfaceGlass;
 pub use mods::ModSurfacePaint;
 pub use mods::ModTab;
 pub use mods::ModTerminalView;

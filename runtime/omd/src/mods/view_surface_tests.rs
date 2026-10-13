@@ -223,9 +223,13 @@ fn text_components_take_the_shared_text_bound() {
 fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
     assert!(view(json!({"surface_styles":{"approval":{"border":"#888888"}}})).is_ok());
     assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());
+    assert!(view(json!({"surface_styles":{"composer":{"glass":{"blur":16,"tint":"#102030","opacity":0.4}}}})).is_ok());
     for value in [
         json!({"surface_styles":{"transcript":{"top":0}}}),
         json!({"surface_styles":{"composer":{"opacity":1.01}}}),
+        json!({"surface_styles":{"composer":{"glass":{"blur":17}}}}),
+        json!({"surface_styles":{"composer":{"glass":{"opacity":-0.1}}}}),
+        json!({"surface_styles":{"approval":{"glass":{}}}}),
         json!({"backdrop":{"ascii":{"text":"x","scale":0.01}}}),
         json!({"backdrop":{"ascii":{"text":"x","offset":{"x":4097,"y":0}}}}),
         json!({"backdrop":{"ascii":{"text":"x","tint":"red"}}}),

@@ -1638,6 +1638,13 @@ The appearance additions (`terminal_surface_paint_v1`,
   the current bounded viewport; it does not repaint earlier terminal scrollback.
   `approval` frames native approval prompts and mod confirmations; their
   text, options, default selection, focus and grants stay host-owned.
+- `surface_styles.composer.glass {blur, tint, opacity}` (`terminal_surface_glass_v1`)
+  extends a placed image backdrop under the composer: the host blurs that part
+  of the transformed image (`blur` 0..16, default 6, in quarter cells) and
+  mixes `tint` over it at `opacity` (0..1, default 0.35). Rows between the
+  transcript and the composer stay clear. Where the image backdrop is not
+  placed (other terminals, narrow, `NO_COLOR`, reduced motion, inline), the
+  surface's gradient is the fallback. Other surfaces refuse `glass`.
 - Image and ASCII backdrops accept `position: center|fit|fill|tile`,
   `scale: 0.1..4`, signed `offset: {x,y}` in -4096..4096 cells,
   `dim`, `opacity` from 0 to 1 and optional `tint`. Image dimming blends
@@ -2193,6 +2200,18 @@ surfaces wrap these:
 Interceptors of these surfaces skip their own mod's calls like every other
 surface, which bounds recursion through `commands.invoke` and
 `settings.write`.
+
+### Codex configuration (`codex_config_v1`)
+
+A manifest's `codex_config` turns on Codex features the package depends on, for
+every lead thread the session starts, resumes or forks while the package is
+active: `{"codex_config": {"tools.update_plan.enabled": true}}`. Keys come from a
+closed host allowlist (`tools.update_plan.enabled`) and must be `true`, and the
+package must list `codex_config_v1` in `required_features`; anything else fails
+inspection with `invalid_codex_config`. The host reads the active packages once
+when the session opens, so enabling or disabling a package takes effect in the
+next session. It overrides an explicit `false` in the user's config for that
+session and writes nothing to `config.toml`.
 
 ### Composer completion (`completion_v1`)
 
@@ -3329,6 +3348,11 @@ limits is dropped whole. Exclusive replacements, contract IDs, service
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.
+The host reuses a mod's last `terminal` patch, or a command's `{terminal}`
+result, without a callback while its settings, durable state, UI state and the
+`terminal` event input are unchanged,
+so a view that shows elapsed time refreshes it through a state change, such as
+an `events.schedule` timer.
 
 ### Protected authority (macOS)
 
