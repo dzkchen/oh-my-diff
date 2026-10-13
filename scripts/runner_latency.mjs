@@ -67,7 +67,7 @@ async function invoke(worker, event = request.event) {
     if (done) throw new Error(`runner exited: ${worker.errors()}`);
     const frame = JSON.parse(value);
     if (!frame.call) {
-      if (frame.error || (event === 'inspect' ? !frame.registrations?.commands?.length : workload === 'command' ? !frame.ui_state?.open : frame.value?.result?.text !== 'render-marker')) throw new Error(JSON.stringify(frame));
+      if (frame.error || (event === 'inspect' ? !frame.registrations?.commands?.length : workload === 'command' ? !JSON.parse(frame.ui_state)?.open : frame.value?.result?.text !== 'render-marker')) throw new Error(JSON.stringify(frame));
       return frame;
     }
     if (frame.call.operation !== 'packages.list') throw new Error(`unexpected host call ${frame.call.operation}`);

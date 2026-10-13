@@ -1826,6 +1826,10 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     }
     assert_eq!(invoke(&mut second, "read", Value::Null), 5);
     assert_eq!(invoke(&mut first, "read", Value::Null), 5);
+    for value in [json!([1e-7, "a".repeat(65_527)]), json!("界".repeat(21_844) + "aa")] {
+        invoke(&mut first, "write", value.clone());
+        assert_eq!(invoke(&mut second, "read", Value::Null), value);
+    }
     let error = first
         .invoke(
             "fixture",

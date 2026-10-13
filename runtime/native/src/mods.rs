@@ -409,6 +409,13 @@ pub(super) fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     host: Arc<Host>,
 ) -> Result<(), String> {
+    initialize(registry, host).map(|_| ())
+}
+
+fn initialize(
+    registry: &mut ExtensionRegistryBuilder<Config>,
+    host: Arc<Host>,
+) -> Result<Arc<Mods>, String> {
     let validator = |schema: &Value| {
         codex_extension_api::parse_tool_input_schema(schema)
             .map(|_| ())
@@ -472,8 +479,8 @@ pub(super) fn install(
     registry.agent_role_contributor(extension.clone());
     registry.token_usage_contributor(extension.clone());
     registry.tool_batch_contributor(extension.clone());
-    registry.tool_contributor(extension);
-    Ok(())
+    registry.tool_contributor(extension.clone());
+    Ok(extension)
 }
 
 fn publish(
