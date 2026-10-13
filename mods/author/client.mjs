@@ -17,32 +17,44 @@ export function encodeFrame(opcode, payload, masked) {
 
 /** @type {typeof import('../client.d.ts').frameReader} */
 export function frameReader(onMessage) {
-  let buffer = Buffer.alloc(0);
+  const header = Buffer.alloc(14);
+  let headerBytes = 0;
+  let headerLength = 2;
+  let length = 0;
+  let parts = [];
   let fragments = [];
   let opcode = 0;
   return chunk => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (buffer.length >= 2) {
-      let length = buffer[1] & 0x7f;
-      let offset = 2;
-      if (length === 126) {
-        if (buffer.length < 4) return;
-        length = buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (length === 127) {
-        if (buffer.length < 10) return;
-        length = Number(buffer.readBigUInt64BE(2));
-        offset = 10;
+    let at = 0;
+    while (at < chunk.length) {
+      while (headerBytes < headerLength) {
+        const count = Math.min(headerLength - headerBytes, chunk.length - at);
+        header.set(chunk.subarray(at, at + count), headerBytes);
+        headerBytes += count;
+        at += count;
+        if (headerBytes < headerLength) return;
+        if (headerLength === 2) {
+          const size = header[1] & 0x7f;
+          headerLength += (size === 126 ? 2 : size === 127 ? 8 : 0) + (header[1] & 0x80 ? 4 : 0);
+        }
+        if (headerBytes === headerLength) {
+          const size = header[1] & 0x7f;
+          length = size === 126 ? header.readUInt16BE(2) : size === 127 ? Number(header.readBigUInt64BE(2)) : size;
+        }
       }
-      const masked = buffer[1] & 0x80;
-      if (buffer.length < offset + (masked ? 4 : 0) + length) return;
-      const key = masked ? buffer.subarray(offset, offset + 4) : null;
-      if (masked) offset += 4;
-      const payload = Buffer.from(buffer.subarray(offset, offset + length));
+      const count = Math.min(length, chunk.length - at);
+      if (count) parts.push(chunk.subarray(at, at + count));
+      at += count;
+      length -= count;
+      if (length) return;
+      const key = header[1] & 0x80 ? header.subarray(headerLength - 4, headerLength) : null;
+      const payload = parts.length === 1 ? (key ? Buffer.from(parts[0]) : parts[0]) : Buffer.concat(parts);
       if (key) for (let i = 0; i < payload.length; i++) payload[i] ^= key[i & 3];
-      const fin = buffer[0] & 0x80;
-      const frameOpcode = buffer[0] & 0x0f;
-      buffer = buffer.subarray(offset + length);
+      const fin = header[0] & 0x80;
+      const frameOpcode = header[0] & 0x0f;
+      headerBytes = 0;
+      headerLength = 2;
+      parts = [];
       if (frameOpcode >= 8) {
         onMessage(frameOpcode, payload);
         continue;
@@ -50,7 +62,7 @@ export function frameReader(onMessage) {
       if (frameOpcode) opcode = frameOpcode;
       fragments.push(payload);
       if (fin) {
-        onMessage(opcode, Buffer.concat(fragments));
+        onMessage(opcode, fragments.length === 1 ? fragments[0] : Buffer.concat(fragments));
         fragments = [];
       }
     }

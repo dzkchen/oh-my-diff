@@ -18,6 +18,18 @@ fails when a native operation, event, capability, host configuration field,
 production string literal or runner name names a feature, or when native code
 mentions a first-party package ID.
 
+The same check enforces direct crate dependency direction across normal,
+build, development and target-specific dependencies, including package aliases:
+
+| Crate | Forbidden dependencies |
+| --- | --- |
+| `codex-omd` | `codex-omd-extension`, `codex-core`, `codex-tui`, `codex-app-server` |
+| `codex-omd-extension` | `codex-tui`, `codex-app-server` |
+
+The host supplies generic contracts to its callers; the extension binds them to
+core without depending on frontends. This is a direct crate-edge guard, not a
+complete module or transitive dependency analysis.
+
 `omd_workflow` owns the reviewed and solo-evidence workflows; the host enforces
 only an explicitly selected schema-2 contract, route grants, permissions and
 receipts. `omd-contract` selects a contract; enabling the package alone selects

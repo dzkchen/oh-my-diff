@@ -44793,10 +44793,10 @@ index 000000000..1463ec371
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 000000000..0b9e04e38
+index 000000000..a1c985cb7
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,362 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -45026,7 +45026,7 @@ index 000000000..0b9e04e38
 +struct Frames(Mutex<HashMap<String, FrameState>>);
 +
 +impl Frames {
-+    fn blit(&self, call: &SurfaceCall, now: Instant) -> Result<Value, String> {
++    fn blit(&self, call: &SurfaceCall, now: Instant) -> Result<Value, client_surface::BlitError> {
 +        let caller = &call.caller;
 +        let arguments = &call.arguments;
 +        let key = arguments["key"].as_str().unwrap_or_default();
@@ -45050,8 +45050,8 @@ index 000000000..0b9e04e38
 +        &self,
 +        key: &str,
 +        now: Instant,
-+        snapshot: impl FnOnce(Instant) -> Result<(), String>,
-+    ) -> Result<Value, String> {
++        snapshot: impl FnOnce(Instant) -> Result<(), client_surface::BlitError>,
++    ) -> Result<Value, client_surface::BlitError> {
 +        let state = self
 +            .0
 +            .lock()
@@ -45105,7 +45105,10 @@ index 000000000..0b9e04e38
 +                Ok(json!({"delivered": false, "method": "none", "reason": "headless"}))
 +            }
 +            "terminal.notice" => notice(&call),
-+            "terminal.blit" => self.0.frames.blit(&call, Instant::now()),
++            "terminal.blit" => {
++                call.reply_blit(self.0.frames.blit(&call, Instant::now()));
++                return Ok(());
++            }
 +            _ if client_surface::USER_ONLY_OPERATIONS.contains(&operation)
 +                || operation == "prompts.consent" =>
 +            {
@@ -50676,10 +50679,10 @@ index 000000000..71f55c55f
 +codex-login = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..bfc8ac3ef
+index 000000000..356b43ef9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2322 @@
+@@ -0,0 +1,2334 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -50963,6 +50966,18 @@ index 000000000..bfc8ac3ef
 +);
 +
 +impl Accounts {
++    #[cfg(test)]
++    pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
++        let runtime = self.1.lock().unwrap();
++        let dispatcher = self.4.lock().unwrap();
++        let notifier = self.5.lock().unwrap();
++        (
++            runtime.as_ref().map_or(0, |(runtime, _)| Arc::as_ptr(runtime) as usize),
++            dispatcher.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
++            notifier.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
++        )
++    }
++
 +    /// Applies a provider's late settlement to a provider-billed request whose route `owns` accepts.
 +    pub(crate) fn settle_provider(
 +        &self,
@@ -54362,10 +54377,10 @@ index 000000000..0a11dc0ae
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..dd108bce2
+index 000000000..37c906a72
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,829 @@
 +use super::*;
 +use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
@@ -54380,12 +54395,26 @@ index 000000000..dd108bce2
 +const RESETTABLE: &[&str] = &["host.json", "mods.json"];
 +
 +struct Installed {
++    owner: Arc<()>,
 +    core: std::sync::Weak<Core>,
-+    handle: Option<tokio::runtime::Handle>,
 +    _roster: codex_omd::client_surface::Registration,
 +}
 +
 +static INSTALLED: Mutex<Option<Installed>> = Mutex::new(None);
++
++pub(super) struct Registration {
++    owner: Arc<()>,
++    _dispatcher: codex_omd::host::SessionRegistration,
++}
++
++impl Drop for Registration {
++    fn drop(&mut self) {
++        let mut installed = INSTALLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        if installed.as_ref().is_some_and(|current| Arc::ptr_eq(&current.owner, &self.owner)) {
++            *installed = None;
++        }
++    }
++}
 +
 +/// Runs requested work on one thread at a time; requests during a run cause one trailing run.
 +struct Coalesce {
@@ -54423,25 +54452,27 @@ index 000000000..dd108bce2
 +
 +static REPUBLISH: Coalesce = Coalesce::new();
 +
-+pub(super) fn install(core: &Arc<Core>) {
-+    let weak = Arc::downgrade(core);
-+    let roster = codex_omd::client_surface::register_observer(Arc::new(move |observed| {
++pub(super) fn install(core: &Arc<Core>, dispatcher: codex_omd::host::SessionRegistration) -> Result<Registration, String> {
++    let mut installed = INSTALLED.lock().map_err(|_| "host_installation_poisoned")?;
++    if installed.is_some() {
++        return Err("host_already_installed".into());
++    }
++    let owner = Arc::new(());
++    let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
 +        if matches!(observed, codex_omd::client_surface::Observed::Roster) {
-+            let weak = weak.clone();
-+            REPUBLISH.request(move || {
-+                if let Some(core) = weak.upgrade() {
++            REPUBLISH.request(|| {
++                if let Ok(core) = self::core() {
 +                    republish(&core);
 +                }
 +            });
 +        }
 +    }));
-+    if let Ok(mut installed) = INSTALLED.lock() {
-+        *installed = Some(Installed {
++    *installed = Some(Installed {
++            owner: owner.clone(),
 +            core: Arc::downgrade(core),
-+            handle: tokio::runtime::Handle::try_current().ok(),
 +            _roster: roster,
 +        });
-+    }
++    Ok(Registration { owner, _dispatcher: dispatcher })
 +}
 +
 +/// Renders the view again so mods see the changed roster, keeping the last published event.
@@ -54476,21 +54507,17 @@ index 000000000..dd108bce2
 +        .ok_or_else(|| "session_unavailable: no thread is running in this host".to_owned())
 +}
 +
-+fn block<T>(future: impl std::future::Future<Output = T>) -> Result<T, String> {
++fn block<T>(core: &Core, future: impl std::future::Future<Output = T>) -> Result<T, String> {
++    let owner = core.session_runtime.as_ref().ok_or("host_operation_unavailable: no session runtime")?;
 +    match tokio::runtime::Handle::try_current() {
 +        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-+            Ok(tokio::task::block_in_place(|| handle.block_on(future)))
++            Ok(tokio::task::block_in_place(|| owner.block_on(future)))
 +        }
 +        Ok(_) => Err(
 +            "host_operation_unavailable: client calls need the multi-threaded session runtime"
 +                .into(),
 +        ),
-+        Err(_) => INSTALLED
-+            .lock()
-+            .ok()
-+            .and_then(|installed| installed.as_ref()?.handle.clone())
-+            .map(|handle| handle.block_on(future))
-+            .ok_or_else(|| "host_operation_unavailable: no session runtime".into()),
++        Err(_) => Ok(owner.block_on(future)),
 +    }
 +}
 +
@@ -54663,7 +54690,7 @@ index 000000000..dd108bce2
 +                permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
 +                ..lead
 +            };
-+            let _ = block(expansion::REMOTE.scope(
++            let _ = block(&core, expansion::REMOTE.scope(
 +                true,
 +                expansion::invoke_one(&core, &lead, owner, "component_post", payload),
 +            ));
@@ -54704,7 +54731,7 @@ index 000000000..dd108bce2
 +        permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
 +        ..lead
 +    };
-+    block(expansion::REMOTE.scope(
++    block(&core, expansion::REMOTE.scope(
 +        true,
 +        expansion::invoke_one(
 +            &core,
@@ -54806,7 +54833,7 @@ index 000000000..dd108bce2
 +            result
 +        },
 +    );
-+    let result = block(expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
++    let result = block(&core, expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
 +    Ok(json!({"status": "completed", "result": result["result"]}))
 +}
 +
@@ -59184,10 +59211,10 @@ index 000000000..c4354f220
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..683f2b20d
+index 000000000..310f9cf88
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2423 @@
+@@ -0,0 +1,2458 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -59390,7 +59417,7 @@ index 000000000..683f2b20d
 +
 +/// Draws one `terminal.blit` for the process's owner while `active` holds.
 +pub(super) type BlitSink =
-+    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, String> + Send + Sync>;
++    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, codex_omd::client_surface::BlitError> + Send + Sync>;
 +
 +const BLIT_RETRY: Duration = Duration::from_millis(100);
 +const BLIT_ATTEMPTS: u32 = 50;
@@ -59564,13 +59591,13 @@ index 000000000..683f2b20d
 +                )),
 +                Ok(_) => None,
 +                Err(_) if !active() => return,
-+                Err(error) if error == "process_raster_revoked" => {
++                Err(error) if error.kind == codex_omd::client_surface::BlitErrorKind::Revoked => {
 +                    stop();
 +                    return;
 +                }
 +                Err(error)
 +                    if image.get("pixels").is_some()
-+                        && !codex_omd::client_surface::blit_retryable(&error) =>
++                        && error.kind == codex_omd::client_surface::BlitErrorKind::Fatal =>
 +                {
 +                    stop();
 +                    return;
@@ -59833,10 +59860,13 @@ index 000000000..683f2b20d
 +    }
 +
 +    pub fn running(&self, owner: &str, session: &str) -> Option<bool> {
-+        let records = self.records.lock().ok()?;
-+        let (_, process) = records
-+            .iter()
-+            .find(|((id, _, name), _)| id == owner && name == session)?;
++        let process = {
++            let records = self.records.lock().ok()?;
++            let (_, process) = records
++                .iter()
++                .find(|((id, _, name), _)| id == owner && name == session)?;
++            process.clone()
++        };
 +        let process = process.lock().ok()?;
 +        Some(!process.exited().ok()?)
 +    }
@@ -60845,6 +60875,37 @@ index 000000000..683f2b20d
 +    }
 +
 +    #[test]
++    fn liveness_releases_registry_before_waiting_for_process() {
++        let fixture = Arc::new(Fixture::new());
++        fixture.start("locked", "read line", json!({})).unwrap();
++        let key = ("fixture".to_owned(), 1, "locked".to_owned());
++        let session = fixture.processes.session(&key).unwrap();
++        let held = session.lock().unwrap();
++        let count = Arc::strong_count(&session);
++        let reader = fixture.clone();
++        let reader = std::thread::spawn(move || reader.processes.running("fixture", "locked"));
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while Arc::strong_count(&session) == count
++            && fixture.processes.records.try_lock().is_ok()
++            && Instant::now() < deadline
++        {
++            std::thread::yield_now();
++        }
++        let remover = fixture.clone();
++        let removing = session.clone();
++        let (sent, received) = mpsc::channel();
++        let remover = std::thread::spawn(move || {
++            remover.processes.remove(&key, &removing);
++            sent.send(()).unwrap();
++        });
++        let removed = received.recv_timeout(Duration::from_secs(2));
++        drop(held);
++        remover.join().unwrap();
++        assert_eq!(reader.join().unwrap(), Some(true));
++        assert!(removed.is_ok(), "removal blocked behind liveness while the process was locked");
++    }
++
++    #[test]
 +    fn raw_streams_deliver_both_streams_whole_characters_and_output_after_exit() {
 +        let fixture = Fixture::new();
 +        let script = "printf 'out\\n'; printf 'err\\n' >&2; read line; printf 'got:%s\\n' \"$line\"; printf '\\303'; sleep 0.2; printf '\\251'; sleep 0.2; printf '\\377'";
@@ -61317,6 +61378,7 @@ index 000000000..683f2b20d
 +            "terminal_blit_unknown",
 +            "terminal_blit_not_owned",
 +            "terminal_blit_limit",
++            "unrelated explanatory wording",
 +        ] {
 +            let (sender, receiver) = mpsc::channel();
 +            let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -61332,7 +61394,7 @@ index 000000000..683f2b20d
 +                "raw-retry".into(),
 +                Arc::new(move |_, _| {
 +                    if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failures {
-+                        Err(error.into())
++                        Err(codex_omd::client_surface::BlitError::retryable(error))
 +                    } else {
 +                        sender.send(()).unwrap();
 +                        Ok(Value::Null)
@@ -61376,7 +61438,7 @@ index 000000000..683f2b20d
 +            let (sender, receiver) = mpsc::channel();
 +            let frames = blit_worker(
 +                "revoked".into(),
-+                Arc::new(|_, _| Err("process_raster_revoked".into())),
++                Arc::new(|_, _| Err(codex_omd::client_surface::BlitError::new(codex_omd::client_surface::BlitErrorKind::Revoked, "authority removed"))),
 +                Arc::new(std::sync::atomic::AtomicBool::new(true)),
 +                move || {
 +                    sender.send(()).unwrap();
@@ -61613,10 +61675,10 @@ index 000000000..683f2b20d
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..e182f9953
+index 000000000..970004e0b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2415 @@
+@@ -0,0 +1,2426 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -61772,12 +61834,12 @@ index 000000000..e182f9953
 +}
 +
 +pub(super) struct Core {
++    session_runtime: Option<tokio::runtime::Handle>,
 +    host: Arc<Host>,
 +    runtime: Arc<Mutex<ModHost>>,
 +    input_runtime: Arc<Mutex<ModHost>>,
 +    persist_runtime: Arc<Mutex<ModHost>>,
-+    intercepted: Arc<Mutex<Vec<&'static str>>>,
-+    required: Arc<Mutex<Vec<&'static str>>>,
++    persist_required: Arc<Mutex<Vec<&'static str>>>,
 +    environment: Arc<codex_omd::host::Environment>,
 +    agents: agents::Agents,
 +    services: services::Services,
@@ -61790,6 +61852,7 @@ index 000000000..e182f9953
 +}
 +
 +struct Mods {
++    registration: Mutex<Option<clients::Registration>>,
 +    core: Arc<Core>,
 +    turns: Mutex<BTreeMap<String, TurnRecord>>,
 +    sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
@@ -62028,6 +62091,14 @@ index 000000000..e182f9953
 +    registry: &mut ExtensionRegistryBuilder<Config>,
 +    host: Arc<Host>,
 +) -> Result<(), String> {
++    initialize(registry, host).map(|_| ())
++}
++
++fn initialize(
++    registry: &mut ExtensionRegistryBuilder<Config>,
++    host: Arc<Host>,
++) -> Result<Arc<Mods>, String> {
++    let registration = codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
 +    let validator = |schema: &Value| {
 +        codex_extension_api::parse_tool_input_schema(schema)
 +            .map(|_| ())
@@ -62039,25 +62110,24 @@ index 000000000..e182f9953
 +        .map_err(|e| e.to_string())?;
 +    let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
 +        .map_err(|e| e.to_string())?;
++    let persist_required = persist_runtime.required_surfaces();
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
 +    let required = runtime.required_surfaces();
-+    let intercepted = runtime.intercepted_surfaces();
 +    let environment = runtime.environment();
 +    let runtime = Arc::new(Mutex::new(runtime));
-+    host.accounts
-+        .install_mod_runtime(runtime.clone(), required.clone());
 +    let views = Arc::new(view::Views::new());
 +    let input_runtime = Arc::new(Mutex::new(input_runtime));
 +    let persist_runtime = Arc::new(Mutex::new(persist_runtime));
 +    let extension = Arc::new(Mods {
++        registration: Mutex::new(None),
 +        core: Arc::new_cyclic(|core| Core {
++            session_runtime: tokio::runtime::Handle::try_current().ok(),
 +            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
 +            host,
 +            runtime,
 +            input_runtime,
 +            persist_runtime,
-+            intercepted,
-+            required,
++            persist_required,
 +            environment,
 +            services: services::Services::default(),
 +            views,
@@ -62077,8 +62147,13 @@ index 000000000..e182f9953
 +        settled: Mutex::new(BTreeMap::new()),
 +        elicitations: Mutex::default(),
 +    });
-+    intercept::install_dispatcher(&extension.core);
-+    clients::install(&extension.core);
++    let dispatcher = intercept::dispatcher(&extension.core);
++    registration.install(dispatcher.clone()).map_err(|error| error.to_string())?;
++    *extension.registration.lock().map_err(|_| "host_installation_poisoned")? =
++        Some(clients::install(&extension.core, registration)?);
++    extension.core.host.accounts.install_mod_runtime(extension.core.runtime.clone(), required);
++    extension.core.host.accounts.install_mod_dispatcher(dispatcher);
++    intercept::install_notifier(&extension.core);
 +    registry.config_contributor(extension.clone());
 +    registry.prompt_contributor(extension.clone());
 +    registry.thread_lifecycle_contributor(extension.clone());
@@ -62091,8 +62166,8 @@ index 000000000..e182f9953
 +    registry.agent_role_contributor(extension.clone());
 +    registry.token_usage_contributor(extension.clone());
 +    registry.tool_batch_contributor(extension.clone());
-+    registry.tool_contributor(extension);
-+    Ok(())
++    registry.tool_contributor(extension.clone());
++    Ok(extension)
 +}
 +
 +fn publish(
@@ -63021,10 +63096,7 @@ index 000000000..e182f9953
 +    }
 +
 +    fn rewrites_persisted_text(&self) -> bool {
-+        self.core
-+            .intercepted
-+            .lock()
-+            .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
++        true
 +    }
 +
 +    fn rewrite_persisted_text<'a>(
@@ -63033,7 +63105,7 @@ index 000000000..e182f9953
 +    ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
 +        Box::pin(persisted::rewrite(
 +            self.core.persist_runtime.clone(),
-+            self.core.required.clone(),
++            self.core.persist_required.clone(),
 +            input,
 +        ))
 +    }
@@ -63076,10 +63148,11 @@ index 000000000..e182f9953
 +                })
 +            };
 +            let boundary = runtime.clone();
++            let boundary_cancelled = cancelled.clone();
 +            let intercepting = tokio::task::spawn_blocking(move || {
 +                let _thread = codex_omd::StateThread::enter(scoped);
 +                let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
-+                runtime.turn_boundary();
++                runtime.refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire)).map_err(|error| error.to_string())?;
 +                Ok::<_, String>(runtime.intercepts("input"))
 +            })
 +            .await
@@ -64034,10 +64107,10 @@ index 000000000..e182f9953
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
-index 000000000..f2255febe
+index 000000000..304f44c7d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/access.rs
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,811 @@
 +use super::operations::Caller;
 +use super::*;
 +use base64::Engine;
@@ -64085,6 +64158,29 @@ index 000000000..f2255febe
 +    response: reqwest::Response,
 +    pending: Vec<u8>,
 +    done: bool,
++}
++
++struct StreamRead<'a> {
++    streams: &'a Mutex<BTreeMap<u64, Stream>>,
++    handle: u64,
++    owner: &'a str,
++    generation: u64,
++    active: bool,
++}
++
++impl Drop for StreamRead<'_> {
++    fn drop(&mut self) {
++        if self.active
++            && let Ok(mut streams) = self.streams.lock()
++            && streams.get(&self.handle).is_some_and(|stream| {
++                stream.owner == self.owner
++                    && stream.generation == self.generation
++                    && stream.body.is_none()
++            })
++        {
++            streams.remove(&self.handle);
++        }
++    }
 +}
 +
 +/// HTTP streams and MCP servers a session's mods hold; both end with the mod generation that opened them.
@@ -64496,24 +64592,36 @@ index 000000000..f2255febe
 +            let status = response.status().as_u16();
 +            let headers = response_headers(&response);
 +            let handle = lead.session.access.next.fetch_add(1, Ordering::Relaxed) + 1;
-+            lead.session
++            let mut streams = lead
++                .session
 +                .access
 +                .streams
 +                .lock()
-+                .map_err(|_| "http_streams_poisoned")?
-+                .insert(
-+                    handle,
-+                    Stream {
-+                        owner: caller.id.to_owned(),
-+                        generation,
-+                        used: Instant::now(),
-+                        body: Some(Body {
-+                            response,
-+                            pending: Vec::new(),
-+                            done: false,
-+                        }),
-+                    },
-+                );
++                .map_err(|_| "http_streams_poisoned")?;
++            let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
++            if runtime.generation() != generation
++                || !runtime
++                    .grants(caller.id)
++                    .is_some_and(|grants| grants.http_access.is_some())
++            {
++                return Err("host_caller_inactive".into());
++            }
++            if streams.values().filter(|stream| stream.owner == caller.id).count() >= STREAMS_PER_MOD {
++                return Err("http_stream_limit: at most 4 open streams".into());
++            }
++            streams.insert(
++                handle,
++                Stream {
++                    owner: caller.id.to_owned(),
++                    generation,
++                    used: Instant::now(),
++                    body: Some(Body {
++                        response,
++                        pending: Vec::new(),
++                        done: false,
++                    }),
++                },
++            );
 +            Ok(
 +                json!({"handle": handle, "status": status, "url": url, "headers": headers, "redirects": hops}),
 +            )
@@ -64539,16 +64647,24 @@ index 000000000..f2255febe
 +                    .map_err(|_| "http_streams_poisoned")?;
 +                let Some(stream) = streams
 +                    .get_mut(&input.handle)
-+                    .filter(|stream| stream.owner == caller.id)
++                    .filter(|stream| stream.owner == caller.id && stream.generation == caller.generation)
 +                else {
 +                    return Err("http_stream_unavailable".into());
 +                };
-+                stream.used = Instant::now();
 +                if request.operation == "http.close" {
 +                    streams.remove(&input.handle);
 +                    return Ok(json!({"closed": true}));
 +                }
-+                stream.body.take().ok_or("http_stream_busy")?
++                let body = stream.body.take().ok_or("http_stream_busy")?;
++                stream.used = Instant::now();
++                body
++            };
++            let mut reservation = StreamRead {
++                streams: &lead.session.access.streams,
++                handle: input.handle,
++                owner: caller.id,
++                generation: caller.generation,
++                active: true,
 +            };
 +            let limit = input.max_bytes.unwrap_or(16 * 1024).clamp(1, READ_BYTES);
 +            let wait = Duration::from_millis(input.wait_ms.unwrap_or(0).min(MAX_WAIT_MS));
@@ -64588,12 +64704,17 @@ index 000000000..f2255febe
 +                    .streams
 +                    .lock()
 +                    .map_err(|_| "http_streams_poisoned")?;
-+                if read.as_ref().is_ok_and(|(_, done)| *done) {
-+                    streams.remove(&input.handle);
-+                } else if let Some(stream) = streams.get_mut(&input.handle) {
-+                    stream.body = Some(body);
++                if let Some(stream) = streams.get_mut(&input.handle).filter(|stream| {
++                    stream.owner == caller.id && stream.generation == caller.generation && stream.body.is_none()
++                }) {
++                    if read.as_ref().is_ok_and(|(_, done)| *done) {
++                        streams.remove(&input.handle);
++                    } else {
++                        stream.body = Some(body);
++                    }
 +                }
 +            }
++            reservation.active = false;
 +            let (bytes, done) = read?;
 +            let (field, data) = content("data", &bytes);
 +            let mut result = json!({"done": done, "bytes": bytes.len()});
@@ -64803,10 +64924,10 @@ index 000000000..f2255febe
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..0bc3b7a5c
+index 000000000..3ab1e4389
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2616 @@
+@@ -0,0 +1,2623 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -66652,6 +66773,13 @@ index 000000000..0bc3b7a5c
 +            return Err("model_tools_require_fork".into());
 +        }
 +        let history = if fork {
++            for capability in ["sessions", "sessions_tools"] {
++                if !caller.grants.as_ref().is_some_and(|grants| {
++                    grants.capabilities.iter().any(|granted| granted == capability)
++                }) {
++                    return Err(format!("capability_denied: {capability}"));
++                }
++            }
 +            let manager = lead
 +                .host
 +                .manager
@@ -68456,7 +68584,7 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..bdc1e6b7b
+index 000000000..c4ee12627
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,832 @@
@@ -69151,7 +69279,7 @@ index 000000000..bdc1e6b7b
 +        };
 +        let result = runtime
 +            .refresh_authority()
-+            .map_err(|_| "callback_cancelled".to_owned())
++            .map_err(|_| codex_omd::client_surface::BlitError::retryable("callback_cancelled"))
 +            .and_then(|_| {
 +                (runtime.generation() == generation
 +                    && runtime.grants(&owner).is_some_and(|grants| {
@@ -69159,7 +69287,7 @@ index 000000000..bdc1e6b7b
 +                            && grants.capabilities == capabilities
 +                    }))
 +                .then_some(())
-+                .ok_or_else(|| "process_raster_revoked".to_owned())
++                .ok_or_else(|| codex_omd::client_surface::BlitError::new(codex_omd::client_surface::BlitErrorKind::Revoked, "process_raster_revoked"))
 +            });
 +        *last
 +            .lock()
@@ -69178,7 +69306,7 @@ index 000000000..bdc1e6b7b
 +                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
 +        });
 +        codex_omd::client_surface::with_admission(&source, generation, None, || {
-+            codex_omd::client_surface::call(
++            codex_omd::client_surface::call_classified(
 +                &id,
 +                "terminal.blit",
 +                arguments,
@@ -69996,7 +70124,7 @@ index 000000000..b0d5a87bb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..509fc979a
+index 000000000..ee980194c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 @@ -0,0 +1,713 @@
@@ -70142,7 +70270,7 @@ index 000000000..509fc979a
 +    if let Some(parent) = forked
 +        && let Err(error) =
 +            codex_omd::data_store::fork_thread_data(&lead.host.root, &parent.to_string(), &thread)
-+        && !error.to_string().starts_with("store_thread_exists")
++        && error.kind() != std::io::ErrorKind::AlreadyExists
 +    {
 +        core.views.diagnostic(
 +            &core.host,
@@ -71322,16 +71450,18 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..d6317ccb3
+index 000000000..a87b8661c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5223 @@
+@@ -0,0 +1,5568 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
 +use std::path::Path;
 +use std::path::PathBuf;
++
++static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 +
 +struct Fixture {
 +    _dir: tempfile::TempDir,
@@ -71386,6 +71516,13 @@ index 000000000..d6317ccb3
 +}
 +
 +fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
++    fixture_with_registry(packages, None)
++}
++
++fn fixture_with_registry(
++    packages: &[Package<'_>],
++    registry: Option<&mut ExtensionRegistryBuilder<Config>>,
++) -> Option<Fixture> {
 +    let node = PathBuf::from(
 +        std::env::var_os("OMD_TEST_NODE")
 +            .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
@@ -71394,6 +71531,7 @@ index 000000000..d6317ccb3
 +    let base = dir.path().canonicalize().unwrap();
 +    let repository = base.join("repo");
 +    std::fs::create_dir(&repository).unwrap();
++    std::fs::create_dir(repository.join(".git")).unwrap();
 +    let store = ModStore::create(base.join("store"), node).unwrap();
 +    let sources = base.join("packages");
 +    std::fs::create_dir(&sources).unwrap();
@@ -71415,31 +71553,34 @@ index 000000000..d6317ccb3
 +        manager: std::sync::Weak::new(),
 +        epoch: 1,
 +    });
-+    let runtime = ModHost::open(root.clone()).unwrap();
-+    let environment = runtime.environment();
-+    let intercepted = runtime.intercepted_surfaces();
-+    let required = runtime.required_surfaces();
-+    let runtime = Arc::new(Mutex::new(runtime));
-+    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-+    let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-+    let views = Arc::new(view::Views::new());
-+    let core = Arc::new_cyclic(|core| Core {
-+        agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
-+        host: host.clone(),
-+        runtime,
-+        input_runtime,
-+        persist_runtime,
-+        intercepted,
-+        required,
-+        environment,
-+        services: services::Services::default(),
-+        views,
-+        expansion: State::default(),
-+        inventory: inventory::Inventory::default(),
-+        autonomy: autonomy::Queues::default(),
-+        peering: peering::Registry::default(),
-+        this: core.clone(),
-+    });
++    let core = if let Some(registry) = registry {
++        initialize(registry, host.clone()).unwrap().core.clone()
++    } else {
++        let runtime = ModHost::open(root.clone()).unwrap();
++        let environment = runtime.environment();
++        let runtime = Arc::new(Mutex::new(runtime));
++        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
++        let persist_required = persist_runtime.lock().unwrap().required_surfaces();
++        let views = Arc::new(view::Views::new());
++        Arc::new_cyclic(|core| Core {
++            session_runtime: tokio::runtime::Handle::try_current().ok(),
++            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
++            host: host.clone(),
++            runtime,
++            input_runtime,
++            persist_runtime,
++            persist_required,
++            environment,
++            services: services::Services::default(),
++            views,
++            expansion: State::default(),
++            inventory: inventory::Inventory::default(),
++            autonomy: autonomy::Queues::default(),
++            peering: peering::Registry::default(),
++            this: core.clone(),
++        })
++    };
 +    let thread = ThreadId::new();
 +    let session = host.open_session(thread, false).unwrap();
 +    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
@@ -71466,8 +71607,45 @@ index 000000000..d6317ccb3
 +    })
 +}
 +
++#[test]
++fn production_initialization_binds_checkout_validates_schemas_and_registers_contributors() {
++    let _guard = DISPATCHER_TEST.blocking_lock();
++    let mut registry = ExtensionRegistryBuilder::new();
++    let fixture = fixture_with_registry(&[
++        Package {
++            id: "bound", capabilities: &["store", "commands"],
++            manifest: json!({"state_scope":"checkout"}),
++            source: "export default api => { api.state.get(); api.command('bound', () => null); }",
++        },
++        Package {
++            id: "invalid", capabilities: &["tools"], manifest: json!({}),
++            source: "export default api => api.tool({name:'bad',description:'Bad',parameters:{type:'object',properties:{},required:7}}, () => null)",
++        },
++    ], Some(&mut registry)).unwrap();
++    for runtime in [&fixture.core.runtime, &fixture.core.input_runtime, &fixture.core.persist_runtime] {
++        let status = runtime.lock().unwrap().status();
++        let mods = status["mods"].as_array().unwrap();
++        let bound = mods.iter().find(|item| item["id"] == "bound").unwrap();
++        assert!(bound["error"].is_null(), "{bound}");
++        assert_eq!(bound["registrations"]["commands"][0]["name"], "bound");
++        let invalid = mods.iter().find(|item| item["id"] == "invalid").unwrap();
++        assert!(!invalid["error"].is_null(), "{invalid}");
++    }
++    let registry = registry.build();
++    for count in [registry.config_contributors().len(), registry.context_contributors().len(),
++        registry.thread_lifecycle_contributors().len(), registry.tool_lifecycle_contributors().len(),
++        registry.turn_lifecycle_contributors().len(), registry.turn_input_contributors().len(),
++        registry.tool_output_contributors().len(), registry.approval_gate_contributors().len(),
++        registry.tool_spec_contributors().len(), registry.agent_role_contributors().len(),
++        registry.token_usage_contributors().len(), registry.tool_batch_contributors().len(),
++        registry.tool_contributors().len()] {
++        assert_eq!(count, 1);
++    }
++}
++
 +fn mods(core: &Arc<Core>) -> Mods {
 +    Mods {
++        registration: Mutex::new(None),
 +        core: core.clone(),
 +        turns: Mutex::new(BTreeMap::new()),
 +        sessions: Mutex::new(BTreeMap::new()),
@@ -71852,6 +72030,7 @@ index 000000000..d6317ccb3
 +
 +#[tokio::test(flavor = "multi_thread")]
 +async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
++    let _guard = DISPATCHER_TEST.lock().await;
 +    let Some(mut fixture) = fixture(&[Package {
 +        id: "control",
 +        capabilities: &["exec", "fs.read", "fs.write"],
@@ -71866,7 +72045,9 @@ index 000000000..d6317ccb3
 +    )
 +    .await;
 +    fixture.core.expansion.thread_started(&fixture.lead);
-+    super::intercept::install_dispatcher(&fixture.core);
++    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
++    let registration = clients::install(&fixture.core, dispatcher).unwrap();
++    assert!(codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).is_err());
 +    let source = fixture
 +        .core
 +        .runtime
@@ -71978,6 +72159,20 @@ index 000000000..d6317ccb3
 +            .join("scoped-policy-proof")
 +            .exists()
 +    );
++    drop(registration);
++    assert!(call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).is_err());
++    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
++    let _reinstalled = clients::install(&fixture.core, dispatcher).unwrap();
++    call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).unwrap();
++    drop(_reinstalled);
++    let mut first = ExtensionRegistryBuilder::new();
++    super::install(&mut first, fixture.core.host.clone()).unwrap();
++    let installed = fixture.core.host.accounts.mod_installation();
++    let mut second = ExtensionRegistryBuilder::new();
++    assert_eq!(super::install(&mut second, fixture.core.host.clone()).unwrap_err(), "host_already_installed");
++    assert_eq!(fixture.core.host.accounts.mod_installation(), installed);
++    drop(first);
++    super::install(&mut second, fixture.core.host.clone()).unwrap();
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -74157,7 +74352,7 @@ index 000000000..d6317ccb3
 +    );
 +    drop((held, surface));
 +    let first = sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err();
-+    assert_ne!(first, "process_raster_revoked");
++    assert_ne!(first.kind, codex_omd::client_surface::BlitErrorKind::Revoked);
 +    let held = fixture.core.runtime.lock().unwrap();
 +    let (sender, receiver) = std::sync::mpsc::channel();
 +    let busy = sink.clone();
@@ -74175,7 +74370,7 @@ index 000000000..d6317ccb3
 +    store.enable(&package, false).unwrap();
 +    std::thread::sleep(std::time::Duration::from_millis(300));
 +    assert_eq!(
-+        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err(),
++        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true)).unwrap_err().to_string(),
 +        "process_raster_revoked"
 +    );
 +}
@@ -74272,6 +74467,7 @@ index 000000000..d6317ccb3
 +    assert!(
 +        sink(json!({"key":"frame", "pixels":{}}), Arc::new(|| true))
 +            .unwrap_err()
++            .message
 +            .starts_with("client_surface_unavailable")
 +    );
 +    assert_eq!(command(&fixture.core, "control", "read"), json!(8));
@@ -74411,7 +74607,7 @@ index 000000000..d6317ccb3
 +        return;
 +    };
 +    let extension = mods(&fixture.core);
-+    assert!(!extension.rewrites_persisted_text());
++    assert!(extension.rewrites_persisted_text());
 +    let entries = [codex_extension_api::PersistedText {
 +        kind: "message",
 +        role: Some("user".to_owned()),
@@ -74422,6 +74618,7 @@ index 000000000..d6317ccb3
 +        thread_id: "thread",
 +        entries: &entries,
 +    };
++    fixture.core.runtime.lock().unwrap().required_surfaces().lock().unwrap().push("history_persist");
 +    let runtime = fixture.core.persist_runtime.clone();
 +    let _ = std::thread::spawn(move || {
 +        let _held = runtime.lock().unwrap();
@@ -74431,13 +74628,135 @@ index 000000000..d6317ccb3
 +    assert_eq!(extension.rewrite_persisted_text(input()).await, None);
 +    fixture
 +        .core
-+        .required
++        .persist_required
 +        .lock()
 +        .unwrap()
 +        .push("history_persist");
 +    let withheld = extension.rewrite_persisted_text(input()).await.unwrap();
 +    assert_eq!(withheld.texts, [codex_omd::PERSIST_WITHHELD]);
 +    assert_eq!(withheld.by, "host");
++}
++
++#[test]
++fn lanes_reject_changed_authority_before_committing_callback_state() {
++    for lane in ["main", "input", "persist"] {
++        for change in ["disable", "revoke", "replace", "broken", "cancel"] {
++            let fixture = fixture(&[Package {
++                id: "writer", capabilities: &["commands", "agents", "store"], manifest: Value::Null,
++                source: "export default api => api.command('run', () => { api.host.call('task.status', null); api.state.set('unsafe'); return 'unsafe'; })",
++            }]).unwrap();
++            let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
++            let path = fixture._dir.path().join("packages/writer").canonicalize().unwrap();
++            std::fs::write(fixture.core.host.root.join("managed.json"), "{").unwrap();
++            let runtime = match lane {
++                "input" => &fixture.core.input_runtime,
++                "persist" => &fixture.core.persist_runtime,
++                _ => &fixture.core.runtime,
++            };
++            let mut runtime = runtime.lock().unwrap();
++            let generation = runtime.generation();
++            let state = fixture.core.host.root.join("state-writer.json");
++            let before = std::fs::read(&state).ok();
++            let active = std::cell::Cell::new(true);
++            let result = runtime.invoke_with("writer", generation, "command", "run", Value::Null,
++                || active.get(), |_| {
++                    match change {
++                        "disable" => store.enable(&path, false)?,
++                        "revoke" => {
++                            let config = fixture.core.host.root.join("mods.json");
++                            let mut value: Value = serde_json::from_slice(&std::fs::read(&config)?)?;
++                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
++                            std::fs::write(config, serde_json::to_vec(&value)?)?;
++                        }
++                        "replace" => std::fs::write(path.join("index.ts"), "export default () => {}")?,
++                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
++                        "cancel" => active.set(false),
++                        _ => unreachable!(),
++                    }
++                    Ok(Value::Null)
++                });
++            assert!(result.is_err(), "{lane} {change}");
++            assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
++            if change == "broken" {
++                assert!(runtime.refresh_guarded(&|| true).is_err());
++            }
++            let next = runtime.invoke_with("writer", generation, "command", "run", Value::Null, || true, |_| Ok(Value::Null));
++            assert_eq!(next.is_ok(), change == "cancel", "next admission {lane} {change}");
++        }
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn persistence_admits_new_requirements_without_main_lane_refresh() {
++    let fixture = fixture(&[]).unwrap();
++    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
++    install(&store, &fixture._dir.path().join("packages"), &Package {
++        id: "redact", capabilities: &["history_persist"], manifest: Value::Null,
++        source: "export default api => api.intercept('history_persist', {required:true}, e => ({entries:e.entries.map(v=>({...v,text:'masked'}))}))",
++    });
++    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
++    let extension = mods(&fixture.core);
++    assert!(extension.rewrites_persisted_text());
++    let entries = [codex_extension_api::PersistedText {
++        kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
++    }];
++    let input = || codex_extension_api::PersistedTextInput { thread_id: "t", entries: &entries };
++    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, ["masked"]);
++    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
++    std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
++    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, [codex_omd::PERSIST_WITHHELD]);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn secondary_lane_calls_preserve_ui_with_distinct_generations() {
++    let fixture = fixture(&[Package {
++        id: "input", capabilities: &["input", "commands", "terminal", "exec"], manifest: json!({"exec_environment":["FIXTURE_VALUE"]}),
++        source: "export default api => { api.command('write', () => api.uiState.set(42)); api.command('read', () => api.uiState.get()); api.intercept('input', (e,next) => { api.host.call('environment.read',{names:['FIXTURE_VALUE']}); return next(e); }); }",
++    }]).unwrap();
++    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
++    let path = fixture._dir.path().join("packages/input").canonicalize().unwrap();
++    store.enable(&path, false).unwrap();
++    fixture.core.runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
++    store.enable(&path, true).unwrap();
++    fixture.core.runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
++    fixture.core.input_runtime.lock().unwrap().refresh_guarded(&|| true).unwrap();
++    assert_ne!(fixture.core.runtime.lock().unwrap().generation(), fixture.core.input_runtime.lock().unwrap().generation());
++    command(&fixture.core, "input", "write");
++    let result = super::intercept::chain(
++        fixture.core.clone(), Arc::new(fixture.lead.clone()), fixture.core.input_runtime.clone(),
++        "input", true, json!({"text":"hello"}), json!({"caller":"user"}),
++        Arc::new(AtomicBool::new(false)), |input| Ok(json!({"text":input["text"]})),
++    ).await.unwrap();
++    assert_eq!(result.result["text"], "hello");
++    assert_eq!(command(&fixture.core, "input", "read"), 42);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn dropping_persistence_cancels_callback_state_commit() {
++    let fixture = fixture(&[Package {
++        id: "persist", capabilities: &["history_persist", "store"], manifest: Value::Null,
++        source: "export default api => api.intercept('history_persist', e => { let n = 0; for (let i = 0; i < 1000000; i++) n += i; api.state.set(n); return {entries: e.entries}; })",
++    }]).unwrap();
++    let runtime = fixture.core.persist_runtime.clone();
++    let required = fixture.core.persist_required.clone();
++    let worker_runtime = runtime.clone();
++    let state = fixture.core.host.root.join("state-persist.json");
++    let before = std::fs::read(&state).ok();
++    let task = tokio::spawn(async move {
++        let entries = [codex_extension_api::PersistedText {
++            kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
++        }];
++        persisted::rewrite(worker_runtime, required, codex_extension_api::PersistedTextInput {
++            thread_id: "t", entries: &entries,
++        }).await
++    });
++    tokio::time::timeout(std::time::Duration::from_secs(2), async {
++        while runtime.try_lock().is_ok() { tokio::task::yield_now().await; }
++    }).await.unwrap();
++    task.abort();
++    assert!(task.await.unwrap_err().is_cancelled());
++    tokio::task::spawn_blocking(move || { drop(runtime.lock().unwrap()); }).await.unwrap();
++    assert_eq!(std::fs::read(state).ok(), before);
 +}
 +
 +#[test]
@@ -74454,6 +74773,160 @@ index 000000000..d6317ccb3
 +        json!({"cache": {"read_tokens": 1}}),
 +    ];
 +    assert_eq!(agents::cache_total(&huge, "read_tokens"), Some(u64::MAX));
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn model_fork_checks_history_authority_before_access() {
++    for (capabilities, expected) in [
++        (vec!["agents"], "capability_denied: sessions"),
++        (vec!["agents", "sessions"], "capability_denied: sessions_tools"),
++        (vec!["agents", "sessions", "sessions_tools"], "native_thread_manager_stopped"),
++    ] {
++        let fixture = fixture(&[Package {
++            id: "forker",
++            capabilities: &capabilities,
++            manifest: Value::Null,
++            source: "export default function () {}\n",
++        }]).expect("native fixture");
++        *fixture.lead.session.contract.lock().unwrap() =
++            crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++        let (grants, generation) = {
++            let runtime = fixture.core.runtime.lock().unwrap();
++            (runtime.grants("forker"), runtime.generation())
++        };
++        let error = operations::dispatch(
++            &fixture.core, &fixture.lead,
++            Caller { id: "forker", source: "", grants, generation,
++                origin: Origin::Event, record_changes: false },
++            None,
++            ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"repeat the tool output"}) },
++            &Arc::new(AtomicBool::new(false)),
++        ).await.unwrap_err();
++        assert_eq!(error, expected);
++    }
++}
++
++fn stream_fixture(origin: &str) -> Fixture {
++    let fixture = fixture(&[Package {
++        id: "fetcher",
++        capabilities: &["http"],
++        manifest: json!({"http_access":{"origins":[origin]}}),
++        source: "export default function () {}\n",
++    }]).expect("HTTP fixture");
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    fixture
++}
++
++async fn stream_call(fixture: &Fixture, operation: &str, arguments: Value) -> Result<Value, String> {
++    let (grants, generation) = {
++        let runtime = fixture.core.runtime.lock().unwrap();
++        (runtime.grants("fetcher"), runtime.generation())
++    };
++    operations::dispatch(
++        &fixture.core, &fixture.lead,
++        Caller { id: "fetcher", source: "", grants, generation,
++            origin: Origin::Event, record_changes: false },
++        None, ModHostCall { operation: operation.into(), arguments }, &Arc::new(AtomicBool::new(false)),
++    ).await
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn http_read_drop_releases_the_handle_and_stream_slot() {
++    use std::io::{Read, Write};
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let origin = format!("http://{}", listener.local_addr().unwrap());
++    let (stop, stopped) = std::sync::mpsc::channel();
++    let server = std::thread::spawn(move || {
++        let mut sockets = Vec::new();
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
++        for _ in 0..5 {
++            let (mut socket, _) = loop {
++                match listener.accept() {
++                    Ok(socket) => break socket,
++                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
++                            || std::time::Instant::now() >= deadline { return; }
++                        std::thread::sleep(std::time::Duration::from_millis(5));
++                    }
++                    Err(error) => panic!("{error}"),
++                }
++            };
++            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
++            let mut request = [0; 4096];
++            socket.read(&mut request).unwrap();
++            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
++            sockets.push(socket);
++        }
++        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
++    });
++    let fixture = stream_fixture(&origin);
++    let mut handles = Vec::new();
++    for _ in 0..4 {
++        handles.push(stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap()["handle"].clone());
++    }
++    let handle = handles[0].clone();
++    let mut read = Box::pin(stream_call(&fixture, "http.read", json!({"handle":handle,"wait_ms":5000})));
++    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(read.as_mut().poll(cx))).await.is_pending());
++    assert_eq!(stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err(), "http_stream_busy");
++    drop(read);
++    let after_drop = stream_call(&fixture, "http.read", json!({"handle":handle})).await.unwrap_err();
++    let replacement = stream_call(&fixture, "http.open", json!({"url":origin})).await;
++    let _ = stop.send(());
++    server.join().unwrap();
++    assert_eq!(after_drop, "http_stream_unavailable");
++    assert!(replacement.is_ok(), "{replacement:?}");
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn concurrent_http_opens_share_the_last_stream_slot() {
++    use std::io::{Read, Write};
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    listener.set_nonblocking(true).unwrap();
++    let origin = format!("http://{}", listener.local_addr().unwrap());
++    let (stop, stopped) = std::sync::mpsc::channel();
++    let server = std::thread::spawn(move || {
++        let mut sockets = Vec::new();
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
++        for index in 0..5 {
++            let (mut socket, _) = loop {
++                match listener.accept() {
++                    Ok(socket) => break socket,
++                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
++                            || std::time::Instant::now() >= deadline { return; }
++                        std::thread::sleep(std::time::Duration::from_millis(5));
++                    }
++                    Err(error) => panic!("{error}"),
++                }
++            };
++            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
++            let mut request = [0; 4096];
++            socket.read(&mut request).unwrap();
++            if index < 3 {
++                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
++            }
++            sockets.push(socket);
++        }
++        for socket in &mut sockets[3..] {
++            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
++        }
++        let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
++    });
++    let fixture = stream_fixture(&origin);
++    for _ in 0..3 {
++        stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap();
++    }
++    let (first, second) = tokio::join!(
++        stream_call(&fixture, "http.open", json!({"url":origin})),
++        stream_call(&fixture, "http.open", json!({"url":origin})),
++    );
++    let _ = stop.send(());
++    server.join().unwrap();
++    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
++    let error = first.err().or_else(|| second.err()).unwrap();
++    assert_eq!(error, "http_stream_limit: at most 4 open streams");
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -74547,8 +75020,8 @@ index 000000000..d6317ccb3
 +    .await
 +    .unwrap_err();
 +    assert_eq!(
-+        fork, "native_thread_manager_stopped",
-+        "a fork needs the live thread"
++        fork, "capability_denied: sessions",
++        "a fork needs history authority before accessing the live thread"
 +    );
 +}
 +
@@ -76551,10 +77024,10 @@ index 000000000..d6317ccb3
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 000000000..6bf58ecf9
+index 000000000..5e9538260
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,217 @@
 +use super::*;
 +use codex_omd::data_store::Origin;
 +use operations::Caller;
@@ -76572,6 +77045,7 @@ index 000000000..6bf58ecf9
 +    cancelled: Arc<AtomicBool>,
 +    executor: impl FnMut(Value) -> std::io::Result<Value> + Send + 'static,
 +) -> Result<codex_omd::ModChain, String> {
++    let secondary = !Arc::ptr_eq(&runtime, &core.runtime);
 +    let (facts, generation) = {
 +        let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +        (facts(&runtime), runtime.generation())
@@ -76602,6 +77076,29 @@ index 000000000..6bf58ecf9
 +        .map_err(|error| error.to_string())
 +    });
 +    while let Some(call) = receiver.recv().await {
++        let generation = if secondary {
++            let authority = core.runtime.clone();
++            let caller = call.caller.clone();
++            let source = call.source.clone();
++            let capabilities = call.grants.as_ref().map(|grants| grants.capabilities.clone());
++            let flag = cancelled.clone();
++            let current = tokio::task::spawn_blocking(move || {
++                let mut runtime = authority.lock().map_err(|_| "mod_runtime_poisoned".to_owned())?;
++                runtime.refresh_guarded(&|| !flag.load(Ordering::Acquire)).map_err(|error| error.to_string())?;
++                let grants = runtime.grants(&caller).ok_or("host_caller_inactive")?;
++                if grants.source_sha256 != source || Some(grants.capabilities) != capabilities {
++                    return Err("callback_authority_changed".into());
++                }
++                Ok(runtime.generation())
++            }).await.map_err(|error| error.to_string()).and_then(|result| result);
++            match current {
++                Ok(generation) => generation,
++                Err(error) => {
++                    let _ = call.reply.send(Err(std::io::Error::other(error)));
++                    continue;
++                }
++            }
++        } else { generation };
 +        let value = operations::dispatch(
 +            &core,
 +            &lead,
@@ -76638,7 +77135,7 @@ index 000000000..6bf58ecf9
 +}
 +
 +/// Lets model-request interceptors call host operations from the transport thread.
-+pub(super) fn install_dispatcher(core: &Arc<Core>) {
++pub(super) fn install_notifier(core: &Arc<Core>) {
 +    let notified = Arc::downgrade(core);
 +    core.host.accounts.install_mod_notifier(Arc::new(
 +        move |event: &'static str, payload: Value| {
@@ -76654,6 +77151,9 @@ index 000000000..6bf58ecf9
 +            }
 +        },
 +    ));
++}
++
++pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher {
 +    let weak = Arc::downgrade(core);
 +    let session = tokio::runtime::Handle::try_current().ok();
 +    let dispatcher: codex_omd::host::SessionDispatcher = Arc::new(
@@ -76673,7 +77173,7 @@ index 000000000..6bf58ecf9
 +                Ok(handle)
 +                    if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
 +                {
-+                    (handle, true)
++                    (session.clone().ok_or_else(|| unavailable("no session runtime"))?, true)
 +                }
 +                Ok(_) => {
 +                    return Err(unavailable(
@@ -76743,10 +77243,7 @@ index 000000000..6bf58ecf9
 +            }
 +        },
 +    );
-+    core.host
-+        .accounts
-+        .install_mod_dispatcher(dispatcher.clone());
-+    codex_omd::host::install_session_dispatcher(dispatcher);
++    dispatcher
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
@@ -78457,10 +78954,10 @@ index 000000000..541f19252
 +}
 diff --git a/codex-rs/ext/omd/src/mods/persisted.rs b/codex-rs/ext/omd/src/mods/persisted.rs
 new file mode 100644
-index 000000000..9b7e66b7e
+index 000000000..a00c97730
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/persisted.rs
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,39 @@
 +use super::*;
 +use codex_extension_api::PersistedTextInput;
 +use codex_extension_api::PersistedTextRewrite;
@@ -78481,8 +78978,10 @@ index 000000000..9b7e66b7e
 +        })
 +        .collect::<Vec<_>>();
 +    let count = entries.len();
++    let cancelled = Arc::new(AtomicBool::new(false));
++    let _cancellation = Cancellation(cancelled.clone());
 +    let rewritten =
-+        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries))
++        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries, || !cancelled.load(Ordering::Acquire)))
 +            .await;
 +    match rewritten {
 +        Ok(Ok(rewrite)) => rewrite.map(|rewrite| PersistedTextRewrite {
@@ -91327,10 +91826,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..8d68fbbee
+index 000000000..e2bb4761e
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1370 @@
+@@ -0,0 +1,1422 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -91438,6 +91937,34 @@ index 000000000..8d68fbbee
 +
 +pub type Reply = SyncSender<Result<Value, String>>;
 +
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum BlitErrorKind { Retryable, Revoked, Fatal }
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct BlitError {
++    pub kind: BlitErrorKind,
++    pub message: String,
++}
++
++impl BlitError {
++    pub fn new(kind: BlitErrorKind, message: impl Into<String>) -> Self {
++        Self { kind, message: message.into() }
++    }
++    pub fn retryable(message: impl Into<String>) -> Self { Self::new(BlitErrorKind::Retryable, message) }
++    pub fn fatal(message: impl Into<String>) -> Self { Self::new(BlitErrorKind::Fatal, message) }
++}
++
++impl From<String> for BlitError {
++    fn from(message: String) -> Self { Self::fatal(message) }
++}
++impl From<&str> for BlitError {
++    fn from(message: &str) -> Self { Self::fatal(message) }
++}
++impl std::fmt::Display for BlitError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.message.fmt(f) }
++}
++impl std::error::Error for BlitError {}
++
 +#[derive(Clone)]
 +pub struct Validity(pub Arc<dyn Fn() -> bool + Send + Sync>);
 +
@@ -91449,6 +91976,7 @@ index 000000000..8d68fbbee
 +
 +#[derive(Clone, Debug, Default)]
 +pub struct CallLifetime {
++    blit_error: Arc<std::sync::OnceLock<BlitErrorKind>>,
 +    pub admission: Option<Value>,
 +    pub pixels: Arc<std::sync::OnceLock<Arc<crate::process_raster::PixelFrame>>>,
 +    upstream_cancelled: Option<Arc<AtomicBool>>,
@@ -91574,15 +92102,22 @@ index 000000000..8d68fbbee
 +}
 +
 +impl SurfaceCall {
++    pub fn reply_blit(&self, result: Result<Value, BlitError>) {
++        if let Err(error) = &result {
++            let _ = self.lifetime.blit_error.set(error.kind);
++        }
++        let _ = self.reply.send(result.map_err(|error| error.message));
++    }
++
 +    pub fn snapshot_pixels(
 +        &self,
 +        source: &crate::process_raster::PixelSource,
 +        next: std::time::Instant,
-+    ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
++    ) -> Result<Arc<crate::process_raster::PixelFrame>, BlitError> {
 +        if !(self.validity.0)() {
-+            return Err("callback_cancelled_or_expired".into());
++            return Err(BlitError::retryable("callback_cancelled_or_expired"));
 +        }
-+        self.lifetime.begin_execution()?;
++        self.lifetime.begin_execution().map_err(BlitError::retryable)?;
 +        let component = self.arguments["key"]
 +            .as_str()
 +            .ok_or("terminal_blit_invalid")?;
@@ -91600,7 +92135,7 @@ index 000000000..8d68fbbee
 +                admission["source"].as_str().unwrap_or_default(),
 +                admission["generation"]
 +                    .as_u64()
-+                    .ok_or("client_surface_admission_changed")?,
++                    .ok_or_else(|| BlitError::retryable("client_surface_admission_changed"))?,
 +                None,
 +                snapshot,
 +            )?
@@ -91863,7 +92398,7 @@ index 000000000..8d68fbbee
 +        thread,
 +        confirm,
 +        Arc::new(|| true),
-+    )
++    ).map_err(|error| error.message)
 +}
 +
 +#[allow(clippy::too_many_arguments)]
@@ -91876,21 +92411,21 @@ index 000000000..8d68fbbee
 +    thread: Option<&str>,
 +    confirm: Option<String>,
 +    active: Arc<dyn Fn() -> bool + Send + Sync>,
-+) -> Result<PendingReply, String> {
++) -> Result<PendingReply, BlitError> {
 +    if !SURFACE_OPERATIONS.contains(&operation) {
-+        return Err(format!("unsupported_host_operation: {operation}"));
++        return Err(BlitError::fatal(format!("unsupported_host_operation: {operation}")));
 +    }
 +    if context != InvocationContext::User && USER_ONLY_OPERATIONS.contains(&operation) {
-+        return Err(format!("host_operation_user_only: {operation}"));
++        return Err(BlitError::fatal(format!("host_operation_user_only: {operation}")));
 +    }
 +    if remote && needs_terminal(operation, &arguments) {
-+        return Err(needs_terminal_error(operation));
++        return Err(BlitError::fatal(needs_terminal_error(operation)));
 +    }
 +    let surface = hub()
 +        .surface
 +        .as_ref()
 +        .map(|(_, surface)| surface.clone())
-+        .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
++        .ok_or_else(|| BlitError::retryable("client_surface_unavailable: no interactive client is attached to this host"))?;
 +    let (reply, receiver) = sync_channel(1);
 +    let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
 +    let lifetime = CallLifetime {
@@ -91920,7 +92455,7 @@ index 000000000..8d68fbbee
 +        confirm,
 +        reply,
 +        lifetime: lifetime.clone(),
-+    })?;
++    }).map_err(BlitError::retryable)?;
 +    Ok(PendingReply { receiver, lifetime })
 +}
 +
@@ -91929,6 +92464,14 @@ index 000000000..8d68fbbee
 +    active: &dyn Fn() -> bool,
 +    deadline: Option<Instant>,
 +) -> Result<Value, String> {
++    wait_classified(receiver, active, deadline).map_err(|error| error.message)
++}
++
++fn wait_classified(
++    receiver: PendingReply,
++    active: &dyn Fn() -> bool,
++    deadline: Option<Instant>,
++) -> Result<Value, BlitError> {
 +    if let Some(deadline) = deadline {
 +        *receiver
 +            .lifetime
@@ -91941,21 +92484,22 @@ index 000000000..8d68fbbee
 +            && !active()
 +            && receiver.lifetime.cancel_queued()
 +        {
-+            return Err("callback_cancelled".into());
++            return Err(BlitError::retryable("callback_cancelled"));
 +        }
 +        if deadline.is_some_and(|deadline| Instant::now() >= deadline)
 +            && receiver.lifetime.cancel_queued()
 +        {
-+            return Err(format!(
++            return Err(BlitError::retryable(format!(
 +                "callback_execution_budget: the client did not answer within {} ms",
 +                crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
-+            ));
++            )));
 +        }
 +        match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
-+            Ok(result) => return result,
++            Ok(result) => return result.map_err(|message| BlitError::new(
++                receiver.lifetime.blit_error.get().copied().unwrap_or(BlitErrorKind::Fatal), message)),
 +            Err(RecvTimeoutError::Timeout) => (),
 +            Err(RecvTimeoutError::Disconnected) => {
-+                return Err("client_surface_closed".into());
++                return Err(BlitError::retryable("client_surface_closed"));
 +            }
 +        }
 +    }
@@ -92191,8 +92735,23 @@ index 000000000..8d68fbbee
 +    confirm: Option<String>,
 +    active: Arc<dyn Fn() -> bool + Send + Sync>,
 +) -> Result<Value, String> {
++    call_classified(caller, operation, arguments, context, remote, thread, confirm, active)
++        .map_err(|error| error.message)
++}
++
++#[allow(clippy::too_many_arguments)]
++pub fn call_classified(
++    caller: &str,
++    operation: &str,
++    arguments: Value,
++    context: InvocationContext,
++    remote: bool,
++    thread: Option<&str>,
++    confirm: Option<String>,
++    active: Arc<dyn Fn() -> bool + Send + Sync>,
++) -> Result<Value, BlitError> {
 +    if !active() {
-+        return Err("callback_cancelled".into());
++        return Err(BlitError::retryable("callback_cancelled"));
 +    }
 +    let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
 +        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
@@ -92209,7 +92768,7 @@ index 000000000..8d68fbbee
 +        active.clone(),
 +    )?;
 +    let pixels = pending.lifetime.pixels.clone();
-+    let answer = wait(pending, active.as_ref(), deadline)?;
++    let answer = wait_classified(pending, active.as_ref(), deadline)?;
 +    if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
 +        notify(Observed::Mirrored {
 +            caller: caller.to_owned(),
@@ -92592,8 +93151,8 @@ index 000000000..8d68fbbee
 +        mut self,
 +        snapshot: impl FnOnce(
 +            &crate::process_raster::PixelSource,
-+        ) -> Result<Arc<crate::process_raster::PixelFrame>, String>,
-+    ) -> Result<Self, String> {
++        ) -> Result<Arc<crate::process_raster::PixelFrame>, BlitError>,
++    ) -> Result<Self, BlitError> {
 +        if let BlitContent::Source(source) = &self.content {
 +            let pixels = snapshot(source)?;
 +            self.bytes = pixels.source.byte_len()?;
@@ -92626,21 +93185,13 @@ index 000000000..8d68fbbee
 +    }
 +}
 +
-+pub fn blit_retryable(error: &str) -> bool {
-+    matches!(
-+        error,
-+        "terminal_blit_unknown" | "terminal_blit_not_owned" | "terminal_blit_limit"
-+    ) || error.starts_with("callback_")
-+        || error.starts_with("client_surface_")
-+}
-+
 +/// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
 +pub fn blit_request(
 +    caller: &str,
 +    owner: Option<&str>,
 +    size: Option<(u16, u16)>,
 +    arguments: &Value,
-+) -> Result<Blit, String> {
++) -> Result<Blit, BlitError> {
 +    let bytes = arguments.to_string().len();
 +    if bytes > BLIT_QUEUE_BYTES {
 +        return Err("terminal_blit_too_large".into());
@@ -92655,12 +93206,12 @@ index 000000000..8d68fbbee
 +    };
 +    match owner {
 +        Some(owner) if owner == caller => {}
-+        Some(_) => return Err("terminal_blit_not_owned".into()),
-+        None => return Err("terminal_blit_unknown".into()),
++        Some(_) => return Err(BlitError::retryable("terminal_blit_not_owned")),
++        None => return Err(BlitError::retryable("terminal_blit_unknown")),
 +    }
 +    let content = match (rect, image) {
 +        (Some((rect, cells)), _) => {
-+            let (width, height) = size.ok_or("terminal_blit_unknown")?;
++            let (width, height) = size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
 +            if rect.width == 0
 +                || rect.height == 0
 +                || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
@@ -92703,10 +93254,10 @@ index 000000000..8d68fbbee
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..76a0f4f96
+index 000000000..fce6f20ac
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,777 @@
+@@ -0,0 +1,798 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -93483,6 +94034,27 @@ index 000000000..76a0f4f96
 +    assert_eq!(cells["cells"][4], json!(" "));
 +    assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
 +    assert!(frame_cells(&json!({"key": "r"}), (4, 2)).is_none());
++}
++#[test]
++fn raster_reply_classification_is_independent_of_wording() {
++    for (kind, message) in [
++        (BlitErrorKind::Retryable, "please try again"),
++        (BlitErrorKind::Revoked, "permission removed"),
++        (BlitErrorKind::Fatal, "callback_unknown_error"),
++    ] {
++        let (reply, receiver) = sync_channel(1);
++        let lifetime = CallLifetime::default();
++        let call = SurfaceCall {
++            validity: Validity(Arc::new(|| true)),
++            caller: "m".into(), operation: "terminal.blit".into(), arguments: Value::Null,
++            context: InvocationContext::Event, remote: false, thread: None, authority: None,
++            confirm: None, reply, lifetime: lifetime.clone(),
++        };
++        call.reply_blit(Err(BlitError::new(kind, message)));
++        let error = wait_classified(PendingReply { receiver, lifetime }, &|| true, None).unwrap_err();
++        assert_eq!(error.kind, kind);
++        assert_eq!(error.message, message);
++    }
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
@@ -95424,7 +95996,7 @@ index 000000000..01150ec4e
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 000000000..064997fba
+index 000000000..624e7fe63
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
 @@ -0,0 +1,430 @@
@@ -95616,7 +96188,7 @@ index 000000000..064997fba
 +    match fs::symlink_metadata(&source) {
 +        Ok(metadata) if metadata.is_dir() => {
 +            if target.try_exists()? {
-+                return Err(failure("store_thread_exists"));
++                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
 +            }
 +            copy_regular_tree(&source, &target).map(|()| true)
 +        }
@@ -95885,19 +96457,23 @@ index 000000000..9bd432289
 +}
 diff --git a/codex-rs/omd/src/event_bus.rs b/codex-rs/omd/src/event_bus.rs
 new file mode 100644
-index 000000000..1523cdb7c
+index 000000000..1ba4088f8
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus.rs
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,213 @@
 +use crate::app_routes::subscribed;
 +use serde_json::Value;
-+use std::collections::{BTreeMap, VecDeque};
++use std::collections::{BTreeMap, BTreeSet, VecDeque};
 +use std::io;
 +use std::sync::{LazyLock, Mutex};
++use std::time::{Duration, Instant};
 +
 +pub const CHANNEL_QUEUE_EVENTS: usize = 256;
 +pub const CHANNEL_QUEUE_BYTES: usize = 1 << 20;
 +pub const CHANNEL_EVENT_BYTES: usize = 64 * 1024;
++pub const CHANNELS_PER_PUBLISHER: usize = 256;
++pub const CHANNEL_SEQUENCES: usize = 4096;
++pub const CHANNEL_PUBLISHER_IDLE: Duration = Duration::from_secs(15 * 60);
 +
 +#[derive(Clone, Debug, PartialEq)]
 +pub struct ChannelEvent {
@@ -95923,9 +96499,14 @@ index 000000000..1523cdb7c
 +    dropped: u64,
 +}
 +
++struct PublisherSequences {
++    used: Instant,
++    channels: BTreeMap<String, u64>,
++}
++
 +pub struct EventBus {
 +    subscribers: BTreeMap<String, Subscriber>,
-+    sequences: BTreeMap<String, u64>,
++    sequences: BTreeMap<String, PublisherSequences>,
 +    max_events: usize,
 +    max_bytes: usize,
 +}
@@ -95989,6 +96570,18 @@ index 000000000..1523cdb7c
 +        correlation: Option<String>,
 +        thread: &str,
 +    ) -> io::Result<Delivery> {
++        self.publish_at(publisher, name, data, correlation, thread, Instant::now())
++    }
++
++    fn publish_at(
++        &mut self,
++        publisher: &str,
++        name: &str,
++        data: Value,
++        correlation: Option<String>,
++        thread: &str,
++        now: Instant,
++    ) -> io::Result<Delivery> {
 +        if !valid_name(name) {
 +            return Err(io::Error::other(format!("channel_name_invalid: {name}")));
 +        }
@@ -95999,8 +96592,27 @@ index 000000000..1523cdb7c
 +        if correlation.as_ref().is_some_and(|c| c.len() > 256) {
 +            return Err(io::Error::other("channel_correlation_too_large"));
 +        }
++        let queued = self.subscribers.values()
++            .flat_map(|subscriber| subscriber.queue.iter().map(|(event, _)| event.publisher.as_str()))
++            .collect::<BTreeSet<_>>();
++        self.sequences.retain(|publisher, sequences| {
++            now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
++                || queued.contains(publisher.as_str())
++        });
++        let current = self.sequences.get(publisher);
++        if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
++            && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)
++                || self.sequences.values().map(|sequences| sequences.channels.len()).sum::<usize>() >= CHANNEL_SEQUENCES)
++        {
++            return Err(io::Error::other("channel_sequence_limit"));
++        }
 +        let channel = format!("{publisher}/{name}");
-+        let sequence = self.sequences.entry(channel.clone()).or_default();
++        let publisher_sequences = self.sequences.entry(publisher.to_owned()).or_insert_with(|| PublisherSequences {
++            used: now,
++            channels: BTreeMap::new(),
++        });
++        publisher_sequences.used = now;
++        let sequence = publisher_sequences.channels.entry(name.to_owned()).or_default();
 +        *sequence += 1;
 +        let event = ChannelEvent {
 +            publisher: publisher.to_owned(),
@@ -96064,12 +96676,61 @@ index 000000000..1523cdb7c
 +mod tests;
 diff --git a/codex-rs/omd/src/event_bus_tests.rs b/codex-rs/omd/src/event_bus_tests.rs
 new file mode 100644
-index 000000000..2f7615cc4
+index 000000000..0e31ecc6f
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus_tests.rs
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,185 @@
 +use super::*;
 +use serde_json::json;
++
++#[test]
++fn channel_sequence_admission_is_bounded_per_publisher_and_globally() {
++    let mut bus = EventBus::default();
++    for publisher in 0..16 {
++        for channel in 0..256 {
++            bus.publish(&format!("p{publisher}"), &format!("c{channel}"), json!(null), None, "t").unwrap();
++        }
++        assert_eq!(bus.publish(&format!("p{publisher}"), "extra", json!(null), None, "t").unwrap_err().to_string(), "channel_sequence_limit");
++    }
++    assert_eq!(bus.publish("extra", "c", json!(null), None, "t").unwrap_err().to_string(), "channel_sequence_limit");
++    bus.subscribe("watcher", vec!["p0/*".into()]);
++    bus.publish("p0", "c0", json!(null), None, "t").unwrap();
++    bus.publish("p0", "c1", json!(null), None, "t").unwrap();
++    assert_eq!(bus.drain("watcher", 10).iter().map(|event| event.sequence).collect::<Vec<_>>(), vec![2, 2]);
++}
++
++#[test]
++fn channel_sequences_expire_only_after_publisher_idle_and_queue_drain() {
++    let mut bus = EventBus::default();
++    let start = Instant::now();
++    bus.publish_at("expired", "c", json!(null), None, "t", start).unwrap();
++    bus.publish_at("probe", "c", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE - Duration::from_nanos(1)).unwrap();
++    assert!(bus.sequences.contains_key("expired"));
++    bus.publish_at("probe", "c", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert!(!bus.sequences.contains_key("expired"));
++    let mut bus = EventBus::default();
++    for channel in 0..CHANNELS_PER_PUBLISHER {
++        bus.publish_at("idle", &format!("c{channel}"), json!(null), None, "t", start).unwrap();
++    }
++    let before = start + CHANNEL_PUBLISHER_IDLE - Duration::from_nanos(1);
++    assert_eq!(bus.publish_at("idle", "extra", json!(null), None, "t", before).unwrap_err().to_string(), "channel_sequence_limit");
++    bus.publish_at("probe", "c", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert!(!bus.sequences.contains_key("idle"), "rejected publication must not extend retention");
++    bus.subscribe("watcher", vec!["idle/*".into()]);
++    bus.publish_at("idle", "c0", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert_eq!(bus.drain("watcher", 1)[0].sequence, 1);
++    bus.publish_at("idle", "c0", json!(null), None, "t", start + CHANNEL_PUBLISHER_IDLE).unwrap();
++    let later = start + CHANNEL_PUBLISHER_IDLE * 2;
++    bus.publish_at("probe", "c", json!(null), None, "t", later).unwrap();
++    assert!(bus.sequences.contains_key("idle"), "queued events retain their publisher's counters");
++    assert_eq!(bus.drain("watcher", 1)[0].sequence, 2);
++    bus.publish_at("idle", "c0", json!(null), None, "t", later).unwrap();
++    assert_eq!(bus.drain("watcher", 1)[0].sequence, 1);
++    bus.unsubscribe("watcher");
++    bus.publish_at("idle", "c0", json!(null), None, "t", later + Duration::from_secs(1)).unwrap();
++    bus.publish_at("probe", "c", json!(null), None, "t", later + CHANNEL_PUBLISHER_IDLE).unwrap();
++    assert!(bus.sequences.contains_key("idle"), "successful publications without subscribers refresh retention");
++}
 +
 +#[test]
 +fn publishers_are_namespaced_and_subscribers_filter_by_pattern() {
@@ -96713,10 +97374,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..81487b8ad
+index 000000000..6e299e0dc
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1687 @@
+@@ -0,0 +1,1744 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -96876,12 +97537,69 @@ index 000000000..81487b8ad
 +        + Sync,
 +>;
 +
-+static SESSION_DISPATCHER: Mutex<Option<SessionDispatcher>> = Mutex::new(None);
++static SESSION_DISPATCHER: Mutex<Option<(Arc<()>, Option<SessionDispatcher>)>> = Mutex::new(None);
++
++pub struct SessionRegistration(Arc<()>);
++
++impl SessionRegistration {
++    pub fn install(&self, dispatcher: SessionDispatcher) -> std::io::Result<()> {
++        let mut installed = SESSION_DISPATCHER.lock().map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
++        match installed.as_mut() {
++            Some((owner, slot)) if Arc::ptr_eq(owner, &self.0) && slot.is_none() => {
++                *slot = Some(dispatcher);
++                Ok(())
++            }
++            _ => Err(std::io::Error::other("host_installation_stale")),
++        }
++    }
++}
++
++impl Drop for SessionRegistration {
++    fn drop(&mut self) {
++        let mut installed = SESSION_DISPATCHER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        if installed.as_ref().is_some_and(|(owner, _)| Arc::ptr_eq(owner, &self.0)) {
++            *installed = None;
++        }
++    }
++}
 +
 +/// Lets callbacks outside the session (terminal commands) reach the session's model operations.
-+pub fn install_session_dispatcher(dispatcher: SessionDispatcher) {
-+    if let Ok(mut installed) = SESSION_DISPATCHER.lock() {
-+        *installed = Some(dispatcher);
++pub fn install_session_dispatcher(dispatcher: SessionDispatcher) -> std::io::Result<SessionRegistration> {
++    let registration = reserve_session_dispatcher()?;
++    registration.install(dispatcher)?;
++    Ok(registration)
++}
++
++pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
++    let mut installed = SESSION_DISPATCHER.lock().map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
++    if installed.is_some() {
++        return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "host_already_installed"));
++    }
++    let owner = Arc::new(());
++    *installed = Some((owner.clone(), None));
++    Ok(SessionRegistration(owner))
++}
++
++#[cfg(test)]
++mod installation_tests {
++    use super::*;
++
++    #[test]
++    fn singleton_rejects_replacement_and_stale_teardown() {
++        let dispatcher = || Arc::new(|_: &str, _: &str, _: Option<&str>, _: Option<&Value>, _: crate::ModHostCall, _: &dyn Fn() -> bool| Ok(Value::Null)) as SessionDispatcher;
++        let pending = reserve_session_dispatcher().unwrap();
++        assert!(install_session_dispatcher(dispatcher()).is_err());
++        drop(pending);
++        let first = install_session_dispatcher(dispatcher()).unwrap();
++        assert!(matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists));
++        let stale = SessionRegistration(first.0.clone());
++        drop(first);
++        let second = install_session_dispatcher(dispatcher()).unwrap();
++        assert!(stale.install(dispatcher()).is_err());
++        drop(stale);
++        assert!(install_session_dispatcher(dispatcher()).is_err());
++        drop(second);
++        assert!(install_session_dispatcher(dispatcher()).is_ok());
 +    }
 +}
 +
@@ -96896,7 +97614,7 @@ index 000000000..81487b8ad
 +    let dispatcher = SESSION_DISPATCHER
 +        .lock()
 +        .ok()
-+        .and_then(|installed| installed.clone())
++        .and_then(|installed| installed.as_ref().and_then(|(_, dispatcher)| dispatcher.clone()))
 +        .ok_or_else(|| {
 +            std::io::Error::other("host_operation_unavailable: no session in this process")
 +        })?;
@@ -100683,10 +101401,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..19b359f04
+index 000000000..584c94fbe
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5768 @@
+@@ -0,0 +1,5869 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -101736,15 +102454,19 @@ index 000000000..19b359f04
 +                .cloned()
 +                .collect()
 +        } else {
-+            let capability = ModHostCall {
++            let required = ModHostCall {
 +                operation: operation.clone(),
 +                arguments: Value::Null,
 +            }
-+            .capability()?;
++            .capabilities()?;
++            if operation == "model.fork"
++                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
++                return Err(failure(format!("undeclared_operation_use: {operation}")));
++            }
 +            let mut used = package
 +                .capabilities
 +                .iter()
-+                .filter(|declared| *declared == capability)
++                .filter(|declared| required.contains(&declared.as_str()))
 +                .cloned()
 +                .collect::<Vec<_>>();
 +            let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);
@@ -103121,7 +103843,7 @@ index 000000000..19b359f04
 +    registrations: Registrations,
 +    state: Value,
 +    #[serde(default)]
-+    ui_state: Value,
++    ui_state: Option<String>,
 +    #[serde(default)]
 +    ui_read: bool,
 +    value: Value,
@@ -103406,6 +104128,7 @@ index 000000000..19b359f04
 +    + 'n;
 +
 +struct Invocation {
++    authority_current: bool,
 +    location: store::StateLocation,
 +    loaded: Loaded,
 +    dynamic: Vec<String>,
@@ -105139,6 +105862,59 @@ index 000000000..19b359f04
 +        )
 +    }
 +
++    fn check_callback_authority(&self, loaded: &Loaded) -> Result<()> {
++        let managed = self.store.managed()?;
++        let brokered = store::brokered_grants(&self.store.root)?;
++        let deployment = if managed.is_some() {
++            self.store.managed_deployment()?
++        } else {
++            policy::ManagedDeployment::default()
++        };
++        let mut selections = match &managed {
++            Some(managed) => managed.selections(
++                &deployment,
++                &self.store.managed_user(),
++                self.project.as_deref(),
++            ).0,
++            None => Vec::new(),
++        };
++        let mut administered = selections.len();
++        let path = self.store.root.join("mods.json");
++        let bytes = store::read(&path, 65_536);
++        let hash = format!("{}:{}:{}:{}:{}",
++            digest(bytes.as_deref().unwrap_or_default()),
++            brokered.as_ref().map_or(0, |(generation, _)| *generation),
++            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
++            deployment.generation,
++            self.project.as_deref().unwrap_or(Path::new("")).display());
++        match bytes.and_then(|bytes| ModConfiguration::parse(&bytes, &path)) {
++            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
++            _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
++            _ => return Err(failure("callback_authority_changed")),
++        }
++        // An unchanged authority inventory cannot introduce a different precedence winner.
++        if hash == self.configuration_sha256 {
++            administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
++            selections.retain(|selection| selection.path == loaded.selection.path);
++        }
++        let selected = Self::select(
++            &selections, administered, false,
++            brokered.as_ref().map(|(_, grants)| grants),
++            managed.as_ref().map(|managed| &managed.policy),
++            &mut Vec::new(),
++        )?;
++        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
++            return Err(failure("callback_authority_changed"));
++        };
++        if selection.path != loaded.selection.path
++            || selection.scope != loaded.selection.scope
++            || store::grant(&json!(selection)) != store::grant(&json!(loaded.selection))
++        {
++            return Err(failure("callback_authority_changed"));
++        }
++        Ok(())
++    }
++
 +    fn begin(
 +        &mut self,
 +        id: &str,
@@ -105162,6 +105938,7 @@ index 000000000..19b359f04
 +                "mod_failed: {error}; explicitly reload to recover"
 +            )));
 +        }
++        self.check_callback_authority(&loaded)?;
 +        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
 +        loaded.state = self
 +            .store
@@ -105190,6 +105967,7 @@ index 000000000..19b359f04
 +            loaded.ui_revision = state.revision;
 +        }
 +        Ok(Invocation {
++            authority_current: loaded.selection.authority_current(),
 +            location,
 +            dynamic: self
 +                .dynamic_tools
@@ -105213,6 +105991,7 @@ index 000000000..19b359f04
 +        reply: Reply,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<(Value, Value)> {
++        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
 +        }
@@ -105250,12 +106029,9 @@ index 000000000..19b359f04
 +                return Err(failure("state_conflict: ui revision changed"));
 +            }
 +        }
-+        if reply.ui_state != loaded.ui_state {
++        if ui_state != loaded.ui_state {
 +            if !reply.ui_read || !matches!(event, "command" | "component_event") {
 +                return Err(failure("ui_state_write_unavailable"));
-+            }
-+            if serde_json::to_vec(&reply.ui_state)?.len() > 65_536 {
-+                return Err(failure("ui_state_limit"));
 +            }
 +        }
 +        let mut parsed_command = None;
@@ -105324,10 +106100,10 @@ index 000000000..19b359f04
 +                &reply.state,
 +            )?;
 +        }
-+        if reply.ui_state != loaded.ui_state
++        if ui_state != loaded.ui_state
 +            && let Some(state) = ui.as_mut()
 +        {
-+            state.value = reply.ui_state;
++            state.value = ui_state;
 +            state.revision = state.revision.wrapping_add(1);
 +        }
 +        if event == "command"
@@ -105360,6 +106136,18 @@ index 000000000..19b359f04
 +        reply: Result<Reply>,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<Value> {
++        if !active() {
++            return Err(failure("callback_cancelled"));
++        }
++        if generation != self.generation {
++            return Err(failure("stale_mod_generation: retry on the next turn"));
++        }
++        self.check_callback_authority(&invocation.loaded)?;
++        if invocation.authority_current && !invocation.loaded.selection.authority_current()
++            && invocation.loaded.package.capabilities.iter().any(|cap| AUTHORITY_CAPABILITIES.contains(&cap.as_str()))
++        {
++            return Err(failure("callback_authority_changed"));
++        }
 +        let result = reply.and_then(|reply| {
 +            self.accept(
 +                &invocation.loaded,
@@ -105369,9 +106157,6 @@ index 000000000..19b359f04
 +                active,
 +            )
 +        });
-+        if generation != self.generation {
-+            return result.map(|(value, _)| value);
-+        }
 +        let (started, previous_state) = (invocation.started, invocation.loaded.state);
 +        let current = self
 +            .loaded
@@ -105884,6 +106669,10 @@ index 000000000..19b359f04
 +
 +    pub fn turn_boundary(&mut self) {
 +        self.turn_boundary_guarded(&|| true);
++    }
++
++    pub fn refresh_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
++        self.reload_guarded(active)
 +    }
 +
 +    pub fn turn_boundary_guarded(&mut self, active: &dyn Fn() -> bool) {
@@ -106441,6 +107230,36 @@ index 000000000..19b359f04
 +            "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
 +                .collect::<Vec<_>>()})));
 +        status
++    }
++}
++
++fn validate_ui_state(encoded: &str) -> Result<Value> {
++    if encoded.len() > 65_536 {
++        return Err(failure("ui_state_limit"));
++    }
++    serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
++}
++
++#[cfg(test)]
++#[test]
++fn ui_state_serialized_boundaries() {
++    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
++    for case in cases.as_array().unwrap() {
++        let encoded = format!(
++            "{}{}{}",
++            case["prefix"].as_str().unwrap(),
++            case["unit"]
++                .as_str()
++                .unwrap()
++                .repeat(case["repeat"].as_u64().unwrap() as usize),
++            case["suffix"].as_str().unwrap()
++        );
++        assert_eq!(
++            validate_ui_state(&encoded).is_ok(),
++            case["valid"].as_bool().unwrap(),
++            "{}",
++            case["name"]
++        );
 +    }
 +}
 +
@@ -107509,10 +108328,10 @@ index 000000000..27684b82d
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..c601d818d
+index 000000000..e6d1ab24c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,404 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -107620,7 +108439,7 @@ index 000000000..c601d818d
 +    pub fn capabilities(&self) -> Result<Vec<&'static str>> {
 +        let mut capabilities = vec![self.capability()?];
 +        if self.operation == "model.fork" {
-+            capabilities.push("sessions");
++            capabilities.extend(["sessions", "sessions_tools"]);
 +        }
 +        if self.operation == "terminal.pty" {
 +            if self.arguments["write"] == true {
@@ -107657,15 +108476,6 @@ index 000000000..c601d818d
 +
 +fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
 +    let capabilities = call.capabilities()?;
-+    if call.operation.starts_with("context.")
-+        && !loaded
-+            .package
-+            .capabilities
-+            .iter()
-+            .any(|cap| cap == "context")
-+    {
-+        return Err(failure("capability_denied: context"));
-+    }
 +    if let Some(missing) = capabilities
 +        .iter()
 +        .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
@@ -113407,10 +114217,10 @@ index 000000000..6c19a9b2d
 +}
 diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
 new file mode 100644
-index 000000000..91b9eff11
+index 000000000..26d791712
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/persisted.rs
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,200 @@
 +use super::*;
 +
 +/// JSON bytes of entries per callback; the payload carries them twice (`input` and `original`).
@@ -113529,38 +114339,44 @@ index 000000000..91b9eff11
 +    runtime: &Mutex<ModHost>,
 +    thread: &str,
 +    entries: &[Value],
++    active: impl Fn() -> bool,
 +) -> std::result::Result<Option<PersistedRewrite>, ()> {
++    if !active() {
++        return Err(());
++    }
 +    let _thread = StateThread::enter(Some(thread.to_owned()));
-+    let required = {
-+        let mut runtime = runtime.lock().map_err(|_| ())?;
-+        runtime.turn_boundary();
-+        match runtime.intercepts("history_persist") {
-+            Some(required) => required,
-+            None => return Ok(None),
-+        }
++    let mut runtime = runtime.lock().map_err(|_| ())?;
++    runtime.refresh_guarded(&active).map_err(|_| ())?;
++    let required = match runtime.intercepts("history_persist") {
++        Some(required) => required,
++        None => return Ok(None),
 +    };
 +    let mut texts = vec![String::new(); entries.len()];
 +    let mut withheld = vec![false; entries.len()];
 +    let mut by = Vec::new();
 +    for chunk in persist_chunks(entries) {
++        if !active() {
++            return Err(());
++        }
 +        let values = chunk
 +            .iter()
 +            .map(|(_, entry)| entry.clone())
 +            .collect::<Vec<_>>();
-+        let chain = intercept_shared(
-+            runtime,
-+            "history_persist",
-+            required,
-+            json!({"thread_id":thread,"entries":values}),
-+            json!({"caller":"host","thread_id":thread}),
-+            || true,
-+            |_, call| {
++        let chain = chain::intercept(
++            &mut Access::Held(&mut runtime),
++            &mut |_, call| {
 +                Err(std::io::Error::other(format!(
 +                    "host_operation_unavailable: history_persist interceptors run while history is persisted ({})",
 +                    call.operation
 +                )))
 +            },
-+            |input| Ok(json!({"entries": input["entries"]})),
++            &mut chain::Core::Call(&mut |input| Ok(json!({"entries": input["entries"]}))),
++            "history_persist",
++            required,
++            json!({"thread_id":thread,"entries":values}),
++            json!({"caller":"host","thread_id":thread}),
++            &active,
++            &InvocationScope::default(),
 +        )
 +        .ok();
 +        let rewritten = chain
@@ -113586,6 +114402,9 @@ index 000000000..91b9eff11
 +        if changed && let Some(chain) = &chain {
 +            by.extend(persist_changed_by(&chain.trace));
 +        }
++    }
++    if !active() {
++        return Err(());
 +    }
 +    for (text, withheld) in texts.iter_mut().zip(&withheld) {
 +        if *withheld {
@@ -115829,10 +116648,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..81343c1f0
+index 000000000..a5fe536b7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,946 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -116491,8 +117310,17 @@ index 000000000..81343c1f0
 +    set(value) {
 +      requireCapability('terminal');
 +      if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
-+      const encoded = JSON.stringify(value);
-+      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
++      const encoded = JSON.stringify(value, (key, item) => {
++        if (!key.isWellFormed() || (typeof item === 'string' && !item.isWellFormed())) throw new Error('ui_state_invalid_json');
++        return item;
++      });
++      if (typeof encoded !== 'string') throw new Error('ui_state_limit');
++      let bytes = 0;
++      for (const character of encoded) {
++        const code = character.codePointAt(0);
++        bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
++        if (bytes > 65536) throw new Error('ui_state_limit');
++      }
 +      uiState = JSON.parse(encoded); uiRead = true;
 +    },
 +  }),
@@ -116604,7 +117432,7 @@ index 000000000..81343c1f0
 +  }),
 +});
 +globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
++  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead}), request, calls,
 +  pending: () => pending, ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
 +  }, suspension, serve, base, component: step };
@@ -128062,6 +128890,241 @@ index 000000000..1f976853f
 +        status["rejected"]
 +    );
 +}
+diff --git a/codex-rs/omd/tests/fixtures/ui_state.json b/codex-rs/omd/tests/fixtures/ui_state.json
+new file mode 100644
+index 000000000..19fc4ef97
+--- /dev/null
++++ b/codex-rs/omd/tests/fixtures/ui_state.json
+@@ -0,0 +1,229 @@
++[
++  {"name":"unicode-object-key-at-limit","prefix":"{\"界\":\"","unit":"a","repeat":65526,"suffix":"\"}","valid":true},
++  {"name":"unicode-object-key-over-limit","prefix":"{\"界\":\"","unit":"a","repeat":65527,"suffix":"\"}","valid":false},
++  {"name":"lone-surrogate-key","prefix":"{\"\\ud800\":","unit":"0","repeat":1,"suffix":"}","valid":false},
++  {
++    "name": "ascii-65535",
++    "prefix": "\"",
++    "unit": "a",
++    "repeat": 65533,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "ascii-65536",
++    "prefix": "\"",
++    "unit": "a",
++    "repeat": 65534,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "ascii-65537",
++    "prefix": "\"",
++    "unit": "a",
++    "repeat": 65535,
++    "suffix": "\"",
++    "valid": false
++  },
++  {
++    "name": "two-65535",
++    "prefix": "\"",
++    "unit": "é",
++    "repeat": 32766,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "two-65536",
++    "prefix": "\"",
++    "unit": "é",
++    "repeat": 32767,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "two-65537",
++    "prefix": "\"",
++    "unit": "é",
++    "repeat": 32767,
++    "suffix": "a\"",
++    "valid": false
++  },
++  {
++    "name": "three-65535",
++    "prefix": "\"",
++    "unit": "界",
++    "repeat": 21844,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "three-65536",
++    "prefix": "\"",
++    "unit": "界",
++    "repeat": 21844,
++    "suffix": "aa\"",
++    "valid": true
++  },
++  {
++    "name": "three-65537",
++    "prefix": "\"",
++    "unit": "界",
++    "repeat": 21845,
++    "suffix": "\"",
++    "valid": false
++  },
++  {
++    "name": "four-65535",
++    "prefix": "\"",
++    "unit": "😀",
++    "repeat": 16383,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "four-65536",
++    "prefix": "\"",
++    "unit": "😀",
++    "repeat": 16383,
++    "suffix": "aa\"",
++    "valid": true
++  },
++  {
++    "name": "four-65537",
++    "prefix": "\"",
++    "unit": "😀",
++    "repeat": 16383,
++    "suffix": "aaa\"",
++    "valid": false
++  },
++  {
++    "name": "quote-65535",
++    "prefix": "\"",
++    "unit": "\\\"",
++    "repeat": 32766,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "quote-65536",
++    "prefix": "\"",
++    "unit": "\\\"",
++    "repeat": 32767,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "quote-65537",
++    "prefix": "\"",
++    "unit": "\\\"",
++    "repeat": 32767,
++    "suffix": "a\"",
++    "valid": false
++  },
++  {
++    "name": "slash-65535",
++    "prefix": "\"",
++    "unit": "\\\\",
++    "repeat": 32766,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "slash-65536",
++    "prefix": "\"",
++    "unit": "\\\\",
++    "repeat": 32767,
++    "suffix": "\"",
++    "valid": true
++  },
++  {
++    "name": "slash-65537",
++    "prefix": "\"",
++    "unit": "\\\\",
++    "repeat": 32767,
++    "suffix": "a\"",
++    "valid": false
++  },
++  {
++    "name": "control-65535",
++    "prefix": "\"",
++    "unit": "\\u0001",
++    "repeat": 10922,
++    "suffix": "a\"",
++    "valid": true
++  },
++  {
++    "name": "control-65536",
++    "prefix": "\"",
++    "unit": "\\u0001",
++    "repeat": 10922,
++    "suffix": "aa\"",
++    "valid": true
++  },
++  {
++    "name": "control-65537",
++    "prefix": "\"",
++    "unit": "\\u0001",
++    "repeat": 10922,
++    "suffix": "aaa\"",
++    "valid": false
++  },
++  {
++    "name": "1e-7-65536",
++    "prefix": "[1e-7,\"",
++    "unit": "a",
++    "repeat": 65527,
++    "suffix": "\"]",
++    "valid": true
++  },
++  {
++    "name": "1e-7-65537",
++    "prefix": "[1e-7,\"",
++    "unit": "a",
++    "repeat": 65528,
++    "suffix": "\"]",
++    "valid": false
++  },
++  {
++    "name": "100000000000000000000-65536",
++    "prefix": "[100000000000000000000,\"",
++    "unit": "a",
++    "repeat": 65510,
++    "suffix": "\"]",
++    "valid": true
++  },
++  {
++    "name": "100000000000000000000-65537",
++    "prefix": "[100000000000000000000,\"",
++    "unit": "a",
++    "repeat": 65511,
++    "suffix": "\"]",
++    "valid": false
++  },
++  {
++    "name": "0-65536",
++    "prefix": "[0,\"",
++    "unit": "a",
++    "repeat": 65530,
++    "suffix": "\"]",
++    "valid": true
++  },
++  {
++    "name": "0-65537",
++    "prefix": "[0,\"",
++    "unit": "a",
++    "repeat": 65531,
++    "suffix": "\"]",
++    "valid": false
++  },
++  {
++    "name": "lone-surrogate",
++    "prefix": "\"",
++    "unit": "\\ud800",
++    "repeat": 1,
++    "suffix": "\"",
++    "valid": false
++  }
++]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
 index 000000000..9f64a20d4
@@ -130277,7 +131340,7 @@ index 000000000..9f64a20d4
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 000000000..9ee95b313
+index 000000000..8c934a2bc
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
 @@ -0,0 +1,506 @@
@@ -130632,7 +131695,7 @@ index 000000000..9ee95b313
 +}
 +
 +#[test]
-+fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one() {
++fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_generation() {
 +    let temp = TempDir::new().unwrap();
 +    let (root, store) = workspace(&temp);
 +    let middleware =
@@ -130695,7 +131758,7 @@ index 000000000..9ee95b313
 +        .unwrap();
 +    assert_eq!(value, json!({"task":"running"}));
 +    assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
-+    assert_eq!(text(&mut runtime), json!("HELLO"));
++    assert!(runtime.event("context", json!({})).into_iter().find(|(id, _)| id == "stream").unwrap().1.is_err());
 +
 +    assert!(runtime.reload().unwrap());
 +    assert_ne!(runtime.generation(), generation);
@@ -132036,10 +133099,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..0d38a556a
+index 000000000..ff35fdec5
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5713 @@
+@@ -0,0 +1,5745 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -132054,6 +133117,14 @@ index 000000000..0d38a556a
 +use std::sync::atomic::AtomicUsize;
 +use std::sync::atomic::Ordering;
 +use tempfile::TempDir;
++
++#[test]
++fn model_fork_requires_tool_history_authority() {
++    let call = codex_omd::ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"p"}) };
++    assert_eq!(call.capabilities().unwrap(), vec!["agents", "sessions", "sessions_tools"]);
++    let complete = codex_omd::ModHostCall { operation: "model.complete".into(), arguments: json!({"route":"w","prompt":"p"}) };
++    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
++}
 +
 +fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
 +    packaged(root, id, id, source, capabilities, &[])
@@ -133817,6 +134888,8 @@ index 000000000..0d38a556a
 +    };
 +    assert!(invoke(&mut first, "read", Value::Null).is_null());
 +    invoke(&mut first, "write", json!(2));
++    assert!(!first.refresh_guarded(&|| true).unwrap());
++    assert!(!second.refresh_guarded(&|| true).unwrap());
 +    assert_eq!(invoke(&mut second, "read", Value::Null), 2);
 +    assert!(first.state("fixture").unwrap().is_null());
 +    let mut raced = false;
@@ -133840,7 +134913,7 @@ index 000000000..0d38a556a
 +    assert_eq!(invoke(&mut second, "read", Value::Null), 11);
 +    store.enable(&path, false).unwrap();
 +    first.turn_boundary();
-+    assert!(invoke(&mut second, "read", Value::Null).is_null());
++    assert!(second.invoke("fixture", second.generation(), "command", "read", Value::Null).is_err());
 +    store.enable(&path, true).unwrap();
 +    first.reload().unwrap();
 +    invoke(&mut first, "write", json!(4));
@@ -133854,6 +134927,10 @@ index 000000000..0d38a556a
 +    }
 +    assert_eq!(invoke(&mut second, "read", Value::Null), 5);
 +    assert_eq!(invoke(&mut first, "read", Value::Null), 5);
++    for value in [json!([1e-7, "a".repeat(65_527)]), json!("界".repeat(21_844) + "aa")] {
++        invoke(&mut first, "write", value.clone());
++        assert_eq!(invoke(&mut second, "read", Value::Null), value);
++    }
 +    let error = first
 +        .invoke(
 +            "fixture",
@@ -134476,6 +135553,14 @@ index 000000000..0d38a556a
 +
 +#[test]
 +fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
++    for capabilities in [vec!["commands", "agents"], vec!["commands", "agents", "sessions"]] {
++        let (temp, _, _) = fixture(
++            "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
++            &capabilities,
++        );
++        let error = activation_error(&temp, "fixture");
++        assert!(error.contains("undeclared_operation_use: model.fork"), "{error}");
++    }
 +    let (temp, _, _) = fixture(
 +        "export default api => api.command('status',()=>api.host.call('task.status',null))",
 +        &["commands"],
@@ -134512,6 +135597,11 @@ index 000000000..0d38a556a
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let (temp, _, _) = fixture(
 +        "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
++        &["commands", "agents", "sessions", "sessions_tools"],
++    );
++    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
++    let (temp, _, _) = fixture(
++        "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
 +        &["commands", "agents", "sessions", "sessions_tools"],
 +    );
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
@@ -134657,7 +135747,7 @@ index 000000000..0d38a556a
 +}
 +
 +#[test]
-+fn disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation() {
++fn disabling_during_native_work_rejects_completion_and_next_generation() {
 +    let (temp, store, path) = fixture(
 +        "export default api => api.command('run', () => api.host.call('task.status',null))",
 +        &["commands", "agents"],
@@ -134677,8 +135767,8 @@ index 000000000..0d38a556a
 +                Ok(json!({"completed":true}))
 +            },
 +        )
-+        .unwrap();
-+    assert_eq!(result, json!({"completed":true}));
++        .unwrap_err();
++    assert!(result.to_string().contains("callback_authority_changed"));
 +    runtime.turn_boundary();
 +    assert!(
 +        runtime
@@ -136763,7 +137853,12 @@ index 000000000..0d38a556a
 +        Ok(json!({"output":"ran","success":true}))
 +    })
 +    .unwrap();
-+    assert_eq!(drained.result["output"], "ran x y");
++    assert_eq!(drained.result["output"], "ran");
++    assert!(drained.trace.iter().any(|entry| entry["mod"] == "y"
++        && entry["reason"] == "callback_authority_changed"));
++    assert!(drained.trace.iter().any(|entry| entry["mod"] == "x"
++        && entry["reason"].as_str().is_some_and(|reason| reason.starts_with("stale_mod_generation"))));
++    runtime.lock().unwrap().reload().unwrap();
 +    assert_eq!(
 +        dispatch(&|| true, &mut { ran }).unwrap().result["output"],
 +        "ran x y2"
@@ -137182,7 +138277,7 @@ index 000000000..0d38a556a
 +    assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
 +    assert_eq!(persist(&["rename"]), ["rename"]);
 +    let entry = json!({"kind": "message", "role": "user", "call_id": null, "text": "sk-live"});
-+    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry])
++    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry], || true)
 +        .unwrap()
 +        .unwrap();
 +    assert_eq!(rewrite.texts, ["[redacted]"]);
@@ -141225,7 +142320,7 @@ index 000000000..ec1840ecb
 +}
 diff --git a/codex-rs/omd/tests/thread_store.rs b/codex-rs/omd/tests/thread_store.rs
 new file mode 100644
-index 000000000..9f4056fd7
+index 000000000..589224744
 --- /dev/null
 +++ b/codex-rs/omd/tests/thread_store.rs
 @@ -0,0 +1,124 @@
@@ -141332,7 +142427,7 @@ index 000000000..9f4056fd7
 +        .unwrap()["value"]["text"],
 +        "ship"
 +    );
-+    assert!(fork_thread_data(&data, "thread-1", "thread-3").is_err());
++    assert_eq!(fork_thread_data(&data, "thread-1", "thread-3").unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
 +    assert!(!fork_thread_data(&data, "absent", "thread-4").unwrap());
 +    assert!(fork_thread_data(&data, "../x", "thread-5").is_err());
 +
@@ -145110,10 +146205,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..13e7881b2
+index 000000000..51f9456b1
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2124 @@
+@@ -0,0 +1,2126 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -146022,8 +147117,8 @@ index 000000000..13e7881b2
 +        call: SurfaceCall,
 +        binding: Option<crate::mod_pty::Binding>,
 +    ) {
-+        if let Err(error) = crate::mod_surface::validate_call(&call) {
-+            let _ = call.reply.send(Err(error));
++        if let Err(error) = crate::mod_surface::validate_call_classified(&call) {
++            call.reply_blit(Err(error));
 +            return;
 +        }
 +        if call.operation == "terminal.pty"
@@ -146250,8 +147345,8 @@ index 000000000..13e7881b2
 +        call: SurfaceCall,
 +        held: Option<Confirmed>,
 +    ) {
-+        if let Err(error) = crate::mod_surface::validate_call(&call) {
-+            let _ = call.reply.send(Err(error));
++        if let Err(error) = crate::mod_surface::validate_call_classified(&call) {
++            call.reply_blit(Err(error));
 +            return;
 +        }
 +        let pty = match &held {
@@ -146402,7 +147497,7 @@ index 000000000..13e7881b2
 +            }
 +            "terminal.blit" => {
 +                let key = call.arguments["key"].as_str().unwrap_or_default();
-+                (|| {
++                let result = (|| {
 +                    let reply = crate::mod_raster::blit(
 +                        &call.caller,
 +                        crate::mod_ui::component_owner(key),
@@ -146417,7 +147512,9 @@ index 000000000..13e7881b2
 +                        tui.frame_requester().schedule_frame_in(delay);
 +                    }
 +                    Ok(reply)
-+                })()
++                })();
++                call.reply_blit(result);
++                return;
 +            }
 +            "terminal.prompt" => {
 +                let title = match (
@@ -154754,7 +155851,7 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..bc91a399d
+index 000000000..875296c00
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
 @@ -0,0 +1,451 @@
@@ -154941,8 +156038,8 @@ index 000000000..bc91a399d
 +    snapshot: impl FnOnce(
 +        &codex_omd::process_raster::PixelSource,
 +        Instant,
-+    ) -> Result<std::sync::Arc<codex_omd::process_raster::PixelFrame>, String>,
-+) -> Result<Value, String> {
++    ) -> Result<std::sync::Arc<codex_omd::process_raster::PixelFrame>, codex_omd::client_surface::BlitError>,
++) -> Result<Value, codex_omd::client_surface::BlitError> {
 +    let mut update =
 +        codex_omd::client_surface::blit_request(caller, owner.as_deref(), size, arguments)?;
 +    if let BlitContent::Cells { cells, .. } = &update.content
@@ -154954,7 +156051,7 @@ index 000000000..bc91a399d
 +    }
 +    let (width, height) = size
 +        .filter(|(width, height)| *width > 0 && *height > 0)
-+        .ok_or("terminal_blit_unknown")?;
++        .ok_or_else(|| codex_omd::client_surface::BlitError::retryable("terminal_blit_unknown"))?;
 +    let key = std::mem::take(&mut update.key);
 +    let binding = codex_omd::process_raster::serial(
 +        crate::mod_surface::current_thread().as_deref(),
@@ -154978,7 +156075,7 @@ index 000000000..bc91a399d
 +    if matches!(update.content, BlitContent::Source(_)) {
 +        let mut rasters = rasters();
 +        if limited(&rasters) {
-+            return Err("terminal_blit_limit".into());
++            return Err(codex_omd::client_surface::BlitError::retryable("terminal_blit_limit"));
 +        }
 +        if let Some(raster) = rasters.get_mut(&key).filter(|raster| reusable(raster)) {
 +            if raster.hidden(now) {
@@ -154996,7 +156093,7 @@ index 000000000..bc91a399d
 +    let update = update.checked(|source| snapshot(source, next))?;
 +    let mut rasters = rasters();
 +    if limited(&rasters) {
-+        return Err("terminal_blit_limit".into());
++        return Err(codex_omd::client_surface::BlitError::retryable("terminal_blit_limit"));
 +    }
 +    let bytes = update.bytes;
 +    let image = matches!(
@@ -155211,7 +156308,7 @@ index 000000000..bc91a399d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 000000000..8773d6788
+index 000000000..1f2190484
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
 @@ -0,0 +1,829 @@
@@ -155232,7 +156329,7 @@ index 000000000..8773d6788
 +        .collect()
 +}
 +
-+fn blit_at(key: &str, caller: &str, value: Value, now: Instant) -> Result<Value, String> {
++fn blit_at(key: &str, caller: &str, value: Value, now: Instant) -> Result<Value, codex_omd::client_surface::BlitError> {
 +    blit(
 +        caller,
 +        Some("owner".into()),
@@ -155357,7 +156454,7 @@ index 000000000..8773d6788
 +    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
 +    assert_eq!(
 +        blit_at("raster-refuse", "intruder", cell.clone(), now),
-+        Err("terminal_blit_not_owned".into())
++        Err(codex_omd::client_surface::BlitError::retryable("terminal_blit_not_owned"))
 +    );
 +    assert_eq!(
 +        blit(
@@ -155368,7 +156465,7 @@ index 000000000..8773d6788
 +            now,
 +            |_, _| unreachable!(),
 +        ),
-+        Err("terminal_blit_unknown".into())
++        Err(codex_omd::client_surface::BlitError::retryable("terminal_blit_unknown"))
 +    );
 +    assert_eq!(
 +        blit_at(&"k".repeat(QUEUE_BYTES), "owner", cell.clone(), now),
@@ -155680,7 +156777,7 @@ index 000000000..8773d6788
 +    json!({"media_type": "image/png", "base64": base64::engine::general_purpose::STANDARD.encode(png)})
 +}
 +
-+fn frame_at(key: &str, image: Value, now: Instant) -> Result<Value, String> {
++fn frame_at(key: &str, image: Value, now: Instant) -> Result<Value, codex_omd::client_surface::BlitError> {
 +    blit(
 +        "owner",
 +        Some("owner".into()),
@@ -155777,7 +156874,7 @@ index 000000000..8773d6788
 +            now,
 +            |_, _| panic!("snapshot before capacity admission")
 +        ),
-+        Err("terminal_blit_limit".into())
++        Err(codex_omd::client_surface::BlitError::retryable("terminal_blit_limit"))
 +    );
 +    retain(&BTreeSet::new());
 +    let mut snapshots = 0;
@@ -155806,7 +156903,7 @@ index 000000000..8773d6788
 +    retain(&BTreeSet::new());
 +}
 +
-+fn raw_at(key: &str, sequence: u64, now: Instant, next: Option<Instant>) -> Result<Value, String> {
++fn raw_at(key: &str, sequence: u64, now: Instant, next: Option<Instant>) -> Result<Value, codex_omd::client_surface::BlitError> {
 +    let source =
 +        json!({"source":"owned", "format":"rgb", "width":1, "height":1, "sequence":sequence});
 +    blit(
@@ -155925,7 +157022,7 @@ index 000000000..8773d6788
 +        json!({"media_type": "image/png", "base64": "bm90IGFuIGltYWdl"}),
 +        frame(4097, 1, [0, 0, 0]),
 +    ] {
-+        assert_eq!(frame_at(key, image, now), invalid);
++        assert_eq!(frame_at(key, image, now), invalid.clone().map_err(codex_omd::client_surface::BlitError::fatal));
 +    }
 +    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
 +    for arguments in [
@@ -156972,7 +158069,7 @@ index 000000000..7ca758b14
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..c16a88b13
+index 000000000..7fe88d891
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,1633 @@
@@ -158112,7 +159209,7 @@ index 000000000..c16a88b13
 +        .and_then(|paths| paths.store)
 +        .and_then(|store| shared_host(store).ok())?;
 +    let entry = serde_json::json!({"kind": "prompt_history", "role": "user", "call_id": null, "text": text});
-+    match codex_omd::persist_texts(&runtime, thread, &[entry]).ok()? {
++    match codex_omd::persist_texts(&runtime, thread, &[entry], || true).ok()? {
 +        None => Some(text),
 +        Some(rewrite) => rewrite
 +            .texts
@@ -158611,7 +159708,7 @@ index 000000000..c16a88b13
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..c37432788
+index 000000000..1fe277922
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,1145 @@
@@ -159401,7 +160498,7 @@ index 000000000..c37432788
 +    let calls = routed.clone();
 +    let admitted = grants.clone();
 +    let environment = codex_omd::host::Environment::default();
-+    codex_omd::host::install_session_dispatcher(Arc::new(
++    let _registration = codex_omd::host::install_session_dispatcher(Arc::new(
 +        move |thread, id, source, policy, call, active| {
 +            assert_eq!(source, Some(admitted.source_sha256.as_str()));
 +            calls
@@ -159440,7 +160537,7 @@ index 000000000..c37432788
 +            )
 +            .map_err(std::io::Error::other)
 +        },
-+    ));
++    )).unwrap();
 +    let scope = CallScope {
 +        epoch: 0,
 +        context: codex_omd::app_routes::InvocationContext::User,
@@ -159762,10 +160859,10 @@ index 000000000..c37432788
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..bcf6051c9
+index 000000000..78f364233
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1048 @@
+@@ -0,0 +1,1053 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -159798,7 +160895,8 @@ index 000000000..bcf6051c9
 +            (admitted.0)() && current() && (host || thread == current_thread())
 +        }));
 +        if !(call.validity.0)() {
-+            return Err("client_context_changed".into());
++            call.reply_blit(Err("client_context_changed".into()));
++            return Ok(());
 +        }
 +        let binding = (call.operation == "terminal.pty")
 +            .then(|| {
@@ -159914,8 +161012,12 @@ index 000000000..bcf6051c9
 +}
 +
 +pub(crate) fn validate_call(call: &SurfaceCall) -> Result<(), String> {
++    validate_call_classified(call).map_err(|error| error.message)
++}
++
++pub(crate) fn validate_call_classified(call: &SurfaceCall) -> Result<(), codex_omd::client_surface::BlitError> {
 +    if !call.lifetime.active() {
-+        return Err("callback_cancelled_or_expired".into());
++        return Err(codex_omd::client_surface::BlitError::retryable("callback_cancelled_or_expired"));
 +    }
 +    if !(call.validity.0)() {
 +        return Err("client_context_changed".into());
@@ -159924,14 +161026,14 @@ index 000000000..bcf6051c9
 +    if let Some(admitted) = &call.lifetime.admission
 +        && admitted["source"] != binding["source"]
 +    {
-+        return Err("client_surface_admission_changed".into());
++        return Err(codex_omd::client_surface::BlitError::retryable("client_surface_admission_changed"));
 +    }
 +    if call.lifetime.binding.as_ref() != Some(&binding)
 +        || (call.caller != codex_omd::broker::HOST_CALLER
 +            && (binding["source"].is_null()
 +                || call.thread.is_some() && call.thread != current_thread()))
 +    {
-+        return Err("client_surface_context_changed".into());
++        return Err(codex_omd::client_surface::BlitError::retryable("client_surface_context_changed"));
 +    }
 +    Ok(())
 +}

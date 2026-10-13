@@ -689,7 +689,7 @@ pub(in crate::mods) fn blit_sink(
         };
         let result = runtime
             .refresh_authority()
-            .map_err(|_| "callback_cancelled".to_owned())
+            .map_err(|_| codex_omd::client_surface::BlitError::retryable("callback_cancelled"))
             .and_then(|_| {
                 (runtime.generation() == generation
                     && runtime.grants(&owner).is_some_and(|grants| {
@@ -697,7 +697,7 @@ pub(in crate::mods) fn blit_sink(
                             && grants.capabilities == capabilities
                     }))
                 .then_some(())
-                .ok_or_else(|| "process_raster_revoked".to_owned())
+                .ok_or_else(|| codex_omd::client_surface::BlitError::new(codex_omd::client_surface::BlitErrorKind::Revoked, "process_raster_revoked"))
             });
         *last
             .lock()
@@ -716,7 +716,7 @@ pub(in crate::mods) fn blit_sink(
                     .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
         });
         codex_omd::client_surface::with_admission(&source, generation, None, || {
-            codex_omd::client_surface::call(
+            codex_omd::client_surface::call_classified(
                 &id,
                 "terminal.blit",
                 arguments,

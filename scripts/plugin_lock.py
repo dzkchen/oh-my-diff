@@ -24,8 +24,7 @@ def build():
     for identifier in listed:
         manifest = json.loads((source / f"plugins/{identifier}/.codex-plugin/plugin.json").read_text())
         plugins[identifier] = {**lock["plugins"][identifier], "version": manifest["version"]}
-    files = sorted(path.relative_to(source).as_posix() for path in source.rglob("*")
-                   if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
+    files = support.plugin_inventory(source)
     return {
         **lock,
         "marketplace": marketplace["name"],

@@ -30,6 +30,32 @@ First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
 raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
 launch; outside authors can use the public client APIs.
 
+## Host lifetime and callback authority
+
+One native host owns the process-wide session dispatcher and client bridge at a
+time. A second live installation is rejected. Stopping the owner releases its
+registrations; teardown from an older registration cannot remove a newer one.
+
+Main, input and persistence runtimes may have different idle snapshots, local
+generation numbers, telemetry and callback failure state. Numeric generations
+are local to a runtime, not a cross-runtime authority token. Each callback uses
+its executing runtime's selected source and grants. Persistence refreshes its own
+runtime and uses that runtime's required-interceptor decision, including failure
+fallback. Required persistence failure withholds text; dropping persistence work
+cancels the callback.
+
+Safety change (2026-10-13): callback admission and completion validate current
+source and authority. Cancellation, disablement, revocation, source replacement
+or a changed executing generation rejects completion before callback state or
+results are accepted. Effects already performed by a host call are not rolled
+back. Authors must not rely on a disabled or replaced callback committing state
+after its host call finishes. Failed-reload transactional restoration is a
+separate contract; retaining an older runtime does not authorize stale callbacks.
+
+Raster producers distinguish retryable, revoked and fatal failures by explicit
+categories, independently of diagnostic wording. Thread-store destination
+conflicts use the native `AlreadyExists` category.
+
 ## API 0.2 host primitives
 
 The host is feature-agnostic: every operation, event and capability below is
@@ -64,10 +90,10 @@ native work.
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `unix_sockets` | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
-| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions`), `task.status`, `workspace.integrate` |
+| `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (with `sessions` and `sessions_tools`), `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
-| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot` and `agents.spawn {parent_history}` (with `sessions`) |
+| `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (with `sessions`) |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
@@ -168,7 +194,11 @@ without an unrestricted child process.
   {handle, max_bytes?, wait_ms?}` returns up to 64 KiB (`data` or
   `data_base64`, never splitting a UTF-8 character) and `done`, or
   `http_stream_busy` while another read of the handle runs; `http.close`
-  ends it. A mod holds at most four streams; they close after 60 s idle and at
+  ends it. Dropping an in-flight read closes its stream and releases its slot;
+  later reads return `http_stream_unavailable`. Busy reads do not renew idle
+  time. A mod holds at most four streams, including concurrent successful
+  opens; excess responses are discarded with `http_stream_limit`. Pending
+  requests do not reserve slots. Streams close after 60 s idle and at
   reload, disable, revoke or expiry. Cancelling the callback aborts a request
   in flight (`host_operation_cancelled`); the deadline fails it with
   `http_timeout`.
@@ -1387,7 +1417,15 @@ it without timings.
 `events.publish {channel, data, correlation?}` publishes under the caller's
 namespace; subscribers declare channel patterns and receive `channel` events
 (256 events / 1 MiB per subscriber) in the publishing thread. Events whose
-originating thread is gone are dropped. `process.start {notify: ['output','exit']}`
+originating thread is gone are dropped. Sequence numbers are independent per
+publisher/channel. The host retains at most 256 channel counters per publisher
+and 4,096 process-wide; a new channel beyond either limit fails with
+`channel_sequence_limit`, while existing channels remain publishable. On
+publication, counters for a publisher with no successful publication for at
+least 15 minutes and no queued events are reclaimed. Its next publication
+starts at sequence 1. Successful publication with no subscribers still counts
+as activity; rejected publication does not. Unsubscribing alone does not reset
+counters. `process.start {notify: ['output','exit']}`
 delivers coalesced `process_event`s; `exit` fires once, when the leader exits,
 even while a background child keeps the output streams open and more output may
 follow. `workspace.watch {paths, recursive?,
@@ -2323,7 +2361,7 @@ read-only worker turn. `route` is a configured worker route the mod may use, or
 asks for structured JSON output, `effort` picks the reasoning effort and
 `max_output_tokens` (at most 128,000, never above a paid route's own ceiling)
 is sent on every route, the included subscription too. `model.fork {prompt,
-route?, tools?, …}` (capabilities `agents` and `sessions`) does the same on a
+route?, tools?, …}` (capabilities `agents`, `sessions` and `sessions_tools`) does the same on a
 snapshot of the current conversation: the thread's committed model-visible
 history, with opaque reasoning kept for a same-provider route and left out
 for another provider, on `lead` unless `route` names a worker route. It is
@@ -2682,7 +2720,11 @@ any it refuses.
   do not survive general callbacks. Render hooks retain activation under their
   existing matching-input rules.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
-  `terminal`. Values are bounded to 64 KiB and shared by host instances in the
+  `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
+  `JSON.stringify(value)` output, including quotes, keys and escapes. Strings
+  and object keys must contain valid Unicode scalars (no lone surrogates).
+  The host checks the original serialized bytes before parsing; number
+  reformatting does not change the limit. Values are shared by host instances in the
   same process, store, repository, thread and package identity. Commands and
   component events may write; other callbacks may read. Writes commit only after
   successful validation and cancellation checks, with revision conflicts using

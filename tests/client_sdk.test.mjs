@@ -11,6 +11,51 @@ import { connect, encodeFrame, frameReader, unsupported } from '../mods/author/c
 
 const renderer = { kind: 'text', formats: ['text'], pointer: 'none', reducedMotion: true };
 
+test('frame reader assembles chunked large payloads with linear copying', t => {
+  const payload = Buffer.alloc(2_097_152, 0x61);
+  for (const masked of [false, true]) {
+    const frame = encodeFrame(1, payload, masked);
+    const received = [];
+    const read = frameReader((opcode, body) => received.push([opcode, body]));
+    const concat = Buffer.concat;
+    let copied = 0;
+    t.mock.method(Buffer, 'concat', (chunks, length) => {
+      copied += length ?? chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      return concat(chunks, length);
+    });
+    try {
+      for (let at = 0; at < frame.length; at += 65_536) read(frame.subarray(at, at + 65_536));
+    } finally {
+      t.mock.restoreAll();
+    }
+    assert.equal(received.length, 1);
+    assert.equal(received[0][0], 1);
+    assert.deepEqual(received[0][1], payload);
+    assert.ok(copied <= frame.length * 2, `${copied} copied bytes for ${frame.length} input bytes`);
+    t.diagnostic(`${masked ? 'masked' : 'unmasked'}: ${copied} concatenated bytes for ${frame.length} input bytes`);
+  }
+});
+
+test('frame reader handles split headers, fragments, controls and coalesced frames', () => {
+  for (const masked of [false, true]) {
+    const first = encodeFrame(1, Buffer.from('start'), masked);
+    first[0] &= 0x7f;
+    const frames = [first, encodeFrame(9, Buffer.from('ping'), masked),
+      encodeFrame(0, Buffer.alloc(130, 0x62), masked), encodeFrame(2, Buffer.alloc(70_000, 0x63), masked),
+      encodeFrame(1, Buffer.alloc(0), masked), encodeFrame(8, Buffer.from([3, 232]), masked)];
+    const wire = Buffer.concat(frames);
+    const expected = [[9, Buffer.from('ping')], [1, Buffer.concat([Buffer.from('start'), Buffer.alloc(130, 0x62)])],
+      [2, Buffer.alloc(70_000, 0x63)], [1, Buffer.alloc(0)], [8, Buffer.from([3, 232])]];
+    for (const width of [1, 3, wire.length]) {
+      const received = [];
+      const read = frameReader((opcode, body) => received.push([opcode, Buffer.from(body)]));
+      for (let at = 0; at < wire.length; at += width) read(new Uint8Array(wire.subarray(at, at + width)));
+      read(Buffer.alloc(0));
+      assert.deepEqual(received, expected);
+    }
+  }
+});
+
 async function until(find) {
   for (let waited = 0; waited < 5000; waited += 10) {
     const found = find();

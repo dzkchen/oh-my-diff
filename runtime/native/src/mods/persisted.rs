@@ -18,8 +18,10 @@ pub(super) async fn rewrite(
         })
         .collect::<Vec<_>>();
     let count = entries.len();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancellation = Cancellation(cancelled.clone());
     let rewritten =
-        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries))
+        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries, || !cancelled.load(Ordering::Acquire)))
             .await;
     match rewritten {
         Ok(Ok(rewrite)) => rewrite.map(|rewrite| PersistedTextRewrite {

@@ -6,6 +6,15 @@ const LIMIT = 50;
 const KEPT = 512;
 const HALF_LIFE = 64;
 
+function serializedBytes(value: unknown): number {
+  let bytes = 0;
+  for (const character of JSON.stringify(value)) {
+    const code = character.codePointAt(0)!;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
 function common(query: string, path: string): number {
   let row = new Array<number>(path.length + 1).fill(0);
   for (const character of query) {
@@ -116,8 +125,13 @@ export default function activate(api: ModAPI) {
     const { files, revision } = load();
     files.tick++;
     for (const path of found) files.files[path] = [(files.files[path]?.[0] ?? 0) + 1, files.tick];
-    let bytes = 0;
-    const kept = Object.keys(files.files).sort((a, b) => weight(files, b) - weight(files, a)).slice(0, KEPT).filter(path => (bytes += path.length + 32) < 60_000);
+    let bytes = serializedBytes({ tick: files.tick, files: {} });
+    const kept: string[] = [];
+    for (const path of Object.keys(files.files).sort((a, b) => weight(files, b) - weight(files, a)).slice(0, KEPT)) {
+      bytes += serializedBytes({ [path]: files.files[path] }) - 2 + (kept.length ? 1 : 0);
+      if (bytes >= 60_000) break;
+      kept.push(path);
+    }
     files.files = Object.fromEntries(kept.map(path => [path, files.files[path]]));
     save(files, revision);
   });

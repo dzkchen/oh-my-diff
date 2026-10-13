@@ -13,6 +13,14 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::TempDir;
 
+#[test]
+fn model_fork_requires_tool_history_authority() {
+    let call = codex_omd::ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"p"}) };
+    assert_eq!(call.capabilities().unwrap(), vec!["agents", "sessions", "sessions_tools"]);
+    let complete = codex_omd::ModHostCall { operation: "model.complete".into(), arguments: json!({"route":"w","prompt":"p"}) };
+    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
+}
+
 fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
     packaged(root, id, id, source, capabilities, &[])
 }
@@ -1775,6 +1783,8 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     };
     assert!(invoke(&mut first, "read", Value::Null).is_null());
     invoke(&mut first, "write", json!(2));
+    assert!(!first.refresh_guarded(&|| true).unwrap());
+    assert!(!second.refresh_guarded(&|| true).unwrap());
     assert_eq!(invoke(&mut second, "read", Value::Null), 2);
     assert!(first.state("fixture").unwrap().is_null());
     let mut raced = false;
@@ -1798,7 +1808,7 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     assert_eq!(invoke(&mut second, "read", Value::Null), 11);
     store.enable(&path, false).unwrap();
     first.turn_boundary();
-    assert!(invoke(&mut second, "read", Value::Null).is_null());
+    assert!(second.invoke("fixture", second.generation(), "command", "read", Value::Null).is_err());
     store.enable(&path, true).unwrap();
     first.reload().unwrap();
     invoke(&mut first, "write", json!(4));
@@ -1812,6 +1822,10 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
     }
     assert_eq!(invoke(&mut second, "read", Value::Null), 5);
     assert_eq!(invoke(&mut first, "read", Value::Null), 5);
+    for value in [json!([1e-7, "a".repeat(65_527)]), json!("界".repeat(21_844) + "aa")] {
+        invoke(&mut first, "write", value.clone());
+        assert_eq!(invoke(&mut second, "read", Value::Null), value);
+    }
     let error = first
         .invoke(
             "fixture",
@@ -2434,6 +2448,14 @@ fn task_scoped_tool_decisions_cannot_select_another_mod_or_hide_unscoped_tools()
 
 #[test]
 fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
+    for capabilities in [vec!["commands", "agents"], vec!["commands", "agents", "sessions"]] {
+        let (temp, _, _) = fixture(
+            "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
+            &capabilities,
+        );
+        let error = activation_error(&temp, "fixture");
+        assert!(error.contains("undeclared_operation_use: model.fork"), "{error}");
+    }
     let (temp, _, _) = fixture(
         "export default api => api.command('status',()=>api.host.call('task.status',null))",
         &["commands"],
@@ -2470,6 +2492,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
         "export default (api: any) => api.command('spawn',()=>api.host.call('agents.spawn',{role:'worker',prompt:'p',parent_history:true}))",
+        &["commands", "agents", "sessions", "sessions_tools"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default api => api.command('forkprobe',()=>api.host.call('model.fork',{prompt:'p'}))",
         &["commands", "agents", "sessions", "sessions_tools"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
@@ -2615,7 +2642,7 @@ fn native_discovery_prefers_project_packages_without_trust() {
 }
 
 #[test]
-fn disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation() {
+fn disabling_during_native_work_rejects_completion_and_next_generation() {
     let (temp, store, path) = fixture(
         "export default api => api.command('run', () => api.host.call('task.status',null))",
         &["commands", "agents"],
@@ -2635,8 +2662,8 @@ fn disabling_during_native_work_preserves_inflight_source_and_revokes_next_gener
                 Ok(json!({"completed":true}))
             },
         )
-        .unwrap();
-    assert_eq!(result, json!({"completed":true}));
+        .unwrap_err();
+    assert!(result.to_string().contains("callback_authority_changed"));
     runtime.turn_boundary();
     assert!(
         runtime
@@ -4721,7 +4748,12 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
         Ok(json!({"output":"ran","success":true}))
     })
     .unwrap();
-    assert_eq!(drained.result["output"], "ran x y");
+    assert_eq!(drained.result["output"], "ran");
+    assert!(drained.trace.iter().any(|entry| entry["mod"] == "y"
+        && entry["reason"] == "callback_authority_changed"));
+    assert!(drained.trace.iter().any(|entry| entry["mod"] == "x"
+        && entry["reason"].as_str().is_some_and(|reason| reason.starts_with("stale_mod_generation"))));
+    runtime.lock().unwrap().reload().unwrap();
     assert_eq!(
         dispatch(&|| true, &mut { ran }).unwrap().result["output"],
         "ran x y2"
@@ -5140,7 +5172,7 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
     assert_eq!(persist(&["swap", "other"]), ["swap", "other"]);
     assert_eq!(persist(&["rename"]), ["rename"]);
     let entry = json!({"kind": "message", "role": "user", "call_id": null, "text": "sk-live"});
-    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry])
+    let rewrite = codex_omd::persist_texts(&runtime, "t", &[entry], || true)
         .unwrap()
         .unwrap();
     assert_eq!(rewrite.texts, ["[redacted]"]);
