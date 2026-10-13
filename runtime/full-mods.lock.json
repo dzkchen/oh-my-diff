@@ -69,11 +69,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "399e9fbe162ae17270914242e86e32395f3c9e97b84c724856c86daa0412c48d",
+        "index.ts": "a0d5b4c2afead3b804d8db3a4cea8c94a7b29e554ee91e7aa09d3181ce8be0be",
         "mod.json": "ab6d99367275abc89cf122a2a854f1ebd09ae94a1a1419d6b30ba28a88746653"
       },
       "id": "omd_frecency",
-      "package_sha256": "ec955cc85d83db8168a255e044baa3759afb59c8a45f9d05e8ad036ce65683bd",
+      "package_sha256": "da874375cd9595b813eb67aa2db01de4b1b53cbfa38db0be45ac030ef7e8b3ad",
       "source": "mods/first-party/omd_frecency",
       "version": "0.1.0-preview.2"
     },
@@ -247,11 +247,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "d72791c05a12f95cb12dee18f71beb0d69f344393e25d002f2b432066def3e7f",
+        "index.ts": "e12bf8f75aca2476d319c5c9f00f5d50a9212801037a5ac299d5051430ac2cde",
         "mod.json": "5f92cc6a137c98da77e6dd5f867f4478b44ec0b0560772770026e581d5558c68"
       },
       "id": "omd_privacy",
-      "package_sha256": "bc31132601944917d9b8a3f38531487383e25f482db219317380ff72092dbe6e",
+      "package_sha256": "5a39f9ffc1f28bd55daaaeb0a9fb4bda9a8bd330858ad36989ac7da8b18b6142",
       "source": "mods/first-party/omd_privacy",
       "version": "0.1.0-preview.1"
     },

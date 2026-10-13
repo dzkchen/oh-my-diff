@@ -24,7 +24,11 @@ function repository(files, status) {
   const writes = [];
   const host = ({ operation, arguments: args }) => {
     if (operation === 'store.get') return files && { value: files, revision: 3, provenance: {} };
-    if (operation === 'store.put') return writes.push(args.value), { revision: 4 };
+    if (operation === 'store.put') {
+      assert.ok(Buffer.byteLength(JSON.stringify(args.value)) <= 65_536, 'store_value_limit');
+      assert.equal(args.expected_revision, files ? 3 : null);
+      return writes.push(args.value), { revision: 4 };
+    }
     if (operation === 'exec.run') return { exit_code: 0, stdout: status };
     if (operation === 'workspace.stat') return { files: Object.fromEntries(args.paths.map(path => [path, path.startsWith('old/') ? null : { kind: 'file', size: 1, mtime_ms: 0 }])) };
     throw new Error(operation);
@@ -68,3 +72,27 @@ test('submitted prompts queue paths; the next turn learns only files Git does no
   assert.equal(learned.state, null);
   assert.deepEqual(run('turn_start', { turn_id: 'u' }, none).calls, []);
 });
+
+for (const [label, component, count] of [['Unicode', '雪'.repeat(60), 200], ['JSON escaping', '\\'.repeat(120), 130]]) {
+  test(`learning trims serialized UTF-8 storage bytes for ${label}`, () => {
+    const path = index => `${component}/${component.slice(0, label === 'Unicode' ? 40 : 120)}${String(index).padStart(3, '0')}.ts`;
+    const files = { tick: 0, files: Object.fromEntries(Array.from({ length: count }, (_, index) => [path(index), [1, 0]])) };
+    const initialBytes = Buffer.byteLength(JSON.stringify(files));
+    assert.ok(initialBytes > 60_000 && initialBytes <= 65_536);
+    const tokens = Array.from({ length: 16 }, (_, index) => path(count + index));
+    const queued = run('intercept', { surface: 'input', input: { text: tokens.join(' '), attachments: 0 }, origin: { caller: 'user' } },
+      call => ({ result: { text: call.arguments.input.text }, trace: [] }), '0').state;
+    assert.deepEqual(queued, tokens);
+    assert.ok(Buffer.byteLength(JSON.stringify({ tick: 1, files: { ...files.files, ...Object.fromEntries(tokens.map(path => [path, [1, 1]])) } })) > 65_536);
+    const { host, writes } = repository(files, tokens.join('\0') + '\0');
+    const learned = run('turn_start', { turn_id: 'unicode' }, host, '', queued);
+    assert.equal(learned.state, null);
+    assert.equal(writes.length, 1);
+    assert.ok(Buffer.byteLength(JSON.stringify(writes[0])) <= 60_000);
+    assert.equal(writes[0].tick, 1);
+    for (const path of tokens) assert.deepEqual(writes[0].files[path], [1, 1]);
+    const retained = Object.keys(writes[0].files);
+    const old = retained.filter(name => !tokens.includes(name));
+    assert.deepEqual(old, Array.from({ length: old.length }, (_, index) => path(index)));
+  });
+}
